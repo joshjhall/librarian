@@ -29,7 +29,7 @@ services:
       # codegraph index: <project>/.codegraph is symlinked here by the dev-tools
       # first-startup hook, so the knowledge-graph index lives on this volume
       # (out of the git tree, droppable to force a clean re-index).
-      - containers-codegraph:/cache/codegraph
+      - librarian-codegraph:/cache/codegraph
     tmpfs:
       # Writable /run for the supervisor socket/pidfile. No uid=/gid= — the
       # entrypoint reconciles ownership at startup (editors remap the runtime
@@ -60,6 +60,11 @@ services:
     command: ["sleep", "infinity"]
     networks:
       - librarian-network
+
+volumes:
+  # codegraph knowledge-graph index, mounted at /cache/codegraph. Named volume so
+  # it survives container rebuilds and can be dropped to force a clean re-index.
+  librarian-codegraph:
 
 networks:
   librarian-network:
