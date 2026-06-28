@@ -1,0 +1,15 @@
+{
+  "description": "Records each golem's permission-gate / idle transitions to the central status feed so the orchestrator can surface BLOCKED golems TTY-free.",
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -44,6 +44,14 @@ always sanity-check packaging with `claude plugin marketplace add <path>` +
 `claude plugin details <name>@librarian` (manifest validation does not exercise
 component discovery).
 
+**Bundled hooks need `hooks/hooks.json`.** A hook script dropped in
+`hooks/<name>.sh` is NOT registered on its own — `claude plugin details` shows
+`Hooks (0)` and installing the plugin wires up nothing. The plugin must ship
+`hooks/hooks.json` mapping the event (e.g. `Notification`) to a `command` that
+invokes the script via `${CLAUDE_PLUGIN_ROOT}/hooks/<name>.sh`. After adding or
+changing it, re-verify with `claude plugin details <name>@librarian` showing
+`Hooks (N)` — same discovery gotcha as the flat-agents rule above.
+
 ## Key conventions
 
 - **Bundled scripts, never `just`.** The `workflow` plugin's skills call their
