@@ -22,3 +22,25 @@ jobs:
 
       - name: Validate marketplace + plugin manifests
         run: node tests/validate-manifests.mjs
+
+  quality-gates:
+    name: Skill/agent quality gates
+    runs-on: ubuntu-latest
+    needs: validate-manifests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Skill/agent structural lint
+        run: bash tests/lint-skills-agents.sh
+
+      - name: Skill contract validation
+        run: bash tests/validate-contracts.sh
