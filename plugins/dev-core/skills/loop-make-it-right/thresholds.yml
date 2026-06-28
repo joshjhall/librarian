@@ -1,0 +1,29 @@
+# loop-make-it-right — Configurable Thresholds
+#
+# These values are read by the pipeline orchestrator and passed to the
+# loop's analysis context. Override by placing a modified copy in your
+# project's .claude/skills/loop-make-it-right/thresholds.yml.
+
+# Maximum function length before flagging (lines)
+max_function_lines: 50
+
+# Maximum nesting depth before flagging (indent levels)
+max_nesting_depth: 4
+
+# Minimum repetitions before extraction is recommended
+duplication_threshold: 3
+
+# Severity mapping per category
+severity:
+  long-function:
+    exceeds_hard_limit: high # Function > max_function_lines
+  deep-nesting:
+    exceeds_max_depth: high # Nesting > max_nesting_depth
+  single-char-name:
+    non_loop_variable: high # Single-char name outside loop counter
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

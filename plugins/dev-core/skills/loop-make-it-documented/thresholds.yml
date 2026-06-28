@@ -1,0 +1,30 @@
+# loop-make-it-documented — Configurable Thresholds
+#
+# These values are read by the pipeline orchestrator and passed to the
+# loop's analysis context. Override by placing a modified copy in your
+# project's .claude/skills/loop-make-it-documented/thresholds.yml.
+
+# Which symbols require documentation
+require_docs_for:
+  python: "module-level functions and classes (not underscore-prefixed)"
+  go: "exported functions and types (capitalized)"
+  typescript: "exported functions, classes, and interfaces"
+  shell: "all named functions"
+
+# Skip documentation checks for test files
+skip_test_files: true
+
+# Severity mapping per category
+severity:
+  undocumented-public-function:
+    no_docstring: high # Public function without any docstring
+  undocumented-public-class:
+    no_class_docs: high # Public class without documentation
+  undocumented-export:
+    no_jsdoc_godoc: high # Exported symbol without JSDoc/GoDoc
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

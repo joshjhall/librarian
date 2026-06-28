@@ -1,0 +1,16 @@
+name: drift-detect
+version: "1.0"
+labels: []
+required_tools:
+  - name: git
+    purpose: "Compare planned vs actual file changes"
+    install_hint: "Install git via your system package manager"
+  - name: gh
+    purpose: "Fetch issue body from GitHub (alternative: glab for GitLab)"
+    install_hint: "Install the GitHub CLI (https://cli.github.com)"
+required_permissions:
+  - provider: github
+    scopes:
+      - repo
+    notes: "Needed to read issue body via gh issue view"
+required_mcps: []

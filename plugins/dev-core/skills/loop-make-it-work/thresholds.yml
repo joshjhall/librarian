@@ -1,0 +1,23 @@
+# loop-make-it-work — Configurable Thresholds
+#
+# These values are read by the pipeline orchestrator and passed to the
+# loop's analysis context. Override by placing a modified copy in your
+# project's .claude/skills/loop-make-it-work/thresholds.yml.
+
+# Severity mapping per category — HIGH blockers must be resolved before
+# the loop can exit
+severity:
+  stub-detected:
+    todo_fixme: high # TODO/FIXME in implementation code
+    not_implemented: high # NotImplementedError / unimplemented!()
+  empty-body:
+    pass_only: high # Function with only pass/... body
+    empty_braces: high # Function with {} body
+  no-assertions:
+    test_no_asserts: high # Test file with zero assertions
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9 # patterns.sh matches
+  heuristic: 0.7 # LLM confirmation of pre-scan
+  llm: 0.5 # LLM judgment only

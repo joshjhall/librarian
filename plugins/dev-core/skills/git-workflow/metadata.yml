@@ -1,0 +1,13 @@
+name: git-workflow
+version: "1.0"
+
+labels: []
+
+required_tools:
+  - name: git
+    purpose: Commit, branch, and PR operations
+    install_hint: "Install git via your system package manager"
+
+required_permissions: []
+
+required_mcps: []

@@ -1,0 +1,41 @@
+# context-data-storage — Phase-to-Skill Mapping
+#
+# Defines which skills are activated in each pipeline phase when the
+# data-storage context is active. The pipeline orchestrator reads this
+# file to inject domain-specific expertise.
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/context-data-storage/context.yml
+
+name: data-storage
+description: "Database, SQL, ORM, migrations, and query performance concerns"
+
+phases:
+  plan:
+    # Surface data modeling requirements during planning
+    - skill: loop-make-it-secure
+      mode: guidance
+      focus: "Plan must address: data model, connection pooling, migration strategy, parameterized queries"
+
+  implement:
+    # Run security loop with SQL injection focus
+    - loop: loop-make-it-secure
+      order: after-core
+      focus: "Parameterized queries, connection pool configuration, transaction boundaries"
+
+  review:
+    # Data-focused review checks (future check-perf-* and check-sec-* skills)
+    - skill: check-sec-injection
+      status: planned
+    - skill: check-perf-queries
+      status: planned
+
+  test:
+    # Shape testing focus toward data concerns
+    - skill: loop-make-it-tested
+      focus: "Include connection failure, timeout, constraint violation, and transaction rollback tests"
+
+  docs:
+    # Shape documentation toward data decisions
+    - skill: loop-make-it-documented
+      focus: "Document schema decisions, migration steps, query patterns, index rationale"
