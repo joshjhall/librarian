@@ -1,0 +1,9 @@
+name: context-data-storage
+version: "1.0"
+labels:
+  - name: context/data-storage
+    color: "5319E7"
+    description: Data storage context was active during this work
+required_tools: []
+required_permissions: []
+required_mcps: []

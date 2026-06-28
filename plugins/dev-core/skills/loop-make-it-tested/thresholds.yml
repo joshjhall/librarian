@@ -1,0 +1,29 @@
+# loop-make-it-tested — Configurable Thresholds
+#
+# These values are read by the pipeline orchestrator and passed to the
+# loop's analysis context. Override by placing a modified copy in your
+# project's .claude/skills/loop-make-it-tested/thresholds.yml.
+
+# What counts as "public" (requiring test coverage)
+public_api_rules:
+  python: "functions not starting with underscore at module level"
+  go: "exported functions (capitalized)"
+  typescript: "exported functions and classes"
+
+# Minimum assertions per test function
+min_assertions_per_test: 1
+
+# Severity mapping per category
+severity:
+  missing-test-file:
+    no_test_module: high # Source file has no test counterpart
+  untested-public-api:
+    exported_no_test: high # Public function not referenced in tests
+  test-no-assertions:
+    empty_test: high # Test function with zero assertions
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

@@ -1,0 +1,9 @@
+name: context-security
+version: "1.0"
+labels:
+  - name: context/security
+    color: "D93F0B"
+    description: Security context was active during this work
+required_tools: []
+required_permissions: []
+required_mcps: []

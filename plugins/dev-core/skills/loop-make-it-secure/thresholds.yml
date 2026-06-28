@@ -1,0 +1,31 @@
+# loop-make-it-secure — Configurable Thresholds
+#
+# These values are read by the pipeline orchestrator and passed to the
+# loop's analysis context. Override by placing a modified copy in your
+# project's .claude/skills/loop-make-it-secure/thresholds.yml.
+
+# Zero tolerance — all HIGH findings must be resolved before exit
+zero_tolerance_categories:
+  - hardcoded-secret
+  - string-interpolation-query
+
+# Severity mapping per category
+severity:
+  hardcoded-secret:
+    api_key_or_token: high # Any hardcoded credential
+    aws_access_key: high # AWS-style key patterns
+  string-interpolation-query:
+    sql_interpolation: high # String-built SQL queries
+    nosql_interpolation: high # String-built NoSQL queries
+  dangerous-function:
+    code_injection: high # Functions enabling arbitrary code execution
+    unsafe_deserialization: high # Unsafe serialization library usage
+    shell_injection: high # Shell commands with uncontrolled input
+  denylist-validation:
+    blocklist_pattern: high # Denylist instead of allowlist
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5
