@@ -1,0 +1,40 @@
+# rumdl configuration — markdown linting and formatting.
+#
+# Ported from joshjhall/containers. We enable the default rule set and only
+# disable rules that are opinionated, need project-specific data, or clash
+# with our conventions (e.g. skill/agent templates that carry the title in
+# YAML frontmatter rather than an H1).
+
+respect-gitignore = true
+
+exclude = [
+  "containers/**",
+  "node_modules/**",
+  ".git/**",
+  ".vscode/**",
+  ".devcontainer/**",
+]
+
+# Rules disabled because they don't fit our docs.
+disable = [
+  # Skill/agent templates put the title in YAML frontmatter, not an H1.
+  "MD041",
+  "MD043", # required heading structure (needs a template)
+  "MD044", # proper names capitalization (needs a names list)
+  "MD054", # link/image style — redundant with MD048-MD050
+  "MD057", # relative link existence (cross-refs resolve at build time)
+  "MD059", # link text should be descriptive
+  "MD060", # table column alignment
+  "MD061", # forbidden terms (needs a term list)
+  "MD063", # heading capitalization
+  "MD072", # frontmatter keys alphabetical
+  "MD073", # TOC matches document headings (needs a TOC)
+  "MD074", # MkDocs nav entries (we don't use MkDocs)
+]
+
+# Line length: 120 characters of prose is plenty; code blocks and tables
+# often exceed that legitimately.
+[MD013]
+line_length = 120
+code_blocks = false
+tables = false
