@@ -72,6 +72,7 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
 ```bash
 just              # list recipes
 just validate     # validate manifests
+just test         # run the full local test suite (tests/run-all.sh; mirrors CI)
 just lint         # dprint + taplo + rumdl + manifest validation
 just fmt          # format JSON/YAML/TOML/markdown
 just install-hooks

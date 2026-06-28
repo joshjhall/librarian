@@ -10,7 +10,13 @@
 
 `run-all.sh` is the single entry point: it runs manifest validation followed by
 the structural gates and one behavioral gate, runs every stage to completion
-(no early exit), and exits non-zero if any stage fails.
+(no early exit), and exits non-zero if any stage fails. It is invoked by both
+CI (`.github/workflows/ci.yml`) and the lefthook `pre-push` hook, so the local
+and CI suites cannot drift.
+
+**Design & roadmap:** see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the test
+layers (unit / integration / behavioral), how each maps to the gate that
+implements it, the priority-ordered gaps, and the LLM-in-the-loop decision.
 
 `validate-manifests.mjs` parses `.claude-plugin/marketplace.json` and every
 `plugins/*/.claude-plugin/plugin.json`, and asserts they agree on name +
