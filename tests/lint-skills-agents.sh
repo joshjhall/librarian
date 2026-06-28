@@ -44,10 +44,17 @@ VALID_TOOLS="Read Write Edit Bash Grep Glob Task WebFetch WebSearch"
 # selects exactly the artifact directories (one level below skills/ or agents/),
 # and degrades cleanly to empty output when a plugin has only .gitkeep.
 
-# List every agent directory across all plugins (absolute paths, sorted).
-list_agent_dirs() {
-    command find "$PLUGINS_DIR" -mindepth 3 -maxdepth 3 -type d -path '*/agents/*' \
-        2>/dev/null | command sort
+# List every agent markdown file across all plugins (absolute paths, sorted).
+#
+# Claude Code discovers plugin agents as FLAT markdown files directly under
+# agents/ (agents/<name>.md), NOT nested in per-agent subdirectories — verified
+# against the plugin loader and the official plugins. A few agents ship a
+# workflow.js harness in a same-named sibling subdir (agents/<name>/workflow.js);
+# that subdir is ignored by agent discovery and intentionally excluded here by
+# matching only *.md one level under agents/.
+list_agent_files() {
+    command find "$PLUGINS_DIR" -mindepth 3 -maxdepth 3 -type f -path '*/agents/*' \
+        -name '*.md' 2>/dev/null | command sort
 }
 
 # List every skill directory across all plugins (absolute paths, sorted).
@@ -116,27 +123,27 @@ workflow_meta_violations() {
 
 # --- Agent Tests ------------------------------------------------------------
 
-# Every agent directory has a correctly named <name>.md file.
+# Agent discovery yields flat agents/<name>.md files; the agent name is the
+# file basename without the .md extension.
+
+# Every plugin exposes at least the expected flat agent files (sanity: the
+# loop bodies below no-op on an empty tree, so assert discovery is non-empty
+# only when an agents/ dir actually holds content).
 test_agent_files_exist() {
-    local agent_dir
-    while IFS= read -r agent_dir; do
-        [ -n "$agent_dir" ] || continue
-        local agent_name
-        agent_name="$(/usr/bin/basename "$agent_dir")"
-        assert_file_exists "$agent_dir/${agent_name}.md" \
-            "Agent $agent_name missing ${agent_name}.md"
-    done < <(list_agent_dirs)
+    local agent_file
+    while IFS= read -r agent_file; do
+        [ -n "$agent_file" ] || continue
+        assert_file_exists "$agent_file" "Agent file missing: $agent_file"
+    done < <(list_agent_files)
 }
 
-# Every agent has required frontmatter fields and the name matches the dir.
+# Every agent has required frontmatter fields and name matches the filename.
 test_agent_frontmatter_fields() {
-    local agent_dir
-    while IFS= read -r agent_dir; do
-        [ -n "$agent_dir" ] || continue
-        local agent_name agent_file
-        agent_name="$(/usr/bin/basename "$agent_dir")"
-        agent_file="$agent_dir/${agent_name}.md"
-        [ -f "$agent_file" ] || continue
+    local agent_file
+    while IFS= read -r agent_file; do
+        [ -n "$agent_file" ] || continue
+        local agent_name
+        agent_name="$(/usr/bin/basename "$agent_file" .md)"
 
         local name_val description_val tools_val model_val
         name_val="$(get_frontmatter_field "$agent_file" "name")"
@@ -149,35 +156,31 @@ test_agent_frontmatter_fields() {
         assert_not_empty "$tools_val" "Agent $agent_name: missing 'tools' in frontmatter"
         assert_not_empty "$model_val" "Agent $agent_name: missing 'model' in frontmatter"
         assert_equals "$name_val" "$agent_name" "Agent $agent_name: frontmatter name mismatch"
-    done < <(list_agent_dirs)
+    done < <(list_agent_files)
 }
 
 # Agent model values are valid (opus/sonnet/haiku).
 test_agent_model_values() {
-    local agent_dir
-    while IFS= read -r agent_dir; do
-        [ -n "$agent_dir" ] || continue
-        local agent_name agent_file model_val
-        agent_name="$(/usr/bin/basename "$agent_dir")"
-        agent_file="$agent_dir/${agent_name}.md"
-        [ -f "$agent_file" ] || continue
+    local agent_file
+    while IFS= read -r agent_file; do
+        [ -n "$agent_file" ] || continue
+        local agent_name model_val
+        agent_name="$(/usr/bin/basename "$agent_file" .md)"
         model_val="$(get_frontmatter_field "$agent_file" "model")"
         [ -z "$model_val" ] && continue
         if ! is_valid_value "$model_val" "$VALID_MODELS"; then
             assert_true false "Agent $agent_name: invalid model '$model_val' (expected: $VALID_MODELS)"
         fi
-    done < <(list_agent_dirs)
+    done < <(list_agent_files)
 }
 
 # Agent tools values are from the valid set.
 test_agent_tool_values() {
-    local agent_dir
-    while IFS= read -r agent_dir; do
-        [ -n "$agent_dir" ] || continue
-        local agent_name agent_file tools_val
-        agent_name="$(/usr/bin/basename "$agent_dir")"
-        agent_file="$agent_dir/${agent_name}.md"
-        [ -f "$agent_file" ] || continue
+    local agent_file
+    while IFS= read -r agent_file; do
+        [ -n "$agent_file" ] || continue
+        local agent_name tools_val
+        agent_name="$(/usr/bin/basename "$agent_file" .md)"
         tools_val="$(get_frontmatter_field "$agent_file" "tools")"
         [ -z "$tools_val" ] && continue
 
@@ -191,7 +194,7 @@ test_agent_tool_values() {
                 fi
             done
         done <<<"$tools_val"
-    done < <(list_agent_dirs)
+    done < <(list_agent_files)
 }
 
 # --- Skill Tests ------------------------------------------------------------
