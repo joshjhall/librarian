@@ -14,6 +14,8 @@ services:
         # Dev tooling: dprint, taplo, shellcheck, shfmt, lefthook, conform,
         # gitleaks, actionlint, rumdl, typos, just, Claude Code CLI.
         INCLUDE_DEV_TOOLS: "true"
+        # Additional dev tools
+        INCLUDE_OP: "true"
         # Node provides MCP servers + bash-language-server for the bundled
         # workflow scripts. No Rust/Python/Postgres/Redis/docker-in-docker:
         # this is a docs + shell + node repo.
@@ -24,14 +26,30 @@ services:
         - type=local,dest=/tmp/.buildx-cache,mode=max
     volumes:
       - ..:/workspace/librarian
+      # codegraph index: <project>/.codegraph is symlinked here by the dev-tools
+      # first-startup hook, so the knowledge-graph index lives on this volume
+      # (out of the git tree, droppable to force a clean re-index).
+      - containers-codegraph:/cache/codegraph
     tmpfs:
       # Writable /run for the supervisor socket/pidfile. No uid=/gid= — the
       # entrypoint reconciles ownership at startup (editors remap the runtime
       # UID; a baked uid= breaks under Zed/VS Code remapping).
       - /run:mode=0755
+      # 1Password cache is kept in memory. No uid=/gid= for the same reason — this
+      # path is under /cache, so fix_cache_permissions aligns it to the runtime user.
+      - /cache/1password/secrets:size=8m,mode=0700
+    # Load environment variables from ../.env if present (optional; the file is
+    # gitignored local state and is absent in fresh git worktrees). Long-form
+    # `required: false` mirrors examples/**/docker-compose.yml so the compose
+    # validation hook passes from worktrees instead of erroring on a missing
+    # env file.
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       - CLAUDE_MCPS=filesystem
       - MEMORY_FILE_PATH=/workspace/librarian/.claude/memory
+      # - SKIP_CASE_CHECK=true
     # tini as PID 1 for zombie reaping (belt-and-suspenders with the Dockerfile).
     init: true
     # Required for the bindfs FUSE overlay (fixes macOS VirtioFS permissions).
