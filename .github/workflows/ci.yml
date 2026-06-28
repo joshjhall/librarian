@@ -7,6 +7,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege: this is a read-only validation pipeline (it checks out the
+# tree and runs lint/test gates, posting only check statuses). Declare the
+# minimal token scope at the workflow level so both jobs inherit it instead of
+# the repository default, mirroring release.yml's explicit permissions block.
+permissions:
+  contents: read
+
 jobs:
   validate-manifests:
     name: Validate plugin manifests
@@ -39,11 +46,10 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Skill/agent structural lint
-        run: bash tests/lint-skills-agents.sh
-
-      - name: Skill contract validation
-        run: bash tests/validate-contracts.sh
-
-      - name: golem-gate-watch feed snapshot
-        run: bash tests/golem-gate-watch.sh
+      # Single entry point — tests/run-all.sh owns the stage list (structural
+      # lint, contract validation, behavioral gates, and a re-run of manifest
+      # validation). Calling it here instead of re-listing each gate keeps CI
+      # from drifting out of sync with the local `just test` suite when a stage
+      # is added or renamed.
+      - name: Run test suite
+        run: bash tests/run-all.sh
