@@ -1,0 +1,9 @@
+{
+  "name": "workflow",
+  "version": "0.1.0",
+  "description": "Issue-driven and parallel automation: next-issue, orchestrate, golem, file-issue, provision-agent, and the bundled scripts they call.",
+  "author": {
+    "name": "Josh Hall",
+    "url": "https://github.com/joshjhall"
+  }
+}
