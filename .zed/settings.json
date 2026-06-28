@@ -16,5 +16,12 @@
         "arguments": ["lsp", "stdio"]
       }
     }
+  },
+  // dprint excludes .devcontainer/**, so compose files fall back to Zed's own
+  // indentation (default tab_size 4). Pin YAML to 2-space.
+  "languages": {
+    "YAML": {
+      "tab_size": 2
+    }
   }
 }
