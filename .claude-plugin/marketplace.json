@@ -1,0 +1,42 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "librarian",
+  "description": "General-purpose Claude Code skills and agents — development, review/audit, and parallel-automation workflow — usable on host, bare Linux, and inside the containers dev image.",
+  "owner": {
+    "name": "Josh Hall",
+    "url": "https://github.com/joshjhall"
+  },
+  "repository": "https://github.com/joshjhall/librarian",
+  "keywords": [
+    "claude-code",
+    "skills",
+    "agents",
+    "code-review",
+    "audit",
+    "workflow",
+    "automation"
+  ],
+  "plugins": [
+    {
+      "name": "dev-core",
+      "source": "./plugins/dev-core",
+      "description": "General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides.",
+      "version": "0.1.0",
+      "category": "development"
+    },
+    {
+      "name": "review-audit",
+      "source": "./plugins/review-audit",
+      "description": "Codebase audit and review: the codebase-audit / check-* / audit-* suite plus the issue writer.",
+      "version": "0.1.0",
+      "category": "development"
+    },
+    {
+      "name": "workflow",
+      "source": "./plugins/workflow",
+      "description": "Issue-driven and parallel automation: next-issue, orchestrate, golem, file-issue, provision-agent, and the bundled scripts they call.",
+      "version": "0.1.0",
+      "category": "productivity"
+    }
+  ]
+}

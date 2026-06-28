@@ -1,0 +1,9 @@
+{
+  "name": "dev-core",
+  "version": "0.1.0",
+  "description": "General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides.",
+  "author": {
+    "name": "Josh Hall",
+    "url": "https://github.com/joshjhall"
+  }
+}
