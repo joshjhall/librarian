@@ -1,0 +1,9 @@
+name: provision-agent
+version: "1.0"
+
+# No labels — this skill doesn't interact with the issue tracker directly
+
+required_tools:
+  - docker
+  - git
+  - tmux

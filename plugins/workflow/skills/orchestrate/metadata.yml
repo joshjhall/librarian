@@ -1,0 +1,32 @@
+name: orchestrate
+version: "2.0"
+
+# Status labels are read as authoritative during monitoring. They are owned and
+# created by next-issue / next-issue-ship — listed here for self-documentation.
+labels:
+  - name: status/in-progress
+  - name: status/pr-pending
+  - name: status/commit-pending
+
+required_tools:
+  - name: git
+    purpose: Branch/worktree operations; local-merge (opt-in)
+    install_hint: "Git — https://git-scm.com (preinstalled on most systems; brew install git / apt install git)"
+  - name: gh
+    purpose: PR state, checks, reviews, issue labels (GitHub) — monitor authority
+    install_hint: "GitHub CLI — https://cli.github.com (brew install gh / apt install gh)"
+  - name: glab
+    purpose: MR state, CI, issue labels (GitLab) — monitor authority
+    install_hint: "GitLab CLI — https://gitlab.com/gitlab-org/cli (brew install glab)"
+
+required_permissions:
+  - provider: github
+    scopes:
+      - repo
+    notes: "gh auth login with 'repo' scope for PR + label reads"
+  - provider: gitlab
+    scopes:
+      - api
+    notes: "glab auth login or GITLAB_TOKEN"
+
+required_mcps: []

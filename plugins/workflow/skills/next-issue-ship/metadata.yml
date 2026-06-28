@@ -1,0 +1,36 @@
+name: next-issue-ship
+version: "1.0"
+
+labels:
+  - name: status/in-progress
+    color: "0E8A16"
+    description: An agent is working on this issue
+  - name: status/pr-pending
+    color: "E4B100"
+    description: PR created, awaiting review
+  - name: status/commit-pending
+    color: "E4B100"
+    description: Fix committed locally but not yet pushed
+
+required_tools:
+  - name: gh
+    purpose: GitHub PR creation, issue labeling
+    install_hint: "GitHub CLI — https://cli.github.com (brew install gh / apt install gh)"
+  - name: glab
+    purpose: GitLab MR creation, issue labeling
+    install_hint: "GitLab CLI — https://gitlab.com/gitlab-org/cli (brew install glab)"
+  - name: git
+    purpose: Committing, pushing, branch management
+    install_hint: "Git — https://git-scm.com (preinstalled on most systems; brew install git / apt install git)"
+
+required_permissions:
+  - provider: github
+    scopes:
+      - repo
+    notes: "gh auth login with 'repo' scope minimum"
+  - provider: gitlab
+    scopes:
+      - api
+    notes: "glab auth login or GITLAB_TOKEN"
+
+required_mcps: []

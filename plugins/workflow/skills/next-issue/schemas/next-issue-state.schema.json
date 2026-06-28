@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "next-issue-state.schema.json",
+  "title": "Next Issue State",
+  "description": "Per-issue state file for the /next-issue pipeline. Written to .claude/memory/tmp/next-issue-{N}.json where N is the issue number.",
+  "type": "object",
+  "required": ["version", "issue", "title", "phase", "started", "platform"],
+  "properties": {
+    "version": {
+      "const": 2,
+      "description": "Schema version. Always 2 for JSON format (version 1 was YAML frontmatter)."
+    },
+    "issue": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Issue number from GitHub or GitLab."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Issue title."
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["select", "plan", "implement", "ship"],
+      "description": "Current pipeline phase."
+    },
+    "branch": {
+      "type": "string",
+      "description": "Git branch name. Set after Phase 1 (select)."
+    },
+    "plan": {
+      "type": "string",
+      "description": "One-line plan summary. Set after Phase 2 (plan)."
+    },
+    "started": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO date when work began (YYYY-MM-DD)."
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["github", "gitlab"],
+      "description": "Issue tracker platform."
+    },
+    "autonomous": {
+      "type": "boolean",
+      "description": "True when the run was started in autonomous mode (--auto flag or NEXT_ISSUE_AUTONOMOUS=1). Gates resolve to documented defaults; no interactive prompts."
+    },
+    "plan_gated": {
+      "type": "boolean",
+      "description": "True when an autonomous run keeps the human plan-approval checkpoint (EnterPlanMode/ExitPlanMode) instead of skipping it. Set true for autonomous runs on effort/medium, effort/large, severity/critical, or no-effort-label issues, or when --plan-gate is passed; false (fully-autonomous, skip plan) for effort/trivial|small non-critical issues, when --force-auto is passed, and for every non-autonomous run."
+    },
+    "plan_comment_url": {
+      "type": "string",
+      "description": "URL of the issue comment where the fully-autonomous plan was posted for traceability. Written only on the fully-autonomous path (plan_gated:false); omitted on plan-gated autonomous runs and all non-autonomous runs."
+    },
+    "contexts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Domain contexts relevant to this issue (e.g., 'api-design', 'security')."
+    },
+    "active_loops": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Implementation loops to execute (e.g., 'make-it-work', 'make-it-tested')."
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "Phase transition checkpoint. Written before context reset points to preserve key context for the next phase.",
+      "properties": {
+        "completed_phase": {
+          "type": "string",
+          "enum": ["select", "plan", "implement", "ship"],
+          "description": "The phase that just completed."
+        },
+        "key_decisions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Non-obvious choices made during the phase that affect downstream work. Do NOT include things derivable from the code."
+        },
+        "files_modified": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files changed so far (avoids re-scanning after reset)."
+        },
+        "files_planned": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files that still need to change."
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Things discovered that the next phase should know about."
+        },
+        "next_action": {
+          "type": "string",
+          "description": "Explicit directive for post-reset pickup (e.g., 'Begin implementation loop: make-it-work')."
+        },
+        "loop_state": {
+          "type": "object",
+          "description": "Implementation loop progress tracking.",
+          "properties": {
+            "completed": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Loops that have finished."
+            },
+            "remaining": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Loops still to run."
+            },
+            "exit_criteria_met": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Exit criteria satisfied so far."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
