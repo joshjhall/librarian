@@ -1,0 +1,63 @@
+{
+  "name": "Librarian Development",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "devcontainer",
+  "workspaceFolder": "/workspace/librarian",
+
+  // Use the container's ENTRYPOINT instead of VS Code's "sleep infinity" so
+  // our entrypoint runs (permission/mount reconciliation, etc.).
+  "overrideCommand": false,
+
+  // Install dependencies once when the container is first created.
+  "postCreateCommand": "bash /workspace/librarian/.devcontainer/post-create.sh",
+
+  // Configure git, CLI auth, and install git hooks on every start.
+  "postStartCommand": "bash /workspace/librarian/.devcontainer/post-start.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Linting & formatting
+        "redhat.vscode-yaml",
+        "dprint.dprint",
+        "tekumara.typos-vscode",
+        // Docker & DevOps
+        "ms-azuretools.vscode-docker",
+        // Git
+        "donjayamanne.githistory",
+        // Editor enhancements
+        "usernamehw.errorlens",
+        "wayou.vscode-todo-highlight",
+        // Documentation
+        "bierner.markdown-mermaid",
+        // AI assistance
+        "Anthropic.claude-code"
+      ],
+      "settings": {
+        // dprint for JSON/YAML (matches CI); markdown handled by rumdl on commit.
+        "[yaml]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "dprint.dprint"
+        },
+        "[json]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "dprint.dprint"
+        },
+        "[jsonc]": {
+          "editor.formatOnSave": true,
+          "editor.defaultFormatter": "dprint.dprint"
+        },
+        "editor.formatOnSave": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "/bin/bash",
+            "args": ["-l"]
+          }
+        }
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

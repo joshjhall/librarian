@@ -1,0 +1,147 @@
+# Lefthook configuration
+# Install hooks: lefthook install
+# Run manually:  lefthook run pre-commit [--all-files]
+#
+# Tooling is provided by the containers devcontainer (dev-tools feature).
+# Every container-only tool skips gracefully when run on a bare host.
+
+# ============================================================================
+# Pre-commit stage: runs on `git commit`
+# ============================================================================
+pre-commit:
+  parallel: true
+  commands:
+    check-merge-conflict:
+      exclude:
+        # The rebase-imports skill documents literal conflict markers in a fence.
+        - "plugins/**/skills/rebase-imports/**"
+      run: |
+        if /usr/bin/grep -lE '^(<{7} |>{7} |={7}$)' {staged_files} 2>/dev/null; then
+          echo "ERROR: merge conflict markers found in the above file(s)"
+          exit 1
+        fi
+
+    # --- Shell linting (bundled workflow scripts) ---
+
+    shellcheck:
+      glob: "*.sh"
+      skip:
+        - run: "! command -v shellcheck >/dev/null 2>&1"
+      run: shellcheck --severity=warning {staged_files}
+
+    shfmt:
+      glob: "*.sh"
+      skip:
+        - run: "! command -v shfmt >/dev/null 2>&1"
+      run: shfmt -w -i 4 -ci {staged_files}
+      stage_fixed: true
+
+    # --- YAML / JSON formatting (dprint) ---
+
+    dprint-yaml:
+      glob: "*.{yml,yaml}"
+      exclude:
+        - ".vscode/**"
+        - ".devcontainer/**"
+        - "containers/**"
+      skip:
+        - run: "! command -v dprint >/dev/null 2>&1"
+      run: dprint fmt {staged_files}
+      stage_fixed: true
+
+    dprint-json:
+      glob: "*.json"
+      exclude:
+        - ".vscode/**"
+        - ".devcontainer/**"
+        - "containers/**"
+      skip:
+        - run: "! command -v dprint >/dev/null 2>&1"
+      run: dprint fmt {staged_files}
+      stage_fixed: true
+
+    # --- TOML formatting (taplo) ---
+
+    taplo:
+      glob: "*.toml"
+      exclude:
+        - "containers/**"
+      skip:
+        - run: "! command -v taplo >/dev/null 2>&1"
+      run: taplo fmt {staged_files}
+      stage_fixed: true
+
+    # --- Markdown linting (rumdl) — lint-only; `just fmt` opts into rewrites ---
+
+    rumdl:
+      glob: "*.md"
+      exclude:
+        - "containers/**"
+      skip:
+        - run: "! command -v rumdl >/dev/null 2>&1"
+      run: rumdl check {staged_files}
+
+    # --- GitHub Actions workflow linting (actionlint) ---
+
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      skip:
+        - run: "! command -v actionlint >/dev/null 2>&1"
+      run: actionlint -shellcheck "shellcheck --severity=warning" {staged_files}
+
+    # --- Plugin manifest validation ---
+
+    validate-manifests:
+      glob: "{.claude-plugin/marketplace.json,plugins/*/.claude-plugin/plugin.json}"
+      run: node tests/validate-manifests.mjs
+
+    # --- Security ---
+
+    gitleaks:
+      skip:
+        - run: "! command -v gitleaks >/dev/null 2>&1"
+      run: gitleaks protect --staged --verbose --redact
+
+# ============================================================================
+# commit-msg stage
+# ============================================================================
+commit-msg:
+  commands:
+    conform:
+      skip:
+        - run: "! command -v conform >/dev/null 2>&1"
+      run: conform enforce --commit-msg-file {1}
+
+# ============================================================================
+# Pre-push stage
+# ============================================================================
+pre-push:
+  parallel: true
+  commands:
+    validate-manifests:
+      run: node tests/validate-manifests.mjs
+
+    typos:
+      skip:
+        - run: "! command -v typos >/dev/null 2>&1"
+      run: |
+        files=$(/usr/bin/printf '%s\n' {push_files} | /usr/bin/grep -v '^$' || true)
+        if [ -n "$files" ]; then
+          typos $files
+        else
+          typos
+        fi
+
+    dprint-check:
+      glob: "*.{yml,yaml,json}"
+      skip:
+        - run: "! command -v dprint >/dev/null 2>&1"
+      run: dprint check {all_files}
+
+    taplo-check:
+      glob: "*.toml"
+      exclude:
+        - "containers/**"
+      skip:
+        - run: "! command -v taplo >/dev/null 2>&1"
+      run: taplo fmt --check {all_files}

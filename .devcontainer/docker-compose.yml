@@ -1,0 +1,48 @@
+services:
+  devcontainer:
+    build:
+      # Build from INSIDE the pinned containers submodule (matches octarine).
+      context: ../containers
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: mcr.microsoft.com/devcontainers/base:trixie
+        PROJECT_NAME: librarian
+        USERNAME: vscode
+        WORKING_DIR: /workspace/librarian
+        # Allow the entrypoint to fix permissions / mounts during dev.
+        ENABLE_PASSWORDLESS_SUDO: "true"
+        # Dev tooling: dprint, taplo, shellcheck, shfmt, lefthook, conform,
+        # gitleaks, actionlint, rumdl, typos, just, Claude Code CLI.
+        INCLUDE_DEV_TOOLS: "true"
+        # Node provides MCP servers + bash-language-server for the bundled
+        # workflow scripts. No Rust/Python/Postgres/Redis/docker-in-docker:
+        # this is a docs + shell + node repo.
+        INCLUDE_NODE: "true"
+      cache_from:
+        - type=local,src=/tmp/.buildx-cache
+      cache_to:
+        - type=local,dest=/tmp/.buildx-cache,mode=max
+    volumes:
+      - ..:/workspace/librarian
+    tmpfs:
+      # Writable /run for the supervisor socket/pidfile. No uid=/gid= — the
+      # entrypoint reconciles ownership at startup (editors remap the runtime
+      # UID; a baked uid= breaks under Zed/VS Code remapping).
+      - /run:mode=0755
+    environment:
+      - CLAUDE_MCPS=filesystem
+      - MEMORY_FILE_PATH=/workspace/librarian/.claude/memory
+    # tini as PID 1 for zombie reaping (belt-and-suspenders with the Dockerfile).
+    init: true
+    # Required for the bindfs FUSE overlay (fixes macOS VirtioFS permissions).
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    command: ["sleep", "infinity"]
+    networks:
+      - librarian-network
+
+networks:
+  librarian-network:
+    driver: bridge

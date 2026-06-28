@@ -1,0 +1,14 @@
+# ShellCheck configuration for librarian (bundled workflow scripts).
+# See https://github.com/koalaman/shellcheck/wiki/Directive for details.
+
+# Minimum severity level to report (error, warning, info, style).
+severity=info
+
+# Shell dialect
+shell=bash
+
+# SC1090/SC1091: Can't follow non-constant source paths — the bundled scripts
+# source helpers via ${CLAUDE_PLUGIN_ROOT}, resolved at runtime.
+# SC2016: Expressions don't expand in single quotes — intentional when we emit
+# shell to files or defer expansion to execution time.
+disable=SC1090,SC1091,SC2016

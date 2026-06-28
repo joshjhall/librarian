@@ -1,0 +1,9 @@
+# Spell-check config for the crate-ci/typos binary.
+# Docs: https://github.com/crate-ci/typos/blob/master/docs/reference.md
+
+[files]
+extend-exclude = [
+  # The containers submodule has its own typos policy; don't double-scan it.
+  "containers/**",
+  "node_modules/**",
+]

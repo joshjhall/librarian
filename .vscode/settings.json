@@ -1,0 +1,16 @@
+{
+  // Editor settings
+  "editor.formatOnSave": true,
+
+  // Use dprint as the formatter for JSON/YAML (matches CI). Markdown is
+  // handled by the rumdl CLI on commit.
+  "[json]": {
+    "editor.defaultFormatter": "dprint.dprint"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "dprint.dprint"
+  },
+  "[yaml]": {
+    "editor.defaultFormatter": "dprint.dprint"
+  }
+}
