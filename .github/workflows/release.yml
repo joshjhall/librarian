@@ -1,0 +1,74 @@
+name: Release
+
+# Fires when a vX.Y.Z tag is pushed (by bin/release.sh --auto-push or by hand).
+# Validates the tagged tree with the same gates as CI, then publishes a GitHub
+# Release whose notes are the matching CHANGELOG.md section. The published tag
+# is what containers' LIBRARIAN_REF pins to (api.github.com/.../releases/latest).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate tagged tree
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Validate marketplace + plugin manifests
+        run: node tests/validate-manifests.mjs
+
+      - name: Skill/agent structural lint
+        run: bash tests/lint-skills-agents.sh
+
+      - name: Skill contract validation
+        run: bash tests/validate-contracts.sh
+
+      - name: Assert VERSION matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          file="$(cat VERSION)"
+          if [ "$tag" != "$file" ]; then
+            echo "::error::tag v$tag does not match VERSION ($file)"
+            exit 1
+          fi
+          echo "VERSION ($file) matches tag ($GITHUB_REF_NAME)"
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate release notes from CHANGELOG
+        id: notes
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes_file="$(mktemp)"
+          bash bin/generate-release-notes.sh "$version" >"$notes_file"
+          echo "file=$notes_file" >>"$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Release $GITHUB_REF_NAME" \
+            --notes-file "${{ steps.notes.outputs.file }}"
