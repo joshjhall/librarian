@@ -1,0 +1,55 @@
+# conform configuration — enforces conventional-commit format.
+#
+# Run locally:  conform enforce --commit-msg-file <path>
+# Run on PR:    conform enforce --base-branch origin/main
+policies:
+  - type: commit
+    spec:
+      header:
+        length: 89
+        invalidLastCharacters: .
+      body:
+        required: false
+      dco: false
+      gpg:
+        required: false
+      conventional:
+        types:
+          - add
+          - build
+          - chore
+          - ci
+          - docs
+          - feat
+          - fix
+          - perf
+          - refactor
+          - revert
+          - style
+          - test
+        # IMPORTANT — entries are Go regular expressions, NOT exact matches
+        # (conform compiles each with regexp.MustCompile + unanchored
+        # MatchString). Anchor every entry `^...$` or a bare scope leaks
+        # enforcement (e.g. `op` would allow `feat(operation):`).
+        scopes:
+          # Plugins (= marketplace component names)
+          - ^dev-core$
+          - ^review-audit$
+          - ^workflow$
+          # Repo subsystems
+          - ^marketplace$
+          - ^manifests$
+          - ^scripts$
+          - ^skills$
+          - ^agents$
+          - ^hooks$
+          - ^tests$
+          - ^ci$
+          - ^devcontainer$
+          - ^deps$
+          - ^docs$
+          - ^lefthook$
+          - ^gitignore$
+          # Process
+          - ^release$
+        descriptionLength: 72
