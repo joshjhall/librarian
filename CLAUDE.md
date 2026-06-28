@@ -32,6 +32,18 @@ containers/                       # pinned submodule — builds the devcontainer
 Each plugin has `.claude-plugin/plugin.json` (name/version/description) and
 auto-discovered `skills/` and `agents/` directories.
 
+**Agent files MUST be flat: `agents/<name>.md`.** Claude Code discovers plugin
+agents only as flat markdown files directly under `agents/` — a nested
+`agents/<name>/<name>.md` is silently NOT discovered (`claude plugin details`
+shows `Agents (0)`). Skills are the opposite: directory form
+`skills/<name>/SKILL.md`. An agent that ships a `workflow.js` harness keeps the
+flat `agents/<name>.md` AND puts the harness in a same-named sibling subdir
+`agents/<name>/workflow.js` — discovery ignores the subdir; the harness still
+resolves. The `tests/lint-skills-agents.sh` gate enforces the flat layout, but
+always sanity-check packaging with `claude plugin marketplace add <path>` +
+`claude plugin details <name>@librarian` (manifest validation does not exercise
+component discovery).
+
 ## Key conventions
 
 - **Bundled scripts, never `just`.** The `workflow` plugin's skills call their
