@@ -1,0 +1,29 @@
+# check-security — Configurable Thresholds
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/check-security/thresholds.yml.
+
+severity:
+  hardcoded-secret:
+    aws_key: critical
+    github_token: critical
+    stripe_key: critical
+    private_key: critical
+    generic_credential: high
+  injection-risk:
+    sql_fstring: critical
+    sql_concat: critical
+    template_literal_sql: critical
+  xss-risk:
+    react_innerhtml: high
+    vue_vhtml: high
+    template_safe: high
+    blade_unescaped: high
+  insecure-crypto:
+    md5_sha1: high
+    ecb_mode: high
+
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "loop-report.schema.json",
+  "title": "Loop Completion Report Schema",
+  "description": "JSON Schema for loop-* skill completion reports. Unlike finding-schema (which reports problems), loop reports track what was changed during an implementation pass.",
+  "type": "object",
+  "required": [
+    "loop",
+    "status",
+    "changes",
+    "blockers_resolved",
+    "blockers_remaining",
+    "tests_passing",
+    "commit"
+  ],
+  "properties": {
+    "loop": {
+      "type": "string",
+      "pattern": "^loop-make-it-[a-z]+$",
+      "description": "Loop skill name (e.g., 'loop-make-it-work')"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "blocked", "partial"],
+      "description": "Loop completion status"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/change"
+      },
+      "description": "List of changes made during the loop"
+    },
+    "blockers_resolved": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/blocker"
+      },
+      "description": "Blockers that were resolved during the loop"
+    },
+    "blockers_remaining": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/blocker"
+      },
+      "description": "Blockers that remain unresolved"
+    },
+    "tests_passing": {
+      "type": "boolean",
+      "description": "Whether the test suite passes after the loop"
+    },
+    "commit": {
+      "type": "string",
+      "description": "Commit message for the loop's atomic commit"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "change": {
+      "type": "object",
+      "required": ["category", "file", "description"],
+      "properties": {
+        "category": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]+$",
+          "description": "Change category slug from the loop's defined set"
+        },
+        "file": {
+          "type": "string",
+          "description": "Relative path of the changed file"
+        },
+        "description": {
+          "type": "string",
+          "description": "What was changed and why"
+        }
+      },
+      "additionalProperties": false
+    },
+    "blocker": {
+      "type": "object",
+      "required": ["category", "file", "description"],
+      "properties": {
+        "category": {
+          "type": "string",
+          "description": "Blocker category from patterns.sh"
+        },
+        "file": {
+          "type": "string",
+          "description": "File where the blocker was found"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the blocker"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

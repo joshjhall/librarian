@@ -1,0 +1,20 @@
+# check-code-health — Configurable Thresholds
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/check-code-health/thresholds.yml.
+
+severity:
+  tech-debt-marker:
+    undated_or_old: medium
+    recent_with_reference: low
+  debug-statement:
+    print_statement: medium
+    debugger_keyword: high
+  empty-handler:
+    empty_catch: high
+    swallowed_error: high
+
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

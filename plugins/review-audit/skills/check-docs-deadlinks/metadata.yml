@@ -1,0 +1,9 @@
+name: check-docs-deadlinks
+version: "1.0"
+labels:
+  - name: check/docs-deadlinks
+    color: "0075CA"
+    description: Broken or dead link in documentation
+required_tools: []
+required_permissions: []
+required_mcps: []

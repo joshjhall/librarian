@@ -1,0 +1,30 @@
+# check-docs-organization — Configurable Thresholds
+
+# Directory README check depth (how many levels deep to check)
+readme_check_depth: 2
+
+# Minimum files in a directory to warrant a README
+min_files_for_readme: 5
+
+# Severity mapping per category
+severity:
+  missing-root-doc:
+    readme: high # README.md is always expected
+    license_public: medium # LICENSE for public repositories
+    changelog: low # CHANGELOG.md nice to have
+    contributing: low # CONTRIBUTING.md for open-source
+  missing-dir-readme:
+    high_file_count: medium # >5 files, no README
+    moderate: low # Could benefit from README
+  inconsistent-structure:
+    confusing: medium # Confusing for contributors
+    minor: low # Minor inconsistency
+  doc-duplication:
+    divergence_risk: medium # High risk of content diverging
+    minor_overlap: low # Small overlap
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

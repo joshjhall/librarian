@@ -1,0 +1,9 @@
+name: check-docs-organization
+version: "1.0"
+labels:
+  - name: check/docs-organization
+    color: "0075CA"
+    description: Documentation structure or organization issue
+required_tools: []
+required_permissions: []
+required_mcps: []

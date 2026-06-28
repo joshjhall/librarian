@@ -1,0 +1,9 @@
+name: check-security
+version: "1.0"
+labels: []
+required_tools:
+  - name: grep
+    purpose: "Pattern matching for security findings"
+    install_hint: "Included in base container image"
+required_permissions: []
+required_mcps: []

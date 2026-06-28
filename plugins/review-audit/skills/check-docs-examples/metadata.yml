@@ -1,0 +1,9 @@
+name: check-docs-examples
+version: "1.0"
+labels:
+  - name: check/docs-examples
+    color: "0075CA"
+    description: Broken or misleading code example in documentation
+required_tools: []
+required_permissions: []
+required_mcps: []
