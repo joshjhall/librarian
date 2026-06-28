@@ -29,3 +29,20 @@ test: validate
 # Install lefthook git hooks
 install-hooks:
     lefthook install
+
+# ============================================================================
+# Release — repo-level semver tag (what containers' LIBRARIAN_REF pins to).
+# Always release through these recipes; never hand-edit VERSION. See CLAUDE.md.
+# ============================================================================
+
+# Cut a patch release (0.1.0 -> 0.1.1), non-interactive
+release-patch:
+    ./bin/release.sh --non-interactive patch
+
+# Cut a minor release (0.1.0 -> 0.2.0), non-interactive
+release-minor:
+    ./bin/release.sh --non-interactive minor
+
+# Cut a major release (0.1.0 -> 1.0.0), non-interactive
+release-major:
+    ./bin/release.sh --non-interactive major

@@ -1,0 +1,71 @@
+# git-cliff configuration for the librarian plugin marketplace.
+# See: https://git-cliff.org/docs/configuration
+#
+# Commit groups mirror librarian's conventional-commit types (.conform.yaml).
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+"""
+
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits %}
+        - {{ commit.message | upper_first | trim }}\
+          {% if commit.breaking %} [**BREAKING**]{% endif %}\
+
+    {% endfor %}
+{% endfor %}\n
+"""
+
+footer = """
+{% for release in releases -%}
+    {% if release.version %}\
+        [{{ release.version | trim_start_matches(pat="v") }}]: \
+            https://github.com/joshjhall/librarian/compare/\
+            {% if release.previous.version %}{{ release.previous.version }}{% else %}{{ release.commit_id }}{% endif %}\
+            ...{{ release.version }}
+    {% endif %}\
+{% endfor %}
+"""
+
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^add", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Improved" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", group = "Testing" },
+  { message = "^style", group = "Changed" },
+  { message = "^chore\\(release\\):", skip = true },
+  { message = "^chore", group = "Miscellaneous" },
+  { message = "^ci", group = "CI/CD" },
+  { message = "^build", group = "Build" },
+  { body = ".*security", group = "Security" },
+  { message = "^revert", group = "Reverted" },
+]
+
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"

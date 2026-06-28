@@ -59,8 +59,11 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   run on host / bare-linux / container identically. Env-overridable config
   (`GOLEM_WORKTREE_DIR`, branch naming, state dir) carries the genuine forks.
 - **Versions are semver.** `marketplace.json` and each `plugin.json` must agree
-  on name + version; `tests/validate-manifests.mjs` enforces it. Release a
-  plugin with `claude plugin tag`.
+  on name + version; `tests/validate-manifests.mjs` enforces it. Two distinct
+  version concepts: **per-plugin** semver (each `plugin.json`, consumed by
+  `claude plugin update`) and the **repo-level release tag** (`vX.Y.Z`, what
+  containers' `LIBRARIAN_REF` pins to). `bin/release.sh` re-aligns all plugin
+  versions to the repo version on each release — see **Releases** below.
 - **The `containers` submodule is pinned** (`update = none`). It exists only to
   build the devcontainer (`build.context: ../containers`). Bump it deliberately.
 
@@ -79,3 +82,26 @@ just install-hooks
 Conventional Commits enforced by `conform` (`.conform.yaml`). Scopes are the
 plugin names (`dev-core`, `review-audit`, `workflow`) plus repo subsystems
 (`marketplace`, `manifests`, `scripts`, `tests`, `ci`, `devcontainer`, …).
+
+## Releases
+
+**Never hand-edit `VERSION`** — always release through the script so the
+`VERSION` file, all three `plugin.json`, the `marketplace.json` entries, and
+`CHANGELOG.md` stay consistent (`tests/validate-manifests.mjs` enforces the
+name+version agreement).
+
+```bash
+just release-patch   # 0.1.0 -> 0.1.1 (bug fixes)
+just release-minor   # 0.1.0 -> 0.2.0 (new skills/agents, additive)
+just release-major   # 0.1.0 -> 1.0.0 (breaking changes)
+```
+
+`bin/release.sh` bumps `VERSION`, stamps every manifest in lockstep
+(`bin/stamp-versions.mjs`), and regenerates `CHANGELOG.md` from conventional
+commits (git-cliff, `cliff.toml`). It does **not** commit/tag/push by default —
+review the diff, commit on a branch, and open a PR. Cut the actual release from
+`main` with the auto flags (`bin/release.sh --full-auto patch`) or by pushing an
+annotated `vX.Y.Z` tag: the `release.yml` workflow validates the tagged tree and
+publishes the GitHub Release. That published tag is what
+[containers#608](https://github.com/joshjhall/containers/issues/608)'s
+`LIBRARIAN_REF` discovers via `releases/latest`.
