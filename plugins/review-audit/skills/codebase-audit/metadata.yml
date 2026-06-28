@@ -1,0 +1,68 @@
+name: codebase-audit
+version: "1.0"
+
+# Built-in audit labels. Project-level audit agents get labels created
+# dynamically by the issue-writer sub-agent (audit/<agent-name>).
+labels:
+  - name: audit/code-health
+    color: "BFD4F2"
+    description: Code health finding from codebase audit
+  - name: audit/security
+    color: "D93F0B"
+    description: Security finding from codebase audit
+  - name: audit/test-gaps
+    color: "FBCA04"
+    description: Test coverage gap from codebase audit
+  - name: audit/architecture
+    color: "7B61FF"
+    description: Architecture finding from codebase audit
+  - name: audit/docs
+    color: "0075CA"
+    description: Documentation finding from codebase audit
+  - name: audit/ai-config
+    color: "C5DEF5"
+    description: AI configuration finding from codebase audit
+  - name: severity/critical
+    color: "B60205"
+    description: Critical severity
+  - name: severity/high
+    color: "D93F0B"
+    description: High severity
+  - name: severity/medium
+    color: "FBCA04"
+    description: Medium severity
+  - name: severity/low
+    color: "0E8A16"
+    description: Low severity
+  - name: effort/trivial
+    color: "C2E0C6"
+    description: Trivial effort
+  - name: effort/small
+    color: "0E8A16"
+    description: Small effort
+  - name: effort/medium
+    color: "7B61FF"
+    description: Medium effort
+  - name: effort/large
+    color: "D93F0B"
+    description: Large effort
+
+required_tools:
+  - name: gh
+    purpose: GitHub issue creation, listing, labeling
+    install_hint: "Install the GitHub CLI (https://cli.github.com)"
+  - name: glab
+    purpose: GitLab issue creation, listing, labeling
+    install_hint: "Install the GitLab CLI (https://gitlab.com/gitlab-org/cli)"
+
+required_permissions:
+  - provider: github
+    scopes:
+      - repo
+    notes: "gh auth login with 'repo' scope minimum"
+  - provider: gitlab
+    scopes:
+      - api
+    notes: "glab auth login or GITLAB_TOKEN"
+
+required_mcps: []

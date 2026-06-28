@@ -1,0 +1,9 @@
+name: check-docs-missing-api
+version: "1.0"
+labels:
+  - name: check/docs-missing-api
+    color: "0075CA"
+    description: Undocumented public API or function
+required_tools: []
+required_permissions: []
+required_mcps: []

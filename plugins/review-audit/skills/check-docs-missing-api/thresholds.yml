@@ -1,0 +1,19 @@
+# check-docs-missing-api — Configurable Thresholds
+
+# Minimum parameter count to flag as "complex enough to need docs"
+min_params_for_complex: 4
+
+# Severity mapping per category
+severity:
+  undocumented-public-api:
+    complex_api: medium # Complex public API with multiple params
+    simple_api: low # Simple public API
+  undocumented-complex-function:
+    frequently_called: medium # Called from many places
+    internal_utility: low # Used in few places
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

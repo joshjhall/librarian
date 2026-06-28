@@ -1,0 +1,46 @@
+# check-ai-config — Configurable Thresholds
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/check-ai-config/thresholds.yml.
+
+severity:
+  agent-frontmatter:
+    missing_field: high
+    invalid_model: high
+    wildcard_tools: medium
+    naming_convention: medium
+  skill-frontmatter:
+    missing_description: high
+    missing_workflow: medium
+    missing_metadata: medium
+  ai-file-bloat:
+    over_warning: medium
+    over_high: high
+  mcp-misconfiguration:
+    insecure_http: high
+  hook-safety:
+    destructive_command: high
+    secret_leak: high
+  harness-logic:
+    ref_collision: medium
+    unsafe_regen: medium
+    unsafe_interpolation: high
+
+bloat_thresholds:
+  claude_md:
+    warning: 400
+    high: 600
+  skill_md:
+    warning: 300
+    high: 500
+  agent_md:
+    warning: 250
+    high: 400
+  doc_md:
+    warning: 500
+    high: 800
+
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

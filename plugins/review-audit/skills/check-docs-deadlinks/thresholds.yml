@@ -1,0 +1,19 @@
+# check-docs-deadlinks — Configurable Thresholds
+
+# Severity mapping per category
+severity:
+  broken-relative-link:
+    readme_or_setup: high # Link in README or setup docs
+    internal_docs: medium # Link in internal documentation
+  broken-anchor:
+    no_match: medium # Anchor doesn't resolve at all
+    close_match: low # Anchor is close to an existing heading
+  suspicious-external-link:
+    likely_dead: medium # URL pattern strongly suggests dead link
+    possibly_outdated: low # URL may be outdated
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

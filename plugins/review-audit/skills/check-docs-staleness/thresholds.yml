@@ -1,0 +1,31 @@
+# check-docs-staleness — Configurable Thresholds
+#
+# These values are read by the checker agent and passed to the skill's
+# LLM analysis context. Override by placing a modified copy in your
+# project's .claude/skills/check-docs-staleness/thresholds.yml.
+
+# Dates older than this many months are flagged as expired
+date_staleness_months: 12
+
+# Acknowledgment expiration: inline audit:acknowledge comments older
+# than this many months are re-raised
+acknowledgment_expiry_months: 12
+
+# Severity mapping per category
+severity:
+  stale-comment:
+    actively_misleading: high # Comment describes opposite behavior
+    outdated_but_harmless: medium # Comment is old but not harmful
+  outdated-reference:
+    setup_instructions: high # Wrong install/config commands
+    general_reference: medium # Old but non-critical reference
+  expired-date:
+    maintenance_signal: medium # Date suggests unmaintained project
+    informational: low # Date is old but purely informational
+
+# Minimum confidence thresholds for reporting
+# Findings below these thresholds are suppressed
+min_confidence:
+  deterministic: 0.9 # patterns.sh matches (HIGH certainty)
+  heuristic: 0.7 # Pre-scan + LLM confirmation (MEDIUM certainty)
+  llm: 0.5 # LLM judgment only (LOW certainty)

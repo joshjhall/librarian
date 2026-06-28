@@ -1,0 +1,19 @@
+# check-docs-examples — Configurable Thresholds
+
+# Severity mapping per category
+severity:
+  broken-example:
+    would_error: high # Example would produce runtime error
+    unexpected_results: medium # Example would silently do wrong thing
+  deprecated-example:
+    deprecated_api: medium # Uses deprecated but still-working API
+    older_pattern: low # Uses older but functionally equivalent pattern
+  incomplete-example:
+    misleading: medium # Missing context makes example misleading
+    snippet: low # Known snippet, reader expected to have context
+
+# Minimum confidence thresholds for reporting
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5

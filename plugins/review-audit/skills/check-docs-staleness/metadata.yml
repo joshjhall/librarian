@@ -1,0 +1,9 @@
+name: check-docs-staleness
+version: "1.0"
+labels:
+  - name: check/docs-staleness
+    color: "0075CA"
+    description: Stale documentation finding
+required_tools: []
+required_permissions: []
+required_mcps: []

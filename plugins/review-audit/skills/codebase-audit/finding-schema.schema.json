@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finding-schema.schema.json",
+  "title": "Scanner Output Schema",
+  "description": "JSON Schema for codebase-audit scanner output. All check-* skills and audit-* agents must produce output conforming to this schema.",
+  "type": "object",
+  "required": ["scanner", "summary", "findings"],
+  "properties": {
+    "scanner": {
+      "type": "string",
+      "description": "Scanner name (e.g., 'code-health', 'check-docs-staleness')"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "acknowledged_findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/acknowledged_finding"
+      }
+    },
+    "check_run": {
+      "$ref": "#/$defs/check_run"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": ["files_scanned", "total_findings", "by_severity"],
+      "properties": {
+        "files_scanned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_severity": {
+          "type": "object",
+          "required": ["critical", "high", "medium", "low"],
+          "properties": {
+            "critical": { "type": "integer", "minimum": 0 },
+            "high": { "type": "integer", "minimum": 0 },
+            "medium": { "type": "integer", "minimum": 0 },
+            "low": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low"]
+    },
+    "effort": {
+      "type": "string",
+      "enum": ["trivial", "small", "medium", "large"]
+    },
+    "certainty": {
+      "type": "object",
+      "required": ["level", "support", "confidence", "method"],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+        },
+        "support": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "method": {
+          "type": "string",
+          "enum": ["deterministic", "heuristic", "llm"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "category",
+        "severity",
+        "title",
+        "description",
+        "file",
+        "line_start",
+        "line_end",
+        "evidence",
+        "suggestion",
+        "effort",
+        "tags",
+        "related_files",
+        "certainty"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]+-\\d{3}$",
+          "description": "Unique ID: <scanner>-<NNN> (zero-padded)"
+        },
+        "category": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]+$",
+          "description": "Category slug from the scanner's defined set"
+        },
+        "severity": { "$ref": "#/$defs/severity" },
+        "title": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "One-line summary"
+        },
+        "description": {
+          "type": "string",
+          "description": "Full explanation with context"
+        },
+        "file": {
+          "type": "string",
+          "description": "Relative path from project root (no leading /)"
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Starting line number (1-based)"
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Ending line number (>= line_start)"
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Concrete data supporting the finding"
+        },
+        "suggestion": {
+          "type": "string",
+          "description": "Actionable fix recommendation"
+        },
+        "effort": { "$ref": "#/$defs/effort" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Relevant tags"
+        },
+        "related_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Other files involved (empty array if none)"
+        },
+        "certainty": { "$ref": "#/$defs/certainty" },
+        "pre_scan": {
+          "type": "boolean",
+          "description": "true if initially detected by deterministic pre-scan"
+        },
+        "skill": {
+          "type": "string",
+          "description": "Name of the check-* skill that produced this finding"
+        },
+        "acknowledged": {
+          "type": "boolean",
+          "description": "true if finding was previously acknowledged"
+        },
+        "acknowledged_baseline": {
+          "type": "number",
+          "description": "Baseline value from the acknowledgment comment"
+        },
+        "acknowledged_date": {
+          "type": "string",
+          "description": "Date from the acknowledgment comment"
+        },
+        "acknowledged_reason": {
+          "type": "string",
+          "description": "Reason from the acknowledgment comment"
+        }
+      },
+      "additionalProperties": false
+    },
+    "acknowledged_finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "category",
+        "severity",
+        "title",
+        "file",
+        "line_start",
+        "line_end",
+        "acknowledged"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "title": { "type": "string" },
+        "file": { "type": "string" },
+        "line_start": { "type": "integer", "minimum": 1 },
+        "line_end": { "type": "integer", "minimum": 1 },
+        "acknowledged": { "type": "boolean", "const": true },
+        "acknowledged_date": { "type": "string" },
+        "acknowledged_baseline": { "type": "number" },
+        "acknowledged_reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "check_run": {
+      "type": "object",
+      "required": ["scope", "skills_executed"],
+      "properties": {
+        "scope": { "type": "string" },
+        "skills_executed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "skills_skipped": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "legacy_agents_used": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "timestamp": { "type": "string" },
+        "timing_ms": { "type": "object" },
+        "pass_stats": { "type": "object" },
+        "parallelized": { "type": "boolean" },
+        "files_in_scope": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}
