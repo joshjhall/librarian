@@ -1,0 +1,57 @@
+name: next-issue
+version: "1.0"
+
+labels:
+  - name: status/in-progress
+    color: "0E8A16"
+    description: An agent is working on this issue
+  - name: status/on-hold
+    color: "D93F0B"
+    description: Issue intentionally deferred; not ready to work on
+  - name: severity/critical
+    color: "B60205"
+    description: Critical severity
+  - name: severity/high
+    color: "D93F0B"
+    description: High severity
+  - name: severity/medium
+    color: "FBCA04"
+    description: Medium severity
+  - name: severity/low
+    color: "0E8A16"
+    description: Low severity
+  - name: effort/trivial
+    color: "C2E0C6"
+    description: Trivial effort
+  - name: effort/small
+    color: "0E8A16"
+    description: Small effort
+  - name: effort/medium
+    color: "7B61FF"
+    description: Medium effort
+  - name: effort/large
+    color: "D93F0B"
+    description: Large effort
+
+required_tools:
+  - name: gh
+    purpose: GitHub issue listing, labeling, assignment
+    install_hint: "GitHub CLI — https://cli.github.com (brew install gh / apt install gh)"
+  - name: glab
+    purpose: GitLab issue listing, labeling, assignment
+    install_hint: "GitLab CLI — https://gitlab.com/gitlab-org/cli (brew install glab)"
+  - name: git
+    purpose: Branch creation and management
+    install_hint: "Git — https://git-scm.com (preinstalled on most systems; brew install git / apt install git)"
+
+required_permissions:
+  - provider: github
+    scopes:
+      - repo
+    notes: "gh auth login with 'repo' scope minimum"
+  - provider: gitlab
+    scopes:
+      - api
+    notes: "glab auth login or GITLAB_TOKEN"
+
+required_mcps: []

@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-status.schema.json",
+  "title": "Agent Status",
+  "description": "Status file for container agents. Written to .worktrees/.status/agent{N}.json by each agent and read by the orchestrator.",
+  "type": "object",
+  "required": ["agent", "state"],
+  "properties": {
+    "agent": {
+      "type": "string",
+      "pattern": "^agent[0-9]{2}$",
+      "description": "Agent identifier (e.g., 'agent01', 'agent02')."
+    },
+    "container": {
+      "type": "string",
+      "description": "Docker container name (e.g., 'project-agent01-1')."
+    },
+    "state": {
+      "type": "string",
+      "enum": ["starting", "working", "review-ready", "idle", "error"],
+      "description": "Current agent state."
+    },
+    "issue": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Issue number the agent is working on."
+    },
+    "issue_title": {
+      "type": "string",
+      "description": "Issue title for display."
+    },
+    "branch": {
+      "type": "string",
+      "description": "Git branch the agent is working on."
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["select", "plan", "implement", "ship"],
+      "description": "Pipeline phase from /next-issue."
+    },
+    "phase_detail": {
+      "type": "string",
+      "description": "Detailed phase info (e.g., 'loop: make-it-tested')."
+    },
+    "commits": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of commits since branch creation."
+    },
+    "started": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime when the agent started this task."
+    },
+    "last_activity": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime of last status update."
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Error messages if state is 'error'."
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "Agent's last checkpoint from the next-issue pipeline state.",
+      "properties": {
+        "completed_phase": { "type": "string" },
+        "key_decisions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "files_modified": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next_action": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

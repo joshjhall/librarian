@@ -1,0 +1,99 @@
+# Default test-skip patterns for pre-review-gates.sh
+# Uses gitignore syntax: globs, ** recursion, ! negation
+# Lines are evaluated in order — later rules override earlier ones
+#
+# Project overrides: .claude/pre-review.yml → test_skip_patterns section
+# Override patterns are appended after these defaults (so they win)
+
+# --- Static assets and media ---
+*.gitkeep
+*.svg
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.webp
+*.woff
+*.woff2
+*.eot
+*.ttf
+*.otf
+*.mp3
+*.mp4
+*.webm
+*.pdf
+
+# --- Stylesheets ---
+*.css
+*.scss
+*.sass
+*.less
+*.styl
+
+# --- Documentation and markup ---
+*.md
+*.mdx
+*.txt
+*.rst
+*.adoc
+
+# --- Data and config ---
+*.json
+*.yaml
+*.yml
+*.toml
+*.ini
+*.cfg
+*.conf
+*.env
+*.env.*
+*.xml
+*.csv
+
+# --- Lock files and checksums ---
+*.lock
+*lock.json
+*go.sum
+*-lock.yaml
+
+# --- Shell scripts ---
+*.sh
+*.bash
+*.zsh
+
+# --- Build and project files ---
+**/Dockerfile
+**/Dockerfile.*
+**/docker-compose*.yml
+**/docker-compose*.yaml
+**/.dockerignore
+**/.gitignore
+**/.gitattributes
+**/.editorconfig
+**/.prettierrc*
+**/.eslintrc*
+**/tsconfig*.json
+**/Makefile
+**/Rakefile
+**/Gemfile
+**/Procfile
+
+# --- License and changelog ---
+**/LICENSE*
+**/LICENCE*
+**/CHANGELOG*
+**/CHANGES*
+**/AUTHORS*
+
+# --- Database migrations and schema (framework-managed) ---
+**/migrations/*.py
+**/migrations/*.rb
+**/migrations/*.sql
+db/schema.rb
+db/seeds.rb
+db/structure.sql
+
+# --- Framework config directories ---
+config/**/*.rb
+config/**/*.yml

@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "golem-status.schema.json",
+  "title": "Golem Status (PR-topology cache)",
+  "description": "Cache file for PR-per-golem dispatch, written to .worktrees/.status/{golem}.json. CACHE ONLY — PR/MR state and issue status labels are authoritative; the orchestrate-monitor harness's PR_STATUS supersedes any stale field here. Sibling to agent-status.schema.json (still used by the opt-in local-merge path).",
+  "type": "object",
+  "required": ["golem", "issue", "state"],
+  "properties": {
+    "golem": {
+      "type": "string",
+      "description": "Golem identifier (e.g., 'agent01' for a container golem, or a worktree label)."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["worktree", "container"],
+      "description": "How the golem process is realized (Mode 2 worktree or Mode 3 container)."
+    },
+    "container": {
+      "type": "string",
+      "description": "Docker container name for container golems (e.g., 'project-agent01-1')."
+    },
+    "issue": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Issue number the golem owns."
+    },
+    "issue_title": {
+      "type": "string",
+      "description": "Issue title for display."
+    },
+    "branch": {
+      "type": "string",
+      "description": "Git head branch the golem works on (one issue → one branch)."
+    },
+    "pr": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "PR/MR number once opened; absent until the golem creates the PR."
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "starting",
+        "working",
+        "pr-open",
+        "review-cycle",
+        "ci-failing",
+        "blocked",
+        "green",
+        "merged",
+        "error"
+      ],
+      "description": "Lifecycle state of the golem (cache estimate; PR/label state wins)."
+    },
+    "ci": {
+      "type": "string",
+      "enum": ["pending", "passing", "failing", "none"],
+      "description": "Cached CI/checks rollup for the PR."
+    },
+    "review": {
+      "type": "string",
+      "enum": ["none", "changes-requested", "approved", "commented"],
+      "description": "Cached latest review decision on the PR."
+    },
+    "review_cycle": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Observed number of review rounds."
+    },
+    "label_state": {
+      "type": "string",
+      "enum": ["in-progress", "commit-pending", "pr-pending", "on-hold", "none"],
+      "description": "Cached issue status/* label (authoritative value lives on the issue)."
+    },
+    "blocking": {
+      "type": "boolean",
+      "description": "Whether the PR needs human action (red CI, changes-requested, or conflicts)."
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["select", "plan", "implement", "ship"],
+      "description": "Pipeline phase from /next-issue (continuity with agent-status)."
+    },
+    "phase_detail": {
+      "type": "string",
+      "description": "Detailed phase info (e.g., 'loop: make-it-tested')."
+    },
+    "commits": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of commits on the branch."
+    },
+    "started": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime when the golem started this issue."
+    },
+    "last_activity": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime of the last status update."
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Error messages if state is 'error'."
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "Golem's last checkpoint from the next-issue pipeline state.",
+      "properties": {
+        "completed_phase": { "type": "string" },
+        "key_decisions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "files_modified": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next_action": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

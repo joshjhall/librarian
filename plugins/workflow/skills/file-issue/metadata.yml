@@ -1,0 +1,75 @@
+name: file-issue
+version: "1.0"
+
+# Type labels (canonical declaration — used by next-issue-ship for branch prefix)
+# Severity and effort labels shared with next-issue and codebase-audit.
+# Component labels are created dynamically — not listed here.
+labels:
+  - name: type/bug
+    color: "D73A4A"
+    description: Bug fix
+  - name: type/feature
+    color: "1D76DB"
+    description: New feature or enhancement
+  - name: type/refactor
+    color: "7B61FF"
+    description: Code refactoring
+  - name: type/docs
+    color: "0075CA"
+    description: Documentation change
+  - name: type/test
+    color: "BFD4F2"
+    description: Test addition or fix
+  - name: type/chore
+    color: "E4E669"
+    description: Maintenance task
+  - name: type/operations
+    color: "FBCA04"
+    description: Infrastructure or CI/CD change
+  - name: type/compliance
+    color: "B60205"
+    description: Compliance or regulatory requirement
+  - name: severity/critical
+    color: "B60205"
+    description: Critical severity
+  - name: severity/high
+    color: "D93F0B"
+    description: High severity
+  - name: severity/medium
+    color: "FBCA04"
+    description: Medium severity
+  - name: severity/low
+    color: "0E8A16"
+    description: Low severity
+  - name: effort/trivial
+    color: "C2E0C6"
+    description: Trivial effort
+  - name: effort/small
+    color: "0E8A16"
+    description: Small effort
+  - name: effort/medium
+    color: "7B61FF"
+    description: Medium effort
+  - name: effort/large
+    color: "D93F0B"
+    description: Large effort
+
+required_tools:
+  - name: gh
+    purpose: GitHub issue creation, labeling, label management
+    install_hint: "GitHub CLI — https://cli.github.com (brew install gh / apt install gh)"
+  - name: glab
+    purpose: GitLab issue creation, labeling, label management
+    install_hint: "GitLab CLI — https://gitlab.com/gitlab-org/cli (brew install glab)"
+
+required_permissions:
+  - provider: github
+    scopes:
+      - repo
+    notes: "gh auth login with 'repo' scope minimum"
+  - provider: gitlab
+    scopes:
+      - api
+    notes: "glab auth login or GITLAB_TOKEN"
+
+required_mcps: []

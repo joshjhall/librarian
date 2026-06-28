@@ -1,0 +1,5 @@
+name: rebase-version
+version: "1.0"
+
+required_tools:
+  - git
