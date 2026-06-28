@@ -10,19 +10,17 @@ alike.
 These artifacts used to live inside the `containers` repo and were baked into
 every image. They were extracted here so they install the same way everywhere
 via Claude Code's native plugin system — with `plugin update` semver rolling
-updates for free — instead of being container-build-bound.
-
-> **Status:** scaffolding. The marketplace structure and plugin manifests are
-> being stood up; the skills/agents are migrated in
-> [joshjhall/containers#607](https://github.com/joshjhall/containers/issues/607).
+updates for free — instead of being container-build-bound. The migration is
+tracked in
+[joshjhall/containers#607](https://github.com/joshjhall/containers/issues/607).
 
 ## Plugins
 
-| Plugin | What's inside |
-|---|---|
-| **dev-core** | General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides. |
-| **review-audit** | The `codebase-audit` / `check-*` / `audit-*` suite plus the issue writer. |
-| **workflow** | Issue-driven and parallel automation: `next-issue`, `orchestrate`, golem, `file-issue`, `provision-agent`, and the bundled shell scripts they call. |
+| Plugin | Components | What's inside |
+|---|---|---|
+| **[dev-core](plugins/dev-core/README.md)** | 20 skills · 6 agents | General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides. |
+| **[review-audit](plugins/review-audit/README.md)** | 9 skills · 8 agents | The `codebase-audit` / `check-*` / `audit-*` suite plus the issue writer. |
+| **[workflow](plugins/workflow/README.md)** | 9 skills · 3 agents · 1 hook | Issue-driven and parallel automation: `next-issue`, `orchestrate`, golem, `file-issue`, `provision-agent`, and the bundled shell scripts they call. |
 
 ## Install
 
