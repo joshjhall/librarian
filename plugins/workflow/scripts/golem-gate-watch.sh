@@ -81,13 +81,24 @@ feed_snapshot() {
     local feed="$1"
     [ -f "$feed" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
+    # A no-`ts` (or empty-`ts`) line bypasses the TTL and counts as fresh — by
+    # design, honoring legacy lines written before the timestamp convention
+    # (`else true`). Guarding the type/emptiness first is load-bearing: feeding
+    # null/"" to `fromdateiso8601` aborts jq with a non-zero exit, the `2>/dev/null`
+    # swallows it, and the snapshot returns EMPTY — silently dropping every gated
+    # golem (issue #24). The TTL bypass is bounded: `group_by | map(.[-1])` keeps
+    # only each golem's MOST-RECENT line, so a later `idle`/`gate` (which always
+    # carries a `.ts` now) supersedes a stale no-`ts` entry rather than it living
+    # forever.
     /usr/bin/tail -n 200 "$feed" 2>/dev/null |
         jq -rs --argjson ttl "$ttl" '
             (now) as $now
             | group_by(.golem)
             | map(.[-1])
             | map(select((.event == "gate" or .event == "blocked")
-                         and (($now - (.ts | fromdateiso8601)) < $ttl)))
+                         and (if (.ts | type) == "string" and .ts != ""
+                              then (($now - (.ts | fromdateiso8601)) < $ttl)
+                              else true end)))
             | .[] | "\(.golem)\t\(.message // "awaiting decision")"
           ' 2>/dev/null |
         /usr/bin/sort -u

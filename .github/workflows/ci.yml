@@ -44,3 +44,6 @@ jobs:
 
       - name: Skill contract validation
         run: bash tests/validate-contracts.sh
+
+      - name: golem-gate-watch feed snapshot
+        run: bash tests/golem-gate-watch.sh

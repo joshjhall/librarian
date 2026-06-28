@@ -5,6 +5,7 @@
 #   1. Manifest validation (node tests/validate-manifests.mjs)
 #   2. Skill/agent structural lint (tests/lint-skills-agents.sh)
 #   3. Skill contract validation (tests/validate-contracts.sh)
+#   4. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -38,6 +39,7 @@ fi
 
 run_stage "Skill/agent structural lint" bash "$SCRIPT_DIR/lint-skills-agents.sh"
 run_stage "Skill contract validation" bash "$SCRIPT_DIR/validate-contracts.sh"
+run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 
 printf '\n========================================\n'
 if [ "$rc" -eq 0 ]; then

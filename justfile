@@ -23,8 +23,9 @@ fmt:
     taplo fmt
     rumdl fmt .
 
-# Run the full local check suite (no network)
-test: validate
+# Run the full local check suite (no network) — mirrors CI's gate jobs
+test:
+    bash tests/run-all.sh
 
 # Install lefthook git hooks
 install-hooks:

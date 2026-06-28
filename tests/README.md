@@ -6,10 +6,11 @@
 | Manifest validation | `node tests/validate-manifests.mjs` |
 | Skill/agent structural lint | `bash tests/lint-skills-agents.sh` |
 | Skill contract validation | `bash tests/validate-contracts.sh` |
+| golem-gate-watch feed snapshot | `bash tests/golem-gate-watch.sh` |
 
 `run-all.sh` is the single entry point: it runs manifest validation followed by
-the two structural gates, runs every stage to completion (no early exit), and
-exits non-zero if any stage fails.
+the structural gates and one behavioral gate, runs every stage to completion
+(no early exit), and exits non-zero if any stage fails.
 
 `validate-manifests.mjs` parses `.claude-plugin/marketplace.json` and every
 `plugins/*/.claude-plugin/plugin.json`, and asserts they agree on name +
@@ -44,3 +45,13 @@ Both gates use a small self-contained harness at `tests/lib/harness.sh`
 (assertions + reporting) instead of the `containers` Docker-coupled test
 framework, so they run with just bash + coreutils (plus `node`/`jq` where
 noted). Run on every PR by `.github/workflows/ci.yml`.
+
+## Behavioral gates
+
+- **`golem-gate-watch.sh`** — runs the real
+  `plugins/workflow/scripts/golem-gate-watch.sh --once` against a throwaway
+  repo whose `.worktrees/.status/feed.jsonl` is seeded with crafted lines. It
+  guards the issue #24 regression — a `feed.jsonl` line with a null/empty `.ts`
+  must NOT abort the jq filter and silently drop every BLOCKED golem — and the
+  symmetric TTL branch (a present-but-stale `.ts` still ages out). Skips
+  cleanly when `jq` is absent (the helper no-ops without it).
