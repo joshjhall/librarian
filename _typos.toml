@@ -14,3 +14,11 @@ extend-exclude = [
 # `ba` is the sed branch-to-label idiom (`:a ... ba`) in the CHANGELOG-trimming
 # commands in bin/release.sh and bin/generate-release-notes.sh, not a typo.
 ba = "ba"
+# Truncated regex stems in the review-audit / next-issue-ship pattern files,
+# deliberately matching word variants (updated/update, deprecated/deprecate,
+# integrate/integration). Not typos.
+updat = "updat"
+deprecat = "deprecat"
+integrat = "integrat"
+# `styl` is the Stylus stylesheet extension (.styl) in test-skip-patterns.
+styl = "styl"
