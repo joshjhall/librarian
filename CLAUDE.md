@@ -66,6 +66,15 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   versions to the repo version on each release — see **Releases** below.
 - **The `containers` submodule is pinned** (`update = none`). It exists only to
   build the devcontainer (`build.context: ../containers`). Bump it deliberately.
+- **GitHub Actions are SHA-pinned with a version comment.** Every `uses:` in
+  `.github/workflows/*.yml` pins a full 40-char commit SHA followed by a
+  `# vX.Y.Z` comment (`actions/checkout@<sha> # v4.3.1`). The SHA and the
+  comment MUST be bumped **together** — a drift means CI runs a different
+  version than advertised. `.github/dependabot.yml` (github-actions ecosystem)
+  does this atomically in a weekly grouped PR; `tests/lint-action-pins.sh`
+  (run by `tests/run-all.sh`, so it gates CI and pre-push) enforces the
+  pinned-SHA + version-comment **format** offline. Dependabot's PRs commit as
+  `ci(deps): …` to satisfy the `conform` scope enum (`.conform.yaml`).
 
 ## Common commands
 
