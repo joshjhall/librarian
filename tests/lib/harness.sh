@@ -175,6 +175,27 @@ assert_contains() {
     return 0
 }
 
+assert_exit() {
+    local expected="$1"
+    local actual="$2"
+    local message="${3:-Exit code should match}"
+    if [ "$expected" = "$actual" ]; then
+        return 0
+    fi
+    _fail "$message" "Expected exit: $expected" "Actual exit:   $actual"
+    return 0
+}
+
+assert_output_empty() {
+    local output="$1"
+    local message="${2:-Output should be empty}"
+    if [ -z "$output" ]; then
+        return 0
+    fi
+    _fail "$message" "Output:   '$(printf '%s' "$output" | command head -3)'"
+    return 0
+}
+
 assert_file_exists() {
     local file="$1"
     local message="${2:-File should exist}"

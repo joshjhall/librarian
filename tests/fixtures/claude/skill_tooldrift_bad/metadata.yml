@@ -1,0 +1,18 @@
+name: skill-tooldrift-bad
+version: "1.0"
+labels: []
+# NEGATIVE FIXTURE — declares a required_tool that is NOT referenced anywhere in
+# the skill dir's *.sh/*.md. The `test_skill_required_tools_guard_detects_drift`
+# test in tests/lint-skills-agents.sh feeds this dir to
+# `skill_unreferenced_required_tools` and asserts the detector flags `kubectl`.
+# `grep` IS referenced (in SKILL.md below) and must NOT be flagged, proving the
+# detector distinguishes referenced from unreferenced declarations.
+required_tools:
+  - name: grep
+    purpose: "Referenced tool — must NOT be flagged"
+    install_hint: "Included in base image"
+  - name: kubectl
+    purpose: "Unreferenced tool — MUST be flagged as drift"
+    install_hint: "https://kubernetes.io/docs/tasks/tools/"
+required_permissions: []
+required_mcps: []
