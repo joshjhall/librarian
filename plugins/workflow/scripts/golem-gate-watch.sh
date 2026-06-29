@@ -25,16 +25,35 @@
 #
 # Output (one line per fresh gate): "<golem-id>\t<message>"
 #
+# Liveness channel (issue #38) — the third, ORTHOGONAL signal. Gate-watch is
+# edge-triggered on permission prompts; a golem in a long uninterrupted phase
+# (background review harness, a multi-minute test run, a big implementation
+# burst) emits NO prompts, so a healthy-but-quiet golem is indistinguishable
+# from a hung one. The liveness sweep turns "absence of a gate" into a positive
+# heartbeat: per live/cached golem it derives a cheap progress proxy (the newest
+# mtime among its worktree index/dir and status-cache file) and classifies it
+#   "golem-N alive, advancing" (activity within GOLEM_STALL_THRESHOLD), or
+#   "golem-N: possible stall — no progress for Nm" (older).
+# A golem currently sitting at a fresh feed gate is reported as gated, NOT
+# stalled (the two are distinct — a gate is expected supervision; a stall is
+# the suspect case). This is a SOFT, advisory signal: it never kills, blocks, or
+# fails a golem — it only tells the operator which ones to actually look at.
+#
 # Modes:
 #   --once         (default) feed snapshot: current fresh gates, then exit 0
 #   --stream                 feed poll loop: emit on TRANSITION into a fresh
 #                            gate (dedupe standing gates), until killed
 #   --once-panes             pane snapshot: live golem-* sessions at a prompt
 #   --stream-panes           pane poll loop: emit on transition, until killed
+#   --once-liveness          liveness snapshot: per-golem heartbeat/stall, exit 0
+#   --stream-liveness        liveness poll loop: re-emit each golem's heartbeat
+#                            every GOLEM_HEARTBEAT_INTERVAL, until killed
 #
 # Tunables (env; see config.sh for worktree/status-dir tunables):
 #   GOLEM_BLOCK_TTL          feed gate freshness window, seconds (default 3600)
 #   GOLEM_WATCH_INTERVAL     poll interval for --stream*, seconds (default 5)
+#   GOLEM_STALL_THRESHOLD    liveness stall window, seconds (default 1200)
+#   GOLEM_HEARTBEAT_INTERVAL liveness poll interval, seconds (default 60)
 #
 # Never blocks a golem and never hangs on a missing feed/tmux: errors are
 # swallowed and a snapshot mode always exits 0. The `--stream*` loops carry NO
@@ -49,16 +68,18 @@ SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mode="--once"
 case "${1:-}" in
-    --once | --stream | --once-panes | --stream-panes) mode="$1" ;;
+    --once | --stream | --once-panes | --stream-panes | --once-liveness | --stream-liveness) mode="$1" ;;
     "") mode="--once" ;;
     *)
-        command echo "golem-gate-watch: unknown mode '$1' (want --once|--stream|--once-panes|--stream-panes)" >&2
+        command echo "golem-gate-watch: unknown mode '$1' (want --once|--stream|--once-panes|--stream-panes|--once-liveness|--stream-liveness)" >&2
         exit 2
         ;;
 esac
 
 ttl="${GOLEM_BLOCK_TTL:-3600}"
 interval="${GOLEM_WATCH_INTERVAL:-5}"
+stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
+heartbeat_interval="${GOLEM_HEARTBEAT_INTERVAL:-60}"
 
 # Resolve the MAIN checkout's status dir (the feed lives there even when invoked
 # from a worktree). repo_root (from config.sh) is bare-repo-safe.
@@ -173,6 +194,124 @@ panes_snapshot() {
 }
 
 # ---------------------------------------------------------------------------
+# Liveness channel (issue #38)
+# ---------------------------------------------------------------------------
+# mtime of a path in epoch seconds, or empty if it does not exist / can't stat.
+# GNU `stat -c %Y` and BSD `stat -f %m` differ; try GNU first, then BSD. All
+# failures are swallowed (advisory signal — never fail a golem over a stat).
+_mtime_epoch() {
+    local path="$1" m=""
+    [ -e "$path" ] || return 0
+    m="$(/usr/bin/stat -c %Y "$path" 2>/dev/null || /usr/bin/stat -f %m "$path" 2>/dev/null || true)"
+    case "$m" in
+        '' | *[!0-9]*) return 0 ;;
+        *) command echo "$m" ;;
+    esac
+}
+
+# Newest mtime (epoch seconds) among a golem's cheap progress proxies: its
+# status-cache JSON, and its worktree's git index + working-tree dir. The index
+# is touched by every git operation (add/commit/checkout); the dir mtime moves
+# when top-level entries change; the status JSON is rewritten as the golem
+# advances phases. We deliberately do NOT walk the whole tree (too costly per
+# tick). Prints the max epoch, or empty when nothing is found.
+_golem_last_activity() {
+    local n="$1" root="$2" status_dir="$3"
+    local candidates=(
+        "$status_dir/golem-$n.json"
+        "$status_dir/issue-$n.json"
+        "$root/$GOLEM_WORKTREE_DIR/issue-$n"
+        "$root/$GOLEM_WORKTREE_DIR/issue-$n/.git"
+        "$root/$GOLEM_WORKTREE_DIR/issue-$n/.git/index"
+    )
+    local p m best=""
+    for p in "${candidates[@]}"; do
+        m="$(_mtime_epoch "$p")"
+        [ -z "$m" ] && continue
+        if [ -z "$best" ] || [ "$m" -gt "$best" ]; then
+            best="$m"
+        fi
+    done
+    [ -n "$best" ] && command echo "$best"
+}
+
+# Human-friendly "Nm" / "Ns" for a non-negative second count.
+_fmt_age() {
+    local s="$1"
+    if [ "$s" -ge 60 ]; then
+        command echo "$((s / 60))m"
+    else
+        command echo "${s}s"
+    fi
+}
+
+# Print one liveness line per known golem: "<golem>\t<message>". A golem is
+# "known" if it has a live golem-* tmux session OR a status-cache file (so the
+# sweep covers headless/container golems with no TTY). A golem currently at a
+# fresh feed gate is reported as gated rather than stalled. Golems with no
+# detectable activity proxy at all are skipped (nothing to assert about them).
+# No-op (success) when the status dir is unresolved.
+liveness_snapshot() {
+    local status_dir="$1" feed="$2"
+    local root
+    root="$(repo_root 2>/dev/null || true)"
+    [ -z "$root" ] && return 0
+
+    # Set of golem numbers to consider: union of live sessions + cache files.
+    declare -A golems=()
+    local sess n f
+    if command -v tmux >/dev/null 2>&1; then
+        while IFS= read -r sess; do
+            [ -z "$sess" ] && continue
+            golems["${sess#golem-}"]=1
+        done < <(tmux ls 2>/dev/null | /usr/bin/grep -oE '^golem-[0-9]+' || true)
+    fi
+    if [ -n "$status_dir" ] && [ -d "$status_dir" ]; then
+        for f in "$status_dir"/golem-*.json "$status_dir"/issue-*.json; do
+            [ -e "$f" ] || continue
+            n="${f##*/}"
+            n="${n#golem-}"
+            n="${n#issue-}"
+            n="${n%.json}"
+            case "$n" in
+                '' | *[!0-9]*) continue ;;
+                *) golems["$n"]=1 ;;
+            esac
+        done
+    fi
+    [ "${#golems[@]}" -eq 0 ] && return 0
+
+    # Golems currently at a fresh feed gate — reported as gated, not stalled.
+    declare -A gated=()
+    if [ -n "$feed" ] && [ -f "$feed" ]; then
+        local g rest
+        while IFS=$'\t' read -r g rest; do
+            [ -z "$g" ] && continue
+            gated["${g#golem-}"]=1
+        done < <(feed_snapshot "$feed")
+    fi
+
+    local now act age
+    now="$(/usr/bin/date +%s)"
+    # Stable numeric order so successive snapshots line up for the operator.
+    for n in $(command echo "${!golems[@]}" | /usr/bin/tr ' ' '\n' | /usr/bin/sort -n); do
+        if [ -n "${gated[$n]:-}" ]; then
+            /usr/bin/printf '%s\t%s\n' "golem-$n" "gated — awaiting decision (not a stall)"
+            continue
+        fi
+        act="$(_golem_last_activity "$n" "$root" "$status_dir")"
+        [ -z "$act" ] && continue
+        age=$((now - act))
+        [ "$age" -lt 0 ] && age=0
+        if [ "$age" -gt "$stall_threshold" ]; then
+            /usr/bin/printf '%s\t%s\n' "golem-$n" "possible stall — no progress for $(_fmt_age "$age")"
+        else
+            /usr/bin/printf '%s\t%s\n' "golem-$n" "alive, advancing (last activity $(_fmt_age "$age") ago)"
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Drive
 # ---------------------------------------------------------------------------
 status_dir="$(resolve_status_dir || true)"
@@ -201,6 +340,20 @@ case "$mode" in
         while :; do
             /usr/bin/sleep "$interval"
             emit_transitions "$(panes_snapshot)" 0
+        done
+        ;;
+    --once-liveness)
+        liveness_snapshot "$status_dir" "$feed"
+        exit 0
+        ;;
+    --stream-liveness)
+        # A heartbeat is a POSITIVE periodic signal, so (unlike gates) it is NOT
+        # transition-deduped — each tick re-emits every golem's current liveness,
+        # confirming "still alive" even when nothing changed. The sweep is cheap
+        # (a handful of stats per golem); GOLEM_HEARTBEAT_INTERVAL paces it.
+        while :; do
+            liveness_snapshot "$status_dir" "$feed"
+            /usr/bin/sleep "$heartbeat_interval"
         done
         ;;
 esac

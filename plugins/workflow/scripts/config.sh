@@ -27,6 +27,14 @@
 #                        push from inside it has what it needs (e.g. .env,
 #                        .claude/settings.local.json). Empty disables copying.
 #                        Default: ".env .claude/settings.local.json"
+#   GOLEM_STALL_THRESHOLD
+#                        Liveness window, seconds. A golem with no detectable
+#                        progress (worktree / status-cache activity) for longer
+#                        than this is flagged a *possible stall* (SOFT, advisory
+#                        — never auto-killed).            Default: 1200 (20 min)
+#   GOLEM_HEARTBEAT_INTERVAL
+#                        Poll interval for the liveness stream (--stream-liveness),
+#                        seconds.                         Default: 60
 #
 # This file only DEFINES variables (no side effects beyond `export`), so it is
 # safe to source from any script.
@@ -50,8 +58,14 @@
 # Gitignored machine-local files a push from inside a worktree needs.
 : "${GOLEM_WORKTREE_LOCAL_FILES:=.env .claude/settings.local.json}"
 
+# Liveness/heartbeat (SOFT, advisory — never auto-kills a golem):
+# how long a golem may show no progress before it is flagged a possible stall,
+# and the poll interval of the liveness stream.
+: "${GOLEM_STALL_THRESHOLD:=1200}"
+: "${GOLEM_HEARTBEAT_INTERVAL:=60}"
+
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_BASE_REF \
-    GOLEM_WORKTREE_LOCAL_FILES
+    GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD GOLEM_HEARTBEAT_INTERVAL
 
 # repo_root — print the main checkout's root directory, bare-repo-safe.
 #
