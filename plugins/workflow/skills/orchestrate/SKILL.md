@@ -329,6 +329,20 @@ Authoritative status comes from **PR + issue-label state**. The
 1. **Flag the human** when a PR is green + review-clean (`ci: passing`,
    `review: approved`/`none`, `blocking: false`) — it is awaiting merge.
 
+1. **On a `ci: failing` PR, triage infra-flake vs real before surfacing it as a
+   regression.** Each golem's own `/next-issue-ship` CI-wait already runs this
+   triage (classify by failing-step name vs the PR's changed files; auto-retry a
+   known infra/setup flake once via `gh run rerun --failed`; collapse a cascade
+   aggregation failure to its upstream root cause — see `next-issue-ship`
+   SKILL.md § "If checks fail — triage" and `mode-protocol.md` § *CI-failure
+   triage contract*). When surfacing a failing PR in the monitor table, mirror
+   that classification: report a cascade failure once under its root cause, and
+   distinguish "infra flake — retried" from "real failure — escalated" so the
+   operator is not flagged to investigate a buildx flake as if it were a code
+   regression. The triage adds no new hard bound — its retry is env-overridable
+   (`LIBRARIAN_CI_INFRA_RETRIES`, default 1) and degrades to escalate-with-note,
+   never blocking shipping.
+
 1. **Loop** (for `monitor`/`watch`): re-poll on an interval, surfacing changes.
    Between sweeps, accept mid-flight commands (see Surface below).
 

@@ -383,6 +383,43 @@ daemon**; the existing monitor cadence is the clock.
 
 ---
 
+## CI-failure triage contract
+
+When a golem's PR CI fails, classify the failure **before** surfacing it as a
+regression or escalating to the human. This is a triage/classification step plus
+cascade-collapse — **not** a new retry layer (the `ci-fixer` harness already
+caps code-fix attempts; the CI-wait loop already never blocks shipping). It runs
+inside each golem's `/next-issue-ship` CI-wait (Step 4 Option 1, "If checks fail
+— triage"); the orchestrator's Phase M monitor mirrors the result when it
+surfaces a failing PR.
+
+**Inputs:** the failing **step** name (`gh run view <run_id> --json jobs`) and
+the PR's changed-file set (`git diff --name-only origin/main...HEAD`).
+
+**Classes:**
+
+| Class | Signal | Action |
+| ----- | ------ | ------ |
+| **infra/flake** | failing step matches `LIBRARIAN_CI_INFRA_STEPS` (e.g. `Set up Docker Buildx`, checkout, login, cache), OR the failing job type cannot be affected by the diff (e.g. a Docker `Build` job on a docs/tests-only PR) | **auto-retry once** (`gh run rerun --failed`), re-poll, re-evaluate; escalate only on re-fail |
+| **real** | failing step exercises the change (test / lint / build touching the diff) | escalate immediately — hand to `ci-fixer` (today's behavior) |
+| **cascade** | an aggregation/summary job (e.g. `PR Tier > Summarize`) that failed only because an upstream job failed | attribute to the upstream root cause; report **once**, not as a second independent failure |
+
+**Bounds (all env-overridable; mirror `REVIEW_MAX_CYCLES`'s `${VAR:-default}`
+posture):**
+
+- `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra step names.
+- `LIBRARIAN_CI_INFRA_RETRIES` — infra-flake auto-retry count, default `1`.
+  **Independent of** the `ci-fixer` 3-attempt cap (that caps code fixes; this
+  re-runs an unchanged infra step). `0` disables infra auto-retry.
+
+**Degrade gracefully — never hard-fail.** If step names or the changed-file set
+can't be fetched (API error, unknown step), do not auto-retry blindly: fall
+through to the normal `ci-fixer` handoff and, when autonomous, record an
+escalate-with-note ("CI triage unavailable — classified as real") in the
+completion summary. The triage never blocks shipping.
+
+---
+
 ## Decision Tree
 
 Inputs for mode selection:
