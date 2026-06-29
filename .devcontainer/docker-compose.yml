@@ -20,6 +20,7 @@ services:
         # workflow scripts. No Rust/Python/Postgres/Redis/docker-in-docker:
         # this is a docs + shell + node repo.
         INCLUDE_NODE: "true"
+        NODE_VERSION: "24"
       cache_from:
         - type=local,src=/tmp/.buildx-cache
       cache_to:
