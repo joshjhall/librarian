@@ -1,5 +1,6 @@
 # Librarian
 
+[![CI](https://github.com/joshjhall/librarian/actions/workflows/ci.yml/badge.svg)](https://github.com/joshjhall/librarian/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 A [Claude Code plugin marketplace](https://docs.claude.com/en/docs/claude-code/plugins)
