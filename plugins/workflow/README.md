@@ -54,3 +54,18 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `GOLEM_WORKTREE_LOCAL_FILES` | `.env .claude/settings.local.json` | Gitignored files copied into a fresh worktree |
 | `GOLEM_BLOCK_TTL` | `3600` | Feed gate-freshness window (seconds) |
 | `GOLEM_WATCH_INTERVAL` | `5` | `--stream*` poll interval (seconds) |
+
+The `GOLEM_*` vars above are sourced by the bundled shell scripts. The vars
+below are **skill-level tunables** — read from the environment by the
+`next-issue-ship` skill itself (not by any shell script), following the same
+opt-in/override convention. They are documented in that skill's "Environment
+Variables" section.
+
+### Skill-level tunables (`next-issue-ship`)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LIBRARIAN_CI_WAIT_TIMEOUT` | `15` | CI-wait threshold (minutes); at the checkpoint, prompt cut-short/extend (autonomous: auto-extend then stop) |
+| `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | Autonomous-only: extra wait intervals before giving up on pending CI (no hang) |
+| `REVIEW_MAX_CYCLES` | `3` | Post-CI adversarial review threshold — caps review cycles (the review action's cut-short/extend lever) |
+| `REVIEW_STRICT` | _unset_ | `true` treats MEDIUM-certainty review findings as blocking |
