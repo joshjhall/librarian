@@ -10,6 +10,10 @@ version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    # All action bumps land in one grouped PR (see `groups` below), so one open
+    # PR at a time is the intended ceiling — set it explicitly rather than
+    # inheriting Dependabot's silent default of 5.
+    open-pull-requests-limit: 1
     schedule:
       interval: "weekly"
     # conform (.conform.yaml) enforces Conventional-Commit type + scope as a

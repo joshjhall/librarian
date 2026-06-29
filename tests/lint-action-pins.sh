@@ -82,13 +82,19 @@ test_file_pins() {
         "Every uses: in $(command basename "$CUR_FILE") must be <40-hex SHA> # vX.Y.Z"
 }
 
-# Negative case: scan_file's violation branch must actually fire. Without this,
-# a regression in PIN_RE or the ref-extraction stripping (e.g. widening the hex
-# quantifier) would report PASS while silently letting unpinned refs through —
-# the gate would be false-green. We plant a throwaway workflow holding one good
-# ref plus the four bad forms the gate must reject, run the REAL scan_file
-# against it, and assert exactly the bad refs surface. Mirrors the two-branch
-# coverage of tests/golem-gate-watch.sh.
+# Negative case: scan_file's violation branch must actually fire, and its
+# exemptions must NOT fire. Without this, a regression in PIN_RE or the
+# ref-extraction stripping (e.g. widening the hex quantifier) would report PASS
+# while silently letting unpinned refs through — the gate would be false-green;
+# conversely a broken `./`/`docker://` exemption would false-positive on repos
+# that use local/container actions. We plant a throwaway workflow holding the
+# bad forms the gate must reject AND the valid/exempt forms it must pass, run the
+# REAL scan_file against it, and assert exactly the bad refs surface. Mirrors the
+# two-branch coverage of tests/golem-gate-watch.sh.
+#
+# The good ref uses a version (# v9.9.9) that no bad fixture shares, so the
+# "good ref not flagged" glob below cannot collide with the trailing-garbage
+# violation line (which carries its own distinct version).
 test_negative_case_fires() {
     local tmp
     tmp="$(command mktemp -d)" || {
@@ -98,12 +104,14 @@ test_negative_case_fires() {
     # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
     trap "command rm -rf '$tmp'" RETURN
 
-    local good="actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1"
+    local good="actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v9.9.9"
     command cat >"$tmp/bad.yml" <<EOF
 jobs:
   x:
     steps:
       - uses: ${good}
+      - uses: ./.github/actions/local-thing
+      - uses: docker://alpine:3.20
       - uses: actions/checkout@v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       - uses: some/action@main # not a version comment
@@ -113,19 +121,25 @@ EOF
     scan_file "$tmp/bad.yml"
 
     assert_not_empty "$CUR_VIOLATIONS" "scan_file flags non-conforming refs (violation branch fires)"
-    # Each bad form must be reported by name; the good ref must NOT be.
+    # Each bad form must be reported in full; use complete refs so the assertion
+    # is unambiguous (no prefix can collide with another planted ref).
     assert_contains "$CUR_VIOLATIONS" "actions/checkout@v4" "Floating tag is flagged"
-    assert_contains "$CUR_VIOLATIONS" "actions/setup-node@49933ea" "SHA without a version comment is flagged"
+    assert_contains "$CUR_VIOLATIONS" \
+        "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020" \
+        "SHA without a version comment is flagged"
     assert_contains "$CUR_VIOLATIONS" "some/action@main" "SHA-less ref with a non-version comment is flagged"
     assert_contains "$CUR_VIOLATIONS" "@trailing" "Trailing garbage after the version token is flagged (anchor)"
-    # The single valid ref must not appear among the violations. No
-    # assert_not_contains in the harness; use a pure-bash glob (no eval).
-    local good_flagged=0
-    case "$CUR_VIOLATIONS" in
-        *"# v4.3.1"$'\n'*) good_flagged=1 ;;
-        *"# v4.3.1") good_flagged=1 ;;
-    esac
+    # The valid ref and both exempt refs must NOT appear among the violations.
+    # No assert_not_contains in the harness; use pure-bash globs (no eval). The
+    # good ref carries a unique version (# v9.9.9), so this cannot match the
+    # trailing-garbage line (# v4.3.1 @trailing).
+    local good_flagged=0 local_flagged=0 docker_flagged=0
+    case "$CUR_VIOLATIONS" in *"# v9.9.9"*) good_flagged=1 ;; esac
+    case "$CUR_VIOLATIONS" in *"local-thing"*) local_flagged=1 ;; esac
+    case "$CUR_VIOLATIONS" in *"docker://alpine"*) docker_flagged=1 ;; esac
     assert_equals "0" "$good_flagged" "A correctly pinned+commented ref is NOT flagged"
+    assert_equals "0" "$local_flagged" "A local ./ action ref is exempt (not flagged)"
+    assert_equals "0" "$docker_flagged" "A docker:// ref is exempt (not flagged)"
 }
 
 # Discover workflow files. nullglob so an empty dir yields an empty array rather
@@ -145,9 +159,12 @@ done
 
 test_corpus_non_empty() {
     assert_not_empty "${workflows[*]:-}" "At least one workflow file is present to lint"
-    if [ "$total_uses" -lt 1 ]; then
-        assert_equals "1" "0" "At least one uses: ref must be found across workflows"
-    fi
+    # Assert the real count rather than a hardcoded 1-vs-0: the assertion then
+    # describes the condition it checks (and surfaces the actual count on fail).
+    local has_uses=0
+    [ "$total_uses" -ge 1 ] && has_uses=1
+    assert_equals "1" "$has_uses" \
+        "At least one uses: ref must be found across workflows (found $total_uses)"
 }
 
 run_test test_corpus_non_empty "Workflow corpus is non-empty (gate is not a no-op)"
