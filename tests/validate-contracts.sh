@@ -44,6 +44,58 @@ find_schema_dir() {
         -name "codebase-audit" 2>/dev/null | command sort | command head -1
 }
 
+# Locate the next-issue-state schema file wherever the next-issue skill lives.
+# Prints the absolute path, or nothing if absent.
+find_next_issue_schema() {
+    command find "$PLUGINS_DIR" -type f -path '*/skills/next-issue/schemas/next-issue-state.schema.json' \
+        2>/dev/null | command sort | command head -1
+}
+
+# Validate a JSON instance against a (draft-07 subset of a) JSON schema using
+# pure jq — ajv is not a dependency in this repo. Checks the parts the
+# next-issue-state schema actually uses: required keys present, declared
+# property types, string enums, the version const, and (when the schema sets
+# additionalProperties:false) rejection of keys not named in `properties`.
+# Args: <schema_file> <instance_file>. Returns 0 (valid) / 1 (invalid).
+jq_validate_against_schema() {
+    local schema="$1" instance="$2"
+    jq -n --slurpfile s "$schema" --slurpfile d "$instance" '
+        ($s[0]) as $schema | ($d[0]) as $doc |
+        # Type-name of a JSON value, mapped to JSON Schema type vocabulary.
+        def jstype:
+            if type == "number" and (. == floor) then "integer"
+            elif type == "number" then "number"
+            else type end;
+        # A value matches a schema "type" (integer also satisfies "number").
+        def type_ok($want; $got): $got == $want or ($want == "number" and $got == "integer");
+        ([
+            # 1. required keys present
+            ( ($schema.required // [])[] as $k | select(($doc | has($k)) | not)
+              | "missing required key: \($k)" ),
+            # 2. version const
+            ( select($schema.properties.version.const != null
+                     and $doc.version != null
+                     and $doc.version != $schema.properties.version.const)
+              | "version const mismatch: expected \($schema.properties.version.const)" ),
+            # 3. declared property type + enum checks (top level only)
+            ( $doc | to_entries[] as $kv
+              | ($schema.properties[$kv.key]) as $prop
+              | select($prop != null)
+              | (
+                  ( select($prop.type != null
+                           and (type_ok($prop.type; ($kv.value | jstype)) | not))
+                    | "type mismatch for \($kv.key): want \($prop.type), got \($kv.value | jstype)" ),
+                  ( select($prop.enum != null and ($prop.enum | index($kv.value)) == null)
+                    | "enum violation for \($kv.key): \($kv.value) not in \($prop.enum)" )
+                ) ),
+            # 4. additionalProperties:false → no unknown top-level keys
+            ( select($schema.additionalProperties == false)
+              | $doc | keys[] as $k | select(($schema.properties | has($k)) | not)
+              | "unknown property (additionalProperties:false): \($k)" )
+          ] | if length == 0 then empty else (.[] | "  - \(.)"), error("schema validation failed") end)
+    ' >/dev/null 2>&1
+}
+
 # Extract JSON from the last ```json fence in a file (later fences may hold
 # sub-objects like certainty; the example finding is last).
 extract_json_from_markdown() {
@@ -127,6 +179,106 @@ test_loop_report_schema_valid() {
     }
     assert_true "jq empty '$schema_file' 2>/dev/null" \
         "loop-report.schema.json is not valid JSON"
+}
+
+# --- next-issue-state Schema Tests ------------------------------------------
+
+# next-issue-state.schema.json is valid JSON (when present + jq available).
+test_next_issue_schema_valid() {
+    if [ "$HAVE_JQ" -ne 1 ]; then
+        skip_test "jq not available — cannot validate next-issue-state.schema.json"
+        return
+    fi
+    local schema_file
+    schema_file="$(find_next_issue_schema)"
+    if [ -z "$schema_file" ]; then
+        skip_test "next-issue skill not present — no state schema to validate"
+        return
+    fi
+    assert_true "jq empty '$schema_file' 2>/dev/null" \
+        "next-issue-state.schema.json is not valid JSON"
+    # additionalProperties:false is the load-bearing guard against silent
+    # state-file typos — assert it is actually set at the top level.
+    assert_true "jq -e '.additionalProperties == false' '$schema_file' >/dev/null 2>&1" \
+        "next-issue-state.schema.json must set top-level additionalProperties:false"
+}
+
+# A representative state doc (including plan_gated) validates against the schema.
+test_next_issue_schema_accepts_valid_doc() {
+    if [ "$HAVE_JQ" -ne 1 ]; then
+        skip_test "jq not available — cannot validate next-issue-state sample doc"
+        return
+    fi
+    local schema_file
+    schema_file="$(find_next_issue_schema)"
+    if [ -z "$schema_file" ]; then
+        skip_test "next-issue skill not present — no state schema to validate against"
+        return
+    fi
+    local tmpdoc
+    tmpdoc="$(/usr/bin/mktemp)"
+    # Exercises plan_gated, plan_comment_url, and a full checkpoint object — the
+    # fields added for the plan-gate work.
+    cat >"$tmpdoc" <<'JSON'
+{
+  "version": 2,
+  "issue": 101,
+  "title": "Fix critical auth bypass in session handler",
+  "phase": "plan",
+  "branch": "fix/issue-101-auth-bypass",
+  "plan": "Validate session token expiry before granting access",
+  "started": "2026-02-27",
+  "platform": "github",
+  "autonomous": true,
+  "plan_gated": true,
+  "plan_comment_url": "https://github.com/o/r/issues/101#issuecomment-1",
+  "contexts": ["security", "auth"],
+  "active_loops": ["make-it-work", "make-it-secure"],
+  "checkpoint": {
+    "completed_phase": "plan",
+    "key_decisions": ["Using env var for timeout, not config file"],
+    "files_modified": [],
+    "files_planned": ["src/auth/session.ts"],
+    "warnings": ["Tests mock the timeout value"],
+    "next_action": "Begin implementation loop: make-it-work"
+  }
+}
+JSON
+    assert_true "jq_validate_against_schema '$schema_file' '$tmpdoc'" \
+        "valid next-issue-state doc (with plan_gated) rejected by schema validator"
+    /usr/bin/rm -f "$tmpdoc"
+}
+
+# additionalProperties:false rejects a doc carrying an unknown top-level key.
+test_next_issue_schema_rejects_unknown_property() {
+    if [ "$HAVE_JQ" -ne 1 ]; then
+        skip_test "jq not available — cannot validate next-issue-state rejection"
+        return
+    fi
+    local schema_file
+    schema_file="$(find_next_issue_schema)"
+    if [ -z "$schema_file" ]; then
+        skip_test "next-issue skill not present — no state schema to validate against"
+        return
+    fi
+    local tmpdoc
+    tmpdoc="$(/usr/bin/mktemp)"
+    # Same minimal-valid doc plus a bogus top-level key that must be rejected.
+    cat >"$tmpdoc" <<'JSON'
+{
+  "version": 2,
+  "issue": 101,
+  "title": "Some issue",
+  "phase": "select",
+  "started": "2026-02-27",
+  "platform": "github",
+  "bogus_unknown_field": "should be rejected"
+}
+JSON
+    # The validator must FAIL here (unknown key under additionalProperties:false).
+    assert_true "! jq_validate_against_schema '$schema_file' '$tmpdoc'" \
+        "schema validator accepted an unknown top-level property"
+    /usr/bin/rm -f "$tmpdoc"
 }
 
 # --- check-* Contract Tests -------------------------------------------------
@@ -344,6 +496,9 @@ test_category_cross_check() {
 
 run_test test_finding_schema_valid "finding-schema.schema.json is valid JSON"
 run_test test_loop_report_schema_valid "loop-report.schema.json is valid JSON"
+run_test test_next_issue_schema_valid "next-issue-state.schema.json is valid JSON + additionalProperties:false"
+run_test test_next_issue_schema_accepts_valid_doc "next-issue-state schema accepts a valid doc (plan_gated)"
+run_test test_next_issue_schema_rejects_unknown_property "next-issue-state schema rejects unknown property"
 run_test test_check_contract_json_valid "check-* contract.md JSON examples are valid"
 run_test test_check_contract_required_fields "check-* contract examples have all required fields"
 run_test test_check_contract_enum_values "check-* contract enum values are valid"
