@@ -52,7 +52,17 @@ _run_once_snapshot() {
     # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
     trap "/usr/bin/rm -rf '$tmp'" RETURN
 
-    /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
+    # Scrub git's hook-exported environment: when this suite runs from a
+    # `git push` pre-push hook, git exports GIT_DIR / GIT_INDEX_FILE / etc. into
+    # the environment. Inherited, they pin every `git` call (and the gate-watch
+    # script's repo_root) to the OUTER repo, so `git init`/repo_root ignore $tmp
+    # and the snapshot reads an empty feed — the assertions then fail only under
+    # a real push (not standalone). Unset them so the temp repo is hermetic.
+    local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
+        GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
+
+    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
     /usr/bin/mkdir -p "$tmp/.worktrees/.status"
     local line
     for line in "$@"; do
@@ -66,7 +76,8 @@ _run_once_snapshot() {
     SNAP_RC=0
     (
         cd "$tmp" &&
-            GOLEM_BLOCK_TTL="$ttl" GOLEM_WORKTREE_DIR=.worktrees \
+            /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+                GOLEM_BLOCK_TTL="$ttl" GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
                 bash "$GATE_WATCH" --once
     ) >"$tmp/out" 2>/dev/null && SNAP_RC=0 || SNAP_RC=$?
