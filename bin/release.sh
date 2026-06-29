@@ -144,11 +144,25 @@ generate_changelog() {
     command echo "Generating CHANGELOG.md..."
     if ! ensure_git_cliff; then
         command echo "Warning: git-cliff unavailable, skipping CHANGELOG generation" >&2
-        command echo "  Install git-cliff, then: git-cliff -o CHANGELOG.md --tag v$new_version" >&2
+        command echo "  Install git-cliff, then: git-cliff -o CHANGELOG.md --tag v$new_version --include-path '**/*'" >&2
         return 1
     fi
 
-    if git-cliff -o CHANGELOG.md --tag "v$new_version"; then
+    # --include-path '**/*' forces full-repo commit scope. git-cliff 2.x
+    # otherwise scopes commits to the current directory, so running this script
+    # from a subdirectory or a linked worktree (e.g. .claude/worktrees/*, as in
+    # a bare-repo checkout) yields an EMPTY changelog while still exiting 0 — a
+    # silent wipe of the existing history. The glob pins scope to the whole repo
+    # regardless of the working directory the release is cut from.
+    if git-cliff -o CHANGELOG.md --tag "v$new_version" --include-path '**/*'; then
+        # Guard against a silent empty render: git-cliff exits 0 even when it
+        # produces only the header (no version sections), which would commit a
+        # wiped changelog. Require the new version's section to be present.
+        if ! command grep -q "## \[$new_version\]" CHANGELOG.md; then
+            command echo "Error: generated CHANGELOG.md has no [$new_version] section" >&2
+            command echo "  (git-cliff produced an empty/headerless changelog — refusing to wipe history)" >&2
+            return 1
+        fi
         # Trim trailing blank lines so the file passes markdown lint (MD012).
         local tmp_file
         tmp_file="$(command mktemp)"

@@ -21,21 +21,21 @@
       "name": "dev-core",
       "source": "./plugins/dev-core",
       "description": "General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "category": "development"
     },
     {
       "name": "review-audit",
       "source": "./plugins/review-audit",
       "description": "Codebase audit and review: the codebase-audit / check-* / audit-* suite plus the issue writer.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "category": "development"
     },
     {
       "name": "workflow",
       "source": "./plugins/workflow",
       "description": "Issue-driven and parallel automation: next-issue, orchestrate, golem, file-issue, provision-agent, and the bundled scripts they call.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "category": "productivity"
     }
   ]
