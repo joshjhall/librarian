@@ -72,6 +72,28 @@ dispatch is sequential and cheap — **not** workflow-driven.
      `git worktree add .worktrees/issue-{N} -b feat/issue-{N}` and launch the
      pipeline in a worktree-bound shell process.
 
+1. **Preflight the launch permissions (once, before the first dispatch).** The
+   documented worktree-golem launch is a bare `tmux new-session …`, which the
+   auto-mode classifier **denies** (`[Create Unsafe Agents]`) unless the host
+   has authorized the launch rules — a hard, opaque wall on the very first
+   `/orchestrate dispatch`. Because the launch shape is fixed, detect this in
+   advance instead of failing opaquely:
+
+   ```bash
+   ${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh preflight
+   ```
+
+   It checks **both** scopes — project-local `.claude/settings.local.json` and
+   global `~/.claude/settings.json` — for the three required rules
+   (`Bash(tmux new-session:*)`, `Bash(tmux ls:*)`, `Bash(tmux kill-session:*)`).
+   If they are present in either scope it is a no-op; if absent in both it
+   prints the exact rules + the scope choice (project-local vs global) and exits
+   3. **Suggest + ask, never write silently:** surface the suggestion and let
+   the operator authorize the add — adding settings is itself permission-gated
+   by design, so do NOT write the rule for them. Under auto mode a missing rule
+   should yield a permission decision (always-allow → write the rule; allow-once
+   → proceed this run), not a hard classifier wall.
+
 1. **Launch the autonomous pipeline** as a process in each golem:
 
    ```bash
@@ -92,6 +114,24 @@ dispatch is sequential and cheap — **not** workflow-driven.
    claude --permission-mode auto "/next-issue {N} --auto" ; claude --permission-mode auto "/next-issue-ship --auto"
    ```
 
+   For a **worktree golem** the process is started by a `tmux new-session`.
+   **Emit ONE standalone `tmux new-session` per golem** — use the bundled helper
+   once per issue:
+
+   ```bash
+   # One bare new-session per golem (matches Bash(tmux new-session:*)).
+   ${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N}
+   ```
+
+   **Never wrap N launches in a shell `for` loop.** The allow rule matches a
+   *bare* `tmux new-session …` command, but a `for golem in …; do tmux
+   new-session …; done` makes the whole Bash invocation a for-loop **string**
+   that does NOT match `Bash(tmux new-session:*)` → re-denied by the classifier.
+   To dispatch a batch, call `golem-launch.sh launch {N}` once per issue (one
+   Bash tool call each), never a single looping call. (`golem-launch.sh print
+   {N}` emits just the launch line if you want to run the bare `tmux
+   new-session` yourself.)
+
    **Plan gate (from the labels read in step 1).** `--auto` is **not** a blanket
    plan-skip — `/next-issue` decides per issue (see `next-issue/SKILL.md` §
    Autonomous Mode):
@@ -104,6 +144,29 @@ dispatch is sequential and cheap — **not** workflow-driven.
      the operator runs `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, reviews/refines the plan
      in-session, and approves — then the SAME session continues autonomously
      through implement → review → push/PR with the refined plan in-context.
+
+   **Plan approval requires a HUMAN keystroke — it is not agent-drivable (#29).**
+   At the `ExitPlanMode` prompt the two relevant choices behave differently
+   under the auto-mode classifier:
+
+   - **Option 1 — "Yes, and use auto mode"** is what makes the SAME session
+     continue autonomously to a PR. But selecting it *switches the golem into
+     auto mode*, and that switch **itself trips the classifier**
+     (`[Create Unsafe Agents]`) when relayed by an orchestrating agent — so an
+     agent operator cannot press option 1 on the golem's behalf.
+   - **Option 2 — "Yes, manually approve edits"** approves the plan WITHOUT the
+     auto-mode switch, so an agent *can* select it — but the golem then gates on
+     **every subsequent edit** and does NOT run unattended to a PR.
+
+   Net: the documented "human approves plan → golem continues autonomously to
+   PR" flow works **only when a human presses option 1 in a real TTY** (via
+   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`). It cannot be driven by an orchestrating
+   agent relaying approval. When dispatching plan-gated (medium+/critical)
+   golems, surface this to the operator: their plan approval is a human
+   keystroke at the attached TTY, not something the orchestrator can answer for
+   them. (To avoid the plan gate entirely on a medium issue, dispatch it with
+   `--force-auto` — see below — accepting that it runs unattended without a
+   plan checkpoint.)
 
    The launch command is identical either way (the policy lives in
    `/next-issue`); dispatch only needs to **expect** medium+/critical golems to
@@ -192,9 +255,10 @@ existing cadence is the clock):
    - **`excess`** — golems beyond `size` after a `pool <N>` shrink. **Report
      them to drain — never kill a golem.**
 
-1. **Dispatch each pick** exactly as Phase D: `${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N}` then launch
-   the autonomous pipeline (Phase D step 3) in a fresh worktree golem. Update
-   `pool.json` `slots` / `backlog_depth`.
+1. **Dispatch each pick** exactly as Phase D: `${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N}` then
+   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N}` (one standalone
+   `tmux new-session` per pick — never a `for`-loop wrapper; see Phase D step 4)
+   in a fresh worktree golem. Update `pool.json` `slots` / `backlog_depth`.
 
 1. **Repeat** until the backlog is empty and every slot is idle.
 
@@ -264,6 +328,20 @@ Authoritative status comes from **PR + issue-label state**. The
 
 1. **Flag the human** when a PR is green + review-clean (`ci: passing`,
    `review: approved`/`none`, `blocking: false`) — it is awaiting merge.
+
+1. **On a `ci: failing` PR, triage infra-flake vs real before surfacing it as a
+   regression.** Each golem's own `/next-issue-ship` CI-wait already runs this
+   triage (classify by failing-step name vs the PR's changed files; auto-retry a
+   known infra/setup flake once via `gh run rerun --failed`; collapse a cascade
+   aggregation failure to its upstream root cause — see `next-issue-ship`
+   SKILL.md § "If checks fail — triage" and `mode-protocol.md` § *CI-failure
+   triage contract*). When surfacing a failing PR in the monitor table, mirror
+   that classification: report a cascade failure once under its root cause, and
+   distinguish "infra flake — retried" from "real failure — escalated" so the
+   operator is not flagged to investigate a buildx flake as if it were a code
+   regression. The triage adds no new hard bound — its retry is env-overridable
+   (`LIBRARIAN_CI_INFRA_RETRIES`, default 1) and degrades to escalate-with-note,
+   never blocking shipping.
 
 1. **Loop** (for `monitor`/`watch`): re-poll on an interval, surfacing changes.
    Between sweeps, accept mid-flight commands (see Surface below).
@@ -531,6 +609,24 @@ Invoked via `/orchestrate spawn <N>` (and by Phase D for container golems).
 
 Invoked via `/orchestrate teardown <agent>` or `teardown all`. Tear down only
 after the golem's PR is merged or abandoned.
+
+**Worktree golem (Mode 2).** Removing the worktree, deleting its branch, **and
+killing its `tmux` session is a single step** — `worktree-rm.sh` does all three
+(#27):
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh {N}
+```
+
+It kills `golem-{N}` idempotently (ignore-if-absent), so a finished golem no
+longer lingers in `tmux ls` / `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`
+after a merge+prune. The Phase P refill loop already calls `worktree-rm.sh` when
+a slot frees, so pooled golems get their sessions reaped automatically — no
+separate manual `tmux kill-session -t golem-{N}` is needed. A leftover
+`golem-*` session whose worktree is already gone is still cleaned by re-running
+`worktree-rm.sh {N}` (the worktree/branch steps no-op; the session is killed).
+
+**Container golem (Mode 3):**
 
 1. `docker compose -f .worktrees/docker-compose.agents.yml stop <agent>`
 1. `docker compose -f .worktrees/docker-compose.agents.yml rm -f <agent>`

@@ -10,9 +10,24 @@ description: Provision headless agent containers from devcontainer config. Gener
 > args it exposes (the containers dev-image convention) to generate agent
 > containers. On a project without a devcontainer/compose setup it has nothing
 > to discover and does not apply — use the worktree golem flow
-> (`scripts/worktree-new.sh` + a local `tmux` launch) instead. It is kept in
-> `workflow` rather than split out, but it is not portable in the way the rest
-> of the plugin is.
+> (`scripts/worktree-new.sh` + `scripts/golem-launch.sh launch {N}`) instead. It
+> is kept in `workflow` rather than split out, but it is not portable in the way
+> the rest of the plugin is.
+>
+> **Setup-time permission preflight (worktree-golem fallback, #29).** The
+> container path below launches `tmux new-session` *inside* the container's own
+> environment, so it is not subject to the host's auto-mode classifier. But the
+> portable worktree-golem fallback launches `tmux new-session` on the **host**,
+> where the auto-mode classifier denies it (`[Create Unsafe Agents]`) unless the
+> launch rules are authorized. Before falling back to the worktree flow, run
+> `${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh preflight` once — it checks
+> BOTH `.claude/settings.local.json` and `~/.claude/settings.json` for
+> `Bash(tmux new-session:*)`, `Bash(tmux ls:*)`, and `Bash(tmux kill-session:*)`,
+> and if absent prints the exact rules + scope choice. **Suggest + ask, never
+> write settings silently.** Then launch with one standalone `tmux new-session`
+> per golem (`golem-launch.sh launch {N}`, once per issue — never a `for`-loop
+> wrapper, which the rule does not match). See `orchestrate/mode-protocol.md` §
+> *Supervised launch & central feed*.
 
 Creates and manages headless agent containers for parallel issue processing.
 Reads the project's devcontainer configuration to generate a lean agent

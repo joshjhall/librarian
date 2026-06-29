@@ -127,6 +127,21 @@ These env vars toggle non-default behavior; all are opt-in:
   before giving up (default `15` + 2×`15` = 45 min total), so a headless golem
   polling a stuck CI run cannot hang. Ignored interactively (the human chooses
   cut-short/extend at each checkpoint).
+- `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra/setup step
+  names that mark a CI failure as a **likely flake** rather than a code
+  regression (CI-failure triage, Step 4 Option 1). Default:
+  `Set up Docker Buildx|Checkout|checkout|Login|login|cache|Cache|Set up job`.
+  A failure whose failing step matches this — or whose failing job type cannot
+  be affected by the PR's changed files — is auto-retried once before any
+  escalation. Override per repo to teach the triage that repo's setup steps.
+- `LIBRARIAN_CI_INFRA_RETRIES` — integer, default `1`. How many times an
+  infra-classified failure is `gh run rerun --failed` before escalating to
+  `ci-fixer`/the human. This bound is **independent of** the `ci-fixer` 3-attempt
+  cap (which covers code fixes) — it only re-runs an unchanged infra step. Set
+  `0` to disable infra auto-retry (every failure goes straight to ci-fixer/human).
+  Degrades gracefully: if classification data can't be fetched, the triage falls
+  through to the normal ci-fixer handoff with an escalate-with-note, never a
+  hard-fail.
 
 > **Review threshold:** the adversarial **review** loop is bounded by
 > `REVIEW_MAX_CYCLES` (above), not a wall-clock timer — that cap, plus the
@@ -552,10 +567,55 @@ Before executing the chosen shipping mode, run these safety checks:
 
    b. **If all checks pass**: inform the user and proceed to labeling
 
-   c. **If checks fail**: hand the failures to the `ci-fixer` Workflow harness,
-   which owns the retry loop (hard-capped at 3 attempts per check) and fans
-   independent checks in parallel under one shared token budget — you no longer
-   track an iteration counter by hand.
+   c. **If checks fail — triage infra-flake vs real regression FIRST**
+   (classification, not a new retry layer). Before handing anything to
+   `ci-fixer`, classify each failing check so a known infra/setup flake is not
+   surfaced as a code regression, and collapse cascade failures to their root
+   cause:
+
+   - **Fetch the failing STEP name and the PR's changed-file set:**
+
+     ```bash
+     gh pr checks {pr_number} --json name,state,conclusion,link \
+       | jq '[.[] | select(.conclusion == "failure")]'
+     gh run view {run_id} --json jobs \
+       --jq '.jobs[] | select(.conclusion=="failure")
+             | {job:.name, step:([.steps[] | select(.conclusion=="failure") | .name] | first)}'
+     git diff --name-only origin/main...HEAD     # the PR's changed files
+     ```
+
+   - **Classify each failure:**
+     - **Likely infra/flake** — the failing step matches a known
+       setup/provisioning step (the env-overridable list
+       `LIBRARIAN_CI_INFRA_STEPS`, default:
+       `Set up Docker Buildx|Checkout|checkout|Login|login|cache|Cache|Set up job`),
+       OR the failing job type cannot be affected by the PR's changed files
+       (e.g. a Docker `Build` job on a docs/tests-only diff). → **auto-retry
+       once**: `gh run rerun --failed`, then re-poll from (a) and re-evaluate;
+       escalate only if it **re-fails**. This auto-retry is bounded by
+       `LIBRARIAN_CI_INFRA_RETRIES` (default `1`) and is INDEPENDENT of — it does
+       not consume or duplicate — the `ci-fixer` 3-attempt cap (that cap covers
+       *code* fixes; this covers *re-running* an unchanged infra step).
+     - **Likely real** — the failing step exercises the change (a test / lint /
+       build step touching the diff). → skip the retry; go straight to the
+       `ci-fixer` handoff below (today's behavior).
+   - **Collapse cascade failures.** An aggregation/summary job (e.g.
+     `PR Tier > Summarize`) that failed only because an upstream job it depends
+     on failed is NOT an independent failure — attribute it to its upstream
+     root cause and report it once, under that cause, rather than as a second
+     failing check.
+   - **Degrade gracefully.** If step names or the changed-file set can't be
+     fetched (API error, unrecognized step), do NOT hard-fail and do NOT auto-
+     retry blindly — fall through to the `ci-fixer` handoff and, when
+     autonomous, record an escalate-with-note ("CI triage unavailable —
+     classified as real") in the completion summary. Never block shipping on the
+     triage step itself.
+
+   For any failure classified **real** (or an infra failure that re-failed after
+   its bounded retry), hand it to the `ci-fixer` Workflow harness, which owns the
+   code-fix retry loop (hard-capped at 3 attempts per check) and fans independent
+   checks in parallel under one shared token budget — you no longer track an
+   iteration counter by hand.
 
    - Collect every failing check into a `checks` array. For each one, grab the
      name and its run-failed logs:

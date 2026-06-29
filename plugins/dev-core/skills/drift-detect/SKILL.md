@@ -60,12 +60,30 @@ actual implementation to identify divergence before shipping.
    - If no such section exists: record `acceptance_criteria: null` and skip
      criteria checking
 
-1. **Get actual file changes**:
+1. **Get actual file changes — scope to the GOLEM'S OWN commits, not base
+   drift.** The right scope is "what did *this golem* change," which is the
+   branch's own commits — NOT everything that differs from `origin/main`. In a
+   worktree golem, a plain base diff also surfaces **base noise**: gitignored /
+   untracked host-tree artifacts (e.g. `.claude/memory/*.md`, machine-local
+   config) and files last touched by *other* merged commits, none of which the
+   golem authored. Reviewing that noise nearly caused false "out-of-scope
+   changes" judgments (#26).
+
+   Use the **three-dot merge-base** range, which diffs against the point the
+   branch forked from (so files another PR changed on `main` after the fork do
+   NOT appear), and for a single-commit branch prefer `git show HEAD`:
 
    ```bash
    git fetch origin main 2>/dev/null
+   # Branch's own contribution vs its fork point (three-dot = merge-base..HEAD):
    git diff --name-only origin/main...HEAD
+   # Single-commit golem branch — the golem's exact contribution:
+   git show --name-only --format= HEAD
    ```
+
+   **Two-dot `git diff origin/main..HEAD` is wrong here** — it compares tips, so
+   it folds in every file that diverged on `main` since the fork, inflating the
+   apparent scope. Always use the three-dot form (or `git show HEAD`).
 
    If not on a feature branch (e.g., on main with uncommitted work):
 
@@ -100,6 +118,18 @@ Exceptions (reduce to LOW):
   `src/foo.py` is planned)
 - Configuration files commonly touched as side effects (`.gitignore`,
   `package-lock.json`, `go.sum`, lock files)
+
+Exceptions (**exclude entirely** — base noise, not the golem's work, #26):
+
+- **Base-noise paths** that leak into a worktree golem's diff without being
+  part of its commit — gitignored / untracked host-tree artifacts and
+  machine-local config, e.g. `.claude/memory/*.md`, `.devcontainer/docker-compose*.yml`,
+  `.env*`. These trace to the bare host tree or to other merged commits, not to
+  the golem. Scoping the actual-files step to the branch's own commits (Step 2,
+  three-dot range / `git show HEAD`) already drops most of them; if any still
+  appear, drop them here rather than reporting them as `unplanned-modification`.
+  Confirm a suspected base-noise file is not the golem's by checking it is
+  absent from `git show --name-only --format= HEAD` (the golem's own commit).
 
 #### 3c. Unchecked acceptance criteria (`unchecked-criteria`)
 
