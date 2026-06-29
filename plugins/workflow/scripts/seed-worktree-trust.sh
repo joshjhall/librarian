@@ -24,7 +24,22 @@
 # Usage: seed-worktree-trust.sh <absolute-worktree-path> [config-path]
 #   config-path defaults to ~/.claude.json (overridable for testing).
 #
-# Exit: always 0 (a trust-seed failure must never abort worktree creation).
+# Granting workspace trust makes Claude Code load a folder's project settings
+# (including `defaultMode: "auto"`) without the interactive trust dialog, so the
+# target path is security-sensitive: a caller able to influence the argument
+# must not be able to pre-trust an ARBITRARY host directory. This helper
+# therefore validates, BEFORE the jq write, that the path is a worktree under
+# THIS repository's root and matches the expected `<worktrees>/issue-<N>` shape.
+# `jq --arg` already blocks JSON injection; this guard constrains the trust
+# GRANT TARGET (issue #21).
+#
+# Exit codes:
+#   0  trust seeded, OR best-effort skip (jq/config absent, or jq write failed)
+#   2  missing worktree-path argument
+#   3  path failed validation (outside repo root, or wrong shape) — trust
+#      refused. This is a hard refusal (non-zero) so an attacker-influenced
+#      target is never silently honoured; the legitimate caller always passes a
+#      `<repo>/<GOLEM_WORKTREE_DIR>/issue-N` path, which validates.
 set -euo pipefail
 
 wt_path="${1:-}"
@@ -34,6 +49,59 @@ if [ -z "$wt_path" ]; then
     command echo "seed-worktree-trust: missing worktree path argument" >&2
     exit 2
 fi
+
+# --- Validate the trust-grant target (issue #21) -----------------------------
+# Resolve this repository's root. Prefer --show-toplevel; fall back to the
+# common-dir parent (robust from inside a worktree / bare layout, matching
+# config.sh's repo_root). Both are evaluated from the script's cwd, which the
+# caller (worktree-new.sh) sets to the main checkout before invoking.
+repo_root="$(/usr/bin/git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$repo_root" ]; then
+    common_dir="$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    [ -n "$common_dir" ] && repo_root="$(/usr/bin/dirname "$common_dir")"
+fi
+if [ -z "$repo_root" ]; then
+    command echo "seed-worktree-trust: refusing trust seed — not inside a git repository" >&2
+    exit 3
+fi
+
+# Canonicalize both sides so `..` / symlink traversal can't escape the root.
+# The worktree path may not exist yet (parent dir does), so resolve leniently.
+canon() { /usr/bin/realpath -m -- "$1" 2>/dev/null || command echo "$1"; }
+repo_root_canon="$(canon "$repo_root")"
+wt_canon="$(canon "$wt_path")"
+
+# 1) Must be strictly UNDER the repo root (not the root itself).
+case "$wt_canon/" in
+    "$repo_root_canon"/*) ;;
+    *)
+        command echo "seed-worktree-trust: refusing trust seed — '$wt_path' is not under repo root '$repo_root'" >&2
+        exit 3
+        ;;
+esac
+
+# 2) Narrow to the expected `<GOLEM_WORKTREE_DIR>/issue-<digits>` shape so the
+#    grant can't target an arbitrary in-tree directory either. GOLEM_WORKTREE_DIR
+#    is repo-root-relative and env-overridable (default .worktrees), mirroring
+#    config.sh; the leaf must be `issue-<N>` with N all digits.
+rel="${wt_canon#"$repo_root_canon"/}"
+wt_dir="${GOLEM_WORKTREE_DIR:-.worktrees}"
+case "$rel" in
+    "$wt_dir"/issue-[0-9]*)
+        leaf="${rel##*/issue-}"
+        case "$leaf" in
+            *[!0-9]*)
+                command echo "seed-worktree-trust: refusing trust seed — '$rel' issue suffix is not all-digits" >&2
+                exit 3
+                ;;
+        esac
+        ;;
+    *)
+        command echo "seed-worktree-trust: refusing trust seed — '$rel' is not a '$wt_dir/issue-<N>' worktree" >&2
+        exit 3
+        ;;
+esac
+# -----------------------------------------------------------------------------
 
 if ! command -v jq >/dev/null 2>&1 || [ ! -f "$cfg" ]; then
     command echo "  skipped trust seed (jq or $cfg not available)"
