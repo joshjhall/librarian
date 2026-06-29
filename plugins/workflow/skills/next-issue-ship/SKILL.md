@@ -115,6 +115,24 @@ These env vars toggle non-default behavior; all are opt-in:
 - `REVIEW_STRICT=true` — treat MEDIUM-certainty findings as blocking in the
   adversarial review (Step 3.5 item 6 and the Step 4 loop), in addition to the
   default HIGH-certainty blocking set. Parallels `PRE_REVIEW_STRICT`.
+- `LIBRARIAN_CI_WAIT_TIMEOUT` — integer **minutes**, default `15`. Threshold for
+  the "Wait for CI" poll loop (Step 4 Option 1): once cumulative wait crosses
+  this, the loop hits a **checkpoint** instead of polling forever. Interactive:
+  prompt **cut short** vs **extend** (another interval). Autonomous: extend
+  automatically up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times, then STOP — see
+  the CI-monitor sub-step. The 30 s poll cadence is unchanged; this only bounds
+  total wait.
+- `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` — integer, default `2`. In autonomous runs,
+  how many extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals the CI-wait loop adds
+  before giving up (default `15` + 2×`15` = 45 min total), so a headless golem
+  polling a stuck CI run cannot hang. Ignored interactively (the human chooses
+  cut-short/extend at each checkpoint).
+
+> **Review threshold:** the adversarial **review** loop is bounded by
+> `REVIEW_MAX_CYCLES` (above), not a wall-clock timer — that cap, plus the
+> harness's token budget, already gives the issue's cut-short/extend +
+> non-interactive-fallback semantics (prompt to fix/ship/defer at the cap;
+> autonomous defers). There is intentionally no separate review timeout var.
 
 ## Step 1 — Read State
 
@@ -363,11 +381,15 @@ Before executing the chosen shipping mode, run these safety checks:
    **after** the PR exists (so the filed issues can link the PR) — see Option 1
    "File deferred review findings".
 
-   e. **Cap / budget exhaustion**: if `cycle` exceeds `REVIEW_MAX_CYCLES` or
-   `budget_exhausted` is true with blocking findings still open:
+   e. **Cap / budget exhaustion**: `REVIEW_MAX_CYCLES` (default 3) is the
+   review action's threshold — the cut-short/extend checkpoint for review, the
+   analogue of `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop. If `cycle`
+   exceeds `REVIEW_MAX_CYCLES` or `budget_exhausted` is true with blocking
+   findings still open:
 
    - **Interactive**: ask — **Fix remaining blocking findings now, ship anyway,
-     or defer them?**
+     or defer them?** (cut short the review vs. extend it by raising
+     `REVIEW_MAX_CYCLES`).
    - **Autonomous**: do NOT prompt. Proceed to open the PR, but record the
      remaining blocking findings as a STOP note for the completion summary
      (Option 1 "Autonomous completion summary" → "Review status").
@@ -510,11 +532,23 @@ Before executing the chosen shipping mode, run these safety checks:
 
    If the user chooses to wait:
 
-   a. **Poll for check completion**:
+   a. **Poll for check completion** against a wait threshold (so a stuck or
+   slow CI run never blocks indefinitely):
 
    - GitHub: `gh pr checks {pr_number} --json name,state,conclusion`
      (poll every 30 seconds until no checks have `state: "pending"`)
    - GitLab: `glab ci status` (check for completion)
+   - **Threshold checkpoint** — track cumulative wait time. Once it crosses
+     `LIBRARIAN_CI_WAIT_TIMEOUT` minutes (default 15), do NOT keep polling
+     blindly:
+     - **Interactive**: prompt — **Cut short** (stop waiting; proceed to
+       labeling, noting CI was still pending) or **Extend** (wait another
+       `LIBRARIAN_CI_WAIT_TIMEOUT` minutes, then re-checkpoint).
+     - **Autonomous**: do NOT prompt. Auto-extend up to
+       `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times (default 2 → 45 min total), then
+       **STOP** — proceed to the completion summary with a STOP note ("CI still
+       pending after {total} min — not waited further"), mirroring the
+       autonomous CI-failure STOP below. Never hang waiting on a prompt.
 
    b. **If all checks pass**: inform the user and proceed to labeling
 
