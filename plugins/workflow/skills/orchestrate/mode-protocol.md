@@ -142,6 +142,25 @@ the plan step. Per-golem overrides: append `--plan-gate` to force the checkpoint
 on a small issue, or `--force-auto` to force full autonomy on a medium+/critical
 one.
 
+**Plan approval is a human keystroke, not agent-drivable (#29).** At the golem's
+`ExitPlanMode` prompt the two "yes" options diverge under the auto-mode
+classifier:
+
+- **Option 1 — "Yes, and use auto mode"** is the one that lets the SAME session
+  continue autonomously to a PR, but it *switches the golem into auto mode*, and
+  that switch **itself trips the classifier** (`[Create Unsafe Agents]`) when an
+  orchestrating agent relays it — so an agent cannot press option 1 for the
+  golem.
+- **Option 2 — "Yes, manually approve edits"** approves the plan WITHOUT the
+  auto-mode switch (an agent *can* select it), but then the golem gates on
+  **every subsequent edit** and does NOT run unattended to a PR.
+
+So the documented "human approves plan → golem continues autonomously to PR"
+flow works **only when a human presses option 1 in a real TTY** (attach via
+`${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`); it is not something the orchestrator can
+answer on the human's behalf. To skip the gate entirely on a medium issue, use
+`--force-auto` (full autonomy, no plan checkpoint).
+
 | Realization        | Built on | Payload (process)                         | Exit                            |
 | ------------------ | -------- | ----------------------------------------- | ------------------------------- |
 | **Worktree golem** | Mode 2   | `claude --permission-mode auto "/next-issue <N> --auto" ; claude --permission-mode auto "/next-issue-ship --auto"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
@@ -167,12 +186,35 @@ the worktree is trusted; `scripts/worktree-new.sh` seeds that trust.) The flag m
 explicit: a fresh worktree is untrusted, so its copied `defaultMode: auto` is not
 loaded on its own and the session would silently fall back to `default` (#585).
 
-Launch a worktree golem (after `${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N}`):
+Launch a worktree golem (after `${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N}`) with
+**one standalone `tmux new-session` per golem**, via the bundled helper:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N}
+```
+
+which runs exactly the bare new-session below (one issue per call):
 
 ```bash
 tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
   "claude --permission-mode auto '/next-issue {N} --auto' ; claude --permission-mode auto '/next-issue-ship --auto'"
 ```
+
+**Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is
+denied by the auto-mode classifier (`[Create Unsafe Agents]`) unless the host
+has authorized the launch rules `Bash(tmux new-session:*)`, `Bash(tmux ls:*)`,
+and `Bash(tmux kill-session:*)`. Run `${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh preflight`
+once before the first dispatch (it checks BOTH `.claude/settings.local.json` and
+`~/.claude/settings.json`); if the rules are absent in both it prints the exact
+rules + the scope choice — **suggest + ask, never write settings silently**
+(adding settings is itself permission-gated; the operator authorizes it, with
+always-allow writing the rule or allow-once proceeding this run). Critically,
+the allow rule matches only a *bare* `tmux new-session …`: wrapping N launches
+in a `for` loop turns the whole Bash invocation into a for-loop **string** that
+does NOT match `Bash(tmux new-session:*)` and is re-denied. So
+`golem-launch.sh launch {N}` is called **once per issue** (one Bash tool call
+each) — never one looping call. (Use `golem-launch.sh print {N}` to emit only
+the launch line.)
 
 `-e GOLEM_ID=golem-{N}` stamps the golem id into the session environment. The
 `Notification` hook reads `$GOLEM_ID` first — the only cwd- and tmux-independent
