@@ -101,6 +101,35 @@ the plan gate is the whole point of this skill:
   (alias `--no-skip-plan`) forces the checkpoint even on a trivial/small issue;
   `--force-auto` (alias `--skip-plan`) forces full plan-skipping even on a
   medium/large/critical one. If both appear, `--plan-gate` wins (safer default).
+
+  **`--force-auto` on a `severity/critical` issue needs a second consent.**
+  `--force-auto` removes the plan gate, which on a critical issue is the **sole
+  human checkpoint** before a fully-autonomous implement → push/PR. Mirror the
+  `next-issue-ship` auto-merge double-consent (which requires BOTH `AUTOMERGE=1`
+  and `AUTOMERGE_AUTONOMOUS=1` while autonomous): when the run is autonomous AND
+  the issue is `severity/critical`, `--force-auto` is honored **only if** the
+  environment variable `FORCE_AUTO_CRITICAL=1` is **also** set. The two signals
+  must come from *separate* sources — `--force-auto` is a per-invocation flag an
+  operator types; `FORCE_AUTO_CRITICAL=1` should be injected from a distinct
+  configuration source, never co-located with the launch command, so one
+  copy-paste cannot silently disarm the critical-issue gate.
+
+  - **`--force-auto` + critical + `FORCE_AUTO_CRITICAL=1` set** → honor the
+    override: print a prominent banner —
+    `WARNING: --force-auto bypassing the plan gate on severity/critical #{N}
+    "{title}" (FORCE_AUTO_CRITICAL=1) — no human checkpoint before push/PR.` —
+    then run fully-autonomous (`plan_gated: false`).
+  - **`--force-auto` + critical but `FORCE_AUTO_CRITICAL` NOT set** → **ignore**
+    `--force-auto` and fall back to plan-gated autonomy (keep the
+    `ExitPlanMode` checkpoint). Print
+    `--force-auto ignored on severity/critical #{N} — set FORCE_AUTO_CRITICAL=1
+    (from a separate source) to bypass the plan gate on a critical issue;
+    keeping the plan gate.`
+  - **Non-critical issue, or non-autonomous run** → `--force-auto` behaves as
+    before (`FORCE_AUTO_CRITICAL` has no effect; the human is in the loop on a
+    non-autonomous run, and a non-critical issue keeps the existing override
+    semantics). `--force-auto` must never appear in a templated golem launch
+    command — it is operator-interactive only.
 - **Shipping handoff (both paths).** Once implementation and testing are
   complete — for a plan-gated run, that means *after* the human approves the
   plan and implementation finishes — **invoke the `/next-issue-ship` skill in
@@ -201,6 +230,20 @@ Proceed with Phase 0 as normal regardless of mode.
     prompt — resume the recorded phase non-interactively (the state file is
     already validated open above); otherwise start fresh for that issue
 
+**Plan-gated resume sub-case.** When the resumed state file has
+`"plan_gated": true`, `"phase": "plan"`, and a populated `checkpoint`
+(`completed_phase: "plan"`, `files_planned`, `key_decisions`), the plan was
+already built and the run paused at the human plan-approval gate before a prior
+context loss. Do **NOT** re-enter Phase 2 and re-run exploration from scratch
+(that discards the stored plan and burns the budget re-deriving it). Instead
+jump straight to **re-presenting the stored plan for approval**: reconstruct the
+plan from the checkpoint (`plan` one-liner + `files_planned` + `key_decisions` +
+`warnings`), call `EnterPlanMode` then `ExitPlanMode` with that reconstructed
+plan, and wait for approval. After approval, continue autonomously through
+implement → test → `/next-issue-ship` exactly as the Phase 2 plan-gated path
+does. Only fall back to a fresh Phase 2 exploration if the checkpoint is missing
+or has no `files_planned` (nothing to re-present).
+
 ## Phase 1 — Select
 
 1. **Detect platform** from `git remote -v`:
@@ -276,9 +319,13 @@ Proceed with Phase 0 as normal regardless of mode.
    the plan-skip rule from `## Autonomous Mode` to the issue's just-fetched
    effort/severity labels: `true` when autonomous AND (the issue is
    `effort/medium`/`large`/`severity/critical`/no-effort-label OR `--plan-gate`
-   was passed) AND `--force-auto` was not passed; `false` otherwise (including
-   every non-autonomous run). A `true` value means this run keeps the plan
-   checkpoint; `false` means it skips plan mode.
+   was passed) AND `--force-auto` did not take effect; `false` otherwise
+   (including every non-autonomous run). **`--force-auto` takes effect** only
+   when it was passed AND, for a `severity/critical` issue, the second-consent
+   `FORCE_AUTO_CRITICAL=1` is also set (see `## Autonomous Mode`); on a critical
+   issue without that second signal, `--force-auto` is ignored and `plan_gated`
+   stays `true`. A `true` value means this run keeps the plan checkpoint;
+   `false` means it skips plan mode.
 
 ## Phase 2 — Plan
 
@@ -338,7 +385,8 @@ Proceed with Phase 0 as normal regardless of mode.
    runs**, which are not autonomous (see the conditional final step below). Set
    `"plan_gated"` per the rule in Phase 1 / `## Autonomous Mode` (an autonomous
    medium+/critical/no-effort-label run, or any autonomous run with
-   `--plan-gate`, unless `--force-auto`). The template above deliberately omits
+   `--plan-gate`, unless `--force-auto` **took effect** — which on a
+   `severity/critical` issue additionally requires `FORCE_AUTO_CRITICAL=1`). The template above deliberately omits
    `"plan_comment_url"`: add that field **only** on the **fully-autonomous**
    path (see the autonomous planning path below), where the plan is posted as an
    issue comment. A plan-gated run uses `EnterPlanMode`/`ExitPlanMode` instead
