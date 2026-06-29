@@ -7,7 +7,7 @@
 # edit target. This stage pins their edge-case contract so a regression is
 # caught before it produces false-positive gate failures:
 #
-#   1. Empty file list  → exit 0, and (with documented exemptions) no output.
+#   1. Empty file list  → exit 0 and no output.
 #   2. No argument      → exit 1 (usage error) with a `Usage` message on stderr.
 #
 # Discovery is dynamic (find), so a newly added pre-scan is covered automatically
@@ -53,22 +53,7 @@ prescan_is_two_arg() {
     esac
 }
 
-# Scripts EXEMPT from the empty-list "output must be empty" assertion because of
-# a known spurious-finding bug (NOT by-design): they still exit 0, but they emit
-# findings on empty input. Each carries the tracking issue so the exemption can
-# be removed once the source is fixed.
-#
-#   check-docs-organization/patterns.sh — scans the project root for standard
-#   docs regardless of the passed file list, so an empty list still yields
-#   `missing-root-doc` findings. Tracked in issue #64.
-prescan_output_exempt() {
-    case "$1" in
-        */check-docs-organization/patterns.sh) return 0 ;; # see issue #64
-        *) return 1 ;;
-    esac
-}
-
-# --- Empty file list: exit 0 (+ empty output unless exempt) -----------------
+# --- Empty file list: exit 0 + empty output ---------------------------------
 
 test_prescans_empty_list() {
     local script
@@ -84,16 +69,8 @@ test_prescans_empty_list() {
         fi
 
         assert_exit 0 "$rc" "Pre-scan $rel: empty file list should exit 0"
-        if prescan_output_exempt "$script"; then
-            # Known-bug carve-out (issue #64): output is NOT
-            # asserted empty. This is an exemption, not a blessing — the script
-            # SHOULD emit nothing on empty input; the tracking issue holds the
-            # real fix, after which this exemption must be removed.
-            :
-        else
-            assert_output_empty "$out" \
-                "Pre-scan $rel: empty file list should emit no findings"
-        fi
+        assert_output_empty "$out" \
+            "Pre-scan $rel: empty file list should emit no findings"
     done < <(list_prescans)
 }
 
