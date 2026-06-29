@@ -610,6 +610,24 @@ Invoked via `/orchestrate spawn <N>` (and by Phase D for container golems).
 Invoked via `/orchestrate teardown <agent>` or `teardown all`. Tear down only
 after the golem's PR is merged or abandoned.
 
+**Worktree golem (Mode 2).** Removing the worktree, deleting its branch, **and
+killing its `tmux` session is a single step** — `worktree-rm.sh` does all three
+(#27):
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh {N}
+```
+
+It kills `golem-{N}` idempotently (ignore-if-absent), so a finished golem no
+longer lingers in `tmux ls` / `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`
+after a merge+prune. The Phase P refill loop already calls `worktree-rm.sh` when
+a slot frees, so pooled golems get their sessions reaped automatically — no
+separate manual `tmux kill-session -t golem-{N}` is needed. A leftover
+`golem-*` session whose worktree is already gone is still cleaned by re-running
+`worktree-rm.sh {N}` (the worktree/branch steps no-op; the session is killed).
+
+**Container golem (Mode 3):**
+
 1. `docker compose -f .worktrees/docker-compose.agents.yml stop <agent>`
 1. `docker compose -f .worktrees/docker-compose.agents.yml rm -f <agent>`
 1. **Remove worktree** (if the PR merged): `git worktree remove .worktrees/<agent>`

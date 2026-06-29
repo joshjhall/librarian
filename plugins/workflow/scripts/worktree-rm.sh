@@ -5,9 +5,12 @@
 # Replaces the containers `worktree-rm` just recipe so the golem/worktree flow
 # runs WITHOUT `just`, on host / bare Linux / inside a devcontainer.
 #
-# Removes <GOLEM_WORKTREE_DIR>/issue-N and deletes branch
-# <GOLEM_BRANCH_PREFIX>N. Refuses to remove a worktree with uncommitted changes
-# (re-run after committing, or force with `git worktree remove --force`).
+# Removes <GOLEM_WORKTREE_DIR>/issue-N, deletes branch <GOLEM_BRANCH_PREFIX>N,
+# and kills the golem's tmux session golem-N (idempotent — ignore-if-absent),
+# so worktree teardown and session teardown are ONE step and finished golems
+# don't linger in `tmux ls` / golem-status.sh after a merge+prune (#27).
+# Refuses to remove a worktree with uncommitted changes (re-run after
+# committing, or force with `git worktree remove --force`).
 #
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
@@ -53,6 +56,17 @@ if [ -n "$(/usr/bin/git branch --list "$br")" ]; then
     removed=1
 fi
 
+# Kill the golem's tmux session so a finished golem does not linger in
+# `tmux ls` / golem-status.sh after merge+prune (#27). Idempotent and
+# ignore-if-absent: a missing session (or no tmux at all) is a clean no-op, and
+# the `|| true` keeps `set -e` from aborting teardown over it.
+sess="golem-$N"
+if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$sess" 2>/dev/null; then
+    tmux kill-session -t "$sess" 2>/dev/null || true
+    command echo "  killed tmux session $sess"
+    removed=1
+fi
+
 if [ "$removed" -eq 0 ]; then
-    command echo "worktree-rm: nothing to remove for issue $N ($wt / $br absent)"
+    command echo "worktree-rm: nothing to remove for issue $N ($wt / $br / $sess absent)"
 fi
