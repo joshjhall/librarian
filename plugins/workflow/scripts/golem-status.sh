@@ -61,10 +61,10 @@ for f in "${cache[@]}"; do
         (.state // "-"),
         (.phase // "-"),
         (if .blocking then "YES" else "-" end)
-    ] | @tsv' "$f" 2>/dev/null \
-    | while IFS=$'\t' read -r g i b p s ph bl; do
-        /usr/bin/printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' "$g" "$i" "$b" "$p" "$s" "$ph" "$bl"
-    done
+    ] | @tsv' "$f" 2>/dev/null |
+        while IFS=$'\t' read -r g i b p s ph bl; do
+            /usr/bin/printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' "$g" "$i" "$b" "$p" "$s" "$ph" "$bl"
+        done
 done
 
 # Live sessions with no cache file yet.
@@ -96,8 +96,8 @@ done
 # reformat to the "  golem — message" display here.
 if [ -f "$feed" ] && [ -x "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
     feed_blocked="$(
-        "$SCRIPT_DIR/golem-gate-watch.sh" --once 2>/dev/null \
-        | /usr/bin/awk -F'\t' 'NF { printf "  %s — %s\n", $1, $2 }'
+        "$SCRIPT_DIR/golem-gate-watch.sh" --once 2>/dev/null |
+            /usr/bin/awk -F'\t' 'NF { printf "  %s — %s\n", $1, $2 }'
     )"
     if [ -n "$feed_blocked" ]; then
         /usr/bin/printf '%s\n' "$feed_blocked"
@@ -105,6 +105,27 @@ if [ -f "$feed" ] && [ -x "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
     fi
 fi
 [ "$blocked" -eq 0 ] && command echo "  (none)"
+
+# Liveness/heartbeat (issue #38) — a SOFT, advisory signal, distinct from the
+# BLOCKED gate list above. Delegated to golem-gate-watch.sh --once-liveness so
+# the pulled status view and the proactive --stream-liveness watch share ONE
+# source of truth (same rule, same stall threshold) and can never drift. Each
+# line is either "golem-N alive, advancing ..." or "golem-N possible stall ...";
+# a golem at a fresh gate is reported as gated here, not stalled. Never
+# kills/blocks a golem — it only points the operator at the suspect ones.
+if [ -x "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
+    command echo ""
+    command echo "LIVENESS (advisory — heartbeat / possible stall):"
+    liveness="$(
+        "$SCRIPT_DIR/golem-gate-watch.sh" --once-liveness 2>/dev/null |
+            /usr/bin/awk -F'\t' 'NF { printf "  %s — %s\n", $1, $2 }'
+    )"
+    if [ -n "$liveness" ]; then
+        /usr/bin/printf '%s\n' "$liveness"
+    else
+        command echo "  (no liveness proxy available)"
+    fi
+fi
 
 if [ -f "$feed" ]; then
     command echo ""
