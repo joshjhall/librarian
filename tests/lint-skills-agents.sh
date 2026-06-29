@@ -121,6 +121,127 @@ workflow_meta_violations() {
     fi
 }
 
+# Capture the `export const meta { … }` block of a workflow.js as text. Shared
+# by the meta-title extraction below; same brace-depth walk as
+# workflow_meta_violations so both see exactly the same block.
+workflow_meta_block() {
+    local wf_file="$1"
+    /usr/bin/awk '
+        /export const meta/ { capturing = 1 }
+        capturing {
+            print
+            depth += gsub(/{/, "{")
+            depth -= gsub(/}/, "}")
+            if (started && depth <= 0) exit
+            if (depth > 0) started = 1
+        }
+    ' "$wf_file"
+}
+
+# Report phase()↔meta.phases inconsistencies in a workflow.js, one per line:
+#   "phase-not-in-meta: <title>"  — a phase('<title>') call with no meta entry
+#   "meta-not-in-phase: <title>"  — a meta.phases title with no phase() call
+# Empty output means the two title sets are equal. A mismatch in either
+# direction means the harness silently skips or duplicates a phase at runtime.
+#
+# Titles are the single/double-quoted string in `phase('X')` calls and in
+# `title: 'X'` entries of the meta block. Shared by the live sweep and the
+# negative-fixture self-test so the self-test exercises the live regexes.
+workflow_phase_meta_mismatch() {
+    local wf_file="$1"
+    local meta_titles phase_titles
+    meta_titles="$(workflow_meta_block "$wf_file" |
+        command grep -oE "title:[[:space:]]*['\"][^'\"]+['\"]" |
+        command sed -E "s/title:[[:space:]]*['\"]([^'\"]+)['\"]/\1/" |
+        command sort -u)"
+    phase_titles="$(command grep -oE "phase\([[:space:]]*['\"][^'\"]+['\"]" "$wf_file" |
+        command sed -E "s/phase\([[:space:]]*['\"]([^'\"]+)['\"]/\1/" |
+        command sort -u)"
+
+    local title
+    while IFS= read -r title; do
+        [ -n "$title" ] || continue
+        if ! printf '%s\n' "$meta_titles" | command grep -qxF "$title"; then
+            printf 'phase-not-in-meta: %s\n' "$title"
+        fi
+    done <<<"$phase_titles"
+    while IFS= read -r title; do
+        [ -n "$title" ] || continue
+        if ! printf '%s\n' "$phase_titles" | command grep -qxF "$title"; then
+            printf 'meta-not-in-phase: %s\n' "$title"
+        fi
+    done <<<"$meta_titles"
+}
+
+# Report agentType references in a workflow.js that do not resolve to a real
+# flat agent file at plugins/*/agents/<name>.md, one dangling name per line.
+# Empty output means every agentType resolves. A dangling agentType means the
+# harness invokes a nonexistent agent at runtime.
+workflow_dangling_agenttypes() {
+    local wf_file="$1"
+    local name
+    command grep -oE "agentType:[[:space:]]*['\"][^'\"]+['\"]" "$wf_file" |
+        command sed -E "s/agentType:[[:space:]]*['\"]([^'\"]+)['\"]/\1/" |
+        command sort -u |
+        while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if [ -z "$(command find "$PLUGINS_DIR" -mindepth 3 -maxdepth 3 \
+                -type f -path '*/agents/*' -name "${name}.md" 2>/dev/null)" ]; then
+                printf '%s\n' "$name"
+            fi
+        done
+}
+
+# Report required_tools declared in a skill's metadata.yml whose command name is
+# NOT referenced anywhere in the skill dir's *.sh/*.md, one per line. Empty
+# output means every declared tool is referenced. A stale declaration (declared
+# but never used) is drift the gate surfaces.
+#
+# Note: required_tools names are SHELL-COMMAND names (git, gh, grep, …), a
+# different namespace than agent frontmatter `tools` (Read, Bash, …). The repo
+# has no SKILL.md frontmatter `tools` field, so the gate validates the genuine
+# contract that exists: declared shell tools must actually be used by the skill.
+skill_unreferenced_required_tools() {
+    local skill_dir="$1"
+    local meta_file="$skill_dir/metadata.yml"
+    [ -f "$meta_file" ] || return 0
+
+    local names name
+    names="$(/usr/bin/awk '
+        /^required_tools:/ { c = 1; next }
+        c && /^[a-zA-Z_]+:/ { c = 0 }
+        c && /^[[:space:]]*-[[:space:]]*name:/ {
+            sub(/^[[:space:]]*-[[:space:]]*name:[[:space:]]*/, "")
+            gsub(/"/, "")
+            print
+        }
+    ' "$meta_file")"
+
+    # Reference search covers the skill's prose + scripts (*.md, *.sh) but NOT
+    # metadata.yml itself — the tool name always appears there as its own
+    # declaration, which would make every tool trivially "referenced". The file
+    # list comes from `find` (one path per line) and is fed to grep -f via a
+    # process substitution; /usr/bin/grep is used directly because the shell's
+    # `grep` may be a ugrep wrapper whose `--include` glob filtering differs.
+    local ref_files name
+    ref_files="$(command find "$skill_dir" -type f \
+        \( -name '*.sh' -o -name '*.md' \) 2>/dev/null)"
+
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        local found=""
+        local f
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if /usr/bin/grep -qwE -- "$name" "$f" 2>/dev/null; then
+                found=1
+                break
+            fi
+        done <<<"$ref_files"
+        [ -n "$found" ] || printf '%s\n' "$name"
+    done <<<"$names"
+}
+
 # --- Agent Tests ------------------------------------------------------------
 
 # Agent discovery yields flat agents/<name>.md files; the agent name is the
@@ -374,6 +495,97 @@ test_workflow_js_node_check_detects_syntax_error() {
     assert_contains "$err" "SyntaxError" "node --check reports a SyntaxError"
 }
 
+# Every workflow.js has consistent phase()↔meta.phases title sets (live sweep).
+test_workflow_phase_meta_consistency() {
+    local wf_file
+    while IFS= read -r wf_file; do
+        [ -n "$wf_file" ] || continue
+        [ -f "$wf_file" ] || continue
+        local rel_name mismatch
+        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        mismatch="$(workflow_phase_meta_mismatch "$wf_file")"
+        if [ -n "$mismatch" ]; then
+            assert_true false \
+                "Workflow $rel_name: phase()/meta.phases mismatch: $(printf '%s' "$mismatch" | command tr '\n' '; ')"
+        fi
+    done < <(command find "$PLUGINS_DIR" -name "workflow.js" -type f 2>/dev/null | command sort)
+}
+
+# The phase↔meta detector FIRES on the negative fixture — in BOTH directions.
+test_workflow_phase_guard_detects_mismatch() {
+    local fixture="$FIXTURES_DIR/workflow_phase_bad.js"
+    assert_file_exists "$fixture" "Negative phase-mismatch fixture exists"
+    [ -f "$fixture" ] || return 0
+
+    local mismatch
+    mismatch="$(workflow_phase_meta_mismatch "$fixture")"
+    assert_contains "$mismatch" "phase-not-in-meta: Ghost" \
+        "Detector flags a phase() call absent from meta.phases"
+    assert_contains "$mismatch" "meta-not-in-phase: Orphan" \
+        "Detector flags a meta.phases entry with no phase() call"
+}
+
+# Every agentType referenced in a workflow.js resolves to a real agent file.
+test_workflow_agenttype_resolves() {
+    local wf_file
+    while IFS= read -r wf_file; do
+        [ -n "$wf_file" ] || continue
+        [ -f "$wf_file" ] || continue
+        local rel_name dangling
+        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        dangling="$(workflow_dangling_agenttypes "$wf_file")"
+        if [ -n "$dangling" ]; then
+            assert_true false \
+                "Workflow $rel_name: agentType has no plugins/*/agents/<name>.md: $(printf '%s' "$dangling" | command tr '\n' ' ')"
+        fi
+    done < <(command find "$PLUGINS_DIR" -name "workflow.js" -type f 2>/dev/null | command sort)
+}
+
+# The agentType cross-ref detector FIRES on the negative fixture.
+test_workflow_agenttype_guard_detects_dangling() {
+    local fixture="$FIXTURES_DIR/workflow_agenttype_bad.js"
+    assert_file_exists "$fixture" "Negative dangling-agentType fixture exists"
+    [ -f "$fixture" ] || return 0
+
+    local dangling
+    dangling="$(workflow_dangling_agenttypes "$fixture")"
+    assert_contains "$dangling" "nonexistent-agent" \
+        "Detector flags an agentType with no matching agent file"
+}
+
+# Every required_tools entry in a skill's metadata.yml is referenced in the
+# skill dir (live sweep over all skills carrying required_tools).
+test_skill_required_tools_referenced() {
+    local skill_dir
+    while IFS= read -r skill_dir; do
+        [ -n "$skill_dir" ] || continue
+        local skill_name unreferenced
+        skill_name="$(/usr/bin/basename "$skill_dir")"
+        unreferenced="$(skill_unreferenced_required_tools "$skill_dir")"
+        if [ -n "$unreferenced" ]; then
+            assert_true false \
+                "Skill $skill_name: required_tools declared but not referenced in *.sh/*.md: $(printf '%s' "$unreferenced" | command tr '\n' ' ')"
+        fi
+    done < <(list_skill_dirs)
+}
+
+# The required_tools reference detector FIRES on the negative fixture: it flags
+# the unreferenced `kubectl` but NOT the referenced `grep`.
+test_skill_required_tools_guard_detects_drift() {
+    local fixture="$FIXTURES_DIR/skill_tooldrift_bad"
+    assert_file_exists "$fixture/metadata.yml" "Negative tool-drift fixture exists"
+    [ -f "$fixture/metadata.yml" ] || return 0
+
+    local unreferenced
+    unreferenced="$(skill_unreferenced_required_tools "$fixture")"
+    assert_contains "$unreferenced" "kubectl" \
+        "Detector flags a declared-but-unreferenced required tool"
+    if printf '%s\n' "$unreferenced" | command grep -qx "grep"; then
+        assert_true false \
+            "Detector must NOT flag the referenced tool 'grep' in the fixture"
+    fi
+}
+
 # --- Run All Tests ----------------------------------------------------------
 
 run_test test_agent_files_exist "Every agent has correctly named .md file"
@@ -391,5 +603,11 @@ run_test test_workflow_meta_pure_literal "Every workflow.js meta is a pure liter
 run_test test_workflow_js_node_check "Every workflow.js passes node --check (syntax valid)"
 run_test test_workflow_js_node_check_detects_syntax_error "node --check guard fires on a syntax error"
 run_test test_workflow_meta_guard_detects_violations "Meta pure-literal guard fires on the negative fixture"
+run_test test_workflow_phase_meta_consistency "Every workflow.js phase() set matches meta.phases"
+run_test test_workflow_phase_guard_detects_mismatch "Phase↔meta guard fires on the negative fixture"
+run_test test_workflow_agenttype_resolves "Every workflow.js agentType resolves to an agent file"
+run_test test_workflow_agenttype_guard_detects_dangling "agentType cross-ref guard fires on the negative fixture"
+run_test test_skill_required_tools_referenced "Every skill's required_tools are referenced in the skill"
+run_test test_skill_required_tools_guard_detects_drift "required_tools reference guard fires on the negative fixture"
 
 generate_report
