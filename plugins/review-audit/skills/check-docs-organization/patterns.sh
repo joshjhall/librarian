@@ -2,7 +2,12 @@
 # check-docs-organization — Deterministic Pre-Scan
 #
 # Checks for missing standard root documents and directories without READMEs.
-# Operates on the project root, not individual files.
+# The checks are DRIVEN BY the passed file list: an empty list (a PR that
+# touched no relevant files) produces empty output and exit 0 — a deterministic
+# pre-scan must never emit project-level findings on empty input (issue #64).
+# When the list is non-empty the root-document check runs against the project
+# root, and the directory-README check runs only for directories that contain a
+# listed file (and their ancestors up to the root), not the whole tree.
 #
 # Input:  $1 = file containing paths to scan (one per line)
 # Output: TSV to stdout: file\tline\tcategory\tevidence\tcertainty
@@ -13,6 +18,21 @@ FILE_LIST="${1:?Usage: patterns.sh <file-list>}"
 if [ ! -f "$FILE_LIST" ]; then
     echo "Error: file list not found: $FILE_LIST" >&2
     exit 1
+fi
+
+# Read the passed file list into an array of non-empty, non-blank paths. The
+# whole scan is gated on this: an empty list means there is nothing to evaluate,
+# so emit nothing and exit 0 rather than scanning the project root regardless.
+FILES=()
+while IFS= read -r _line || [ -n "$_line" ]; do
+    # Trim surrounding whitespace; skip blank lines.
+    _line="${_line#"${_line%%[![:space:]]*}"}"
+    _line="${_line%"${_line##*[![:space:]]}"}"
+    [ -n "$_line" ] && FILES+=("$_line")
+done <"$FILE_LIST"
+
+if [ "${#FILES[@]}" -eq 0 ]; then
+    exit 0
 fi
 
 # Determine project root from the file list (use the common prefix)
@@ -43,22 +63,47 @@ for expected_file in README.md LICENSE CHANGELOG.md; do
 done
 
 # --- Category: missing-dir-readme ---
-# Check directories with significant content but no README
-# Configurable depth (default: 2 levels deep)
+# Check directories with significant content but no README. Driven by the passed
+# file list: only the directories that actually contain a listed file are
+# candidates (capped at the configured depth below the project root), so a PR
+# emits a finding only for a directory it touched — never for the whole tree.
 MAX_DEPTH="${CHECK_ORG_README_DEPTH:-2}"
 MIN_FILES="${CHECK_ORG_MIN_FILES:-5}"
 
-/usr/bin/find "$PROJECT_ROOT" -maxdepth "$MAX_DEPTH" -type d \
-    -not -path '*/\.*' \
-    -not -path '*/node_modules/*' \
-    -not -path '*/vendor/*' \
-    -not -path '*/__pycache__/*' \
-    -not -path '*/dist/*' \
-    -not -path '*/build/*' \
-    -not -path '*/.git/*' \
-    2>/dev/null | while IFS= read -r dir; do
-    # Skip project root (already checked above)
+# Collect the unique directories of the listed files (absolute paths), so the
+# missing-README check considers only touched directories.
+candidate_dirs() {
+    local f abs
+    for f in "${FILES[@]}"; do
+        case "$f" in
+            /*) abs="$f" ;;
+            *) abs="${PROJECT_ROOT}/${f}" ;;
+        esac
+        /usr/bin/dirname "$abs"
+    done | command sort -u
+}
+
+candidate_dirs | while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    # Skip project root (covered by the missing-root-doc check above).
     [ "$dir" = "$PROJECT_ROOT" ] && continue
+    # Only consider directories that exist and live under the project root.
+    [ -d "$dir" ] || continue
+    case "$dir" in
+        "${PROJECT_ROOT}"/*) : ;;
+        *) continue ;;
+    esac
+
+    # Respect the configured max depth below the project root.
+    rel="${dir#"${PROJECT_ROOT}"/}"
+    depth=$(/usr/bin/printf '%s\n' "$rel" | /usr/bin/awk -F/ '{print NF}')
+    [ "$depth" -le "$MAX_DEPTH" ] || continue
+
+    # Skip excluded / generated trees. `*/.*` already covers any hidden
+    # directory (including .git), so it is not listed separately.
+    case "$dir" in
+        */.* | */node_modules/* | */vendor/* | */__pycache__/* | */dist/* | */build/*) continue ;;
+    esac
 
     # Skip if README exists
     [ -f "${dir}/README.md" ] && continue
