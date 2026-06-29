@@ -208,7 +208,6 @@ do not emit a `json` fence):
 | Field            | Type     | Meaning                                                  |
 | ---------------- | -------- | -------------------------------------------------------- |
 | `resolved`       | boolean  | `true` if the conflict was mechanically resolved         |
-| `needs_regen`    | boolean  | `true` for lockfile/generated — triggers the regen step  |
 | `files_changed`  | string[] | Files you edited (the caller stages these)               |
 | `summary`        | string   | One-line description of what was done                    |
 | `ours_summary`   | string   | When `resolved=false`: what the target side changed      |
