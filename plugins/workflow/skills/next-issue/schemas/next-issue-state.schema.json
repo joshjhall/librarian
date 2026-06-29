@@ -45,7 +45,7 @@
     },
     "autonomous": {
       "type": "boolean",
-      "description": "True when the run was started in autonomous mode (--auto flag or NEXT_ISSUE_AUTONOMOUS=1). Gates resolve to documented defaults; no interactive prompts."
+      "description": "True when the run was started in autonomous mode (--autonomous flag, deprecated alias --auto, or NEXT_ISSUE_AUTONOMOUS=1). Gates resolve to documented defaults; no interactive prompts."
     },
     "plan_gated": {
       "type": "boolean",

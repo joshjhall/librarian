@@ -6,7 +6,7 @@ description: Master orchestrator for PR-per-golem parallel work. Dispatch golems
 
 The default topology is **PR-per-golem**: the orchestrator is a **live
 interactive session** that dispatches **golems** (each a PROCESS owning one
-issue → branch → worktree → PR, running the autonomous `/next-issue --auto` →
+issue → branch → worktree → PR, running the autonomous `/next-issue --autonomous` →
 `/next-issue-ship` pipeline), then monitors, surfaces, and rebases across their
 PRs. **The orchestrator never merges golem branches into its own** — humans
 merge PRs (or per-golem auto-merge, which for an autonomous golem requires BOTH
@@ -104,14 +104,15 @@ dispatch is sequential and cheap — **not** workflow-driven.
    # so Claude Code does NOT load its copied settings.local.json `defaultMode:
    # auto` and would silently fall back to `default` and prompt-storm (#585).
    # The harness `--permission-mode auto` is distinct from the `/next-issue`
-   # `--auto` skill flag (skip plan / run autonomously) — both are needed.
+   # `--autonomous` skill flag (deprecated alias `--auto`; run autonomously) —
+   # both are needed.
    # Autonomous /next-issue invokes /next-issue-ship in-turn, so the first prompt
    # reaches Branch + PR on its own. The `;`-chained second prompt is a resume
    # backstop, NOT `&&`: it must run even if the first prompt exits non-zero
    # before shipping (the very case it exists for). If the first already shipped
    # (state file deleted), the second is a near no-op ("No in-progress issue
    # found" → stop):
-   claude --permission-mode auto "/next-issue {N} --auto" ; claude --permission-mode auto "/next-issue-ship --auto"
+   claude --permission-mode auto "/next-issue {N} --autonomous" ; claude --permission-mode auto "/next-issue-ship --autonomous"
    ```
 
    For a **worktree golem** the process is started by a `tmux new-session`.
@@ -132,7 +133,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
    {N}` emits just the launch line if you want to run the bare `tmux
    new-session` yourself.)
 
-   **Plan gate (from the labels read in step 1).** `--auto` is **not** a blanket
+   **Plan gate (from the labels read in step 1).** `--autonomous` is **not** a blanket
    plan-skip — `/next-issue` decides per issue (see `next-issue/SKILL.md` §
    Autonomous Mode):
 
@@ -173,7 +174,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
    block at the plan step rather than run straight through. To override per
    golem, append `--plan-gate` (force the checkpoint on a small issue) or
    `--force-auto` (force full autonomy on a medium+/critical one) to the
-   `/next-issue {N} --auto` prompt.
+   `/next-issue {N} --autonomous` prompt.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem), or, per-golem, queues GitHub auto-merge when BOTH

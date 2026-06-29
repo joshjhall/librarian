@@ -12,7 +12,7 @@ invocation.
 Accepts an optional issue number argument: `/next-issue 123` skips priority
 selection and targets that specific issue.
 
-Adding the `--auto` flag — `/next-issue 123 --auto` (or setting the
+Adding the `--autonomous` flag — `/next-issue 123 --autonomous` (or setting the
 `NEXT_ISSUE_AUTONOMOUS=1` environment variable) — runs the workflow
 autonomously: every human gate resolves to its documented default and no
 interactive tool is called — **except** the plan-approval checkpoint, which is
@@ -58,19 +58,28 @@ See `## Autonomous Mode` below.
 
 ## Autonomous Mode
 
-The run is **autonomous** when EITHER the literal token `--auto` appears in
-the invocation arguments OR the environment variable `NEXT_ISSUE_AUTONOMOUS=1`
-is set. Autonomy is strictly opt-in.
+The run is **autonomous** when EITHER the literal token `--autonomous` (or its
+deprecated alias `--auto`) appears in the invocation arguments OR the
+environment variable `NEXT_ISSUE_AUTONOMOUS=1` is set. Autonomy is strictly
+opt-in.
+
+> **Flag rename (deprecation).** The autonomy flag is `--autonomous`. The old
+> spelling `--auto` remains a **deprecated alias** for one release and behaves
+> identically; prefer `--autonomous` in new launch commands and docs. The
+> rename disambiguates it from the Claude Code harness flag
+> `--permission-mode auto` and from `/next-issue`'s orthogonal **plan-gate**
+> override `--skip-plan` (alias of `--force-auto`) — autonomy (run unattended)
+> and plan-gating (keep the plan checkpoint) are independent concerns.
 
 **Announce the mode when it is active via the env var.** When the run is
 autonomous because `NEXT_ISSUE_AUTONOMOUS=1` is set (rather than an explicit
-`--auto` on this invocation), print one visible line up front —
+`--autonomous` on this invocation), print one visible line up front —
 `Autonomous mode active (NEXT_ISSUE_AUTONOMOUS=1) — all human gates bypassed,
-will proceed to a pushed PR.` — so an operator who didn't type `--auto` notices
-that gates are off. The env var is persistent across invocations in a shell or
-container, so a manually-typed `/next-issue` inherits autonomy silently without
-this banner. (Set `NEXT_ISSUE_AUTONOMOUS=1` only in dedicated headless golem
-environments, never in a shared interactive shell.)
+will proceed to a pushed PR.` — so an operator who didn't type `--autonomous`
+notices that gates are off. The env var is persistent across invocations in a
+shell or container, so a manually-typed `/next-issue` inherits autonomy silently
+without this banner. (Set `NEXT_ISSUE_AUTONOMOUS=1` only in dedicated headless
+golem environments, never in a shared interactive shell.)
 
 Autonomy splits into **two independent sub-behaviors**. Keep them distinct —
 the plan gate is the whole point of this skill:
@@ -85,7 +94,7 @@ the plan gate is the whole point of this skill:
 
   ```text
   IF (effort/trivial OR effort/small) AND NOT severity/critical:
-      → FULLY AUTONOMOUS: skip plan mode entirely (today's --auto behavior).
+      → FULLY AUTONOMOUS: skip plan mode entirely (the --autonomous behavior).
         Use the autonomous planning path in Phase 2 (state file + issue
         comment, no EnterPlanMode), then implement and ship in-turn.
   ELSE (effort/medium | effort/large | severity/critical | no effort label):
@@ -135,7 +144,7 @@ the plan gate is the whole point of this skill:
   plan and implementation finishes — **invoke the `/next-issue-ship` skill in
   the same turn** (call the `Skill` tool with `next-issue-ship`). Do NOT end the
   turn after merely printing a "next step". The handoff is an actual in-turn
-  skill invocation, not narrative: a single `claude '/next-issue <N> --auto'`
+  skill invocation, not narrative: a single `claude '/next-issue <N> --autonomous'`
   prompt must reach a pushed PR on its own, because the model ending its turn
   after `/next-issue` does not start a second skill. `/next-issue-ship` then
   detects autonomy independently (via the same toggle and the persisted
@@ -145,7 +154,7 @@ the plan gate is the whole point of this skill:
   `"plan_gated": true` when the run is plan-gated (see Phase 1 and Phase 2
   below) so `/next-issue-ship` and any post-`/clear` resume inherit them.
 
-When NOT autonomous (no `--auto`, no env var), behavior is unchanged — every
+When NOT autonomous (no `--autonomous`/`--auto`, no env var), behavior is unchanged — every
 interactive prompt and plan-mode step below runs verbatim as the default.
 
 ## Agent Worktree Mode
@@ -179,7 +188,7 @@ Proceed with Phase 0 as normal regardless of mode.
    stay blocked). The plan-mode call is made in Phase 2 once `plan_gated` is
    known: a **plan-gated** run calls `EnterPlanMode` there (then `ExitPlanMode`
    for approval); a **fully-autonomous** run never enters plan mode at all
-   (today's `--auto` behavior). See `## Autonomous Mode`.
+   (the `--autonomous` behavior). See `## Autonomous Mode`.
 
 1. **Legacy migration** — run in order:
 
@@ -314,7 +323,7 @@ or has no `files_planned` (nothing to re-present).
    }
    ```
 
-   Set `"autonomous"` from the toggle (true when `--auto` or
+   Set `"autonomous"` from the toggle (true when `--autonomous`/`--auto` or
    `NEXT_ISSUE_AUTONOMOUS=1`, false otherwise). Set `"plan_gated"` by applying
    the plan-skip rule from `## Autonomous Mode` to the issue's just-fetched
    effort/severity labels: `true` when autonomous AND (the issue is
@@ -380,7 +389,7 @@ or has no `files_planned` (nothing to re-present).
    }
    ```
 
-   Set `"autonomous"` from the toggle: `true` only when `--auto` or
+   Set `"autonomous"` from the toggle: `true` only when `--autonomous`/`--auto` or
    `NEXT_ISSUE_AUTONOMOUS=1`; `false` otherwise — **including `--ship`/`--now`
    runs**, which are not autonomous (see the conditional final step below). Set
    `"plan_gated"` per the rule in Phase 1 / `## Autonomous Mode` (an autonomous
@@ -429,12 +438,12 @@ or has no `files_planned` (nothing to re-present).
    NOT invoke ship before `ExitPlanMode` approval or before the work exists. Do
    NOT stop after implementation to *suggest* shipping,
    and do NOT merely print a "next step: /next-issue-ship" line — actually
-   invoke it. This is the whole point of `--auto`: a single
-   `claude '/next-issue <N> --auto'` prompt must reach a pushed PR + labeled
+   invoke it. This is the whole point of `--autonomous`: a single
+   `claude '/next-issue <N> --autonomous'` prompt must reach a pushed PR + labeled
    issue without a second manual command. Ending the turn after `/next-issue`
    leaves the work uncommitted with no PR. (As a belt-and-suspenders for a
    premature turn-exit, the orchestrate golem launch also chains a second
-   `; claude '/next-issue-ship --auto'` prompt — see the orchestrate skill — but
+   `; claude '/next-issue-ship --autonomous'` prompt — see the orchestrate skill — but
    the in-turn invocation here is the primary path and must not be skipped.)
 
 1. **Exit plan mode** (call `ExitPlanMode` tool) — this presents the plan to
