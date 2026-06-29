@@ -122,14 +122,16 @@ pre-push:
       run: node tests/validate-manifests.mjs
 
     # Skill/agent/workflow quality gates (structural lint, contract validation,
-    # behavioral feed snapshot). Runs the same tests/run-all.sh entry point CI
-    # uses, gated to pushes that touch plugin artifacts or the gates themselves,
-    # so editing a SKILL.md / workflow.js is caught before CI. Skips on a bare
-    # host without node (run-all.sh degrades on its own when jq is absent).
+    # behavioral feed snapshot, action-pin format). Runs the same tests/run-all.sh
+    # entry point CI uses, gated to pushes that touch plugin artifacts, the gates
+    # themselves, or the CI workflows, so editing a SKILL.md / workflow.js / a
+    # pinned `uses:` is caught before CI. Skips on a bare host without node
+    # (run-all.sh degrades on its own when jq is absent).
     quality-gates:
       glob:
         - "plugins/**"
         - "tests/**"
+        - ".github/workflows/**"
       skip:
         - run: "! command -v node >/dev/null 2>&1"
       run: bash tests/run-all.sh
