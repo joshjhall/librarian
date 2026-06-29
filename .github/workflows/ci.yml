@@ -9,14 +9,14 @@ on:
 
 # Least privilege: this is a read-only validation pipeline (it checks out the
 # tree and runs lint/test gates, posting only check statuses). Declare the
-# minimal token scope at the workflow level so both jobs inherit it instead of
+# minimal token scope at the workflow level so all jobs inherit it instead of
 # the repository default, mirroring release.yml's explicit permissions block.
 permissions:
   contents: read
 
 jobs:
   validate-manifests:
-    name: Validate plugin manifests
+    name: Validate manifests + action pins
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,14 +28,65 @@ jobs:
         with:
           node-version: "22"
 
+      # Fork-PR sandboxing (issue #52). This job runs the low-risk Node manifest
+      # gate and the pure-bash action-pin gate UNCONDITIONALLY so fork PRs still
+      # get that feedback (the shell suite in quality-gates is what we withhold).
+      # But checkout pulls the PR HEAD, so on a fork those two gate scripts are
+      # untrusted contributor code — running them as-is would let a poisoned
+      # tests/validate-manifests.mjs (or tests/lint-action-pins.sh) execute
+      # arbitrary code on the runner, reaching GITHUB_TOKEN / env / network.
+      #
+      # Defense: before running them, restore the TRUSTED main copies of exactly
+      # the files we execute. Both gates read the repo (manifests, workflow YAML)
+      # purely as data and import/source nothing outside this set —
+      # validate-manifests.mjs uses only Node builtins; lint-action-pins.sh
+      # sources only lib/harness.sh — so the trusted scripts still validate the
+      # fork's actual manifests and action pins while the fork's edits to the
+      # gate code itself cannot run. Same-repo PRs / push / dispatch are trusted
+      # and skip this restore (the head.repo clause is null for non-PR events, so
+      # the first clause keeps push + workflow_dispatch trusted). See issue #47
+      # for the originating fork-execution hardening.
+      - name: Restore trusted gate scripts (fork PRs)
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin main
+          for f in tests/validate-manifests.mjs tests/lint-action-pins.sh tests/lib/harness.sh; do
+            git show "FETCH_HEAD:${f}" > "${f}"
+          done
+          echo "::notice::Fork PR — manifest + action-pin gate scripts restored from origin/main before execution (issue #52)."
+
       - name: Validate marketplace + plugin manifests
         run: node tests/validate-manifests.mjs
+
+      # Action-pin format gate on fork PRs too (issue #59). Pure bash, network-
+      # free, reads only checked-out workflow files — the same low-risk profile
+      # as the manifest gate above, and trusted-restored on forks by the step
+      # above. Kept OUTSIDE the quality-gates fork guard so a fork PR that edits
+      # .github/workflows/ is checked for unpinned/malformed action refs at PR
+      # time, not only at release time (release.yml, post-merge).
+      - name: Validate action pins
+        run: bash tests/lint-action-pins.sh
 
   quality-gates:
     name: Skill/agent quality gates
     runs-on: ubuntu-latest
     needs: validate-manifests
     timeout-minutes: 15
+    # Fork PRs check out untrusted contributor code as tests/* (checkout uses
+    # the PR HEAD), so running the full shell suite would expose the runner —
+    # network, environment, GITHUB_TOKEN — to it. Guard the WHOLE job (not just
+    # the step) so a fork PR reports this job as `skipped` rather than a green
+    # job with a silently-skipped step (issue #53): merge-gate below keys off
+    # that skipped result. The first clause keeps push and workflow_dispatch
+    # passing (their pull_request context is null, so the head.repo check alone
+    # would wrongly skip them); fork PRs still get the lower-risk node manifest
+    # + action-pin gates from validate-manifests. See issues #47 and #53.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -49,20 +100,74 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       # Single entry point — tests/run-all.sh owns the stage list (structural
-      # lint, contract validation, behavioral gates, and a re-run of manifest
-      # validation). Calling it here instead of re-listing each gate keeps CI
-      # from drifting out of sync with the local `just test` suite when a stage
-      # is added or renamed.
-      # Fork PRs check out untrusted contributor code as tests/* (checkout uses
-      # the PR HEAD), so running the full shell suite would expose the runner —
-      # network, environment, GITHUB_TOKEN — to it. Run the suite only for
-      # same-repo PRs, push, and workflow_dispatch. The first clause keeps push
-      # and workflow_dispatch passing (their pull_request context is null, so the
-      # head.repo check alone would wrongly skip them); fork PRs still get the
-      # lower-risk node manifest validation from the validate-manifests job. See
-      # issue #47.
+      # lint, contract validation, behavioral gates, action-pin format, and a
+      # re-run of manifest validation). Calling it here instead of re-listing
+      # each gate keeps CI from drifting out of sync with the local `just test`
+      # suite when a stage is added or renamed.
       - name: Run test suite
-        if: >-
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.head.repo.full_name == github.repository
         run: bash tests/run-all.sh
+
+  # Aggregating gate (issue #53). A skipped step does not fail its job, and a
+  # skipped JOB reports neither success nor failure — so without this, a fork PR
+  # (quality-gates skipped) would leave no single check that means "everything
+  # that should have run, ran and passed". merge-gate consumes both upstream
+  # results via `needs` + `if: always()` (so it runs even when quality-gates is
+  # skipped or a dependency failed) and is the safe candidate for a required
+  # branch-protection check.
+  #
+  # Pass conditions:
+  #   - validate-manifests must have succeeded (it runs on every event); AND
+  #   - quality-gates must have succeeded, OR been legitimately skipped because
+  #     this is a fork PR (the shell suite is withheld from forks by design;
+  #     it runs on maintainer push to an in-repo branch and at release time).
+  # Any other state — a real failure, a cancellation, or quality-gates skipped
+  # on a NON-fork event — fails the gate.
+  #
+  # Org-member-fork edge: a PR from an org member's personal fork has
+  # head.repo.full_name != github.repository, so it is treated as external and
+  # its suite is skipped (with the ::notice:: below). That is the conservative
+  # choice — distinguishing trusted org members would require extra token scope
+  # (org membership lookup) and is out of scope. A maintainer revalidates such a
+  # PR by pushing the branch into this repo, which runs the full suite.
+  #
+  # No checkout / no actions are used here on purpose: the job only reads
+  # `needs.*.result`, so it adds no new `uses:` ref for the action-pin gate.
+  merge-gate:
+    name: Merge gate
+    runs-on: ubuntu-latest
+    needs: [validate-manifests, quality-gates]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: Require upstream gates to have passed (or legitimately skipped)
+        # Pass results through env, never interpolated into the shell, to keep
+        # the check injection-safe.
+        env:
+          MANIFESTS_RESULT: ${{ needs.validate-manifests.result }}
+          QUALITY_RESULT: ${{ needs.quality-gates.result }}
+          IS_FORK_PR: >-
+            ${{ github.event_name == 'pull_request' &&
+                github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+          echo "validate-manifests: ${MANIFESTS_RESULT}"
+          echo "quality-gates:      ${QUALITY_RESULT}"
+          echo "fork PR:            ${IS_FORK_PR}"
+
+          if [ "${MANIFESTS_RESULT}" != "success" ]; then
+            echo "::error::validate-manifests did not succeed (${MANIFESTS_RESULT})."
+            exit 1
+          fi
+
+          if [ "${QUALITY_RESULT}" = "success" ]; then
+            echo "All required gates passed."
+            exit 0
+          fi
+
+          if [ "${QUALITY_RESULT}" = "skipped" ] && [ "${IS_FORK_PR}" = "true" ]; then
+            echo "::notice::quality-gates shell suite is skipped for fork PRs by design (issue #47); it runs on maintainer push to an in-repo branch and at release time. Manifest + action-pin gates did run."
+            exit 0
+          fi
+
+          echo "::error::quality-gates result '${QUALITY_RESULT}' is not acceptable for this event."
+          exit 1
