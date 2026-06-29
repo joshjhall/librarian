@@ -226,8 +226,8 @@ If the user declines, continue normally — the suggestion is advisory.
 
 ## Status Labels
 
-Four labels track in-flight work and prevent the same issue from being
-picked up twice:
+Five labels track in-flight or not-ready work and prevent an issue from being
+picked up:
 
 | Label                   | Set by                        | Meaning                                               |
 | ----------------------- | ----------------------------- | ----------------------------------------------------- |
@@ -235,9 +235,92 @@ picked up twice:
 | `status/pr-pending`     | `/next-issue-ship` (Option 1) | A PR has been created; awaiting review/merge          |
 | `status/commit-pending` | `/next-issue-ship` (Option 3) | Fix committed locally but not yet pushed              |
 | `status/on-hold`        | Manual                        | Issue intentionally deferred; not ready to work on    |
+| `status/blocked`        | Manual                        | Issue has an unresolved dependency; not ready to work |
 
-All four labels are **excluded** from all priority queries (see below) so
-that in-progress issues are never re-selected.
+The first four labels are **excluded** by the `--search` filter in every
+priority query (see below) so that in-progress issues are never re-selected.
+`status/blocked` is handled by the **blocked-by exclusion** (see below): it is
+filtered the same way, alongside parsed `Blocked by` / `Depends on` / native
+blocked-by references.
+
+---
+
+## Blocked-by Exclusion
+
+Selection must never dispatch an issue whose declared dependencies are still
+open — a golem would plan against an unresolved blocker and, on a
+fully-autonomous path, could resolve the upstream decision by fiat. The
+blocked-by exclusion is a **sibling of the status-label exclusion above**: it is
+applied at the same point in the priority loop, so `orchestrate` dispatch and
+pool refill (which reuse this ordering) inherit it automatically.
+
+A candidate is **blocked** when ANY of these references an OPEN issue:
+
+1. A `status/blocked` label on the candidate (the operator-set signal).
+2. A `Blocked by #N` reference in the candidate body (case-insensitive,
+   `blocked by #N` / `Blocked-by: #N`).
+3. A `Depends on #N` reference in the candidate body (case-insensitive,
+   `depends on #N` / `Depends-on: #N`).
+4. A GitHub native **blocked-by** relationship (the `blockedBy` field).
+
+### Determining blocker state
+
+For a candidate issue `#C`, gather referenced blocker numbers and check each
+one's state. On GitHub:
+
+```bash
+# 1. Native blocked-by relationships (newline-separated issue numbers, may be empty).
+native_blockers=$(gh issue view "$C" --json blockedBy \
+  --jq '.blockedBy[]?.number' 2>/dev/null)
+
+# 2. Body references: Blocked by #N / Depends on #N (case-insensitive).
+body=$(gh issue view "$C" --json body --jq '.body' 2>/dev/null)
+body_blockers=$(printf '%s\n' "$body" \
+  | command grep -oiE '(blocked[ -]by|depends[ -]on):?[[:space:]]*#[0-9]+' \
+  | command grep -oE '[0-9]+')
+
+# 3. status/blocked label is read from the candidate's labels (already fetched
+#    in the priority query's --json labels).
+
+# Any referenced blocker still OPEN ⇒ candidate is blocked.
+open_blockers=""
+for b in $native_blockers $body_blockers; do
+  state=$(gh issue view "$b" --json state --jq '.state' 2>/dev/null)
+  if [ "$state" = "OPEN" ]; then
+    open_blockers="$open_blockers #$b"   # collect for the skip note
+  fi
+done
+```
+
+On GitLab there is no native blocked-by JSON field exposed uniformly; rely on
+the body references (`Blocked by #N` / `Depends on #N`) and the
+`status/blocked` label, checking each referenced issue with
+`glab issue view {N}` for its state.
+
+### Applying the exclusion
+
+- **Priority / pool-refill selection** (no explicit issue number): when a
+  candidate is blocked, **skip it** and continue the priority walk to the next
+  candidate — exactly as a `status/in-progress` hit is skipped. Emit a one-line
+  note so the operator sees why it was passed over:
+
+  > `#572 skipped — blocked by open #467, #563`
+
+  List the open blocker numbers (and `status/blocked` if that label was the
+  trigger). A candidate gated only by the `status/blocked` label notes
+  `blocked by status/blocked label`.
+- **Explicit single-issue selection** (`/next-issue 572`): the operator named
+  the issue, so do **not** hard-block. **Warn** —
+
+  > `WARNING: #572 is blocked by open #467, #563 — proceeding because you named
+  > it explicitly; the plan gate is your backstop.`
+
+  — then proceed to Phase 2. The plan gate (see `SKILL.md` § Autonomous Mode)
+  remains the human checkpoint for a plan-gated run.
+- **`status/blocked` label** is also added to the `--search` exclusion list in
+  every priority query below, so a candidate carrying that label is filtered
+  out by the query itself before per-candidate parsing even runs (cheaper, and
+  covers the operator-set case without an extra API round-trip).
 
 ---
 
@@ -259,12 +342,19 @@ for severity in critical high medium low; do
       --label "effort/${effort}" \
       --state open \
       --assignee "" \
-      --search "-label:status/in-progress -label:status/pr-pending -label:status/commit-pending -label:status/on-hold" \
+      --search "-label:status/in-progress -label:status/pr-pending -label:status/commit-pending -label:status/on-hold -label:status/blocked" \
       --limit 1 \
       --json number,title,labels,body
   done
 done
 ```
+
+After the query returns a candidate, apply the **blocked-by exclusion** above
+(parse `Blocked by`/`Depends on`/native `blockedBy`, check each referenced
+issue's state): if any blocker is still open, skip the candidate with a
+one-line note and continue the priority walk. The `-label:status/blocked` filter
+covers the operator-set label cheaply; the per-candidate parse covers
+body/native references the query can't express.
 
 ### GitLab (`glab`)
 
@@ -281,10 +371,10 @@ for severity in critical high medium low; do
       --not-assignee \
       --per-page 5 \
     | while read -r line; do
-        # Skip issues with status/in-progress, status/pr-pending, status/commit-pending, or status/on-hold labels
+        # Skip issues with status/in-progress, status/pr-pending, status/commit-pending, status/on-hold, or status/blocked labels
         issue_num=$(/usr/bin/printf '%s\n' "$line" | /usr/bin/awk '{print $1}')
         labels=$(glab issue view "$issue_num" --output json | /usr/bin/grep -o '"status/[^"]*"')
-        if ! /usr/bin/printf '%s\n' "$labels" | /usr/bin/grep -qE 'status/in-progress|status/pr-pending|status/commit-pending|status/on-hold'; then
+        if ! /usr/bin/printf '%s\n' "$labels" | /usr/bin/grep -qE 'status/in-progress|status/pr-pending|status/commit-pending|status/on-hold|status/blocked'; then
           /usr/bin/printf '%s\n' "$line"
           break
         fi
@@ -295,12 +385,14 @@ done
 
 ### Collision-aware selection (pool refill)
 
-The priority loop above picks the single highest-priority eligible issue. When
-the **orchestrate worker pool** (Phase P) refills a free slot, it layers an
-**in-flight collision check** on top of that order: a freshly-picked issue whose
-work is predicted to overlap an in-flight golem's files would collide on the
-merge train (#602), so the pool prefers the next priority issue that is
-predicted **disjoint**.
+The priority loop above picks the single highest-priority eligible issue. The
+**blocked-by exclusion** (above) is already part of that loop, so a candidate
+with an open blocker is skipped before any collision logic runs — pool refill
+inherits dependency-awareness for free. When the **orchestrate worker pool**
+(Phase P) refills a free slot, it then layers an **in-flight collision check**
+on top of that order: a freshly-picked issue whose work is predicted to overlap
+an in-flight golem's files would collide on the merge train (#602), so the pool
+prefers the next priority issue that is predicted **disjoint**.
 
 The overlap prediction is heuristic — the candidate issue's `## Affected Files`
 section plus its `component/*` labels vs each in-flight golem's changed files
@@ -329,7 +421,7 @@ excluding status labels):
 # GitHub
 gh issue list \
   --state open \
-  --search "-label:status/in-progress -label:status/pr-pending -label:status/commit-pending -label:status/on-hold" \
+  --search "-label:status/in-progress -label:status/pr-pending -label:status/commit-pending -label:status/on-hold -label:status/blocked" \
   --limit 1 \
   --json number,title,labels,body
 

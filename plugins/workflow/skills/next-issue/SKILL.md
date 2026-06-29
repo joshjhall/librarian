@@ -209,18 +209,28 @@ Proceed with Phase 0 as normal regardless of mode.
    - `gitlab.com` or `gitlab.` → GitLab (`glab`)
 
 1. **If a specific issue number was provided**: fetch that issue directly and
-   skip the priority query
+   skip the priority query. Still run the **blocked-by check** (see
+   `state-format.md` § Blocked-by Exclusion) on it — but because the operator
+   named the issue, **do not skip it**: emit a one-line `WARNING:` listing the
+   open blockers and proceed (the plan gate is the backstop). Never hard-block
+   an explicitly-named issue.
 
 1. **Otherwise query by priority** using the nested severity x effort loop
    (see `state-format.md` for exact commands). **Important**: all queries
    MUST exclude issues with `status/in-progress`, `status/pr-pending`,
-   `status/commit-pending`, or `status/on-hold` labels — see `state-format.md` for the exact
-   `--search` / post-filter syntax. Pick the first open, unassigned issue
-   returned
+   `status/commit-pending`, `status/on-hold`, or `status/blocked` labels — see
+   `state-format.md` for the exact `--search` / post-filter syntax. For each
+   candidate the query returns, also apply the **blocked-by exclusion**
+   (`state-format.md` § Blocked-by Exclusion): parse `Blocked by #N` /
+   `Depends on #N` / native `blockedBy` references and **skip** the candidate
+   when any referenced blocker is still open, surfacing a one-line skip reason
+   (`#572 skipped — blocked by open #467, #563`), then continue the priority
+   walk. Pick the first open, unassigned, **unblocked** issue returned
 
 1. **If no labeled issues found**: fall back to oldest open issue (also
    excluding `status/in-progress`, `status/pr-pending`,
-   `status/commit-pending`, and `status/on-hold`)
+   `status/commit-pending`, `status/on-hold`, and `status/blocked`, and applying
+   the same per-candidate blocked-by exclusion)
 
    > **Pool refill (orchestrate Phase P):** when selection is driven by the
    > orchestrate worker pool rather than a plain `/next-issue`, layer the
@@ -228,7 +238,10 @@ Proceed with Phase 0 as normal regardless of mode.
    > priority issue predicted disjoint from in-flight golems' files, holding the
    > slot if only colliding candidates remain. See `state-format.md` §
    > Collision-aware selection. A standalone `/next-issue` ignores this and picks
-   > strictly by priority.
+   > strictly by priority. The **blocked-by exclusion** is applied first in both
+   > cases (it lives in the shared priority walk), so a blocked candidate is
+   > skipped before the collision check ever sees it — dispatch and pool refill
+   > inherit dependency-awareness automatically.
 
 1. Show the selected issue to the user — title, labels, body excerpt
 
