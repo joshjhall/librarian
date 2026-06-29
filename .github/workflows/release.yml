@@ -7,7 +7,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # Semver only — `bin/release.sh` tags `vX.Y.Z` (bin/lib/release/git-automation.sh).
+      # Tag filters are glob patterns, not regex: `+` is one-or-more, `.` is literal, so
+      # this requires a digit in each of three dot-separated segments and rejects stray
+      # tags like `v`, `v0`, `v-test`, or `v1.2` that would otherwise fire the release.
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 # Scope token permissions per job rather than workflow-wide: `validate` only
 # reads the tree (checkout + lint/test gates), while `publish` needs write to
