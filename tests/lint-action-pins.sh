@@ -30,8 +30,12 @@ WORKFLOW_DIR="$REPO_ROOT/.github/workflows"
 
 # A `uses:` value is valid when it is `<name>@<40 hex> # v<digit>...`. The name
 # allows the owner/repo[/sub/path] of a reusable workflow; the SHA is exactly 40
-# lowercase hex; the trailing comment must start `# v` + a digit.
-PIN_RE='^[A-Za-z0-9._/-]+@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v[0-9]'
+# lowercase hex (git/Dependabot always emit lowercase); the trailing comment must
+# start `# v` + a digit. The `$` anchor closes the ref end-to-end so trailing
+# garbage (a second `@`, a malformed suffix) after the version token is rejected
+# rather than passing on a substring match — the version token itself may carry a
+# dotted suffix (`v4.3.1`) so the tail allows `.`, digits, and `-`/alphanum.
+PIN_RE='^[A-Za-z0-9._/-]+@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v[0-9][0-9A-Za-z._-]*$'
 
 test_suite "Action pin format (#50)"
 
@@ -78,6 +82,52 @@ test_file_pins() {
         "Every uses: in $(command basename "$CUR_FILE") must be <40-hex SHA> # vX.Y.Z"
 }
 
+# Negative case: scan_file's violation branch must actually fire. Without this,
+# a regression in PIN_RE or the ref-extraction stripping (e.g. widening the hex
+# quantifier) would report PASS while silently letting unpinned refs through —
+# the gate would be false-green. We plant a throwaway workflow holding one good
+# ref plus the four bad forms the gate must reject, run the REAL scan_file
+# against it, and assert exactly the bad refs surface. Mirrors the two-branch
+# coverage of tests/golem-gate-watch.sh.
+test_negative_case_fires() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    local good="actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1"
+    command cat >"$tmp/bad.yml" <<EOF
+jobs:
+  x:
+    steps:
+      - uses: ${good}
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: some/action@main # not a version comment
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 @trailing
+EOF
+
+    scan_file "$tmp/bad.yml"
+
+    assert_not_empty "$CUR_VIOLATIONS" "scan_file flags non-conforming refs (violation branch fires)"
+    # Each bad form must be reported by name; the good ref must NOT be.
+    assert_contains "$CUR_VIOLATIONS" "actions/checkout@v4" "Floating tag is flagged"
+    assert_contains "$CUR_VIOLATIONS" "actions/setup-node@49933ea" "SHA without a version comment is flagged"
+    assert_contains "$CUR_VIOLATIONS" "some/action@main" "SHA-less ref with a non-version comment is flagged"
+    assert_contains "$CUR_VIOLATIONS" "@trailing" "Trailing garbage after the version token is flagged (anchor)"
+    # The single valid ref must not appear among the violations. No
+    # assert_not_contains in the harness; use a pure-bash glob (no eval).
+    local good_flagged=0
+    case "$CUR_VIOLATIONS" in
+        *"# v4.3.1"$'\n'*) good_flagged=1 ;;
+        *"# v4.3.1") good_flagged=1 ;;
+    esac
+    assert_equals "0" "$good_flagged" "A correctly pinned+commented ref is NOT flagged"
+}
+
 # Discover workflow files. nullglob so an empty dir yields an empty array rather
 # than a literal glob pattern.
 shopt -s nullglob
@@ -101,6 +151,7 @@ test_corpus_non_empty() {
 }
 
 run_test test_corpus_non_empty "Workflow corpus is non-empty (gate is not a no-op)"
+run_test test_negative_case_fires "scan_file flags unpinned/uncommented/garbage refs (violation path)"
 
 for f in "${workflows[@]}"; do
     CUR_FILE="$f"

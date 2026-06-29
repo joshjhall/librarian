@@ -45,6 +45,9 @@ jobs:
       - name: Skill contract validation
         run: bash tests/validate-contracts.sh
 
+      - name: Action pin format
+        run: bash tests/lint-action-pins.sh
+
       - name: Assert VERSION matches the tag
         run: |
           tag="${GITHUB_REF_NAME#v}"
