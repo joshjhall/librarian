@@ -69,7 +69,11 @@ Denied:
 
 ## Output Format
 
-Return a single JSON object:
+When driven by the `codebase-audit` **`workflow.js` harness** (the Workflow
+tool), return this object via the **`StructuredOutput`** tool against the schema
+the harness passes — **not** a ` ```json ` fence. When dispatched directly
+(no harness), return it as a single ` ```json ` object instead. The fields are
+identical either way:
 
 ```json
 {

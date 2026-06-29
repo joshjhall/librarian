@@ -22,7 +22,62 @@ Accept these from the user's invocation (all optional):
 
 ## Orchestration Protocol
 
-Follow these steps in order. Do not skip steps.
+The fan-out is owned by the bundled **`workflow.js`** harness (invoked via the
+Workflow tool), not by hand-dispatched `Task` calls. The harness makes the
+scanner fan-out deterministic, puts every scan + verify under **one shared
+token budget** with a resumable per-domain checkpoint, runs a **fresh
+adversarial verify** pass before any issue is filed, and fans the issue-writer
+creation in parallel. This skill supplies the harness its domain knowledge —
+the file-routing manifest (Step 2), the deterministic prescan contract (Step
+2.5), the finding schema (`finding-schema.md`), and the grouping / template
+rules (`issue-templates.md`) — all of which stay authoritative and unchanged.
+
+Because the harness runs in the sandboxed Workflow JS engine (no filesystem,
+shell, or git), every step that touches the tree, runs `patterns.sh`, or calls
+`gh`/`glab` happens inside the `checker` and `issue-writer` agents, which the
+harness drives in discriminated **modes** (`map`, `scan:<domain>`, `verify`,
+`aggregate`, then `issue-writer`). Steps 1, 2, and 2.5 below describe what the
+`checker` does in its `map` and `scan` modes — they are the reference the
+harness and agents follow, not a separate hand-run pass.
+
+### Invoke the Harness
+
+**Invoke the `Workflow` tool** with the script bundled alongside this skill at
+`~/.claude/skills/codebase-audit/workflow.js`, passing the user's parameters:
+
+```text
+args: {
+  scope:             "<dir or glob, or omit for whole repo>",
+  categories:        [<scanner/domain names>, …],   // omit for all discovered
+  depth:             "quick" | "standard" | "deep",  // default "standard"
+  severityThreshold: "critical" | "high" | "medium" | "low",  // default "medium"
+  dryRun:            <true|false>                    // default false
+}
+```
+
+The harness phases are **Map → Scan → Verify → Aggregate → File**:
+
+- **Map** — one `checker` call (`mode: map`) does Steps 1–2 below plus check-\*
+  skill / audit-agent discovery, returning one manifest per scanner domain.
+- **Scan → Verify** — a pipeline **without a barrier**: each domain's
+  `scan:<domain>` (Steps 1–2.5 deterministic prescan + heuristic + judgment,
+  per the `checker` agent) streams straight into a **fresh** `checker`
+  `verify` that re-scores certainty and refutes false positives — domains
+  verify as soon as they finish scanning, not after all scans complete.
+- **Aggregate** — a barrier `checker` step (`mode: aggregate`) applies Step 4
+  dedup + cross-scanner correlation and Step 5 grouping, returning issue
+  payloads keyed by finding ref plus the dry-run report.
+- **File** — if `dryRun`, the harness returns the report and stops; otherwise
+  it fans one `issue-writer` per group in parallel (dedupe-before-create), and
+  falls back to a dry-run report when no `gh`/`glab` platform is detected.
+
+The harness returns `{ scanner, dry_run, platform, scanned_domains, totals,
+report_markdown, issues[], summary, budget_exhausted }`. Surface
+`report_markdown` to the user, and list the created issues from `issues[]`.
+
+The remaining steps document the domain knowledge the harness and agents
+consume. They are **not** a separate hand-run dispatch loop — `Task`
+fan-out, scanner-completion bookkeeping, and aggregation are the harness's job.
 
 ### Step 1: Map the Codebase
 
@@ -152,71 +207,32 @@ If no check-\* skills with patterns.sh are found, skip this step silently.
 If a patterns.sh exits non-zero, log the error and continue with remaining
 skills.
 
-### Step 3: Dispatch Scanners in Parallel
+### Step 3: Scan Each Domain (harness Scan + Verify phases)
 
-Send **a single message** with one `Task` tool call per active scanner. If
-total scanners exceed 6, dispatch in batches of 6. Each task prompt must
-include:
+The harness drives `checker` once per domain (`scan:<domain>`) over that
+domain's manifest from Step 2, then immediately re-runs a **fresh** `checker`
+(`verify`) on that domain's findings. The `checker` agent owns the per-domain
+work: prescan (Step 2.5) → heuristic pass → judgment pass → within-skill dedup,
+emitting the `finding-schema.md` object via StructuredOutput.
 
-1. The scanner's manifest (from Step 2)
-1. The full finding schema (from `finding-schema.md`)
-1. The severity threshold
+The active scanner set is whatever `map` discovered, with the domain-override
+precedence (a `check-*` skill overrides the `audit-*` agent for its domain; a
+project agent overrides a built-in of the same name). Built-in domains:
+code-health, security, test-gaps, architecture, docs, ai-config; plus any
+project agents discovered under `.claude/agents/audit-*`. The `categories`
+parameter restricts the set.
 
-Use the active scanner list assembled in Step 1:
+The **verify** pass is adversarial: a fresh `checker` that did not produce the
+findings re-scores each one's certainty and refutes false positives (no
+producer self-grading). The harness drops a finding only on an explicit
+refutation and keeps everything else, so a verify failure or budget exhaustion
+never silently loses a real finding.
 
-**Built-in scanners** (unless overridden by a project agent of the same name):
-audit-code-health, audit-security, audit-test-gaps, audit-architecture,
-audit-docs, audit-ai-config
+### Step 4: Aggregate and Deduplicate (harness Aggregate phase)
 
-**Project scanners** (discovered from `.claude/agents/audit-*`):
-Include all project agents from the `project_scanners` list.
+The harness collects every verified finding and drives one `checker`
+(`mode: aggregate`) that applies, over the full set:
 
-Scanners use the model declared in their agent frontmatter
-(`sonnet` or `opus` depending on task complexity) and `tools: Read, Grep, Glob, Bash, Task`.
-Scanners with manifests exceeding 2000 source lines automatically fan out to
-batch sub-agents (model: haiku) — see each scanner's agent definition for
-details.
-
-Skip scanners not in the `categories` parameter.
-
-### Step 3.5: Verify Scanner Completion
-
-Before proceeding to aggregation, validate all scanner results:
-
-1. **Check completion** — verify all dispatched scanner Tasks completed
-   (no timeouts or crashes). If a scanner timed out or errored:
-
-   - Log which scanner failed and why
-   - Proceed with partial results from successful scanners
-   - Note the incomplete scan in the final summary
-
-1. **Validate output** — for each scanner result:
-
-   - Verify the response contains parseable JSON in a \`\`\`json fence
-   - Check the `scanner` field matches the expected scanner name
-   - Verify `findings` is an array (even if empty)
-   - Verify each finding has the required fields per `finding-schema.md`
-     (including the `certainty` object)
-   - If validation fails: discard the malformed result and log the error
-
-1. **Report** scanner status before proceeding:
-
-   ```text
-   Scanner completion: 6/6 succeeded
-   ```
-
-   Or if partial:
-
-   ```text
-   Scanner completion: 5/6 succeeded (audit-architecture: timeout)
-   Proceeding with partial results.
-   ```
-
-### Step 4: Aggregate and Deduplicate
-
-After all scanners return:
-
-1. **Parse JSON** from each scanner's response (extract from \`\`\`json fences)
 1. **Within-scanner dedup**: Same file + category + overlapping line ranges →
    merge into one finding (keep broader range, combine evidence)
 1. **Cross-scanner correlation** (see `issue-templates.md` for rules):
@@ -228,40 +244,29 @@ After all scanners return:
    - Any project-scanner finding + any other scanner finding on same file →
      cross-reference note only (do not merge). Predefined merge rules apply
      only between built-in scanner pairs
-1. **Aggregate acknowledged findings**: Collect `acknowledged_findings` arrays
-   from all scanners into a unified list for the final report
 1. **Filter**: Remove findings below `severity-threshold`
 1. **Sort**: By severity (critical first), then by effort (trivial first —
    quick wins surface to the top)
-1. **Assign sequential IDs** across the merged set for the final report
+1. **Group** into issue payloads (same file + category → one issue; same
+   pattern across files → one issue, max 10 findings, splitting larger groups
+   with `(1/N)` suffixes). For project-scanner findings, derive the category
+   label as `audit/<scanner-name-without-audit-prefix>` (e.g.,
+   `audit-perf-regression` → `audit/perf-regression`) and set
+   `create_label: true`.
 
-### Step 5: Create Issues (or Dry-Run Report)
+Acknowledged findings (`acknowledged_findings` from each scan) flow through to
+the harness's `report_markdown` for the final report.
 
-**If `dry-run` is true**: Output the summary table, findings list, and
-acknowledged findings table as described in `issue-templates.md` (Dry-Run
-Output Format section). Stop here.
+### Step 5: Create Issues (or Dry-Run Report) (harness File phase)
 
-**If `dry-run` is false**:
+**If `dryRun` is true**: the harness returns `report_markdown` (the Dry-Run
+Output Format from `issue-templates.md`) and files nothing.
 
-1. **Group findings** into issues following the rules in `issue-templates.md`:
-   - Same file + same category → one issue
-   - Same pattern across files → one issue (max 10 findings per issue)
-   - Cross-scanner correlations → single merged issue
-1. **Build issue payloads**: For each group, assemble the JSON payload described
-   in `issue-templates.md` (Issue-Writer Sub-Agent Protocol section). For
-   project-scanner findings, derive the category label as
-   `audit/<scanner-name-without-audit-prefix>` (e.g., `audit-perf-regression`
-   → `audit/perf-regression`) and set `create_label: true` in the payload
-1. **Dispatch issue-writer sub-agents**: Send groups to `issue-writer` agents
-   via the Task tool (model: haiku). Each issue-writer receives one group and
-   handles duplicate detection + issue creation independently:
-   - Dispatch up to 10 issue-writers in parallel per message
-   - If more than 10 groups exist, send additional batches after the first
-     batch completes
-1. **Collect results**: Each issue-writer returns JSON with `action`
-   (`created`/`skipped`/`error`), `url`, and `reason`
-1. **Output summary**: List created issues with URLs, note any skipped
-   duplicates or errors
+**If `dryRun` is false**: the harness fans one `issue-writer` per group in
+parallel, each handling duplicate detection + issue creation independently
+(Issue-Writer Sub-Agent Protocol in `issue-templates.md`). If no `gh`/`glab`
+platform was detected, it falls back to the dry-run report. The returned
+`issues[]` array carries each writer's `{action, url, title, reason}`.
 
 ## Auto-Fix (Opt-In)
 
