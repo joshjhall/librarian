@@ -84,6 +84,57 @@ _run_once_snapshot() {
     SNAP_OUT="$(/usr/bin/cat "$tmp/out")"
 }
 
+# As _run_once_snapshot, but runs the script with `jq` stubbed OFF $PATH so the
+# `command -v jq >/dev/null 2>&1 || return 0` guard in feed_snapshot() fires.
+# The script reaches coreutils via absolute /usr/bin/* paths, so a hermetic PATH
+# (bash itself, plus the script's `bash` invoker) is enough — only `jq` and
+# `command -v jq` resolve through PATH in the feed-snapshot path. Sets SNAP_RC
+# and SNAP_OUT like its sibling.
+_run_once_snapshot_no_jq() {
+    local ttl="$1"
+    shift
+    local tmp
+    tmp="$(/usr/bin/mktemp -d)" || return 1
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "/usr/bin/rm -rf '$tmp'" RETURN
+
+    local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
+        GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
+
+    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
+    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+    local line
+    for line in "$@"; do
+        /usr/bin/printf '%s\n' "$line"
+    done >"$tmp/.worktrees/.status/feed.jsonl"
+
+    # A PATH dir holding only `bash` (the script's interpreter, also re-invoked
+    # via `bash "$GATE_WATCH"`), deliberately WITHOUT a `jq` symlink, so
+    # `command -v jq` fails inside the script. Resolve the real bash so the stub
+    # works even if the harness was launched via an absolute path.
+    local stub_bin real_bash
+    stub_bin="$tmp/stub-bin"
+    /usr/bin/mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+
+    # BASH_ENV is sourced by every non-interactive bash before it runs; some
+    # environments (e.g. this devcontainer's /etc/bash_env) RESET $PATH there,
+    # which would silently undo the jq-free PATH and defeat the stub. Unset it
+    # for the child so the pinned PATH actually reaches feed_snapshot().
+    SNAP_RC=0
+    (
+        cd "$tmp" &&
+            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub_bin" \
+                GOLEM_BLOCK_TTL="$ttl" GOLEM_WORKTREE_DIR=.worktrees \
+                GOLEM_STATUS_DIR=.worktrees/.status \
+                "$real_bash" "$GATE_WATCH" --once
+    ) >"$tmp/out" 2>/dev/null && SNAP_RC=0 || SNAP_RC=$?
+    SNAP_OUT="$(/usr/bin/cat "$tmp/out")"
+}
+
 # Regression: a legacy line with no `.ts` field must NOT abort the pipeline and
 # drop every blocked golem. Both the legacy line and a valid dated gate survive.
 # A high TTL keeps the dated gate inside the freshness window regardless of when
@@ -148,8 +199,31 @@ test_empty_ts_treated_as_fresh() {
     assert_contains "$SNAP_OUT" "golem-empty" "Empty-ts golem is honored as fresh"
 }
 
+# jq-absent contract (#28): feed_snapshot() guards on `command -v jq ... ||
+# return 0`, so with jq off $PATH the `--once` snapshot is a silent no-op —
+# exit 0, EMPTY output — EVEN with a fresh gated entry in the feed. This pins
+# that documented behavior (a runtime missing jq must not crash the watcher, and
+# its silence is indistinguishable from a clean empty feed by design). Unlike
+# the sibling tests it does NOT skip when jq is present: it stubs jq OFF the
+# script's PATH so the guard fires regardless of the host. Skips only when the
+# host bash cannot be resolved (the stub needs a real bash to symlink).
+test_jq_absent_is_silent_noop() {
+    if ! command -v bash >/dev/null 2>&1; then
+        skip_test "bash not resolvable on PATH (cannot build a jq-free stub PATH)"
+        return 0
+    fi
+
+    # A fresh, valid, dated gate that WOULD appear if jq were present.
+    _run_once_snapshot_no_jq 999999999999 \
+        '{"golem":"golem-7","event":"gate","message":"push gate","ts":"2026-06-27T10:00:00Z"}'
+
+    assert_equals "0" "$SNAP_RC" "Snapshot exits 0 when jq is absent"
+    assert_output_empty "$SNAP_OUT" "Snapshot emits nothing when jq is absent, even with a fresh gate"
+}
+
 run_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not drop all BLOCKED golems"
 run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
+run_test test_jq_absent_is_silent_noop "jq absent from PATH: --once is a silent no-op despite a fresh gate"
 
 generate_report
