@@ -51,5 +51,16 @@ jobs:
       # validation). Calling it here instead of re-listing each gate keeps CI
       # from drifting out of sync with the local `just test` suite when a stage
       # is added or renamed.
+      # Fork PRs check out untrusted contributor code as tests/* (checkout uses
+      # the PR HEAD), so running the full shell suite would expose the runner —
+      # network, environment, GITHUB_TOKEN — to it. Run the suite only for
+      # same-repo PRs, push, and workflow_dispatch. The first clause keeps push
+      # and workflow_dispatch passing (their pull_request context is null, so the
+      # head.repo check alone would wrongly skip them); fork PRs still get the
+      # lower-risk node manifest validation from the validate-manifests job. See
+      # issue #47.
       - name: Run test suite
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         run: bash tests/run-all.sh
