@@ -3,7 +3,7 @@
 #
 # Claude Code fires the `Notification` hook when a session is awaiting a
 # permission decision or other input. For a golem (an interactive
-# `/next-issue --auto` session running in tmux under `auto` permission mode)
+# `/next-issue --autonomous` session running in tmux under `auto` permission mode)
 # that is exactly the "BLOCKED — needs a human" signal the orchestrator must
 # surface. The golem's TUI paints an alternate screen buffer, so it cannot be
 # scraped live; this hook is the TTY-free channel instead.

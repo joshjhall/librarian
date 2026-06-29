@@ -64,7 +64,7 @@ Write using the Write tool:
 | `plan`         | no       | One-line plan summary (set after plan)               |
 | `started`      | yes      | ISO date when work began                             |
 | `platform`     | yes      | `github` or `gitlab`                                 |
-| `autonomous`   | no       | True when started autonomously (`--auto`/env)        |
+| `autonomous`   | no       | True when started autonomously (`--autonomous`/`--auto`/env) |
 | `plan_gated`   | no       | True when an autonomous run keeps the plan checkpoint (medium+/critical/no-effort or `--plan-gate`); false skips plan |
 | `plan_comment_url` | no   | URL of posted plan comment (fully-autonomous only)   |
 | `contexts`     | no       | Domain contexts for this issue                       |
@@ -186,13 +186,14 @@ same context (the small planning footprint does not justify a reset). The
 plan-approval gate itself is preserved, and `autonomous` stays false. For
 `effort/medium`/`large` the reset point is unaffected.
 
-\* **`--auto` exception**: when `/next-issue` is invoked with `--auto` (or
-`NEXT_ISSUE_AUTONOMOUS=1`), **every** reset point above is bypassed — the
+\* **`--autonomous` exception**: when `/next-issue` is invoked with
+`--autonomous` (deprecated alias `--auto`) or `NEXT_ISSUE_AUTONOMOUS=1`,
+**every** reset point above is bypassed — the
 autonomous run invokes `/next-issue-ship` in the same turn (via the `Skill`
 tool) and never reaches the "After plan approval", "After review", or "After
 ship" boundaries as distinct resets. The orchestrate golem launch's
-`;`-chained `/next-issue-ship --auto` is the only resume path if the turn exits
-early. Unlike `--ship`, `--auto` sets `autonomous: true`. Whether it removes the
+`;`-chained `/next-issue-ship --autonomous` is the only resume path if the turn exits
+early. Unlike `--ship`, `--autonomous` sets `autonomous: true`. Whether it removes the
 **plan-approval gate** depends on `plan_gated` (see `SKILL.md` § Autonomous
 Mode): a fully-autonomous run (`effort/trivial`/`small`, non-critical, no
 `--plan-gate`) skips the gate; a plan-gated run (`effort/medium`/`large`,

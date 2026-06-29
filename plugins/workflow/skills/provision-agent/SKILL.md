@@ -155,7 +155,7 @@ directly via `docker exec -it <container> tmux attach -t claude`.
 
 1. **Write `.worktrees/agent-entrypoint.sh`** — a wrapper script that verifies
    git-host auth, then launches the **autonomous golem pipeline**
-   (`/next-issue --auto` → `/next-issue-ship`) in a named tmux session. A
+   (`/next-issue --autonomous` → `/next-issue-ship`) in a named tmux session. A
    background poller mirrors live PR state into the golem status cache. The
    human can still attach to watch via
    `docker exec -it <container> tmux attach -t claude`.
@@ -316,13 +316,14 @@ directly via `docker exec -it <container> tmux attach -t claude`.
    # nothing. The flag is explicit because a fresh worktree is untrusted, so its
    # copied settings.local.json `defaultMode: auto` is not loaded on its own and
    # the session would fall back to `default` (#585). The harness
-   # `--permission-mode auto` is distinct from the `/next-issue` `--auto` skill
-   # flag — both are needed. When a golem hits a genuinely risky prompt, the
+   # `--permission-mode auto` is distinct from the `/next-issue` `--autonomous`
+   # skill flag (deprecated alias `--auto`) — both are needed. When a golem hits
+   # a genuinely risky prompt, the
    # Notification hook flags it and a human attaches via `tmux attach -t claude`.
    # See orchestrate § Supervised launch.
    tmux new-session -d -s claude "
-       claude --permission-mode auto '/next-issue ${ISSUE} --auto' ; \
-       claude --permission-mode auto '/next-issue-ship --auto';
+       claude --permission-mode auto '/next-issue ${ISSUE} --autonomous' ; \
+       claude --permission-mode auto '/next-issue-ship --autonomous';
        echo \$? > /tmp/golem-rc
    "
    echo "Autonomous golem started for issue #${ISSUE} in tmux session 'claude'"
@@ -405,7 +406,7 @@ For each agent to provision (e.g., agent01 through agent{N}):
    ```
 
    The container's `agent-entrypoint.sh` owns pipeline startup (auth check →
-   `/next-issue --auto` → `/next-issue-ship` in the `claude` tmux session), so
+   `/next-issue --autonomous` → `/next-issue-ship` in the `claude` tmux session), so
    no separate `docker exec ... tmux new-session` is needed here.
 
 ## Step 5 — Report

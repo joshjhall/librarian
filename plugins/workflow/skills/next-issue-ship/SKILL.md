@@ -26,7 +26,7 @@ the `next-issue` skill for the rationale). The hand-off is the state file
   no `/clear`. Being reached this way is **NOT autonomous**: the `--ship`
   fast-path keeps the plan-approval gate and leaves `autonomous` false, so this
   run still prompts for shipping mode (Step 3) and every other interactive gate.
-- **Auto-chained by `/next-issue --auto`** — the autonomous flow, which sets
+- **Auto-chained by `/next-issue --autonomous`** — the autonomous flow, which sets
   `"autonomous": true` (see below). Autonomous `/next-issue` invokes this skill
   **in the same turn** (via the `Skill` tool) once implementation and testing
   complete — it does not stop and suggest a manual run. This skill therefore
@@ -37,9 +37,15 @@ the `next-issue` skill for the rationale). The hand-off is the state file
 ## Autonomous Mode
 
 The run is **autonomous** when ANY of the following holds: the literal token
-`--auto` appears in the invocation arguments, the environment variable
-`NEXT_ISSUE_AUTONOMOUS=1` is set, OR the state file read in Step 1 has
-`"autonomous": true`. Autonomy is strictly opt-in.
+`--autonomous` (deprecated alias `--auto`) appears in the invocation arguments,
+the environment variable `NEXT_ISSUE_AUTONOMOUS=1` is set, OR the state file
+read in Step 1 has `"autonomous": true`. Autonomy is strictly opt-in.
+
+> **Flag rename (deprecation).** `--autonomous` is the autonomy flag; `--auto`
+> remains a **deprecated alias** for one release and behaves identically. This
+> is distinct from `gh pr merge --auto` (GitHub's auto-merge flag, used
+> verbatim below) and from `--permission-mode auto` (the Claude Code harness
+> flag) — neither of those is affected by this rename.
 
 When autonomous:
 
@@ -753,7 +759,7 @@ Before executing the chosen shipping mode, run these safety checks:
      into a `--body "..."` argument: the description is LLM-generated and may
      contain backticks, `$(...)`, quotes, or newlines that would break out of
      the quoted string and execute in the shell — and this path runs unattended
-     under `--auto` with no human gate. Use the **`Write` tool** to write the
+     under `--autonomous` with no human gate. Use the **`Write` tool** to write the
      body to a temp file (so the content never passes through a shell at all),
      then reference it:
 

@@ -98,7 +98,7 @@ docker exec -it project-agent01-1 tmux attach -t claude
 
 A **golem** is a per-issue sub-orchestrator: a PROCESS that owns one issue →
 branch → worktree → PR and runs the autonomous pipeline (`/next-issue <N>
---auto`, which invokes `/next-issue-ship` in-turn → Branch + PR) unattended to
+--autonomous`, which invokes `/next-issue-ship` in-turn → Branch + PR) unattended to
 a green, review-clean PR. Golems are not a new isolation mechanism — they are
 the **existing Mode 2 or Mode 3** with an autonomous payload and a PR exit.
 
@@ -108,10 +108,11 @@ The launch is **interactive** in tmux with `--permission-mode auto` passed
 issues #570, #585). The explicit flag is required because a fresh worktree is untrusted,
 so Claude Code does not load its copied `settings.local.json` `defaultMode: auto`
 and would otherwise fall back to `default`. The harness `--permission-mode auto`
-is distinct from the `/next-issue` `--auto` skill flag — both are needed.
+is distinct from the `/next-issue` `--autonomous` skill flag (deprecated alias
+`--auto`) — both are needed.
 Autonomous `/next-issue` invokes `/next-issue-ship` in-turn, so the single prompt
 reaches a PR on its own. A `;`-chained second prompt is the resume backstop —
-`claude --permission-mode auto "/next-issue <N> --auto" ; claude --permission-mode auto "/next-issue-ship --auto"`
+`claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/next-issue-ship --autonomous"`
 — so that a premature turn-exit after `/next-issue` still ships: the second
 prompt re-reads the state file and delivers (a near no-op if the first already
 pushed a PR). Use `;`, NOT `&&`: the backstop must run even when the first prompt
@@ -119,7 +120,7 @@ exits non-zero before shipping, which is exactly the case `&&` would skip.
 
 ### Plan gate by effort/severity
 
-`--auto` skips the plan checkpoint **conditionally**, not always. `/next-issue`
+`--autonomous` skips the plan checkpoint **conditionally**, not always. `/next-issue`
 reads the issue's labels and chooses (see `next-issue/SKILL.md` § Autonomous
 Mode):
 
@@ -163,7 +164,7 @@ answer on the human's behalf. To skip the gate entirely on a medium issue, use
 
 | Realization        | Built on | Payload (process)                         | Exit                            |
 | ------------------ | -------- | ----------------------------------------- | ------------------------------- |
-| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/next-issue <N> --auto" ; claude --permission-mode auto "/next-issue-ship --auto"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
+| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/next-issue-ship --autonomous"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
 | **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (or auto-merge: needs `AUTOMERGE=1` + `AUTOMERGE_AUTONOMOUS=1`) |
 
 > **Hard constraint — golems are processes, never Workflow subagents.** The
@@ -197,7 +198,7 @@ which runs exactly the bare new-session below (one issue per call):
 
 ```bash
 tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
-  "claude --permission-mode auto '/next-issue {N} --auto' ; claude --permission-mode auto '/next-issue-ship --auto'"
+  "claude --permission-mode auto '/next-issue {N} --autonomous' ; claude --permission-mode auto '/next-issue-ship --autonomous'"
 ```
 
 **Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is
