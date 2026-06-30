@@ -9,7 +9,7 @@
 #   . "${BIN_DIR}/lib/release/git-cliff.sh"
 #   ensure_git_cliff || echo "git-cliff not available"
 
-# Pin the fallback binary version (cargo install tracks latest).
+# Pin the version for both install paths (cargo and the fallback binary).
 GIT_CLIFF_VERSION="${GIT_CLIFF_VERSION:-2.8.0}"
 
 ensure_git_cliff() {
@@ -19,9 +19,12 @@ ensure_git_cliff() {
 
     command echo "git-cliff not found, installing..."
 
-    # Prefer cargo when present.
+    # Prefer cargo when present. Pin to the same version as the binary fallback
+    # and pass --locked so the build uses git-cliff's committed Cargo.lock — this
+    # makes installs reproducible and avoids silently pulling whatever is latest
+    # (or maliciously published) on crates.io.
     if command -v cargo >/dev/null 2>&1; then
-        cargo install git-cliff
+        cargo install git-cliff --version "$GIT_CLIFF_VERSION" --locked
         return $?
     fi
 
