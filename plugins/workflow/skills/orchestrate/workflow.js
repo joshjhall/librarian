@@ -79,6 +79,24 @@ export const meta = {
 // NO rebase — the live session drives those, gated, per SKILL.md Phase T.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Single-file by necessity (NOT by accident): the Workflow engine loads ONE
+// self-contained inline script with NO module system — `import`/`require` are
+// unavailable, and there is no filesystem to read sibling sources from. So the
+// four operating modes CANNOT be split into separate harnesses
+// (`orchestrate-pool.js`, `orchestrate-train.js`, …): there is nothing to load
+// or import them with, and the Workflow tool runs exactly one script per call.
+// They are instead organized as named entry-point functions — `runPool`,
+// `runTrain`, `runPollSweep` — dispatched on MODE at the foot of this file, with
+// the shared schemas, injection-hardening utils, and prompt builders kept at
+// module scope (genuinely shared across modes; duplicating them into each
+// function is the only "extraction" the runtime allows, and a strictly worse
+// one). This is the same constraint that forces `BUDGET_FLOOR` to be
+// copy-duplicated across all six harnesses (see tests/lint-skills-agents.sh).
+// Do NOT re-file this as a "god module — extract modules" finding: the
+// extraction target (sibling .js modules) does not exist in this runtime.
+// ---------------------------------------------------------------------------
+
 const prs = (args && Array.isArray(args.prs) ? args.prs : []).filter(Boolean)
 const base = args && typeof args.base === 'string' && args.base ? args.base : 'main'
 const MODE =
@@ -349,7 +367,7 @@ const setsIntersect = (a, b) => {
 // A candidate with no predicted files is dispatchable but ranked LAST, so the
 // pool prefers known-disjoint work and doesn't starve on pure uncertainty.
 // ---------------------------------------------------------------------------
-if (MODE === 'pool') {
+function runPool() {
   phase('Pool')
 
   const pool = (args && args.pool) || {}
@@ -441,7 +459,7 @@ if (MODE === 'pool') {
 //   phase. The live session (SKILL.md Phase T) consumes `train` to drive the
 //   gated merge -> rebase -> merge loop with one up-front batch approval.
 // ---------------------------------------------------------------------------
-if (MODE === 'train') {
+async function runTrain() {
   phase('Order')
 
   // Resolve each PR's changed-file set: prefer the caller-supplied `files`
@@ -544,157 +562,174 @@ if (MODE === 'train') {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 — Poll (parallel barrier; per-PR checkpoint via the Workflow journal).
+// Poll / poll+rebase entry point — fan read-only PR-status reads across the
+//   open-PR set, then (poll+rebase only) classify + auto-rebase PRs behind base.
+//   This is the default flow; unlike runPool/runTrain it does live I/O via
+//   dispatched agents. The Rebase phase stays gated on MODE === 'poll+rebase'.
 // ---------------------------------------------------------------------------
-phase('Poll')
-let budgetExhausted = false
+async function runPollSweep() {
+  // ---------------------------------------------------------------------------
+  // Phase 1 — Poll (parallel barrier; per-PR checkpoint via the Workflow journal).
+  // ---------------------------------------------------------------------------
+  phase('Poll')
+  let budgetExhausted = false
 
-const statuses = (
-  await parallel(
-    prs.map((pr) => async () => {
-      if (budget.total && budget.remaining() < BUDGET_FLOOR) {
-        budgetExhausted = true
-        log(`budget low — skipped poll of PR #${pr.number} (not in this sweep)`)
-        return null
-      }
-      let prompt
-      try {
-        prompt = pollPrompt(pr)
-      } catch (e) {
-        // Tainted branch/base name — drop this PR from the sweep rather than
-        // dispatch a poll agent with a poisoned prompt.
-        log(`poll SKIPPED for PR #${pr.number} — ${e.message}`)
-        return null
-      }
-      const s = await agent(prompt, {
-        label: `poll:#${pr.number}`,
-        phase: 'Poll',
-        schema: PR_STATUS,
-      })
-      // A null here is an agent failure, NOT a budget skip (those returned
-      // above). Log it so the PR doesn't silently vanish from the rendered
-      // status table — a missing row reads as "merged/gone" to the human.
-      if (!s) log(`poll FAILED for PR #${pr.number} — omitted from this sweep, re-poll to refresh`)
-      return s
-    }),
-  )
-).filter(Boolean) // null-resilience: a failed/skipped PR read drops out, the sweep continues
-
-// ---------------------------------------------------------------------------
-// Phase 2 — Rebase (only PRs the poll flagged behind base; loop-until-dry).
-// ---------------------------------------------------------------------------
-const rebases = []
-const escalations = []
-
-if (MODE === 'poll+rebase') {
-  phase('Rebase')
-
-  // Work list: PRs behind base, in PR order. Each is independently journaled, so
-  // relaunching with resumeFromRunId resumes mid-list rather than from PR zero.
-  const queue = statuses
-    .filter((s) => s.behind_base)
-    .map((s) => prs.find((p) => p.number === s.pr))
-    .filter(Boolean)
-
-  let i = 0
-  while (i < queue.length && rebases.length < MAX_REBASES) {
-    if (budget.total && budget.remaining() < BUDGET_FLOOR) {
-      budgetExhausted = true
-      log(`budget low — stopping rebase sweep after ${rebases.length} PR(s)`)
-      break
-    }
-    const pr = queue[i++]
-
-    // Fail closed on a tainted branch/base name: surface a whole-PR escalation
-    // for human review instead of dispatching the Edit+Bash rebase-agent with a
-    // prompt-injectable value. Validated once here so neither the overlap nor
-    // the rebase stage below can throw on it.
-    try {
-      safeRef(pr.branch, 'branch')
-      safeRef(base, 'base')
-    } catch (e) {
-      log(`rebase SKIPPED for PR #${pr.number} — ${e.message}`)
-      const escalation = { file: '(whole PR)', reason: `untrusted ref — manual rebase review (${e.message})` }
-      rebases.push({ pr: pr.number, branch: pr.branch, rebased: false, resolved: [], escalated: [escalation] })
-      escalations.push({ pr: pr.number, ...escalation })
-      continue
-    }
-
-    const [result] = await pipeline(
-      [pr],
-      (p) =>
-        agent(overlapPrompt(p), {
-          label: `overlap:#${p.number}`,
-          phase: 'Rebase',
-          schema: OVERLAP,
-        }),
-      (ov) => {
-        // Logic overlap (or a failed classify) → never auto-rebase; escalate.
-        if (!ov || ov.overlap === 'has-logic' || !ov.rebase_needed) {
-          // On a FAILED classify we have no file list, so a per-file escalation
-          // map would be empty and the PR would surface nothing to the human —
-          // it'd look quietly handled. Emit one synthetic whole-PR escalation in
-          // that case so a classify failure is always visible.
-          let escalated
-          if (!ov) {
-            escalated = [{ file: '(whole PR)', reason: 'overlap classify failed — manual rebase review' }]
-          } else {
-            escalated = ov.conflict_files.map((f) => ({
-              file: f,
-              reason: ov.overlap === 'has-logic' ? 'logic overlap — human review' : 'rebase not attempted',
-            }))
-          }
-          return Promise.resolve({
-            pr: pr.number,
-            branch: pr.branch,
-            rebased: false,
-            resolved: [],
-            escalated,
-          })
+  const statuses = (
+    await parallel(
+      prs.map((pr) => async () => {
+        if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+          budgetExhausted = true
+          log(`budget low — skipped poll of PR #${pr.number} (not in this sweep)`)
+          return null
         }
-        // Trivial-only (or no-conflict) → dispatch the existing rebase-agent.
-        // The agent returns only { resolved, escalated }; stamp pr/branch/rebased
-        // so this path's result matches the escalation branch's shape above.
-        // A null/skipped agent result stays null (the `if (result)` guard below
-        // handles it).
         let prompt
         try {
-          prompt = rebasePrompt(pr, ov)
+          prompt = pollPrompt(pr)
         } catch (e) {
-          // A conflict_files entry (LLM-derived) failed the path allowlist —
-          // escalate the whole PR for manual review rather than feed a
-          // poisoned prompt to the Edit+Bash rebase-agent.
-          log(`rebase SKIPPED for PR #${pr.number} — ${e.message}`)
-          return Promise.resolve({
-            pr: pr.number,
-            branch: pr.branch,
-            rebased: false,
-            resolved: [],
-            escalated: [{ file: '(whole PR)', reason: `untrusted conflict path — manual rebase review (${e.message})` }],
-          })
+          // Tainted branch/base name — drop this PR from the sweep rather than
+          // dispatch a poll agent with a poisoned prompt.
+          log(`poll SKIPPED for PR #${pr.number} — ${e.message}`)
+          return null
         }
-        return agent(prompt, {
-          label: `rebase:#${pr.number}`,
-          phase: 'Rebase',
-          agentType: 'rebase-agent',
-          schema: REBASE_RESULT,
-        }).then((r) => r && { pr: pr.number, branch: pr.branch, rebased: true, ...r })
-      },
+        const s = await agent(prompt, {
+          label: `poll:#${pr.number}`,
+          phase: 'Poll',
+          schema: PR_STATUS,
+        })
+        // A null here is an agent failure, NOT a budget skip (those returned
+        // above). Log it so the PR doesn't silently vanish from the rendered
+        // status table — a missing row reads as "merged/gone" to the human.
+        if (!s) log(`poll FAILED for PR #${pr.number} — omitted from this sweep, re-poll to refresh`)
+        return s
+      }),
     )
+  ).filter(Boolean) // null-resilience: a failed/skipped PR read drops out, the sweep continues
 
-    if (result) {
-      rebases.push(result)
-      for (const e of result.escalated) escalations.push({ pr: pr.number, ...e })
+  // ---------------------------------------------------------------------------
+  // Phase 2 — Rebase (only PRs the poll flagged behind base; loop-until-dry).
+  // ---------------------------------------------------------------------------
+  const rebases = []
+  const escalations = []
+
+  if (MODE === 'poll+rebase') {
+    phase('Rebase')
+
+    // Work list: PRs behind base, in PR order. Each is independently journaled, so
+    // relaunching with resumeFromRunId resumes mid-list rather than from PR zero.
+    const queue = statuses
+      .filter((s) => s.behind_base)
+      .map((s) => prs.find((p) => p.number === s.pr))
+      .filter(Boolean)
+
+    let i = 0
+    while (i < queue.length && rebases.length < MAX_REBASES) {
+      if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+        budgetExhausted = true
+        log(`budget low — stopping rebase sweep after ${rebases.length} PR(s)`)
+        break
+      }
+      const pr = queue[i++]
+
+      // Fail closed on a tainted branch/base name: surface a whole-PR escalation
+      // for human review instead of dispatching the Edit+Bash rebase-agent with a
+      // prompt-injectable value. Validated once here so neither the overlap nor
+      // the rebase stage below can throw on it.
+      try {
+        safeRef(pr.branch, 'branch')
+        safeRef(base, 'base')
+      } catch (e) {
+        log(`rebase SKIPPED for PR #${pr.number} — ${e.message}`)
+        const escalation = { file: '(whole PR)', reason: `untrusted ref — manual rebase review (${e.message})` }
+        rebases.push({ pr: pr.number, branch: pr.branch, rebased: false, resolved: [], escalated: [escalation] })
+        escalations.push({ pr: pr.number, ...escalation })
+        continue
+      }
+
+      const [result] = await pipeline(
+        [pr],
+        (p) =>
+          agent(overlapPrompt(p), {
+            label: `overlap:#${p.number}`,
+            phase: 'Rebase',
+            schema: OVERLAP,
+          }),
+        (ov) => {
+          // Logic overlap (or a failed classify) → never auto-rebase; escalate.
+          if (!ov || ov.overlap === 'has-logic' || !ov.rebase_needed) {
+            // On a FAILED classify we have no file list, so a per-file escalation
+            // map would be empty and the PR would surface nothing to the human —
+            // it'd look quietly handled. Emit one synthetic whole-PR escalation in
+            // that case so a classify failure is always visible.
+            let escalated
+            if (!ov) {
+              escalated = [{ file: '(whole PR)', reason: 'overlap classify failed — manual rebase review' }]
+            } else {
+              escalated = ov.conflict_files.map((f) => ({
+                file: f,
+                reason: ov.overlap === 'has-logic' ? 'logic overlap — human review' : 'rebase not attempted',
+              }))
+            }
+            return Promise.resolve({
+              pr: pr.number,
+              branch: pr.branch,
+              rebased: false,
+              resolved: [],
+              escalated,
+            })
+          }
+          // Trivial-only (or no-conflict) → dispatch the existing rebase-agent.
+          // The agent returns only { resolved, escalated }; stamp pr/branch/rebased
+          // so this path's result matches the escalation branch's shape above.
+          // A null/skipped agent result stays null (the `if (result)` guard below
+          // handles it).
+          let prompt
+          try {
+            prompt = rebasePrompt(pr, ov)
+          } catch (e) {
+            // A conflict_files entry (LLM-derived) failed the path allowlist —
+            // escalate the whole PR for manual review rather than feed a
+            // poisoned prompt to the Edit+Bash rebase-agent.
+            log(`rebase SKIPPED for PR #${pr.number} — ${e.message}`)
+            return Promise.resolve({
+              pr: pr.number,
+              branch: pr.branch,
+              rebased: false,
+              resolved: [],
+              escalated: [{ file: '(whole PR)', reason: `untrusted conflict path — manual rebase review (${e.message})` }],
+            })
+          }
+          return agent(prompt, {
+            label: `rebase:#${pr.number}`,
+            phase: 'Rebase',
+            agentType: 'rebase-agent',
+            schema: REBASE_RESULT,
+          }).then((r) => r && { pr: pr.number, branch: pr.branch, rebased: true, ...r })
+        },
+      )
+
+      if (result) {
+        rebases.push(result)
+        for (const e of result.escalated) escalations.push({ pr: pr.number, ...e })
+      }
     }
+  }
+
+  return {
+    base,
+    pr_status: statuses,
+    rebases,
+    escalations,
+    budget_exhausted: budgetExhausted,
+    polled: statuses.length,
+    rebased: rebases.length,
   }
 }
 
-return {
-  base,
-  pr_status: statuses,
-  rebases,
-  escalations,
-  budget_exhausted: budgetExhausted,
-  polled: statuses.length,
-  rebased: rebases.length,
-}
+// ---------------------------------------------------------------------------
+// Dispatch — one entry point per MODE. pool/train are pure computation and
+// return BEFORE any I/O; poll/poll+rebase share runPollSweep (the Rebase phase
+// is gated on MODE inside it). This is the whole control flow of the harness.
+// ---------------------------------------------------------------------------
+if (MODE === 'pool') return runPool()
+if (MODE === 'train') return runTrain()
+return runPollSweep()
