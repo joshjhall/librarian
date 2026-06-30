@@ -4,6 +4,7 @@
 |---|---|
 | Everything | `bash tests/run-all.sh` |
 | Manifest validation | `node tests/validate-manifests.mjs` |
+| Harness self-test | `bash tests/validate-harness.sh` |
 | Skill/agent structural lint | `bash tests/lint-skills-agents.sh` |
 | Skill contract validation | `bash tests/validate-contracts.sh` |
 | golem-gate-watch feed snapshot | `bash tests/golem-gate-watch.sh` |
@@ -51,6 +52,15 @@ Both gates use a small self-contained harness at `tests/lib/harness.sh`
 (assertions + reporting) instead of the `containers` Docker-coupled test
 framework, so they run with just bash + coreutils (plus `node`/`jq` where
 noted). Run on every PR by `.github/workflows/ci.yml`.
+
+- **`validate-harness.sh`** — self-test for `tests/lib/harness.sh`. Every gate
+  trusts the harness, so the harness gets its own coverage: `assert_true`'s
+  argument-parsing heuristic (last arg is the message when it has whitespace or
+  starts uppercase, else part of the command), the value assertions
+  (`assert_equals` / `assert_not_empty` / `assert_contains` /
+  `assert_not_contains`) on both passing and failing inputs, and `skip_test`'s
+  counter bookkeeping. Each deliberately-failing probe runs in an isolated
+  subshell so it cannot corrupt the live suite's counters.
 
 ## Behavioral gates
 

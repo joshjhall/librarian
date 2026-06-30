@@ -218,13 +218,9 @@ test_stale_ts_gate_ages_out() {
     assert_equals "0" "$SNAP_RC" "Snapshot exits 0 with a stale-ts gate"
     assert_not_empty "$SNAP_OUT" "Snapshot is non-empty (the no-ts golem is still fresh)"
     assert_contains "$SNAP_OUT" "golem-new" "No-ts golem is honored as fresh"
-    # Negative check via a pure-bash glob (no assert_not_contains in the harness,
-    # and no eval — keep attacker-influenceable $SNAP_OUT out of any eval'd cmd).
-    local stale_present=0
-    case "$SNAP_OUT" in
-        *golem-old*) stale_present=1 ;;
-    esac
-    assert_equals "0" "$stale_present" "Stale dated gate ages out of the TTL window"
+    # assert_not_contains is glob-based (no eval), so attacker-influenceable
+    # $SNAP_OUT never reaches an eval'd command.
+    assert_not_contains "$SNAP_OUT" "golem-old" "Stale dated gate ages out of the TTL window"
 }
 
 # Distinct from the no-`ts` case: a present-but-empty `.ts` ("") is a string, so

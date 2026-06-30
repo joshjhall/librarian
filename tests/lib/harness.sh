@@ -175,6 +175,21 @@ assert_contains() {
     return 0
 }
 
+# assert_not_contains <haystack> <needle> [message]
+# The negative of assert_contains. Pure-bash glob, no eval — safe for
+# attacker-influenceable strings (golem-gate-watch.sh and lint-action-pins.sh
+# previously open-coded this with `case`-globs for exactly that reason).
+assert_not_contains() {
+    local haystack="$1"
+    local needle="$2"
+    local message="${3:-String should not contain substring}"
+    if [[ "$haystack" != *"$needle"* ]]; then
+        return 0
+    fi
+    _fail "$message" "String:   '$haystack'" "Unexpected: '$needle'"
+    return 0
+}
+
 assert_exit() {
     local expected="$1"
     local actual="$2"
