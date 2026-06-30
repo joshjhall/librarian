@@ -80,6 +80,63 @@ test_crossref_detector_fires_on_fixture() {
         "Collector extracts subagent_type '$bad_name' from the fixture frontmatter"
 }
 
+# The detector fires end-to-end for the multi-value YAML shapes — the inline-flow
+# list `[a, b]` and the multi-entry block list. The scalar fixture above only
+# exercises one name in one shape, so a parser regression that silently dropped a
+# list element (or handled only the first) would slip through without these. Each
+# fixture names two nonexistent agents; for each shape we assert (1) the collector
+# surfaces BOTH names and (2) the full gate (collect -> agent_resolver_exists)
+# flags BOTH as dangling — not just the collector in isolation.
+test_crossref_detector_fires_on_list_fixtures() {
+    local both_names=("this-agent-does-not-exist" "another-missing-agent")
+    local fixture name path tmp collected dangling
+
+    # The fixtures are only meaningful while their agent names stay unresolved.
+    # Guard the invariant so a real agent created by one of these names produces
+    # a clear failure here instead of silently defanging the fixtures.
+    for name in "${both_names[@]}"; do
+        if agent_resolver_exists "$PLUGINS_DIR" "$name"; then
+            assert_true false \
+                "Fixture agent '$name' unexpectedly resolves — list fixture is no longer dangling"
+            return 0
+        fi
+    done
+
+    for fixture in skill_subagent_inline_list skill_subagent_block_list; do
+        path="$FIXTURES_DIR/${fixture}.md"
+        assert_file_exists "$path" "List cross-ref fixture exists ($fixture)"
+        [ -f "$path" ] || continue
+
+        # Drive the gate over a throwaway plugins tree holding the fixture as a
+        # SKILL.md. The trap guarantees cleanup even if a command below exits
+        # non-zero under `set -euo pipefail`, so no temp dir leaks on failure.
+        tmp="$(/usr/bin/mktemp -d)"
+        # shellcheck disable=SC2064  # expand $tmp now, not at trap time
+        trap "/usr/bin/rm -rf '$tmp'" RETURN
+        /usr/bin/mkdir -p "$tmp/p/skills/$fixture"
+        /usr/bin/cp "$path" "$tmp/p/skills/$fixture/SKILL.md"
+
+        collected="$(collect_skill_subagent_types "$tmp")"
+
+        # Re-run the resolver step the live gate uses, collecting dangling names.
+        dangling=""
+        while IFS=$'\t' read -r _ name; do
+            [ -n "$name" ] || continue
+            agent_resolver_exists "$tmp" "$name" || dangling="${dangling}${name}"$'\n'
+        done <<<"$collected"
+
+        for name in "${both_names[@]}"; do
+            assert_contains "$collected" "$name" \
+                "Collector extracts '$name' from $fixture frontmatter"
+            assert_contains "$dangling" "$name" \
+                "Gate flags '$name' from $fixture as dangling"
+        done
+
+        /usr/bin/rm -rf "$tmp"
+        trap - RETURN
+    done
+}
+
 # A positive control: a known real agent name resolves through the resolver.
 # Guards against the resolver returning false for everything (which would make
 # the gate pass vacuously).
@@ -97,5 +154,6 @@ test_resolver_finds_a_real_agent() {
 run_test test_skill_subagent_types_resolve "Every SKILL.md subagent_type resolves to a real agent"
 run_test test_resolver_finds_a_real_agent "Resolver resolves a known real agent (positive control)"
 run_test test_crossref_detector_fires_on_fixture "Cross-ref detector fires on the dangling fixture"
+run_test test_crossref_detector_fires_on_list_fixtures "Cross-ref gate fires on every name from list-form fixtures"
 
 generate_report
