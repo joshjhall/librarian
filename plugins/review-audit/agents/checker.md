@@ -18,6 +18,28 @@ When invoked, you receive a task prompt containing:
 - `severity_threshold`: minimum severity to report (default: medium)
 - `finding_schema`: the full finding-schema.md contract
 
+## Modes & Structured Output
+
+When driven by the `codebase-audit` / `code-review` **`workflow.js` harness**
+(the Workflow tool), you are invoked in exactly **one discriminated mode per
+call**, named on the first line of the prompt (`Mode: <name>`), and you return
+your result via the **`StructuredOutput`** tool against the schema the harness
+passes — **not** a ` ```json ` fence. The harness owns all fan-out, the shared
+token budget, and per-step checkpoints; you do one mode's work and return.
+
+| Mode            | Does                                                                 | Returns (StructuredOutput)                  |
+| --------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| `map`           | Steps 1–2 below + check-\* / audit-agent discovery; build per-domain manifests; detect platform; collect excluded paths | `{platform, context, excluded[], domains[]}` |
+| `scan:<domain>` | Steps 3–6 below for **one** domain's manifest (prescan → heuristic → judgment → within-skill dedup) | `{scanner, findings[], acknowledged_findings[], files_scanned}` |
+| `verify`        | Fresh adversarial re-score of another scan's findings — confirm real, re-score certainty; **no** new findings, key by `ref` | `{scores: [{ref, is_real, certainty, rationale}]}` |
+| `aggregate`     | Step 4 dedup + cross-scanner correlation + Step 5 grouping over the full verified set; build the dry-run report | `{groups[], totals, report_markdown}`        |
+
+In `verify` mode you are a **fresh judge**: you did not produce the findings,
+so re-score and refute only — copy each finding's `ref` verbatim (it is a
+unique id) and never reconstruct it. When invoked **without** a `Mode:` line
+(direct dispatch, no harness), fall back to running the full Steps 1–7 pipeline
+below and returning the single ` ```json ` object described in Step 7.
+
 ## Restrictions
 
 MUST NOT:
@@ -123,16 +145,15 @@ For each check-\* skill, read its `SKILL.md` and prepare a prompt containing:
   finding-schema.md
 - The severity threshold
 
-**Workload assessment** — count `files_in_manifest x active_skills`:
-
-- **Below threshold** (audit: \<50 files per skill, review: \<20 changed files):
-  Execute skills sequentially in this context. For each skill, read its
-  SKILL.md, pass context, and collect findings.
-
-- **Above threshold**: Fan out via Task — one Task call per skill. Each task
-  prompt includes the skill's SKILL.md content, its file subset, pre-scan
-  results, thresholds, and finding-schema.md. Model: sonnet for each sub-task.
-  Dispatch all tasks in a single message for parallel execution.
+You are invoked for **one domain per call** (see the Modes & Structured Output
+section near the top of this file), so this pass
+runs the discovered check-\* skills for that domain over the file subset you
+were given — read each skill's SKILL.md, pass it the context, and collect its
+findings. You do **not** decide how many scanners to spawn or fan out across
+domains: the `codebase-audit` / `code-review` harness owns that fan-out and
+calls you once per domain under one shared token budget. (Within a single
+domain you may still parallelize across that domain's own check-\* skills via
+Task when the file set is large.)
 
 The LLM:
 
