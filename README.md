@@ -15,21 +15,10 @@ updates for free — instead of being container-build-bound. The migration is
 tracked in
 [joshjhall/containers#607](https://github.com/joshjhall/containers/issues/607).
 
-## What's new in 0.2.0
+## Release notes
 
-Hardening and reliability across the `workflow` automation, plus toolchain
-bumps. Highlights (full notes in [CHANGELOG.md](CHANGELOG.md)):
-
-- **Dependency-aware issue selection** — `next-issue` skips candidates whose
-  `Blocked by`/`Depends on` references are still open.
-- **Prompt-injection hardening** — `orchestrate` / `rebase-agent` harnesses
-  validate and delimit caller-supplied branch names and file paths.
-- **Golem liveness/heartbeat** — distinguishes a quietly-working golem from a
-  hung one, with env-overridable thresholds.
-- **`--autonomous` flag** — the `/next-issue` autonomy flag is renamed from
-  `--auto` (kept as a deprecated alias) to disambiguate it from
-  `--permission-mode auto` and the `--skip-plan` plan-gate override.
-- **Node 24** across the devcontainer and CI/release pipelines.
+Per-release highlights and full notes live in [CHANGELOG.md](CHANGELOG.md),
+regenerated from conventional commits on every release.
 
 ## Plugins
 
