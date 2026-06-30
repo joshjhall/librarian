@@ -50,10 +50,12 @@ pattern:
 If a match is detected, read the orchestrator's companion files and ensure
 the new agent follows its contracts. For `audit-*` agents specifically:
 
-1. Directory: `.claude/agents/audit-<domain>/audit-<domain>.md`
+1. Directory: `plugins/review-audit/agents/<name>.md` (flat — a nested
+   `agents/<name>/<name>.md` is silently never discovered)
 1. Model: `sonnet` (primary), `haiku` (batch sub-agents)
 1. Output: JSON matching `finding-schema.md`
-1. Categories: `audit-<domain>/<slug>` format
+1. Categories: bare slugs (e.g. `stale-comment`, `missing-api-docs`) from
+   each scanner's own defined set per `finding-schema.md`
 1. Read `codebase-audit/finding-schema.md` for the exact output contract
 
 ## Modes
@@ -61,7 +63,7 @@ the new agent follows its contracts. For `audit-*` agents specifically:
 ### Create Mode
 
 1. **Understand the task**: What does the agent do? What existing agents are
-   similar? Check for description overlap with `grep -r "description:" ~/.claude/agents/`
+   similar? Check for description overlap with `grep -r "description:" plugins/*/agents/`
 1. **Determine model tier**: Use the Model Tiering Guide decision tree:
    - Mechanical/rote → `haiku`
    - Pattern-matching → `sonnet`
