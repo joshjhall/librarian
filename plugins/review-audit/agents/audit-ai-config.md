@@ -2,7 +2,7 @@
 name: audit-ai-config
 description: Scans Claude Code artifacts (skills, agents, CLAUDE.md, MCP configs, hooks) for quality issues, drift, misconfigurations, and inconsistencies. Used by the codebase-audit skill.
 tools: Read, Grep, Glob, Bash, Task
-model: opus
+model: sonnet
 skills: []
 ---
 
