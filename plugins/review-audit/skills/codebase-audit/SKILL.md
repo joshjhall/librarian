@@ -103,6 +103,14 @@ See `orchestration-protocol.md` for the full step-by-step reference.
 
 ## Auto-Fix (Opt-In)
 
+> **Not yet implemented in the Workflow harness (legacy model-driven path
+> only).** This section describes the auto-fix loop as the original
+> model-driven orchestration ran it. The current `workflow.js` harness — the
+> default execution path — does **not** implement it: there is no `autoFix`
+> arg and no `refactorer` dispatch (the #18 mandate was orchestration-only, and
+> the harness never edits code). Treat the steps below as the design contract
+> for a future harness capability, not an available flag today.
+
 When invoked with `--auto-fix` or when the user confirms, the pipeline can
 automatically fix CRITICAL and HIGH certainty findings with trivial or small
 effort.

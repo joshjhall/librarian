@@ -3,6 +3,7 @@
 #
 # Runs, in order:
 #   1. Manifest validation (node tests/validate-manifests.mjs)
+#   1b. Workflow helper unit tests (node tests/validate-workflow-helpers.mjs)
 #   2. Harness self-test (tests/validate-harness.sh)
 #   3. Skill/agent structural lint (tests/lint-skills-agents.sh)
 #   4. Skill contract validation (tests/validate-contracts.sh)
@@ -42,8 +43,10 @@ run_stage() {
 
 if command -v node >/dev/null 2>&1; then
     run_stage "Manifest validation" node "$SCRIPT_DIR/validate-manifests.mjs"
+    run_stage "Workflow helper unit tests" node "$SCRIPT_DIR/validate-workflow-helpers.mjs"
 else
     printf '[skip] Manifest validation — node not available\n'
+    printf '[skip] Workflow helper unit tests — node not available\n'
 fi
 
 run_stage "Harness self-test" bash "$SCRIPT_DIR/validate-harness.sh"
