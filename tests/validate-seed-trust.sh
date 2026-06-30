@@ -15,18 +15,36 @@
 #
 # Test shape: each case runs the REAL script inside a fresh `git init` sandbox
 # under a module-level `mktemp -d` (so the script's `git rev-parse` resolves the
-# sandbox as repo root, never the librarian checkout), with the inherited git
-# environment cleared so the parent repo's context cannot leak in. All writes are
-# confined to the sandbox; the EXIT trap removes it. The real ~/.claude.json is
-# never touched (config path is always an in-sandbox file).
+# sandbox as repo root, never the librarian checkout). Every git call and every
+# seed-script invocation is wrapped in `/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}"`
+# so git's hook-exported environment (GIT_DIR / GIT_COMMON_DIR / …) cannot pin
+# the script's repo_root to the OUTER repo when the suite runs from a `git push`
+# pre-push hook — the exact failure mode root-caused in golem-gate-watch (PR #62)
+# and whose fix this mirrors. All writes are confined to the sandbox; the EXIT
+# trap removes it. The real ~/.claude.json is never touched (config path is
+# always an in-sandbox file).
 #
-# Pure bash + coreutils. Uses the shared harness assertions.
+# Pure bash + coreutils, reached via absolute /usr/bin/* paths per project
+# convention. Uses the shared harness assertions.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SEED_SCRIPT="$REPO_ROOT/plugins/workflow/scripts/seed-worktree-trust.sh"
+
+# Resolve the real bash once so child invocations work even when PATH is
+# deliberately stripped to hide jq (test g).
+REAL_BASH="$(command -v bash)"
+
+# Git's hook-exported environment. When this suite runs from a `git push`
+# pre-push hook these are set; inherited into a child, they pin every `git` call
+# (and the seed script's repo_root) to the OUTER repo, so `git init` / repo_root
+# would ignore the sandbox. Scrub all of them per-invocation via
+# `/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}"` (the documented golem-gate-watch
+# fix), never a one-shot module-level `unset` that a re-injected var defeats.
+GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
+    GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
@@ -37,27 +55,21 @@ test_suite "seed-worktree-trust path validation"
 
 # Module-level scratch dir, cleaned up once when the suite exits. Each sandbox is
 # a fresh subdir, so no per-test trap is needed (mirrors validate-release.sh).
-WORKDIR="$(command mktemp -d)"
-trap 'command rm -rf "$WORKDIR"' EXIT
-
-# Clear any inherited git environment so the script's `git rev-parse` binds to
-# the sandbox we cd into, not the parent librarian repo. A leaked GIT_DIR was the
-# root cause of an earlier flaky gate (golem-gate-watch), so this is deliberate.
-unset GIT_DIR GIT_WORK_TREE GIT_CONFIG GIT_INDEX_FILE 2>/dev/null || true
+WORKDIR="$(/usr/bin/mktemp -d)"
+trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname>
 # Creates a fresh git repo sandbox with a `.worktrees/` dir and an empty `{}`
 # config at <sandbox>/claude.json, assigning the sandbox path to the caller's
-# named variable.
+# named variable. The `git init` runs with the git environment scrubbed so the
+# sandbox is hermetic even under a pre-push hook.
 new_sandbox() {
     local __out="$1" dir
-    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    (
-        cd "$dir" || exit 1
-        /usr/bin/git init -q
-    ) || return 1
-    command mkdir -p "$dir/.worktrees"
-    command printf '{}\n' >"$dir/claude.json"
+    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
+    /usr/bin/mkdir -p "$dir/.worktrees"
+    /usr/bin/printf '{}\n' >"$dir/claude.json"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -67,12 +79,15 @@ SEED_OUT=""
 
 # run_seed <sandbox-dir> <worktree-path> [config-path]
 # Invokes the real script from within the sandbox (so repo_root resolves there),
-# capturing combined stdout+stderr in SEED_OUT and the exit code in SEED_RC.
-# Honors GOLEM_WORKTREE_DIR if the caller exported it.
+# with the git environment scrubbed, capturing combined stdout+stderr in
+# SEED_OUT and the exit code in SEED_RC. Honors GOLEM_WORKTREE_DIR if the caller
+# exported it before calling.
 run_seed() {
     local dir="$1" wt="$2" cfg="${3:-$1/claude.json}"
     SEED_RC=0
-    SEED_OUT="$(cd "$dir" && bash "$SEED_SCRIPT" "$wt" "$cfg" 2>&1)" || SEED_RC=$?
+    SEED_OUT="$(cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$wt" "$cfg" 2>&1)" || SEED_RC=$?
 }
 
 # --- Tests ------------------------------------------------------------------
@@ -128,38 +143,66 @@ test_non_digit_suffix_refused() {
 test_in_repo_wrong_dir_refused() {
     local sb
     new_sandbox sb
-    command mkdir -p "$sb/src"
+    /usr/bin/mkdir -p "$sb/src"
     run_seed "$sb" "$sb/src/issue-7"
     assert_exit 3 "$SEED_RC" "in-repo path outside the worktree dir is refused (exit 3)"
     assert_contains "$SEED_OUT" "is not a" "explains the worktree-dir violation"
 }
 
-# (f) Missing argument exits 2 (distinct from the validation refusal code).
+# (f) Not inside a git repository at all: the first guard (repo_root unresolved)
+# refuses with exit 3 before any path check. Run from a plain mktemp dir with no
+# `git init` AND the git environment scrubbed, so neither the cwd nor an
+# inherited GIT_DIR can supply a repo context.
+test_not_in_git_repo_refused() {
+    local nogit
+    nogit="$(/usr/bin/mktemp -d "$WORKDIR/nogit.XXXXXX")"
+    SEED_RC=0
+    SEED_OUT="$(cd "$nogit" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$nogit/.worktrees/issue-1" \
+            "$nogit/claude.json" 2>&1)" || SEED_RC=$?
+    assert_exit 3 "$SEED_RC" "invocation outside any git repo is refused (exit 3)"
+    assert_contains "$SEED_OUT" "not inside a git repository" \
+        "reports the missing git context"
+}
+
+# (g) Missing argument exits 2 (distinct from the validation refusal code).
 test_missing_arg_exits_2() {
     local sb
     new_sandbox sb
     SEED_RC=0
-    SEED_OUT="$(cd "$sb" && bash "$SEED_SCRIPT" 2>&1)" || SEED_RC=$?
+    SEED_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" 2>&1)" || SEED_RC=$?
     assert_exit 2 "$SEED_RC" "no worktree-path argument exits 2"
     assert_contains "$SEED_OUT" "missing worktree path" "reports the missing argument"
 }
 
-# (g) Best-effort skip when jq is absent: validation still passes, but the write
-# is skipped with exit 0. jq is removed by running with an empty PATH; BASH_ENV
-# must be cleared or /etc/bash_env re-adds PATH on the devcontainer.
+# (h) Best-effort skip when jq is absent: validation still passes, but the write
+# is skipped with exit 0. jq is removed by pointing PATH at a stub dir holding
+# ONLY a `bash` symlink (no `jq`), so `command -v jq` fails inside the script —
+# the portable, deterministic technique used by golem-gate-watch. BASH_ENV must
+# be unset too, or /etc/bash_env re-adds the real PATH on the devcontainer and
+# defeats the stub.
 test_jq_absent_skips() {
-    local sb
+    local sb stub_bin
     new_sandbox sb
+    stub_bin="$sb/stub-bin"
+    /usr/bin/mkdir -p "$stub_bin"
+    /usr/bin/ln -s "$REAL_BASH" "$stub_bin/bash"
     SEED_RC=0
-    SEED_OUT="$(cd "$sb" && env -u BASH_ENV PATH=/var/empty /bin/bash \
-        "$SEED_SCRIPT" "$sb/.worktrees/issue-9" "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    SEED_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            PATH="$stub_bin" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-9" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
     assert_exit 0 "$SEED_RC" "jq absent → best-effort skip exits 0"
     assert_contains "$SEED_OUT" "skipped trust seed" "reports the skip"
     assert_file_not_contains "$sb/claude.json" "hasTrustDialogAccepted" \
         "config is left untouched when the write is skipped"
 }
 
-# (h) Best-effort skip when the config file is absent (the other operand of the
+# (i) Best-effort skip when the config file is absent (the other operand of the
 # same guard): validation passes, write skipped, exit 0.
 test_config_absent_skips() {
     local sb
@@ -169,27 +212,34 @@ test_config_absent_skips() {
     assert_contains "$SEED_OUT" "skipped trust seed" "reports the skip"
 }
 
-# (i) Malformed config: validation passes, jq runs but fails to parse, so the
+# (j) Malformed config: validation passes, jq runs but fails to parse, so the
 # write is skipped (config left untouched) with exit 0 — the jq-failure arm.
+# Also asserts the temp file (mktemp adjacent to the config) is cleaned up by the
+# script's `rm -f` safety net, so a broken cleanup leaves no `${cfg}.XXXXXX`
+# litter on every failed-jq invocation.
 test_malformed_config_skips() {
-    local sb
+    local sb leftover
     new_sandbox sb
-    command printf 'not json {{{' >"$sb/claude.json"
+    /usr/bin/printf 'not json {{{' >"$sb/claude.json"
     run_seed "$sb" "$sb/.worktrees/issue-9"
     assert_exit 0 "$SEED_RC" "malformed config → jq fails, skip exits 0"
     assert_contains "$SEED_OUT" "could not update" "reports the jq failure"
     assert_file_contains "$sb/claude.json" "not json" \
         "malformed config is left byte-for-byte untouched"
+    leftover="$(/usr/bin/find "$sb" -maxdepth 1 -name 'claude.json.*' 2>/dev/null)"
+    assert_equals "" "$leftover" "no temp file left beside config after jq failure"
 }
 
-# (j) GOLEM_WORKTREE_DIR override: a path under the custom worktree dir validates.
+# (k) GOLEM_WORKTREE_DIR override: a path under the custom worktree dir validates.
 test_worktree_dir_override() {
     local sb
     new_sandbox sb
-    command mkdir -p "$sb/custom-wt"
+    /usr/bin/mkdir -p "$sb/custom-wt"
     SEED_RC=0
-    SEED_OUT="$(cd "$sb" && GOLEM_WORKTREE_DIR=custom-wt bash "$SEED_SCRIPT" \
-        "$sb/custom-wt/issue-5" "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    SEED_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" GOLEM_WORKTREE_DIR=custom-wt \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/custom-wt/issue-5" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
     assert_exit 0 "$SEED_RC" "path under GOLEM_WORKTREE_DIR override is accepted"
     assert_contains "$SEED_OUT" "seeded workspace trust" "reports the trust seed"
     assert_file_contains "$sb/claude.json" '"hasTrustDialogAccepted": true' \
@@ -209,6 +259,7 @@ run_test test_outside_repo_root_refused "path outside repo root is refused (exit
 run_test test_wrong_shape_refused "in-tree wrong-shape leaf is refused (exit 3)"
 run_test test_non_digit_suffix_refused "issue-<digits><non-digit> suffix is refused (exit 3)"
 run_test test_in_repo_wrong_dir_refused "in-repo path outside the worktree dir is refused (exit 3)"
+run_test test_not_in_git_repo_refused "invocation outside any git repo is refused (exit 3)"
 run_test test_missing_arg_exits_2 "missing worktree-path argument exits 2"
 run_test test_jq_absent_skips "jq absent → best-effort skip (exit 0)"
 run_test test_config_absent_skips "absent config → best-effort skip (exit 0)"
