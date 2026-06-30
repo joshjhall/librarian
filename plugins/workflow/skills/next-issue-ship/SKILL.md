@@ -61,99 +61,18 @@ When autonomous:
 When NOT autonomous, behavior is unchanged — every interactive prompt below
 runs verbatim as the default.
 
-## Golem Execution Model (for orchestrators)
+## Golem Execution Model & Environment Variables
 
-A golem running this skill is an OS **process**, never itself a Workflow
-subagent. This skill drives the adversarial review harness
-(`next-issue-ship/workflow.js`, Step 3.5 item 6 and the Step 4 multi-cycle
-loop), which in turn fans out the `code-reviewer` agent. The Workflow tool
-permits only **one level of nesting** (`workflow()` inside a workflow throws),
-and that nesting level is reserved for the review harness's own fan-out — so a
-golem MUST be its own process and own the single Workflow invocation tree.
-
-Orchestrators (e.g. the master-orchestrator in #524) MUST spawn golems as
-**processes** (subprocess / container / worktree), NOT as Workflow subagents.
-Spawning a golem as a Workflow subagent would consume the one nesting level and
-make the review harness invocation throw.
-
-## Environment Variables
-
-These env vars toggle non-default behavior; all are opt-in:
-
-- `AUTOMERGE=1` — in Option 1 (Branch + PR), queue the PR for GitHub's
-  native auto-merge via `gh pr merge --auto --squash --delete-branch`
-  immediately after PR creation and exit, skipping the CI-wait loop. Because
-  the fast path exits before the post-CI multi-cycle review loop, it
-  **intentionally skips that loop** — `AUTOMERGE=1` is the per-invocation
-  escape hatch from the review gate. GitHub only. Skipped for
-  `severity/critical` issues. Falls through to the normal CI-wait loop if
-  `gh pr merge --auto` fails (e.g., auto-merge not enabled on the repo). See
-  Option 1 "Auto-merge fast path" below. The orchestrate **integration train**
-  (`orchestrate` § Phase T) is the batch consumer of this same
-  `gh pr merge --auto` settle-on-green path: it lands a set of PRs with one
-  up-front approval, relying on `--auto` to merge each as its (already-green)
-  checks settle rather than a manual merge + wait per PR.
-- `AUTOMERGE_AUTONOMOUS=1` — **required second consent** to allow the
-  `AUTOMERGE=1` fast path *while autonomous*. Auto-merge skips the entire
-  adversarial review loop, and an autonomous golem sets autonomy from the
-  environment — so `AUTOMERGE=1` alone in an autonomous run would merge to the
-  default branch unreviewed and unseen. To prevent that, when the run is
-  autonomous the auto-merge fast path is taken ONLY if BOTH `AUTOMERGE=1` and
-  `AUTOMERGE_AUTONOMOUS=1` are set. If `AUTOMERGE=1` is set but
-  `AUTOMERGE_AUTONOMOUS=1` is not, the run ignores auto-merge and falls through
-  to the normal CI-wait loop + review, stopping at green CI for human merge.
-  Has no effect in non-autonomous runs (interactive `AUTOMERGE=1` is unchanged
-  — the human is already in the loop). **Operational note:** the two-variable
-  scheme is a real consent gate only if the variables come from *separate*
-  sources — setting both in the same `.env` block, compose `environment:`, or
-  CI secret group defeats the "second consent" intent (one copy-paste enables
-  unreviewed merges). Inject `AUTOMERGE_AUTONOMOUS=1` from a distinct
-  configuration source (e.g. a separate 1Password entry / secret group) than
-  `AUTOMERGE=1`, and only for golem environments that are meant to auto-merge.
-  The integration train does **not** weaken this: its single batch approval
-  authorizes the *sequence* of merges, but each PR's auto-merge still requires
-  BOTH `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` when the train runs autonomously.
-- `PRE_REVIEW_STRICT=true` — pre-review gates (Step 3.5) block Option 1 PR
-  creation on HIGH certainty findings instead of warning only.
-- `REVIEW_MAX_CYCLES` — integer, default `3`. Caps the post-CI multi-cycle
-  adversarial review loop (Option 1). The cap lives in this skill, not in
-  `workflow.js`, which runs exactly one review cycle per invocation.
-- `REVIEW_STRICT=true` — treat MEDIUM-certainty findings as blocking in the
-  adversarial review (Step 3.5 item 6 and the Step 4 loop), in addition to the
-  default HIGH-certainty blocking set. Parallels `PRE_REVIEW_STRICT`.
-- `LIBRARIAN_CI_WAIT_TIMEOUT` — integer **minutes**, default `15`. Threshold for
-  the "Wait for CI" poll loop (Step 4 Option 1): once cumulative wait crosses
-  this, the loop hits a **checkpoint** instead of polling forever. Interactive:
-  prompt **cut short** vs **extend** (another interval). Autonomous: extend
-  automatically up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times, then STOP — see
-  the CI-monitor sub-step. The 30 s poll cadence is unchanged; this only bounds
-  total wait.
-- `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` — integer, default `2`. In autonomous runs,
-  how many extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals the CI-wait loop adds
-  before giving up (default `15` + 2×`15` = 45 min total), so a headless golem
-  polling a stuck CI run cannot hang. Ignored interactively (the human chooses
-  cut-short/extend at each checkpoint).
-- `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra/setup step
-  names that mark a CI failure as a **likely flake** rather than a code
-  regression (CI-failure triage, Step 4 Option 1). Default:
-  `Set up Docker Buildx|Checkout|checkout|Login|login|cache|Cache|Set up job`.
-  A failure whose failing step matches this — or whose failing job type cannot
-  be affected by the PR's changed files — is auto-retried once before any
-  escalation. Override per repo to teach the triage that repo's setup steps.
-- `LIBRARIAN_CI_INFRA_RETRIES` — integer, default `1`. How many times an
-  infra-classified failure is `gh run rerun --failed` before escalating to
-  `ci-fixer`/the human. This bound is **independent of** the `ci-fixer` 3-attempt
-  cap (which covers code fixes) — it only re-runs an unchanged infra step. Set
-  `0` to disable infra auto-retry (every failure goes straight to ci-fixer/human).
-  Degrades gracefully: if classification data can't be fetched, the triage falls
-  through to the normal ci-fixer handoff with an escalate-with-note, never a
-  hard-fail.
-
-> **Review threshold:** the adversarial **review** loop is bounded by
-> `REVIEW_MAX_CYCLES` (above), not a wall-clock timer — that cap, plus the
-> harness's token budget, already gives the issue's cut-short/extend +
-> non-interactive-fallback semantics (prompt to fix/ship/defer at the cap;
-> autonomous defers). There is intentionally no separate review timeout var.
+**Companion file**: `ship-protocol.md` in this skill directory carries (1) the
+**Golem Execution Model** — a golem running this skill is an OS **process**,
+never a Workflow subagent, because the one permitted Workflow nesting level is
+reserved for this skill's review harness; orchestrators MUST spawn golems as
+processes (subprocess / container / worktree), and (2) the full **Environment
+Variables** contract: `AUTOMERGE` plus `AUTOMERGE_AUTONOMOUS` (the auto-merge
+fast path and its autonomous double-consent), `PRE_REVIEW_STRICT` /
+`REVIEW_STRICT` / `REVIEW_MAX_CYCLES` (review gating), and the `LIBRARIAN_CI_*`
+family (CI-wait threshold/extensions and infra-flake triage tuning). Load
+`ship-protocol.md` before relying on any of these toggles.
 
 ## Step 1 — Read State
 
@@ -234,191 +153,27 @@ use `AskUserQuestion` to present three options:
 
 ## Step 3.5 — Pre-Ship Validation
 
-Before executing the chosen shipping mode, run these safety checks:
+**Companion file**: `pre-ship-validation.md` in this skill directory carries the
+full six-check pre-ship validation sequence. Before executing the chosen shipping
+mode, run these safety checks in order:
 
-1. **Run test suite** — auto-detect the project's test runner (see
-   `orchestrate/merge-protocol.md` § Test Runner Detection for the detection
-   order: `package.json` → `pyproject.toml` → `go.mod` → `Cargo.toml` →
-   `Gemfile` → `Makefile` → `build.gradle`).
+1. **Run test suite** (auto-detect runner) — blocking for Option 1 / autonomous
+   (never open a PR with red tests; autonomous attempts a capped 3-fix loop then
+   STOPs with a completion summary); advisory for Options 2/3.
+1. **Verify git status** — warn on untracked source/test files that look stageable.
+1. **Check branch freshness** (Option 1) — warn if `origin/main` has advanced;
+   advisory (autonomous records a note and proceeds).
+1. **Check for plan drift** (optional) — compare planned vs actual files +
+   acceptance criteria; advisory (autonomous records notes and proceeds).
+1. **Pre-review gates** — run `pre-review-gates.sh` over the diff; advisory by
+   default, HIGH-certainty findings block Option 1 under `PRE_REVIEW_STRICT=true`.
+1. **Adversarial pre-PR review** (Option 1) — run the `workflow.js` harness
+   (`phase: "pre-pr"`); fix `blocking` findings in a `REVIEW_MAX_CYCLES`-capped
+   loop, collect `deferrable` for filing after the PR exists.
 
-   - If tests **pass**: proceed to Step 4
-   - If tests **fail**:
-     - Show the failure summary to the user
-     - Ask: **Fix failures now, or ship anyway?**
-     - **Option 1 (Branch + PR)**: test failure is **blocking** — do NOT
-       create a PR with failing tests. The user must fix first or switch to
-       Option 3 (commit only)
-     - **Option 2/3**: test failure is **advisory** — warn but allow commit
-     - **When autonomous** (always Option 1): test failure stays **blocking**
-       — never open a PR with red tests — but do NOT prompt. Attempt an
-       autonomous fix in a capped loop (cap at 3 attempts), re-running tests
-       each time. If still failing after the cap, STOP and emit the
-       structured completion summary (see Option 1 "Autonomous completion
-       summary") reporting the test failure, rather than asking
-   - If **no test runner detected**: skip this check and note it in the output
-
-1. **Verify git status** — check for untracked files that look like they
-   should be staged (new source files, new test files). Warn if found.
-
-1. **Check branch freshness** (Option 1 only) — if on a feature branch,
-   check if main has advanced:
-
-   ```bash
-   git fetch origin main
-   git rev-list --count HEAD..origin/main
-   ```
-
-   If count > 0, warn: "Main has {N} new commits since this branch was
-   created. Consider rebasing before PR."
-
-   When autonomous, do not prompt — branch freshness is advisory; record the
-   warning as a note for the completion summary and proceed.
-
-1. **Check for plan drift** (optional) — fetch the issue body and check for
-   "Affected Files" or "Acceptance Criteria" sections. If either exists,
-   run drift analysis (see `drift-detect` skill for full workflow):
-
-   - Compare planned files from the issue against actual files from
-     `git diff --name-only origin/main...HEAD`
-   - Check acceptance criteria checkboxes for unaddressed items
-   - **If HIGH-severity drift found**: warn and ask — "Fix drift now,
-     ship anyway, or skip?"
-   - **If only MEDIUM/LOW drift**: show summary, proceed automatically
-   - **If no plan sections found in issue**: skip this check silently
-
-   This check is advisory — the user can always choose to ship anyway.
-
-   When autonomous, do not prompt — drift is advisory; record any findings as
-   notes for the completion summary and proceed.
-
-1. **Pre-review gates** (advisory by default) — run deterministic quality
-   scanning on changed files to catch mechanical issues before review:
-
-   a. Generate file list from the diff:
-
-   ```bash
-   git diff --name-only origin/main...HEAD > /tmp/pre-review-files.txt
-   ```
-
-   b. Run the pre-review scanner (locate `pre-review-gates.sh` in the same
-   directory as this skill file):
-
-   ```bash
-   bash pre-review-gates.sh /tmp/pre-review-files.txt
-   ```
-
-   c. Parse TSV output — each line: `file\tline\tcategory\tevidence\tcertainty`
-
-   **Categories detected:**
-
-   | Category              | What it catches                                  | Certainty |
-   | --------------------- | ------------------------------------------------ | --------- |
-   | `ai-slop`             | Hedging phrases, buzzword inflation, filler text | HIGH      |
-   | `debug-statement`     | print(), console.log, debugger, breakpoint       | HIGH      |
-   | `missing-test-file`   | Source files with no corresponding test file     | HIGH      |
-   | `untested-public-api` | Public functions not referenced in any test file | HIGH      |
-
-   **Handling findings:**
-
-   - **No findings**: proceed silently to Step 4
-   - **Findings exist (advisory mode — the default)**:
-     - Show a summary table: category, count, top examples
-     - For HIGH certainty `ai-slop` or `debug-statement` findings: offer to
-       auto-fix (remove debug lines, trim AI slop phrases) before committing
-     - For `missing-test-file` / `untested-public-api`: note these in the PR
-       description (Option 1) so reviewers are aware
-     - Proceed to Step 4 regardless of findings
-   - **Strict mode** (`PRE_REVIEW_STRICT=true` in environment):
-     - HIGH certainty findings **block Option 1** (PR creation) — the user
-       must fix them or explicitly choose "ship anyway"
-     - Options 2/3 remain advisory (warn only)
-
-   **PR description integration** (Option 1 only): if findings remain after
-   auto-fix, append a "Pre-review findings" section to the PR body:
-
-   ```markdown
-   ## Pre-review findings
-
-   - 2x debug-statement (src/handler.py:42, src/utils.py:18)
-   - 1x missing-test-file (src/new_module.py)
-   ```
-
-   **Autonomous mode**: never prompt. Apply auto-fixes as in advisory mode and
-   record any remaining findings as notes for the completion summary (and in
-   the PR description as above). Pre-review stays advisory unless
-   `PRE_REVIEW_STRICT=true`, in which case HIGH certainty findings still block
-   Option 1 — but the run STOPS and emits the structured completion summary
-   (see Option 1 "Autonomous completion summary") rather than prompting.
-
-   **Graceful degradation**: if `pre-review-gates.sh` is not found or fails
-   to execute, skip this check with a note: "Pre-review gates skipped
-   (scanner not available)." Never block shipping due to scanner errors.
-
-1. **Adversarial pre-PR review** (Option 1 only) — run a multi-dimension
-   adversarial review of the changes **before** the PR is opened, so the PR's
-   first impression is review-clean. This complements the deterministic
-   pre-review gates above with LLM reviewers (security, correctness, tests,
-   CLAUDE.md conventions, scope-drift) plus a fresh judge and gatekeeper.
-
-   a. Compute the review scope from the diff against `main`:
-
-   ```bash
-   git fetch origin main
-   git diff --name-only origin/main...HEAD   # -> files
-   git diff origin/main...HEAD               # -> diff (context)
-   ```
-
-   If there are no committed changes yet (work is staged but not committed),
-   stage and make the implementation commit first (Step 4 Option 1 steps 1-3),
-   then compute the scope — the review needs a diff to read.
-
-   b. **Invoke the `Workflow` tool** with the script bundled alongside this
-   skill at `~/.claude/skills/next-issue-ship/workflow.js`, passing:
-
-   ```text
-   args: {
-     phase: "pre-pr",
-     cycle: 1,
-     maxCycles: <REVIEW_MAX_CYCLES, default 3>,
-     files: [<changed files>],
-     diff: "<diff text>",
-     issue: { number: {N}, title: "{title}" }
-   }
-   ```
-
-   The harness fans the dimensions as one parallel barrier under a single
-   token budget, re-scores certainty with a fresh judge, and returns
-   `{ blocking[], deferrable[], summary, budget_exhausted, clean }`. The review
-   agents are **read-only** — applying fixes and filing deferrals is this
-   skill's job (below).
-
-   c. **Resolve the blocking findings**: for each finding in `blocking`, make
-   the fix in the working tree, then amend or add a commit. Re-run step (b)
-   (incrementing `cycle`) until `clean` is true or `cycle` exceeds
-   `REVIEW_MAX_CYCLES`. When `REVIEW_STRICT=true`, also treat MEDIUM-certainty
-   findings as blocking.
-
-   d. **Collect the deferrables**: keep the `deferrable` list for filing
-   **after** the PR exists (so the filed issues can link the PR) — see Option 1
-   "File deferred review findings".
-
-   e. **Cap / budget exhaustion**: `REVIEW_MAX_CYCLES` (default 3) is the
-   review action's threshold — the cut-short/extend checkpoint for review, the
-   analogue of `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop. If `cycle`
-   exceeds `REVIEW_MAX_CYCLES` or `budget_exhausted` is true with blocking
-   findings still open:
-
-   - **Interactive**: ask — **Fix remaining blocking findings now, ship anyway,
-     or defer them?** (cut short the review vs. extend it by raising
-     `REVIEW_MAX_CYCLES`).
-   - **Autonomous**: do NOT prompt. Proceed to open the PR, but record the
-     remaining blocking findings as a STOP note for the completion summary
-     (Option 1 "Autonomous completion summary" → "Review status").
-
-   **Graceful degradation**: if the `Workflow` tool or
-   `~/.claude/skills/next-issue-ship/workflow.js` is unavailable, skip this
-   step with a note: "Adversarial pre-PR review skipped (harness not
-   available)." Never block shipping due to harness errors.
+Each check degrades gracefully (a missing scanner/harness is skipped with a note,
+never a hard-fail) and never prompts when autonomous. See `pre-ship-validation.md`
+for the per-check commands, tables, and autonomous-mode rules.
 
 ## Step 4 — Execute
 
@@ -539,256 +294,33 @@ Before executing the chosen shipping mode, run these safety checks:
    commit still references the issue. Users who want merge-commits can
    run Option 1 without `AUTOMERGE=1`.
 
-1. **Monitor CI and remediate failures** (advisory; the `ci-fixer` Workflow
-   harness caps fixes at 3 attempts per check):
+1. **Monitor CI, run the multi-cycle review loop, and file deferred findings**
+   — **Companion file**: `ci-review-protocol.md` in this skill directory carries
+   the full protocol for these three post-PR-creation steps. Skipped entirely
+   when `AUTOMERGE=1` took the auto-merge fast path above. In brief:
 
-   Before labeling the issue, optionally monitor CI checks and auto-fix
-   failures. Ask the user:
+   - **Monitor CI and remediate failures** (advisory; `ci-fixer` caps fixes at 3
+     attempts per check). Autonomous always waits. Poll `gh pr checks` every 30 s
+     against the `LIBRARIAN_CI_WAIT_TIMEOUT` checkpoint (autonomous auto-extends
+     up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS`, then STOPs). On failure, **triage
+     infra-flake vs real first** (classify by failing-step name vs the diff;
+     auto-retry an infra flake once via `gh run rerun --failed`; collapse cascade
+     failures to their root cause), then hand real failures to the `ci-fixer`
+     `workflow.js` harness — applying its commits (hard-filtered against the
+     CI-config denylist), pushing, and re-polling.
+   - **Multi-cycle PR review loop** (after green CI) — re-run the `workflow.js`
+     harness (`phase: "pr-cycle"`) folding in open PR comments, resolve `blocking`
+     / file `deferrable`, commit + push + re-check CI each cycle, terminate when
+     clean + green + every comment resolved-or-deferred (cap `REVIEW_MAX_CYCLES`).
+   - **File deferred review findings** — file each via `/file-issue` (autonomous
+     fallback: `gh issue create --body-file`, never interpolating LLM text into a
+     shell arg), link them on the PR, and append a "Review findings" section to
+     the PR body. Nothing is silently dropped.
 
-   - **Wait for CI** — monitor checks and auto-fix failures if possible
-   - **Skip CI monitoring** — proceed to labeling immediately
-
-   When autonomous, do not prompt — ALWAYS wait for CI and auto-fix (proceed
-   as if the user chose "Wait for CI").
-
-   If the user chooses to wait:
-
-   a. **Poll for check completion** against a wait threshold (so a stuck or
-   slow CI run never blocks indefinitely):
-
-   - GitHub: `gh pr checks {pr_number} --json name,state,conclusion`
-     (poll every 30 seconds until no checks have `state: "pending"`)
-   - GitLab: `glab ci status` (check for completion)
-   - **Threshold checkpoint** — track cumulative wait time. Once it crosses
-     `LIBRARIAN_CI_WAIT_TIMEOUT` minutes (default 15), do NOT keep polling
-     blindly:
-     - **Interactive**: prompt — **Cut short** (stop waiting; proceed to
-       labeling, noting CI was still pending) or **Extend** (wait another
-       `LIBRARIAN_CI_WAIT_TIMEOUT` minutes, then re-checkpoint).
-     - **Autonomous**: do NOT prompt. Auto-extend up to
-       `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times (default 2 → 45 min total), then
-       **STOP** — proceed to the completion summary with a STOP note ("CI still
-       pending after {total} min — not waited further"), mirroring the
-       autonomous CI-failure STOP below. Never hang waiting on a prompt.
-
-   b. **If all checks pass**: inform the user and proceed to labeling
-
-   c. **If checks fail — triage infra-flake vs real regression FIRST**
-   (classification, not a new retry layer). Before handing anything to
-   `ci-fixer`, classify each failing check so a known infra/setup flake is not
-   surfaced as a code regression, and collapse cascade failures to their root
-   cause:
-
-   - **Fetch the failing STEP name and the PR's changed-file set:**
-
-     ```bash
-     gh pr checks {pr_number} --json name,state,conclusion,link \
-       | jq '[.[] | select(.conclusion == "failure")]'
-     gh run view {run_id} --json jobs \
-       --jq '.jobs[] | select(.conclusion=="failure")
-             | {job:.name, step:([.steps[] | select(.conclusion=="failure") | .name] | first)}'
-     git diff --name-only origin/main...HEAD     # the PR's changed files
-     ```
-
-   - **Classify each failure:**
-     - **Likely infra/flake** — the failing step matches a known
-       setup/provisioning step (the env-overridable list
-       `LIBRARIAN_CI_INFRA_STEPS`, default:
-       `Set up Docker Buildx|Checkout|checkout|Login|login|cache|Cache|Set up job`),
-       OR the failing job type cannot be affected by the PR's changed files
-       (e.g. a Docker `Build` job on a docs/tests-only diff). → **auto-retry
-       once**: `gh run rerun --failed`, then re-poll from (a) and re-evaluate;
-       escalate only if it **re-fails**. This auto-retry is bounded by
-       `LIBRARIAN_CI_INFRA_RETRIES` (default `1`) and is INDEPENDENT of — it does
-       not consume or duplicate — the `ci-fixer` 3-attempt cap (that cap covers
-       *code* fixes; this covers *re-running* an unchanged infra step).
-     - **Likely real** — the failing step exercises the change (a test / lint /
-       build step touching the diff). → skip the retry; go straight to the
-       `ci-fixer` handoff below (today's behavior).
-   - **Collapse cascade failures.** An aggregation/summary job (e.g.
-     `PR Tier > Summarize`) that failed only because an upstream job it depends
-     on failed is NOT an independent failure — attribute it to its upstream
-     root cause and report it once, under that cause, rather than as a second
-     failing check.
-   - **Degrade gracefully.** If step names or the changed-file set can't be
-     fetched (API error, unrecognized step), do NOT hard-fail and do NOT auto-
-     retry blindly — fall through to the `ci-fixer` handoff and, when
-     autonomous, record an escalate-with-note ("CI triage unavailable —
-     classified as real") in the completion summary. Never block shipping on the
-     triage step itself.
-
-   For any failure classified **real** (or an infra failure that re-failed after
-   its bounded retry), hand it to the `ci-fixer` Workflow harness, which owns the
-   code-fix retry loop (hard-capped at 3 attempts per check) and fans independent
-   checks in parallel under one shared token budget — you no longer track an
-   iteration counter by hand.
-
-   - Collect every failing check into a `checks` array. For each one, grab the
-     name and its run-failed logs:
-
-     ```bash
-     gh pr checks {pr_number} --json name,state,conclusion,link \
-       | jq '[.[] | select(.conclusion == "failure")]'
-     gh run view {run_id} --log-failed 2>&1 | tail -200   # one per failing check
-     ```
-
-   - **Invoke the `Workflow` tool** with the script at
-     `~/.claude/agents/ci-fixer/workflow.js` (it ships bundled with the
-     `ci-fixer` agent), passing
-     `args: { checks: [{ name, logs, pr: {pr_number} }, …] }`. The harness runs
-     a capped `parse → fix → verify` loop per check and returns
-     `{ results: [{ check, fixed, summary, files_changed, remainingFailures, … }] }`.
-     Agents never push — applying the commits is your job:
-
-     - For each result with `fixed: true`: stage its `files_changed`, then make
-       one commit `fix(ci): {summary}` (combine multiple fixed checks into a
-       single commit when convenient), `git push`, and go back to (a) to
-       re-check CI. **Before staging, hard-filter `files_changed` against the
-       CI-config denylist** — drop any path matching `.github/workflows/`,
-       `.gitlab-ci.yml`, `.github/actions/`, or `*/action.yml`. The `ci-fixer`
-       agent is instructed not to touch CI config, but it has tree-wide edit
-       access, so enforce it here rather than trusting the guardrail: if a
-       result's `files_changed` contains a denylisted path, do NOT stage that
-       path, and surface it to the user (autonomous: record as a STOP note in
-       the completion summary) as "ci-fixer attempted a CI-config edit
-       ({path}) — skipped; manual review required." Never let an automated CI
-       fix rewrite the CI definition that gates it.
-     - For each result with `fixed: false`: inform the user "CI check {check}
-       appears to be {failure_type} — {summary}. Remaining: {remainingFailures}.
-       Requires manual intervention." Ask: **Fix manually now, or ship with
-       failing CI?** If fix manually, pause then go back to (a); if ship anyway,
-       proceed to labeling. **When autonomous**: do NOT prompt — STOP and emit
-       the structured completion summary (see "Autonomous completion summary"
-       below) noting the unresolved CI failure; do not leave the run in a
-       prompting state.
-
-   The harness stops on its own once the per-check cap or the shared budget is
-   reached, so there is no separate "after 3 attempts" step — surface any
-   still-failing results to the user as above.
-
-   **Graceful degradation**: If `gh pr checks` is unavailable or errors,
-   skip CI monitoring with a note and proceed to labeling. CI monitoring
-   never blocks shipping.
-
-1. **Multi-cycle PR review loop** (after green CI) — re-review the PR after
-   fixes land, because resolving one finding (or a CI fix) can silently
-   introduce another. Each cycle re-runs the adversarial review harness **and**
-   folds in open PR review comments, then resolves-or-defers everything.
-   Skipped entirely when `AUTOMERGE=1` took the auto-merge fast path above.
-
-   Run the loop with `cycle = 1` and `cap = REVIEW_MAX_CYCLES` (default 3):
-
-   a. **Gather the changed scope** (now includes any CI fixes):
-
-   ```bash
-   git diff --name-only origin/main...HEAD   # -> files
-   git diff origin/main...HEAD               # -> diff
-   ```
-
-   b. **Gather open PR review comments** and normalize unresolved review-thread
-   comments + issue-style PR comments into a `prComments` array of
-   `{ id, author, path?, line?, body, url? }`:
-
-   ```bash
-   gh pr view {pr_number} --json reviews,comments
-   ```
-
-   c. **Invoke the `Workflow` tool** with
-   `~/.claude/skills/next-issue-ship/workflow.js`, passing:
-
-   ```text
-   args: {
-     phase: "pr-cycle",
-     cycle: <cycle>,
-     maxCycles: <cap>,
-     files: [<changed files>],
-     diff: "<diff text>",
-     prComments: [<normalized comments>],
-     issue: { number: {N}, title: "{title}" }
-   }
-   ```
-
-   It returns `{ blocking[], deferrable[], comments_addressed[], summary,
-   budget_exhausted, clean }`.
-
-   d. **Resolve or defer**:
-
-   - For each `blocking` finding (and any comment triaged `blocking`): fix it
-     in the working tree and stage. When `REVIEW_STRICT=true`, MEDIUM-certainty
-     findings are blocking too.
-   - For each `deferrable` finding (and any comment triaged `deferrable`): file
-     it via Option 1 "File deferred review findings" below, then reply to the
-     originating PR review comment (if any) with the new issue link so the
-     comment is **resolved-or-deferred**, not dropped.
-
-   e. **If any fixes were applied this cycle**: commit
-   `fix(review): address cycle {cycle} findings`, `git push`, and re-run the
-   CI-monitor sub-step above (wait for green, auto-fix via `ci-fixer`).
-
-   f. **Terminate the loop** when ALL of the following hold:
-
-   - `clean` is true (no blocking findings remain), **and**
-   - CI is green, **and**
-   - every PR comment is resolved-or-deferred (none left unaddressed).
-
-   Otherwise `cycle++`; if `cycle` exceeds `cap`, **STOP** and surface the
-   remaining blocking findings / unresolved comments. **Interactive**: ask
-   **Keep fixing, ship as-is, or defer the rest?** **Autonomous**: do NOT
-   prompt — STOP and record the remaining items for the completion summary
-   (Review status: stopped-with-blocking).
-
-   The cap and budget bound the loop: `workflow.js` runs one cycle per
-   invocation and returns partial results if its shared budget is exhausted, so
-   the loop always terminates.
-
-   **Graceful degradation**: if the `Workflow` tool or the harness script is
-   unavailable, skip this loop with a note ("Multi-cycle review skipped
-   (harness not available)") and proceed to labeling. Review never blocks
-   shipping due to harness errors.
-
-1. **File deferred review findings** — for each deferrable finding collected in
-   the pre-PR pass (Step 3.5 item 6) and every loop cycle above:
-
-   - Preferred: invoke **`/file-issue`** with the finding's title, severity,
-     category, and description as the seed (its auto-labeling and scope checks
-     apply). In autonomous mode, pre-answer `/file-issue`'s questions from the
-     finding fields so it does not prompt.
-   - Autonomous fallback (to avoid a nested interactive skill): create the
-     issue directly with the same label taxonomy `/file-issue` uses. Pass the
-     body via `--body-file`, **never** by interpolating `{finding.description}`
-     into a `--body "..."` argument: the description is LLM-generated and may
-     contain backticks, `$(...)`, quotes, or newlines that would break out of
-     the quoted string and execute in the shell — and this path runs unattended
-     under `--autonomous` with no human gate. Use the **`Write` tool** to write the
-     body to a temp file (so the content never passes through a shell at all),
-     then reference it:
-
-     1. `Write` the body to `/tmp/deferred-finding-{n}.md` — the finding's
-        description followed by `\n\nDeferred from PR #{pr_number} (review
-        finding).`
-     2. Create the issue from that file:
-
-        ```bash
-        gh issue create --title "{finding.title}" \
-          --body-file /tmp/deferred-finding-{n}.md \
-          --label "type/{type},severity/{sev},component/{comp}"
-        ```
-
-   Keep `--title` short and free of shell metacharacters (it is a finding
-   name); if a title could contain them, write it into the body and use a
-   generic title.
-
-   - After filing, link the deferred issues on the PR in one comment:
-
-     ```bash
-     gh pr comment {pr_number} --body "Deferred review findings filed: #{A}, #{B}. Addressed on this PR: {count} blocking finding(s) across {cycles} review cycle(s)."
-     ```
-
-   - Append a "Review findings" section to the PR body (mirrors the
-     "Pre-review findings" convention), listing fixed-on-PR vs deferred-to-#.
-
-   Nothing is silently dropped: every confirmed finding is either fixed on the
-   PR or filed as a linked issue.
+   Every sub-step degrades gracefully (a missing harness/`gh` is skipped with a
+   note, never a hard-fail) and never prompts when autonomous. See
+   `ci-review-protocol.md` for the commands, the failure-triage classifier, the
+   loop-termination rule, and the deferred-filing safety contract.
 
 1. **Label the issue** `status/pr-pending` and remove `status/in-progress`:
 
