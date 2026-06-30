@@ -1,7 +1,8 @@
-# CLAUDE.md
+# Librarian — Developer Guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with
-code in this repository.
+This file provides guidance to AI coding agents (Claude Code via `CLAUDE.md`,
+and others via the `AGENTS.md` symlink) when working with code in this
+repository.
 
 ## What this repo is
 
