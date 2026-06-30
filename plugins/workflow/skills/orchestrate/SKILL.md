@@ -286,12 +286,12 @@ golem waits. Arm both gate channels via the `Monitor` tool (they are
 
 ```text
 Monitor({                                       # feed: ALL golems, TTY-free
-  command: "bin/golem-gate-watch.sh --stream",
+  command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-gate-watch.sh --stream",
   description: "golem permission gates (feed.jsonl)",
   persistent: true,
 })
 Monitor({                                       # panes: live worktree golems
-  command: "bin/golem-gate-watch.sh --stream-panes",
+  command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-gate-watch.sh --stream-panes",
   description: "golem prompt overlays (tmux capture-pane)",
   persistent: true,
 })
