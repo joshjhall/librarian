@@ -30,9 +30,11 @@ Environment Variables).
 **Companion files** (load before the matching phase):
 
 - `mode-protocol.md` — execution + golem dispatch modes, decision tree
+- `pool-train-protocol.md` — Phase P (worker pool) + Phase T (integration train)
+  full step-by-step protocol
 - `merge-protocol.md` — cross-PR rebase conflict classification + test-runner
-  detection + integration-train sequencing/CI-subset policy (live); merge/sync
-  sections marked opt-in legacy
+  detection + integration-train sequencing/CI-subset policy (live); merge/sync +
+  local-merge sections marked opt-in legacy
 - `workflow.js` — the monitor-poll + cross-PR-rebase + train-order + pool-refill
   harness (invoked via the Workflow tool; never edited at runtime)
 
@@ -99,19 +101,17 @@ dispatch is sequential and cheap — **not** workflow-driven.
    ```bash
    # Inside the golem's container tmux or worktree shell — launch INTERACTIVE
    # with `--permission-mode auto` passed EXPLICITLY (never headless `claude -p`,
-   # never --dangerously-skip-permissions — see the golem-supervised-auto-mode
-   # memory / #570). The explicit flag is required: a fresh worktree is untrusted,
-   # so Claude Code does NOT load its copied settings.local.json `defaultMode:
-   # auto` and would silently fall back to `default` and prompt-storm (#585).
-   # The harness `--permission-mode auto` is distinct from the `/next-issue`
-   # `--autonomous` skill flag (deprecated alias `--auto`; run autonomously) —
-   # both are needed.
+   # never --dangerously-skip-permissions — see golem-supervised-auto-mode / #570).
+   # The explicit flag is required: a fresh worktree is untrusted, so Claude Code
+   # does NOT load its copied settings.local.json `defaultMode: auto` and would
+   # fall back to `default` and prompt-storm (#585). The harness
+   # `--permission-mode auto` is distinct from the `/next-issue` `--autonomous`
+   # skill flag (deprecated alias `--auto`) — both are needed.
    # Autonomous /next-issue invokes /next-issue-ship in-turn, so the first prompt
    # reaches Branch + PR on its own. The `;`-chained second prompt is a resume
-   # backstop, NOT `&&`: it must run even if the first prompt exits non-zero
-   # before shipping (the very case it exists for). If the first already shipped
-   # (state file deleted), the second is a near no-op ("No in-progress issue
-   # found" → stop):
+   # backstop, NOT `&&`: it must run even if the first exits non-zero before
+   # shipping. If the first already shipped (state file deleted), the second is a
+   # near no-op ("No in-progress issue found" → stop):
    claude --permission-mode auto "/next-issue {N} --autonomous" ; claude --permission-mode auto "/next-issue-ship --autonomous"
    ```
 
@@ -141,40 +141,27 @@ dispatch is sequential and cheap — **not** workflow-driven.
      fully autonomous, no plan stop. The launch above runs unattended to a PR.
    - **`effort/medium`, `effort/large`, `severity/critical`, or no `effort/*`
      label** → **plan-gated**: the golem builds the plan and BLOCKS at
-     `ExitPlanMode` awaiting human approval. It shows up BLOCKED in `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`;
-     the operator runs `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, reviews/refines the plan
-     in-session, and approves — then the SAME session continues autonomously
-     through implement → review → push/PR with the refined plan in-context.
+     `ExitPlanMode` awaiting human approval (shown BLOCKED in
+     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`). The operator attaches via
+     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines and approves the
+     plan in-session — then the SAME session continues autonomously through
+     implement → review → push/PR with the refined plan in-context.
 
    **Plan approval requires a HUMAN keystroke — it is not agent-drivable (#29).**
-   At the `ExitPlanMode` prompt the two relevant choices behave differently
-   under the auto-mode classifier:
-
-   - **Option 1 — "Yes, and use auto mode"** is what makes the SAME session
-     continue autonomously to a PR. But selecting it *switches the golem into
-     auto mode*, and that switch **itself trips the classifier**
-     (`[Create Unsafe Agents]`) when relayed by an orchestrating agent — so an
-     agent operator cannot press option 1 on the golem's behalf.
-   - **Option 2 — "Yes, manually approve edits"** approves the plan WITHOUT the
-     auto-mode switch, so an agent *can* select it — but the golem then gates on
-     **every subsequent edit** and does NOT run unattended to a PR.
-
-   Net: the documented "human approves plan → golem continues autonomously to
-   PR" flow works **only when a human presses option 1 in a real TTY** (via
-   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`). It cannot be driven by an orchestrating
-   agent relaying approval. When dispatching plan-gated (medium+/critical)
-   golems, surface this to the operator: their plan approval is a human
-   keystroke at the attached TTY, not something the orchestrator can answer for
-   them. (To avoid the plan gate entirely on a medium issue, dispatch it with
-   `--force-auto` — see below — accepting that it runs unattended without a
-   plan checkpoint.)
+   At the `ExitPlanMode` prompt only **option 1 ("Yes, and use auto mode")** lets
+   the SAME session continue autonomously to a PR, but selecting it trips the
+   auto-mode classifier when an orchestrating agent relays it — so a human must
+   press it in a real TTY (attach via `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh
+   {N}`). When dispatching plan-gated (medium+/critical) golems, surface this:
+   their plan approval is a human keystroke at the attached TTY, not something the
+   orchestrator can answer for them. See `mode-protocol.md` § *Plan gate by
+   effort/severity* for the full option-1-vs-option-2 classifier contract.
 
    The launch command is identical either way (the policy lives in
    `/next-issue`); dispatch only needs to **expect** medium+/critical golems to
-   block at the plan step rather than run straight through. To override per
-   golem, append `--plan-gate` (force the checkpoint on a small issue) or
-   `--force-auto` (force full autonomy on a medium+/critical one) to the
-   `/next-issue {N} --autonomous` prompt.
+   block at the plan step. To override per golem, append `--plan-gate` (force the
+   checkpoint on a small issue) or `--force-auto` (force full autonomy on a
+   medium+/critical one) to the `/next-issue {N} --autonomous` prompt.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem), or, per-golem, queues GitHub auto-merge when BOTH
@@ -191,96 +178,17 @@ dispatch is sequential and cheap — **not** workflow-driven.
 
 ## Phase P — Worker Pool
 
-Phase D dispatches a fixed **set** of golems once. Phase P turns that set into a
-fixed-size **pool**: maintain up to **N** concurrent golems, and whenever a slot
-frees (a golem's PR merges and its worktree is pruned), automatically pull the
-next non-colliding issue from the backlog into a **fresh** worktree — until the
-backlog is empty and all slots are idle. The key property is a **bounded
-worktree footprint** (≤ N worktrees → bounded disk / container load) with
-continuous throughput, plus a clean **drain** off-switch so the operator can
-reset orchestrator context or restart services without losing in-flight work.
-
-The pool pairs with Phase T: the **pool feeds work in**, the **train lands it**.
-
-**Pool state** lives in `.worktrees/.status/pool.json` (schema:
-`schemas/pool-status.schema.json`). It is **authoritative for operator policy**
-— the pool `size` and the `accepting` state — and a display cache for everything
-else (PR + issue-label state stay authoritative for golem liveness):
-
-```json
-{ "size": 3, "accepting": "accepting", "slots": [ … ], "backlog_depth": 7 }
-```
-
-`accepting` is a three-state policy: `accepting` (refill a free slot from the
-backlog), `draining` (stop refills, let in-flight golems finish to idle — a
-one-way wind-down), `paused` (freeze refills without draining; resumable).
-
-### Refill loop
-
-The pool advances **on each Phase M monitor sweep** (no background daemon — the
-existing cadence is the clock):
-
-1. **Free slots.** The Phase M sweep already detects merged PRs; for each merged
-   golem, prune its worktree (`${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh {N}`, which also deletes the
-   branch). That frees a slot.
-
-1. **Refill decision.** If `pool.accepting == "accepting"` **and** a slot is
-   free **and** the backlog is non-empty, compute the refill plan. Gather:
-
-   - **in-flight** golems with their changed files (`gh pr view <N> --json files`
-     for golems with a PR; the issue's `## Affected Files` section otherwise),
-   - the **backlog** — the next issues in `next-issue` priority order
-     (`state-format.md` § Priority Ordering, status-label-excluded), each with
-     its predicted files (issue `## Affected Files` + `component/*` labels).
-
-   Invoke the Workflow tool on `~/.claude/skills/orchestrate/workflow.js` with:
-
-   ```text
-   args: {
-     mode: "pool",
-     pool:     { size: <N>, accepting: "<state>" },
-     inflight: [{ issue, golem, branch, files: [<paths>] }, …],
-     backlog:  [{ issue, files: [<predicted paths>] }, …],
-   }
-   ```
-
-   The harness is **pure computation** — it never dispatches, merges, or pushes.
-   It returns `pool` = `{ free_slots, picks, held, held_slots, excess }`:
-
-   - **`picks`** — the issues to dispatch into free slots, in priority order,
-     each predicted to collide with **neither** an in-flight golem **nor** an
-     earlier pick (keeps #602's merge train conflict-light).
-   - **`held`** — candidates skipped this sweep on a predicted file overlap
-     (with the colliding reason). A slot is held (left idle) rather than filled
-     with a guaranteed-colliding pick when only colliding candidates remain.
-   - **`excess`** — golems beyond `size` after a `pool <N>` shrink. **Report
-     them to drain — never kill a golem.**
-
-1. **Dispatch each pick** exactly as Phase D: `${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N}` then
-   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N}` (one standalone
-   `tmux new-session` per pick — never a `for`-loop wrapper; see Phase D step 4)
-   in a fresh worktree golem. Update `pool.json` `slots` / `backlog_depth`.
-
-1. **Repeat** until the backlog is empty and every slot is idle.
-
-### Controls (mid-flight Surface commands)
-
-These flip `pool.json` policy; the next sweep's refill honors it. They are also
-exposed as `/orchestrate` invocations (see the table above):
-
-- **`pool <N>`** — set the pool size live. **Grow** → free slots appear and the
-  next sweep fills them. **Shrink** → the now-`excess` golems are left to
-  **drain** (finish their PRs), never killed; the footprint settles at the new N.
-- **`drain`** — set `accepting = "draining"`. Refills stop; in-flight golems run
-  to completion and the pool idles. Use before a context reset / service restart
-  / end of day. One-way intent (re-enable with `resume`).
-- **`pause`** — set `accepting = "paused"`. Freeze refills without draining
-  (slots are held open, not wound down).
-- **`resume`** — set `accepting = "accepting"`. Re-enable refills; the next sweep
-  fills any free slot.
-
-`${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` surfaces the pool line — size, slots in use, backlog depth, and
-the `accepting` state — above the golem table.
+**Companion file**: `pool-train-protocol.md` § Phase P (load before this phase)
+carries the full worker-pool protocol. Phase D dispatches a fixed **set** of
+golems once; Phase P turns it into a fixed-size self-refilling **pool**: up to
+**N** concurrent golems, refilling each freed slot from the non-colliding backlog
+into a **fresh** worktree — bounded footprint (≤ N) plus a clean **drain**
+off-switch. The pool feeds work in; the train (Phase T) lands it. Pool policy
+lives in `.worktrees/.status/pool.json` (schema `schemas/pool-status.schema.json`)
+— `size` and the three-state `accepting` (`accepting`/`draining`/`paused`). The
+refill loop advances on each Phase M sweep (no daemon) via `workflow.js`
+(`mode: "pool"`); live controls (`pool <N>`/`drain`/`pause`/`resume`) flip
+`pool.json` for the next sweep.
 
 ## Phase M — Monitor
 
@@ -400,16 +308,13 @@ clears and later re-occurs re-fires), so this is signal, not noise.
   shows here only as a generic `gate`.
 - **Pane channel** (`--stream-panes`) — `tmux capture-pane` matched against the
   modal **prompt overlay** (`Do you want to proceed?` and the `ExitPlanMode`
-  plan-approval prompt, whose signatures include `Here is Claude's plan`,
-  `Would you like to proceed`, and the `Yes, and use auto mode` option line) on
-  live `golem-*` sessions. It is the better catcher of **plan-gate** prompts
-  (which the feed under-classifies). The "capture-pane is blank until exit"
-  caveat applies to scrolling **work output**, *not* the prompt overlay, which
-  renders over the alt-screen and is reliably scrapeable. The stream carries no
-  "zero golems remain → stop" exit, so a transient **zero-golem handoff window**
-  (one golem's session killed, the next not yet created) is a no-op poll, not a
-  reason to terminate — the watch keeps running until the operator stops it
-  (#621).
+  plan-approval prompt) on live `golem-*` sessions. It is the better catcher of
+  **plan-gate** prompts (which the feed under-classifies): the prompt overlay
+  renders over the alt-screen and is reliably scrapeable. A transient
+  **zero-golem handoff window** (one session killed, the next not yet created) is
+  a no-op poll, not a reason to terminate — the watch runs until the operator
+  stops it (#621). See `mode-protocol.md` § *Gate-watch contract* for the prompt
+  signatures and the capture-pane caveats.
 
 A human operator gets the same proactive surface with **`${CLAUDE_PLUGIN_ROOT}/scripts/golem-watch.sh`**
 (streams both channels). See `mode-protocol.md` § *Gate-watch contract* for the
@@ -447,102 +352,20 @@ Detect and rebase them — without merging anything into the orchestrator branch
 
 ## Phase T — Integration Train
 
-Land a **batch** of already-green, already-approved PRs end-to-end —
-merge → rebase the next → merge — with **one up-front authorization** instead of
-one human gate per merge/rebase/push, and with CI re-run cost bounded. This is
-the automation of the merge→rebase→merge chain the human used to drive by hand
-(see `merge-protocol.md` § *Integration Train — Sequencing & CI-Subset Policy*).
-
-The train is **not** a new merge mechanism — it is **sequencing + batch
-authorization** layered over the existing pieces: the order is computed by
-`workflow.js` (`mode: 'train'`), each rebase is the existing Phase R
-(`poll+rebase`), and every outward action still flows through the live session's
-`ask` gates. The orchestrator still never merges a golem branch into its own.
-
-1. **Assemble the batch.** Run Phase M and take the PRs that are merge-ready
-   (`ci: passing`, `review: approved`/`none`, `blocking: false`) — or the
-   explicit `<N…>` list. A PR that is not green + review-clean is **excluded**
-   from the train (the train lands approved work; it does not wait on red CI or
-   open review). Report the excluded PRs so the human sees what is held back.
-
-1. **One up-front batch approval.** Authorize "**land this batch**" **once** via
-   `AskUserQuestion` (skipped when autonomous — see below). This single consent
-   replaces the per-step merge/rebase/push prompts. It does **not** dissolve the
-   safety boundary: the outward-action `ask` rules on `git push` /
-   `gh pr merge` / `gh pr create` remain in force for every individual action —
-   the operator simply grants the batch once rather than N times.
-
-1. **Compute the merge order.** Gather each PR's changed-file list
-   (`gh pr view <N> --json files`) and invoke the Workflow tool on
-   `~/.claude/skills/orchestrate/workflow.js` with:
-
-   ```text
-   args: {
-     prs:  [{ number, branch, issue, golem, files: [<changed paths>] }, …],
-     base: "<base branch, e.g. main>",
-     mode: "train"
-   }
-   ```
-
-   The harness returns `train` = `{ independents, chains, waves, order }`
-   computed purely from pairwise file-overlap (no merge, no push, no rebase):
-
-   - **`independents`** — PRs that share no changed file with any other; land in
-     any order, **no rebase between them**.
-   - **`chains`** — overlap components (≥2 PRs touching a common file), each
-     ordered; land **in sequence**, rebasing each onto the prior merge.
-   - **`waves`** — wave 0 = all independents + every chain head (mergeable
-     immediately, in parallel); wave *k* = the *k*-th link of each chain (only
-     mergeable after the (*k*−1)-th merges).
-
-1. **Drive the loop** (loop-until-dry, resumable):
-
-   1. **Merge wave 0** — every independent + each chain head. Prefer
-      `gh pr merge <N> --auto --squash --delete-branch` so GitHub merges each the
-      moment its already-green checks settle (no manual merge + wait); fall back
-      to a direct `gh pr merge` where `--auto` is unavailable. Independents need
-      no rebase, so they land without re-triggering CI.
-   1. **For each chain, advance one link:** after the chain's current head
-      merges, the next link is now behind base → run **Phase R**
-      (`mode: "poll+rebase"`, scoped to that PR) to rebase it onto the new base.
-      Post-#601 union handling resolves complementary same-region edits without
-      escalation; only genuinely contradictory conflicts surface to the human.
-   1. **Push** the rebased branch: `git push --force-with-lease origin <branch>`
-      (the harness never pushes). Then merge it (`--auto` settle as above).
-   1. **Repeat** until every wave is merged. Re-poll between waves to confirm CI
-      stayed green and pick up any newly-behind PR.
-
-1. **Bound CI cost.** A force-push after a rebase normally replays the full
-   matrix. Reduce it per repo policy (see `merge-protocol.md`):
-
-   - Use `gh pr merge --auto` so the PR merges on settle rather than after a
-     manual wait — independents and no-conflict rebases add no full replay.
-   - For a rebase whose only conflicts were docs/skills-only (union-resolved),
-     require only the **changed-file** check subset to re-pass, not the whole
-     build matrix, **where the repo's branch protection permits**.
-
-   Auto-merge consent is unchanged: under an autonomous run the `--auto` fast
-   path is taken only when BOTH `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` are
-   set (see `next-issue-ship` § Environment Variables). The train's single batch
-   approval does **not** substitute for that per-PR auto-merge consent.
-
-1. **Honor stop/drain.** Between iterations, check the pool stop/drain signal —
-   `pool.json` `accepting` (Phase P). If it is `draining` (or `paused`), finish
-   the in-flight merge/rebase, then halt the train cleanly (leaving remaining PRs
-   open and labeled) rather than starting the next wave. When `pool.json` is
-   absent (the pool was never engaged), there is no drain signal and the train
-   runs every wave to completion — the check defaults to "keep going."
-
-1. **Report** the train result: merged PRs (with order/wave), rebases
-   auto-resolved (with strategy), and any escalations surfaced **verbatim** for
-   the human. Never merge a golem branch into the orchestrator branch.
-
-**Autonomous train.** When the orchestrator runs autonomously, skip the
-`AskUserQuestion` batch approval (the batch is authorized by the autonomous
-invocation) but keep every outward-action `ask` gate and the `AUTOMERGE` +
-`AUTOMERGE_AUTONOMOUS` double-consent. A genuine conflict escalation still stops
-the train for the human — the train automates the *sequencing*, not the
-judgment.
+**Companion file**: `pool-train-protocol.md` § Phase T (load before this phase)
+carries the full integration-train protocol. The train lands a **batch** of
+already-green, already-approved PRs end-to-end — merge → rebase the next → merge
+— with **one up-front authorization** instead of a gate per merge/rebase/push. It
+is **not** a new merge mechanism but **sequencing + batch authorization** over
+existing pieces: order computed by `workflow.js` (`mode: 'train'`), each rebase is
+Phase R (`poll+rebase`), every outward action still flows through the live
+session's `ask` gates. The flow: assemble the merge-ready batch → one up-front
+`AskUserQuestion` batch approval (skipped when autonomous) → compute
+`{ independents, chains, waves, order }` from pairwise file-overlap → drive the
+merge/rebase/merge loop wave by wave, honoring the `pool.json` drain signal.
+Autonomous runs keep every outward-action `ask` gate and the `AUTOMERGE` +
+`AUTOMERGE_AUTONOMOUS` double-consent; a genuine conflict still stops the train.
+The orchestrator still never merges a golem branch into its own.
 
 ## Surface — Mid-Flight Commands
 
@@ -638,51 +461,17 @@ separate manual `tmux kill-session -t golem-{N}` is needed. A leftover
 
 ## Local-Merge (OPT-IN, Legacy)
 
+**Companion file**: the full local-merge protocol lives in `merge-protocol.md` §
+*Local-Merge (OPT-IN, Legacy)*. Load it only when explicitly requested
+(`/orchestrate merge`, `review`, `sync`).
+
 > **OPT-IN LEGACY MODE.** The default topology is PR-per-golem (Phases D/M/R).
-> Use local-merge ONLY for tightly-coupled work where golems push to no remote
-> (offline / no-PR worktree workflow). The orchestrator merging golem branches
-> into its own branch — and syncing back — is exactly what PR-per-golem
-> replaces. Load `merge-protocol.md` (the merge/sync sections are bannered
-> superseded; conflict classification + test-runner detection remain live).
+> Use local-merge ONLY for tightly-coupled work where golems push to no remote.
+> The orchestrator merging golem branches into its own branch — and syncing back
+> — is exactly what PR-per-golem replaces.
 
-Use these only when explicitly requested (`/orchestrate merge`, `review`,
-`sync`).
-
-### Merge (legacy Phase 2)
-
-1. **Resolve agent identifier**: numeric → map from the status table; branch
-   name → use directly; `all` → iterate agents with pending commits.
-1. **Preview**: `MERGE_BASE=$(git merge-base HEAD <agent-branch>)`;
-   `git log --oneline "$MERGE_BASE"..<agent-branch>`; diffstat. Confirm.
-1. **Merge**: `git merge --no-ff <agent-branch> -m "merge(<agent-branch>): …"`
-   (or `--squash` on request).
-1. **Conflicts**: dispatch `rebase-agent` for trivial; escalate non-trivial
-   (see `merge-protocol.md` § Conflict Classification).
-1. **Run tests** (see `merge-protocol.md` § Test Runner Detection); warn on
-   failure, do not auto-revert.
-1. **Report** the merge commit. Suggest `/clear` if context is large.
-
-### Review (legacy Phase 3)
-
-Per-PR review is normally the **golem's** job (the `/next-issue-ship` review
-loop). This phase applies only after a local merge.
-
-1. `MERGE_COMMIT=$(git log -1 --merges --format='%H')`.
-1. **Run the `code-review` harness** via the Workflow tool on
-   `~/.claude/agents/code-reviewer/workflow.js`, passing
-   `args: { diff: "<git diff \"${MERGE_COMMIT}^1\" \"${MERGE_COMMIT}\">", files: [<changed>] }`.
-   It returns the `finding-schema.md` object.
-1. **Apply corrections** in a single commit trailered `Reviewed-by: orchestrate`.
-1. **Run tests**; report a summary table.
-
-### Sync (legacy Phase 4)
-
-1. `ORCH_BRANCH=$(git branch --show-current)`.
-1. For each `git branch --list 'agent*' | /usr/bin/sort`:
-   `git checkout <branch>; git merge "$ORCH_BRANCH" -m "sync: …"`; on conflict
-   `git merge --abort` and skip.
-1. Return to `$ORCH_BRANCH`; remove `status/in-progress` /
-   `status/commit-pending` labels for synced issues. Report a sync table.
+Its three legacy phases — **Merge**, **Review**, and **Sync** — are documented
+step-by-step in `merge-protocol.md` § *Local-Merge (OPT-IN, Legacy)*.
 
 ## When to Use
 

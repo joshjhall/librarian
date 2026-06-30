@@ -473,3 +473,52 @@ checkpoint context in the review prompt:
 - Pass `key_decisions` so the reviewer understands design choices
 - Pass `warnings` so the reviewer checks flagged concerns
 - Compare `files_planned` vs `files_modified` to verify completeness
+
+## Local-Merge (OPT-IN, Legacy)
+
+> **OPT-IN LEGACY MODE.** The default topology is PR-per-golem (Phases D/M/R in
+> `orchestrate/SKILL.md`). Use local-merge ONLY for tightly-coupled work where
+> golems push to no remote (offline / no-PR worktree workflow). The orchestrator
+> merging golem branches into its own branch — and syncing back — is exactly
+> what PR-per-golem replaces. The merge/sync sections below are bannered
+> superseded; conflict classification + test-runner detection (above) remain
+> live.
+
+Use these only when explicitly requested (`/orchestrate merge`, `review`,
+`sync`).
+
+### Merge (legacy Phase 2)
+
+1. **Resolve agent identifier**: numeric → map from the status table; branch
+   name → use directly; `all` → iterate agents with pending commits.
+1. **Preview**: `MERGE_BASE=$(git merge-base HEAD <agent-branch>)`;
+   `git log --oneline "$MERGE_BASE"..<agent-branch>`; diffstat. Confirm.
+1. **Merge**: `git merge --no-ff <agent-branch> -m "merge(<agent-branch>): …"`
+   (or `--squash` on request).
+1. **Conflicts**: dispatch `rebase-agent` for trivial; escalate non-trivial
+   (see § Conflict Classification above).
+1. **Run tests** (see § Test Runner Detection above); warn on
+   failure, do not auto-revert.
+1. **Report** the merge commit. Suggest `/clear` if context is large.
+
+### Review (legacy Phase 3)
+
+Per-PR review is normally the **golem's** job (the `/next-issue-ship` review
+loop). This phase applies only after a local merge.
+
+1. `MERGE_COMMIT=$(git log -1 --merges --format='%H')`.
+1. **Run the `code-review` harness** via the Workflow tool on
+   `~/.claude/agents/code-reviewer/workflow.js`, passing
+   `args: { diff: "<git diff \"${MERGE_COMMIT}^1\" \"${MERGE_COMMIT}\">", files: [<changed>] }`.
+   It returns the `finding-schema.md` object.
+1. **Apply corrections** in a single commit trailered `Reviewed-by: orchestrate`.
+1. **Run tests**; report a summary table.
+
+### Sync (legacy Phase 4)
+
+1. `ORCH_BRANCH=$(git branch --show-current)`.
+1. For each `git branch --list 'agent*' | /usr/bin/sort`:
+   `git checkout <branch>; git merge "$ORCH_BRANCH" -m "sync: …"`; on conflict
+   `git merge --abort` and skip.
+1. Return to `$ORCH_BRANCH`; remove `status/in-progress` /
+   `status/commit-pending` labels for synced issues. Report a sync table.
