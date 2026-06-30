@@ -109,8 +109,11 @@ test_valid_path_seeds_trust() {
 test_outside_repo_root_refused() {
     local sb outside
     new_sandbox sb
-    # A sibling dir under WORKDIR is a real path but not under the sandbox root.
+    # A sibling dir under WORKDIR is a real, on-disk path but not under the
+    # sandbox root — mirrors the real exploit vector (an existing host dir) and
+    # exercises realpath against a path that exists, not just a lexical one.
     outside="$WORKDIR/elsewhere/issue-7"
+    /usr/bin/mkdir -p "$outside"
     run_seed "$sb" "$outside"
     assert_exit 3 "$SEED_RC" "path outside repo root is refused (exit 3)"
     assert_contains "$SEED_OUT" "not under repo root" "explains the root violation"
@@ -126,6 +129,9 @@ test_wrong_shape_refused() {
     assert_exit 3 "$SEED_RC" "issue-abc (no leading digit) is refused (exit 3)"
     assert_contains "$SEED_OUT" "is not a" "explains the shape violation"
     assert_contains "$SEED_OUT" "worktree" "names the expected worktree shape"
+    # Confirm the OUTER shape arm fired, not the inner all-digits arm (d).
+    assert_not_contains "$SEED_OUT" "not all-digits" \
+        "shape arm fired, not the non-digit-suffix arm"
 }
 
 # (d) `issue-<digits><non-digit>` is refused by the inner all-digits check — a
@@ -246,10 +252,63 @@ test_worktree_dir_override() {
         "override path is recorded in the config"
 }
 
+# (l) The override REPLACES the default dir, it does not supplement it: with
+# GOLEM_WORKTREE_DIR=custom-wt set, a path under the default `.worktrees/` is
+# refused. Guards against the override becoming additive (which would widen the
+# trusted set beyond the single intended dir).
+test_worktree_dir_override_replaces_default() {
+    local sb
+    new_sandbox sb
+    /usr/bin/mkdir -p "$sb/custom-wt"
+    SEED_RC=0
+    SEED_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" GOLEM_WORKTREE_DIR=custom-wt \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-5" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    assert_exit 3 "$SEED_RC" "default .worktrees path is refused when override is set"
+    assert_contains "$SEED_OUT" "custom-wt/issue-<N>" \
+        "names the active override dir in the refusal"
+    assert_file_not_contains "$sb/claude.json" "hasTrustDialogAccepted" \
+        "config is left untouched on refusal"
+}
+
+# (m) Symlink escape: a symlink at `.worktrees/issue-7` pointing OUTSIDE the repo
+# is refused. realpath -m canonicalizes the link target before the under-root
+# check, so the grant cannot be redirected to an arbitrary host dir via a symlink
+# — the core issue-#21 attack surface. A regression in canon()/the prefix check
+# would silently re-open it.
+test_symlink_escape_refused() {
+    local sb target
+    new_sandbox sb
+    target="$WORKDIR/escape-target"
+    /usr/bin/mkdir -p "$target"
+    /usr/bin/ln -s "$target" "$sb/.worktrees/issue-7"
+    run_seed "$sb" "$sb/.worktrees/issue-7"
+    assert_exit 3 "$SEED_RC" "symlink escaping the repo root is refused (exit 3)"
+    assert_contains "$SEED_OUT" "not under repo root" \
+        "canonicalized link target fails the under-root check"
+    assert_file_not_contains "$sb/claude.json" "hasTrustDialogAccepted" \
+        "config is left untouched on a symlink-escape refusal"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
-if ! command -v git >/dev/null 2>&1; then
-    skip_test "git not available — cannot build sandbox repos"
+# Every sandbox is built with `git init`, so the whole suite needs git. Gate it
+# from inside a run_test-dispatched body (not a bare module-level skip_test) so
+# the counters stay consistent — skip_test is designed for within-test use.
+git_unavailable() { ! command -v git >/dev/null 2>&1; }
+
+test_git_available() {
+    if git_unavailable; then
+        skip_test "git not available — cannot build sandbox repos"
+        return
+    fi
+    assert_true "command -v git" "git is available for sandbox construction"
+}
+
+run_test test_git_available "git is available (suite prerequisite)"
+
+if git_unavailable; then
     generate_report
     exit $?
 fi
@@ -265,5 +324,7 @@ run_test test_jq_absent_skips "jq absent → best-effort skip (exit 0)"
 run_test test_config_absent_skips "absent config → best-effort skip (exit 0)"
 run_test test_malformed_config_skips "malformed config → jq-failure skip (exit 0)"
 run_test test_worktree_dir_override "GOLEM_WORKTREE_DIR override path is accepted (exit 0)"
+run_test test_worktree_dir_override_replaces_default "GOLEM_WORKTREE_DIR override replaces the default dir (exit 3)"
+run_test test_symlink_escape_refused "symlink escaping the repo root is refused (exit 3)"
 
 generate_report
