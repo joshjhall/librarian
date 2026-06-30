@@ -37,6 +37,13 @@ test_suite "Claude Agent/Skill Structural Lint"
 VALID_MODELS="opus sonnet haiku"
 VALID_TOOLS="Read Write Edit Bash Grep Glob Task WebFetch WebSearch"
 
+# The shared "house floor" every fan-out workflow.js harness must use for its
+# BUDGET_FLOOR (see workflow-authoring/SKILL.md § Budget Discipline). The harnesses
+# run in a sandboxed JS engine with no import, so the constant is duplicated in
+# each file; this value is the single source of truth the live sweep below pins
+# every declaration to. Bump it here AND in every harness together.
+HOUSE_BUDGET_FLOOR="40000"
+
 # --- Discovery helpers ------------------------------------------------------
 #
 # Plugins live at plugins/<plugin>/{skills,agents}/<artifact>/. We enumerate
@@ -190,6 +197,25 @@ workflow_dangling_agenttypes() {
                 printf '%s\n' "$name"
             fi
         done
+}
+
+# Echo the BUDGET_FLOOR value declared in a workflow.js, with underscore digit
+# separators stripped (so `40_000` and `40000` compare equal), or nothing if the
+# file declares no floor. Used to enforce that the cross-harness house floor
+# (HOUSE_BUDGET_FLOOR below) stays identical across every fan-out harness — they
+# run in a sandboxed JS engine with no shared-module import, so the constant is
+# necessarily duplicated and a deterministic gate is the only consistency check.
+# Only the first declaration is read; a harness with no fan-out simply omits it
+# and is skipped by the live sweep.
+#
+# The pattern is anchored to a `const` declaration so a comment that merely
+# mentions the constant (e.g. `// previously BUDGET_FLOOR = 50_000`) cannot
+# shadow the real value via head -n1.
+workflow_budget_floor_value() {
+    local wf_file="$1"
+    command grep -oE "const[[:space:]]+BUDGET_FLOOR[[:space:]]*=[[:space:]]*[0-9_]+" "$wf_file" |
+        command head -n1 |
+        command sed -E 's/.*=[[:space:]]*//; s/_//g'
 }
 
 # Report required_tools declared in a skill's metadata.yml whose command name is
@@ -553,6 +579,54 @@ test_workflow_agenttype_guard_detects_dangling() {
         "Detector flags an agentType with no matching agent file"
 }
 
+# Every workflow.js that declares a BUDGET_FLOOR uses the house value. The
+# constant cannot live in a shared module (sandboxed JS engine, no import), so it
+# is duplicated across the fan-out harnesses; this live sweep is the only thing
+# keeping the 6 copies in lockstep. A harness with no fan-out omits the floor and
+# is skipped — only a declared-but-divergent value fails.
+test_workflow_budget_floor_consistent() {
+    local wf_file
+    while IFS= read -r wf_file; do
+        [ -n "$wf_file" ] || continue
+        [ -f "$wf_file" ] || continue
+        local rel_name value
+        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        value="$(workflow_budget_floor_value "$wf_file")"
+        [ -n "$value" ] || continue
+        assert_equals "$HOUSE_BUDGET_FLOOR" "$value" \
+            "Workflow $rel_name: BUDGET_FLOOR ($value) must equal the house floor ($HOUSE_BUDGET_FLOOR)"
+    done < <(command find "$PLUGINS_DIR" -name "workflow.js" -type f 2>/dev/null | command sort)
+}
+
+# The BUDGET_FLOOR consistency detector FIRES on the negative fixture: the fixture
+# declares a non-house floor (99000), and the value it reports back must be that
+# exact value — proving both that the extraction is precise (no partial match)
+# and that the assert_equals in the live sweep would fail on drift. Also pins the
+# skip path: a workflow.js with NO floor must yield empty so the live sweep's
+# `[ -n "$value" ] || continue` skips it rather than validating it.
+test_workflow_budget_floor_guard_detects_drift() {
+    local fixture="$FIXTURES_DIR/workflow_budgetfloor_bad.js"
+    assert_file_exists "$fixture" "Negative budget-floor fixture exists"
+    [ -f "$fixture" ] || return 0
+
+    local value
+    value="$(workflow_budget_floor_value "$fixture")"
+    assert_equals "99000" "$value" \
+        "Detector extracts the exact non-house floor from the bad fixture"
+    if [ "$value" = "$HOUSE_BUDGET_FLOOR" ]; then
+        assert_true false \
+            "Negative fixture must declare a NON-house floor so the guard has drift to catch"
+    fi
+
+    # Skip-path coverage: a fixture with no BUDGET_FLOOR declaration yields empty,
+    # so the live sweep skips it instead of asserting against the house value.
+    local nofloor="$FIXTURES_DIR/workflow_agenttype_bad.js"
+    if [ -f "$nofloor" ]; then
+        assert_equals "" "$(workflow_budget_floor_value "$nofloor")" \
+            "Detector returns empty for a workflow.js with no BUDGET_FLOOR"
+    fi
+}
+
 # Every required_tools entry in a skill's metadata.yml is referenced in the
 # skill dir (live sweep over all skills carrying required_tools).
 test_skill_required_tools_referenced() {
@@ -607,6 +681,8 @@ run_test test_workflow_phase_meta_consistency "Every workflow.js phase() set mat
 run_test test_workflow_phase_guard_detects_mismatch "Phase↔meta guard fires on the negative fixture"
 run_test test_workflow_agenttype_resolves "Every workflow.js agentType resolves to an agent file"
 run_test test_workflow_agenttype_guard_detects_dangling "agentType cross-ref guard fires on the negative fixture"
+run_test test_workflow_budget_floor_consistent "Every workflow.js BUDGET_FLOOR equals the house floor"
+run_test test_workflow_budget_floor_guard_detects_drift "BUDGET_FLOOR consistency guard fires on the negative fixture"
 run_test test_skill_required_tools_referenced "Every skill's required_tools are referenced in the skill"
 run_test test_skill_required_tools_guard_detects_drift "required_tools reference guard fires on the negative fixture"
 

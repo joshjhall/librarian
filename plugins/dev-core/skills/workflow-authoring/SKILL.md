@@ -19,7 +19,7 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
   BinaryExpression, not a literal, and the tool rejects the whole script with
   "meta must be a pure literal". Keep each meta string on ONE line (a single
   long quoted literal is fine). Enforced by
-  `tests/unit/claude/lint_skills_agents.sh`.
+  `tests/lint-skills-agents.sh`.
 - **Discriminated agent modes**: drive one `agentType` in modes named in the
   prompt (`manifest`, `reviewer:<name>`, `rescore`, `merge`, …). The agent does
   one mode per call; the harness sequences them.
@@ -37,7 +37,11 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
 
 - Define a `BUDGET_FLOOR` (40_000 is the house value) and stop spawning new
   fan-out work once `budget.total && budget.remaining() < BUDGET_FLOOR`, so a
-  partial run returns its results instead of throwing mid-barrier.
+  partial run returns its results instead of throwing mid-barrier. The harnesses
+  run in a sandboxed engine with no shared-module import, so this constant is
+  duplicated per file; `tests/lint-skills-agents.sh` pins every declaration to
+  the house value, so a tuning change must update all harnesses (and the test's
+  `HOUSE_BUDGET_FLOOR`) together.
 - **Check the budget INSIDE each thunk**, not only while building the work list.
   A budget read during list construction is synchronous and never sees mid-flight
   exhaustion. (See `adversarial-review` Bug-Class Checklist: "Budget checked
