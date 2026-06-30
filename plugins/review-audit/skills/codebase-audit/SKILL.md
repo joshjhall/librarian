@@ -91,7 +91,11 @@ aggregation are the harness's job.
 - **Step 2 — Build Work Manifest**: batch by line count, route file types to
   scanners, emit per-scanner manifest objects.
 - **Step 2.5 — Deterministic Pre-Scan**: run `check-*/patterns.sh` for
-  zero-LLM-cost regex findings, fed into each scanner's prompt.
+  zero-LLM-cost regex findings, fed into each scanner's prompt. Project-level
+  scripts (`.claude/skills/...` in the repo under audit) and project-level
+  `audit-*` agents are an execution surface for a hostile repo — both run only
+  when `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1` is set (see
+  `orchestration-protocol.md`).
 - **Step 3 — Scan Each Domain**: harness Scan + adversarial Verify phases over
   each manifest.
 - **Step 4 — Aggregate & Deduplicate**: within-scanner dedup, cross-scanner
