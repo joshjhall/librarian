@@ -130,16 +130,12 @@ EOF
     assert_contains "$CUR_VIOLATIONS" "some/action@main" "SHA-less ref with a non-version comment is flagged"
     assert_contains "$CUR_VIOLATIONS" "@trailing" "Trailing garbage after the version token is flagged (anchor)"
     # The valid ref and both exempt refs must NOT appear among the violations.
-    # No assert_not_contains in the harness; use pure-bash globs (no eval). The
-    # good ref carries a unique version (# v9.9.9), so this cannot match the
-    # trailing-garbage line (# v4.3.1 @trailing).
-    local good_flagged=0 local_flagged=0 docker_flagged=0
-    case "$CUR_VIOLATIONS" in *"# v9.9.9"*) good_flagged=1 ;; esac
-    case "$CUR_VIOLATIONS" in *"local-thing"*) local_flagged=1 ;; esac
-    case "$CUR_VIOLATIONS" in *"docker://alpine"*) docker_flagged=1 ;; esac
-    assert_equals "0" "$good_flagged" "A correctly pinned+commented ref is NOT flagged"
-    assert_equals "0" "$local_flagged" "A local ./ action ref is exempt (not flagged)"
-    assert_equals "0" "$docker_flagged" "A docker:// ref is exempt (not flagged)"
+    # assert_not_contains is glob-based (no eval). The good ref carries a unique
+    # version (# v9.9.9), so it cannot match the trailing-garbage line
+    # (# v4.3.1 @trailing).
+    assert_not_contains "$CUR_VIOLATIONS" "# v9.9.9" "A correctly pinned+commented ref is NOT flagged"
+    assert_not_contains "$CUR_VIOLATIONS" "local-thing" "A local ./ action ref is exempt (not flagged)"
+    assert_not_contains "$CUR_VIOLATIONS" "docker://alpine" "A docker:// ref is exempt (not flagged)"
 }
 
 # Discover workflow files. nullglob so an empty dir yields an empty array rather

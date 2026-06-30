@@ -3,13 +3,14 @@
 #
 # Runs, in order:
 #   1. Manifest validation (node tests/validate-manifests.mjs)
-#   2. Skill/agent structural lint (tests/lint-skills-agents.sh)
-#   3. Skill contract validation (tests/validate-contracts.sh)
-#   4. SKILL.md ↔ agent cross-reference integrity (tests/validate-crossrefs.sh)
-#   5. Pre-scan empty/missing-input robustness (tests/validate-prescans.sh)
-#   6. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
-#   7. Action pin format (tests/lint-action-pins.sh)
-#   8. Release toolchain coverage (tests/validate-release.sh)
+#   2. Harness self-test (tests/validate-harness.sh)
+#   3. Skill/agent structural lint (tests/lint-skills-agents.sh)
+#   4. Skill contract validation (tests/validate-contracts.sh)
+#   5. SKILL.md ↔ agent cross-reference integrity (tests/validate-crossrefs.sh)
+#   6. Pre-scan empty/missing-input robustness (tests/validate-prescans.sh)
+#   7. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
+#   8. Action pin format (tests/lint-action-pins.sh)
+#   9. Release toolchain coverage (tests/validate-release.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -41,6 +42,7 @@ else
     printf '[skip] Manifest validation — node not available\n'
 fi
 
+run_stage "Harness self-test" bash "$SCRIPT_DIR/validate-harness.sh"
 run_stage "Skill/agent structural lint" bash "$SCRIPT_DIR/lint-skills-agents.sh"
 run_stage "Skill contract validation" bash "$SCRIPT_DIR/validate-contracts.sh"
 run_stage "SKILL.md ↔ agent cross-reference integrity" bash "$SCRIPT_DIR/validate-crossrefs.sh"
