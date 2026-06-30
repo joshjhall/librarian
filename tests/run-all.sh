@@ -13,6 +13,7 @@
 #   9. Action pin format (tests/lint-action-pins.sh)
 #  10. Release toolchain coverage (tests/validate-release.sh)
 #  11. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
+#  12. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -54,6 +55,7 @@ run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-trust.sh"
+run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
 
 printf '\n========================================\n'
 if [ "$rc" -eq 0 ]; then
