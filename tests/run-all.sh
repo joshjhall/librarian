@@ -8,12 +8,13 @@
 #   4. Skill contract validation (tests/validate-contracts.sh)
 #   5. SKILL.md ↔ agent cross-reference integrity (tests/validate-crossrefs.sh)
 #   6. Pre-scan empty/missing-input robustness (tests/validate-prescans.sh)
-#   7. codebase-audit issue-template sync (tests/validate-template-sync.sh)
-#   8. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
-#   9. Action pin format (tests/lint-action-pins.sh)
-#  10. Release toolchain coverage (tests/validate-release.sh)
-#  11. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
-#  12. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
+#   7. pre-review-gates scan categories + skip policy (tests/validate-pre-review-gates.sh)
+#   8. codebase-audit issue-template sync (tests/validate-template-sync.sh)
+#   9. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
+#  10. Action pin format (tests/lint-action-pins.sh)
+#  11. Release toolchain coverage (tests/validate-release.sh)
+#  12. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
+#  13. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -50,6 +51,7 @@ run_stage "Skill/agent structural lint" bash "$SCRIPT_DIR/lint-skills-agents.sh"
 run_stage "Skill contract validation" bash "$SCRIPT_DIR/validate-contracts.sh"
 run_stage "SKILL.md ↔ agent cross-reference integrity" bash "$SCRIPT_DIR/validate-crossrefs.sh"
 run_stage "Pre-scan empty/missing-input robustness" bash "$SCRIPT_DIR/validate-prescans.sh"
+run_stage "pre-review-gates scan categories + skip policy" bash "$SCRIPT_DIR/validate-pre-review-gates.sh"
 run_stage "codebase-audit issue-template sync" bash "$SCRIPT_DIR/validate-template-sync.sh"
 run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
