@@ -276,7 +276,7 @@ of the freshness window (`GOLEM_BLOCK_TTL` seconds, default `3600`).
 ### Gate-watch contract
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` is a **pull** surface (the operator runs it). The proactive
-**push** complement is `bin/golem-gate-watch.sh`, which the live session arms via
+**push** complement is `${CLAUDE_PLUGIN_ROOT}/scripts/golem-gate-watch.sh`, which the live session arms via
 the `Monitor` tool at dispatch and a human can run as `${CLAUDE_PLUGIN_ROOT}/scripts/golem-watch.sh` (see
 `SKILL.md` Phase M § *Proactive gate-watch*). It is the single source of truth
 for "which golem is at a gate" — the `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` BLOCKED list calls its `--once`
