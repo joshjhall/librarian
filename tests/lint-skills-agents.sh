@@ -207,9 +207,13 @@ workflow_dangling_agenttypes() {
 # necessarily duplicated and a deterministic gate is the only consistency check.
 # Only the first declaration is read; a harness with no fan-out simply omits it
 # and is skipped by the live sweep.
+#
+# The pattern is anchored to a `const` declaration so a comment that merely
+# mentions the constant (e.g. `// previously BUDGET_FLOOR = 50_000`) cannot
+# shadow the real value via head -n1.
 workflow_budget_floor_value() {
     local wf_file="$1"
-    command grep -oE "BUDGET_FLOOR[[:space:]]*=[[:space:]]*[0-9_]+" "$wf_file" |
+    command grep -oE "const[[:space:]]+BUDGET_FLOOR[[:space:]]*=[[:space:]]*[0-9_]+" "$wf_file" |
         command head -n1 |
         command sed -E 's/.*=[[:space:]]*//; s/_//g'
 }
@@ -595,8 +599,11 @@ test_workflow_budget_floor_consistent() {
 }
 
 # The BUDGET_FLOOR consistency detector FIRES on the negative fixture: the fixture
-# declares a non-house floor, and the value it reports back must differ from the
-# house value (proving the assert_equals in the live sweep would fail on drift).
+# declares a non-house floor (99000), and the value it reports back must be that
+# exact value — proving both that the extraction is precise (no partial match)
+# and that the assert_equals in the live sweep would fail on drift. Also pins the
+# skip path: a workflow.js with NO floor must yield empty so the live sweep's
+# `[ -n "$value" ] || continue` skips it rather than validating it.
 test_workflow_budget_floor_guard_detects_drift() {
     local fixture="$FIXTURES_DIR/workflow_budgetfloor_bad.js"
     assert_file_exists "$fixture" "Negative budget-floor fixture exists"
@@ -604,10 +611,19 @@ test_workflow_budget_floor_guard_detects_drift() {
 
     local value
     value="$(workflow_budget_floor_value "$fixture")"
-    assert_not_empty "$value" "Detector reads a BUDGET_FLOOR value from the fixture"
+    assert_equals "99000" "$value" \
+        "Detector extracts the exact non-house floor from the bad fixture"
     if [ "$value" = "$HOUSE_BUDGET_FLOOR" ]; then
         assert_true false \
             "Negative fixture must declare a NON-house floor so the guard has drift to catch"
+    fi
+
+    # Skip-path coverage: a fixture with no BUDGET_FLOOR declaration yields empty,
+    # so the live sweep skips it instead of asserting against the house value.
+    local nofloor="$FIXTURES_DIR/workflow_agenttype_bad.js"
+    if [ -f "$nofloor" ]; then
+        assert_equals "" "$(workflow_budget_floor_value "$nofloor")" \
+            "Detector returns empty for a workflow.js with no BUDGET_FLOOR"
     fi
 }
 
