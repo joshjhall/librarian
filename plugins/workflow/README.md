@@ -17,9 +17,12 @@ devcontainer.
 - `rebase-generated` / `rebase-imports` / `rebase-lockfile` / `rebase-version`
   — targeted merge-conflict resolvers
 
-## Agents (4)
+## Agents (3)
 
-`issue-writer`, `issue-filer`, `ci-fixer`, `rebase-agent`.
+`issue-filer`, `ci-fixer`, `rebase-agent`.
+
+(The `issue-writer` agent lives in the
+[review-audit](../review-audit/README.md) plugin.)
 
 ## Hook
 
