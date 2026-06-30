@@ -66,16 +66,13 @@ SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
-mode="--once"
-case "${1:-}" in
-    --once | --stream | --once-panes | --stream-panes | --once-liveness | --stream-liveness) mode="$1" ;;
-    "") mode="--once" ;;
-    *)
-        command echo "golem-gate-watch: unknown mode '$1' (want --once|--stream|--once-panes|--stream-panes|--once-liveness|--stream-liveness)" >&2
-        exit 2
-        ;;
-esac
-
+# The drive block at the bottom is wrapped in a main-guard so SOURCING this
+# script (the unit tests do, to call _fmt_age / pane_is_* / emit_transitions
+# directly) defines only the functions and never runs the snapshot loop or its
+# `exit` calls. When the script is EXECUTED, `${BASH_SOURCE[0]}` equals `$0`, the
+# guard fires, and behavior is byte-for-byte identical to before it was added.
+# These tunables stay at top level (assigned whether sourced or executed) so a
+# sourced helper that reads `$ttl` still sees its default — harmless and cheap.
 ttl="${GOLEM_BLOCK_TTL:-3600}"
 interval="${GOLEM_WATCH_INTERVAL:-5}"
 stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
@@ -314,46 +311,64 @@ liveness_snapshot() {
 # ---------------------------------------------------------------------------
 # Drive
 # ---------------------------------------------------------------------------
-status_dir="$(resolve_status_dir || true)"
-feed="${status_dir:+$status_dir/feed.jsonl}"
+# Main-guard: only when EXECUTED (not sourced) do we parse the mode argument and
+# enter the drive block. Sourcing the script (unit tests) defines the functions
+# above and stops here, so calling _fmt_age / pane_is_* / emit_transitions in a
+# test never triggers the snapshot loops or the `exit` calls below.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 
-case "$mode" in
-    --once)
-        [ -n "$feed" ] && feed_snapshot "$feed"
-        exit 0
-        ;;
-    --once-panes)
-        panes_snapshot
-        exit 0
-        ;;
-    --stream)
-        # Prime from the current state so pre-existing gates are not replayed as
-        # new, then emit only genuine transitions thereafter.
-        [ -n "$feed" ] && emit_transitions "$(feed_snapshot "$feed")" 1
-        while :; do
-            /usr/bin/sleep "$interval"
-            [ -n "$feed" ] && emit_transitions "$(feed_snapshot "$feed")" 0
-        done
-        ;;
-    --stream-panes)
-        emit_transitions "$(panes_snapshot)" 1
-        while :; do
-            /usr/bin/sleep "$interval"
-            emit_transitions "$(panes_snapshot)" 0
-        done
-        ;;
-    --once-liveness)
-        liveness_snapshot "$status_dir" "$feed"
-        exit 0
-        ;;
-    --stream-liveness)
-        # A heartbeat is a POSITIVE periodic signal, so (unlike gates) it is NOT
-        # transition-deduped — each tick re-emits every golem's current liveness,
-        # confirming "still alive" even when nothing changed. The sweep is cheap
-        # (a handful of stats per golem); GOLEM_HEARTBEAT_INTERVAL paces it.
-        while :; do
+    mode="--once"
+    case "${1:-}" in
+        --once | --stream | --once-panes | --stream-panes | --once-liveness | --stream-liveness) mode="$1" ;;
+        "") mode="--once" ;;
+        *)
+            command echo "golem-gate-watch: unknown mode '$1' (want --once|--stream|--once-panes|--stream-panes|--once-liveness|--stream-liveness)" >&2
+            exit 2
+            ;;
+    esac
+
+    status_dir="$(resolve_status_dir || true)"
+    feed="${status_dir:+$status_dir/feed.jsonl}"
+
+    case "$mode" in
+        --once)
+            [ -n "$feed" ] && feed_snapshot "$feed"
+            exit 0
+            ;;
+        --once-panes)
+            panes_snapshot
+            exit 0
+            ;;
+        --stream)
+            # Prime from the current state so pre-existing gates are not replayed as
+            # new, then emit only genuine transitions thereafter.
+            [ -n "$feed" ] && emit_transitions "$(feed_snapshot "$feed")" 1
+            while :; do
+                /usr/bin/sleep "$interval"
+                [ -n "$feed" ] && emit_transitions "$(feed_snapshot "$feed")" 0
+            done
+            ;;
+        --stream-panes)
+            emit_transitions "$(panes_snapshot)" 1
+            while :; do
+                /usr/bin/sleep "$interval"
+                emit_transitions "$(panes_snapshot)" 0
+            done
+            ;;
+        --once-liveness)
             liveness_snapshot "$status_dir" "$feed"
-            /usr/bin/sleep "$heartbeat_interval"
-        done
-        ;;
-esac
+            exit 0
+            ;;
+        --stream-liveness)
+            # A heartbeat is a POSITIVE periodic signal, so (unlike gates) it is NOT
+            # transition-deduped — each tick re-emits every golem's current liveness,
+            # confirming "still alive" even when nothing changed. The sweep is cheap
+            # (a handful of stats per golem); GOLEM_HEARTBEAT_INTERVAL paces it.
+            while :; do
+                liveness_snapshot "$status_dir" "$feed"
+                /usr/bin/sleep "$heartbeat_interval"
+            done
+            ;;
+    esac
+
+fi

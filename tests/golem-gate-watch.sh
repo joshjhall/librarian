@@ -33,7 +33,21 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 GATE_WATCH="$REPO_ROOT/plugins/workflow/scripts/golem-gate-watch.sh"
 
-test_suite "golem-gate-watch feed snapshot + liveness (#24, #28, #38)"
+test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82)"
+
+# _pane_rc <function-name> <text> — source the script (the main-guard makes it
+# sourceable without running the drive block) in a subshell and call one of its
+# prompt-overlay matchers, echoing the function's exit code. The subshell
+# isolates the script's `set -uo pipefail` from the harness's `set -euo
+# pipefail`, and `|| rc=$?` keeps a rc-1 (non-match) from aborting under set -e.
+_pane_rc() {
+    local fn="$1" text="$2" rc=0
+    (
+        source "$GATE_WATCH"
+        "$fn" "$text"
+    ) >/dev/null 2>&1 || rc=$?
+    command echo "$rc"
+}
 
 # Run the real script `--once` against a throwaway git repo whose
 # .worktrees/.status/feed.jsonl holds the given lines. Args: $1 = TTL seconds,
@@ -324,6 +338,132 @@ test_liveness_threshold_env_overridable() {
         "GOLEM_STALL_THRESHOLD is env-overridable (low threshold flips alive->stall)"
 }
 
+# --- Helper / mode coverage (#82) -------------------------------------------
+# The tests below exercise the previously-untested surface: the unknown-mode
+# error path, the _fmt_age formatter, the two pane-overlay matchers, and the
+# emit_transitions dedup logic. The pure functions are reached by SOURCING the
+# script (its bottom main-guard means a source defines functions without running
+# the drive block) in a subshell, so the script's `set -uo pipefail` never leaks
+# into the harness.
+
+# Unknown mode: an unrecognized argument must exit 2 with a usage message naming
+# the valid modes — the only non-zero exit the script makes (snapshots always
+# exit 0). Run as a SUBPROCESS (not sourced) so the `exit 2` is observed as a
+# real exit code.
+test_unknown_mode_exits_2() {
+    local out rc=0
+    out="$(bash "$GATE_WATCH" --bogus-mode 2>&1)" && rc=0 || rc=$?
+    assert_equals "2" "$rc" "Unknown mode exits 2"
+    assert_contains "$out" "unknown mode" "Usage message names the unknown mode"
+    assert_contains "$out" "--once" "Usage message lists the valid modes"
+}
+
+# An empty/no argument defaults to --once (mode="--once") and must NOT hit the
+# unknown-mode arm — exit 0, and no "unknown mode" complaint.
+test_no_arg_defaults_to_once() {
+    local out rc=0
+    # Run from a tmpdir with no git repo context; --once resolves no feed and
+    # exits 0 cleanly (status_dir empty -> the [ -n "$feed" ] guard skips).
+    out="$(cd "$(/usr/bin/mktemp -d)" && bash "$GATE_WATCH" 2>&1)" && rc=0 || rc=$?
+    assert_equals "0" "$rc" "No argument defaults to --once and exits 0"
+    assert_not_contains "$out" "unknown mode" "Default mode does not hit the error path"
+}
+
+# _fmt_age: < 60 seconds renders "Ns"; >= 60 renders whole "Nm" (integer minutes,
+# truncating). Covers the boundary (59/60), a multi-minute value, and zero.
+test_fmt_age_formats() {
+    local r
+    r="$( (
+        source "$GATE_WATCH"
+        _fmt_age 0
+    ))"
+    assert_equals "0s" "$r" "_fmt_age 0 -> 0s"
+    r="$( (
+        source "$GATE_WATCH"
+        _fmt_age 59
+    ))"
+    assert_equals "59s" "$r" "_fmt_age 59 -> 59s (just under the minute)"
+    r="$( (
+        source "$GATE_WATCH"
+        _fmt_age 60
+    ))"
+    assert_equals "1m" "$r" "_fmt_age 60 -> 1m (the boundary)"
+    r="$( (
+        source "$GATE_WATCH"
+        _fmt_age 125
+    ))"
+    assert_equals "2m" "$r" "_fmt_age 125 -> 2m (integer-minute truncation)"
+}
+
+# pane_is_plan_gate: each plan-overlay phrase matches (rc 0); unrelated text does
+# not (rc 1). The phrases come straight from the matcher's case arms.
+test_pane_is_plan_gate() {
+    assert_equals "0" "$(_pane_rc pane_is_plan_gate "... Ready to code? ...")" \
+        "'Ready to code' is a plan gate"
+    assert_equals "0" "$(_pane_rc pane_is_plan_gate "Here is Claude's plan:")" \
+        "'Here is Claude's plan' is a plan gate"
+    assert_equals "0" "$(_pane_rc pane_is_plan_gate "Would you like to proceed?")" \
+        "'Would you like to proceed' is a plan gate"
+    assert_equals "0" "$(_pane_rc pane_is_plan_gate "1. Yes, and use auto mode")" \
+        "'Yes, and use auto mode' is a plan gate"
+    assert_equals "1" "$(_pane_rc pane_is_plan_gate "just some scrolling build output")" \
+        "Unrelated work output is NOT a plan gate"
+}
+
+# pane_is_gate: the generic permission-decision overlay matches (rc 0); other
+# text does not (rc 1). Distinct from the plan-gate matcher.
+test_pane_is_gate() {
+    assert_equals "0" "$(_pane_rc pane_is_gate "Do you want to proceed?")" \
+        "'Do you want to proceed' is a permission gate"
+    assert_equals "1" "$(_pane_rc pane_is_gate "Here is Claude's plan:")" \
+        "A plan overlay is NOT matched by the generic-gate matcher"
+    assert_equals "1" "$(_pane_rc pane_is_gate "nothing to see")" \
+        "Unrelated text is NOT a permission gate"
+}
+
+# emit_transitions: the transition-dedup contract that backs --stream/--stream-
+# panes. All cases run inside ONE subshell because LAST_EMIT is module state the
+# function mutates across calls; the subshell isolates that from the harness.
+#   1. prime=1 records state WITHOUT emitting (startup must not replay standing gates)
+#   2. a NEW golem (or changed message) emits exactly its line
+#   3. a STANDING gate (same golem+message) is suppressed on the next tick
+#   4. a changed message for the same golem re-emits
+#   5. a golem that CLEARS then re-gates is a fresh transition (emits again)
+test_emit_transitions_dedup() {
+    local out
+    out="$(
+        source "$GATE_WATCH"
+        # 1. Prime with one standing gate -> no output.
+        command printf '[prime]'
+        emit_transitions "$(/usr/bin/printf 'golem-1\tpush gate\n')" 1
+        # 2. Same gate on the next tick -> suppressed (already primed).
+        command printf '[standing]'
+        emit_transitions "$(/usr/bin/printf 'golem-1\tpush gate\n')" 0
+        # 3. A genuinely new golem -> emits.
+        command printf '[new]'
+        emit_transitions "$(/usr/bin/printf 'golem-1\tpush gate\ngolem-2\tPR gate\n')" 0
+        # 4. golem-1's message changes -> re-emits; golem-2 unchanged -> silent.
+        command printf '[changed]'
+        emit_transitions "$(/usr/bin/printf 'golem-1\tmerge gate\ngolem-2\tPR gate\n')" 0
+        # 5. golem-2 clears (empty snapshot for it) then re-gates -> fresh emit.
+        command printf '[clear]'
+        emit_transitions "$(/usr/bin/printf 'golem-1\tmerge gate\n')" 0
+        command printf '[regate]'
+        emit_transitions "$(/usr/bin/printf 'golem-1\tmerge gate\ngolem-2\tPR gate\n')" 0
+    )"
+    # Prime + standing emit nothing between their markers.
+    assert_contains "$out" "[prime][standing][new]" \
+        "Prime and standing gate emit nothing (no replay on startup or steady state)"
+    assert_contains "$out" "[new]golem-2"$'\t'"PR gate" \
+        "A newly-gated golem emits its line"
+    assert_contains "$out" "[changed]golem-1"$'\t'"merge gate" \
+        "A changed message re-emits for the same golem"
+    assert_not_contains "$out" "[changed]golem-1"$'\t'"merge gate"$'\n'"golem-2" \
+        "An unchanged golem is not re-emitted alongside a changed one"
+    assert_contains "$out" "[regate]golem-2"$'\t'"PR gate" \
+        "A cleared-then-re-gated golem is a fresh transition"
+}
+
 run_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not drop all BLOCKED golems"
 run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
@@ -332,5 +472,11 @@ run_test test_liveness_fresh_is_alive "Liveness: fresh-activity golem reports al
 run_test test_liveness_stale_is_possible_stall "Liveness: old-activity golem flagged a possible stall (exit 0)"
 run_test test_liveness_gated_not_stalled "Liveness: gated golem reported gated, not stalled"
 run_test test_liveness_threshold_env_overridable "Liveness: GOLEM_STALL_THRESHOLD is env-overridable"
+run_test test_unknown_mode_exits_2 "Unknown mode exits 2 with a usage message"
+run_test test_no_arg_defaults_to_once "No argument defaults to --once (not the error path)"
+run_test test_fmt_age_formats "_fmt_age: seconds vs whole-minute formatting"
+run_test test_pane_is_plan_gate "pane_is_plan_gate matches plan overlays, not work output"
+run_test test_pane_is_gate "pane_is_gate matches the generic permission overlay only"
+run_test test_emit_transitions_dedup "emit_transitions: prime/standing/new/changed/re-gate dedup"
 
 generate_report
