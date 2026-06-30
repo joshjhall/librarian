@@ -9,6 +9,7 @@
 #   5. Pre-scan empty/missing-input robustness (tests/validate-prescans.sh)
 #   6. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
 #   7. Action pin format (tests/lint-action-pins.sh)
+#   8. Release toolchain coverage (tests/validate-release.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -46,6 +47,7 @@ run_stage "SKILL.md ↔ agent cross-reference integrity" bash "$SCRIPT_DIR/valid
 run_stage "Pre-scan empty/missing-input robustness" bash "$SCRIPT_DIR/validate-prescans.sh"
 run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
+run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 
 printf '\n========================================\n'
 if [ "$rc" -eq 0 ]; then
