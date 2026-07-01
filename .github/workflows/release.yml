@@ -14,9 +14,10 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
 # Scope token permissions per job rather than workflow-wide: `validate` only
-# reads the tree (checkout + lint/test gates), while `publish` needs write to
-# create the GitHub Release. Declaring write at the workflow level would let the
-# read-only validate job inherit it, against least privilege.
+# reads the tree (checkout + the full `tests/run-all.sh` gate suite), while
+# `publish` needs write to create the GitHub Release. Declaring write at the
+# workflow level would let the read-only validate job inherit it, against least
+# privilege.
 jobs:
   validate:
     name: Validate tagged tree
@@ -36,17 +37,15 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Validate marketplace + plugin manifests
-        run: node tests/validate-manifests.mjs
-
-      - name: Skill/agent structural lint
-        run: bash tests/lint-skills-agents.sh
-
-      - name: Skill contract validation
-        run: bash tests/validate-contracts.sh
-
-      - name: Action pin format
-        run: bash tests/lint-action-pins.sh
+      # Single entry point — tests/run-all.sh owns the full gate list (manifest
+      # validation, structural lint, contract + behavioral gates, action-pin
+      # format, release-toolchain coverage, …). Calling it here rather than
+      # re-listing a hand-picked subset makes the release gate a strict superset
+      # of what CI runs on a PR, so a tag can never publish from a tree the PR
+      # suite would have rejected (issue #143). Mirrors ci.yml's quality-gates
+      # job — same command, same anti-drift rationale.
+      - name: Run test suite
+        run: bash tests/run-all.sh
 
       - name: Assert VERSION matches the tag
         run: |
