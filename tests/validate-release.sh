@@ -34,8 +34,8 @@ test_suite "Release toolchain coverage"
 # Module-level scratch dir, cleaned up once when the suite exits. Each sandbox is
 # a fresh subdir under it, so a per-helper RETURN trap (which would fire when the
 # helper returns, before the test body runs) is unnecessary.
-WORKDIR="$(command mktemp -d)"
-trap 'command rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(/usr/bin/mktemp -d)"
+trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 
 # make_bin_sandbox <varname>
 # Creates a fresh sandbox subdir with a copy of bin/ and a synthetic VERSION
@@ -45,9 +45,9 @@ trap 'command rm -rf "$WORKDIR"' EXIT
 make_bin_sandbox() {
     local __out="$1"
     local dir
-    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    command cp -R "$REPO_ROOT/bin" "$dir/bin"
-    command printf '1.2.3\n' >"$dir/VERSION"
+    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    /usr/bin/cp -R "$REPO_ROOT/bin" "$dir/bin"
+    /usr/bin/printf '1.2.3\n' >"$dir/VERSION"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -59,13 +59,13 @@ make_bin_sandbox() {
 make_full_sandbox() {
     local __out="$1"
     local dir
-    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    command cp -R "$REPO_ROOT/bin" "$dir/bin"
-    command mkdir -p "$dir/tests"
-    command cp "$REPO_ROOT/tests/validate-manifests.mjs" "$dir/tests/"
-    command cp -R "$REPO_ROOT/.claude-plugin" "$dir/.claude-plugin"
-    command cp -R "$REPO_ROOT/plugins" "$dir/plugins"
-    command printf '1.2.3\n' >"$dir/VERSION"
+    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    /usr/bin/cp -R "$REPO_ROOT/bin" "$dir/bin"
+    /usr/bin/mkdir -p "$dir/tests"
+    /usr/bin/cp "$REPO_ROOT/tests/validate-manifests.mjs" "$dir/tests/"
+    /usr/bin/cp -R "$REPO_ROOT/.claude-plugin" "$dir/.claude-plugin"
+    /usr/bin/cp -R "$REPO_ROOT/plugins" "$dir/plugins"
+    /usr/bin/printf '1.2.3\n' >"$dir/VERSION"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -114,7 +114,7 @@ test_release_happy_path() {
     bash "$sb/bin/release.sh" patch --non-interactive --skip-changelog --force \
         >/dev/null 2>&1 || rc=$?
     assert_exit 0 "$rc" "release.sh patch --non-interactive --skip-changelog --force succeeds"
-    assert_equals "1.2.4" "$(command cat "$sb/VERSION")" "VERSION bumped 1.2.3 → 1.2.4"
+    assert_equals "1.2.4" "$(/usr/bin/cat "$sb/VERSION")" "VERSION bumped 1.2.3 → 1.2.4"
     assert_file_contains "$sb/plugins/dev-core/.claude-plugin/plugin.json" \
         '"version": "1.2.4"' "dev-core plugin.json stamped to 1.2.4"
 }
@@ -122,7 +122,7 @@ test_release_happy_path() {
 test_release_missing_version_file() {
     local sb rc=0 err
     make_bin_sandbox sb
-    command rm -f "$sb/VERSION"
+    /usr/bin/rm -f "$sb/VERSION"
     err="$(bash "$sb/bin/release.sh" patch --non-interactive --force 2>&1 >/dev/null)" || rc=$?
     assert_exit 1 "$rc" "release.sh exits 1 when VERSION is missing"
     assert_contains "$err" "VERSION file not found" "release.sh reports the missing VERSION file"
@@ -158,7 +158,7 @@ test_release_no_args() {
 # Drop a synthetic CHANGELOG.md at the sandbox root (the PROJECT_ROOT the script
 # resolves relative to bin/).
 seed_changelog() {
-    command cat >"$1/CHANGELOG.md" <<'EOF'
+    /usr/bin/cat >"$1/CHANGELOG.md" <<'EOF'
 # Changelog
 
 ## [9.9.9] - 2026-01-01
@@ -211,7 +211,7 @@ test_release_notes_fallback_no_section() {
 test_release_notes_fallback_no_changelog() {
     local sb out
     make_bin_sandbox sb
-    command rm -f "$sb/CHANGELOG.md"
+    /usr/bin/rm -f "$sb/CHANGELOG.md"
     out="$(bash "$sb/bin/generate-release-notes.sh" 1.0.0 2>/dev/null)"
     assert_contains "$out" "## Release v1.0.0" "fallback header when CHANGELOG.md is absent"
     assert_contains "$out" "claude plugin marketplace add" "fallback includes install instructions"
@@ -240,31 +240,31 @@ test_release_notes_fallback_no_changelog() {
 run_git_automation() {
     local sb="$1" ac="$2" at="$3" ap="$4" agr="$5" gh_mode="${6:-ok}" push_rc="${7:-0}"
     local stub="$sb/stubbin"
-    command mkdir -p "$stub"
+    /usr/bin/mkdir -p "$stub"
     # git stub: `push` returns the caller-chosen code; every other subcommand
     # (commit/tag/...) succeeds. Absolute /bin/sh shebang so it runs regardless
     # of PATH contents.
-    command cat >"$stub/git" <<EOF
+    /usr/bin/cat >"$stub/git" <<EOF
 #!/bin/sh
 case "\$1" in
     push) exit $push_rc ;;
     *) exit 0 ;;
 esac
 EOF
-    command chmod +x "$stub/git"
-    command rm -f "$sb/gh_called"
+    /usr/bin/chmod +x "$stub/git"
+    /usr/bin/rm -f "$sb/gh_called"
     if [ "$gh_mode" = "ok" ] || [ "$gh_mode" = "fail" ]; then
         local gh_rc=0
         [ "$gh_mode" = "fail" ] && gh_rc=1
-        command cat >"$stub/gh" <<EOF
+        /usr/bin/cat >"$stub/gh" <<EOF
 #!/bin/sh
 touch "$sb/gh_called"
 exit $gh_rc
 EOF
-        command chmod +x "$stub/gh"
+        /usr/bin/chmod +x "$stub/gh"
     fi
     # A .git marker so the function's early "not a git repository" guard passes.
-    command mkdir -p "$sb/.git"
+    /usr/bin/mkdir -p "$sb/.git"
     (
         # ok/fail: stub prepended to a full PATH so the git/gh stubs shadow the
         # real binaries while coreutils + generate-release-notes.sh (used by the
@@ -371,7 +371,7 @@ test_git_automation_not_a_git_repo() {
     local sb out rc=0
     make_bin_sandbox sb
     # No .git marker: the early guard returns 0 without touching git/gh.
-    command rm -rf "$sb/.git"
+    /usr/bin/rm -rf "$sb/.git"
     out="$(
         cd "$sb" || exit 1
         BIN_DIR="$sb/bin" GH_REPO="joshjhall/librarian" \

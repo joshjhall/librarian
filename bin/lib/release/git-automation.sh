@@ -78,25 +78,32 @@ perform_git_automation() {
         if ! command -v gh >/dev/null 2>&1; then
             command echo "Warning: gh CLI not found, skipping GitHub release" >&2
         else
-            local release_notes notes_file
-            release_notes="$("${BIN_DIR}/generate-release-notes.sh" "$new_version" 2>/dev/null ||
-                command echo "See [CHANGELOG.md](https://github.com/${GH_REPO}/blob/v${new_version}/CHANGELOG.md) for details.")"
+            # Subshell so the notes_file cleanup trap is block-scoped: it fires on
+            # any exit from this block (signal, or a future early return/exit added
+            # here) and cannot leak the temp file, without installing a
+            # function-lifetime RETURN trap that would linger past this branch.
+            (
+                # No `local` here: this is a subshell, not a function body, so the
+                # variables are already scoped to it — `local` would be a no-op.
+                release_notes="$("${BIN_DIR}/generate-release-notes.sh" "$new_version" 2>/dev/null ||
+                    command echo "See [CHANGELOG.md](https://github.com/${GH_REPO}/blob/v${new_version}/CHANGELOG.md) for details.")"
 
-            command echo "Note: creating an UNSIGNED release (tag not pushed, so release.yml did not run)." >&2
-            # Pass notes via a temp file, not --notes "$release_notes": the notes
-            # come from CHANGELOG.md and may contain characters that misbehave as
-            # a shell-word argument. Mirrors release.yml's --notes-file path.
-            notes_file="$(command mktemp)"
-            command printf '%s\n' "$release_notes" >"$notes_file"
-            if gh release create "v$new_version" \
-                --title "Release v$new_version" \
-                --notes-file "$notes_file"; then
-                command echo "✓ GitHub release created: https://github.com/${GH_REPO}/releases/tag/v$new_version"
-            else
-                command echo "Warning: failed to create GitHub release" >&2
-                command echo "Create it manually: https://github.com/${GH_REPO}/releases/new?tag=v$new_version"
-            fi
-            command rm -f "$notes_file"
+                command echo "Note: creating an UNSIGNED release (tag not pushed, so release.yml did not run)." >&2
+                # Pass notes via a temp file, not --notes "$release_notes": the notes
+                # come from CHANGELOG.md and may contain characters that misbehave as
+                # a shell-word argument. Mirrors release.yml's --notes-file path.
+                notes_file="$(command mktemp)"
+                trap 'command rm -f "$notes_file"' EXIT
+                command printf '%s\n' "$release_notes" >"$notes_file"
+                if gh release create "v$new_version" \
+                    --title "Release v$new_version" \
+                    --notes-file "$notes_file"; then
+                    command echo "✓ GitHub release created: https://github.com/${GH_REPO}/releases/tag/v$new_version"
+                else
+                    command echo "Warning: failed to create GitHub release" >&2
+                    command echo "Create it manually: https://github.com/${GH_REPO}/releases/new?tag=v$new_version"
+                fi
+            )
         fi
     fi
 
