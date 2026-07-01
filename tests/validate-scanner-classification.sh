@@ -16,10 +16,15 @@
 #
 # It also gives patterns.sh its first positive-fixture coverage (#135): prior
 # tests only pinned its empty-list / missing-arg contract, never that its
-# debug-statement detector actually fires.
+# debug-statement detector actually fires. The two patterns.sh-only categories
+# — tech-debt-marker and empty-handler — get their positive-fixture coverage
+# here too (#139): they are NOT implemented by pre-review-gates.sh, so they have
+# no cross-scanner-agreement dimension and are asserted against patterns.sh alone.
 #
-# Both scanners emit TSV: file\tline\tcategory\tevidence\tcertainty. We assert on
-# the debug-statement category (both scanners implement it identically).
+# Both scanners emit TSV: file\tline\tcategory\tevidence\tcertainty. The shared
+# classification/agreement tests assert on the debug-statement category (both
+# scanners implement it identically); the two patterns.sh-only tests below filter
+# to their own category via scan_cat().
 #
 # The scanners resolve _PROJECT_ROOT via `git rev-parse` (pre-review-gates.sh),
 # so each invocation runs with git's hook-exported environment scrubbed — same
@@ -41,7 +46,7 @@ GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
-test_suite "scanner test-file classification (#132/#134/#135)"
+test_suite "scanner test-file classification (#132/#134/#135/#139)"
 
 WORKDIR="$(/usr/bin/mktemp -d)"
 trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
@@ -51,6 +56,14 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 scan() {
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$1" "$2" 2>/dev/null |
         /usr/bin/awk -F '\t' '$3 == "debug-statement"'
+}
+
+# scan_cat SCRIPT LIST CATEGORY — like scan(), but filter to an arbitrary finding
+# category (3rd tab-column). scan() is the debug-statement special case; the
+# patterns.sh-only tech-debt-marker / empty-handler tests use this.
+scan_cat() {
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$1" "$2" 2>/dev/null |
+        /usr/bin/awk -F '\t' -v c="$3" '$3 == c'
 }
 
 # has_row ROWS SUBSTR — 0 if any row contains SUBSTR.
@@ -163,8 +176,70 @@ test_scanners_agree() {
 $TEST_FILES"
 }
 
+# --- patterns.sh-only categories (#139) -----------------------------------
+# tech-debt-marker and empty-handler are implemented only in patterns.sh (not
+# pre-review-gates.sh), so these are single-scanner positive-fixture tests with
+# a negative control each — proving the detector fires on a real marker AND stays
+# quiet on a clean file, so a broken regex (either direction) is caught.
+
+# patterns.sh emits a tech-debt-marker row for each of the five keywords its
+# regex matches (TODO|FIXME|HACK|XXX|WORKAROUND), and none for a clean file.
+# One fixture per keyword so a regression that drops any single keyword from the
+# alternation is caught — a one-keyword test would miss exactly that.
+TECH_DEBT_KEYWORDS="TODO
+FIXME
+HACK
+XXX
+WORKAROUND"
+
+test_patterns_tech_debt_fires() {
+    local d rows kw
+    d="$(fresh_dir)"
+    # One .py file per keyword, plus a marker-free control.
+    : >"$d/list.txt"
+    while IFS= read -r kw; do
+        [ -n "$kw" ] || continue
+        /usr/bin/printf '%s\n' "# $kw: handle this" >"$d/debt_$kw.py"
+        /usr/bin/printf '%s\n' "$d/debt_$kw.py" >>"$d/list.txt"
+    done <<<"$TECH_DEBT_KEYWORDS"
+    /usr/bin/printf '%s\n' "x = 1  # a plain comment, no marker" >"$d/clean.py"
+    /usr/bin/printf '%s\n' "$d/clean.py" >>"$d/list.txt"
+
+    rows="$(scan_cat "$PATTERNS" "$d/list.txt" tech-debt-marker)"
+
+    while IFS= read -r kw; do
+        [ -n "$kw" ] || continue
+        if ! has_row "$rows" "$d/debt_$kw.py"; then
+            _fail "patterns.sh: $kw marker must emit a tech-debt-marker row, but none was found"
+        fi
+    done <<<"$TECH_DEBT_KEYWORDS"
+    if has_row "$rows" "$d/clean.py"; then
+        _fail "patterns.sh: clean.py has no marker but a tech-debt-marker row was emitted for it"
+    fi
+}
+
+# patterns.sh emits an empty-handler row for an except/pass block, and none for
+# an except block with a real body.
+test_patterns_empty_handler_fires() {
+    local d rows
+    d="$(fresh_dir)"
+    /usr/bin/printf '%s\n' "try:" "    do()" "except Exception:" "    pass" >"$d/empty.py"
+    /usr/bin/printf '%s\n' "try:" "    do()" "except Exception:" "    handle()" >"$d/handled.py"
+    /usr/bin/printf '%s\n' "$d/empty.py" "$d/handled.py" >"$d/list.txt"
+    rows="$(scan_cat "$PATTERNS" "$d/list.txt" empty-handler)"
+
+    if ! has_row "$rows" "$d/empty.py"; then
+        _fail "patterns.sh: except/pass in empty.py must emit an empty-handler row, but none was found"
+    fi
+    if has_row "$rows" "$d/handled.py"; then
+        _fail "patterns.sh: handled.py has a non-empty except body but an empty-handler row was emitted for it"
+    fi
+}
+
 run_test test_patterns_classifies "patterns.sh flags source, skips test files by path"
 run_test test_gates_classifies "pre-review-gates.sh flags source, skips test files by path"
 run_test test_scanners_agree "both scanners classify every fixture identically"
+run_test test_patterns_tech_debt_fires "patterns.sh fires tech-debt-marker on all 5 keywords, not on clean file"
+run_test test_patterns_empty_handler_fires "patterns.sh fires empty-handler on except/pass, not on handled block"
 
 generate_report
