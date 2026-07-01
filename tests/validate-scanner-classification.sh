@@ -236,10 +236,53 @@ test_patterns_empty_handler_fires() {
     fi
 }
 
+# The Python except/pass path above is one of five empty-handler detectors in
+# patterns.sh. This covers the other four language branches — JS/TS catch{},
+# Java/Kotlin catch{}, Ruby rescue/end, Go `if err != nil {}` — each with a
+# positive fixture (empty body, must fire) and a negative control (real body,
+# must not). Guards against a regression in any single language branch, which
+# the Python-only test would miss (issue #141, deferred from PR #140).
+test_patterns_empty_handler_multilang_fires() {
+    local d rows
+    d="$(fresh_dir)"
+
+    # JS/TS — inline empty catch vs a catch with a real body.
+    /usr/bin/printf '%s\n' "try { do(); } catch (e) {}" >"$d/empty.js"
+    /usr/bin/printf '%s\n' "try { do(); } catch (e) { handle(e); }" >"$d/handled.js"
+    # Java/Kotlin — same catch(){} shape.
+    /usr/bin/printf '%s\n' "try { doThing(); } catch (Exception e) {}" >"$d/empty.java"
+    /usr/bin/printf '%s\n' "try { doThing(); } catch (Exception e) { log(e); }" >"$d/handled.java"
+    # Ruby — rescue whose next non-blank line closes the block, vs one with a body.
+    /usr/bin/printf '%s\n' "begin" "  do_it" "rescue" "end" >"$d/empty.rb"
+    /usr/bin/printf '%s\n' "begin" "  do_it" "rescue" "  handle" "end" >"$d/handled.rb"
+    # Go — swallowed error (empty braces) vs a handled one.
+    /usr/bin/printf '%s\n' "if err != nil {}" >"$d/empty.go"
+    /usr/bin/printf '%s\n' "if err != nil { return err }" >"$d/handled.go"
+
+    /usr/bin/printf '%s\n' \
+        "$d/empty.js" "$d/handled.js" \
+        "$d/empty.java" "$d/handled.java" \
+        "$d/empty.rb" "$d/handled.rb" \
+        "$d/empty.go" "$d/handled.go" >"$d/list.txt"
+
+    rows="$(scan_cat "$PATTERNS" "$d/list.txt" empty-handler)"
+
+    local lang
+    for lang in js java rb go; do
+        if ! has_row "$rows" "$d/empty.$lang"; then
+            _fail "patterns.sh: empty handler in empty.$lang must emit an empty-handler row, but none was found"
+        fi
+        if has_row "$rows" "$d/handled.$lang"; then
+            _fail "patterns.sh: handled.$lang has a non-empty handler body but an empty-handler row was emitted for it"
+        fi
+    done
+}
+
 run_test test_patterns_classifies "patterns.sh flags source, skips test files by path"
 run_test test_gates_classifies "pre-review-gates.sh flags source, skips test files by path"
 run_test test_scanners_agree "both scanners classify every fixture identically"
 run_test test_patterns_tech_debt_fires "patterns.sh fires tech-debt-marker on all 5 keywords, not on clean file"
 run_test test_patterns_empty_handler_fires "patterns.sh fires empty-handler on except/pass, not on handled block"
+run_test test_patterns_empty_handler_multilang_fires "patterns.sh fires empty-handler on JS/Java/Ruby/Go empty handlers, not on handled blocks"
 
 generate_report
