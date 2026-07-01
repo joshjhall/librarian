@@ -246,6 +246,7 @@ project's test suite, checking in this order (first match wins):
 | `go.mod`                 | `go test ./...`         | Go          |
 | `Cargo.toml`             | `cargo test`            | Rust        |
 | `Gemfile`                | `bundle exec rake test` | Ruby        |
+| `Package.swift`          | `swift test`            | Swift/SwiftPM |
 | `Makefile` (test target) | `make test`             | Generic     |
 | `build.gradle`           | `./gradlew test`        | Java/Kotlin |
 
@@ -267,6 +268,9 @@ elif [ -f Cargo.toml ]; then
 # Check for Ruby project
 elif [ -f Gemfile ]; then
     bundle exec rake test
+# Check for Swift Package Manager project
+elif [ -f Package.swift ]; then
+    swift test
 # Check for Makefile with test target
 elif [ -f Makefile ] && /usr/bin/grep -q '^test:' Makefile; then
     make test

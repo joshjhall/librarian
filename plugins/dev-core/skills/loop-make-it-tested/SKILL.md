@@ -18,6 +18,8 @@ with behavior-focused assertions.
 1. Detect the project's test runner from config files:
    - `package.json` (jest/vitest/mocha) | `pyproject.toml`/`setup.cfg` (pytest)
    - `go.mod` (go test) | `Cargo.toml` (cargo test) | `Makefile`
+   - `Package.swift` (`swift test` — match the existing suite: Swift Testing
+     `import Testing`/`@Test` vs XCTest `import XCTest`/`XCTestCase`)
 1. Run `patterns.sh` on changed files to find untested public APIs
 1. Write tests following Arrange-Act-Assert:
    - Happy path with end-to-end assertions

@@ -232,26 +232,49 @@ test_release_notes_fallback_no_changelog() {
 #   gh_mode:      "ok" (default) stub exits 0; "fail" stub exits 1 (release-create
 #                 failure path); "missing" omits the gh stub AND shadows the real
 #                 gh with a non-executable placeholder so `command -v gh` fails.
-#   git_push_rc:  exit code the git stub returns for a `push` subcommand (default
-#                 0). Non-zero exercises the push-failure `exit 1` paths.
+#   git_push_rc:  exit code the git stub returns for a BRANCH `push` subcommand
+#                 (`git push origin <branch>`, default 0). Non-zero exercises the
+#                 branch-push-failure `exit 1` path.
+#   tag_push_rc:  exit code the git stub returns for a TAG `push` subcommand
+#                 (`git push origin v<tag>`, default = git_push_rc). Set it to 1
+#                 with git_push_rc=0 to exercise the tag-push-failure `exit 1`
+#                 path without tripping the branch-push guard first.
 # The stub dir is always kept on a full PATH (prepended), so the git/gh stubs
 # shadow the real binaries while coreutils + generate-release-notes.sh still
 # resolve — the git stub therefore genuinely runs in every mode.
 run_git_automation() {
     local sb="$1" ac="$2" at="$3" ap="$4" agr="$5" gh_mode="${6:-ok}" push_rc="${7:-0}"
+    local tag_push_rc="${8:-$push_rc}"
     local stub="$sb/stubbin"
     /usr/bin/mkdir -p "$stub"
-    # git stub: `push` returns the caller-chosen code; every other subcommand
-    # (commit/tag/...) succeeds. Absolute /bin/sh shebang so it runs regardless
-    # of PATH contents.
+    # git stub: a `push` subcommand returns a per-ref code so the branch push
+    # (`push origin <branch>`) and the tag push (`push origin v<tag>`) can fail
+    # independently — the pushed ref is $3, and a tag ref is the only one that
+    # starts with `v`. Every other subcommand (commit/tag/rev-parse/...) succeeds.
+    # Absolute /bin/sh shebang so it runs regardless of PATH contents.
     /usr/bin/cat >"$stub/git" <<EOF
 #!/bin/sh
 case "\$1" in
-    push) exit $push_rc ;;
+    push)
+        case "\$3" in
+            v*) exit $tag_push_rc ;;
+            *) exit $push_rc ;;
+        esac ;;
     *) exit 0 ;;
 esac
 EOF
     /usr/bin/chmod +x "$stub/git"
+    # mktemp stub: delegates to the real mktemp but also records the created path
+    # to "$sb/notes_tempfile_path" so a test can assert the unsigned-fallback
+    # subshell's EXIT trap actually removed the release-notes temp file.
+    # git-automation.sh creates it via `command mktemp`, which honors PATH.
+    /usr/bin/cat >"$stub/mktemp" <<EOF
+#!/bin/sh
+f="\$(/usr/bin/mktemp "\$@")" || exit 1
+printf '%s\n' "\$f" >"$sb/notes_tempfile_path"
+printf '%s\n' "\$f"
+EOF
+    /usr/bin/chmod +x "$stub/mktemp"
     /usr/bin/rm -f "$sb/gh_called"
     if [ "$gh_mode" = "ok" ] || [ "$gh_mode" = "fail" ]; then
         local gh_rc=0
@@ -271,7 +294,7 @@ EOF
         # unsigned fallback) still resolve.
         # missing: PATH = stub only, so there is NO gh anywhere and
         # `command -v gh` fails. The git stub's absolute /bin/sh shebang means it
-        # still runs, and the gh-missing branch exits before any coreutil call.
+        # still runs, and the gh-missing branch exits before any coreutils call.
         if [ "$gh_mode" = "missing" ]; then
             PATH="$stub"
         else
@@ -354,6 +377,26 @@ test_git_automation_gh_release_failure_degrades() {
     out="$(run_git_automation "$sb" true true false true fail)"
     assert_contains "$out" "failed to create GitHub release" "gh failure warns gracefully"
     assert_contains "$out" "releases/new?tag=v9.9.9" "gh failure prints the manual-create URL"
+    # The unsigned-fallback subshell's `trap ... EXIT` must remove the release-
+    # notes temp file even when gh fails. The mktemp stub recorded the path; if
+    # the trap (or the subshell) regressed, the file would still be present here.
+    local notes_file
+    notes_file="$(/usr/bin/cat "$sb/notes_tempfile_path" 2>/dev/null)"
+    assert_true "[ -n '$notes_file' ]" "the fallback path created a release-notes temp file"
+    assert_true "[ ! -e '$notes_file' ]" "the subshell EXIT trap removed the release-notes temp file"
+}
+
+test_git_automation_tag_push_failure_aborts() {
+    local sb out rc=0
+    make_bin_sandbox sb
+    # Branch push succeeds (push_rc=0) but the TAG push fails (tag_push_rc=1):
+    # the function must reach the tag-push guard and abort with exit 1, rather
+    # than proceeding to a release. Distinct code path from the branch-push
+    # failure above, which trips first when both share one push_rc.
+    out="$(run_git_automation "$sb" true true true true ok 0 1)" || rc=$?
+    assert_exit 1 "$rc" "a failed tag push aborts perform_git_automation with exit 1"
+    assert_contains "$out" "Failed to push tag" "tag-push failure is reported"
+    assert_true "[ ! -e '$sb/gh_called' ]" "tag-push failure → no release is created"
 }
 
 test_git_automation_push_failure_aborts() {
@@ -407,7 +450,8 @@ run_test test_git_automation_push_no_tag_skips_release "git-automation: push wit
 run_test test_git_automation_release_disabled "git-automation: AUTO_GITHUB_RELEASE=false creates no release"
 run_test test_git_automation_unpushed_tag_gh_missing_degrades "git-automation: missing gh on the fallback path degrades gracefully"
 run_test test_git_automation_gh_release_failure_degrades "git-automation: a failing gh release create degrades gracefully"
-run_test test_git_automation_push_failure_aborts "git-automation: a failed git push aborts with exit 1"
+run_test test_git_automation_push_failure_aborts "git-automation: a failed branch push aborts with exit 1"
+run_test test_git_automation_tag_push_failure_aborts "git-automation: a failed tag push aborts with exit 1"
 run_test test_git_automation_not_a_git_repo "git-automation: missing .git returns 0 with a manual-commit notice"
 
 generate_report
