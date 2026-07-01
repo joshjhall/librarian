@@ -114,8 +114,10 @@ review the diff, commit on a branch, and open a PR. Cut the actual release from
 `main` with the auto flags (`bin/release.sh --full-auto patch`) or by pushing an
 annotated `vX.Y.Z` tag: the `release.yml` workflow validates the tagged tree,
 **cosign-keyless-signs a `git archive` tarball of the tag** and publishes it
-alongside the GitHub Release as `librarian-<version>.tar.gz` + `.sig` + `.pem`
-(the verification contract — recipe in `README.md` § "Verifying a release").
+alongside the GitHub Release as `librarian-<version>.tar.gz` +
+`.tar.gz.sigstore.json` (the Sigstore bundle carrying both the signature and the
+Fulcio cert — cosign 3.x's `--new-bundle-format`; the verification contract,
+recipe in `README.md` § "Verifying a release").
 Because keyless signing needs the CI OIDC token, `release.yml` is the canonical
 signed publisher; `bin/release.sh --full-auto` deliberately skips its local
 `gh release create` once the tag is pushed (see
