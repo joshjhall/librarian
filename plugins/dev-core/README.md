@@ -50,4 +50,8 @@ inside a devcontainer.
 
 `code-reviewer` ships a deterministic `workflow.js` harness alongside its flat
 `agents/code-reviewer.md` (see the repo's
-[CLAUDE.md](../../CLAUDE.md) for the flat-agent + harness-sibling layout).
+[CLAUDE.md](../../CLAUDE.md) for the flat-agent + harness-sibling layout). A
+harness references its subagent by the **namespaced `<plugin>:<name>`** form
+(e.g. `dev-core:code-reviewer`) — the Workflow tool's resolver requires it,
+opposite to the Agent tool's bare `subagent_type`; `tests/lint-skills-agents.sh`
+enforces the namespaced form.
