@@ -22,6 +22,25 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# >>> shared:is-test-file (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
+# is_test_file PATH — return 0 (true) if PATH is a test file by path/name
+# convention. PATH-ONLY: content-colocated tests (Rust #[cfg(test)] blocks in
+# real source files) are NOT this function's job. Segment-anchored so that
+# contest.py / latest.js / attestation.go (which a bare *test* glob wrongly
+# matches) are NOT skipped, while tests/helper.py (which a suffix-only set
+# wrongly scans) IS. Handles both repo-relative and absolute path forms.
+is_test_file() {
+    case "$1" in
+        tests/* | */tests/* | test/* | */test/* | \
+            __tests__/* | */__tests__/* | spec/* | */spec/* | \
+            __pycache__/* | */__pycache__/*) return 0 ;;
+        test_*.* | */test_*.*) return 0 ;;
+        *_test.* | *_spec.* | *.test.* | *.spec.*) return 0 ;;
+    esac
+    return 1
+}
+# <<< shared:is-test-file
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -33,13 +52,11 @@ while IFS= read -r file; do
 
     # Determine if this is a test file (skip debug-statement checks for tests)
     is_test=0
-    case "$file" in
-        *_test.* | *.test.* | *.spec.* | *__tests__* | *test* | *spec*) is_test=1 ;;
-    esac
+    is_test_file "$file" && is_test=1
 
     # --- Category: tech-debt-marker ---
     # TODO, FIXME, HACK, XXX, WORKAROUND comments
-    /usr/bin/grep -niE '\b(TODO|FIXME|HACK|XXX|WORKAROUND)\b' "$file" 2>/dev/null |
+    /usr/bin/grep -niE -- '\b(TODO|FIXME|HACK|XXX|WORKAROUND)\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(/usr/bin/printf '%.80s' "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -50,14 +67,14 @@ while IFS= read -r file; do
     # --- Category: debug-statement ---
     # Only flag in non-test files
     if [ "$is_test" -eq 0 ]; then
-        # >>> shared:debug-statement-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-debug-scanner-sync.sh)
+        # >>> shared:debug-statement-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
         # This case is a DELIBERATE cross-plugin duplicate: review-audit and
         # workflow install independently, so pre-review-gates.sh cannot source
         # it. Edit both copies together; the drift guard fails CI otherwise.
         case "$file" in
             *.py)
                 # Python: print() used as debug (not in logging context)
-                /usr/bin/grep -nE '^\s*print\(' "$file" 2>/dev/null |
+                /usr/bin/grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
                     /usr/bin/grep -vE '(logging|logger|log\.)' |
                     while IFS=: read -r line_num content; do
                         evidence=$(/usr/bin/printf '%.80s' "$content")
@@ -66,7 +83,7 @@ while IFS= read -r file; do
                             "Debug print statement: ${evidence}" "HIGH"
                     done || true
                 # Python: breakpoint(), pdb
-                /usr/bin/grep -nE '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
+                /usr/bin/grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -76,7 +93,7 @@ while IFS= read -r file; do
                 ;;
             *.js | *.ts | *.jsx | *.tsx)
                 # JavaScript/TypeScript: console.log, console.debug, console.warn
-                /usr/bin/grep -nE '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
+                /usr/bin/grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -84,7 +101,7 @@ while IFS= read -r file; do
                             "Console debug statement: ${evidence}" "HIGH"
                     done || true
                 # debugger keyword
-                /usr/bin/grep -nE '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
+                /usr/bin/grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -94,7 +111,7 @@ while IFS= read -r file; do
                 ;;
             *.rb)
                 # Ruby: binding.pry, puts used as debug
-                /usr/bin/grep -nE '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
+                /usr/bin/grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -104,7 +121,7 @@ while IFS= read -r file; do
                 ;;
             *.go)
                 # Go: fmt.Println used as debug (not in main or test)
-                /usr/bin/grep -nE '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
+                /usr/bin/grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -114,7 +131,7 @@ while IFS= read -r file; do
                 ;;
             *.java | *.kt)
                 # Java/Kotlin: System.out.println, System.err.println
-                /usr/bin/grep -nE '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
+                /usr/bin/grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -131,11 +148,11 @@ while IFS= read -r file; do
     case "$file" in
         *.py)
             # Python: except with only pass
-            /usr/bin/grep -nE '^\s*except' "$file" 2>/dev/null |
+            /usr/bin/grep -nE -- '^\s*except' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    next_line=$(/usr/bin/sed -n "$((line_num + 1)),\$p" "$file" |
+                    next_line=$(/usr/bin/sed -n -- "$((line_num + 1)),\$p" "$file" |
                         /usr/bin/grep -m1 -E '\S' | /usr/bin/head -1)
-                    if echo "$next_line" | /usr/bin/grep -qE '^\s*pass\s*$' 2>/dev/null; then
+                    if /usr/bin/printf '%s\n' "$next_line" | /usr/bin/grep -qE '^\s*pass\s*$' 2>/dev/null; then
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-handler" \
@@ -145,7 +162,7 @@ while IFS= read -r file; do
             ;;
         *.js | *.ts | *.jsx | *.tsx)
             # JS/TS: catch with empty body
-            /usr/bin/grep -nE 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
+            /usr/bin/grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -155,7 +172,7 @@ while IFS= read -r file; do
             ;;
         *.java | *.kt)
             # Java/Kotlin: catch with empty body
-            /usr/bin/grep -nE 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
+            /usr/bin/grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -165,11 +182,11 @@ while IFS= read -r file; do
             ;;
         *.rb)
             # Ruby: rescue with no body
-            /usr/bin/grep -nE '^\s*rescue\b' "$file" 2>/dev/null |
+            /usr/bin/grep -nE -- '^\s*rescue\b' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    next_line=$(/usr/bin/sed -n "$((line_num + 1)),\$p" "$file" |
+                    next_line=$(/usr/bin/sed -n -- "$((line_num + 1)),\$p" "$file" |
                         /usr/bin/grep -m1 -E '\S' | /usr/bin/head -1)
-                    if echo "$next_line" | /usr/bin/grep -qE '^\s*(end|rescue)\s*$' 2>/dev/null; then
+                    if /usr/bin/printf '%s\n' "$next_line" | /usr/bin/grep -qE '^\s*(end|rescue)\s*$' 2>/dev/null; then
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-handler" \
@@ -179,7 +196,7 @@ while IFS= read -r file; do
             ;;
         *.go)
             # Go: if err != nil with empty body
-            /usr/bin/grep -nE 'if err != nil\s*\{\s*\}' "$file" 2>/dev/null |
+            /usr/bin/grep -nE -- 'if err != nil\s*\{\s*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
