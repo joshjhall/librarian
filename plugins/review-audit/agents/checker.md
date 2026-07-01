@@ -118,8 +118,36 @@ exist for the same domain, use check-\* skills and skip the audit-\* agent. Log:
 
 For each skill that has `patterns.sh`:
 
+1. **Log the script on discovery** (always, every script):
+   `[prescan] discovered <resolved-path> (source: <source>)`, using the
+   `source` you recorded for this skill in Step 2. A `patterns.sh` is only ever
+   reached here from a check-\* skill, so `source` is `user` (`~/.claude/...`)
+   or `project` (`.claude/...` in the repo under audit); the `legacy` audit-\*
+   agents have no `patterns.sh` and never enter this loop. Log on discovery —
+   **not** "executing" — so a script that the gate skips is never recorded as
+   having run.
+1. **Integrity gate — branch on `source`** (a discovered `patterns.sh` is
+   arbitrary shell run with your full permissions over the audit manifest):
+   - `source: user` (from `~/.claude/...`): the operator's own deliberately
+     installed plugins — **trusted, run as normal**.
+   - `source: project` (`.claude/skills/...` inside the repo under audit): this
+     is the supply-chain surface — a hostile repo can ship and commit its own
+     scanner. **Skip the prescan for this skill unless the operator has opted
+     in** by setting `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1` (exact value `1`;
+     treat any other value, including `true`/`yes`/empty, as unset). When opted
+     in, also confirm the script is git-tracked
+     (`git -C <repo-root> ls-files --error-unmatch <skill-dir>/patterns.sh`) and
+     skip if it is not — this is an **existence-in-index check, not an integrity
+     check** (an attacker who can commit the script makes it tracked by
+     definition); it only filters stray local/untracked files, the real trust
+     decision is the opt-in itself. On any skip, log
+     `[prescan] skipped <resolved-path> (untrusted project source)` and fall
+     through to Pass 2 exactly like the non-zero-exit case below — the skill is
+     NOT dropped, only its deterministic results are absent.
 1. Write the file manifest (one path per line) to a temporary file
-1. Run: `bash <skill-dir>/patterns.sh <tempfile>`
+1. **For a script that passes the gate**, log
+   `[prescan] executing <resolved-path> (source: <source>)`, then run:
+   `bash <skill-dir>/patterns.sh <tempfile>`
 1. Parse the TSV output. Expected format per line:
    `<file>\t<line>\t<category>\t<evidence>\t<certainty>`
 1. Collect pre-scan findings with certainty `HIGH` and method `deterministic`
