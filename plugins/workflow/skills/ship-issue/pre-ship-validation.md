@@ -9,7 +9,7 @@ behavior is noted inline per check; environment variables referenced here
 1. **Run test suite** — auto-detect the project's test runner (see
    `orchestrate/merge-protocol.md` § Test Runner Detection for the detection
    order: `package.json` → `pyproject.toml` → `go.mod` → `Cargo.toml` →
-   `Gemfile` → `Makefile` → `build.gradle`).
+   `Gemfile` → `Package.swift` → `Makefile` → `build.gradle`).
 
    - If tests **pass**: proceed to Step 4
    - If tests **fail**:
