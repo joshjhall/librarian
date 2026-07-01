@@ -180,22 +180,39 @@ workflow_phase_meta_mismatch() {
     done <<<"$meta_titles"
 }
 
-# Report agentType references in a workflow.js that do not resolve to a real
-# flat agent file at plugins/*/agents/<name>.md, one dangling name per line.
-# Empty output means every agentType resolves. A dangling agentType means the
-# harness invokes a nonexistent agent at runtime.
+# Report agentType references in a workflow.js that do not resolve under the
+# Workflow tool's runtime registry, one dangling ref per line. Empty output
+# means every agentType resolves.
+#
+# The Workflow tool's agent() resolver keys agents ONLY by their namespaced
+# `<plugin>:<name>` form (`dev-core:code-reviewer`, `review-audit:checker`, …) —
+# the OPPOSITE of the Agent tool's `subagent_type`, which takes the bare name.
+# So a valid agentType MUST be `<plugin>:<name>` AND map to a real flat agent
+# file at plugins/<plugin>/agents/<name>.md. A bare name (no colon) is reported
+# as dangling even when its basename resolves, because that is exactly what
+# throws at runtime under a marketplace install (issue #126).
 workflow_dangling_agenttypes() {
     local wf_file="$1"
-    local name
+    local ref plugin name
     command grep -oE "agentType:[[:space:]]*['\"][^'\"]+['\"]" "$wf_file" |
         command sed -E "s/agentType:[[:space:]]*['\"]([^'\"]+)['\"]/\1/" |
         command sort -u |
-        while IFS= read -r name; do
-            [ -n "$name" ] || continue
-            if [ -z "$(command find "$PLUGINS_DIR" -mindepth 3 -maxdepth 3 \
-                -type f -path '*/agents/*' -name "${name}.md" 2>/dev/null)" ]; then
-                printf '%s\n' "$name"
-            fi
+        while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            case "$ref" in
+                *:*)
+                    plugin="${ref%%:*}"
+                    name="${ref#*:}"
+                    if [ ! -f "$PLUGINS_DIR/$plugin/agents/${name}.md" ]; then
+                        printf '%s\n' "$ref"
+                    fi
+                    ;;
+                *)
+                    # Bare name — resolves under the Agent tool but throws under
+                    # the Workflow tool. Always dangling here.
+                    printf '%s\n' "$ref"
+                    ;;
+            esac
         done
 }
 
@@ -551,7 +568,8 @@ test_workflow_phase_guard_detects_mismatch() {
         "Detector flags a meta.phases entry with no phase() call"
 }
 
-# Every agentType referenced in a workflow.js resolves to a real agent file.
+# Every agentType in a workflow.js is the namespaced <plugin>:<name> form the
+# Workflow tool's registry resolves — a bare name throws at runtime (issue #126).
 test_workflow_agenttype_resolves() {
     local wf_file
     while IFS= read -r wf_file; do
@@ -562,12 +580,12 @@ test_workflow_agenttype_resolves() {
         dangling="$(workflow_dangling_agenttypes "$wf_file")"
         if [ -n "$dangling" ]; then
             assert_true false \
-                "Workflow $rel_name: agentType has no plugins/*/agents/<name>.md: $(printf '%s' "$dangling" | command tr '\n' ' ')"
+                "Workflow $rel_name: agentType not a resolvable <plugin>:<name>: $(printf '%s' "$dangling" | command tr '\n' ' ')"
         fi
     done < <(command find "$PLUGINS_DIR" -name "workflow.js" -type f 2>/dev/null | command sort)
 }
 
-# The agentType cross-ref detector FIRES on the negative fixture.
+# The detector FIRES on a namespaced-but-unresolvable agentType.
 test_workflow_agenttype_guard_detects_dangling() {
     local fixture="$FIXTURES_DIR/workflow_agenttype_bad.js"
     assert_file_exists "$fixture" "Negative dangling-agentType fixture exists"
@@ -575,8 +593,21 @@ test_workflow_agenttype_guard_detects_dangling() {
 
     local dangling
     dangling="$(workflow_dangling_agenttypes "$fixture")"
-    assert_contains "$dangling" "nonexistent-agent" \
-        "Detector flags an agentType with no matching agent file"
+    assert_contains "$dangling" "workflow:nonexistent-agent" \
+        "Detector flags a namespaced agentType with no matching agent file"
+}
+
+# The detector FIRES on a BARE agentType — resolvable by basename but invalid
+# for the Workflow tool, which is precisely the issue #126 class.
+test_workflow_agenttype_guard_detects_bare() {
+    local fixture="$FIXTURES_DIR/workflow_agenttype_bare.js"
+    assert_file_exists "$fixture" "Negative bare-agentType fixture exists"
+    [ -f "$fixture" ] || return 0
+
+    local dangling
+    dangling="$(workflow_dangling_agenttypes "$fixture")"
+    assert_contains "$dangling" "code-reviewer" \
+        "Detector flags a bare agentType even when its basename resolves"
 }
 
 # Every workflow.js that declares a BUDGET_FLOOR uses the house value. The
@@ -679,8 +710,9 @@ run_test test_workflow_js_node_check_detects_syntax_error "node --check guard fi
 run_test test_workflow_meta_guard_detects_violations "Meta pure-literal guard fires on the negative fixture"
 run_test test_workflow_phase_meta_consistency "Every workflow.js phase() set matches meta.phases"
 run_test test_workflow_phase_guard_detects_mismatch "Phase↔meta guard fires on the negative fixture"
-run_test test_workflow_agenttype_resolves "Every workflow.js agentType resolves to an agent file"
-run_test test_workflow_agenttype_guard_detects_dangling "agentType cross-ref guard fires on the negative fixture"
+run_test test_workflow_agenttype_resolves "Every workflow.js agentType is a resolvable <plugin>:<name>"
+run_test test_workflow_agenttype_guard_detects_dangling "agentType guard fires on a namespaced-unresolvable ref"
+run_test test_workflow_agenttype_guard_detects_bare "agentType guard fires on a bare (un-namespaced) ref"
 run_test test_workflow_budget_floor_consistent "Every workflow.js BUDGET_FLOOR equals the house floor"
 run_test test_workflow_budget_floor_guard_detects_drift "BUDGET_FLOOR consistency guard fires on the negative fixture"
 run_test test_skill_required_tools_referenced "Every skill's required_tools are referenced in the skill"

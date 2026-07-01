@@ -59,6 +59,7 @@ modes this method has caught; treat the "Detect" column as the question to ask.
 | **Doc contradicts the real dispatch path** | An agent doc that says "always driven per-file by the harness" misleads when the primary caller dispatches it directly with the whole list | Does the doc match how the artifact is ACTUALLY invoked on every path, not just one? |
 | **Extending a shared schema in one consumer** | Adding a field to a schema that other artifacts also emit forks the contract | Is this schema shared before extending it? If shared, change it everywhere or not at all. |
 | **Parallel verify collisions** | N items each running the full suite in parallel waste budget and collide on shared ports / test DBs | Is verification scoped to the changed unit, falling back to the full suite only when no scoped check exists? |
+| **Bare `agentType` in a harness** | The Workflow tool's `agent()` resolves agents only by their namespaced `<plugin>:<name>` key — the OPPOSITE of the Agent tool's bare `subagent_type` — so a bare `agentType` passes basename linting yet throws at runtime, silently degrading the fan-out | Is every `agentType` the namespaced `<plugin>:<name>` form that resolves to `plugins/<plugin>/agents/<name>.md`? |
 
 ## Certainty Grading
 

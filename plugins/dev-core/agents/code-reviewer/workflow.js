@@ -22,7 +22,7 @@ export const meta = {
 //
 // The fan-out, the shared token budget, and per-step resume all live HERE in
 // the harness — NOT in the code-reviewer agent. The agent is one
-// `agentType: "code-reviewer"` driven in four discriminated modes named in the
+// `agentType: "dev-core:code-reviewer"` driven in four discriminated modes named in the
 // prompt: `manifest`, `reviewer:<name>`, `rescore`, `merge`. Independent
 // sub-reviewers fan with parallel() and share one budget; a sub-reviewer that
 // throws drops to null and is filtered — the rest proceed. Per-step resume is
@@ -279,7 +279,7 @@ phase('Manifest')
 const manifest = await agent(manifestPrompt(), {
   label: 'manifest',
   phase: 'Manifest',
-  agentType: 'code-reviewer',
+  agentType: 'dev-core:code-reviewer',
   schema: MANIFEST_SCHEMA,
 })
 
@@ -309,7 +309,7 @@ const reviewResults = await parallel(
     agent(reviewerPrompt(reviewer, manifest), {
       label: `review:${reviewer}`,
       phase: 'Review',
-      agentType: 'code-reviewer',
+      agentType: 'dev-core:code-reviewer',
       schema: FINDINGS_SCHEMA,
     }).then((r) => ({ reviewer, findings: (r && r.findings) || [] }))
   )
@@ -344,7 +344,7 @@ phase('Rescore')
 const rescored = await agent(rescorePrompt(rawFindings), {
   label: 'rescore',
   phase: 'Rescore',
-  agentType: 'code-reviewer',
+  agentType: 'dev-core:code-reviewer',
   schema: RESCORE_SCHEMA,
 })
 
@@ -367,7 +367,7 @@ phase('Merge')
 const report = await agent(mergePrompt(rawFindings, manifest, didRescore), {
   label: 'merge',
   phase: 'Merge',
-  agentType: 'code-reviewer',
+  agentType: 'dev-core:code-reviewer',
   schema: MERGE_SCHEMA,
 })
 

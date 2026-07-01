@@ -131,21 +131,21 @@ const results = await parallel(
           agent(parsePrompt(c, iteration), {
             label: `parse:${check.name}#${iteration}`,
             phase: 'Fix',
-            agentType: 'ci-fixer',
+            agentType: 'workflow:ci-fixer',
             schema: CLASSIFY_SCHEMA,
           }),
         (cls) =>
           agent(fixPrompt(check, cls, iteration), {
             label: `fix:${check.name}#${iteration}`,
             phase: 'Fix',
-            agentType: 'ci-fixer',
+            agentType: 'workflow:ci-fixer',
             schema: FIX_SCHEMA,
           }),
         () =>
           agent(verifyPrompt(check, iteration), {
             label: `verify:${check.name}#${iteration}`,
             phase: 'Fix',
-            agentType: 'ci-fixer',
+            agentType: 'workflow:ci-fixer',
             schema: VERIFY_SCHEMA,
           }),
       )

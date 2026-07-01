@@ -26,7 +26,7 @@ export const meta = {
 //   }
 //
 // The fan-out, the shared token budget, and per-file resume all live HERE in the
-// harness — NOT in the rebase-agent. The agent is one `agentType: "rebase-agent"`
+// harness — NOT in the rebase-agent. The agent is one `agentType: "workflow:rebase-agent"`
 // driven in two discriminated modes named in the prompt: `classify` and
 // `resolve`. A file whose pipeline throws drops to null and is reported as
 // escalated; the rest proceed. The agent applies edits in the working tree; it
@@ -221,7 +221,7 @@ const outcomes = await parallel(
         agent(classifyPrompt(f), {
           label: `classify:${f}`,
           phase: 'Resolve',
-          agentType: 'rebase-agent',
+          agentType: 'workflow:rebase-agent',
           schema: CLASSIFY_SCHEMA,
         }),
       (cls) => {
@@ -249,7 +249,7 @@ const outcomes = await parallel(
         return agent(prompt, {
           label: `resolve:${file}`,
           phase: 'Resolve',
-          agentType: 'rebase-agent',
+          agentType: 'workflow:rebase-agent',
           schema: RESOLVE_SCHEMA,
         }).then((res) => ({ file, cls, res }))
       },
@@ -280,7 +280,7 @@ const outcomes = await parallel(
           verdict = await agent(verifyPrompt(file, cls, attempt), {
             label: `verify:${file}#${attempt}`,
             phase: 'Resolve',
-            agentType: 'rebase-agent',
+            agentType: 'workflow:rebase-agent',
             schema: VERIFY_SCHEMA,
           })
           if (!verdict) break
