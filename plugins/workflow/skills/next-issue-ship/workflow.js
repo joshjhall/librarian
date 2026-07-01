@@ -413,7 +413,7 @@ phase('Manifest')
 const manifest = await agent(manifestPrompt(), {
   label: 'manifest',
   phase: 'Manifest',
-  agentType: 'code-reviewer',
+  agentType: 'dev-core:code-reviewer',
   schema: MANIFEST_SCHEMA,
 })
 
@@ -463,7 +463,7 @@ const reviewResults = await parallel(
     return agent(prompt, {
       label: `review:${entry.dim.name}`,
       phase: 'Review',
-      agentType: 'code-reviewer',
+      agentType: 'dev-core:code-reviewer',
       schema: FINDINGS_SCHEMA,
     }).then((r) => ({ dim: entry.dim.name, findings: (r && r.findings) || [] }))
   })
@@ -492,7 +492,7 @@ if (PHASE === 'pr-cycle' && prComments.length) {
   const triage = await agent(commentsPrompt(manifest), {
     label: 'comment-triage',
     phase: 'Comments',
-    agentType: 'code-reviewer',
+    agentType: 'dev-core:code-reviewer',
     schema: COMMENTS_SCHEMA,
   })
   if (triage) {
@@ -540,7 +540,7 @@ phase('Rescore')
 const rescored = await agent(rescorePrompt(rawFindings), {
   label: 'rescore',
   phase: 'Rescore',
-  agentType: 'code-reviewer',
+  agentType: 'dev-core:code-reviewer',
   schema: RESCORE_SCHEMA,
 })
 
@@ -562,7 +562,7 @@ phase('Classify')
 const classified = await agent(classifyPrompt(rawFindings, budgetExhausted), {
   label: 'classify',
   phase: 'Classify',
-  agentType: 'code-reviewer',
+  agentType: 'dev-core:code-reviewer',
   schema: CLASSIFY_SCHEMA,
 })
 

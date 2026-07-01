@@ -701,7 +701,7 @@ async function runPollSweep() {
           return agent(prompt, {
             label: `rebase:#${pr.number}`,
             phase: 'Rebase',
-            agentType: 'rebase-agent',
+            agentType: 'workflow:rebase-agent',
             schema: REBASE_RESULT,
           }).then((r) => r && { pr: pr.number, branch: pr.branch, rebased: true, ...r })
         },

@@ -22,7 +22,12 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
   `tests/lint-skills-agents.sh`.
 - **Discriminated agent modes**: drive one `agentType` in modes named in the
   prompt (`manifest`, `reviewer:<name>`, `rescore`, `merge`, …). The agent does
-  one mode per call; the harness sequences them.
+  one mode per call; the harness sequences them. `agentType` MUST be the
+  **namespaced `<plugin>:<name>`** form (`dev-core:code-reviewer`,
+  `review-audit:checker`, …) — the Workflow tool's `agent()` resolver keys
+  agents only by that form. This is the OPPOSITE of the `Agent` tool's
+  `subagent_type`, which takes the **bare** name; a bare `agentType` passes a
+  basename check but throws at runtime (issue #126).
 - **Typed schemas**: every `agent()` that returns data uses a JSON-Schema with
   `additionalProperties: false` and an explicit `required` list. Validation
   happens at the tool layer, so the model retries on mismatch.
@@ -87,6 +92,9 @@ silent drops, unsafe interpolation) are caught by that one pass.
 ## Validation
 
 - `node --check workflow.js` — the script must parse (it is plain JS, not TS).
+- Every `agentType` is namespaced `<plugin>:<name>` and resolves to
+  `plugins/<plugin>/agents/<name>.md` — a bare name throws under the Workflow
+  tool. Enforced by `tests/lint-skills-agents.sh`.
 - Trace each `agent()` mode against the agent definition it drives — the modes
   named in prompts must match the agent's documented modes.
 - Confirm the agent contract doc matches EVERY dispatch path (per-file harness

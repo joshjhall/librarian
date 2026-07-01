@@ -503,7 +503,7 @@ phase('Map')
 const map = await agent(mapPrompt(), {
   label: 'map',
   phase: 'Map',
-  agentType: 'checker',
+  agentType: 'review-audit:checker',
   schema: MAP_SCHEMA,
 })
 
@@ -550,7 +550,7 @@ const verified = await pipeline(
     return agent(scanPrompt(domain), {
       label: `scan:${domain.name}`,
       phase: 'Scan',
-      agentType: 'checker',
+      agentType: 'review-audit:checker',
       schema: SCAN_SCHEMA,
     }).then((r) => {
       if (!r) {
@@ -581,7 +581,7 @@ const verified = await pipeline(
     return agent(verifyPrompt(domain.name, scanResult.findings), {
       label: `verify:${domain.name}`,
       phase: 'Verify',
-      agentType: 'checker',
+      agentType: 'review-audit:checker',
       schema: VERIFY_SCHEMA,
     }).then((v) => {
       if (!v) {
@@ -643,7 +643,7 @@ phase('Aggregate')
 const aggregate = await agent(aggregatePrompt(allFindings, acknowledgedAll), {
   label: 'aggregate',
   phase: 'Aggregate',
-  agentType: 'checker',
+  agentType: 'review-audit:checker',
   schema: AGGREGATE_SCHEMA,
 })
 
@@ -723,7 +723,7 @@ const outcomes = await parallel(
     agent(issueWriterPrompt(map.platform, g.group, g.findings), {
       label: `file:${g.group.category}`,
       phase: 'File',
-      agentType: 'issue-writer',
+      agentType: 'review-audit:issue-writer',
       schema: ISSUE_WRITER_SCHEMA,
     })
   )

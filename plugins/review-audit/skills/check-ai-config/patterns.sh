@@ -309,6 +309,20 @@ check_harness_logic() {
                 "Finding ref may collide (no per-finding index): ${evidence}" "MEDIUM"
         done || true
 
+    # Bare agentType — a subagent reference with no `<plugin>:` namespace. The
+    # Workflow tool's agent() resolver keys agents ONLY by `<plugin>:<name>`
+    # (the opposite of the Agent tool's bare subagent_type), so a bare name
+    # throws at runtime and silently degrades the fan-out. Portable check: flag
+    # any agentType literal lacking a colon. Cannot confirm the <plugin> half
+    # resolves without this repo's layout, so MEDIUM for the LLM pass to confirm.
+    /usr/bin/grep -nE "agentType:[[:space:]]*['\"][^'\":]+['\"]" "$file" 2>/dev/null |
+        while IFS=: read -r line_num content; do
+            evidence=$(/usr/bin/printf '%.80s' "$content")
+            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$file" "$line_num" "harness-logic" \
+                "Bare agentType (needs <plugin>:<name> for the Workflow tool): ${evidence}" "MEDIUM"
+        done || true
+
     # Unsafe interpolation into an auto-approving command.
     /usr/bin/grep -nE 'dangerously-skip-permissions.*\$\{' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
