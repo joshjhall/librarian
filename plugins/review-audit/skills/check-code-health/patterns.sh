@@ -50,6 +50,10 @@ while IFS= read -r file; do
     # --- Category: debug-statement ---
     # Only flag in non-test files
     if [ "$is_test" -eq 0 ]; then
+        # >>> shared:debug-statement-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-debug-scanner-sync.sh)
+        # This case is a DELIBERATE cross-plugin duplicate: review-audit and
+        # workflow install independently, so pre-review-gates.sh cannot source
+        # it. Edit both copies together; the drift guard fails CI otherwise.
         case "$file" in
             *.py)
                 # Python: print() used as debug (not in logging context)
@@ -119,6 +123,7 @@ while IFS= read -r file; do
                     done || true
                 ;;
         esac
+        # <<< shared:debug-statement-scan
     fi
 
     # --- Category: empty-handler ---
