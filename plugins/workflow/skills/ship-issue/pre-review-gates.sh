@@ -154,8 +154,11 @@ scan_ai_slop() {
 
 # =============================================================================
 # Category: debug-statement
-# Reuses patterns from check-code-health for debug/logging statements
-# left in production code.
+# The per-language detection `case` below is a DELIBERATE cross-plugin duplicate
+# of check-code-health/patterns.sh: review-audit and workflow install
+# independently, so this script cannot source that one at runtime. The shared
+# region (between the sentinel comments) is kept byte-for-byte in sync by
+# tests/validate-debug-scanner-sync.sh — edit both copies together.
 # =============================================================================
 
 scan_debug_statements() {
@@ -167,32 +170,40 @@ scan_debug_statements() {
         *_test.* | *.test.* | *.spec.* | *__tests__*) return ;;
     esac
 
+    # >>> shared:debug-statement-scan (kept in sync with check-code-health/patterns.sh by tests/validate-debug-scanner-sync.sh)
+    # This case is a DELIBERATE cross-plugin duplicate: review-audit and
+    # workflow install independently, so pre-review-gates.sh cannot source
+    # it. Edit both copies together; the drift guard fails CI otherwise.
     case "$file" in
         *.py)
+            # Python: print() used as debug (not in logging context)
             /usr/bin/grep -nE '^\s*print\(' "$file" 2>/dev/null |
                 /usr/bin/grep -vE '(logging|logger|log\.)' |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
-                        "Debug print: ${evidence}" "HIGH"
+                        "Debug print statement: ${evidence}" "HIGH"
                 done || true
+            # Python: breakpoint(), pdb
             /usr/bin/grep -nE '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
-                        "Debugger: ${evidence}" "HIGH"
+                        "Debugger statement: ${evidence}" "HIGH"
                 done || true
             ;;
         *.js | *.ts | *.jsx | *.tsx)
+            # JavaScript/TypeScript: console.log, console.debug, console.warn
             /usr/bin/grep -nE '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
-                        "Console statement: ${evidence}" "HIGH"
+                        "Console debug statement: ${evidence}" "HIGH"
                 done || true
+            # debugger keyword
             /usr/bin/grep -nE '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
@@ -201,16 +212,8 @@ scan_debug_statements() {
                         "Debugger keyword: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.go)
-            /usr/bin/grep -nE '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
-                        "$file" "$line_num" "debug-statement" \
-                        "Debug print: ${evidence}" "HIGH"
-                done || true
-            ;;
         *.rb)
+            # Ruby: binding.pry, puts used as debug
             /usr/bin/grep -nE '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
@@ -219,16 +222,28 @@ scan_debug_statements() {
                         "Ruby debugger: ${evidence}" "HIGH"
                 done || true
             ;;
+        *.go)
+            # Go: fmt.Println used as debug (not in main or test)
+            /usr/bin/grep -nE '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
+                while IFS=: read -r line_num content; do
+                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
         *.java | *.kt)
+            # Java/Kotlin: System.out.println, System.err.println
             /usr/bin/grep -nE '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
-                        "Debug print: ${evidence}" "HIGH"
+                        "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
     esac
+    # <<< shared:debug-statement-scan
 }
 
 # =============================================================================

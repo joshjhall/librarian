@@ -56,6 +56,7 @@ run_stage "SKILL.md ↔ agent cross-reference integrity" bash "$SCRIPT_DIR/valid
 run_stage "Pre-scan empty/missing-input robustness" bash "$SCRIPT_DIR/validate-prescans.sh"
 run_stage "pre-review-gates scan categories + skip policy" bash "$SCRIPT_DIR/validate-pre-review-gates.sh"
 run_stage "codebase-audit issue-template sync" bash "$SCRIPT_DIR/validate-template-sync.sh"
+run_stage "debug-statement scanner sync" bash "$SCRIPT_DIR/validate-debug-scanner-sync.sh"
 run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
