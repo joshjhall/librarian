@@ -276,6 +276,15 @@ test_patterns_empty_handler_multilang_fires() {
             _fail "patterns.sh: handled.$lang has a non-empty handler body but an empty-handler row was emitted for it"
         fi
     done
+
+    # Exactly four rows — one per empty fixture. Guards against a language
+    # branch cross-firing on another language's file (all rows share the same
+    # "empty-handler" category, so the per-language checks above can't catch it).
+    local count
+    count="$(/usr/bin/printf '%s\n' "$rows" | /usr/bin/grep -c . || true)"
+    if [ "$count" -ne 4 ]; then
+        _fail "patterns.sh: expected exactly 4 empty-handler rows (one per language), got $count"
+    fi
 }
 
 run_test test_patterns_classifies "patterns.sh flags source, skips test files by path"
