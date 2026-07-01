@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-01
+
+### Added
+
+- Sign releases (cosign keyless) + extend empty-handler test coverage (#142)
+
+### Changed
+
+- Rename next-issue-ship skill to ship-issue (#129)
+- Dedupe debug-statement scanner via drift guard (#131)
+- Unify test-file classification across scanners (#138)
+- Gate project audit-* dispatch + mirror gate into checker.md (#151)
+
+### Documentation
+
+- Add typos-gate-blocks-push memory note
+
+### Fixed
+
+- Harden release pipeline (PR #142 follow-ups) (#147)
+- SwiftPM/Swift Testing detection + release Group D coverage + release.yml tempfile cleanup (#150)
+
+### Testing
+
+- Add positive fixtures for tech-debt-marker and empty-handler (#140)
+
 ## [0.3.0] - 2026-07-01
 
 ### Added
@@ -121,6 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.4.0]: https://github.com/joshjhall/librarian/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/joshjhall/librarian/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/joshjhall/librarian/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/joshjhall/librarian/compare/568c46603b0561440d3b1a151780f71d5e4c3e7b...v0.1.0
