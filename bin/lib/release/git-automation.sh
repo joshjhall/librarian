@@ -70,26 +70,33 @@ perform_git_automation() {
     if [ "$AUTO_GITHUB_RELEASE" = "true" ] && [ "$AUTO_PUSH" = "true" ] && [ "$AUTO_TAG" = "true" ]; then
         command echo "Tag v$new_version pushed — release.yml will publish the signed GitHub release."
         command echo "  Track it: https://github.com/${GH_REPO}/actions/workflows/release.yml"
-    elif [ "$AUTO_GITHUB_RELEASE" = "true" ]; then
-        # Tag was NOT pushed (local-only): CI won't fire, so create an
+    elif [ "$AUTO_GITHUB_RELEASE" = "true" ] && [ "$AUTO_TAG" = "true" ]; then
+        # A tag exists locally but was NOT pushed: CI won't fire, so create an
         # unsigned local release as a fallback. Signed assets require the
-        # tag-push CI path above.
+        # tag-push CI path above. (Gated on AUTO_TAG so we never try to release
+        # a tag that was never created — gh would just fail on a missing ref.)
         if ! command -v gh >/dev/null 2>&1; then
             command echo "Warning: gh CLI not found, skipping GitHub release" >&2
         else
-            local release_notes
+            local release_notes notes_file
             release_notes="$("${BIN_DIR}/generate-release-notes.sh" "$new_version" 2>/dev/null ||
                 command echo "See [CHANGELOG.md](https://github.com/${GH_REPO}/blob/v${new_version}/CHANGELOG.md) for details.")"
 
             command echo "Note: creating an UNSIGNED release (tag not pushed, so release.yml did not run)." >&2
+            # Pass notes via a temp file, not --notes "$release_notes": the notes
+            # come from CHANGELOG.md and may contain characters that misbehave as
+            # a shell-word argument. Mirrors release.yml's --notes-file path.
+            notes_file="$(command mktemp)"
+            command printf '%s\n' "$release_notes" >"$notes_file"
             if gh release create "v$new_version" \
                 --title "Release v$new_version" \
-                --notes "$release_notes"; then
+                --notes-file "$notes_file"; then
                 command echo "✓ GitHub release created: https://github.com/${GH_REPO}/releases/tag/v$new_version"
             else
                 command echo "Warning: failed to create GitHub release" >&2
                 command echo "Create it manually: https://github.com/${GH_REPO}/releases/new?tag=v$new_version"
             fi
+            command rm -f "$notes_file"
         fi
     fi
 

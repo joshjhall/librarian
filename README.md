@@ -48,15 +48,21 @@ git archive --format=tar.gz --prefix=librarian-<version>/ v<version>
 cosign verify-blob \
   --certificate librarian-<version>.tar.gz.pem \
   --signature   librarian-<version>.tar.gz.sig \
-  --certificate-identity-regexp '^https://github.com/joshjhall/librarian/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-identity 'https://github.com/joshjhall/librarian/.github/workflows/release.yml@refs/tags/v<version>' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   librarian-<version>.tar.gz
 ```
 
 The expected signer identity is this repo's `release.yml` workflow at the
-release tag; the OIDC issuer is GitHub Actions
+release tag (`--certificate-identity` pins the **exact** ref — substitute the
+concrete `v<version>`); the OIDC issuer is GitHub Actions
 (`https://token.actions.githubusercontent.com`). A `Verified OK` result proves
-both provenance and integrity.
+both provenance and integrity. To verify without knowing the version up front,
+swap in a semver-anchored regexp rather than a bare wildcard:
+
+```bash
+  --certificate-identity-regexp '^https://github.com/joshjhall/librarian/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+```
 
 Signing is **additive** — the plain `vX.Y.Z` tag remains resolvable, so
 clone-by-tag consumers that don't verify keep working unchanged.

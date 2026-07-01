@@ -62,7 +62,9 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs: validate
-    timeout-minutes: 5
+    # Headroom for the cosign keyless signing round-trip (OIDC → Fulcio cert →
+    # Rekor log) plus the multi-asset upload, on top of the original publish work.
+    timeout-minutes: 10
     # `id-token: write` lets cosign mint a short-lived OIDC token for keyless
     # signing (Fulcio issues a cert bound to this workflow's identity; Rekor
     # logs it) — no long-lived key to custody. `contents: write` publishes the
@@ -73,6 +75,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # `git archive "$GITHUB_REF_NAME"` below needs the tag resolvable as a
+          # local ref; make that explicit rather than relying on checkout's
+          # implicit tag fetch.
+          fetch-tags: true
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

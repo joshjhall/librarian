@@ -217,6 +217,110 @@ test_release_notes_fallback_no_changelog() {
     assert_contains "$out" "claude plugin marketplace add" "fallback includes install instructions"
 }
 
+# --- Group D: git-automation.sh GitHub-release branch -----------------------
+#
+# perform_git_automation delegates the GitHub release to CI when the tag is
+# pushed (release.yml signs + publishes), and only falls back to a local
+# unsigned `gh release create` when a tag exists but was NOT pushed. These
+# tests source the function directly and put stub `git`/`gh` on PATH so no real
+# git or network calls happen; a stub `gh` records whether it was invoked.
+
+# run_git_automation <sandbox> <AUTO_COMMIT> <AUTO_TAG> <AUTO_PUSH> <AUTO_GITHUB_RELEASE> [gh_available]
+# Sources git-automation.sh in a subshell with stubbed git/gh on PATH and runs
+# perform_git_automation 9.9.9. Echoes combined stdout+stderr; the stub `gh`
+# touches "$sandbox/gh_called" when invoked. gh_available=false omits the gh
+# stub AND masks the real gh (PATH is the stub dir only) so `command -v gh`
+# fails — exercising the graceful-degradation branch.
+run_git_automation() {
+    local sb="$1" ac="$2" at="$3" ap="$4" agr="$5" gh_ok="${6:-true}"
+    local stub="$sb/stubbin"
+    command mkdir -p "$stub"
+    # git stub: swallow every subcommand (commit/tag/push) as a success.
+    command cat >"$stub/git" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    command rm -f "$sb/gh_called"
+    if [ "$gh_ok" = "true" ]; then
+        command cat >"$stub/gh" <<EOF
+#!/usr/bin/env bash
+command touch "$sb/gh_called"
+exit 0
+EOF
+        command chmod +x "$stub/gh"
+    fi
+    command chmod +x "$stub/git"
+    # A .git marker so the function's early "not a git repository" guard passes.
+    # Created here (before the restricted-PATH subshell) with an absolute mkdir.
+    command mkdir -p "$sb/.git"
+    (
+        # gh present: prepend the stub so the stub git/gh shadow the real ones,
+        # keeping the rest of PATH for the coreutils + generate-release-notes.sh
+        # the unsigned fallback runs.
+        # gh missing: PATH = stub only (git stub, no gh), so `command -v gh`
+        # fails. That branch reaches only shell builtins (`command echo`) plus
+        # the git stub before returning, so it needs nothing else on PATH.
+        if [ "$gh_ok" = "true" ]; then
+            PATH="$stub:$PATH"
+        else
+            PATH="$stub"
+        fi
+        BIN_DIR="$sb/bin"
+        GH_REPO="joshjhall/librarian"
+        AUTO_COMMIT="$ac" AUTO_TAG="$at" AUTO_PUSH="$ap" AUTO_GITHUB_RELEASE="$agr"
+        export PATH BIN_DIR GH_REPO AUTO_COMMIT AUTO_TAG AUTO_PUSH AUTO_GITHUB_RELEASE
+        cd "$sb" || exit 1
+        # shellcheck source=bin/lib/release/git-automation.sh
+        source "$REPO_ROOT/bin/lib/release/git-automation.sh"
+        perform_git_automation "9.9.9"
+    ) 2>&1
+}
+
+test_git_automation_pushed_tag_defers_to_ci() {
+    local sb out
+    make_bin_sandbox sb
+    out="$(run_git_automation "$sb" true true true true)"
+    assert_contains "$out" "release.yml will publish the signed GitHub release" \
+        "pushed tag defers to CI as the canonical signed publisher"
+    assert_true "[ ! -e '$sb/gh_called' ]" "gh release create is NOT invoked when the tag was pushed"
+}
+
+test_git_automation_unpushed_tag_creates_unsigned() {
+    local sb out
+    make_bin_sandbox sb
+    out="$(run_git_automation "$sb" true true false true)"
+    assert_contains "$out" "UNSIGNED release" \
+        "unpushed tag warns that the local release is unsigned"
+    assert_true "[ -e '$sb/gh_called' ]" "gh release create IS invoked on the unpushed-tag fallback"
+}
+
+test_git_automation_no_tag_skips_release() {
+    local sb out
+    make_bin_sandbox sb
+    # AUTO_TAG=false: no tag exists, so neither the CI-defer nor the local
+    # fallback should create a release (gh must not be called).
+    out="$(run_git_automation "$sb" true false false true)"
+    assert_true "[ ! -e '$sb/gh_called' ]" "no tag → gh release create is NOT invoked"
+    assert_not_contains "$out" "release.yml will publish" "no tag → does not claim CI will publish"
+}
+
+test_git_automation_release_disabled() {
+    local sb out
+    make_bin_sandbox sb
+    out="$(run_git_automation "$sb" true true true false)"
+    assert_true "[ ! -e '$sb/gh_called' ]" "AUTO_GITHUB_RELEASE=false → gh is NOT invoked"
+    assert_not_contains "$out" "release.yml will publish" "AUTO_GITHUB_RELEASE=false → no CI-defer message"
+}
+
+test_git_automation_unpushed_tag_gh_missing_degrades() {
+    local sb out
+    make_bin_sandbox sb
+    # gh unavailable on the fallback path: warn and continue (exit 0), do not crash.
+    out="$(run_git_automation "$sb" true true false true false)"
+    assert_contains "$out" "gh CLI not found" "missing gh on the fallback path warns gracefully"
+    assert_true "[ ! -e '$sb/gh_called' ]" "missing gh → no gh invocation recorded"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 run_test test_is_semver_accepts_valid "is_semver accepts a valid X.Y.Z"
@@ -234,5 +338,11 @@ run_test test_release_notes_missing_arg "generate-release-notes.sh exits 1 with 
 run_test test_release_notes_extracts_section "generate-release-notes.sh extracts the matching CHANGELOG section"
 run_test test_release_notes_fallback_no_section "generate-release-notes.sh falls back when the version section is absent"
 run_test test_release_notes_fallback_no_changelog "generate-release-notes.sh falls back when CHANGELOG.md is absent"
+
+run_test test_git_automation_pushed_tag_defers_to_ci "git-automation: pushed tag defers to release.yml (no local gh release)"
+run_test test_git_automation_unpushed_tag_creates_unsigned "git-automation: unpushed tag creates an unsigned local release"
+run_test test_git_automation_no_tag_skips_release "git-automation: AUTO_TAG=false creates no release"
+run_test test_git_automation_release_disabled "git-automation: AUTO_GITHUB_RELEASE=false creates no release"
+run_test test_git_automation_unpushed_tag_gh_missing_degrades "git-automation: missing gh on the fallback path degrades gracefully"
 
 generate_report
