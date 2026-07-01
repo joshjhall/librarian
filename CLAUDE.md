@@ -112,7 +112,14 @@ just release-major   # 0.1.0 -> 1.0.0 (breaking changes)
 commits (git-cliff, `cliff.toml`). It does **not** commit/tag/push by default —
 review the diff, commit on a branch, and open a PR. Cut the actual release from
 `main` with the auto flags (`bin/release.sh --full-auto patch`) or by pushing an
-annotated `vX.Y.Z` tag: the `release.yml` workflow validates the tagged tree and
-publishes the GitHub Release. That published tag is what
+annotated `vX.Y.Z` tag: the `release.yml` workflow validates the tagged tree,
+**cosign-keyless-signs a `git archive` tarball of the tag** and publishes it
+alongside the GitHub Release as `librarian-<version>.tar.gz` + `.sig` + `.pem`
+(the verification contract — recipe in `README.md` § "Verifying a release").
+Because keyless signing needs the CI OIDC token, `release.yml` is the canonical
+signed publisher; `bin/release.sh --full-auto` deliberately skips its local
+`gh release create` once the tag is pushed (see
+`bin/lib/release/git-automation.sh`) so it never races an unsigned release past
+CI. That published tag is what
 [containers#608](https://github.com/joshjhall/containers/issues/608)'s
 `LIBRARIAN_REF` discovers via `releases/latest`.

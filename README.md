@@ -20,6 +20,53 @@ tracked in
 Per-release highlights and full notes live in [CHANGELOG.md](CHANGELOG.md),
 regenerated from conventional commits on every release.
 
+## Verifying a release
+
+Every `vX.Y.Z` release is signed with [cosign](https://github.com/sigstore/cosign)
+keyless signing (Sigstore — no long-lived keys) by the tag-triggered
+`release.yml` workflow. This lets a consumer prove the marketplace it fetched
+was published by this project and has not been tampered with.
+
+**What is signed.** A deterministic archive of the whole marketplace tree at the
+tag, produced by:
+
+```bash
+git archive --format=tar.gz --prefix=librarian-<version>/ v<version>
+```
+
+**Assets published per release** (attached to the GitHub Release):
+
+| Asset | Contents |
+|---|---|
+| `librarian-<version>.tar.gz` | the signed archive (bytes covered by the signature) |
+| `librarian-<version>.tar.gz.sig` | the cosign signature |
+| `librarian-<version>.tar.gz.pem` | the Fulcio-issued signing certificate |
+
+**Verification recipe.** Download the three assets for a release, then:
+
+```bash
+cosign verify-blob \
+  --certificate librarian-<version>.tar.gz.pem \
+  --signature   librarian-<version>.tar.gz.sig \
+  --certificate-identity 'https://github.com/joshjhall/librarian/.github/workflows/release.yml@refs/tags/v<version>' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  librarian-<version>.tar.gz
+```
+
+The expected signer identity is this repo's `release.yml` workflow at the
+release tag (`--certificate-identity` pins the **exact** ref — substitute the
+concrete `v<version>`); the OIDC issuer is GitHub Actions
+(`https://token.actions.githubusercontent.com`). A `Verified OK` result proves
+both provenance and integrity. To verify without knowing the version up front,
+swap in a semver-anchored regexp rather than a bare wildcard:
+
+```bash
+  --certificate-identity-regexp '^https://github.com/joshjhall/librarian/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+```
+
+Signing is **additive** — the plain `vX.Y.Z` tag remains resolvable, so
+clone-by-tag consumers that don't verify keep working unchanged.
+
 ## Plugins
 
 | Plugin | Components | What's inside |
