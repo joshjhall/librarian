@@ -1,5 +1,5 @@
 ---
-description: Issue-driven development workflow that picks the next issue by severity/effort priority and creates an implementation plan. Use when working through a backlog, picking up the next issue, or resuming in-progress work. After implementation, use /next-issue-ship to deliver.
+description: Issue-driven development workflow that picks the next issue by severity/effort priority and creates an implementation plan. Use when working through a backlog, picking up the next issue, or resuming in-progress work. After implementation, use /ship-issue to deliver.
 ---
 
 # Next Issue
@@ -36,7 +36,7 @@ full rule):
 
 Adding the `--ship` flag (alias `--now`) — `/next-issue 123 --ship` — is a
 fast-path for **small work**: after plan approval and implementation it invokes
-`/next-issue-ship` directly instead of suggesting a `/clear` + manual resume.
+`/ship-issue` directly instead of suggesting a `/clear` + manual resume.
 `--ship` is **not** autonomy — it keeps the interactive plan-approval gate
 (`EnterPlanMode`/`ExitPlanMode`) and leaves `autonomous` false; it only removes
 the context-reset ceremony between implement and ship. It is honored **only for
@@ -86,7 +86,7 @@ opt-in. Autonomy splits into **two independent sub-behaviors**:
   issue `--force-auto` additionally requires `FORCE_AUTO_CRITICAL=1` — see
   `autonomous-mode.md`). If both flags appear, `--plan-gate` wins.
 
-After implementation and testing complete, both paths **invoke `/next-issue-ship`
+After implementation and testing complete, both paths **invoke `/ship-issue`
 in the same turn** (call the `Skill` tool) — never end the turn with only a
 "next step" note. Persist `"autonomous": true` (plus `"plan_gated": true` when
 plan-gated) to the state file so ship and any post-`/clear` resume inherit them.
@@ -106,7 +106,7 @@ If `$CURRENT_BRANCH` matches `^agent` (e.g., `agent01`, `agent02`):
 
 - Inform the user: "Running in agent worktree mode on branch `{branch}`.
   Commits will stay local — the orchestrator handles delivery."
-- Note that `/next-issue-ship` will auto-select commit-only mode (Option 3)
+- Note that `/ship-issue` will auto-select commit-only mode (Option 3)
 
 **Note on state isolation**: In agent worktree mode, each worktree has its own
 working directory, so per-issue state files are naturally isolated per agent.
@@ -186,7 +186,7 @@ jump straight to **re-presenting the stored plan for approval**: reconstruct the
 plan from the checkpoint (`plan` one-liner + `files_planned` + `key_decisions` +
 `warnings`), call `EnterPlanMode` then `ExitPlanMode` with that reconstructed
 plan, and wait for approval. After approval, continue autonomously through
-implement → test → `/next-issue-ship` exactly as the Phase 2 plan-gated path
+implement → test → `/ship-issue` exactly as the Phase 2 plan-gated path
 does. Only fall back to a fresh Phase 2 exploration if the checkpoint is missing
 or has no `files_planned` (nothing to re-present).
 
@@ -292,12 +292,12 @@ or has no `files_planned` (nothing to re-present).
 1. **MANDATORY final step** — always append this verbatim as the last step
    of the plan:
 
-   > **After all implementation and testing is complete**, invoke `/next-issue-ship`
+   > **After all implementation and testing is complete**, invoke `/ship-issue`
    > to commit, deliver, and close the issue.
 
    If in agent worktree mode, also append:
 
-   > Agent worktree mode: `/next-issue-ship` will auto-select commit-only
+   > Agent worktree mode: `/ship-issue` will auto-select commit-only
    > (Option 3). The orchestrator handles PR creation and delivery.
 
 1. **Update state file** — write the full JSON with `phase: "plan"`, a
@@ -364,23 +364,23 @@ or has no `files_planned` (nothing to re-present).
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines the plan in-session, and approves.
      **After approval**, the run is autonomous again: skip the "Suggest context
      reset" step, proceed directly through implementation and testing, and then
-     invoke `/next-issue-ship` in-turn exactly as the shipping handoff below.
+     invoke `/ship-issue` in-turn exactly as the shipping handoff below.
      Posting a plan issue comment is optional here (the plan is already visible
      in the approval prompt); skip `"plan_comment_url"`.
 
    **Then, once implementation and testing are complete — for a plan-gated run,
    that means only after the `ExitPlanMode` approval below AND the subsequent
-   "Implement" step both finish — invoke the `/next-issue-ship`
-   skill in this same turn** (call the `Skill` tool with `next-issue-ship`). Do
+   "Implement" step both finish — invoke the `/ship-issue`
+   skill in this same turn** (call the `Skill` tool with `ship-issue`). Do
    NOT invoke ship before `ExitPlanMode` approval or before the work exists. Do
    NOT stop after implementation to *suggest* shipping,
-   and do NOT merely print a "next step: /next-issue-ship" line — actually
+   and do NOT merely print a "next step: /ship-issue" line — actually
    invoke it. This is the whole point of `--autonomous`: a single
    `claude '/next-issue <N> --autonomous'` prompt must reach a pushed PR + labeled
    issue without a second manual command. Ending the turn after `/next-issue`
    leaves the work uncommitted with no PR. (As a belt-and-suspenders for a
    premature turn-exit, the orchestrate golem launch also chains a second
-   `; claude '/next-issue-ship --autonomous'` prompt — see the orchestrate skill — but
+   `; claude '/ship-issue --autonomous'` prompt — see the orchestrate skill — but
    the in-turn invocation here is the primary path and must not be skipped.)
 
 1. **Exit plan mode** (call `ExitPlanMode` tool) — this presents the plan to
@@ -391,7 +391,7 @@ or has no `files_planned` (nothing to re-present).
 
 1. **Implement** — after plan approval, carry out the plan: make the changes
    and run the tests. The two steps below fire only **once implementation and
-   testing are complete** — do NOT invoke `/next-issue-ship` or suggest a
+   testing are complete** — do NOT invoke `/ship-issue` or suggest a
    `/clear` before the work exists.
 
 1. **Hand off — suggest a context reset, OR take the `--ship` fast-path.**
@@ -401,7 +401,7 @@ or has no `files_planned` (nothing to re-present).
    Choose by flag + effort:
 
    - **`--ship` (or `--now`) set AND effort is `trivial`/`small`**: do NOT
-     suggest a `/clear`. Invoke `/next-issue-ship` directly to deliver in this
+     suggest a `/clear`. Invoke `/ship-issue` directly to deliver in this
      same context. The plan was still approved interactively above, so the
      human remains in the loop; only the reset ceremony is skipped. The state
      file's `"autonomous"` stays `false` — the ship run will still prompt for
@@ -433,11 +433,11 @@ If neither matches, ask the user which platform to use.
 
 ## Pipeline
 
-`/next-issue` and `/next-issue-ship` are two halves of one issue-driven
+`/next-issue` and `/ship-issue` are two halves of one issue-driven
 pipeline, deliberately kept as **separate** skills:
 
 ```text
-/next-issue        →  (implement + test)  →  /next-issue-ship
+/next-issue        →  (implement + test)  →  /ship-issue
   select + plan          your work             commit · PR/push · CI · review · label
        └──────────────── next-issue-{N}.json ────────────────┘
               (phase / checkpoint carry state across the gap)
@@ -445,7 +445,7 @@ pipeline, deliberately kept as **separate** skills:
 
 The hand-off is the state file `.claude/memory/tmp/next-issue-{N}.json` (schema
 in `state-format.md`): `/next-issue` writes `phase` + a `checkpoint` block;
-`/next-issue-ship` reads them. This lets the implement step happen later, in a
+`/ship-issue` reads them. This lets the implement step happen later, in a
 fresh context, or across a `/clear` — the planning context does not have to
 stay resident through implementation, review, and CI.
 

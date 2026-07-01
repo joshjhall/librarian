@@ -9,7 +9,7 @@ Reference companion for `SKILL.md`. Load when assigning labels, establishing
 
 ### Type Labels (namespace: `type/`)
 
-Owned by: `/file-issue`. Consumed by: `/next-issue-ship` (branch prefix).
+Owned by: `/file-issue`. Consumed by: `/ship-issue` (branch prefix).
 
 | Label             | Branch Prefix | When to Apply                         |
 | ----------------- | ------------- | ------------------------------------- |
@@ -78,13 +78,13 @@ Owned by: `/file-issue`. Created on-demand.
 
 ### Status Labels (namespace: `status/`)
 
-Owned by: `/next-issue`, `/next-issue-ship`. Do not apply from `/file-issue`.
+Owned by: `/next-issue`, `/ship-issue`. Do not apply from `/file-issue`.
 
 | Label                   | Set By             |
 | ----------------------- | ------------------ |
 | `status/in-progress`    | `/next-issue`      |
-| `status/pr-pending`     | `/next-issue-ship` |
-| `status/commit-pending` | `/next-issue-ship` |
+| `status/pr-pending`     | `/ship-issue` |
+| `status/commit-pending` | `/ship-issue` |
 | `status/on-hold`        | Manual             |
 
 ### Audit Labels (namespace: `audit/`)

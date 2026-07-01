@@ -177,7 +177,7 @@ authorization** layered over the existing pieces: the order is computed by
 
    Auto-merge consent is unchanged: under an autonomous run the `--auto` fast
    path is taken only when BOTH `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` are
-   set (see `next-issue-ship` § Environment Variables). The train's single batch
+   set (see `ship-issue` § Environment Variables). The train's single batch
    approval does **not** substitute for that per-PR auto-merge consent.
 
 1. **Honor stop/drain.** Between iterations, check the pool stop/drain signal —

@@ -133,7 +133,7 @@ const CONFLICT_CLASSES = [
 // ---------------------------------------------------------------------------
 
 // Authoritative per-PR state: PR/MR platform state wins over the status cache.
-// label_state mirrors the live taxonomy owned by next-issue / next-issue-ship.
+// label_state mirrors the live taxonomy owned by next-issue / ship-issue.
 const PR_STATUS = {
   type: 'object',
   additionalProperties: false,

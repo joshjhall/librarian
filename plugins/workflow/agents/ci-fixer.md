@@ -1,6 +1,6 @@
 ---
 name: ci-fixer
-description: Diagnoses CI failures from log output and applies targeted fixes. Dispatched by next-issue-ship after PR creation when CI checks fail.
+description: Diagnoses CI failures from log output and applies targeted fixes. Dispatched by ship-issue after PR creation when CI checks fail.
 tools: Read, Edit, Bash, Grep, Glob
 model: sonnet
 skills: []

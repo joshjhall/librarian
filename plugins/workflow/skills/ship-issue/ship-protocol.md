@@ -1,6 +1,6 @@
-# Next Issue — Ship Protocol
+# Ship Issue Protocol
 
-Companion to `next-issue-ship/SKILL.md`. Reference material loaded alongside the
+Companion to `ship-issue/SKILL.md`. Reference material loaded alongside the
 skill: the golem execution model (for orchestrators) and the full environment-
 variable contract that toggles non-default ship behavior.
 
@@ -8,7 +8,7 @@ variable contract that toggles non-default ship behavior.
 
 A golem running this skill is an OS **process**, never itself a Workflow
 subagent. This skill drives the adversarial review harness
-(`next-issue-ship/workflow.js`, Step 3.5 item 6 and the Step 4 multi-cycle
+(`ship-issue/workflow.js`, Step 3.5 item 6 and the Step 4 multi-cycle
 loop), which in turn fans out the `code-reviewer` agent. The Workflow tool
 permits only **one level of nesting** (`workflow()` inside a workflow throws),
 and that nesting level is reserved for the review harness's own fan-out — so a

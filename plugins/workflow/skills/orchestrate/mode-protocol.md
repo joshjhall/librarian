@@ -98,7 +98,7 @@ docker exec -it project-agent01-1 tmux attach -t claude
 
 A **golem** is a per-issue sub-orchestrator: a PROCESS that owns one issue →
 branch → worktree → PR and runs the autonomous pipeline (`/next-issue <N>
---autonomous`, which invokes `/next-issue-ship` in-turn → Branch + PR) unattended to
+--autonomous`, which invokes `/ship-issue` in-turn → Branch + PR) unattended to
 a green, review-clean PR. Golems are not a new isolation mechanism — they are
 the **existing Mode 2 or Mode 3** with an autonomous payload and a PR exit.
 
@@ -110,9 +110,9 @@ so Claude Code does not load its copied `settings.local.json` `defaultMode: auto
 and would otherwise fall back to `default`. The harness `--permission-mode auto`
 is distinct from the `/next-issue` `--autonomous` skill flag (deprecated alias
 `--auto`) — both are needed.
-Autonomous `/next-issue` invokes `/next-issue-ship` in-turn, so the single prompt
+Autonomous `/next-issue` invokes `/ship-issue` in-turn, so the single prompt
 reaches a PR on its own. A `;`-chained second prompt is the resume backstop —
-`claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/next-issue-ship --autonomous"`
+`claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/ship-issue --autonomous"`
 — so that a premature turn-exit after `/next-issue` still ships: the second
 prompt re-reads the state file and delivers (a near no-op if the first already
 pushed a PR). Use `;`, NOT `&&`: the backstop must run even when the first prompt
@@ -164,16 +164,16 @@ answer on the human's behalf. To skip the gate entirely on a medium issue, use
 
 | Realization        | Built on | Payload (process)                         | Exit                            |
 | ------------------ | -------- | ----------------------------------------- | ------------------------------- |
-| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/next-issue-ship --autonomous"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
+| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/ship-issue --autonomous"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
 | **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (or auto-merge: needs `AUTOMERGE=1` + `AUTOMERGE_AUTONOMOUS=1`) |
 
 > **Hard constraint — golems are processes, never Workflow subagents.** The
-> Workflow tool permits one nesting level, and each golem's `/next-issue-ship`
+> Workflow tool permits one nesting level, and each golem's `/ship-issue`
 > already owns it (its review harness fans out the `code-reviewer` agent).
 > Dispatching a golem via the Workflow/Task tool with workflow nesting consumes
 > that level and makes the golem's review harness throw. Dispatch golems as OS
 > processes only — containers (`/provision-agent`) or worktree-bound shells.
-> (See `next-issue-ship` SKILL.md § Golem Execution Model.)
+> (See `ship-issue` SKILL.md § Golem Execution Model.)
 
 ### Supervised launch & central feed
 
@@ -198,7 +198,7 @@ which runs exactly the bare new-session below (one issue per call):
 
 ```bash
 tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
-  "claude --permission-mode auto '/next-issue {N} --autonomous' ; claude --permission-mode auto '/next-issue-ship --autonomous'"
+  "claude --permission-mode auto '/next-issue {N} --autonomous' ; claude --permission-mode auto '/ship-issue --autonomous'"
 ```
 
 **Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is
@@ -390,7 +390,7 @@ When a golem's PR CI fails, classify the failure **before** surfacing it as a
 regression or escalating to the human. This is a triage/classification step plus
 cascade-collapse — **not** a new retry layer (the `ci-fixer` harness already
 caps code-fix attempts; the CI-wait loop already never blocks shipping). It runs
-inside each golem's `/next-issue-ship` CI-wait (Step 4 Option 1, "If checks fail
+inside each golem's `/ship-issue` CI-wait (Step 4 Option 1, "If checks fail
 — triage"); the orchestrator's Phase M monitor mirrors the result when it
 surfaces a failing PR.
 

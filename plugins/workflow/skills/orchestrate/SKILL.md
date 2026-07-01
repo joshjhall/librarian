@@ -7,16 +7,16 @@ description: Master orchestrator for PR-per-golem parallel work. Dispatch golems
 The default topology is **PR-per-golem**: the orchestrator is a **live
 interactive session** that dispatches **golems** (each a PROCESS owning one
 issue → branch → worktree → PR, running the autonomous `/next-issue --autonomous` →
-`/next-issue-ship` pipeline), then monitors, surfaces, and rebases across their
+`/ship-issue` pipeline), then monitors, surfaces, and rebases across their
 PRs. **The orchestrator never merges golem branches into its own** — humans
 merge PRs (or per-golem auto-merge, which for an autonomous golem requires BOTH
-`AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` — see `next-issue-ship` §
+`AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` — see `ship-issue` §
 Environment Variables).
 
 **Hard constraints** (architecture — do not violate):
 
 - **Golems are processes, never Workflow subagents.** Each golem's
-  `/next-issue-ship` owns the single permitted Workflow nesting level (its review
+  `/ship-issue` owns the single permitted Workflow nesting level (its review
   harness). Spawning a golem as a Workflow/Task subagent makes that harness
   throw. Dispatch golems as containers (`/provision-agent`) or worktree-bound
   shell processes — see `mode-protocol.md` § Golem Dispatch Modes.
@@ -107,12 +107,12 @@ dispatch is sequential and cheap — **not** workflow-driven.
    # fall back to `default` and prompt-storm (#585). The harness
    # `--permission-mode auto` is distinct from the `/next-issue` `--autonomous`
    # skill flag (deprecated alias `--auto`) — both are needed.
-   # Autonomous /next-issue invokes /next-issue-ship in-turn, so the first prompt
+   # Autonomous /next-issue invokes /ship-issue in-turn, so the first prompt
    # reaches Branch + PR on its own. The `;`-chained second prompt is a resume
    # backstop, NOT `&&`: it must run even if the first exits non-zero before
    # shipping. If the first already shipped (state file deleted), the second is a
    # near no-op ("No in-progress issue found" → stop):
-   claude --permission-mode auto "/next-issue {N} --autonomous" ; claude --permission-mode auto "/next-issue-ship --autonomous"
+   claude --permission-mode auto "/next-issue {N} --autonomous" ; claude --permission-mode auto "/ship-issue --autonomous"
    ```
 
    For a **worktree golem** the process is started by a `tmux new-session`.
@@ -204,7 +204,7 @@ Authoritative status comes from **PR + issue-label state**. The
    glab mr list --json   # or: glab mr list
    ```
 
-   Map each PR to its issue via the `Closes #N` line that `/next-issue-ship`
+   Map each PR to its issue via the `Closes #N` line that `/ship-issue`
    writes into the PR body.
 
 1. **Invoke the Workflow tool** on `~/.claude/skills/orchestrate/workflow.js`
@@ -239,10 +239,10 @@ Authoritative status comes from **PR + issue-label state**. The
    `review: approved`/`none`, `blocking: false`) — it is awaiting merge.
 
 1. **On a `ci: failing` PR, triage infra-flake vs real before surfacing it as a
-   regression.** Each golem's own `/next-issue-ship` CI-wait already runs this
+   regression.** Each golem's own `/ship-issue` CI-wait already runs this
    triage (classify by failing-step name vs the PR's changed files; auto-retry a
    known infra/setup flake once via `gh run rerun --failed`; collapse a cascade
-   aggregation failure to its upstream root cause — see `next-issue-ship`
+   aggregation failure to its upstream root cause — see `ship-issue`
    SKILL.md § "If checks fail — triage" and `mode-protocol.md` § *CI-failure
    triage contract*). When surfacing a failing PR in the monitor table, mirror
    that classification: report a cascade failure once under its root cause, and

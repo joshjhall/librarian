@@ -34,10 +34,10 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
      pass-through `GITHUB_TOKEN`/`GH_TOKEN` so the golem can push and open PRs.
      Optional: `PRE_REVIEW_STRICT`, `REVIEW_STRICT`, `AUTOMERGE`,
      `AUTOMERGE_AUTONOMOUS`. **Note:** golems are autonomous, and
-     `/next-issue-ship` only takes the auto-merge fast path autonomously when
+     `/ship-issue` only takes the auto-merge fast path autonomously when
      BOTH `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` are set (the second is a
      required consent because auto-merge skips the adversarial review loop — see
-     `next-issue-ship` SKILL.md § Environment Variables). Passing `AUTOMERGE=1`
+     `ship-issue` SKILL.md § Environment Variables). Passing `AUTOMERGE=1`
      alone to a golem is intentionally a no-op: it falls through to the normal
      review loop and stops at a green PR for human merge.
    - **Init system**: `init: true` for tini zombie reaping
@@ -68,7 +68,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
          NEXT_ISSUE_AUTONOMOUS: "1"
          REVIEW_MAX_CYCLES: "${REVIEW_MAX_CYCLES:-3}"
          # Auto-merge requires BOTH keys for an autonomous golem (see notes
-         # above + next-issue-ship § Environment Variables). Default off.
+         # above + ship-issue § Environment Variables). Default off.
          AUTOMERGE: "${AUTOMERGE:-}"
          AUTOMERGE_AUTONOMOUS: "${AUTOMERGE_AUTONOMOUS:-}"
          GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
@@ -84,7 +84,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
 
 1. **Write `.worktrees/agent-entrypoint.sh`** — a wrapper script that verifies
    git-host auth, then launches the **autonomous golem pipeline**
-   (`/next-issue --autonomous` → `/next-issue-ship`) in a named tmux session. A
+   (`/next-issue --autonomous` → `/ship-issue`) in a named tmux session. A
    background poller mirrors live PR state into the golem status cache. The
    human can still attach to watch via
    `docker exec -it <container> tmux attach -t claude`.
@@ -99,7 +99,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    ISSUE="${AGENT_ISSUE:-}"
    STATUS_FILE="/workspace/.worktrees/.status/${AGENT_ID}.json"
 
-   # Ambient autonomy opt-in (see next-issue / next-issue-ship contract).
+   # Ambient autonomy opt-in (see next-issue / ship-issue contract).
    export NEXT_ISSUE_AUTONOMOUS=1
    export REVIEW_MAX_CYCLES="${REVIEW_MAX_CYCLES:-3}"
    # Optional pass-throughs (inherited from the environment if set):
@@ -234,7 +234,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    # review-clean PR awaiting human merge. Write a terminal state on exit.
    #
    # Chain the two prompts with ';', NOT '&&': autonomous /next-issue invokes
-   # /next-issue-ship in-turn, so the second prompt is only a resume backstop for
+   # /ship-issue in-turn, so the second prompt is only a resume backstop for
    # a premature turn-exit — and it is needed most when the first prompt exits
    # non-zero, exactly the case '&&' would skip. If the first already shipped,
    # the second is a near no-op ("No in-progress issue found" → stop).
@@ -252,7 +252,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    # See orchestrate § Supervised launch.
    tmux new-session -d -s claude "
        claude --permission-mode auto '/next-issue ${ISSUE} --autonomous' ; \
-       claude --permission-mode auto '/next-issue-ship --autonomous';
+       claude --permission-mode auto '/ship-issue --autonomous';
        echo \$? > /tmp/golem-rc
    "
    echo "Autonomous golem started for issue #${ISSUE} in tmux session 'claude'"

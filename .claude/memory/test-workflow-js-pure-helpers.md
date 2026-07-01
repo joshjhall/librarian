@@ -18,7 +18,7 @@ statement (regex on `^(log\(|phase\(|await |const x = await|if \(|for \(|return 
 with the `m` flag), strip `export` off `export const meta`, then eval the pure
 prefix in `new Function('args','budget','log','phase','agent','parallel','pipeline', prefix + 'return {…}')`
 with inert stubs. Seed `args` to satisfy config consts the prefix derives at load
-(e.g. next-issue-ship's `emptyResult` reads CYCLE/PHASE/scopeFiles from args).
+(e.g. ship-issue's `emptyResult` reads CYCLE/PHASE/scopeFiles from args).
 
 Cutting before the first top-level `await` is mandatory — a `new Function` body
 containing top-level await throws at construction; assert that failure mode as a

@@ -99,12 +99,12 @@ when `git merge` reports conflicts in the legacy path):
 
    **Worked example (the #585/#586/#587 launch-line union).** Three parallel
    golems each edited the same `worktree-new` launch line: #585 added
-   `--permission-mode auto` plus the `/next-issue-ship` chain, and #587 added
+   `--permission-mode auto` plus the `/ship-issue` chain, and #587 added
    `-e GOLEM_ID=golem-{N}`. These are additive and composable — none overwrites
    another's change — so the correct resolution is the **union** of all three:
 
    ```text
-   ... -e GOLEM_ID=golem-{N} "claude --permission-mode auto '/next-issue ...' ; claude --permission-mode auto '/next-issue-ship ...'"
+   ... -e GOLEM_ID=golem-{N} "claude --permission-mode auto '/next-issue ...' ; claude --permission-mode auto '/ship-issue ...'"
    ```
 
    The old "same region → escalate" reading would have forced a needless human
@@ -204,7 +204,7 @@ the repo's branch protection permits**:
 - **Parallelize independents.** Only the overlapping chain is serialized; the
   independent PRs (wave 0) land concurrently, not behind each other.
 
-Auto-merge consent is unchanged from `next-issue-ship` § Environment Variables:
+Auto-merge consent is unchanged from `ship-issue` § Environment Variables:
 under an autonomous run the `--auto` fast path requires BOTH `AUTOMERGE=1` and
 `AUTOMERGE_AUTONOMOUS=1`. The train's single batch approval authorizes the
 *sequence*; it does **not** replace that per-PR auto-merge double-consent.
@@ -309,7 +309,7 @@ for a squash merge in natural language.
 ## Review Protocol [OPT-IN LEGACY]
 
 In the default PR-per-golem topology, per-PR review is the **golem's** job (the
-`/next-issue-ship` adversarial review loop). This section applies only after a
+`/ship-issue` adversarial review loop). This section applies only after a
 legacy local merge (`/orchestrate review`), reviewing the merged changes for
 correctness and quality.
 
@@ -503,7 +503,7 @@ Use these only when explicitly requested (`/orchestrate merge`, `review`,
 
 ### Review (legacy Phase 3)
 
-Per-PR review is normally the **golem's** job (the `/next-issue-ship` review
+Per-PR review is normally the **golem's** job (the `/ship-issue` review
 loop). This phase applies only after a local merge.
 
 1. `MERGE_COMMIT=$(git log -1 --merges --format='%H')`.

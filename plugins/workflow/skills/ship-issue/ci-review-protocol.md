@@ -1,6 +1,6 @@
 # Next Issue — CI Monitor & Review Protocol
 
-Companion to `next-issue-ship/SKILL.md`, loaded for the **Option 1 (Branch + PR)**
+Companion to `ship-issue/SKILL.md`, loaded for the **Option 1 (Branch + PR)**
 post-creation steps: CI monitoring + failure triage, the multi-cycle PR review
 loop, and filing deferred review findings. These steps run after the PR is
 created (and after the auto-merge fast path is NOT taken). Environment variables
@@ -164,7 +164,7 @@ gh pr view {pr_number} --json reviews,comments
 ```
 
 c. **Invoke the `Workflow` tool** with
-`~/.claude/skills/next-issue-ship/workflow.js`, passing:
+`~/.claude/skills/ship-issue/workflow.js`, passing:
 
 ```text
 args: {

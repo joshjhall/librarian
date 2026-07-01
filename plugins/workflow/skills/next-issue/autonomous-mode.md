@@ -61,7 +61,7 @@ the plan gate is the whole point of this skill:
   **`--force-auto` on a `severity/critical` issue needs a second consent.**
   `--force-auto` removes the plan gate, which on a critical issue is the **sole
   human checkpoint** before a fully-autonomous implement → push/PR. Mirror the
-  `next-issue-ship` auto-merge double-consent (which requires BOTH `AUTOMERGE=1`
+  `ship-issue` auto-merge double-consent (which requires BOTH `AUTOMERGE=1`
   and `AUTOMERGE_AUTONOMOUS=1` while autonomous): when the run is autonomous AND
   the issue is `severity/critical`, `--force-auto` is honored **only if** the
   environment variable `FORCE_AUTO_CRITICAL=1` is **also** set. The two signals
@@ -88,18 +88,18 @@ the plan gate is the whole point of this skill:
     command — it is operator-interactive only.
 - **Shipping handoff (both paths).** Once implementation and testing are
   complete — for a plan-gated run, that means *after* the human approves the
-  plan and implementation finishes — **invoke the `/next-issue-ship` skill in
-  the same turn** (call the `Skill` tool with `next-issue-ship`). Do NOT end the
+  plan and implementation finishes — **invoke the `/ship-issue` skill in
+  the same turn** (call the `Skill` tool with `ship-issue`). Do NOT end the
   turn after merely printing a "next step". The handoff is an actual in-turn
   skill invocation, not narrative: a single `claude '/next-issue <N> --autonomous'`
   prompt must reach a pushed PR on its own, because the model ending its turn
-  after `/next-issue` does not start a second skill. `/next-issue-ship` then
+  after `/next-issue` does not start a second skill. `/ship-issue` then
   detects autonomy independently (via the same toggle and the persisted
   state-file signal) and continues to Branch + PR. See the autonomous planning
   path in Phase 2 for the exact point at which the invocation happens.
 - **Persist the signals** to the state file: `"autonomous": true`, plus
   `"plan_gated": true` when the run is plan-gated (see Phase 1 and Phase 2
-  below) so `/next-issue-ship` and any post-`/clear` resume inherit them.
+  below) so `/ship-issue` and any post-`/clear` resume inherit them.
 
 When NOT autonomous (no `--autonomous`/`--auto`, no env var), behavior is unchanged — every
 interactive prompt and plan-mode step below runs verbatim as the default.

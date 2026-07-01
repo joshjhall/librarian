@@ -1,7 +1,7 @@
 name: file-issue
 version: "1.0"
 
-# Type labels (canonical declaration — used by next-issue-ship for branch prefix)
+# Type labels (canonical declaration — used by ship-issue for branch prefix)
 # Severity and effort labels shared with next-issue and codebase-audit.
 # Component labels are created dynamically — not listed here.
 labels:

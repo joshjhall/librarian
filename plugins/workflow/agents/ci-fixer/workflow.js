@@ -24,7 +24,7 @@ export const meta = {
 // agent. Independent checks are fanned with parallel() and share one token
 // budget. Per-agent resume is automatic via the Workflow tool's journal
 // (relaunch with resumeFromRunId). Agents push nothing — the dispatching
-// skill (next-issue-ship) stages, commits, and pushes the resulting edits.
+// skill (ship-issue) stages, commits, and pushes the resulting edits.
 // ---------------------------------------------------------------------------
 
 const checks = (args && Array.isArray(args.checks) ? args.checks : []).filter(Boolean)

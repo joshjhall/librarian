@@ -7,7 +7,7 @@ metadata:
   originSessionId: 5ab6fd65-c6c6-433d-a590-2ec30160b58e
 ---
 
-`/next-issue` + `/next-issue-ship` carry two **independent** flag families:
+`/next-issue` + `/ship-issue` carry two **independent** flag families:
 
 - **Autonomy** — run unattended to a PR. Flag: `--autonomous` (PR #72 / #22).
   `--auto` is a **deprecated alias** kept for one release. Also triggered by

@@ -256,7 +256,7 @@ The `codebase-audit` orchestrator discovers scanner agents by globbing
 - **Labels**: the orchestrator creates `audit/<category>` labels automatically
 - **Model**: use `sonnet` for primary scanner, `haiku` for batch sub-agents
 
-### Pattern 2: State Handoff (`next-issue` → `next-issue-ship`)
+### Pattern 2: State Handoff (`next-issue` → `ship-issue`)
 
 Skills that chain across invocations use JSON state files with schema:
 

@@ -2,7 +2,7 @@
 description: Ship the current next-issue work — commit, deliver (PR or push), label the issue, and optionally loop back. Use after implementation and testing are complete for an issue started with /next-issue.
 ---
 
-# Next Issue — Ship
+# Ship Issue
 
 Delivers the completed work for an issue previously selected and planned by
 `/next-issue`. Handles committing, pushing, PR creation, issue labeling, and
@@ -13,7 +13,7 @@ this skill. The state file written by `/next-issue` must exist.
 
 ## Pipeline
 
-This skill is the delivery half of the `/next-issue` → `/next-issue-ship`
+This skill is the delivery half of the `/next-issue` → `/ship-issue`
 pipeline (the two are kept as separate skills on purpose — see `## Pipeline` in
 the `next-issue` skill for the rationale). The hand-off is the state file
 `.claude/memory/tmp/next-issue-{N}.json`: `/next-issue` writes `phase` +
@@ -431,5 +431,5 @@ Then ask with `AskUserQuestion`:
 - **Stop** — end the session
 
 **Agent worktree mode**: When running on an agent branch (`^agent`), this
-behavior persists across invocations — `/next-issue-ship` will always
+behavior persists across invocations — `/ship-issue` will always
 auto-select commit-only mode (Option 3) without prompting.

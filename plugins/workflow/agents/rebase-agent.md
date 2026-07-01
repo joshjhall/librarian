@@ -122,11 +122,11 @@ from both sides. Do not drop, reorder, or rewrite either side's content beyond
 what is needed to combine them.
 
 **Example** — three golems each edited the same `worktree-new` launch line:
-one added `--permission-mode auto` + a `/next-issue-ship` chain, another added
+one added `--permission-mode auto` + a `/ship-issue` chain, another added
 `-e GOLEM_ID=golem-{N}`. The union keeps all of them:
 
 ```text
-... -e GOLEM_ID=golem-{N} "claude --permission-mode auto '/next-issue ...' ; claude --permission-mode auto '/next-issue-ship ...'"
+... -e GOLEM_ID=golem-{N} "claude --permission-mode auto '/next-issue ...' ; claude --permission-mode auto '/ship-issue ...'"
 ```
 
 ### Version Numbers (rebase-version)
