@@ -2,7 +2,7 @@ name: orchestrate
 version: "2.0"
 
 # Status labels are read as authoritative during monitoring. They are owned and
-# created by next-issue / next-issue-ship — listed here for self-documentation.
+# created by next-issue / ship-issue — listed here for self-documentation.
 labels:
   - name: status/in-progress
   - name: status/pr-pending

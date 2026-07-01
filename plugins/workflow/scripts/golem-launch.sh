@@ -127,7 +127,7 @@ launch_line() {
     # `;` second prompt is the resume backstop (NOT `&&`); see orchestrate
     # SKILL.md Phase D / mode-protocol.md § Supervised launch.
     command printf '%s' \
-        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n \"claude --permission-mode auto '/next-issue $n --autonomous' ; claude --permission-mode auto '/next-issue-ship --autonomous'\""
+        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n \"claude --permission-mode auto '/next-issue $n --autonomous' ; claude --permission-mode auto '/ship-issue --autonomous'\""
 }
 
 cmd="${1:-}"
@@ -162,7 +162,7 @@ case "$cmd" in
         fi
         # Bare, standalone new-session — matches Bash(tmux new-session:*).
         tmux new-session -d -s "golem-$N" -c "$wt" -e GOLEM_ID="golem-$N" \
-            "claude --permission-mode auto '/next-issue $N --autonomous' ; claude --permission-mode auto '/next-issue-ship --autonomous'"
+            "claude --permission-mode auto '/next-issue $N --autonomous' ; claude --permission-mode auto '/ship-issue --autonomous'"
         command echo "golem-launch: started golem-$N in $wt"
         ;;
     *)

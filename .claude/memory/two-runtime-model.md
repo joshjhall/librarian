@@ -31,7 +31,7 @@ of them. So "lean on a bundled runtime" is not an option — there isn't one.
 - Harness design (e.g. [[release-process]]-style automation, the codebase-audit
   harness in #18): the harness is pure orchestration; ALL shell/fs/git work must
   live in a Bash-capable subagent driven in discriminated modes (the pattern
-  `next-issue-ship/workflow.js` uses to drive `code-reviewer`).
+  `ship-issue/workflow.js` uses to drive `code-reviewer`).
 - Issue #17 ("multi-language/multi-runtime support" for skill code tools): there
   is no Claude-bundled runtime to standardize on. The real axis is
   lowest-common-denominator POSIX `bash` (what `patterns.sh` already targets)

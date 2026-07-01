@@ -102,5 +102,5 @@ This is advisory — the user can proceed with a large issue.
 ## When NOT to Use
 
 - Bulk issue creation from audit findings (use `/codebase-audit`)
-- Closing or shipping issues (use `/next-issue-ship`)
+- Closing or shipping issues (use `/ship-issue`)
 - Triaging existing issues without changes (just read with `gh issue view`)

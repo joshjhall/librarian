@@ -92,7 +92,7 @@ with a background PR poller, autonomous pipeline in tmux) — lives in
    `AGENT_CPUS`/`AGENT_MEMORY`), `init: true`, and `command: sleep infinity`.
 1. **Write `.worktrees/agent-entrypoint.sh`** — verifies git-host auth, then
    launches the autonomous golem pipeline (`/next-issue --autonomous` →
-   `/next-issue-ship`) in a named tmux session with a background PR-state poller.
+   `/ship-issue`) in a named tmux session with a background PR-state poller.
 
 See `provision-protocol.md` for the verbatim YAML and entrypoint script.
 
@@ -153,7 +153,7 @@ For each agent to provision (e.g., agent01 through agent{N}):
    ```
 
    The container's `agent-entrypoint.sh` owns pipeline startup (auth check →
-   `/next-issue --autonomous` → `/next-issue-ship` in the `claude` tmux session), so
+   `/next-issue --autonomous` → `/ship-issue` in the `claude` tmux session), so
    no separate `docker exec ... tmux new-session` is needed here.
 
 ## Step 5 — Report

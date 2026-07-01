@@ -2,8 +2,8 @@
 # Negative-fixture coverage for the four scan categories AND the project
 # skip-policy override in pre-review-gates.sh (issue #83).
 #
-# plugins/workflow/skills/next-issue-ship/pre-review-gates.sh is the
-# deterministic pre-scan /next-issue-ship runs before PR creation. It emits
+# plugins/workflow/skills/ship-issue/pre-review-gates.sh is the
+# deterministic pre-scan /ship-issue runs before PR creation. It emits
 # TSV findings (file\tline\tcategory\tevidence\tcertainty) in four categories —
 # ai-slop, debug-statement, missing-test-file, untested-public-api — and merges
 # a project .claude/pre-review.yml into the bundled test-skip-patterns.default
@@ -33,7 +33,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GATE="$REPO_ROOT/plugins/workflow/skills/next-issue-ship/pre-review-gates.sh"
+GATE="$REPO_ROOT/plugins/workflow/skills/ship-issue/pre-review-gates.sh"
 
 # Resolve the real bash once so child invocations work regardless of PATH.
 REAL_BASH="$(command -v bash)"

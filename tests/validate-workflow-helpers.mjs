@@ -108,7 +108,7 @@ const ORCH = "plugins/workflow/skills/orchestrate/workflow.js";
 const REBASE = "plugins/workflow/agents/rebase-agent/workflow.js";
 const CIFIX = "plugins/workflow/agents/ci-fixer/workflow.js";
 const REVIEW = "plugins/dev-core/agents/code-reviewer/workflow.js";
-const SHIP = "plugins/workflow/skills/next-issue-ship/workflow.js";
+const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
 
 // =============================================================================
 // codebase-audit — sanitize / sanitizeList / dataBlock / stampRefs / finalResult
@@ -296,7 +296,7 @@ for (const path of [ORCH, REBASE]) {
 }
 
 // =============================================================================
-// code-reviewer / next-issue-ship — refOf + empty-result constructors
+// code-reviewer / ship-issue — refOf + empty-result constructors
 // =============================================================================
 {
   const { refOf, emptyReport } = extractHelpers(REVIEW, ["refOf", "emptyReport"]);
@@ -309,14 +309,14 @@ for (const path of [ORCH, REBASE]) {
 }
 
 {
-  // next-issue-ship's emptyResult reads module-level CYCLE/PHASE/scopeFiles that
+  // ship-issue's emptyResult reads module-level CYCLE/PHASE/scopeFiles that
   // are derived from args at prefix load, so seed them through args.
   const { refOf, emptyResult } = extractHelpers(
     SHIP,
     ["refOf", "emptyResult"],
     { cycle: 2, phase: "pr-cycle", files: ["x.js"] },
   );
-  eq(refOf({ ref: "y:2:perf#1" }), "y:2:perf#1", "refOf (next-issue-ship): returns .ref");
+  eq(refOf({ ref: "y:2:perf#1" }), "y:2:perf#1", "refOf (ship-issue): returns .ref");
   const r = emptyResult(false);
   eq(r.cycle, 2, "emptyResult: cycle reflects args");
   eq(r.phase, "pr-cycle", "emptyResult: phase reflects args");

@@ -22,7 +22,7 @@ install:
 harness now uses the namespaced `<plugin>:<name>` form (23 refs across 6
 harnesses). Map: `code-reviewer`→`dev-core:`, `checker`/`issue-writer`→
 `review-audit:`, `ci-fixer`/`rebase-agent`→`workflow:`. So harness-driven
-fan-out (next-issue-ship review, ci-fixer, rebase-agent, codebase-audit) no
+fan-out (ship-issue review, ci-fixer, rebase-agent, codebase-audit) no
 longer throws. New harnesses MUST keep using the namespaced form.
 
 **The real CI gate is `tests/lint-skills-agents.sh`** →

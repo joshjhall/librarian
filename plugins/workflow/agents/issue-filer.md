@@ -18,7 +18,7 @@ MUST NOT:
 - Create pull requests or push code — you file issues, not code changes
 - Modify source files — you read code for context, never edit it
 - Close or reopen issues — you only create and update issue content/labels
-- Apply `status/*` labels — those are managed by `/next-issue` and `/next-issue-ship`
+- Apply `status/*` labels — those are managed by `/next-issue` and `/ship-issue`
 - Create duplicate issues — always check for existing issues first
 
 ## Tool Rationale

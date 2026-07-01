@@ -1,6 +1,6 @@
 # Next Issue — Pre-Ship Validation (Step 3.5)
 
-Companion to `next-issue-ship/SKILL.md`, loaded for **Step 3.5**. Before
+Companion to `ship-issue/SKILL.md`, loaded for **Step 3.5**. Before
 executing the chosen shipping mode (Step 4), run these safety checks. Autonomous
 behavior is noted inline per check; environment variables referenced here
 (`PRE_REVIEW_STRICT`, `REVIEW_MAX_CYCLES`, `REVIEW_STRICT`) are defined in
@@ -143,7 +143,7 @@ behavior is noted inline per check; environment variables referenced here
    then compute the scope — the review needs a diff to read.
 
    b. **Invoke the `Workflow` tool** with the script bundled alongside this
-   skill at `~/.claude/skills/next-issue-ship/workflow.js`, passing:
+   skill at `~/.claude/skills/ship-issue/workflow.js`, passing:
 
    ```text
    args: {
@@ -186,6 +186,6 @@ behavior is noted inline per check; environment variables referenced here
      (Option 1 "Autonomous completion summary" → "Review status").
 
    **Graceful degradation**: if the `Workflow` tool or
-   `~/.claude/skills/next-issue-ship/workflow.js` is unavailable, skip this
+   `~/.claude/skills/ship-issue/workflow.js` is unavailable, skip this
    step with a note: "Adversarial pre-PR review skipped (harness not
    available)." Never block shipping due to harness errors.

@@ -7,7 +7,7 @@ metadata:
   originSessionId: 13da0b8e-0e9a-47ce-951c-0c33f7cb4d30
 ---
 
-`plugins/workflow/skills/next-issue-ship/pre-review-gates.sh` resolves
+`plugins/workflow/skills/ship-issue/pre-review-gates.sh` resolves
 `_PROJECT_ROOT` via `git rev-parse --show-toplevel` to locate both
 `.claude/pre-review.yml` (the project skip-policy override read by
 `load_test_skip_policy`) and the repo-rooted `tests/` tree used by the

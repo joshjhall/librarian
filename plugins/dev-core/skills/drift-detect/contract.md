@@ -1,7 +1,7 @@
 # drift-detect — Output Contract
 
 Reference companion for `SKILL.md`. Defines the drift detection report format.
-The `/next-issue-ship` skill reads this when drift-detect is invoked as a
+The `/ship-issue` skill reads this when drift-detect is invoked as a
 pre-ship validation step.
 
 ## Contract Version
@@ -49,7 +49,7 @@ The skill produces a JSON drift report:
     "total": 4,
     "addressed": 3,
     "unaddressed": [
-      "Integrates with next-issue-ship as optional pre-ship check"
+      "Integrates with ship-issue as optional pre-ship check"
     ]
   },
   "summary": {

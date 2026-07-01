@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# next-issue-ship — Pre-Review Gates (Deterministic Pre-Scan)
+# ship-issue — Pre-Review Gates (Deterministic Pre-Scan)
 #
 # Scans changed files for mechanical issues before PR creation:
 # AI slop patterns, debug statements, missing tests, untested public APIs.

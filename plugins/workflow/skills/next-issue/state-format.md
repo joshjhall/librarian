@@ -181,7 +181,7 @@ safely cleared. The state file (with checkpoint) preserves continuity.
 
 \* **`--ship` fast-path exception**: when `/next-issue` is invoked with `--ship`
 (or `--now`) on an `effort/trivial`/`small` issue, the "After plan approval"
-reset is **skipped** — the run chains straight into `/next-issue-ship` in the
+reset is **skipped** — the run chains straight into `/ship-issue` in the
 same context (the small planning footprint does not justify a reset). The
 plan-approval gate itself is preserved, and `autonomous` stays false. For
 `effort/medium`/`large` the reset point is unaffected.
@@ -189,10 +189,10 @@ plan-approval gate itself is preserved, and `autonomous` stays false. For
 \* **`--autonomous` exception**: when `/next-issue` is invoked with
 `--autonomous` (deprecated alias `--auto`) or `NEXT_ISSUE_AUTONOMOUS=1`,
 **every** reset point above is bypassed — the
-autonomous run invokes `/next-issue-ship` in the same turn (via the `Skill`
+autonomous run invokes `/ship-issue` in the same turn (via the `Skill`
 tool) and never reaches the "After plan approval", "After review", or "After
 ship" boundaries as distinct resets. The orchestrate golem launch's
-`;`-chained `/next-issue-ship --autonomous` is the only resume path if the turn exits
+`;`-chained `/ship-issue --autonomous` is the only resume path if the turn exits
 early. Unlike `--ship`, `--autonomous` sets `autonomous: true`. Whether it removes the
 **plan-approval gate** depends on `plan_gated` (see `SKILL.md` § Autonomous
 Mode): a fully-autonomous run (`effort/trivial`/`small`, non-critical, no
@@ -233,8 +233,8 @@ picked up:
 | Label                   | Set by                        | Meaning                                               |
 | ----------------------- | ----------------------------- | ----------------------------------------------------- |
 | `status/in-progress`    | `/next-issue` (Phase 1)       | An agent has selected this issue and is working on it |
-| `status/pr-pending`     | `/next-issue-ship` (Option 1) | A PR has been created; awaiting review/merge          |
-| `status/commit-pending` | `/next-issue-ship` (Option 3) | Fix committed locally but not yet pushed              |
+| `status/pr-pending`     | `/ship-issue` (Option 1) | A PR has been created; awaiting review/merge          |
+| `status/commit-pending` | `/ship-issue` (Option 3) | Fix committed locally but not yet pushed              |
 | `status/on-hold`        | Manual                        | Issue intentionally deferred; not ready to work on    |
 | `status/blocked`        | Manual                        | Issue has an unresolved dependency; not ready to work |
 

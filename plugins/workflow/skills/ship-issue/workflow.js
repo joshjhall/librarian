@@ -1,7 +1,7 @@
 export const meta = {
   name: 'next-issue-review',
   description:
-    'Budgeted, resumable adversarial review for next-issue-ship: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), re-scores with a fresh judge, then classifies each finding blocking-vs-deferrable for the skill to resolve-or-defer. One cycle per invocation — the skill owns the cycle loop and the cap.',
+    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), re-scores with a fresh judge, then classifies each finding blocking-vs-deferrable for the skill to resolve-or-defer. One cycle per invocation — the skill owns the cycle loop and the cap.',
   phases: [
     { title: 'Manifest', detail: 'build + classify the changed-file manifest, decide specialists' },
     { title: 'Review', detail: 'review dimensions run as one parallel barrier under one budget' },

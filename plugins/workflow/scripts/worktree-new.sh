@@ -74,4 +74,4 @@ fi
 command echo ""
 command echo "Worktree ready: $wt (branch $br)"
 command echo "Launch a golem there with:"
-command echo "  tmux new-session -d -s golem-$N -c \"$root/$wt\" -e GOLEM_ID=golem-$N \"claude --permission-mode auto '/next-issue $N --autonomous' ; claude --permission-mode auto '/next-issue-ship --autonomous'\""
+command echo "  tmux new-session -d -s golem-$N -c \"$root/$wt\" -e GOLEM_ID=golem-$N \"claude --permission-mode auto '/next-issue $N --autonomous' ; claude --permission-mode auto '/ship-issue --autonomous'\""

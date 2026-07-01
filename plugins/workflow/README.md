@@ -10,7 +10,7 @@ devcontainer.
 ## Skills (9)
 
 - `file-issue` — structured GitHub/GitLab issue creation with auto-labeling
-- `next-issue` / `next-issue-ship` — issue-driven development + delivery
+- `next-issue` / `ship-issue` — issue-driven development + delivery
 - `orchestrate` — master orchestrator for PR-per-golem parallel work
 - `provision-agent` — provision headless agent containers (assumes a
   devcontainer-based setup; see its `SKILL.md`)
@@ -60,11 +60,11 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 
 The `GOLEM_*` vars above are sourced by the bundled shell scripts. The vars
 below are **skill-level tunables** — read from the environment by the
-`next-issue-ship` skill itself (not by any shell script), following the same
+`ship-issue` skill itself (not by any shell script), following the same
 opt-in/override convention. They are documented in that skill's "Environment
 Variables" section.
 
-### Skill-level tunables (`next-issue-ship`)
+### Skill-level tunables (`ship-issue`)
 
 This is a quick reference; the skill's "Environment Variables" section is
 authoritative and documents the same vars in the same order.

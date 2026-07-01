@@ -12,9 +12,9 @@ actual implementation to identify divergence before shipping.
 
 ## When to Use
 
-- Before running `/next-issue-ship` to verify implementation matches the plan
+- Before running `/ship-issue` to verify implementation matches the plan
 - After completing implementation to check for scope drift
-- As part of pre-ship validation (auto-invoked by `/next-issue-ship`)
+- As part of pre-ship validation (auto-invoked by `/ship-issue`)
 
 ## Workflow
 
@@ -154,10 +154,10 @@ Generate a drift report following the format in `contract.md`.
 - Summarize: "N findings (X high, Y medium, Z low)"
 - If zero findings: "No drift detected — implementation matches the plan"
 
-**If called from next-issue-ship** (pre-ship validation):
+**If called from ship-issue** (pre-ship validation):
 
 - Return the structured JSON report
-- Let next-issue-ship handle the user prompt based on severity
+- Let ship-issue handle the user prompt based on severity
 
 ### Step 5 — Run Deterministic Pre-Scan (Optional)
 
@@ -171,9 +171,9 @@ git diff --name-only origin/main...HEAD > /tmp/drift-detect-files.txt
 
 Merge any TSV findings into the report alongside the LLM-judged findings.
 
-## Integration with next-issue-ship
+## Integration with ship-issue
 
-This skill is invoked automatically by `/next-issue-ship` in Step 3.5
+This skill is invoked automatically by `/ship-issue` in Step 3.5
 (Pre-Ship Validation) as the 4th check. The integration is optional — if the
 issue body has no "Affected Files" or "Acceptance Criteria" sections, the check
 is skipped silently.

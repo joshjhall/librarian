@@ -12,7 +12,7 @@ This repo's `conform` commit-msg hook enforces a **fixed scope enum** (in
 `manifests`, `scripts`, `skills`, `agents`, `hooks`, `tests`, `ci`,
 `devcontainer`, `deps`, `docs`, `lefthook`, `gitignore`, `release`.
 
-**Why:** the `next-issue-ship` skill tells golems to commit review fixes as
+**Why:** the `ship-issue` skill tells golems to commit review fixes as
 `fix(review): …` — but `review` is NOT in the enum, so that commit is rejected
 by the commit-msg hook and the ship stalls.
 
