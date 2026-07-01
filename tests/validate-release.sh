@@ -225,45 +225,57 @@ test_release_notes_fallback_no_changelog() {
 # tests source the function directly and put stub `git`/`gh` on PATH so no real
 # git or network calls happen; a stub `gh` records whether it was invoked.
 
-# run_git_automation <sandbox> <AUTO_COMMIT> <AUTO_TAG> <AUTO_PUSH> <AUTO_GITHUB_RELEASE> [gh_available]
+# run_git_automation <sandbox> <AUTO_COMMIT> <AUTO_TAG> <AUTO_PUSH> <AUTO_GITHUB_RELEASE> [gh_mode] [git_push_rc]
 # Sources git-automation.sh in a subshell with stubbed git/gh on PATH and runs
-# perform_git_automation 9.9.9. Echoes combined stdout+stderr; the stub `gh`
-# touches "$sandbox/gh_called" when invoked. gh_available=false omits the gh
-# stub AND masks the real gh (PATH is the stub dir only) so `command -v gh`
-# fails — exercising the graceful-degradation branch.
+# perform_git_automation 9.9.9. Echoes combined stdout+stderr and preserves the
+# function's exit code. The stub `gh` touches "$sandbox/gh_called" when invoked.
+#   gh_mode:      "ok" (default) stub exits 0; "fail" stub exits 1 (release-create
+#                 failure path); "missing" omits the gh stub AND shadows the real
+#                 gh with a non-executable placeholder so `command -v gh` fails.
+#   git_push_rc:  exit code the git stub returns for a `push` subcommand (default
+#                 0). Non-zero exercises the push-failure `exit 1` paths.
+# The stub dir is always kept on a full PATH (prepended), so the git/gh stubs
+# shadow the real binaries while coreutils + generate-release-notes.sh still
+# resolve — the git stub therefore genuinely runs in every mode.
 run_git_automation() {
-    local sb="$1" ac="$2" at="$3" ap="$4" agr="$5" gh_ok="${6:-true}"
+    local sb="$1" ac="$2" at="$3" ap="$4" agr="$5" gh_mode="${6:-ok}" push_rc="${7:-0}"
     local stub="$sb/stubbin"
     command mkdir -p "$stub"
-    # git stub: swallow every subcommand (commit/tag/push) as a success.
-    command cat >"$stub/git" <<'EOF'
-#!/usr/bin/env bash
-exit 0
+    # git stub: `push` returns the caller-chosen code; every other subcommand
+    # (commit/tag/...) succeeds. Absolute /bin/sh shebang so it runs regardless
+    # of PATH contents.
+    command cat >"$stub/git" <<EOF
+#!/bin/sh
+case "\$1" in
+    push) exit $push_rc ;;
+    *) exit 0 ;;
+esac
 EOF
+    command chmod +x "$stub/git"
     command rm -f "$sb/gh_called"
-    if [ "$gh_ok" = "true" ]; then
+    if [ "$gh_mode" = "ok" ] || [ "$gh_mode" = "fail" ]; then
+        local gh_rc=0
+        [ "$gh_mode" = "fail" ] && gh_rc=1
         command cat >"$stub/gh" <<EOF
-#!/usr/bin/env bash
-command touch "$sb/gh_called"
-exit 0
+#!/bin/sh
+touch "$sb/gh_called"
+exit $gh_rc
 EOF
         command chmod +x "$stub/gh"
     fi
-    command chmod +x "$stub/git"
     # A .git marker so the function's early "not a git repository" guard passes.
-    # Created here (before the restricted-PATH subshell) with an absolute mkdir.
     command mkdir -p "$sb/.git"
     (
-        # gh present: prepend the stub so the stub git/gh shadow the real ones,
-        # keeping the rest of PATH for the coreutils + generate-release-notes.sh
-        # the unsigned fallback runs.
-        # gh missing: PATH = stub only (git stub, no gh), so `command -v gh`
-        # fails. That branch reaches only shell builtins (`command echo`) plus
-        # the git stub before returning, so it needs nothing else on PATH.
-        if [ "$gh_ok" = "true" ]; then
-            PATH="$stub:$PATH"
-        else
+        # ok/fail: stub prepended to a full PATH so the git/gh stubs shadow the
+        # real binaries while coreutils + generate-release-notes.sh (used by the
+        # unsigned fallback) still resolve.
+        # missing: PATH = stub only, so there is NO gh anywhere and
+        # `command -v gh` fails. The git stub's absolute /bin/sh shebang means it
+        # still runs, and the gh-missing branch exits before any coreutil call.
+        if [ "$gh_mode" = "missing" ]; then
             PATH="$stub"
+        else
+            PATH="$stub:$PATH"
         fi
         BIN_DIR="$sb/bin"
         GH_REPO="joshjhall/librarian"
@@ -297,11 +309,25 @@ test_git_automation_unpushed_tag_creates_unsigned() {
 test_git_automation_no_tag_skips_release() {
     local sb out
     make_bin_sandbox sb
-    # AUTO_TAG=false: no tag exists, so neither the CI-defer nor the local
-    # fallback should create a release (gh must not be called).
+    # AUTO_TAG=false + AUTO_PUSH=false: no tag exists, so neither the CI-defer
+    # nor the local fallback should create a release, and the manual-steps hint
+    # should be emitted instead.
     out="$(run_git_automation "$sb" true false false true)"
     assert_true "[ ! -e '$sb/gh_called' ]" "no tag → gh release create is NOT invoked"
     assert_not_contains "$out" "release.yml will publish" "no tag → does not claim CI will publish"
+    assert_contains "$out" "To complete the release" "manual-steps header emitted when not fully automated"
+    assert_contains "$out" "git tag -a v9.9.9" "manual-steps lists the tag command"
+}
+
+test_git_automation_push_no_tag_skips_release() {
+    local sb out
+    make_bin_sandbox sb
+    # AUTO_PUSH=true but AUTO_TAG=false: branch is pushed, but no tag exists, so
+    # no release of any kind is created (distinct code path from no-push/no-tag).
+    out="$(run_git_automation "$sb" true false true true)"
+    assert_true "[ ! -e '$sb/gh_called' ]" "push without tag → gh release create is NOT invoked"
+    assert_not_contains "$out" "release.yml will publish" "push without tag → no CI-defer message"
+    assert_not_contains "$out" "UNSIGNED release" "push without tag → no unsigned-fallback message"
 }
 
 test_git_automation_release_disabled() {
@@ -316,9 +342,44 @@ test_git_automation_unpushed_tag_gh_missing_degrades() {
     local sb out
     make_bin_sandbox sb
     # gh unavailable on the fallback path: warn and continue (exit 0), do not crash.
-    out="$(run_git_automation "$sb" true true false true false)"
+    out="$(run_git_automation "$sb" true true false true missing)"
     assert_contains "$out" "gh CLI not found" "missing gh on the fallback path warns gracefully"
     assert_true "[ ! -e '$sb/gh_called' ]" "missing gh → no gh invocation recorded"
+}
+
+test_git_automation_gh_release_failure_degrades() {
+    local sb out
+    make_bin_sandbox sb
+    # gh present but exits non-zero: warn + print the manual-create URL, no crash.
+    out="$(run_git_automation "$sb" true true false true fail)"
+    assert_contains "$out" "failed to create GitHub release" "gh failure warns gracefully"
+    assert_contains "$out" "releases/new?tag=v9.9.9" "gh failure prints the manual-create URL"
+}
+
+test_git_automation_push_failure_aborts() {
+    local sb out rc=0
+    make_bin_sandbox sb
+    # git push exits non-zero: the function must abort with exit 1 and report it,
+    # rather than silently proceeding to tag/release.
+    out="$(run_git_automation "$sb" true true true true ok 1)" || rc=$?
+    assert_exit 1 "$rc" "a failed git push aborts perform_git_automation with exit 1"
+    assert_contains "$out" "Failed to push branch" "push failure is reported"
+    assert_true "[ ! -e '$sb/gh_called' ]" "push failure → no release is created"
+}
+
+test_git_automation_not_a_git_repo() {
+    local sb out rc=0
+    make_bin_sandbox sb
+    # No .git marker: the early guard returns 0 without touching git/gh.
+    command rm -rf "$sb/.git"
+    out="$(
+        cd "$sb" || exit 1
+        BIN_DIR="$sb/bin" GH_REPO="joshjhall/librarian" \
+            AUTO_COMMIT=true AUTO_TAG=true AUTO_PUSH=true AUTO_GITHUB_RELEASE=true \
+            bash -c 'source "'"$REPO_ROOT"'/bin/lib/release/git-automation.sh"; perform_git_automation 9.9.9'
+    )" || rc=$?
+    assert_exit 0 "$rc" "missing .git returns 0 (manual commit required)"
+    assert_contains "$out" "Not a git repository" "missing .git prints the guard message"
 }
 
 # --- Run all tests ----------------------------------------------------------
@@ -341,8 +402,12 @@ run_test test_release_notes_fallback_no_changelog "generate-release-notes.sh fal
 
 run_test test_git_automation_pushed_tag_defers_to_ci "git-automation: pushed tag defers to release.yml (no local gh release)"
 run_test test_git_automation_unpushed_tag_creates_unsigned "git-automation: unpushed tag creates an unsigned local release"
-run_test test_git_automation_no_tag_skips_release "git-automation: AUTO_TAG=false creates no release"
+run_test test_git_automation_no_tag_skips_release "git-automation: no tag + no push creates no release, prints manual steps"
+run_test test_git_automation_push_no_tag_skips_release "git-automation: push without tag creates no release"
 run_test test_git_automation_release_disabled "git-automation: AUTO_GITHUB_RELEASE=false creates no release"
 run_test test_git_automation_unpushed_tag_gh_missing_degrades "git-automation: missing gh on the fallback path degrades gracefully"
+run_test test_git_automation_gh_release_failure_degrades "git-automation: a failing gh release create degrades gracefully"
+run_test test_git_automation_push_failure_aborts "git-automation: a failed git push aborts with exit 1"
+run_test test_git_automation_not_a_git_repo "git-automation: missing .git returns 0 with a manual-commit notice"
 
 generate_report
