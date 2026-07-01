@@ -11,11 +11,12 @@
 #   6. Pre-scan empty/missing-input robustness (tests/validate-prescans.sh)
 #   7. pre-review-gates scan categories + skip policy (tests/validate-pre-review-gates.sh)
 #   8. codebase-audit issue-template sync (tests/validate-template-sync.sh)
-#   9. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
-#  10. Action pin format (tests/lint-action-pins.sh)
-#  11. Release toolchain coverage (tests/validate-release.sh)
-#  12. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
-#  13. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
+#   9. debug-statement scanner sync (tests/validate-debug-scanner-sync.sh)
+#  10. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
+#  11. Action pin format (tests/lint-action-pins.sh)
+#  12. Release toolchain coverage (tests/validate-release.sh)
+#  13. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
+#  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +

@@ -19,12 +19,14 @@
 #   case "$file" in ... esac
 #   # <<< shared:debug-statement-scan
 #
-# This gate extracts both regions, normalizes each to its set of unique,
-# non-blank, trimmed lines, and asserts the sets are identical. Trimming leading
-# whitespace is deliberate: patterns.sh nests the block one indent level deeper
-# (inside an `if`) than pre-review-gates.sh (inside a function), so the arms are
-# byte-identical only after indentation is stripped — the regexes and evidence
-# strings are the invariant that must hold.
+# This gate extracts both regions, normalizes each to its ordered sequence of
+# non-blank, trimmed lines, and asserts the sequences are identical. Trimming
+# leading whitespace is deliberate: patterns.sh nests the block one indent level
+# deeper (inside an `if`) than pre-review-gates.sh (inside a function), so the
+# arms are byte-identical only after indentation is stripped — the regexes,
+# evidence strings, AND their order are the invariant that must hold. The
+# comparison is an ordered multiset (NOT `sort -u`): deduplicating or sorting
+# would let a duplicated arm or a reordered arm slip through undetected.
 #
 # A synthetic tamper check proves the detector fires (mirrors the
 # negative-fixture discipline of tests/validate-template-sync.sh, the exemplar
@@ -57,15 +59,24 @@ extract_shared() {
     ' "$1"
 }
 
-# Normalize to the sorted set of unique, non-blank, trimmed lines. Trimming
-# collapses the indentation difference between the two nesting depths; sort -u
-# makes the comparison order-insensitive while still catching any regex or
-# evidence-string divergence.
+# Normalize to the ordered sequence of non-blank, trimmed lines. Trimming
+# collapses the indentation difference between the two nesting depths. Order is
+# preserved (no sort) and duplicates are preserved (no -u), so the comparison is
+# a true ordered-multiset equality: a reordered arm, a duplicated line, or a
+# dropped line all surface as drift, not just a changed evidence string.
 normalize() {
     /usr/bin/awk '
         { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
         $0 != "" { print }
-    ' | LC_ALL=C /usr/bin/sort -u
+    '
+}
+
+# Count how many times a fixed string appears in a file. Used to assert both
+# sentinels are present exactly once before trusting extract_shared's output —
+# a deleted closing sentinel would make extract_shared run to EOF, yielding a
+# non-empty but structurally wrong region that assert_not_empty alone misses.
+sentinel_count() {
+    /usr/bin/grep -c "$1" "$2" || true
 }
 
 # The two shared regions agree on their set of unique lines. This is the live
@@ -73,6 +84,15 @@ normalize() {
 test_shared_regions_match() {
     assert_file_exists "$CANONICAL" "check-code-health/patterns.sh exists"
     assert_file_exists "$DUPLICATE" "ship-issue/pre-review-gates.sh exists"
+
+    # Both sentinels must be present exactly once in each file. Without this, a
+    # deleted closing sentinel lets extract_shared consume to EOF and still pass
+    # assert_not_empty below with a structurally wrong region.
+    local open="# >>> shared:debug-statement-scan" close="# <<< shared:debug-statement-scan"
+    assert_equals "1" "$(sentinel_count "$open" "$CANONICAL")" "patterns.sh has exactly one opening sentinel"
+    assert_equals "1" "$(sentinel_count "$close" "$CANONICAL")" "patterns.sh has exactly one closing sentinel"
+    assert_equals "1" "$(sentinel_count "$open" "$DUPLICATE")" "pre-review-gates.sh has exactly one opening sentinel"
+    assert_equals "1" "$(sentinel_count "$close" "$DUPLICATE")" "pre-review-gates.sh has exactly one closing sentinel"
 
     local canonical duplicate
     canonical="$(extract_shared "$CANONICAL" | normalize)"
@@ -95,8 +115,8 @@ test_shared_regions_match() {
 }
 
 # The detector FIRES: a tampered copy (one evidence string changed) must break
-# set equality. Without this, a normalize() that collapsed everything to empty
-# would let the live check pass vacuously.
+# sequence equality. Without this, a normalize() that collapsed everything to
+# empty would let the live check pass vacuously.
 test_detector_fires_on_drift() {
     local canonical duplicate tampered
     canonical="$(extract_shared "$CANONICAL" | normalize)"
