@@ -51,6 +51,13 @@ find_next_issue_schema() {
         2>/dev/null | command sort | command head -1
 }
 
+# Locate the next-issue dependency-queue schema file. Prints the absolute path,
+# or nothing if absent.
+find_next_issue_queue_schema() {
+    command find "$PLUGINS_DIR" -type f -path '*/skills/next-issue/schemas/next-issue-queue.schema.json' \
+        2>/dev/null | command sort | command head -1
+}
+
 # Validate a JSON instance against a (draft-07 subset of a) JSON schema using
 # pure jq — ajv is not a dependency in this repo. Checks the parts the
 # next-issue-state schema actually uses: required keys present, declared
@@ -281,6 +288,89 @@ JSON
     /usr/bin/rm -f "$tmpdoc"
 }
 
+# next-issue-queue.schema.json is valid JSON + closed (when present + jq).
+test_next_issue_queue_schema_valid() {
+    if [ "$HAVE_JQ" -ne 1 ]; then
+        skip_test "jq not available — cannot validate next-issue-queue.schema.json"
+        return
+    fi
+    local schema_file
+    schema_file="$(find_next_issue_queue_schema)"
+    if [ -z "$schema_file" ]; then
+        skip_test "next-issue skill not present — no queue schema to validate"
+        return
+    fi
+    assert_true "jq empty '$schema_file' 2>/dev/null" \
+        "next-issue-queue.schema.json is not valid JSON"
+    # additionalProperties:false guards against silent queue-file typos.
+    assert_true "jq -e '.additionalProperties == false' '$schema_file' >/dev/null 2>&1" \
+        "next-issue-queue.schema.json must set top-level additionalProperties:false"
+}
+
+# A representative queue doc validates against the queue schema.
+test_next_issue_queue_schema_accepts_valid_doc() {
+    if [ "$HAVE_JQ" -ne 1 ]; then
+        skip_test "jq not available — cannot validate next-issue-queue sample doc"
+        return
+    fi
+    local schema_file
+    schema_file="$(find_next_issue_queue_schema)"
+    if [ -z "$schema_file" ]; then
+        skip_test "next-issue skill not present — no queue schema to validate against"
+        return
+    fi
+    local tmpdoc
+    tmpdoc="$(/usr/bin/mktemp)"
+    # A queue driving toward #5 with deps #4, #2 resolved deepest-first.
+    cat >"$tmpdoc" <<'JSON'
+{
+  "version": 1,
+  "target": 5,
+  "ordered": [4, 2, 5],
+  "remaining": [4, 2, 5],
+  "active": 4,
+  "created": "2026-07-02",
+  "platform": "github"
+}
+JSON
+    assert_true "jq_validate_against_schema '$schema_file' '$tmpdoc'" \
+        "valid next-issue-queue doc rejected by schema validator"
+    /usr/bin/rm -f "$tmpdoc"
+}
+
+# additionalProperties:false rejects a queue doc with an unknown top-level key.
+test_next_issue_queue_schema_rejects_unknown_property() {
+    if [ "$HAVE_JQ" -ne 1 ]; then
+        skip_test "jq not available — cannot validate next-issue-queue rejection"
+        return
+    fi
+    local schema_file
+    schema_file="$(find_next_issue_queue_schema)"
+    if [ -z "$schema_file" ]; then
+        skip_test "next-issue skill not present — no queue schema to validate against"
+        return
+    fi
+    local tmpdoc
+    tmpdoc="$(/usr/bin/mktemp)"
+    # Same minimal-valid doc plus a bogus top-level key that must be rejected.
+    cat >"$tmpdoc" <<'JSON'
+{
+  "version": 1,
+  "target": 5,
+  "ordered": [4, 2, 5],
+  "remaining": [4, 2, 5],
+  "active": 4,
+  "created": "2026-07-02",
+  "platform": "github",
+  "bogus_unknown_field": "should be rejected"
+}
+JSON
+    # The validator must FAIL here (unknown key under additionalProperties:false).
+    assert_true "! jq_validate_against_schema '$schema_file' '$tmpdoc'" \
+        "queue schema validator accepted an unknown top-level property"
+    /usr/bin/rm -f "$tmpdoc"
+}
+
 # --- check-* Contract Tests -------------------------------------------------
 
 # Every check-* contract.md has a valid JSON example.
@@ -499,6 +589,9 @@ run_test test_loop_report_schema_valid "loop-report.schema.json is valid JSON"
 run_test test_next_issue_schema_valid "next-issue-state.schema.json is valid JSON + additionalProperties:false"
 run_test test_next_issue_schema_accepts_valid_doc "next-issue-state schema accepts a valid doc (plan_gated)"
 run_test test_next_issue_schema_rejects_unknown_property "next-issue-state schema rejects unknown property"
+run_test test_next_issue_queue_schema_valid "next-issue-queue.schema.json is valid JSON + additionalProperties:false"
+run_test test_next_issue_queue_schema_accepts_valid_doc "next-issue-queue schema accepts a valid doc"
+run_test test_next_issue_queue_schema_rejects_unknown_property "next-issue-queue schema rejects unknown property"
 run_test test_check_contract_json_valid "check-* contract.md JSON examples are valid"
 run_test test_check_contract_required_fields "check-* contract examples have all required fields"
 run_test test_check_contract_enum_values "check-* contract enum values are valid"

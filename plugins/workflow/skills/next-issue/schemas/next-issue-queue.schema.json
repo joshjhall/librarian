@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "next-issue-queue.schema.json",
+  "title": "Next Issue Dependency Queue",
+  "description": "Singleton work-queue file for the /next-issue pipeline, created when an explicitly-named issue has open declared dependencies. Written to .claude/memory/tmp/next-issue-queue.json. Drives subsequent /next-issue runs toward the named target, resolving its open blockers first. Kept separate from the per-issue next-issue-{N}.json state (which /ship-issue deletes when a dependency ships) so the queue survives each dependency landing.",
+  "type": "object",
+  "required": ["version", "target", "ordered", "remaining", "active", "created", "platform"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Schema version. Always 1 for the queue file."
+    },
+    "target": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The explicitly-named issue this queue is driving toward. Appears last in `ordered`."
+    },
+    "ordered": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 1,
+      "description": "Full topological work order, deepest blocker first and `target` last. Immutable record of the resolved dependency chain."
+    },
+    "remaining": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 1,
+      "description": "Not-yet-completed entries from `ordered`. Shrinks as dependencies close; when it reduces to just `target`, that issue is selected and the queue file is deleted."
+    },
+    "active": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The entry selected to work this cycle (the first open, unblocked issue in `remaining`)."
+    },
+    "created": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO date when the queue was created (YYYY-MM-DD)."
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["github", "gitlab"],
+      "description": "Issue tracker platform."
+    }
+  },
+  "additionalProperties": false
+}
