@@ -34,7 +34,7 @@ FIXTURES_DIR="$SCRIPT_DIR/fixtures/claude"
 test_suite "Claude Agent/Skill Structural Lint"
 
 # Valid values for frontmatter fields
-VALID_MODELS="opus sonnet haiku"
+VALID_MODELS="fable opus sonnet haiku inherit"
 VALID_TOOLS="Read Write Edit Bash Grep Glob Task WebFetch WebSearch"
 
 # The shared "house floor" every fan-out workflow.js harness must use for its
@@ -323,7 +323,7 @@ test_agent_frontmatter_fields() {
     done < <(list_agent_files)
 }
 
-# Agent model values are valid (opus/sonnet/haiku).
+# Agent model values are valid (fable/opus/sonnet/haiku/inherit).
 test_agent_model_values() {
     local agent_file
     while IFS= read -r agent_file; do
@@ -695,7 +695,7 @@ test_skill_required_tools_guard_detects_drift() {
 
 run_test test_agent_files_exist "Every agent has correctly named .md file"
 run_test test_agent_frontmatter_fields "Every agent has required frontmatter fields"
-run_test test_agent_model_values "Agent model values are valid (opus/sonnet/haiku)"
+run_test test_agent_model_values "Agent model values are valid (fable/opus/sonnet/haiku/inherit)"
 run_test test_agent_tool_values "Agent tool values are from valid set"
 run_test test_skill_files_exist "Every skill has SKILL.md"
 run_test test_skill_frontmatter "Every skill has description in frontmatter"

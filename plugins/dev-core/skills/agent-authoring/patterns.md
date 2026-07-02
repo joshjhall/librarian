@@ -46,7 +46,7 @@ When invoked:
 | `description`     | Yes      | —         | When Claude should delegate to this agent         |
 | `tools`           | No       | All       | Allowlist of available tools                      |
 | `disallowedTools` | No       | None      | Tools to deny from inherited set                  |
-| `model`           | No       | `inherit` | `haiku`, `sonnet`, `opus`, or `inherit`           |
+| `model`           | No       | `inherit` | `haiku`, `sonnet`, `opus`, `fable`, full ID, or `inherit` |
 | `permissionMode`  | No       | `default` | Permission handling mode                          |
 | `maxTurns`        | No       | —         | Max agentic turns before stopping                 |
 | `skills`          | No       | None      | Skills to preload into the agent's context        |
@@ -212,7 +212,7 @@ Before shipping an agent, verify each item:
 - [ ] Workflow steps are numbered and concrete
 - [ ] Output format is specified
 - [ ] Tools are scoped to minimum necessary (not all tools)
-- [ ] Model matches the task (haiku for fast, sonnet for balanced, opus for complex)
+- [ ] Model matches the task (haiku=fast, sonnet=balanced, opus=implementation/reasoning, fable=expensive-error gates)
 - [ ] No fundamentals the model already knows
 - [ ] Red flags / checklists use specific items, not vague goals
 - [ ] Agent tested with a real task to verify delegation triggers
@@ -281,36 +281,44 @@ the agentsys evaluation (#304). Use during agent review or creation.
 
 Decision framework for choosing the right model tier. Key principle from the
 agentsys evaluation: **quality compounds** — bad exploration → bad plan → bad
-implementation. Use opus where errors propagate downstream.
+implementation. Escalate the tier where errors propagate downstream, and reserve
+`fable` (the priciest) for the gates where a wrong call is most expensive.
+
+The 5-generation lineup, cheapest to priciest: **haiku** (mechanical) ·
+**sonnet** (Sonnet 5, balanced default) · **opus** (Opus 4.8, implementation +
+most reasoning) · **fable** (Fable 5, deep reasoning where errors are
+expensive). Tier aliases auto-track the latest generation.
 
 ### Decision Criteria
 
-| Criterion            | → haiku          | → sonnet              | → opus                    |
-| -------------------- | ---------------- | --------------------- | ------------------------- |
-| Error propagation    | Errors are local | Errors are noticeable | Errors cascade downstream |
-| Task structure       | Mechanical/rote  | Pattern-matching      | Requires reasoning        |
-| Quality compounding  | No               | Moderate              | High                      |
-| Invocation frequency | Very high        | Normal                | Low-moderate              |
+| Criterion            | → haiku          | → sonnet              | → opus                    | → fable                        |
+| -------------------- | ---------------- | --------------------- | ------------------------- | ------------------------------ |
+| Error propagation    | Errors are local | Errors are noticeable | Errors cascade downstream | Errors are costly + hard to catch |
+| Task structure       | Mechanical/rote  | Pattern-matching      | Requires reasoning        | Adversarial / deep reasoning   |
+| Quality compounding  | No               | Moderate              | High                      | Highest — final quality gate   |
+| Invocation frequency | Very high        | Normal                | Low-moderate              | Low — surgical use             |
 
 ### Decision Tree
 
-1. Does the agent produce output that other agents consume? → Lean toward opus
 1. Is the task mechanical (copy, format, look up)? → Use haiku
 1. Is the task pattern-matching (review, scan, classify)? → Use sonnet
-1. Does the agent make architectural or design decisions? → Use opus
+1. Does the agent do implementation or make architectural/design decisions? → Use opus
+1. Is it a security audit, review-verification/adversarial judge, or
+   orchestration gate where a wrong call is expensive? → Use fable
 
 ### Real Examples from Our System
 
 | Agent                | Model  | Rationale                                                        |
 | -------------------- | ------ | ---------------------------------------------------------------- |
 | `issue-writer`       | haiku  | Mechanical: renders template + calls CLI                         |
-| `code-reviewer`      | sonnet | Orchestrates parallel sub-reviewers via Task                     |
+| `code-reviewer`      | sonnet | Orchestrates parallel sub-reviewers via Task (verify stages escalate to fable per-call) |
 | `test-writer`        | sonnet | Structured generation following test framework patterns          |
-| `audit-architecture` | opus   | Architecture analysis quality compounds downstream               |
 | `debugger`           | opus   | Root cause analysis benefits from deeper reasoning               |
 | `audit-ai-config`    | opus   | Agent/skill quality analysis affects all downstream interactions |
 | `skill-author`       | opus   | Quality compounds: bad skill → bad behavior across all uses      |
 | `agent-author`       | opus   | Quality compounds: bad agent → bad output across all uses        |
+| `audit-architecture` | fable  | Architecture map feeds every downstream audit domain — errors cascade widely |
+| `audit-security`     | fable  | Security analysis where a missed or false finding is expensive; quality compounds |
 
 ### Model Tier and Deterministic Coverage
 
@@ -399,7 +407,9 @@ frontmatter to build its scanner list. To create a new scanner:
 1. **Directory**: `.claude/agents/audit-<domain>/audit-<domain>.md`
 1. **Frontmatter**: `name` and `description` must be present (orchestrator
    reads these for routing)
-1. **Model**: `sonnet` for the primary scanner; `haiku` for batch sub-agents
+1. **Model**: `sonnet` for the primary scanner (escalate to `fable` for
+   high-stakes domains where a missed finding is expensive — e.g.
+   `audit-security`, `audit-architecture`); `haiku` for batch sub-agents
    dispatched via `Task` tool for manifests > 2000 lines
 1. **Output**: JSON matching `finding-schema.md` — fields: `scanner`,
    `summary` (files_scanned, total_findings, by_severity), `findings` array

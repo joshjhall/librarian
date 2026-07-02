@@ -28,6 +28,27 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
   agents only by that form. This is the OPPOSITE of the `Agent` tool's
   `subagent_type`, which takes the **bare** name; a bare `agentType` passes a
   basename check but throws at runtime (issue #126).
+- **Per-stage model / effort escalation**: `agent()` accepts an optional
+  `model` (and `effort`) opt that overrides the sub-agent's own frontmatter tier
+  for that one call — same tokens as frontmatter (`fable`, `opus`, `sonnet`,
+  `haiku`, a full model ID, or `inherit`). Reserve it for the **adversarial
+  verify stages** — the "FRESH judge panel, you did NOT produce these findings"
+  re-scorers — where a wrong verdict drops a real finding or ships a false
+  positive: those escalate to `model: 'fable'` while the base scan/review stages
+  stay on the agent's default tier. Example (the `rescore` stage in
+  `code-reviewer/workflow.js`):
+
+  ```js
+  const rescored = await agent(rescorePrompt(rawFindings), {
+    label: 'rescore', phase: 'Rescore',
+    agentType: 'dev-core:code-reviewer',
+    model: 'fable', // last gate before a finding surfaces — quality compounds
+    schema: RESCORE_SCHEMA,
+  })
+  ```
+
+  Don't spread `fable` across every stage; it is the priciest tier, justified
+  only where the call is the final quality gate.
 - **Typed schemas**: every `agent()` that returns data uses a JSON-Schema with
   `additionalProperties: false` and an explicit `required` list. Validation
   happens at the tool layer, so the model retries on mismatch.

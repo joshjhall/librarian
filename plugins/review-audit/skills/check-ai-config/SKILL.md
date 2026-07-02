@@ -13,11 +13,20 @@ bloat, misconfigurations, and quality issues. The deterministic pre-scan
 ### agent-frontmatter (deterministic + heuristic)
 
 Pre-scan detects: missing frontmatter fields, invalid model values, wildcard
-tools, naming convention violations.
+tools, naming convention violations. Valid model tokens are `fable`, `opus`,
+`sonnet`, `haiku`, `inherit`, or a full model ID — do NOT flag a `fable` or
+`inherit` agent as an invalid value.
 
-LLM adds: wrong model selection for the task complexity (e.g., opus for
-simple scanning), tool list that includes write tools on read-only agents,
-description that doesn't match the agent's actual behavior.
+LLM adds: wrong model selection for the task complexity. Judge against the
+5-generation lineup — `haiku`=mechanical, `sonnet`=balanced default (Sonnet 5),
+`opus`=implementation/most reasoning (Opus 4.8), `fable`=deep reasoning where
+errors are expensive (Fable 5: security audits, review verification,
+orchestration). Flag genuine mismatches (e.g. `fable` on a mechanical
+template-renderer, or `haiku` on a security auditor) — but do NOT flag a
+correct new-lineup choice (e.g. `audit-security`/`audit-architecture` on
+`fable`, or a balanced agent on `sonnet`) as an error. Also flag tool lists that
+include write tools on read-only agents, and descriptions that don't match the
+agent's actual behavior.
 
 ### skill-frontmatter (deterministic + heuristic)
 
