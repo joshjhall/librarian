@@ -70,8 +70,9 @@ identically on a host Mac, a bare Linux box, and inside the devcontainer.
 | `run-all.sh` | Single entry point: runs every stage above to completion, exits non-zero if any fails. |
 
 Output schemas: `finding-schema.schema.json`, `loop-report.schema.json`
-(review-audit/codebase-audit), `next-issue-state.schema.json`, and the three
-orchestrate `*-status.schema.json` files.
+(review-audit/codebase-audit), `next-issue-state.schema.json`,
+`next-issue-queue.schema.json`, and the three orchestrate
+`*-status.schema.json` files.
 
 ## Integration — where the gates run
 

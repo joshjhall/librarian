@@ -78,7 +78,9 @@ family (CI-wait threshold/extensions and infra-flake triage tuning). Load
 
 1. **Discover the current state file**:
 
-   - List JSON state files: `ls .claude/memory/tmp/next-issue-*.json 2>/dev/null`
+   - List JSON state files (the singleton `next-issue-queue.json` is a
+     dependency-queue record, NOT a per-issue state file — exclude it):
+     `ls .claude/memory/tmp/next-issue-*.json 2>/dev/null | grep -v '/next-issue-queue\.json$'`
    - **If multiple files exist**: list them and ask which issue to ship
    - **If exactly one file**: use it
    - **If none exist**: check for legacy `.md` files:
@@ -91,6 +93,14 @@ family (CI-wait threshold/extensions and infra-flake triage tuning). Load
 1. Extract: `issue` (number), `title`, `platform` (`github` or `gitlab`),
    `branch` (if set), `autonomous` (boolean — feeds the autonomy toggle
    above), and `plan_comment_url` (if present)
+
+   > **Dependency queue:** if `.claude/memory/tmp/next-issue-queue.json` exists
+   > and the issue being shipped is that queue's `active` entry, **leave the
+   > queue file in place** — do NOT delete or mutate it here. The next
+   > `/next-issue` run advances the queue on resume (it re-reads the queue,
+   > drops the now-closed entry, and recomputes `active` — see
+   > `next-issue/state-format.md` § Dependency Queue). Shipping only deletes the
+   > per-issue `next-issue-{N}.json`, never the queue file.
 
 1. If no state file is found, tell the user:
 

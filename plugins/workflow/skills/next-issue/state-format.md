@@ -255,6 +255,15 @@ blocked-by exclusion is a **sibling of the status-label exclusion above**: it is
 applied at the same point in the priority loop, so `orchestrate` dispatch and
 pool refill (which reuse this ordering) inherit it automatically.
 
+Priority and explicit selection handle a blocked issue **differently but
+symmetrically in intent** — neither drops a golem into planning against an open
+blocker. Priority selection **skips** a blocked candidate and walks on (it can
+pick a different issue). Explicit selection can't just pick something else — the
+operator named an issue — so instead of skipping it **queues the open
+dependencies first** and works them in order toward the named target (see
+`## Dependency Queue` below). The old warn-and-proceed behavior is preserved
+only behind the `--force-target` / `--no-deps` override.
+
 A candidate is **blocked** when ANY of these references an OPEN issue:
 
 1. A `status/blocked` label on the candidate (the operator-set signal).
@@ -311,17 +320,145 @@ the body references (`Blocked by #N` / `Depends on #N`) and the
   trigger). A candidate gated only by the `status/blocked` label notes
   `blocked by status/blocked label`.
 - **Explicit single-issue selection** (`/next-issue 572`): the operator named
-  the issue, so do **not** hard-block. **Warn** —
+  the issue, so do **not** hard-block — but do **not** plan the named issue
+  against its open blockers either. Naming an issue is a **target objective**,
+  not an override of its dependency requirements. Instead **queue the open
+  dependencies first** and work them toward the named target (the full algorithm
+  is in `## Dependency Queue` below). In brief: resolve the named issue's open
+  blockers transitively, build a topological work queue with the named target
+  last, write `next-issue-queue.json`, and select the **first open, unblocked**
+  entry (a dependency, usually) to plan **this** run instead of the target. A
+  subsequent `/next-issue` advances the queue toward the target.
+
+  The `--force-target` flag (alias `--no-deps`) restores today's
+  warn-and-proceed for "I really do mean #572 now":
 
   > `WARNING: #572 is blocked by open #467, #563 — proceeding because you named
-  > it explicitly; the plan gate is your backstop.`
+  > it explicitly with --force-target; the plan gate is your backstop.`
 
-  — then proceed to Phase 2. The plan gate (see `SKILL.md` § Autonomous Mode)
-  remains the human checkpoint for a plan-gated run.
+  With `--force-target`, proceed directly to Phase 2 for the named issue; the
+  plan gate (see `SKILL.md` § Autonomous Mode) remains the human checkpoint for
+  a plan-gated run. A detected dependency **cycle** also stops queuing and falls
+  back to the same escape hatch (see `## Dependency Queue`), so an
+  explicitly-named issue is never hard-blocked.
 - **`status/blocked` label** is also added to the `--search` exclusion list in
   every priority query below, so a candidate carrying that label is filtered
   out by the query itself before per-candidate parsing even runs (cheaper, and
   covers the operator-set case without an extra API round-trip).
+
+---
+
+## Dependency Queue
+
+When an operator explicitly names an issue that has **open** declared
+dependencies (`/next-issue 5` where #5 declares `Depends on #2, #4`),
+`/next-issue` resolves the dependencies and works them first, driving toward the
+named **target** across successive runs. The queue lives in a **singleton** file
+separate from the per-issue state:
+
+Path: `.claude/memory/tmp/next-issue-queue.json` (schema:
+`schemas/next-issue-queue.schema.json`).
+
+It is deliberately **not** a field inside a `next-issue-{N}.json` state file:
+`/ship-issue` deletes the per-issue state file when a dependency ships, which
+would take a queue stored there with it. The separate file survives each
+dependency landing, and every worked dependency still gets its own normal
+`next-issue-{dep}.json` while in flight.
+
+### Schema
+
+```json
+{
+  "version": 1,
+  "target": 5,
+  "ordered": [4, 2, 5],
+  "remaining": [4, 2, 5],
+  "active": 4,
+  "created": "2026-07-02",
+  "platform": "github"
+}
+```
+
+| Field       | Description                                                          |
+| ----------- | ------------------------------------------------------------------- |
+| `version`   | Always `1`                                                          |
+| `target`    | The explicitly-named issue the queue drives toward (last in order)  |
+| `ordered`   | Full topological order, deepest blocker first, target last (fixed)  |
+| `remaining` | Not-yet-completed entries; shrinks as dependencies close            |
+| `active`    | The entry selected to work this cycle (first open, unblocked)       |
+| `created`   | ISO date the queue was created                                      |
+| `platform`  | `github` or `gitlab`                                                |
+
+### Resolution algorithm
+
+For the named target `#T`, before selecting anything:
+
+1. **Gather open blockers.** Reuse the blocker detection above verbatim
+   (`status/blocked` label, `Blocked by #N` / `Depends on #N` body refs, native
+   `blockedBy`), keeping only blockers whose state is **OPEN**.
+1. **Resolve transitively.** A blocker may have its own open blockers. Walk the
+   dependency graph breadth-first from `#T`, tracking a `visited` set so each
+   issue is expanded once.
+1. **Be cycle-safe.** If a node is re-encountered on its own resolution path,
+   stop and surface a clear error — never loop:
+
+   > `ERROR: dependency cycle detected (#5 → #2 → #5) — cannot queue; resolve
+   > the cycle manually or pass --force-target to plan #5 directly.`
+
+   Then stop (do not select). `--force-target` is the escape hatch.
+1. **Handle missing / already-closed blockers gracefully.** A referenced issue
+   that is already **closed** is not a blocker — drop it silently. A referenced
+   issue that cannot be found (deleted, wrong number) is dropped with a one-line
+   note (`note: referenced blocker #99 not found — ignoring`). Neither crashes
+   the walk.
+1. **Order topologically, deepest blocker first.** An issue with no open
+   blockers of its own comes before one that depends on it. Among independent
+   blockers at the same depth, tie-break by the existing severity × effort
+   priority (see `## Priority Ordering`). The target `#T` is always last.
+1. **Build and persist the queue.** `ordered = [dep_deepest, …, #T]`;
+   `remaining = ordered`; `active` = the first open, unblocked entry. Write
+   `next-issue-queue.json`.
+1. **Select `active`, not `#T`.** Continue Phase 1 (assign, `status/in-progress`
+   label, write `next-issue-{active}.json`) for the `active` issue. The named
+   target is planned only once it is all that remains and is unblocked.
+
+If `#T` has **no** open blockers, no queue is created — proceed normally to plan
+`#T` (the explicit path is unchanged for an unblocked named issue).
+
+### Advancing / resuming the queue
+
+A plain `/next-issue` (no issue number) checks for `next-issue-queue.json` in
+Phase 0 **before** priority selection:
+
+- If the `active` issue is now **closed** (its dependency shipped), drop it from
+  `remaining`.
+- Recompute `active` = the first entry in `remaining` that is open **and**
+  unblocked (its own open blockers, if any, resolve first — they are already in
+  `ordered`), and target that issue for this run.
+- When `remaining` reduces to just `#T` and `#T` is unblocked, target `#T`,
+  **delete** the queue file (its own `next-issue-{T}.json` state takes over),
+  and proceed to plan the target.
+- If every `remaining` entry is still blocked (nothing actionable), surface a
+  one-line status (`queue toward #5 blocked — #4 still open`) and stop.
+
+An explicit `/next-issue {other}` while a queue exists starts fresh for
+`{other}` and leaves the queue file untouched — the queue is target-keyed, not a
+global priority override. (If `{other}` itself has open blockers, it builds its
+own queue, replacing the file.)
+
+### Autonomous interaction
+
+An autonomous explicit run (`/next-issue 5 --autonomous`, as `orchestrate`
+always dispatches) **queues and works the first unblocked dependency** this
+turn — planning it, implementing it, and shipping its own PR — then leaves the
+queue file for the next cycle. It does **not** auto-advance the whole chain
+within one turn: each dependency is one golem / one PR (the natural PR-per-golem
+granularity). Because `orchestrate`'s priority walk already **skips** blocked
+issues, once a dependency PR merges the next dependency becomes unblocked and is
+re-selected by ordinary priority selection — the queue file is primarily a
+resume aid for a plain interactive `/next-issue` walking toward the target.
+`--force-target` on an autonomous run restores warn-and-proceed and plans the
+named target directly.
 
 ---
 

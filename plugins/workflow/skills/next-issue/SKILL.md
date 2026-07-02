@@ -45,6 +45,16 @@ no effort label) it is ignored with a one-line note, preserving the `/clear`
 boundary that keeps planning context out of the longer implement/review budget.
 See `## Pipeline` and the conditional final step of Phase 2.
 
+Adding the `--force-target` flag (alias `--no-deps`) — `/next-issue 5
+--force-target` — changes how an **explicitly-named** issue with open
+dependencies is handled. By default, naming an issue whose declared
+dependencies are still open **queues those dependencies first** and works them
+toward the named target (see Phase 1 below and `state-format.md` §
+Dependency Queue). `--force-target` restores the legacy warn-and-proceed: it
+plans the named issue directly, ignoring its open blockers, with the plan gate
+as the only backstop. It is orthogonal to `--force-auto` (which governs
+plan-skipping, not dependencies) — do not conflate the two.
+
 **IMPORTANT — Plan mode**: In **non-autonomous** mode, use the `EnterPlanMode`
 tool immediately at the start of every `/next-issue` invocation (before any
 other work). Phases 0-2 are planning phases that only need read-only tools and
@@ -136,11 +146,32 @@ Proceed with Phase 0 as normal regardless of mode.
    migrate each to `.json`: read the YAML frontmatter fields, write a new
    `.json` file with those fields plus `"version": 2`, delete the `.md` file
 
-1. **Discover state files**:
+1. **Discover state files** (the singleton `next-issue-queue.json` is NOT a
+   per-issue state file — exclude it from this glob):
 
    ```bash
-   ls .claude/memory/tmp/next-issue-*.json 2>/dev/null
+   ls .claude/memory/tmp/next-issue-*.json 2>/dev/null \
+     | grep -v '/next-issue-queue\.json$'
    ```
+
+1. **Dependency-queue resume** — if `.claude/memory/tmp/next-issue-queue.json`
+   exists AND **no** explicit issue number was passed to this invocation, resume
+   the queue toward its `target` before ordinary priority selection (see
+   `state-format.md` § Dependency Queue → "Advancing / resuming the queue"):
+
+   - Read the queue file. If its `active` issue is now **closed**, drop it from
+     `remaining`.
+   - Recompute `active` = the first entry in `remaining` that is open **and**
+     unblocked, and target that issue for this run (skip Phase 1 priority
+     selection, jump to the assign/label/state-write steps for `active`).
+   - When `remaining` is just `target` and `target` is unblocked, target it,
+     **delete** the queue file, and plan the target normally.
+   - If nothing in `remaining` is actionable, surface a one-line status
+     (`queue toward #{target} blocked — #{N} still open`) and stop.
+   - An explicit `/next-issue {N}` **ignores** an existing queue (it is
+     target-keyed, not a global override) — leave the queue file untouched and
+     let Phase 1 handle `{N}` (which may build its own queue). If `{N}` equals
+     the queue's `target`, Phase 1's dependency check will rebuild/refresh it.
 
 1. **If multiple state files exist** (parallel agents scenario):
 
@@ -198,11 +229,28 @@ or has no `files_planned` (nothing to re-present).
    - `gitlab.com` or `gitlab.` → GitLab (`glab`)
 
 1. **If a specific issue number was provided**: fetch that issue directly and
-   skip the priority query. Still run the **blocked-by check** (see
-   `state-format.md` § Blocked-by Exclusion) on it — but because the operator
-   named the issue, **do not skip it**: emit a one-line `WARNING:` listing the
-   open blockers and proceed (the plan gate is the backstop). Never hard-block
-   an explicitly-named issue.
+   skip the priority query. Run the **blocked-by check** (see `state-format.md`
+   § Blocked-by Exclusion) on it:
+
+   - **No open blockers** → proceed to plan the named issue as normal.
+   - **Open blockers, default behavior** → do **not** plan the named issue
+     against them. Build a **dependency queue** and work the blockers first,
+     toward the named target (full algorithm in `state-format.md` §
+     Dependency Queue): resolve open blockers transitively, order them
+     topologically (deepest first, target last), write
+     `.claude/memory/tmp/next-issue-queue.json`, and select the **first open,
+     unblocked** entry (usually a dependency) to plan **this** run instead of
+     the named issue. Continue Phase 1's assign/label/state-write steps for that
+     selected issue. A subsequent `/next-issue` advances the queue.
+   - **Open blockers, `--force-target` (alias `--no-deps`)** → restore the
+     legacy warn-and-proceed: emit a one-line `WARNING:` listing the open
+     blockers and plan the named issue directly (the plan gate is the backstop).
+   - **Dependency cycle detected** → do not loop; emit the `ERROR:` cycle line
+     from `state-format.md` and stop, pointing at `--force-target` as the escape
+     hatch.
+
+   Never hard-block an explicitly-named issue — `--force-target` always plans it
+   directly, and a cycle errors out with that same escape hatch.
 
 1. **Otherwise query by priority** using the nested severity x effort loop
    (see `state-format.md` for exact commands). **Important**: all queries
@@ -340,6 +388,14 @@ or has no `files_planned` (nothing to re-present).
 
 1. **Autonomous planning path** — branches on the plan gate (`"plan_gated"`
    from Phase 1 / `## Autonomous Mode`):
+
+   > **Note (dependency queue):** if Phase 1 built a dependency queue for an
+   > explicitly-named blocked issue, the `active` issue selected there — a
+   > dependency, not the named target — is what this autonomous run plans,
+   > implements, and ships (its own PR). The run works exactly **one** queue
+   > entry; the queue file persists for the next cycle to advance toward the
+   > target (see `state-format.md` § Dependency Queue → "Autonomous
+   > interaction"). Do NOT try to auto-advance the whole chain in one turn.
 
    - **Fully-autonomous run (`plan_gated: false`)** — do NOT enter plan mode.
      After exploring and forming the plan: (1) write the plan to the state file
