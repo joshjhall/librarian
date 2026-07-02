@@ -345,6 +345,9 @@ const rescored = await agent(rescorePrompt(rawFindings), {
   label: 'rescore',
   phase: 'Rescore',
   agentType: 'dev-core:code-reviewer',
+  // Escalate the fresh judge panel to fable: it is the last gate before a
+  // finding is surfaced, so its scoring accuracy compounds.
+  model: 'fable',
   schema: RESCORE_SCHEMA,
 })
 

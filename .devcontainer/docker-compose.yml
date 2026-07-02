@@ -54,7 +54,7 @@ services:
     environment:
       - CLAUDE_MCPS=filesystem,codegraph
       - MEMORY_FILE_PATH=/workspace/librarian/.claude/memory
-      # - SKIP_CASE_CHECK=true
+      - SKIP_CASE_CHECK=true
     # tini as PID 1 for zombie reaping (belt-and-suspenders with the Dockerfile).
     init: true
     # Required for the bindfs FUSE overlay (fixes macOS VirtioFS permissions).

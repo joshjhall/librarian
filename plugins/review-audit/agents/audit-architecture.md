@@ -2,7 +2,7 @@
 name: audit-architecture
 description: Analyzes codebase structure for circular dependencies, high coupling, bus-factor risks, layer violations, and god modules. Used by the codebase-audit skill.
 tools: Read, Grep, Glob, Bash, Task
-model: opus
+model: fable
 skills: []
 ---
 

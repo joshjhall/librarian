@@ -109,10 +109,10 @@ check_agent_frontmatter() {
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Missing required frontmatter field: model" "HIGH"
-    elif [ "$model" != "opus" ] && [ "$model" != "sonnet" ] && [ "$model" != "haiku" ]; then
+    elif [ "$model" != "fable" ] && [ "$model" != "opus" ] && [ "$model" != "sonnet" ] && [ "$model" != "haiku" ] && [ "$model" != "inherit" ]; then
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
-            "Invalid model value: ${model} (expected opus, sonnet, or haiku)" "HIGH"
+            "Invalid model value: ${model} (expected fable, opus, sonnet, haiku, or inherit)" "HIGH"
     fi
 
     # Check for wildcard tools

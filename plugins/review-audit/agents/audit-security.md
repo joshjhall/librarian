@@ -2,7 +2,7 @@
 name: audit-security
 description: Scans code for security vulnerabilities including OWASP patterns, hardcoded secrets, insecure crypto, missing validation, and dependency issues. Used by the codebase-audit skill.
 tools: Read, Grep, Glob, Bash, Task
-model: sonnet
+model: fable
 skills: []
 ---
 

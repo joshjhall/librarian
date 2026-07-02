@@ -582,6 +582,9 @@ const verified = await pipeline(
       label: `verify:${domain.name}`,
       phase: 'Verify',
       agentType: 'review-audit:checker',
+      // Escalate the adversarial judge to fable: a false verdict here either
+      // drops a real finding or ships a false positive, so quality compounds.
+      model: 'fable',
       schema: VERIFY_SCHEMA,
     }).then((v) => {
       if (!v) {

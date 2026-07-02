@@ -541,6 +541,9 @@ const rescored = await agent(rescorePrompt(rawFindings), {
   label: 'rescore',
   phase: 'Rescore',
   agentType: 'dev-core:code-reviewer',
+  // Escalate the fresh judge panel to fable: it is the last gate before a
+  // finding is surfaced, so its scoring accuracy compounds.
+  model: 'fable',
   schema: RESCORE_SCHEMA,
 })
 
@@ -563,6 +566,9 @@ const classified = await agent(classifyPrompt(rawFindings, budgetExhausted), {
   label: 'classify',
   phase: 'Classify',
   agentType: 'dev-core:code-reviewer',
+  // Escalate the fresh gatekeeper to fable: the blocking-vs-deferrable verdict
+  // decides what stops a ship, so a wrong call is expensive either way.
+  model: 'fable',
   schema: CLASSIFY_SCHEMA,
 })
 

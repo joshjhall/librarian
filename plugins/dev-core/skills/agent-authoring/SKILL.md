@@ -18,7 +18,11 @@ not inherit the full Claude Code system prompt.
 - `name` (required): lowercase with hyphens, matches directory name
 - `description` (required): tells Claude when to delegate — primary trigger
 - `tools`: allowlist of tools the agent can use (inherits all if omitted)
-- `model`: `haiku`, `sonnet`, `opus`, or `inherit` (default: `inherit`)
+- `model`: `haiku`, `sonnet`, `opus`, `fable`, a full model ID (e.g.
+  `claude-opus-4-8`), or `inherit` (default: `inherit`). The tier aliases
+  auto-track the latest generation — `sonnet`→Sonnet 5, `opus`→Opus 4.8,
+  `fable`→Fable 5 — so an alias never needs a version bump when a new model
+  ships. Pin a full ID only when you deliberately want to freeze a generation.
 - Other fields: `disallowedTools`, `permissionMode`, `maxTurns`, `skills`,
   `mcpServers`, `hooks`, `memory`
 
@@ -66,19 +70,25 @@ Start restrictive, expand as needed. Every unnecessary tool is a risk.
 ## Model Selection
 
 Match the model to the task's complexity. **Quality compounds** — bad
-exploration produces bad plans produces bad implementation. Use opus when
-errors propagate downstream.
+exploration produces bad plans produces bad implementation. Escalate the tier
+when errors propagate downstream.
 
-| Model     | Use when                                        | Rationale                                 |
-| --------- | ----------------------------------------------- | ----------------------------------------- |
-| `haiku`   | Fast lookups, simple checks, high-frequency ops | Mechanical work, no judgment calls        |
-| `sonnet`  | Pattern matching, code review, most agents      | Good quality for structured tasks         |
-| `opus`    | Reasoning-critical, architecture, quality audit | Errors propagate — quality compounds here |
-| `inherit` | Same model as the conversation (default)        | Let the caller decide                     |
+| Model     | Use when                                              | Rationale                                       |
+| --------- | ----------------------------------------------------- | ----------------------------------------------- |
+| `haiku`   | Fast lookups, simple checks, high-frequency ops       | Mechanical work, no judgment calls              |
+| `sonnet`  | Pattern matching, most agents — the balanced default  | Sonnet 5: good quality for structured tasks     |
+| `opus`    | Implementation, architecture, most reasoning work     | Opus 4.8: strong reasoning, lighter than fable  |
+| `fable`   | Deep reasoning where errors are expensive             | Fable 5: security audits, review verification, orchestration — priciest, reserve for compounding gates |
+| `inherit` | Same model as the conversation                        | Let the caller decide                           |
 
-Default to `sonnet` unless the agent performs reasoning-critical work where
-quality compounds (use `opus`) or purely mechanical work (use `haiku`). See
-`patterns.md` — **Model Tiering Guide** for the full decision framework.
+Default to `sonnet` (the balanced tier) unless the agent does purely mechanical
+work (use `haiku`), does implementation or most reasoning work (use `opus`), or
+is a security/review-verification/orchestration gate where a wrong call is
+expensive and quality compounds (use `fable`, the priciest tier — reserve it).
+Note the two senses of "default": the frontmatter field defaults to `inherit`
+when omitted, but when you DO pick a tier, `sonnet` is the recommended starting
+point. See `patterns.md` — **Model Tiering Guide** for the full decision
+framework.
 
 ## MUST NOT Restrictions
 

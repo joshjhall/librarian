@@ -37,7 +37,7 @@ Each finding extends the standard finding-schema.md:
   "line_start": 1,
   "line_end": 1,
   "evidence": "Frontmatter missing 'model' field",
-  "suggestion": "Add 'model: sonnet' (or opus/haiku) to frontmatter",
+  "suggestion": "Add 'model: sonnet' (or fable/opus/haiku/inherit) to frontmatter",
   "effort": "trivial",
   "tags": ["ai-config"],
   "related_files": [],
