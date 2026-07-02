@@ -40,17 +40,6 @@ services:
       # (out of the git tree, droppable to force a clean re-index).
       - librarian-codegraph:/cache/codegraph
     tmpfs:
-      # Writable /run tmpfs — DISABLED PENDING REBUILD TEST. The original reason
-      # (supervisor socket/pidfile) is stale: the containers image moved
-      # supervisord's socket/pidfile/logs to /tmp (containers issue #386,
-      # supervisord.conf), and librarian's feature set has no other non-root
-      # /run writer (no cron; docker-secrets only reads /run/secrets). The
-      # entrypoint's fix_run_permissions no-ops when /run is not a mount, so
-      # this should be safe to drop — rebuild + verify supervisorctl and the
-      # entrypoint /run check, then delete this block for good. No uid=/gid= was
-      # set — the entrypoint reconciled ownership at startup (editors remap the
-      # runtime UID; a baked uid= breaks under Zed/VS Code remapping).
-      # - /run:mode=0755
       # 1Password cache is kept in memory. No uid=/gid= for the same reason — this
       # path is under /cache, so fix_cache_permissions aligns it to the runtime user.
       - /cache/1password/secrets:size=8m,mode=0700
@@ -63,7 +52,7 @@ services:
       - path: ../.env
         required: false
     environment:
-      - CLAUDE_MCPS=filesystem
+      - CLAUDE_MCPS=filesystem,codegraph
       - MEMORY_FILE_PATH=/workspace/librarian/.claude/memory
       # - SKIP_CASE_CHECK=true
     # tini as PID 1 for zombie reaping (belt-and-suspenders with the Dockerfile).
