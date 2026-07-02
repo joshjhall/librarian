@@ -39,15 +39,13 @@ git archive --format=tar.gz --prefix=librarian-<version>/ v<version>
 | Asset | Contents |
 |---|---|
 | `librarian-<version>.tar.gz` | the signed archive (bytes covered by the signature) |
-| `librarian-<version>.tar.gz.sig` | the cosign signature |
-| `librarian-<version>.tar.gz.pem` | the Fulcio-issued signing certificate |
+| `librarian-<version>.tar.gz.sigstore.json` | the Sigstore bundle — carries both the cosign signature and the Fulcio-issued signing certificate |
 
-**Verification recipe.** Download the three assets for a release, then:
+**Verification recipe.** Download both assets for a release, then:
 
 ```bash
 cosign verify-blob \
-  --certificate librarian-<version>.tar.gz.pem \
-  --signature   librarian-<version>.tar.gz.sig \
+  --bundle librarian-<version>.tar.gz.sigstore.json \
   --certificate-identity 'https://github.com/joshjhall/librarian/.github/workflows/release.yml@refs/tags/v<version>' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   librarian-<version>.tar.gz

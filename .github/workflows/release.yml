@@ -93,10 +93,16 @@ jobs:
           # a release). Reproducible from the tag alone with the same command.
           git archive --format=tar.gz --prefix="librarian-${version}/" \
             -o "$tarball" "$GITHUB_REF_NAME"
-          # Keyless: OIDC identity from this workflow, cert + signature to files.
+          # Keyless: OIDC identity from this workflow, signature + cert emitted as
+          # a single Sigstore bundle. cosign 3.x defaults to --new-bundle-format,
+          # which deprecated and IGNORES the old --output-signature/-certificate
+          # flags (they silently produced no files → the v0.4.0 publish failed
+          # with "create bundle file: open : no such file or directory"). The
+          # bundle carries both the signature and the Fulcio cert; verification
+          # consumes it via `cosign verify-blob --bundle` (see README ##
+          # Verifying a release).
           cosign sign-blob --yes "$tarball" \
-            --output-signature "${tarball}.sig" \
-            --output-certificate "${tarball}.pem"
+            --bundle "${tarball}.sigstore.json"
           echo "tarball=$tarball" >>"$GITHUB_OUTPUT"
 
       - name: Create release
@@ -116,4 +122,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "Release $GITHUB_REF_NAME" \
             --notes-file "$notes_file" \
-            "$TARBALL" "${TARBALL}.sig" "${TARBALL}.pem"
+            "$TARBALL" "${TARBALL}.sigstore.json"

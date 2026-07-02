@@ -22,3 +22,4 @@
 - [Workflow agentType namespacing](workflow-agenttype-namespacing.md) — Workflow tool agent() wants namespaced <plugin>:<name>, Agent tool wants bare — opposite; FIXED #126/PR #128 (harnesses namespaced + lint-skills-agents.sh gate enforces it); fallback = Agent tool with bare name
 - [ship-issue rename rationale](ship-issue-rename-rationale.md) — the ship skill is ship-issue (not next-issue-ship) on purpose; moved out of next-issue* prefix to fix a `nex` autocomplete collision; don't rename it back
 - [typos gate blocks push](typos-gate-blocks-push.md) — the `typos` pre-push hook fails the whole push on any misspelling in touched files, including pre-existing ones adjacent to your edits
+- [cosign bundle format](cosign-bundle-format.md) — release.yml signing must use --bundle (.sigstore.json); cosign 3.x ignores --output-signature/-certificate; v0.4.0 was first release to run cosign, publish job broke (PR #153)
