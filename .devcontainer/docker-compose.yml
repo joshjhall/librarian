@@ -9,7 +9,26 @@ services:
         PROJECT_NAME: librarian
         USERNAME: vscode
         WORKING_DIR: /workspace/librarian
-        # Allow the entrypoint to fix permissions / mounts during dev.
+        # Passwordless sudo (NOPASSWD:ALL for the vscode user) — accepted
+        # dev-only risk, documented here so it is a deliberate posture, not an
+        # oversight. It is REQUIRED, not merely convenient: the image's final
+        # USER is vscode (containers/Dockerfile), so the entrypoint runs
+        # unprivileged and its run_privileged() helper falls back to `sudo` for
+        # the startup permission/mount reconciliation — the bindfs FUSE overlay
+        # plus the /cache and /run chowns (containers v4.19.10
+        # lib/runtime/entrypoint.sh + lib/runtime/lib/*). Setting this "false"
+        # would make `sudo -n` fail at startup, silently skipping those steps
+        # and reintroducing the macOS VirtioFS permission bug bindfs exists to
+        # fix — so it must stay "true" for this dev image.
+        # Accepted exposure: any process running as vscode (a shell, a Claude
+        # Code tool call, a compromised npm dep) can reach root for the
+        # container's lifetime, and via the ..:/workspace bind mount below could
+        # touch the host project dir. Mitigating context: this is a dev-only
+        # container (production builds set ENABLE_PASSWORDLESS_SUDO=false).
+        # Follow-up (#157): replace NOPASSWD:ALL with a scoped sudoers.d
+        # allowlist (bindfs, chown) in the pinned containers submodule's
+        # lib/base/user.sh + bump the pin — the real least-privilege fix, which
+        # cannot be made from this repo.
         ENABLE_PASSWORDLESS_SUDO: "true"
         # Dev tooling: dprint, taplo, shellcheck, shfmt, lefthook, conform,
         # gitleaks, actionlint, rumdl, typos, just, Claude Code CLI.
@@ -57,7 +76,13 @@ services:
       - SKIP_CASE_CHECK=true
     # tini as PID 1 for zombie reaping (belt-and-suspenders with the Dockerfile).
     init: true
-    # Required for the bindfs FUSE overlay (fixes macOS VirtioFS permissions).
+    # CAP_SYS_ADMIN + /dev/fuse are the documented MINIMUM for the bindfs FUSE
+    # overlay (containers lib/features/bindfs.sh); no narrower capability lets a
+    # FUSE filesystem mount. bindfs exists only to fix macOS/VirtioFS ownership
+    # on the ..:/workspace bind mount and runs in `auto` mode, degrading
+    # gracefully to a no-op when /dev/fuse is absent — so Linux hosts are
+    # unaffected and Mac contributors keep the permission fix. Kept as-is: this
+    # is the least privilege that still makes the overlay work.
     cap_add:
       - SYS_ADMIN
     devices:
