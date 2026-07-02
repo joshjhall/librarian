@@ -457,8 +457,13 @@ Agent state files live in the agent's worktree at
 if a state file exists with checkpoint data:
 
 ```bash
-# From the agent's worktree directory
-cat .claude/memory/tmp/next-issue-*.json 2>/dev/null
+# From the agent's worktree directory. Exclude the singleton
+# next-issue-queue.json — it is a dependency-queue record, not a per-issue
+# checkpoint, and has none of the checkpoint fields read below.
+for f in .claude/memory/tmp/next-issue-*.json; do
+  case "$f" in */next-issue-queue.json) continue ;; esac
+  cat "$f" 2>/dev/null
+done
 ```
 
 The `checkpoint` object contains:

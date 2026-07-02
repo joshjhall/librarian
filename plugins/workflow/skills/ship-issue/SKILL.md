@@ -80,7 +80,7 @@ family (CI-wait threshold/extensions and infra-flake triage tuning). Load
 
    - List JSON state files (the singleton `next-issue-queue.json` is a
      dependency-queue record, NOT a per-issue state file — exclude it):
-     `ls .claude/memory/tmp/next-issue-*.json 2>/dev/null | grep -v '/next-issue-queue\.json$'`
+     `ls .claude/memory/tmp/next-issue-*.json 2>/dev/null | command grep -v '/next-issue-queue\.json$'`
    - **If multiple files exist**: list them and ask which issue to ship
    - **If exactly one file**: use it
    - **If none exist**: check for legacy `.md` files:

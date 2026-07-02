@@ -151,7 +151,7 @@ Proceed with Phase 0 as normal regardless of mode.
 
    ```bash
    ls .claude/memory/tmp/next-issue-*.json 2>/dev/null \
-     | grep -v '/next-issue-queue\.json$'
+     | command grep -v '/next-issue-queue\.json$'
    ```
 
 1. **Dependency-queue resume** — if `.claude/memory/tmp/next-issue-queue.json`

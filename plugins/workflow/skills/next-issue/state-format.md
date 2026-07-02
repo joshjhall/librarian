@@ -397,10 +397,18 @@ For the named target `#T`, before selecting anything:
    (`status/blocked` label, `Blocked by #N` / `Depends on #N` body refs, native
    `blockedBy`), keeping only blockers whose state is **OPEN**.
 1. **Resolve transitively.** A blocker may have its own open blockers. Walk the
-   dependency graph breadth-first from `#T`, tracking a `visited` set so each
-   issue is expanded once.
-1. **Be cycle-safe.** If a node is re-encountered on its own resolution path,
-   stop and surface a clear error — never loop:
+   dependency graph from `#T`, expanding each issue's open blockers. Keep a
+   graph-wide `resolved` set of issues already expanded so a shared blocker is
+   expanded **once** — a diamond (e.g. `#5` depends on `#2` and `#3`, both of
+   which depend on `#1`) is legal and re-reaching `#1` from a second parent is
+   **not** a cycle.
+1. **Be cycle-safe.** Cycle detection is separate from the `resolved` set above:
+   track the **current ancestor path** (the chain of issues from `#T` down to
+   the node being expanded, a DFS stack / parent-pointer chain). A cycle is a
+   back-edge — a blocker that is already **on the current ancestor path**, not
+   merely one already in `resolved`. Re-reaching a shared blocker via a
+   different parent (the diamond case) is fine; re-reaching an **ancestor** is
+   the cycle. On a back-edge, stop and surface a clear error — never loop:
 
    > `ERROR: dependency cycle detected (#5 → #2 → #5) — cannot queue; resolve
    > the cycle manually or pass --force-target to plan #5 directly.`
@@ -430,6 +438,13 @@ If `#T` has **no** open blockers, no queue is created — proceed normally to pl
 A plain `/next-issue` (no issue number) checks for `next-issue-queue.json` in
 Phase 0 **before** priority selection:
 
+- **Target-closed self-heal (check first).** If `target` (`#T`) is itself now
+  **closed** — it was force-shipped directly under `--force-target`, closed
+  manually, or de-duped while a queue for it still existed — the queue is stale
+  and pointless. **Delete the queue file immediately** and fall through to
+  ordinary priority selection, regardless of what `remaining` still holds. This
+  is symmetric to the `active`-closed check below and prevents a stranded queue
+  from looping forever once its target is gone.
 - If the `active` issue is now **closed** (its dependency shipped), drop it from
   `remaining`.
 - Recompute `active` = the first entry in `remaining` that is open **and**
@@ -459,6 +474,38 @@ re-selected by ordinary priority selection — the queue file is primarily a
 resume aid for a plain interactive `/next-issue` walking toward the target.
 `--force-target` on an autonomous run restores warn-and-proceed and plans the
 named target directly.
+
+#### Orchestrate dispatch — golem-cache coherence
+
+`orchestrate` dispatch (`/orchestrate dispatch 5`) labels `#5`
+`status/in-progress`, writes a golem-status cache row keyed `issue: 5`
+(`orchestrate/schemas/golem-status.schema.json`), and launches
+`/next-issue 5 --autonomous` inside `golem-5`'s worktree. If `#5` has open
+blockers, the default queuing behavior redirects that golem to a **dependency**
+(say `#2`) — it commits `next-issue-2.json` and a PR for `#2`, while the golem
+process is still cached as `golem-5 / issue: 5`. That is a cache-vs-reality
+desync: monitor sweeps, `golem-status.sh`, and pool collision prediction
+(`gh pr view <N> --json files`) all key off the cached issue.
+
+Two safe ways to dispatch a blocked issue under orchestrate, until the
+golem-status cache learns about queue redirects:
+
+- **Preferred — let priority selection resolve order.** Pool/priority refill
+  already **skips** blocked issues, so it never dispatches `#5` while `#2`/`#4`
+  are open; it dispatches the unblocked dependencies first, and `#5` becomes
+  eligible only once they close. No explicit-dispatch redirect happens, so no
+  desync.
+- **Force-dispatch — pass `--force-target`.** An operator who deliberately
+  force-dispatches a specific blocked issue should pass
+  `/next-issue 5 --force-target --autonomous` so the golem works exactly the
+  cached issue (`#5`), keeping `golem-5` coherent (the plan gate is the
+  backstop).
+
+Teaching the golem-status cache to record a queue redirect (e.g. a
+`queued_target` field, or writing the `active` issue into the cache `issue`
+field) is **out of scope for this change** and tracked as an orchestrate
+follow-up. A plain (non-orchestrate) explicit `/next-issue 5` is unaffected —
+it has no golem cache to desync.
 
 ---
 

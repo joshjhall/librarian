@@ -23,7 +23,10 @@ actual implementation to identify divergence before shipping.
 1. **Check for next-issue state**:
 
    ```bash
-   ls .claude/memory/tmp/next-issue-*.json 2>/dev/null
+   # Exclude the singleton next-issue-queue.json — it is a dependency-queue
+   # record, not a per-issue state file.
+   ls .claude/memory/tmp/next-issue-*.json 2>/dev/null \
+     | command grep -v '/next-issue-queue\.json$'
    ls .claude/memory/tmp/next-issue-*.md 2>/dev/null
    ```
 
