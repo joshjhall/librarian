@@ -17,10 +17,18 @@ services:
         # Additional dev tools
         INCLUDE_OP: "true"
         # Node provides MCP servers + bash-language-server for the bundled
-        # workflow scripts. No Rust/Python/Postgres/Redis/docker-in-docker:
-        # this is a docs + shell + node repo.
+        # workflow scripts. No Rust/Postgres/Redis/docker-in-docker: this is a
+        # docs + shell + node + python repo.
         INCLUDE_NODE: "true"
         NODE_VERSION: "24"
+        # Python is the primary runtime for the ported patterns.sh pre-scan
+        # tools (issue #17); bash is kept only as a legacy fallback. Floor is
+        # 3.11 (macOS ships no usable system Python, so requiring 3.11 costs a
+        # mac user nothing over 3.10 while 3.10 hits EOL Oct 2026); we develop
+        # on 3.12 — one ahead of the floor to catch forward-compat issues,
+        # without chasing the containers default (3.14) where libs still lag.
+        INCLUDE_PYTHON: "true"
+        PYTHON_VERSION: "3.12"
       cache_from:
         - type=local,src=/tmp/.buildx-cache
       cache_to:
