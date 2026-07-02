@@ -251,8 +251,8 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    # Notification hook flags it and a human attaches via `tmux attach -t claude`.
    # See orchestrate § Supervised launch.
    tmux new-session -d -s claude "
-       claude --permission-mode auto '/next-issue ${ISSUE} --autonomous' ; \
-       claude --permission-mode auto '/ship-issue --autonomous';
+       claude --permission-mode auto '/workflow:next-issue ${ISSUE} --autonomous' ; \
+       claude --permission-mode auto '/workflow:ship-issue --autonomous';
        echo \$? > /tmp/golem-rc
    "
    echo "Autonomous golem started for issue #${ISSUE} in tmux session 'claude'"

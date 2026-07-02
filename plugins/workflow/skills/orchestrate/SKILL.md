@@ -112,7 +112,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
    # backstop, NOT `&&`: it must run even if the first exits non-zero before
    # shipping. If the first already shipped (state file deleted), the second is a
    # near no-op ("No in-progress issue found" → stop):
-   claude --permission-mode auto "/next-issue {N} --autonomous" ; claude --permission-mode auto "/ship-issue --autonomous"
+   claude --permission-mode auto "/workflow:next-issue {N} --autonomous" ; claude --permission-mode auto "/workflow:ship-issue --autonomous"
    ```
 
    For a **worktree golem** the process is started by a `tmux new-session`.
