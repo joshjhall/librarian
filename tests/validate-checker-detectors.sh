@@ -107,23 +107,6 @@ assert_silent() {
     fi
 }
 
-# assert_fires_py CAT LIST NEEDLE MSG [ENV...] — the category fires in the PYTHON
-# primary only. Used for the missing-frontmatter-field cases, where the bash
-# fallback currently CRASHES (exit 1) instead of reporting: get_frontmatter's
-# unguarded `grep` trips `set -euo pipefail` when the key is absent. That is a
-# real, filed bug (#205) — NOT a fixture problem: python emits the correct rows.
-# When #205 is fixed, promote these calls back to assert_fires (both impls) and
-# delete this helper. Until then we still pin the python detector's behavior so
-# the coverage + regression guard lands; the bash side is tracked by #205.
-assert_fires_py() {
-    local cat="$1" list="$2" needle="$3" msg="$4"
-    shift 4
-    [ "$HAVE_PY" -eq 1 ] || return 0
-    local py_rows
-    py_rows="$(run_py "$cat" "$list" "$@")"
-    assert_contains "$py_rows" "$needle" "$msg (python; bash tracked by #205)"
-}
-
 # ============================================================================
 # agent-frontmatter — */agents/<dir>/<dir>.md
 # ============================================================================
@@ -147,20 +130,19 @@ test_agent_frontmatter() {
     assert_fires agent-frontmatter "$list" "Missing YAML frontmatter" \
         "agent-frontmatter: missing opening --- flagged"
 
-    # Present frontmatter missing all four required fields. Python-only: the bash
-    # fallback crashes on a missing field (#205) — asserted here for python, whose
-    # behavior is correct; the bash side is un-skipped when #205 lands.
+    # Present frontmatter missing all four required fields. Both impls now report
+    # (bash's get_frontmatter no longer crashes on a missing field — #205 fixed).
     /usr/bin/mkdir -p "$d/agents/bare"
     f="$d/agents/bare/bare.md"
     /usr/bin/printf '%s\n' "---" "unrelated: value" "---" "body" >"$f"
     list="$(list_of "$f")"
-    assert_fires_py agent-frontmatter "$list" "field: name" \
+    assert_fires agent-frontmatter "$list" "field: name" \
         "agent-frontmatter: missing name flagged"
-    assert_fires_py agent-frontmatter "$list" "field: description" \
+    assert_fires agent-frontmatter "$list" "field: description" \
         "agent-frontmatter: missing description flagged"
-    assert_fires_py agent-frontmatter "$list" "field: tools" \
+    assert_fires agent-frontmatter "$list" "field: tools" \
         "agent-frontmatter: missing tools flagged"
-    assert_fires_py agent-frontmatter "$list" "field: model" \
+    assert_fires agent-frontmatter "$list" "field: model" \
         "agent-frontmatter: missing model flagged"
 
     # Invalid model value.
@@ -195,20 +177,19 @@ test_agent_frontmatter() {
 test_skill_frontmatter() {
     local d f list
 
-    # Missing description + no structural section + no metadata.yml. Python-only:
-    # the missing `description` field crashes the bash fallback (#205) before it
-    # reaches the section / metadata checks, so all three rows are asserted for
-    # python here; the bash side is un-skipped when #205 lands.
+    # Missing description + no structural section + no metadata.yml. Both impls
+    # now report all three rows — bash's get_frontmatter no longer crashes on the
+    # missing `description` before reaching the section / metadata checks (#205).
     d="$(fresh_dir)"
     /usr/bin/mkdir -p "$d/skills/nodesc"
     f="$d/skills/nodesc/SKILL.md"
     /usr/bin/printf '%s\n' "---" "name: nodesc" "---" "Some prose with no section heading." >"$f"
     list="$(list_of "$f")"
-    assert_fires_py skill-frontmatter "$list" "field: description" \
+    assert_fires skill-frontmatter "$list" "field: description" \
         "skill-frontmatter: missing description flagged"
-    assert_fires_py skill-frontmatter "$list" "No structural section" \
+    assert_fires skill-frontmatter "$list" "No structural section" \
         "skill-frontmatter: missing structural section flagged"
-    assert_fires_py skill-frontmatter "$list" "Missing metadata.yml" \
+    assert_fires skill-frontmatter "$list" "Missing metadata.yml" \
         "skill-frontmatter: missing metadata.yml flagged"
 
     # Missing opening fence.

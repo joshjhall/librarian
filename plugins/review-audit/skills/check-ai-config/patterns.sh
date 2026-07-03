@@ -75,8 +75,12 @@ DOC_HIGH=${DOC_HIGH:-800}
 # =============================================================================
 get_frontmatter() {
     local file="$1" key="$2"
+    # `grep` exits non-zero when the key is absent; guard it with `|| true` so a
+    # no-match yields empty output with a zero pipeline status instead of tripping
+    # `set -euo pipefail` and aborting the whole scan (#205). Mirrors the Python
+    # primary, where an absent key returns "".
     /usr/bin/sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null |
-        /usr/bin/grep -E "^${key}:" |
+        { /usr/bin/grep -E "^${key}:" || true; } |
         /usr/bin/sed "s/^${key}:[[:space:]]*//" |
         /usr/bin/sed 's/^["'\'']//' | /usr/bin/sed 's/["'\'']\s*$//' |
         /usr/bin/head -1
