@@ -36,6 +36,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 # XSS detection patterns — stored as variable to avoid hook false positives
 # on the pattern strings themselves (this script DETECTS these, not uses them)
 XSS_REACT_PATTERN='dangerously''SetInnerHTML'
@@ -57,7 +82,7 @@ while IFS= read -r file; do
     # AWS access keys (AKIA followed by 16 uppercase alphanumeric chars)
     /usr/bin/grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "AWS access key pattern: ${evidence}" "HIGH"
@@ -66,7 +91,7 @@ while IFS= read -r file; do
     # GitHub tokens (ghp_, gho_, ghs_, ghr_, github_pat_)
     /usr/bin/grep -nE '(ghp_|gho_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "GitHub token pattern: ${evidence}" "HIGH"
@@ -75,7 +100,7 @@ while IFS= read -r file; do
     # Stripe keys (sk_live_, rk_live_, pk_live_)
     /usr/bin/grep -nE '(sk_live_|rk_live_|pk_live_)[A-Za-z0-9]{20,}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Stripe live key pattern: ${evidence}" "HIGH"
@@ -84,7 +109,7 @@ while IFS= read -r file; do
     # Private key headers
     /usr/bin/grep -nE 'BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Private key header: ${evidence}" "HIGH"
@@ -100,7 +125,7 @@ while IFS= read -r file; do
     /usr/bin/grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)\s*[=:]\s*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
         /usr/bin/grep -viE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_|#|//|/\*)' |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Possible hardcoded credential: ${evidence}" "HIGH"
@@ -117,7 +142,7 @@ while IFS= read -r file; do
             # bracket expression).
             /usr/bin/grep -nE 'f["'\''](SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "injection-risk" \
                         "SQL in f-string: ${evidence}" "HIGH"
@@ -126,7 +151,7 @@ while IFS= read -r file; do
         *.js | *.ts | *.jsx | *.tsx)
             /usr/bin/grep -nE '`(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\$\{' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "injection-risk" \
                         "SQL in template literal: ${evidence}" "HIGH"
@@ -135,7 +160,7 @@ while IFS= read -r file; do
         *.rb)
             /usr/bin/grep -nE '"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*#\{' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "injection-risk" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
@@ -146,7 +171,7 @@ while IFS= read -r file; do
     # String concatenation with SQL keywords (all languages)
     /usr/bin/grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "injection-risk" \
                 "SQL string concatenation: ${evidence}" "HIGH"
@@ -157,7 +182,7 @@ while IFS= read -r file; do
     # React: raw HTML rendering
     /usr/bin/grep -n "$XSS_REACT_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "React raw HTML rendering: ${evidence}" "HIGH"
@@ -166,7 +191,7 @@ while IFS= read -r file; do
     # Vue: v-html directive
     /usr/bin/grep -n "$XSS_VUE_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "Vue raw HTML directive: ${evidence}" "HIGH"
@@ -175,7 +200,7 @@ while IFS= read -r file; do
     # Django/Jinja: |safe filter, mark_safe()
     /usr/bin/grep -nE "$XSS_SAFE_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "Template safe filter bypassing escaping: ${evidence}" "HIGH"
@@ -184,7 +209,7 @@ while IFS= read -r file; do
     # Blade: unescaped output
     /usr/bin/grep -n "$XSS_BLADE_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "Blade unescaped output: ${evidence}" "HIGH"
@@ -200,7 +225,7 @@ while IFS= read -r file; do
     /usr/bin/grep -nEi '\b(md5|sha1)\s*\(' "$file" 2>/dev/null |
         /usr/bin/grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "insecure-crypto" \
                 "Weak hash algorithm: ${evidence}" "HIGH"
@@ -211,7 +236,7 @@ while IFS= read -r file; do
     /usr/bin/grep -nEi '\bECB\b|MODE_ECB|mode.*ecb' "$file" 2>/dev/null |
         /usr/bin/grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "insecure-crypto" \
                 "ECB mode encryption: ${evidence}" "HIGH"

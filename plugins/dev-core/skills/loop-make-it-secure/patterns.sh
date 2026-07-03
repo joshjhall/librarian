@@ -34,6 +34,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -50,7 +75,7 @@ while IFS= read -r file; do
     # bracket expression).
     /usr/bin/grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)\s*[=:]\s*["'\''][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Possible hardcoded secret: ${evidence}" "HIGH"
@@ -59,7 +84,7 @@ while IFS= read -r file; do
     # AWS-style access keys (AKIA...)
     /usr/bin/grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "AWS access key pattern: ${evidence}" "HIGH"
@@ -75,7 +100,7 @@ while IFS= read -r file; do
             # bracket expression).
             /usr/bin/grep -nE '(execute|cursor)\s*\(\s*f["'\'']' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
@@ -85,7 +110,7 @@ while IFS= read -r file; do
             # Template literal SQL
             /usr/bin/grep -nE '(query|execute)\s*\(\s*`[^`]*(SELECT|INSERT|UPDATE|DELETE)' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
@@ -95,7 +120,7 @@ while IFS= read -r file; do
             # fmt.Sprintf with SQL
             /usr/bin/grep -nE '(Exec|Query|QueryRow)\s*\(\s*fmt\.Sprintf' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
@@ -108,7 +133,7 @@ while IFS= read -r file; do
     # Note: this script DETECTS these patterns for remediation, it does not use them
     /usr/bin/grep -nE '\b(subprocess\.call\s*\(.*shell\s*=\s*True|child_process\.exec\s*\()' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "dangerous-function" \
                 "Dangerous function usage: ${evidence}" "HIGH"
@@ -123,7 +148,7 @@ while IFS= read -r file; do
     /usr/bin/grep -nE '\b(yaml\.load\s*\(|marshal\.loads?\s*\()' "$file" 2>/dev/null |
         /usr/bin/grep -vE 'Loader\s*=' |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "dangerous-function" \
                 "Unsafe deserialization: ${evidence}" "HIGH"
@@ -133,7 +158,7 @@ while IFS= read -r file; do
     # Input validation patterns using denylists (!=, not in [bad values])
     /usr/bin/grep -niE '(blacklist|blocklist|denylist|banned|forbidden)\s*=\s*\[' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "denylist-validation" \
                 "Denylist pattern (prefer allowlist): ${evidence}" "HIGH"

@@ -21,6 +21,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 # =============================================================================
 # Test-skip policy: gitignore-style patterns for files that don't need tests.
 # Uses git check-ignore as the matching engine for full gitignore semantics
@@ -137,7 +162,7 @@ scan_ai_slop() {
     # Hedging phrases — strong indicators of unedited AI output
     /usr/bin/grep -niE -- '\b(it.s worth noting that|it is worth noting that|importantly,|notably,|broadly speaking|in essence,|at its core,|fundamentally,)\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
                 "Hedging phrase: ${evidence}" "HIGH"
@@ -146,7 +171,7 @@ scan_ai_slop() {
     # Buzzword inflation
     /usr/bin/grep -niE -- '\b(enterprise[- ]grade|robust and scalable|seamlessly integrat|leverage the power of|cutting[- ]edge|state[- ]of[- ]the[- ]art|world[- ]class)\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
                 "Buzzword inflation: ${evidence}" "HIGH"
@@ -155,7 +180,7 @@ scan_ai_slop() {
     # Filler phrases in comments/docstrings
     /usr/bin/grep -niE -- '\b(this (function|method|class) (is responsible for|handles|takes care of|provides|ensures that)|as (mentioned|discussed|noted) (above|earlier|previously|before))\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
                 "Filler phrase: ${evidence}" "MEDIUM"
@@ -164,7 +189,7 @@ scan_ai_slop() {
     # Placeholder/stub text left behind
     /usr/bin/grep -niE -- '(# TODO: implement|// TODO: implement|raise NotImplementedError|throw new Error\(.not implemented)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
                 "Unimplemented placeholder: ${evidence}" "HIGH"
@@ -199,7 +224,7 @@ scan_debug_statements() {
             /usr/bin/grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
                 /usr/bin/grep -vE '(logging|logger|log\.)' |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Debug print statement: ${evidence}" "HIGH"
@@ -207,7 +232,7 @@ scan_debug_statements() {
             # Python: breakpoint(), pdb
             /usr/bin/grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Debugger statement: ${evidence}" "HIGH"
@@ -217,7 +242,7 @@ scan_debug_statements() {
             # JavaScript/TypeScript: console.log, console.debug, console.warn
             /usr/bin/grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Console debug statement: ${evidence}" "HIGH"
@@ -225,7 +250,7 @@ scan_debug_statements() {
             # debugger keyword
             /usr/bin/grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Debugger keyword: ${evidence}" "HIGH"
@@ -235,7 +260,7 @@ scan_debug_statements() {
             # Ruby: binding.pry, puts used as debug
             /usr/bin/grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Ruby debugger: ${evidence}" "HIGH"
@@ -245,7 +270,7 @@ scan_debug_statements() {
             # Go: fmt.Println used as debug (not in main or test)
             /usr/bin/grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Debug print statement: ${evidence}" "HIGH"
@@ -255,7 +280,7 @@ scan_debug_statements() {
             # Java/Kotlin: System.out.println, System.err.println
             /usr/bin/grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Debug print statement: ${evidence}" "HIGH"
@@ -390,7 +415,7 @@ scan_untested_public_api() {
                         "${dirname}"/test_*.py \
                         "${dirname}"/tests/test_*.py \
                         "${dirname}"/../tests/test_*.py 2>/dev/null; then
-                        evidence=$(/usr/bin/printf '%.60s' "$content")
+                        evidence=$(truncate_chars 60 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \
                             "No tests reference ${func_name}: ${evidence}" "HIGH"
@@ -403,7 +428,7 @@ scan_untested_public_api() {
                     func_name=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     test_file="${dirname}/${name_no_ext}_test.go"
                     if [ -f "$test_file" ] && ! /usr/bin/grep -q -- "\b${func_name}\b" "$test_file" 2>/dev/null; then
-                        evidence=$(/usr/bin/printf '%.60s' "$content")
+                        evidence=$(truncate_chars 60 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \
                             "No tests reference ${func_name}: ${evidence}" "HIGH"
@@ -426,7 +451,7 @@ scan_untested_public_api() {
                         done
                     done
                     if [ "$found" = "false" ]; then
-                        evidence=$(/usr/bin/printf '%.60s' "$content")
+                        evidence=$(truncate_chars 60 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \
                             "No tests reference ${func_name}: ${evidence}" "HIGH"

@@ -34,6 +34,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -108,7 +133,7 @@ while IFS= read -r file; do
                     func_name=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
                     # Check if this function appears in any test file nearby
                     if ! /usr/bin/grep -rql "\b${func_name}\b" "${dirname}"/test_*.py "${dirname}"/tests/test_*.py 2>/dev/null; then
-                        evidence=$(/usr/bin/printf '%.60s' "$content")
+                        evidence=$(truncate_chars 60 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \
                             "No tests reference ${func_name}: ${evidence}" "HIGH"
@@ -122,7 +147,7 @@ while IFS= read -r file; do
                     func_name=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     test_file="${dirname}/${name_no_ext}_test.go"
                     if [ -f "$test_file" ] && ! /usr/bin/grep -q "\b${func_name}\b" "$test_file" 2>/dev/null; then
-                        evidence=$(/usr/bin/printf '%.60s' "$content")
+                        evidence=$(truncate_chars 60 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \
                             "No tests reference ${func_name}: ${evidence}" "HIGH"

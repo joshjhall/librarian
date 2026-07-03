@@ -34,6 +34,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 # Configurable via environment (thresholds.yml values passed by orchestrator)
 MAX_FUNCTION_LINES="${LOOP_MAX_FUNCTION_LINES:-50}"
 MAX_NESTING_DEPTH="${LOOP_MAX_NESTING_DEPTH:-4}"
@@ -60,7 +85,7 @@ while IFS= read -r file; do
                         func_lines=$((total - line_num))
                     fi
                     if [ "$func_lines" -gt "$MAX_FUNCTION_LINES" ]; then
-                        evidence=$(/usr/bin/printf '%.60s' "$content")
+                        evidence=$(truncate_chars 60 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "long-function" \
                             "Function ${func_lines} lines (max ${MAX_FUNCTION_LINES}): ${evidence}" "HIGH"
@@ -82,7 +107,7 @@ while IFS= read -r file; do
                         func_lines=$((total - line_num))
                     fi
                     if [ "$func_lines" -gt "$MAX_FUNCTION_LINES" ]; then
-                        evidence=$(/usr/bin/printf '%.60s' "$_content")
+                        evidence=$(truncate_chars 60 "$_content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "long-function" \
                             "Function ${func_lines} lines (max ${MAX_FUNCTION_LINES}): ${evidence}" "HIGH"
@@ -92,35 +117,34 @@ while IFS= read -r file; do
     esac
 
     # --- Category: deep-nesting ---
-    # Count leading whitespace to detect excessive nesting
+    # Count leading whitespace to detect excessive nesting. awk truncates by
+    # BYTES (its `%.60s` / substr are byte-based even under a UTF-8 locale), which
+    # diverged from the python primary's char slice on multibyte lines. So awk now
+    # emits the RAW line as a trailing field and the char-aware bash helper
+    # truncates it (#17 equivalence). Fields before the raw line are tab-free, and
+    # `read -r ... rawline` captures the (possibly tab-bearing) line whole.
+    nest_unit=0
     case "$file" in
-        *.py)
-            # Python: 4-space indent, nesting = indent / 4
-            /usr/bin/awk -v max="$MAX_NESTING_DEPTH" '
-                /^[[:space:]]+[^[:space:]]/ {
-                    match($0, /^[[:space:]]+/)
-                    depth = int(RLENGTH / 4)
-                    if (depth > max) {
-                        printf "%s\t%d\tdeep-nesting\tNesting depth %d (max %d): %.60s\tHIGH\n",
-                            FILENAME, NR, depth, max, $0
-                    }
-                }
-            ' "$file" 2>/dev/null || true
-            ;;
-        *.ts | *.js | *.tsx | *.jsx | *.go | *.rs)
-            # Brace languages: 2-space indent, nesting = indent / 2
-            /usr/bin/awk -v max="$MAX_NESTING_DEPTH" '
-                /^[[:space:]]+[^[:space:]]/ {
-                    match($0, /^[[:space:]]+/)
-                    depth = int(RLENGTH / 2)
-                    if (depth > max) {
-                        printf "%s\t%d\tdeep-nesting\tNesting depth %d (max %d): %.60s\tHIGH\n",
-                            FILENAME, NR, depth, max, $0
-                    }
-                }
-            ' "$file" 2>/dev/null || true
-            ;;
+        *.py) nest_unit=4 ;;
+        *.ts | *.js | *.tsx | *.jsx | *.go | *.rs) nest_unit=2 ;;
     esac
+    if [ "$nest_unit" -ne 0 ]; then
+        /usr/bin/awk -v max="$MAX_NESTING_DEPTH" -v unit="$nest_unit" '
+            /^[[:space:]]+[^[:space:]]/ {
+                match($0, /^[[:space:]]+/)
+                depth = int(RLENGTH / unit)
+                if (depth > max) {
+                    printf "%d\t%d\t%s\n", NR, depth, $0
+                }
+            }
+        ' "$file" 2>/dev/null |
+            while IFS=$'\t' read -r line_num depth rawline; do
+                evidence=$(truncate_chars 60 "$rawline")
+                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "deep-nesting" \
+                    "Nesting depth ${depth} (max ${MAX_NESTING_DEPTH}): ${evidence}" "HIGH"
+            done || true
+    fi
 
     # --- Category: single-char-name ---
     # Single-character variable names outside common loop patterns
@@ -135,7 +159,7 @@ while IFS= read -r file; do
                     case "$varname" in
                         i | j | k | n | x | y | _ | e | f) continue ;;
                     esac
-                    evidence=$(/usr/bin/printf '%.60s' "$content")
+                    evidence=$(truncate_chars 60 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "single-char-name" \
                         "Single-character variable '${varname}': ${evidence}" "HIGH"

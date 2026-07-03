@@ -34,6 +34,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 # Thresholds (overridable via thresholds.yml in caller)
 CLAUDE_MD_WARN=${CLAUDE_MD_WARN:-400}
 CLAUDE_MD_HIGH=${CLAUDE_MD_HIGH:-600}
@@ -253,7 +278,7 @@ check_mcp_config() {
     /usr/bin/grep -nE '"http://' "$file" 2>/dev/null |
         /usr/bin/grep -vE '(localhost|127\.0\.0\.1|host\.docker\.internal)' |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "mcp-misconfiguration" \
                 "Insecure HTTP URL in config (use HTTPS): ${evidence}" "HIGH"
@@ -277,7 +302,7 @@ check_hook_safety() {
     # Destructive commands without guards
     /usr/bin/grep -nE '(rm\s+-rf\s|git\s+reset\s+--hard|git\s+clean\s+-fd|docker\s+system\s+prune)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hook-safety" \
                 "Destructive command in hook without confirmation: ${evidence}" "HIGH"
@@ -286,7 +311,7 @@ check_hook_safety() {
     # Secret leaks — echoing env vars with secret-like names
     /usr/bin/grep -nE '(echo|printf).*\$(ANTHROPIC_|GITHUB_TOKEN|GITLAB_TOKEN|API_KEY|SECRET|PASSWORD|OP_.*_REF)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hook-safety" \
                 "Potential secret leak in hook output: ${evidence}" "HIGH"
@@ -316,7 +341,7 @@ check_harness_logic() {
     /usr/bin/grep -nE '`\$\{[^}]+\}:\$\{[^}]+\}:\$\{[^}]+\}`' "$file" 2>/dev/null |
         /usr/bin/grep -vE '#\$\{' |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Finding ref may collide (no per-finding index): ${evidence}" "MEDIUM"
@@ -330,7 +355,7 @@ check_harness_logic() {
     # resolves without this repo's layout, so MEDIUM for the LLM pass to confirm.
     /usr/bin/grep -nE "agentType:[[:space:]]*['\"][^'\":]+['\"]" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Bare agentType (needs <plugin>:<name> for the Workflow tool): ${evidence}" "MEDIUM"
@@ -339,7 +364,7 @@ check_harness_logic() {
     # Unsafe interpolation into an auto-approving command.
     /usr/bin/grep -nE 'dangerously-skip-permissions.*\$\{' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Interpolation into --dangerously-skip-permissions (validate first): ${evidence}" "HIGH"
@@ -349,7 +374,7 @@ check_harness_logic() {
     /usr/bin/grep -nE '(npm install|pnpm install|composer update|yarn install)' "$file" 2>/dev/null |
         /usr/bin/grep -vE 'package-lock-only|ignore-scripts|no-scripts|lockfile-only|update-lockfile' |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Install/regen may run lifecycle scripts (use lockfile-only): ${evidence}" "MEDIUM"
