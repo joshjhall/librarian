@@ -94,10 +94,8 @@ reserved for this skill's review harness; orchestrators MUST spawn golems as
 processes (subprocess / container / worktree), and (2) the full **Environment
 Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_STRICT` / `REVIEW_MAX_CYCLES`
 (review gating), and the `LIBRARIAN_CI_*` family (CI-wait threshold/extensions and
-infra-flake triage tuning). The legacy `AUTOMERGE` / `AUTOMERGE_AUTONOMOUS`
-double-consent is **retired as the merge path** — merge is now the level-aware
-routine gate in Step 4 (L3–L4 auto after green + clean; L1–L2 human). The vars are
-retained-but-deprecated until #209 removes them. Load `ship-protocol.md` before
+infra-flake triage tuning). Merge is the level-aware routine gate in Step 4
+(L3–L4 auto after green + clean; L1–L2 human). Load `ship-protocol.md` before
 relying on any of these toggles.
 
 ## Step 1 — Read State
@@ -298,16 +296,6 @@ for the per-check commands, tables, and per-level rules.
      glab mr create --title "{type}({scope}): {description}" \
        --description "## Summary\n- {what changed and why}\n\n## Test plan\n- {how this was tested}\n\nCloses #{N}"
      ```
-
-   > **The review-skipping `AUTOMERGE` fast path is retired.** Earlier versions
-   > queued `gh pr merge --auto` right here, *before* the review loop, as an
-   > escape hatch from the review gate (guarded by
-   > `AUTOMERGE`/`AUTOMERGE_AUTONOMOUS`). That path is **gone** — there is no
-   > unreviewed merge anymore. Merge is now a **routine gate** that fires **after**
-   > the CI-wait + review loop terminates green **and** clean (see the merge step
-   > below). The env vars are retained-but-deprecated for one release; their
-   > removal is #209's cleanup sweep. See `ship-protocol.md` § Environment
-   > Variables.
 
 1. **Monitor CI, run the multi-cycle review loop, and file deferred findings**
    — **Companion file**: `ci-review-protocol.md` in this skill directory carries

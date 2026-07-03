@@ -32,14 +32,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    - **Agent environment**: `NEXT_ISSUE_AUTONOMOUS=1` (ambient autonomy opt-in),
      `AGENT_ISSUE` (the assigned issue), `REVIEW_MAX_CYCLES` (default 3), and a
      pass-through `GITHUB_TOKEN`/`GH_TOKEN` so the golem can push and open PRs.
-     Optional: `PRE_REVIEW_STRICT`, `REVIEW_STRICT`, `AUTOMERGE`,
-     `AUTOMERGE_AUTONOMOUS`. **Note:** golems are autonomous, and
-     `/ship-issue` only takes the auto-merge fast path autonomously when
-     BOTH `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` are set (the second is a
-     required consent because auto-merge skips the adversarial review loop — see
-     `ship-issue` SKILL.md § Environment Variables). Passing `AUTOMERGE=1`
-     alone to a golem is intentionally a no-op: it falls through to the normal
-     review loop and stops at a green PR for human merge.
+     Optional: `PRE_REVIEW_STRICT`, `REVIEW_STRICT`.
    - **Init system**: `init: true` for tini zombie reaping
    - **Capabilities**: same as devcontainer (`cap_add`, `devices`)
    - **Command**: `sleep infinity` (entrypoint handles startup, tmux starts
@@ -67,10 +60,6 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
          AGENT_ISSUE: "${AGENT01_ISSUE:-}"
          NEXT_ISSUE_AUTONOMOUS: "1"
          REVIEW_MAX_CYCLES: "${REVIEW_MAX_CYCLES:-3}"
-         # Auto-merge requires BOTH keys for an autonomous golem (see notes
-         # above + ship-issue § Environment Variables). Default off.
-         AUTOMERGE: "${AUTOMERGE:-}"
-         AUTOMERGE_AUTONOMOUS: "${AUTOMERGE_AUTONOMOUS:-}"
          GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
          GH_TOKEN: "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
        init: true
@@ -103,8 +92,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    export NEXT_ISSUE_AUTONOMOUS=1
    export REVIEW_MAX_CYCLES="${REVIEW_MAX_CYCLES:-3}"
    # Optional pass-throughs (inherited from the environment if set):
-   #   PRE_REVIEW_STRICT, REVIEW_STRICT, AUTOMERGE, AUTOMERGE_AUTONOMOUS
-   # (autonomous auto-merge needs BOTH AUTOMERGE=1 and AUTOMERGE_AUTONOMOUS=1).
+   #   PRE_REVIEW_STRICT, REVIEW_STRICT
 
    now() { command date -u +%Y-%m-%dT%H:%M:%SZ; }
 

@@ -121,8 +121,6 @@ authoritative and documents the same vars in the same order.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `AUTOMERGE` | _unset_ | **Deprecated** (retired as the merge path; removal tracked in #209). Merging is now the level-aware routine gate — auto at L3–L4, human at L1–L2 |
-| `AUTOMERGE_AUTONOMOUS` | _unset_ | **Deprecated** — was the second consent for `AUTOMERGE`; superseded by the L1–L4 merge gate (#209) |
 | `PRE_REVIEW_STRICT` | _unset_ | `true` blocks PR creation on HIGH-certainty pre-review findings |
 | `REVIEW_MAX_CYCLES` | `3` | Post-CI adversarial review threshold — caps review cycles (the review action's cut-short/extend lever) |
 | `REVIEW_STRICT` | _unset_ | `true` treats MEDIUM-certainty review findings as blocking |

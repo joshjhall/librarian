@@ -36,19 +36,6 @@ in SKILL.md Step 4 (the level-aware merge gate), after the review loop.
 
 These env vars toggle non-default behavior; all are opt-in:
 
-- `AUTOMERGE=1` / `AUTOMERGE_AUTONOMOUS=1` — **retired as the merge path**
-  (deprecated; removed by #209). These once queued `gh pr merge --auto`
-  **before** the review loop as an escape hatch from the review gate, guarded by
-  a two-variable consent when autonomous. That review-*skipping* merge is **gone**
-  — there is no unreviewed merge path anymore. Merge is now the level-aware
-  routine gate in SKILL.md Step 4: at **L3–L4** ship auto-merges (squash,
-  delete-branch) **after** the CI-wait + review loop terminates green + clean; at
-  **L1–L2** it stops for a human. The vars are still parsed for one release so
-  existing golem environments don't break, but they **no longer bypass review**;
-  setting them has no effect on the merge decision. The orchestrate **integration
-  train** (`orchestrate` § Phase T) lands a batch of already-green, already-clean
-  PRs under the same invariant — one up-front approval authorizes the sequence,
-  but no PR merges un-green or un-reviewed.
 - `PRE_REVIEW_STRICT=true` — pre-review gates (Step 3.5) block Option 1 PR
   creation on HIGH certainty findings instead of warning only.
 - `REVIEW_MAX_CYCLES` — integer, default `3`. Caps the post-CI multi-cycle

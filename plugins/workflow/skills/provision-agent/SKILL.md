@@ -87,8 +87,7 @@ with a background PR poller, autonomous pipeline in tmux) — lives in
    config: same base image / Dockerfile / `INCLUDE_*` flags, plus
    `SKIP_LSP_INSTALL=true`, per-agent worktree + `.status` volumes, the golem
    environment (`NEXT_ISSUE_AUTONOMOUS=1`, `AGENT_ISSUE`, `REVIEW_MAX_CYCLES`,
-   pass-through `GITHUB_TOKEN`/`GH_TOKEN`, optional `AUTOMERGE` +
-   `AUTOMERGE_AUTONOMOUS`), `deploy.resources.limits` (4 CPU / 8 GB defaults via
+   pass-through `GITHUB_TOKEN`/`GH_TOKEN`), `deploy.resources.limits` (4 CPU / 8 GB defaults via
    `AGENT_CPUS`/`AGENT_MEMORY`), `init: true`, and `command: sleep infinity`.
 1. **Write `.worktrees/agent-entrypoint.sh`** — verifies git-host auth, then
    launches the autonomous golem pipeline (`/next-issue --autonomous` →

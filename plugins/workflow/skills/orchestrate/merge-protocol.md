@@ -204,10 +204,10 @@ the repo's branch protection permits**:
 - **Parallelize independents.** Only the overlapping chain is serialized; the
   independent PRs (wave 0) land concurrently, not behind each other.
 
-Auto-merge consent is unchanged from `ship-issue` § Environment Variables:
-under an autonomous run the `--auto` fast path requires BOTH `AUTOMERGE=1` and
-`AUTOMERGE_AUTONOMOUS=1`. The train's single batch approval authorizes the
-*sequence*; it does **not** replace that per-PR auto-merge double-consent.
+Merging is the level-aware routine gate (auto at L3–L4 after green CI + clean
+review; human-authorized at L1–L2 — see `orchestrate/autonomy-levels.md`). The
+train's single batch approval authorizes the *sequence*; it does **not** override
+the per-PR merge invariant (green CI + clean review).
 
 ### Worked example (the #585/#586/#587 + independents batch)
 

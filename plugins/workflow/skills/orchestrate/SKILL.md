@@ -13,9 +13,7 @@ then monitors, surfaces, and rebases across their PRs. **The orchestrator never
 merges golem branches into its own** — a golem's own `/ship-issue` merges its PR
 as the **level-aware routine gate** (auto at L3–L4, human at L1–L2, always
 subject to the green-CI + clean-review merge invariant); the humans in the loop
-merge anything a golem leaves for them. (The legacy `AUTOMERGE` /
-`AUTOMERGE_AUTONOMOUS` double-consent is retired as that path and deprecated —
-see `ship-issue` § Environment Variables and #209.)
+merge anything a golem leaves for them.
 
 **Hard constraints** (architecture — do not violate):
 
@@ -196,9 +194,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem below L4); its own `/ship-issue` then merges as the
    level-aware routine gate — **auto at L3–L4**, **human at L1–L2** — always
-   subject to the green-CI + clean-review merge invariant. (The legacy
-   `AUTOMERGE` / `AUTOMERGE_AUTONOMOUS` double-consent is retired as that path and
-   deprecated — #209.)
+   subject to the green-CI + clean-review merge invariant.
 
 1. **Label + cache**: ensure each dispatched issue is `status/in-progress`
    (the autonomous `/next-issue` does this) and write the initial golem cache
