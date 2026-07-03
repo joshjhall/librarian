@@ -15,7 +15,7 @@
 # exits 0.
 #
 # Input  (stdin):  Notification hook JSON, e.g. {"message":"...", ...}
-# Output (feed):   {"ts","golem","event":"gate|idle","message"}
+# Output (feed):   {"ts","golem","event":"gate|idle|escalation","message"}
 #
 # The `event` kind separates a real permission gate (a human decision the
 # orchestrator must surface) from a transient between-turn idle: Claude Code
@@ -24,6 +24,15 @@
 # golem as BLOCKED only when its most-recent feed line is a fresh `gate`, so an `idle`
 # emitted once the golem moves on implicitly clears that golem's stale block —
 # no separate resolution hook needed.
+#
+# A third kind, `escalation`, marks a genuine judgement call carrying options —
+# a mid-flight architectural/directional fork, or a wall with more than one
+# viable path forward (issue #176). Unlike a `gate` (a mechanical permission
+# decision), an escalation is a human choice at L1–L3 and auto-resolved at L4;
+# it is surfaced distinctly so the orchestrator does not lose it among routine
+# permission gates. The next-issue escalation protocol emits one by piping a
+# payload whose message begins `ESCALATION:` to this hook (the git-common-dir
+# resolution, golem-id derivation, and JSON escaping below are reused verbatim).
 set -uo pipefail
 
 # Resolve the main repo root even when invoked from a worktree:
@@ -49,16 +58,24 @@ fi
 [ -z "$message" ] && message="awaiting permission decision"
 
 # Classify the notification into an event kind so the reader can tell a real
-# permission gate (an actionable human decision) from a transient idle (noise):
-#   gate — a permission decision is pending, e.g. the `git push` / `gh pr
-#          create` `ask` rule firing ("Claude needs your permission to ...").
-#   idle — a momentary between-turn idle ("Claude is waiting for your input"),
-#          which also fires while a sub-agent runs mid-work and is NOT a block.
+# permission gate (an actionable human decision) from a transient idle (noise)
+# or a mid-flight escalation (a judgement call carrying options):
+#   gate       — a permission decision is pending, e.g. the `git push` / `gh pr
+#                create` `ask` rule firing ("Claude needs your permission to ...").
+#   idle       — a momentary between-turn idle ("Claude is waiting for your
+#                input"), which also fires while a sub-agent runs mid-work and
+#                is NOT a block.
+#   escalation — a genuine architectural/directional fork or a wall with >1
+#                viable path (issue #176). The next-issue escalation protocol
+#                emits it with a message beginning `ESCALATION:`; surfaced
+#                distinctly from a routine permission gate.
 # Match case-insensitively on the message; default to `gate` so an unrecognized
 # notification surfaces (fail loud) rather than being silently dropped as idle.
+# The `escalation` branch precedes the `gate` default so its marker wins.
 case "$(printf '%s' "$message" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
     *"waiting for your input"*) event="idle" ;;
     *"waiting for input"*) event="idle" ;;
+    *"escalation:"*) event="escalation" ;;
     *) event="gate" ;;
 esac
 
@@ -105,8 +122,8 @@ else
     # remaining double quotes. Keeps every feed line valid JSON on this path.
     golem_safe="$(printf '%s' "${golem//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
     message_safe="$(printf '%s' "${message//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
-    # $event is a fixed literal (gate|idle) set above, never attacker-derived,
-    # so it needs no sanitizing — interpolate it directly.
+    # $event is a fixed literal (gate|idle|escalation) set by the case above,
+    # never attacker-derived, so it needs no sanitizing — interpolate it directly.
     printf '{"ts":"%s","golem":"%s","event":"%s","message":"%s"}\n' \
         "$ts" "${golem_safe//\"/\\\"}" "$event" "${message_safe//\"/\\\"}" \
         >>"$feed" 2>/dev/null || true

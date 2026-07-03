@@ -7,7 +7,9 @@ description: Issue-driven development workflow that picks the next issue by seve
 **Companion file**: See `state-format.md` in this skill directory for the state
 file schema (JSON), priority ordering commands, branch naming convention,
 checkpoint structure, and reset points. Load it at the start of every
-invocation.
+invocation. See `escalation-protocol.md` when a **mid-flight** architectural or
+directional decision arises during implementation (the escalation gate — human
+at L1–L3, auto at L4).
 
 Accepts an optional issue number argument: `/next-issue 123` skips priority
 selection and targets that specific issue.
@@ -456,6 +458,19 @@ or has no `files_planned` (nothing to re-present).
    and run the tests. The two steps below fire only **once implementation and
    testing are complete** — do NOT invoke `/ship-issue` or suggest a
    `/clear` before the work exists.
+
+   **Mid-flight escalation gate.** If, while implementing or testing, you reach a
+   decision that is **not mechanical** — competing architectural approaches, a
+   directional choice the plan left open, or a wall with more than one viable
+   escape — this is an **escalation gate**, not something to silently decide.
+   Load `escalation-protocol.md` and follow it: assemble the payload (decision,
+   options + tradeoffs, recommendation), then dispatch by level — **L1–L3 block
+   and wait indefinitely** for a human (surfaced as an `escalation` on the feed +
+   an issue comment; inline for a lone `/next-issue`), **L4 auto-selects the
+   recommendation** and continues, **unless it is a dead-end** (no safe option /
+   would violate the merge invariant), which blocks at every level including L4.
+   Err toward escalating when unsure. This is distinct from the plan gate above,
+   which is handled structurally by `ExitPlanMode`.
 
 1. **Hand off — suggest a context reset, OR take the `--ship` fast-path.**
    Reached only after implementation and testing complete (previous step).

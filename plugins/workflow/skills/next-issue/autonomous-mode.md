@@ -129,6 +129,18 @@ golem environments, never in a shared interactive shell.)
   `autonomous` mirror until #177) and continues to Branch + PR. See the
   autonomous planning path in Phase 2 for the exact point at which the invocation
   happens.
+- **Mid-flight escalation gate (all levels).** The plan gate is not the only
+  escalation gate. If a **non-mechanical** decision surfaces *during
+  implementation or testing* — competing architectural approaches, a directional
+  fork the plan left open, or a wall with more than one viable escape — it is an
+  **escalation gate**, dispatched by level exactly like plan approval: **human at
+  L1–L3, auto-passed (agent picks its recommendation) at L4**, and a **dead-end**
+  (whose only auto-resolution would break the merge invariant) blocks at **every**
+  level, L4 included. Follow `escalation-protocol.md` for the payload format
+  (decision, options + tradeoffs, recommendation), the feed emission
+  (`ESCALATION:`-prefixed message → `golem-notify.sh`, surfaced distinctly by
+  `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`), and the **never-time-out**
+  rule at this gate. Err toward escalating when unsure.
 - **Persist the signals** to the state file: `"autonomy_level": <1-4>`, plus the
   derived back-compat mirrors `"autonomous"` (= level 4) and `"plan_gated"` (true
   when the plan gate is kept — L1–L3, or a capped critical) so `/ship-issue` and

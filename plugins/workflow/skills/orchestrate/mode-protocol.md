@@ -259,15 +259,17 @@ Each line in `.worktrees/.status/feed.jsonl` is one JSON object:
 `Notification` it receives into an `event` kind so the reader can separate a
 real block from noise:
 
-| `event`   | Meaning                                                          | Surfaces in BLOCKED?                          |
-| --------- | ---------------------------------------------------------------- | --------------------------------------------- |
-| `gate`    | A permission decision is pending — a human must answer (e.g. the `git push` / `gh pr create` `ask` rule: *"Claude needs your permission to ..."*). | **Yes**, while it is the golem's latest line and within the freshness window. |
-| `idle`    | A transient between-turn idle (*"Claude is waiting for your input"*) — also fires while a sub-agent runs mid-work. Noise, not a block. | No. |
-| `blocked` | **Legacy** kind written before issue #600 (every notification was `blocked`). Honored as a `gate` for backward compatibility. | Yes (treated as `gate`). |
+| `event`      | Meaning                                                          | Surfaces in BLOCKED?                          |
+| ------------ | ---------------------------------------------------------------- | --------------------------------------------- |
+| `gate`       | A permission decision is pending — a human must answer (e.g. the `git push` / `gh pr create` `ask` rule: *"Claude needs your permission to ..."*). | **Yes**, while it is the golem's latest line and within the freshness window. |
+| `idle`       | A transient between-turn idle (*"Claude is waiting for your input"*) — also fires while a sub-agent runs mid-work. Noise, not a block. | No. |
+| `escalation` | A genuine **judgement call carrying options** — a mid-flight architectural/directional fork, or a wall with more than one viable path forward (issue #176). A human decision at L1–L3, auto-resolved (agent picks its recommendation) at L4. Distinct from a routine permission `gate`: emitted with a message beginning `ESCALATION:`, and labelled *"escalation — …"* in the BLOCKED list so it is not lost among permission gates. See `next-issue/escalation-protocol.md`. | **Yes**, while latest + fresh; labelled distinctly. |
+| `blocked`    | **Legacy** kind written before issue #600 (every notification was `blocked`). Honored as a `gate` for backward compatibility. | Yes (treated as `gate`). |
 
 Classification is case-insensitive on the message and **defaults to `gate`** for
 an unrecognized message, so a new notification kind surfaces (fail loud) rather
-than being silently dropped.
+than being silently dropped. The `escalation` marker is matched before the `gate`
+default, so an escalation is never misfiled as a plain permission gate.
 
 **How a block clears (no resolution event).** The feed is append-only and
 chronological, so `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` takes only each golem's **most-recent** line as
@@ -303,8 +305,9 @@ mode, so the pull and push surfaces can never disagree. Two **co-equal** channel
 
 **Notifies:** a real permission `gate` (feed: latest line per golem is a fresh
 `gate`/legacy `blocked` within `GOLEM_BLOCK_TTL`; pane: a prompt overlay is
-present), and a plan-gate `ExitPlanMode` (a `gate` in the feed, distinctly
-labeled on the pane channel).
+present), a mid-flight `escalation` (feed: latest line is a fresh `escalation`,
+labelled *"escalation — …"* — issue #176), and a plan-gate `ExitPlanMode` (a
+`gate` in the feed, distinctly labeled on the pane channel).
 
 **Suppressed:** a transient `idle` (feed noise); a `gate` superseded by a later
 `idle`/`gate` line; a `gate` aged past `GOLEM_BLOCK_TTL`; and — crucially for a
