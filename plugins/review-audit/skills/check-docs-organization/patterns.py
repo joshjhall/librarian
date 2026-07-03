@@ -85,7 +85,13 @@ def main(argv: list[str]) -> int:
     for expected in ("README.md", "LICENSE", "CHANGELOG.md"):
         found = False
         if expected == "LICENSE":
-            for variant in ("LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md"):
+            for variant in (
+                "LICENSE",
+                "LICENSE.md",
+                "LICENSE.txt",
+                "LICENCE",
+                "LICENCE.md",
+            ):
                 if os.path.isfile(f"{project_root}/{variant}"):
                     found = True
                     break

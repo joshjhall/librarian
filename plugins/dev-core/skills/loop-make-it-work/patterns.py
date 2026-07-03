@@ -69,10 +69,8 @@ def _first_nonblank_after(lines: list[str], idx0: int) -> str:
     return ""
 
 
-
 def scan_file(path: str, lines: list[str]) -> None:
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-    base = path.rsplit("/", 1)[-1]
 
     for idx, content in enumerate(lines, start=1):
         # --- Category: stub-detected ---
@@ -95,7 +93,8 @@ def scan_file(path: str, lines: list[str]) -> None:
                         path,
                         str(idx),
                         "empty-body",
-                        "Empty function body: " + _bash_read_content(content)[:EVIDENCE_CAP],
+                        "Empty function body: "
+                        + _bash_read_content(content)[:EVIDENCE_CAP],
                     )
         elif ext in ("ts", "js", "tsx", "jsx"):
             if JS_EMPTY_BODY_RE.search(content):
@@ -103,7 +102,8 @@ def scan_file(path: str, lines: list[str]) -> None:
                     path,
                     str(idx),
                     "empty-body",
-                    "Empty function body: " + _bash_read_content(content)[:EVIDENCE_CAP],
+                    "Empty function body: "
+                    + _bash_read_content(content)[:EVIDENCE_CAP],
                 )
         elif ext == "go":
             if GO_EMPTY_BODY_RE.search(content):
@@ -111,7 +111,8 @@ def scan_file(path: str, lines: list[str]) -> None:
                     path,
                     str(idx),
                     "empty-body",
-                    "Empty function body: " + _bash_read_content(content)[:EVIDENCE_CAP],
+                    "Empty function body: "
+                    + _bash_read_content(content)[:EVIDENCE_CAP],
                 )
 
     # --- Category: no-assertions (whole-file, test files only) ---
@@ -119,7 +120,9 @@ def scan_file(path: str, lines: list[str]) -> None:
     # full path, not just basename — `*test*.py` etc. are unanchored globs).
     if fnmatch(path, "*test*.py") or fnmatch(path, "*_spec.py"):
         if not any(PY_ASSERT_RE.search(ln) for ln in lines):
-            emit(path, "1", "no-assertions", "Test file contains no assertion statements")
+            emit(
+                path, "1", "no-assertions", "Test file contains no assertion statements"
+            )
     elif (
         fnmatch(path, "*.test.ts")
         or fnmatch(path, "*.test.js")
@@ -129,10 +132,14 @@ def scan_file(path: str, lines: list[str]) -> None:
         or fnmatch(path, "*.test.jsx")
     ):
         if not any(JS_ASSERT_RE.search(ln) for ln in lines):
-            emit(path, "1", "no-assertions", "Test file contains no assertion statements")
+            emit(
+                path, "1", "no-assertions", "Test file contains no assertion statements"
+            )
     elif fnmatch(path, "*_test.go"):
         if not any(GO_ASSERT_RE.search(ln) for ln in lines):
-            emit(path, "1", "no-assertions", "Test file contains no assertion statements")
+            emit(
+                path, "1", "no-assertions", "Test file contains no assertion statements"
+            )
 
 
 def main(argv: list[str]) -> int:

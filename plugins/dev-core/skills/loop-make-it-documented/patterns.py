@@ -43,7 +43,7 @@ SKIP_GLOBS = (
 PY_FUNC_RE = re.compile(r"^def [a-zA-Z][a-zA-Z0-9_]*\(")
 PY_CLASS_RE = re.compile(r"^class [A-Z][a-zA-Z0-9_]*")
 BLANK_RE = re.compile(r"^[ \t]*$")
-PY_DOCSTRING_RE = re.compile(r"""^[ \t]*("""  '"""'  r"""|''')""")
+PY_DOCSTRING_RE = re.compile(r"""^[ \t]*(""" '"""' r"""|''')""")
 
 JS_DEF_RE = re.compile(
     r"^export\s+(async\s+)?function\s+\w+|^export\s+(default\s+)?class\s+\w+"

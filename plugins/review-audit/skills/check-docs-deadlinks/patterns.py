@@ -81,9 +81,9 @@ def scan_file(path: str, lines: list[str]) -> None:
                     # the raw string in grep -E, but for our fixture corpus these
                     # anchors are plain words. Search the whole file.
                     if not any(hp_re.search(ln) for ln in lines):
-                        ev = (
-                            f"Anchor #{anchor} has no matching heading in file"
-                        )[:EVIDENCE_CAP]
+                        ev = (f"Anchor #{anchor} has no matching heading in file")[
+                            :EVIDENCE_CAP
+                        ]
                         emit(path, idx, "broken-anchor", ev)
 
         # --- Category: suspicious-external-link ---

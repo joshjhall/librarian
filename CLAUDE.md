@@ -100,10 +100,21 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
 just              # list recipes
 just validate     # validate manifests
 just test         # run the full local test suite (tests/run-all.sh; mirrors CI)
-just lint         # dprint + taplo + rumdl + manifest validation
-just fmt          # format JSON/YAML/TOML/markdown
+just lint         # dprint + taplo + rumdl + ruff (check + format) + manifests
+just fmt          # format JSON/YAML/TOML/markdown/Python
 just install-hooks
 ```
+
+**Linting is language-by-language and gated in CI + pre-push.** Formatting/lint
+for JSON/YAML/TOML/markdown is dprint/taplo/rumdl (via `just lint`). The two
+in-repo languages each have a `tests/run-all.sh` gate: **shell** →
+`tests/lint-shellcheck.sh` (`shellcheck --severity=warning` over `plugins/ tests/
+bin/`) plus `tests/lint-shell-portability.sh` (bans bash-4 constructs, macOS
+bash-3.2 target); **Python** → `tests/lint-python.sh` (`ruff check` +
+`ruff format --check`, config in `ruff.toml`, py311 target). All three
+skip-if-absent locally but CI installs `shellcheck`/`ruff` (and asserts they are
+on PATH) so they actually run there — see `.github/workflows/ci.yml`. `ruff`,
+`shellcheck`, and `shfmt` also run in the lefthook pre-commit hook.
 
 ## Commits
 
