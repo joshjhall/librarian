@@ -144,6 +144,51 @@ its own track's next queued issue rather than the global-priority winner) is a
 follow-up on top of this composition; until then the flat collision-aware refill
 above is the fallback.
 
+### The setup flow (propose → approve → choose level → dispatch)
+
+`mode: "tracks"` only **composes** the lanes; it never dispatches. Turning a
+composition into running golems is the four-step **setup flow** from
+`autonomy-levels.md` § "The setup flow" — two of the steps are human gates that
+**wait indefinitely** (never lapse-and-default; see `autonomy-levels.md` §
+*Standing rule*). Run it whenever the operator invokes `/orchestrate tracks` (or
+`/orchestrate dispatch` with a track composition):
+
+1. **Propose.** Render the composed lanes for the operator: for each lane, its
+   ordered issue list (head first) with titles; the `deferred` issues; the
+   `cross_track_overlap` count; and the `rationale` line. This is a display step,
+   not a gate.
+
+2. **Approve the tracks** — an `AskUserQuestion` gate. Offer **accept** /
+   **adjust** (operator moves/drops an issue, or changes `trackCount`/`trackSize`
+   → recompose and re-propose) / **regenerate** (recompose with the same params —
+   the composition is deterministic, so "regenerate" is only meaningful after an
+   adjust). **Wait indefinitely** for the answer; do not default to accept because
+   the operator stepped away.
+
+3. **Choose the rules of engagement** — a second `AskUserQuestion` gate offering
+   the autonomy level **L1–L4**, each with its one-line description
+   (`autonomy-levels.md` § "The four levels"). **Apply the critical cap when
+   building the options:** a track containing a `severity/critical` issue offers
+   **L1–L3 only** (never L4) — the cap holds its plan/escalation gates human. If
+   tracks differ (one has a critical issue, another does not), ask **per track**,
+   or ask once and record the capped value per track (L4 → L3 for the critical
+   track, with a one-line note). **Wait indefinitely.**
+
+4. **Dispatch.** Write the approved composition to
+   `.worktrees/.status/tracks.json`, stamping each track's chosen (capped)
+   `autonomy_level`. Then dispatch **one worktree golem per track head** at that
+   level (Phase D — `scripts/worktree-new.sh {head}` + `scripts/golem-launch.sh
+   launch {head}`, one bare `tmux new-session` per head); the rest of each track
+   **queues** behind its head for lane-aware serial refill. Pass the level into
+   the golem as `--level {N}` on its `/next-issue` prompt so the run's state file
+   records it (see `next-issue/autonomous-mode.md` § *Level selection*).
+
+**Autonomous orchestrator.** When the orchestrator itself runs unattended, the
+two `AskUserQuestion` gates are authorized by the autonomous invocation (as the
+train's batch approval is) — but the **critical cap still applies** (a critical
+track never dispatches at L4), and any genuine escalation still stops. The
+wait-indefinitely rule governs every non-autonomous run.
+
 ## Phase T — Integration Train
 
 Land a **batch** of already-green, already-approved PRs end-to-end —

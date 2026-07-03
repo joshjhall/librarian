@@ -52,6 +52,12 @@
       ],
       "description": "Lifecycle state of the golem (cache estimate; PR/label state wins)."
     },
+    "autonomy_level": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "The rules-of-engagement level (L1-L4) this golem runs at, per orchestrate/autonomy-levels.md — chosen at the setup flow and inherited from its track (a severity/critical issue is capped at L3). Lets the monitor/display show and reason about each golem's gate disposition. Cache mirror; the next-issue state file's autonomy_level is authoritative for the run."
+    },
     "ci": {
       "type": "string",
       "enum": ["pending", "passing", "failing", "none"],

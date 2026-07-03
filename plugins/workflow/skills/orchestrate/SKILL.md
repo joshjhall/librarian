@@ -44,7 +44,7 @@ Environment Variables).
 | ---------- | ----- |
 | `/orchestrate dispatch <N…>` or `dispatch <count>` | Phase D — Dispatch golems |
 | `/orchestrate pool <N>` | Phase P — Worker pool (set size, refill from backlog) |
-| `/orchestrate tracks [N]` | Phase P — Compose 2–4 ordered, low-collision tracks from the backlog |
+| `/orchestrate tracks [N]` | Phase P — Compose 2–4 ordered, low-collision tracks, then run the setup flow (propose → approve → choose L1–L4 → dispatch) |
 | `/orchestrate drain` / `pause` / `resume` | Phase P — Pool refill controls |
 | `/orchestrate` or `/orchestrate status` | Phase M — Monitor (one sweep) |
 | `/orchestrate monitor` / `watch` | Phase M — Monitor loop |
@@ -59,6 +59,15 @@ Environment Variables).
 
 Spin up N golems, each owning one issue end-to-end. Golems are **processes**;
 dispatch is sequential and cheap — **not** workflow-driven.
+
+> **Track setup flow feeds dispatch.** When dispatch follows a `/orchestrate
+> tracks` composition, the issues and their **autonomy level** come from the
+> approved setup flow (`pool-train-protocol.md` § *The setup flow*) — the
+> operator has already approved the lanes and chosen L1–L4 (offered as L1–L3 for
+> a track holding a `severity/critical` issue). Dispatch one golem per **track
+> head** and pass the level in as `--level {N}` on its `/next-issue` prompt so
+> the run's state file records it. A plain `/orchestrate dispatch <N…>` without a
+> composition selects by priority as below and asks the L1–L4 question itself.
 
 1. **Select issues** by priority using the ordering in
    `next-issue/state-format.md` (exclude issues already labeled
