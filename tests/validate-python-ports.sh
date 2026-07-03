@@ -67,9 +67,11 @@ STRIPE_TOK="sk_""live_""ABCDEFGHIJKLMNOPQRSTUV"
 /usr/bin/cat >"$FIXDIR/app.py" <<'EOF'
 import hashlib
 query = f"SELECT * FROM users WHERE id={user_id}"
+single_q = f'SELECT * FROM t WHERE id={i}'
 digest = md5(payload)
 secret = "abcdefghijkl"
-# md5(commented) still flagged by the current scanner
+xor_secret = "value_x2_7_here"
+# md5(commented) is skipped — the crypto comment-skip is live (#168)
 placeholder = "changeme_example_value"
 concat = "SELECT a FROM t" + tail
 EOF

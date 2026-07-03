@@ -92,20 +92,12 @@ def scan_file(path: str) -> None:
 
         # Generic credential assignment with a string-literal value. Two-stage,
         # mirroring the `grep -nEi ... | grep -viE <denylist>` pipe: a positive
-        # match that is NOT a placeholder/env-read/comment line.
-        #
-        # FIDELITY NOTE: the bash regex writes the single-quote delimiter as
-        # `\x27` inside a POSIX bracket expression, but GNU grep does NOT expand
-        # `\x27` there — it adds the literal characters \, x, 2, 7 to the class.
-        # So the real delimiter/content class is [ " \ x 2 7 ], and a value
-        # containing any of x/2/7 breaks the {8,} run (many real secrets are
-        # thus missed). This port REPLICATES that exact (buggy) class for
-        # byte-parity; the intended `'` fix is a tracked follow-up, not this
-        # runtime-port increment. The class below is written as [ " \\ x 2 7 ]:
-        # `\\` is a literal backslash and `x27` are literal chars (no hex expand).
+        # match that is NOT a placeholder/env-read/comment line. The quote
+        # delimiter class is ["'] — a double- or single-quote (matches the bash
+        # regex fixed in #168).
         if re.search(
             r"(password|passwd|secret|api_key|apikey|auth_token|access_token)"
-            r"""\s*[=:]\s*["\\x27][^"\\x27]{8,}["\\x27]""",
+            r"""\s*[=:]\s*["'][^"']{8,}["']""",
             line,
             re.IGNORECASE,
         ) and not re.search(
@@ -171,21 +163,19 @@ def scan_file(path: str) -> None:
         if XSS_BLADE in line:
             emit(path, idx, "xss-risk", "Blade unescaped output: " + cap(line))
 
-        # --- Category: insecure-crypto ---
-        # NOTE ON FIDELITY: patterns.sh intends to skip comment lines here via a
-        # `grep -v` comment filter, but that filter runs on `grep -n` output
-        # already prefixed with "<lineno>:", so the leading-comment anchor never
-        # matches and the skip is effectively dead — the bash impl flags weak-hash
-        # and mode findings on comment lines too. This port intentionally
-        # REPLICATES that behavior for byte-exact parity
-        # (tests/validate-python-ports.sh); fixing the dead comment-skip is a
-        # behavior change tracked as a separate follow-up so this increment stays
-        # purely a runtime port.
+        # --- Category: insecure-crypto (skip comment-only lines) ---
+        # A line whose first non-space character opens a comment (#, //, /*, *)
+        # is skipped — matches the fixed bash `grep -v '^[0-9]+:\s*(#|...)'`
+        # filter (see #168; the earlier anchor never fired against grep -n's
+        # line-number prefix, so comment lines were wrongly flagged).
+        is_comment = re.match(r"\s*(#|//|/\*|\*)", line) is not None
 
-        if re.search(r"\b(md5|sha1)\s*\(", line, re.IGNORECASE):
+        if not is_comment and re.search(r"\b(md5|sha1)\s*\(", line, re.IGNORECASE):
             emit(path, idx, "insecure-crypto", "Weak hash algorithm: " + cap(line))
 
-        if re.search(r"\bECB\b|MODE_ECB|mode.*ecb", line, re.IGNORECASE):
+        if not is_comment and re.search(
+            r"\bECB\b|MODE_ECB|mode.*ecb", line, re.IGNORECASE
+        ):
             emit(path, idx, "insecure-crypto", "ECB mode encryption: " + cap(line))
 
 
