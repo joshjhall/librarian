@@ -292,10 +292,10 @@ authorization** layered over the existing pieces: the order is computed by
      require only the **changed-file** check subset to re-pass, not the whole
      build matrix, **where the repo's branch protection permits**.
 
-   Auto-merge consent is unchanged: under an autonomous run the `--auto` fast
-   path is taken only when BOTH `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` are
-   set (see `ship-issue` § Environment Variables). The train's single batch
-   approval does **not** substitute for that per-PR auto-merge consent.
+   Merging is the level-aware routine gate (auto at L3–L4 after green CI + clean
+   review; human-authorized at L1–L2 — see `orchestrate/autonomy-levels.md`).
+   The train's single batch approval authorizes the *sequence*; it does **not**
+   override the per-PR merge invariant.
 
 1. **Honor stop/drain.** Between iterations, check the pool stop/drain signal —
    `pool.json` `accepting` (Phase P). If it is `draining` (or `paused`), finish
@@ -310,7 +310,6 @@ authorization** layered over the existing pieces: the order is computed by
 
 **Autonomous train.** When the orchestrator runs autonomously, skip the
 `AskUserQuestion` batch approval (the batch is authorized by the autonomous
-invocation) but keep every outward-action `ask` gate and the `AUTOMERGE` +
-`AUTOMERGE_AUTONOMOUS` double-consent. A genuine conflict escalation still stops
-the train for the human — the train automates the *sequencing*, not the
-judgment.
+invocation) but keep every outward-action `ask` gate. A genuine conflict
+escalation still stops the train for the human — the train automates the
+*sequencing*, not the judgment.

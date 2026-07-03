@@ -172,7 +172,7 @@ answer on the human's behalf. To skip the gate entirely on a medium issue, use
 | Realization        | Built on | Payload (process)                         | Exit                            |
 | ------------------ | -------- | ----------------------------------------- | ------------------------------- |
 | **Worktree golem** | Mode 2   | `claude --permission-mode auto "/workflow:next-issue <N> --autonomous" ; claude --permission-mode auto "/workflow:ship-issue --autonomous"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
-| **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (or auto-merge: needs `AUTOMERGE=1` + `AUTOMERGE_AUTONOMOUS=1`) |
+| **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (merge is the level-aware routine gate: auto at L3–L4 after green CI + clean review) |
 
 > **Hard constraint — golems are processes, never Workflow subagents.** The
 > Workflow tool permits one nesting level, and each golem's `/ship-issue`
@@ -357,8 +357,7 @@ monitors PR + issue-label state and rebases across PRs. It NEVER merges a
 golem's branch into its own — a golem's own `/ship-issue` merges its PR as the
 **level-aware routine gate** (auto at L3–L4, human at L1–L2, always subject to the
 green-CI + clean-review merge invariant); humans merge whatever a golem leaves for
-them. (The legacy `AUTOMERGE` / `AUTOMERGE_AUTONOMOUS` double-consent is retired as
-that path and deprecated — #209.) See `SKILL.md` Phases D / M / R.
+them. See `SKILL.md` Phases D / M / R.
 
 ### Worker Pool (fixed-size, self-refilling)
 
