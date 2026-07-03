@@ -5,7 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2026-07-01
+## [0.5.0] - 2026-07-03
+
+### Added
+
+- Install Python 3.12 for the patterns.sh port (#17) (#154)
+- Wire codegraph MCP + track .codegraph cache symlink
+- Queue dependencies first for an explicitly-named blocked issue (#160)
+- Python-primary check-security pre-scan + bash-3.2 portability (#169)
+- Port check-docs-missing-api pre-scan to Python 3.11+ (#170)
+- Port check-code-health pre-scan to Python 3.11+ (#172)
+- Port high-tier pre-scan tools to Python 3.11+ (phase 2) (#173)
+- Port moderate-tier pre-scan tools to Python 3.11+ (phase 2) (#182)
+- Port simple-tier pre-scan tools to Python 3.11+ (phase 2)
+- Autonomy-level contract & gate taxonomy (L1–L4) (#188)
+- Next-issue autonomy_level (1–4) replaces binary autonomous (#191)
+- Scope sudo to a command allowlist (drop NOPASSWD:ALL) (#192)
+- Mid-flight escalation gate for architectural/directional decisions (#194)
+- Ship-issue merge-on-green+clean-review as level-aware routine gate (#195)
+- Add Codecov coverage reporting + expand README badges (#196)
+- Structured dead-end summary for unresolvable gates (#197)
+- Orchestrate tracks composition mode (#178 Part A) (#201)
+- Orchestrate setup flow + lone /next-issue L1–L4 prompt (#202)
+- Orchestrate lane-aware serial refill (#199 Part C) (#203)
+- Extract autonomy-level gate disposition into a resolver script (#207)
+
+### CI/CD
+
+- Add Python (ruff) + shellcheck lint gates across the board (#185)
+
+### Changed
+
+- Retier agents/skills for the 5-gen models (#156)
+- Cap critical at L3, remove force-auto-critical overrides (#200)
+- Remove deprecated AUTOMERGE auto-merge fast path (#211)
+
+### Documentation
+
+- Document passwordless-sudo + SYS_ADMIN threat model (#158)
+- Document tmux launch permission setup for first dispatch (#165)
+- Reconcile autonomy language to L1–L4 + bake in never-time-out rule (#210)
+- Add session team memories for autonomy/ship-issue work
+
+### Fixed
+
+- Correct 3 latent check-security scanner regex bugs (#171)
+- Correct 5 latent pre-scan scanner bugs found during the port (#184)
+- Namespace golem launch commands to /workflow:next-issue (#163)
+- Make bash/python pre-scans byte-equivalent + add differential gate (#187)
+- Guard check-ai-config get_frontmatter against pipefail abort (#208)
+
+### Miscellaneous
+
+- Bump containers to v4.19.10; disable /run tmpfs
+
+### Testing
+
+- Add source-level category-slug parity gate (patterns.sh ↔ patterns.py) (#193)
+- Behavioral coverage gate for check-ai-config detectors (#206)
+
+## [0.4.0] - 2026-07-02
 
 ### Added
 
@@ -26,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Harden release pipeline (PR #142 follow-ups) (#147)
 - SwiftPM/Swift Testing detection + release Group D coverage + release.yml tempfile cleanup (#150)
+- Sign releases with cosign 3.x bundle format (--bundle) (#153)
 
 ### Testing
 
@@ -147,6 +207,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.5.0]: https://github.com/joshjhall/librarian/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/joshjhall/librarian/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/joshjhall/librarian/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/joshjhall/librarian/compare/v0.1.0...v0.2.0
