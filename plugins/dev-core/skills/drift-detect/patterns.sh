@@ -15,7 +15,21 @@
 #   1 = usage error (missing argument)
 #
 # Note: Uses full paths for commands per project shell-scripting conventions.
+#
+# Runtime: Python 3.11+ primary (patterns.py) with this bash script as the
+# portable fallback. The shim below exec's patterns.py when a python3>=3.11 is
+# present (identical TSV contract; both args forwarded); PATTERNS_FORCE_BASH=1
+# forces this bash body. This tool is the two-arg outlier. See CLAUDE.md § Key
+# conventions (runtime policy).
 set -euo pipefail
+
+# --- runtime selection: prefer python3>=3.11, else this bash fallback --------
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/patterns.py" ] &&
+    command -v python3 >/dev/null 2>&1 &&
+    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    exec python3 "$_here/patterns.py" "$@"
+fi
 
 ACTUAL_FILES="${1:?Usage: patterns.sh <actual-files> <planned-files>}"
 PLANNED_FILES="${2:?Usage: patterns.sh <actual-files> <planned-files>}"

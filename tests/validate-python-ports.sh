@@ -107,6 +107,24 @@ done
 EMPTY="$WORKDIR/empty.txt"
 : >"$EMPTY"
 
+# drift-detect is the two-arg outlier (actual-files + planned-files). It reads no
+# file CONTENT — only compares the two path lists — so its parity fixture is a
+# pair of path lists rather than the shared source tree. A planned file absent
+# from "actual" and an unplanned actual file exercise both categories.
+DRIFT_ACTUAL="$WORKDIR/drift-actual.txt"
+DRIFT_PLANNED="$WORKDIR/drift-planned.txt"
+/usr/bin/printf '%s\n' "src/foo.py" "src/unplanned.py" "package-lock.json" >"$DRIFT_ACTUAL"
+/usr/bin/printf '%s\n' "src/foo.py" "src/never_touched.py" >"$DRIFT_PLANNED"
+
+# port_is_two_arg PY — 0 (true) if this port takes two file-list args. Mirrors
+# the same special-case in tests/validate-prescans.sh (keyed on the skill dir).
+port_is_two_arg() {
+    case "$1" in
+        */drift-detect/patterns.py) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # --- Edge-case contract (python entry point) --------------------------------
 
 CUR_PY=""
@@ -119,9 +137,14 @@ test_python_edgecases() {
     assert_exit 1 "$rc" "patterns.py: missing argument should exit 1"
     assert_contains "$err" "Usage" "patterns.py: missing argument should print a usage error"
 
-    # Empty file list -> exit 0, no output.
+    # Empty file list -> exit 0, no output. drift-detect needs the right arity
+    # (two empty lists) so it does not exit 1 on a legitimately empty diff.
     rc=0
-    out="$(python3 "$py" "$EMPTY" 2>/dev/null)" || rc=$?
+    if port_is_two_arg "$py"; then
+        out="$(python3 "$py" "$EMPTY" "$EMPTY" 2>/dev/null)" || rc=$?
+    else
+        out="$(python3 "$py" "$EMPTY" 2>/dev/null)" || rc=$?
+    fi
     assert_exit 0 "$rc" "patterns.py: empty file list should exit 0"
     assert_output_empty "$out" "patterns.py: empty file list should emit no findings"
 }
@@ -138,8 +161,13 @@ test_python_bash_parity() {
     fi
 
     local py_out sh_out
-    py_out="$(python3 "$py" "$FILE_LIST" 2>/dev/null | command sort)"
-    sh_out="$(PATTERNS_FORCE_BASH=1 bash "$sh" "$FILE_LIST" 2>/dev/null | command sort)"
+    if port_is_two_arg "$py"; then
+        py_out="$(python3 "$py" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
+        sh_out="$(PATTERNS_FORCE_BASH=1 bash "$sh" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
+    else
+        py_out="$(python3 "$py" "$FILE_LIST" 2>/dev/null | command sort)"
+        sh_out="$(PATTERNS_FORCE_BASH=1 bash "$sh" "$FILE_LIST" 2>/dev/null | command sort)"
+    fi
 
     assert_equals "$sh_out" "$py_out" \
         "$(command basename "$(command dirname "$py")"): python and bash impls emit identical findings"
