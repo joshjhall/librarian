@@ -148,9 +148,51 @@ the merge invariant**. Concretely:
 
 A dead-end **defers to a human at every level, L4 included** — there is nothing
 safe to auto-decide, because every automatic path forward would cross the merge
-invariant. On a dead-end the orchestrator emits a **structured summary**: why it
-is a dead-end, what was attempted, and what options remain. This is the one place
-even a fully hands-off L4 run stops and waits.
+invariant. On a dead-end the orchestrator emits a **structured summary** (below)
+and waits. This is the one place even a fully hands-off L4 run stops and waits.
+
+### The dead-end summary template
+
+Every dead-end — from any of the three sources above — emits the **same three
+required sections**, so an operator returning to a parked run reads one shape
+regardless of what stalled. This is the canonical definition; the three sources
+(`ship-issue/ci-review-protocol.md`, `agents/ci-fixer.md`,
+`agents/rebase-agent.md`) reference it rather than re-inventing a format.
+
+```markdown
+## Dead-end — {issue #N or PR #N}: {one-line what stalled}
+
+**Why it's a dead-end**
+{The specific gate and why no safe auto-resolution exists — name the invariant
+it would cross. e.g. "CI job `test` is red after `ci-fixer` exhausted its
+3-attempt cap; the failure is in product code the diff changed, not infra, so
+merging would violate green-CI."}
+
+**What was attempted**
+{The concrete remediation already tried and its outcome, so the human does not
+redo it. e.g. "3 `ci-fixer` passes (assertion fix, import fix, type fix); each
+re-ran CI and the same 2 tests stayed red. Infra-flake retry ruled it out —
+failing step exercises the diff."}
+
+**Options that remain**
+{The agent's analysis of viable paths forward — may be "none obvious — needs a
+human decision." Include a recommendation with a one-line rationale when one
+exists. e.g. "A: the test expectation itself may be wrong (recommend — the
+assertion predates the behavior the issue changes); B: revert the behavior
+change and re-scope the issue; C: ship with failing CI is NOT an option (merge
+invariant)."}
+```
+
+Rules that hold for every dead-end summary, at every level:
+
+- **Never merge**, never force past the merge invariant, never fabricate a human
+  answer or lapse-and-default (see § *Standing rule* below).
+- Leave the PR **parked** (`status/pr-pending`), not merged, not in a prompting
+  state.
+- **Surface it on the feed** as a `dead-end` event (message begins `DEAD-END:`)
+  so `golem-status.sh` / `golem-gate-watch.sh` flag it distinctly from a routine
+  `escalation` and point the operator at `golem-attach.sh {N}`. See
+  `orchestrate/mode-protocol.md` § *Feed event vocabulary*.
 
 ---
 

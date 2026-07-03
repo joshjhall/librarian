@@ -339,7 +339,12 @@ Detect and rebase them — without merging anything into the orchestrator branch
    - escalates `has-logic` (same-function / add-add / delete-modify) conflicts.
 
 1. **Report** `rebases[]` (auto-resolved, with strategy) and surface
-   `escalations[]` **verbatim** to the human.
+   `escalations[]` **verbatim** to the human. A contradictory conflict the
+   `rebase-agent` could not union is a **dead-end** — emit it with the dead-end
+   summary template (`autonomy-levels.md` § *The dead-end summary template*) and
+   a `dead-end` feed event (message begins `DEAD-END:`) so it surfaces distinctly
+   and blocks at every level; the `rebase-agent`'s `escalated[]` entry already
+   carries the why/attempted/remaining content to fold in.
 
 1. **Push rebased branches** (the harness never pushes): for each rebased PR
    branch, the orchestrator pushes under human supervision:

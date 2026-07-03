@@ -151,6 +151,24 @@ For conflicts you cannot auto-resolve:
 1. **Do NOT attempt** to resolve contradictory logic conflicts, API changes,
    configuration changes, or architectural decisions
 
+A contradictory conflict you cannot union is a **dead-end** (a rebase can only
+proceed by choosing one side's logic over the other's — a judgement call, and
+shipping the wrong side would land un-reviewed logic). Structure each
+`escalated[]` entry so the orchestrator can surface it with the **dead-end
+summary template** (`orchestrate/autonomy-levels.md` § *The dead-end summary
+template*) without re-deriving context — the three sections map directly onto
+what you already report:
+
+- **why it's a dead-end** → the conflict type + why it is not unionable
+  (contradictory, not complementary);
+- **what was attempted** → the union check you ran and why it did not apply;
+- **options that remain** → both sides verbatim (the human picks, or redesigns).
+
+You never emit the feed event or merge — the **orchestrator** owns delivery and
+emits the `dead-end` feed marker (`DEAD-END:` — see
+`orchestrate/mode-protocol.md` § *Feed event vocabulary*); you supply the
+structured content it surfaces.
+
 ## Error Handling
 
 - **Package manager fails during lockfile regeneration**: mark the file as
