@@ -15,6 +15,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 # --- runtime selection: prefer python3>=3.11, else this bash fallback --------
 # Runtime: Python 3.11+ primary (patterns.py); this bash body is the portable
 # fallback. PATTERNS_FORCE_BASH=1 forces bash. See CLAUDE.md § Key conventions.
@@ -79,8 +104,12 @@ while IFS= read -r file; do
 
         # Python: check imports
         if [ "$code_lang" = "python" ]; then
-            # Match: from X import Y or import X
-            module=$(/usr/bin/echo "$line" | /usr/bin/grep -oE '^(from|import) [a-zA-Z_][a-zA-Z0-9_.]*' | /usr/bin/awk '{print $2}' | /usr/bin/head -1)
+            # Match: from X import Y or import X. The trailing `|| true` is
+            # load-bearing: under `set -euo pipefail`, a `grep` that finds no
+            # match makes this command substitution non-zero and aborts the
+            # WHOLE scan mid-file (silently dropping every later finding). The
+            # empty result is already handled by the `[ -n "$module" ]` guard.
+            module=$(/usr/bin/echo "$line" | /usr/bin/grep -oE '^(from|import) [a-zA-Z_][a-zA-Z0-9_.]*' | /usr/bin/awk '{print $2}' | /usr/bin/head -1 || true)
             if [ -n "$module" ]; then
                 # Convert module path to file path
                 module_path=$(/usr/bin/echo "$module" | /usr/bin/sed 's/\./\//g')
@@ -94,7 +123,7 @@ while IFS= read -r file; do
                             datetime | math | random | copy | io | abc | enum | logging | unittest | pytest | \
                             flask | django | fastapi | requests | numpy | pandas | click | pydantic) continue ;;
                     esac
-                    evidence=$(/usr/bin/printf '%.80s' "Import not found in project: ${line}")
+                    evidence=$(truncate_chars 80 "Import not found in project: ${line}")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "broken-example" \
                         "$evidence" "HIGH"
@@ -104,11 +133,14 @@ while IFS= read -r file; do
 
         # Shell: check script references
         if [ "$code_lang" = "shell" ]; then
-            # Match: ./scripts/foo.sh or bash scripts/foo.sh
-            script=$(/usr/bin/echo "$line" | /usr/bin/grep -oE '(\./|bash |sh )[a-zA-Z0-9_./-]+\.sh' | /usr/bin/sed 's/^bash //' | /usr/bin/sed 's/^sh //' | /usr/bin/head -1)
+            # Match: ./scripts/foo.sh or bash scripts/foo.sh. `|| true` for the
+            # same reason as the python arm above — a no-match grep here would
+            # otherwise abort the whole scan under `set -e` (a shell code block
+            # line without a `.sh` reference is common). Guarded by `[ -n "$script" ]`.
+            script=$(/usr/bin/echo "$line" | /usr/bin/grep -oE '(\./|bash |sh )[a-zA-Z0-9_./-]+\.sh' | /usr/bin/sed 's/^bash //' | /usr/bin/sed 's/^sh //' | /usr/bin/head -1 || true)
             if [ -n "$script" ]; then
                 if [ ! -f "${PROJECT_ROOT}/${script}" ]; then
-                    evidence=$(/usr/bin/printf '%.80s' "Script not found: ${script}")
+                    evidence=$(truncate_chars 80 "Script not found: ${script}")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "broken-example" \
                         "$evidence" "HIGH"

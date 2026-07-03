@@ -34,6 +34,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -41,7 +66,7 @@ while IFS= read -r file; do
     # Match TODO, FIXME, STUB, PLACEHOLDER, NotImplementedError, unimplemented!
     /usr/bin/grep -niE '\b(TODO|FIXME|STUB|PLACEHOLDER)\b|NotImplementedError|raise NotImplementedError|unimplemented!\(\)|todo!\(\)|panic\("not implemented"\)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            evidence=$(/usr/bin/printf '%.80s' "$content")
+            evidence=$(truncate_chars 80 "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "stub-detected" \
                 "Stub/placeholder: ${evidence}" "HIGH"
@@ -60,7 +85,7 @@ while IFS= read -r file; do
                     next_line=$(/usr/bin/sed -n "$((line_num + 1)),\$p" "$file" |
                         /usr/bin/grep -m1 -E '\S' | /usr/bin/head -1)
                     if echo "$next_line" | /usr/bin/grep -qE '^\s*(pass|\.\.\.)\s*$' 2>/dev/null; then
-                        evidence=$(/usr/bin/printf '%.80s' "$content")
+                        evidence=$(truncate_chars 80 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-body" \
                             "Empty function body: ${evidence}" "HIGH"
@@ -74,7 +99,7 @@ while IFS= read -r file; do
             # space) was missed (#183).
             /usr/bin/grep -nE '(function\s+\w+|=>\s*)\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-body" \
                         "Empty function body: ${evidence}" "HIGH"
@@ -84,7 +109,7 @@ while IFS= read -r file; do
             # Go: function with empty braces ([[:space:]]* not [\s]*, see #183).
             /usr/bin/grep -nE '^func\s+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    evidence=$(/usr/bin/printf '%.80s' "$content")
+                    evidence=$(truncate_chars 80 "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-body" \
                         "Empty function body: ${evidence}" "HIGH"

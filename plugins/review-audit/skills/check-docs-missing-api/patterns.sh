@@ -29,6 +29,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 # check_prev_lines FILE LINE_NUM PATTERN — returns 0 if PATTERN found in
 # the 3 lines before LINE_NUM
 check_prev_lines() {
@@ -57,7 +82,7 @@ while IFS= read -r file; do
                         # Also check if function body starts with docstring
                         next_lines=$(/usr/bin/sed -n "$((line_num + 1)),$((line_num + 2))p" "$file" 2>/dev/null)
                         if ! /usr/bin/echo "$next_lines" | /usr/bin/grep -qE '^\s+"""'; then
-                            evidence=$(/usr/bin/printf '%.80s' "$content")
+                            evidence=$(truncate_chars 80 "$content")
                             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-api" \
                                 "Python: ${evidence}" "HIGH"
@@ -73,7 +98,7 @@ while IFS= read -r file; do
                 while IFS=: read -r line_num content; do
                     # Check for JSDoc comment (/**) in preceding lines
                     if ! check_prev_lines "$file" "$line_num" '/\*\*'; then
-                        evidence=$(/usr/bin/printf '%.80s' "$content")
+                        evidence=$(truncate_chars 80 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "JS/TS: ${evidence}" "HIGH"
@@ -92,7 +117,7 @@ while IFS= read -r file; do
                     if [ -n "$func_name" ]; then
                         prev_line=$(/usr/bin/sed -n "$((line_num - 1))p" "$file" 2>/dev/null)
                         if ! /usr/bin/echo "$prev_line" | /usr/bin/grep -q "// ${func_name}"; then
-                            evidence=$(/usr/bin/printf '%.80s' "$content")
+                            evidence=$(truncate_chars 80 "$content")
                             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-api" \
                                 "Go: ${evidence}" "HIGH"
@@ -108,7 +133,7 @@ while IFS= read -r file; do
                 while IFS=: read -r line_num content; do
                     # Check for /// doc comment
                     if ! check_prev_lines "$file" "$line_num" '^\s*///'; then
-                        evidence=$(/usr/bin/printf '%.80s' "$content")
+                        evidence=$(truncate_chars 80 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Rust: ${evidence}" "HIGH"
@@ -127,7 +152,7 @@ while IFS= read -r file; do
                     esac
                     # Check for # comment on preceding line
                     if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
-                        evidence=$(/usr/bin/printf '%.80s' "$content")
+                        evidence=$(truncate_chars 80 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Shell: ${evidence}" "HIGH"
@@ -140,7 +165,7 @@ while IFS= read -r file; do
             /usr/bin/grep -nE '^\s*def [a-z]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
-                        evidence=$(/usr/bin/printf '%.80s' "$content")
+                        evidence=$(truncate_chars 80 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Ruby: ${evidence}" "HIGH"
@@ -153,7 +178,7 @@ while IFS= read -r file; do
             /usr/bin/grep -nE '^\s*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     if ! check_prev_lines "$file" "$line_num" '/\*\*'; then
-                        evidence=$(/usr/bin/printf '%.80s' "$content")
+                        evidence=$(truncate_chars 80 "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Java/Kotlin: ${evidence}" "HIGH"

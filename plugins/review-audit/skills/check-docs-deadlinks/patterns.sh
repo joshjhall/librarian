@@ -25,6 +25,31 @@ if [ ! -f "$FILE_LIST" ]; then
     exit 1
 fi
 
+# --- char-aware evidence truncation (#17 bash<->python equivalence) ----------
+# Evidence is truncated to a fixed number of CHARACTERS to match the Python
+# primary's str[:N]. `printf '%.Ns'` truncates by BYTES (and can split a UTF-8
+# character), so multibyte evidence diverged between the two impls. Detect a
+# UTF-8 locale once, then slice with bash parameter expansion under it
+# (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
+_PRESCAN_UTF8_LOCALE=""
+for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+        _PRESCAN_UTF8_LOCALE="$_cand"
+        break
+    fi
+done
+unset _cand
+# truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
+truncate_chars() {
+    local n="$1" s="$2"
+    if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
+        local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
+        printf '%s' "${s:0:$n}"
+    else
+        /usr/bin/printf "%.${n}s" "$s"
+    fi
+}
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -51,7 +76,7 @@ while IFS= read -r file; do
             resolved="${file_dir}/${target_file}"
 
             if [ ! -e "$resolved" ]; then
-                evidence=$(/usr/bin/printf '%.80s' "Link target not found: ${target}")
+                evidence=$(truncate_chars 80 "Link target not found: ${target}")
                 /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "broken-relative-link" \
                     "$evidence" "HIGH"
@@ -70,7 +95,7 @@ while IFS= read -r file; do
             # Search for matching heading in the same file
             heading_pattern=$(/usr/bin/echo "$anchor" | /usr/bin/sed 's/-/ /g')
             if ! /usr/bin/grep -qiE "^#{1,6} .*${heading_pattern}" "$file" 2>/dev/null; then
-                evidence=$(/usr/bin/printf '%.80s' "Anchor #${anchor} has no matching heading in file")
+                evidence=$(truncate_chars 80 "Anchor #${anchor} has no matching heading in file")
                 /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "broken-anchor" \
                     "$evidence" "HIGH"
@@ -82,7 +107,7 @@ while IFS= read -r file; do
     /usr/bin/grep -noE 'https?://[^ )>"]+' "$file" 2>/dev/null |
         /usr/bin/grep -iE '(deprecated|sunset|eol|end-of-life|removed|legacy)' |
         while IFS=: read -r line_num url; do
-            evidence=$(/usr/bin/printf '%.80s' "Suspicious URL: ${url}")
+            evidence=$(truncate_chars 80 "Suspicious URL: ${url}")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "suspicious-external-link" \
                 "$evidence" "HIGH"
