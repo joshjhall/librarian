@@ -291,8 +291,24 @@ or has no `files_planned` (nothing to re-present).
 1. Show the selected issue to the user — title, labels, body excerpt
 
 1. Ask: **Work on this issue?** (user can accept, skip to next, or pick
-   a different one) — at **L3–L4** (issue acceptance is a routine gate), accept
-   the selected issue automatically (no prompt)
+   a different one) — when the run is already known to be autonomous (an
+   `--autonomous`/`--auto`/`--level` flag or an orchestrator-passed level, i.e.
+   issue acceptance is a routine gate at **L3–L4**), accept the selected issue
+   automatically (no prompt).
+
+1. **Choose the rules of engagement (autonomy level)** — for a **lone
+   interactive `/next-issue`** whose level was NOT already fixed by a flag or an
+   orchestrator, ask the operator now: an `AskUserQuestion` offering **L1–L4**,
+   each with its one-line description (`orchestrate/autonomy-levels.md` § "The
+   four levels"). The issue's `effort/*`/`severity/*` labels are known here, so
+   apply the **critical cap**: a `severity/critical` issue offers **L1–L3 only**.
+   **Wait indefinitely** for the answer — never lapse-and-default to L1 because
+   the operator stepped away (`autonomy-levels.md` § *Standing rule*). Skip this
+   question entirely when the level is already set (flag / env / orchestrator
+   `--level`), and in a non-interactive context with no TTY fall back to the L1
+   disposition rather than hang. This resolves `autonomy_level` **before** the
+   Phase 2 plan-mode decision, which depends on it. See `## Autonomous Mode` §
+   Level selection.
 
 1. Assign the issue to yourself
 
@@ -319,9 +335,11 @@ or has no `files_planned` (nothing to re-present).
 
    Set `"autonomy_level"` from level selection (see `## Autonomous Mode`):
    `--level {1,2,3,4}`; else `--autonomous`/`--auto`/`NEXT_ISSUE_AUTONOMOUS=1` →
-   `4`; else `1` (the interactive default) unless an orchestrator chose a level
-   at setup. Then apply the **critical cap** to the just-fetched labels: if the
-   issue is `severity/critical` and the selected level is `4`, record `3`. Write
+   `4`; else an orchestrator-passed `--level`; else the **operator's answer to
+   the L1–L4 rules-of-engagement question** asked above (lone interactive run);
+   else — only in a non-interactive context with no TTY — the **L1** fallback.
+   Then apply the **critical cap** to the just-fetched labels: if the issue is
+   `severity/critical` and the selected level is `4`, record `3`. Write
    the two derived back-compat mirrors: `"autonomous"` = `(autonomy_level == 4)`;
    `"plan_gated"` = `true` when the plan gate is **kept** — i.e. `autonomy_level
    <= 3` (which includes every capped critical) — and `false` at L4. The legacy
@@ -384,8 +402,10 @@ or has no `files_planned` (nothing to re-present).
 
    Carry `"autonomy_level"` (and its derived `"autonomous"` / `"plan_gated"`
    mirrors) forward from Phase 1 unchanged — the level is fixed at selection,
-   including the critical cap. Note a `--ship`/`--now` run is **L1** (it is not
-   autonomy; it only skips the `/clear`, keeping the interactive plan gate). The
+   including the critical cap. Note `--ship`/`--now` is **not autonomy** and never
+   selects L4 — it keeps the interactive plan gate and only skips the `/clear`; a
+   lone `--ship` run still answers the L1–L4 question in Phase 1 (any of L1–L3),
+   and its plan-approval gate is preserved at every one of those. The
    template above deliberately omits `"plan_comment_url"`: add that field **only**
    on the **L4 (plan-auto-passed)** path (see the autonomous planning path below),
    where the plan is posted as an issue comment. An **L1–L3** run uses

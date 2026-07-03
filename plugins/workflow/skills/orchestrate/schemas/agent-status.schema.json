@@ -20,6 +20,12 @@
       "enum": ["starting", "working", "review-ready", "idle", "error"],
       "description": "Current agent state."
     },
+    "autonomy_level": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "The rules-of-engagement level (L1-L4) this agent runs at, per orchestrate/autonomy-levels.md — chosen at the setup flow and inherited from its track (a severity/critical issue is capped at L3). Cache mirror for the monitor/display; the next-issue state file's autonomy_level is authoritative for the run."
+    },
     "issue": {
       "type": "integer",
       "minimum": 1,

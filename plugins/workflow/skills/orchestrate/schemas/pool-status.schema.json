@@ -40,6 +40,12 @@
           "branch": {
             "type": "string",
             "description": "Git head branch of the slot's golem."
+          },
+          "autonomy_level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "The rules-of-engagement level (L1-L4) the slot's golem runs at, per orchestrate/autonomy-levels.md — inherited from its track (a severity/critical issue is capped at L3). Per-slot because a single pool may run golems from tracks chosen at different levels. Cache mirror for the pool header/display; the golem's next-issue state file is authoritative."
           }
         },
         "additionalProperties": false

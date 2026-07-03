@@ -17,8 +17,24 @@ The run's **autonomy level** is an integer **1–4**, chosen once and persisted 
 - an explicit **`--level {1,2,3,4}`** flag; else
 - **`--autonomous`** (or its deprecated alias **`--auto`**), or the environment
   variable **`NEXT_ISSUE_AUTONOMOUS=1`** — each an **alias for L4**; else
-- **nothing** → the interactive default, an **L1 disposition** (every gate asks),
-  unless a level was chosen at setup by an orchestrator.
+- a level **already chosen at setup by an orchestrator** (the track's
+  `autonomy_level`, passed as `--level {N}` at dispatch); else
+- for a **lone interactive `/next-issue`** (no flag, no orchestrator), **ask the
+  operator** — the setup-flow "rules of engagement" question, scaled to one
+  issue: an `AskUserQuestion` offering **L1–L4**, each with its one-line
+  description (`orchestrate/autonomy-levels.md` § "The four levels"). A
+  `severity/critical` issue offers **L1–L3 only** (the cap). **Wait indefinitely**
+  for the answer — never lapse-and-default to L1 because the operator stepped
+  away (`autonomy-levels.md` § *Standing rule*). Ask **once per run**, in Phase 1
+  right after the issue's `effort/*`/`severity/*` labels are fetched (so the
+  critical cap is known) and **before** the Phase 0/2 plan-mode deferral, since
+  the chosen level decides whether plan mode is even entered.
+
+The old **silent L1 default** is gone for an interactive run — L1 is now a
+*choice the operator can make*, not an unannounced fallback. (A non-interactive
+context with no TTY to ask — e.g. a headless invocation that is somehow neither
+`--autonomous` nor orchestrator-dispatched — still falls back to the L1
+disposition rather than hang on an unanswerable prompt.)
 
 `severity/critical` issues are **capped at L3**: an L4 selection (via `--level 4`
 or an `--autonomous` alias) on a critical issue is silently reduced to L3, so a
