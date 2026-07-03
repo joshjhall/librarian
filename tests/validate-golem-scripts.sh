@@ -145,7 +145,7 @@ test_launch_print_emits_new_session() {
     assert_exit 0 "$RUN_RC" "print <N> exits 0"
     assert_contains "$RUN_OUT" "tmux new-session" "print emits a tmux new-session line"
     assert_contains "$RUN_OUT" "golem-5" "the line targets golem-5"
-    assert_contains "$RUN_OUT" "/next-issue 5" "the line resumes the issue's next-issue run"
+    assert_contains "$RUN_OUT" "/workflow:next-issue 5" "the line resumes the issue's namespaced next-issue run"
 }
 
 # `print` with a non-numeric argument → exit 2.

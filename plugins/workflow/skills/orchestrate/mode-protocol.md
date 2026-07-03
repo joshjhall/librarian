@@ -111,8 +111,12 @@ and would otherwise fall back to `default`. The harness `--permission-mode auto`
 is distinct from the `/next-issue` `--autonomous` skill flag (deprecated alias
 `--auto`) — both are needed.
 Autonomous `/next-issue` invokes `/ship-issue` in-turn, so the single prompt
-reaches a PR on its own. A `;`-chained second prompt is the resume backstop —
-`claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/ship-issue --autonomous"`
+reaches a PR on its own. A `;`-chained second prompt is the resume backstop:
+
+```bash
+claude --permission-mode auto "/workflow:next-issue <N> --autonomous" ; claude --permission-mode auto "/workflow:ship-issue --autonomous"
+```
+
 — so that a premature turn-exit after `/next-issue` still ships: the second
 prompt re-reads the state file and delivers (a near no-op if the first already
 pushed a PR). Use `;`, NOT `&&`: the backstop must run even when the first prompt
@@ -164,7 +168,7 @@ answer on the human's behalf. To skip the gate entirely on a medium issue, use
 
 | Realization        | Built on | Payload (process)                         | Exit                            |
 | ------------------ | -------- | ----------------------------------------- | ------------------------------- |
-| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/next-issue <N> --autonomous" ; claude --permission-mode auto "/ship-issue --autonomous"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
+| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/workflow:next-issue <N> --autonomous" ; claude --permission-mode auto "/workflow:ship-issue --autonomous"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
 | **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (or auto-merge: needs `AUTOMERGE=1` + `AUTOMERGE_AUTONOMOUS=1`) |
 
 > **Hard constraint — golems are processes, never Workflow subagents.** The
@@ -198,7 +202,7 @@ which runs exactly the bare new-session below (one issue per call):
 
 ```bash
 tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
-  "claude --permission-mode auto '/next-issue {N} --autonomous' ; claude --permission-mode auto '/ship-issue --autonomous'"
+  "claude --permission-mode auto '/workflow:next-issue {N} --autonomous' ; claude --permission-mode auto '/workflow:ship-issue --autonomous'"
 ```
 
 **Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is
