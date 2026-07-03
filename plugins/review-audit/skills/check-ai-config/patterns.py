@@ -39,9 +39,7 @@ def _int_env(name: str, default: int) -> int:
 
 
 def emit(path: str, line_no: str, category: str, message: str, certainty: str) -> None:
-    sys.stdout.write(
-        "\t".join((path, line_no, category, message, certainty)) + "\n"
-    )
+    sys.stdout.write("\t".join((path, line_no, category, message, certainty)) + "\n")
 
 
 def _glob(path: str, pattern: str) -> bool:
@@ -108,7 +106,13 @@ def check_agent_frontmatter(path: str, lines: list[str]) -> None:
         )
 
     if not lines or lines[0] != "---":
-        emit(path, "1", "agent-frontmatter", "Missing YAML frontmatter (no opening ---)", "HIGH")
+        emit(
+            path,
+            "1",
+            "agent-frontmatter",
+            "Missing YAML frontmatter (no opening ---)",
+            "HIGH",
+        )
         return
 
     name = get_frontmatter(lines, "name")
@@ -117,19 +121,44 @@ def check_agent_frontmatter(path: str, lines: list[str]) -> None:
     model = get_frontmatter(lines, "model")
 
     if not name:
-        emit(path, "1", "agent-frontmatter", "Missing required frontmatter field: name", "HIGH")
+        emit(
+            path,
+            "1",
+            "agent-frontmatter",
+            "Missing required frontmatter field: name",
+            "HIGH",
+        )
     if not desc:
-        emit(path, "1", "agent-frontmatter", "Missing required frontmatter field: description", "HIGH")
+        emit(
+            path,
+            "1",
+            "agent-frontmatter",
+            "Missing required frontmatter field: description",
+            "HIGH",
+        )
     if not tools:
-        emit(path, "1", "agent-frontmatter", "Missing required frontmatter field: tools", "HIGH")
+        emit(
+            path,
+            "1",
+            "agent-frontmatter",
+            "Missing required frontmatter field: tools",
+            "HIGH",
+        )
     if not model:
-        emit(path, "1", "agent-frontmatter", "Missing required frontmatter field: model", "HIGH")
+        emit(
+            path,
+            "1",
+            "agent-frontmatter",
+            "Missing required frontmatter field: model",
+            "HIGH",
+        )
     elif model not in ("fable", "opus", "sonnet", "haiku", "inherit"):
         emit(
             path,
             "1",
             "agent-frontmatter",
-            f"Invalid model value: {model} (expected fable, opus, sonnet, haiku, or inherit)",
+            f"Invalid model value: {model} "
+            "(expected fable, opus, sonnet, haiku, or inherit)",
             "HIGH",
         )
 
@@ -149,46 +178,96 @@ def check_skill_frontmatter(path: str, lines: list[str]) -> None:
     dirname = path.rsplit("/", 1)[0] if "/" in path else ""
 
     if not lines or lines[0] != "---":
-        emit(path, "1", "skill-frontmatter", "Missing YAML frontmatter (no opening ---)", "HIGH")
+        emit(
+            path,
+            "1",
+            "skill-frontmatter",
+            "Missing YAML frontmatter (no opening ---)",
+            "HIGH",
+        )
         return
 
     desc = get_frontmatter(lines, "description")
     if not desc:
-        emit(path, "1", "skill-frontmatter", "Missing required frontmatter field: description", "HIGH")
+        emit(
+            path,
+            "1",
+            "skill-frontmatter",
+            "Missing required frontmatter field: description",
+            "HIGH",
+        )
 
     if not any(
-        re.search(r"^## (Workflow|Step|Phase|Categories|Conventions|Rules|Patterns|When to)", ln)
+        re.search(
+            r"^## (Workflow|Step|Phase|Categories|Conventions|Rules|Patterns|When to)",
+            ln,
+        )
         for ln in lines
     ):
         emit(
             path,
             "1",
             "skill-frontmatter",
-            "No structural section found (expected ## Workflow, ## Categories, or similar)",
+            "No structural section found "
+            "(expected ## Workflow, ## Categories, or similar)",
             "MEDIUM",
         )
 
     if not os.path.isfile(os.path.join(dirname, "metadata.yml")):
-        emit(path, "1", "skill-frontmatter", "Missing metadata.yml in skill directory", "MEDIUM")
+        emit(
+            path,
+            "1",
+            "skill-frontmatter",
+            "Missing metadata.yml in skill directory",
+            "MEDIUM",
+        )
 
 
 def check_ai_file_bloat(path: str, lines: list[str]) -> None:
     n = len(lines)
     if _glob(path, "*/CLAUDE.md") or _glob(path, "*/AGENTS.md"):
-        warn, high, ftype = _int_env("CLAUDE_MD_WARN", 400), _int_env("CLAUDE_MD_HIGH", 600), "CLAUDE.md"
+        warn, high, ftype = (
+            _int_env("CLAUDE_MD_WARN", 400),
+            _int_env("CLAUDE_MD_HIGH", 600),
+            "CLAUDE.md",
+        )
     elif _glob(path, "*/skills/*/SKILL.md"):
-        warn, high, ftype = _int_env("SKILL_WARN", 300), _int_env("SKILL_HIGH", 500), "skill definition"
+        warn, high, ftype = (
+            _int_env("SKILL_WARN", 300),
+            _int_env("SKILL_HIGH", 500),
+            "skill definition",
+        )
     elif _glob(path, "*/agents/*/*.md"):
-        warn, high, ftype = _int_env("AGENT_WARN", 250), _int_env("AGENT_HIGH", 400), "agent definition"
+        warn, high, ftype = (
+            _int_env("AGENT_WARN", 250),
+            _int_env("AGENT_HIGH", 400),
+            "agent definition",
+        )
     elif _glob(path, "*/docs/*.md"):
-        warn, high, ftype = _int_env("DOC_WARN", 500), _int_env("DOC_HIGH", 800), "documentation"
+        warn, high, ftype = (
+            _int_env("DOC_WARN", 500),
+            _int_env("DOC_HIGH", 800),
+            "documentation",
+        )
     else:
         return
 
     if n > high:
-        emit(path, "1", "ai-file-bloat", f"{ftype} exceeds high threshold: {n} lines (>{high})", "HIGH")
+        emit(
+            path,
+            "1",
+            "ai-file-bloat",
+            f"{ftype} exceeds high threshold: {n} lines (>{high})",
+            "HIGH",
+        )
     elif n > warn:
-        emit(path, "1", "ai-file-bloat", f"{ftype} exceeds warning threshold: {n} lines (>{warn})", "MEDIUM")
+        emit(
+            path,
+            "1",
+            "ai-file-bloat",
+            f"{ftype} exceeds warning threshold: {n} lines (>{warn})",
+            "MEDIUM",
+        )
 
 
 def check_mcp_config(path: str, lines: list[str]) -> None:
@@ -223,7 +302,8 @@ def check_hook_safety(path: str, lines: list[str]) -> None:
                 path,
                 str(idx),
                 "hook-safety",
-                "Destructive command in hook without confirmation: " + line[:EVIDENCE_CAP],
+                "Destructive command in hook without confirmation: "
+                + line[:EVIDENCE_CAP],
                 "HIGH",
             )
         if secret_leak.search(line):
@@ -254,7 +334,8 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 path,
                 str(idx),
                 "harness-logic",
-                "Finding ref may collide (no per-finding index): " + line[:EVIDENCE_CAP],
+                "Finding ref may collide (no per-finding index): "
+                + line[:EVIDENCE_CAP],
                 "MEDIUM",
             )
         if bare_agent.search(line):
@@ -262,7 +343,8 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 path,
                 str(idx),
                 "harness-logic",
-                "Bare agentType (needs <plugin>:<name> for the Workflow tool): " + line[:EVIDENCE_CAP],
+                "Bare agentType (needs <plugin>:<name> for the Workflow tool): "
+                + line[:EVIDENCE_CAP],
                 "MEDIUM",
             )
         if unsafe_interp.search(line):
@@ -270,7 +352,8 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 path,
                 str(idx),
                 "harness-logic",
-                "Interpolation into --dangerously-skip-permissions (validate first): " + line[:EVIDENCE_CAP],
+                "Interpolation into --dangerously-skip-permissions (validate first): "
+                + line[:EVIDENCE_CAP],
                 "HIGH",
             )
         if install.search(line) and not install_safe.search(line):
@@ -278,7 +361,8 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
                 path,
                 str(idx),
                 "harness-logic",
-                "Install/regen may run lifecycle scripts (use lockfile-only): " + line[:EVIDENCE_CAP],
+                "Install/regen may run lifecycle scripts (use lockfile-only): "
+                + line[:EVIDENCE_CAP],
                 "MEDIUM",
             )
 

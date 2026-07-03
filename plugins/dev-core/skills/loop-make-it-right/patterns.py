@@ -80,9 +80,7 @@ def _leading_ws_len(line: str) -> int:
     return m.end() if m else 0
 
 
-def scan_long_functions(
-    path: str, lines: list[str], ext: str, max_lines: int
-) -> None:
+def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -> None:
     total = len(lines)
     if ext == "py":
         # Python: from `def`, count to the next line at same-or-lower indent.

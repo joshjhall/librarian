@@ -10,18 +10,22 @@ default:
 validate:
     node tests/validate-manifests.mjs
 
-# Lint everything the pre-commit hooks would (formatting + manifests)
+# Lint everything the pre-commit hooks would (formatting + manifests + python).
+# shellcheck runs as part of `just test` (tests/lint-shellcheck.sh).
 lint:
     dprint check '**/*.{json,yml,yaml}'
     taplo fmt --check
     rumdl check .
+    ruff check plugins
+    ruff format --check plugins
     node tests/validate-manifests.mjs
 
-# Format JSON/YAML/TOML (markdown via rumdl is opt-in here, review the diff)
+# Format JSON/YAML/TOML/Python (markdown via rumdl is opt-in here, review the diff)
 fmt:
     dprint fmt
     taplo fmt
     rumdl fmt .
+    ruff format plugins
 
 # Run the full local check suite (no network) — mirrors CI's gate jobs
 test:

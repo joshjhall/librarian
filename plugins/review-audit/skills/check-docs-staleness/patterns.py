@@ -38,15 +38,14 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-DATE_RE = re.compile(
-    r"\b(20[0-9]{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12][0-9]|3[01])\b"
-)
+DATE_RE = re.compile(r"\b(20[0-9]{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12][0-9]|3[01])\b")
 YEAR_RE = re.compile(r"20[0-9]{2}")
 YEARMONTH_RE = re.compile(r"20[0-9]{2}[-/](0[1-9]|1[0-2])")
 MONTH_TAIL_RE = re.compile(r"(0[1-9]|1[0-2])$")
 VERSION_RE = re.compile(r"\bv?[0-9]+\.[0-9]+\.[0-9]+\b")
 STALE_MARKER_RE = re.compile(
-    r"(TODO|FIXME|XXX|HACK|WORKAROUND).*(updat|outdat|stale|obsolete|deprecat|remov|old |was )",
+    r"(TODO|FIXME|XXX|HACK|WORKAROUND).*"
+    r"(updat|outdat|stale|obsolete|deprecat|remov|old |was )",
     re.IGNORECASE,
 )
 URL_RE = re.compile(r'https?://[^ )>"]+')
@@ -112,9 +111,7 @@ def main(argv: list[str]) -> int:
 
             # --- Category: outdated-reference (version references) ---
             if VERSION_RE.search(content):
-                if not (
-                    "### [" in content or "## [" in content or "- v" in content
-                ):
+                if not ("### [" in content or "## [" in content or "- v" in content):
                     emit(
                         path,
                         idx,

@@ -1,0 +1,22 @@
+# Ruff configuration for the repo's Python — currently the pre-scan tools
+# (plugins/*/skills/*/patterns.py), the Python-3.11-floor primary implementations
+# behind the pre-scan TSV contract (see CLAUDE.md § Key conventions). Ruff is
+# both linter and formatter here, mirroring the repo's other Rust-based
+# format/lint tools (dprint, taplo, rumdl). Enforced by tests/lint-python.sh,
+# which gates CI and pre-push.
+
+target-version = "py311"
+line-length = 88
+
+[lint]
+# A focused, low-noise rule set: pyflakes (F, real bugs — unused vars/imports,
+# undefined names), pycodestyle errors + warnings (E/W), isort (I, import order),
+# and flake8-bugbear (B, likely-bug patterns). Deliberately NOT the full default
+# so a faithful regex-port style (long alternation strings, intentional literals)
+# does not fight the linter.
+select = ["F", "E", "W", "I", "B"]
+
+[format]
+# Black-compatible defaults (double quotes, trailing commas). Explicit so the
+# `ruff format --check` gate is reproducible across ruff versions.
+quote-style = "double"

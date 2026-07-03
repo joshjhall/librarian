@@ -32,10 +32,34 @@ EVIDENCE_CAP = 80
 
 # Stdlib + common third-party modules skipped (not "broken" if absent locally).
 KNOWN_MODULES = {
-    "os", "sys", "re", "json", "typing", "pathlib", "collections", "functools",
-    "itertools", "dataclasses", "datetime", "math", "random", "copy", "io",
-    "abc", "enum", "logging", "unittest", "pytest", "flask", "django", "fastapi",
-    "requests", "numpy", "pandas", "click", "pydantic",
+    "os",
+    "sys",
+    "re",
+    "json",
+    "typing",
+    "pathlib",
+    "collections",
+    "functools",
+    "itertools",
+    "dataclasses",
+    "datetime",
+    "math",
+    "random",
+    "copy",
+    "io",
+    "abc",
+    "enum",
+    "logging",
+    "unittest",
+    "pytest",
+    "flask",
+    "django",
+    "fastapi",
+    "requests",
+    "numpy",
+    "pandas",
+    "click",
+    "pydantic",
 }
 
 IMPORT_RE = re.compile(r"^(from|import) [a-zA-Z_][a-zA-Z0-9_.]*")
