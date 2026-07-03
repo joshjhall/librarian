@@ -19,6 +19,7 @@
 #  11b. Shell portability / bash-3.2 clean (tests/lint-shell-portability.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
 #  11c2. Pre-scan bash<->python differential (tests/validate-prescan-differential.sh)
+#  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
 #  11d. Shellcheck — bundled shell scripts (tests/lint-shellcheck.sh)
 #  11e. Python lint + format — ruff (tests/lint-python.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
@@ -72,6 +73,7 @@ run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
 run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"
 run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
 run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-prescan-differential.sh"
+run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner-category-parity.sh"
 run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck.sh"
 run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
