@@ -281,6 +281,140 @@ for (const path of [ORCH, REBASE]) {
 }
 
 // =============================================================================
+// orchestrate — setsOverlapCount (magnitude of shared paths; tracks mode)
+// =============================================================================
+{
+  const { setsOverlapCount } = extractHelpers(ORCH, ["setsOverlapCount"]);
+  eq(
+    setsOverlapCount(new Set(["a"]), new Set(["b", "c"])),
+    0,
+    "setsOverlapCount: 0 when sets are disjoint",
+  );
+  eq(
+    setsOverlapCount(new Set(["a", "b"]), new Set(["b", "c"])),
+    1,
+    "setsOverlapCount: 1 when exactly one path is shared",
+  );
+  eq(
+    setsOverlapCount(new Set(["a", "b", "c"]), new Set(["a", "b", "c", "d"])),
+    3,
+    "setsOverlapCount: counts every shared path",
+  );
+  eq(
+    setsOverlapCount(new Set(), new Set(["a"])),
+    0,
+    "setsOverlapCount: 0 when one set is empty",
+  );
+  eq(
+    setsOverlapCount(new Set(["only"]), new Set(["x", "y", "only", "z"])),
+    1,
+    "setsOverlapCount: finds the shared path regardless of which set is smaller",
+  );
+}
+
+// =============================================================================
+// orchestrate — composeTracks (pure track-composition partition; issue #178)
+// =============================================================================
+{
+  const { composeTracks } = extractHelpers(ORCH, ["composeTracks"]);
+
+  // Two disjoint clusters of files → two independent lanes, no cross-track
+  // overlap. Overlapping issues co-locate; the two clusters spread across lanes.
+  const backlog = [
+    { issue: 1, files: ["a.js", "b.js"] },
+    { issue: 2, files: ["x.js", "y.js"] },
+    { issue: 3, files: ["b.js", "c.js"] }, // overlaps #1 (b.js)
+    { issue: 4, files: ["y.js", "z.js"] }, // overlaps #2 (y.js)
+  ];
+  const r = composeTracks(backlog, { trackCount: 2, trackSize: 5 });
+
+  eq(r.tracks.length, 2, "composeTracks: honors trackCount (2 lanes)");
+  eq(
+    r.cross_track_overlap,
+    0,
+    "composeTracks: disjoint clusters land in separate lanes (0 cross-track overlap)",
+  );
+  // #1 and #3 share b.js → same lane; #2 and #4 share y.js → same lane.
+  const laneOf = (n) =>
+    r.tracks.findIndex((t) => t.issues.includes(n));
+  ok(
+    laneOf(1) === laneOf(3),
+    "composeTracks: overlapping issues (#1,#3) co-locate in one lane",
+  );
+  ok(
+    laneOf(2) === laneOf(4),
+    "composeTracks: overlapping issues (#2,#4) co-locate in one lane",
+  );
+  ok(
+    laneOf(1) !== laneOf(2),
+    "composeTracks: the two disjoint clusters occupy different lanes",
+  );
+  // Within-lane order preserves priority (issue #1 before #3 in its lane).
+  const lane1 = r.tracks[laneOf(1)].issues;
+  ok(
+    lane1.indexOf(1) < lane1.indexOf(3),
+    "composeTracks: within-lane order preserves backlog priority",
+  );
+
+  // trackCount default is 3, trackSize default is 5; clamped out-of-range inputs.
+  const rDefault = composeTracks(
+    [
+      { issue: 10, files: ["p"] },
+      { issue: 11, files: ["q"] },
+      { issue: 12, files: ["r"] },
+    ],
+    {},
+  );
+  eq(rDefault.tracks.length, 3, "composeTracks: default trackCount is 3");
+  const rClamp = composeTracks(backlog, { trackCount: 99, trackSize: 99 });
+  ok(
+    rClamp.tracks.length <= 4,
+    "composeTracks: trackCount clamps to <= 4",
+  );
+
+  // Overflow: more disjoint issues than trackCount x trackSize → deferred.
+  const many = [];
+  for (let i = 1; i <= 8; i++) many.push({ issue: i, files: [`f${i}`] });
+  const rOverflow = composeTracks(many, { trackCount: 2, trackSize: 3 });
+  const placed = rOverflow.tracks.reduce((n, t) => n + t.issues.length, 0);
+  eq(placed, 6, "composeTracks: fills 2 lanes x 3 = 6 issues");
+  eq(
+    rOverflow.deferred.length,
+    2,
+    "composeTracks: issues past capacity are deferred",
+  );
+  for (const t of rOverflow.tracks) {
+    ok(
+      t.issues.length <= 3,
+      "composeTracks: no lane exceeds trackSize",
+    );
+  }
+
+  // Determinism: identical input → byte-identical output (no Date.now/Math.random).
+  eq(
+    JSON.stringify(composeTracks(backlog, { trackCount: 2, trackSize: 5 })),
+    JSON.stringify(composeTracks(backlog, { trackCount: 2, trackSize: 5 })),
+    "composeTracks: deterministic — same input yields identical output",
+  );
+
+  // Defensive parse: malformed entries dropped, non-array backlog → empty.
+  const rMalformed = composeTracks(
+    [{ issue: 5, files: ["a"] }, null, { files: ["b"] }, { issue: "x" }],
+    {},
+  );
+  eq(
+    rMalformed.tracks.reduce((n, t) => n + t.issues.length, 0),
+    1,
+    "composeTracks: drops entries with no integer issue number",
+  );
+  eq(
+    composeTracks(null, {}).tracks.length,
+    0,
+    "composeTracks: non-array backlog yields no tracks",
+  );
+}
+
+// =============================================================================
 // ci-fixer — defaultVerdict
 // =============================================================================
 {

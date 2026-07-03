@@ -99,6 +99,51 @@ exposed as `/orchestrate` invocations (see the table in SKILL.md):
 `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` surfaces the pool line — size, slots in use, backlog depth, and
 the `accepting` state — above the golem table.
 
+### Track composition (`mode: "tracks"`)
+
+Where the flat pool refills from **global** priority, **tracks** pre-partition the
+backlog into 2–4 ordered **lanes** run serially, so within-track collisions are
+moot and cross-track collisions were minimized up front. Composition is the
+**pure-computation `tracks` mode of `workflow.js`** (mirroring `pool` / `train` —
+no poll, no I/O, no dispatch). It is the first step of the setup flow
+(`autonomy-levels.md` § "The setup flow"): **propose** these tracks, **approve**
+them, choose the **autonomy level**, then **dispatch** one golem per track head.
+
+Call it with the same priority-ordered backlog the pool uses (each issue with its
+predicted files — `## Affected Files` + `component/*` labels):
+
+```text
+args: {
+  mode:       "tracks",
+  backlog:    [{ issue, files: [<predicted paths>] }, …],  // next-issue priority order
+  trackCount: <2..4>,   // desired lanes (clamped; default 3)
+  trackSize:  <3..5>,   // max issues per lane (clamped; default 5)
+}
+```
+
+It returns `tracks` = `{ tracks, deferred, cross_track_overlap, rationale }`:
+
+- **`tracks`** — the composed lanes: `[{ lane, issues: [<ordered>] }]`. Each
+  lane's `issues` are in priority order = the **serial execution order** (issue
+  k+1 dispatches after issue k's PR merges). The greedy composition co-locates
+  overlapping issues in one lane (which keeps *cross*-lane overlap low) and opens
+  a fresh lane for work disjoint from every open lane while lanes remain. Priority
+  is honored **fuzzily** — a higher-priority issue may be deferred to balance
+  lanes and avoid collisions (explicitly desired).
+- **`deferred`** — backlog issues that did not fit (all lanes full or capped), in
+  priority order; a later composition sweep can pick them up.
+- **`cross_track_overlap`** — count of lane pairs sharing ≥ 1 predicted file
+  (lower is better — the objective the composition minimizes).
+- **`rationale`** — short, deterministic, data-derived notes (lane count / sizes /
+  deferred count / overlap) for the proposal the operator approves.
+
+The composition persists to `.worktrees/.status/tracks.json` (schema:
+`schemas/tracks.schema.json`) once approved, carrying the per-track
+`autonomy_level` chosen at setup. Lane-aware **serial refill** (a freed slot pulls
+its own track's next queued issue rather than the global-priority winner) is a
+follow-up on top of this composition; until then the flat collision-aware refill
+above is the fallback.
+
 ## Phase T — Integration Train
 
 Land a **batch** of already-green, already-approved PRs end-to-end —

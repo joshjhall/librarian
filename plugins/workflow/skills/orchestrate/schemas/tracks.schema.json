@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tracks.schema.json",
+  "title": "Track Composition (ordered, low-collision issue lanes)",
+  "description": "Track composition for the orchestrate setup flow, written to .worktrees/.status/tracks.json. A track is an ORDERED sequence of low-collision issues run serially in one lane; the setup flow proposes 2-4 tracks (composed by orchestrate/workflow.js `mode: \"tracks\"`, pure computation) and the operator approves them and picks the run's autonomy level (L1-L4). AUTHORITATIVE for track membership + within-track ordering + the chosen per-track autonomy_level. PR/MR state and issue status labels remain authoritative for golem liveness. Sibling to pool-status.schema.json, golem-status.schema.json, and agent-status.schema.json.",
+  "type": "object",
+  "required": ["tracks"],
+  "properties": {
+    "tracks": {
+      "type": "array",
+      "description": "The composed tracks, in lane order. Each track's issues run serially (issue k+1 dispatches after issue k's PR merges), so within-track collisions are moot and cross-track overlap was minimized at composition.",
+      "items": {
+        "type": "object",
+        "required": ["lane", "issues"],
+        "properties": {
+          "lane": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "0-based lane index. One golem runs per track head; the rest of the track queues behind it."
+          },
+          "autonomy_level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "The rules-of-engagement level (L1-L4) chosen at setup for this track, per orchestrate/autonomy-levels.md. A track containing a severity/critical issue is capped at L3. Set by the setup flow (issue #178 Part B); the pure `tracks` composition step does not populate it."
+          },
+          "issues": {
+            "type": "array",
+            "description": "Issue numbers in serial execution order (the head is issues[0]). Composition preserves next-issue priority order within the lane.",
+            "minItems": 1,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "head": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "DISPLAY CACHE: the issue currently dispatched (or last dispatched) for this lane. The live golem set is authoritative via PR/label state; lane-aware refill advances this as each issue's PR merges."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "deferred": {
+      "type": "array",
+      "description": "Backlog issues that did not fit any track this composition (all lanes full or capped), in priority order. A later composition sweep can pick them up.",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "cross_track_overlap": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of unordered lane pairs that share >= 1 predicted file. Lower is better — the composition minimizes this so serial tracks stay merge-independent."
+    },
+    "updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime of the last tracks.json write."
+    }
+  },
+  "additionalProperties": false
+}
