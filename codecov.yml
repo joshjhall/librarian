@@ -1,0 +1,56 @@
+# Codecov configuration (#186).
+#
+# Coverage here is INFORMATIONAL, not a merge gate. This repo has no single
+# "coverage %" — the instrumented surface is the Python patterns.py ports
+# (coverage.py -> coverage.xml, uploaded under the `python` flag) and the two
+# .mjs validators (c8 -> lcov, uploaded under the `javascript` flag). The bash
+# patterns.sh fallback is deliberately NOT measured: its matching lives in grep
+# subprocess regex alternations a line tracer cannot see, so a bash coverage
+# number would be instrument noise (see CLAUDE.md runtime policy; the bash path
+# is guarded by tests/validate-python-ports.sh byte-parity instead).
+#
+# Until a stable baseline lands, every status is informational: true so Codecov
+# posts the delta as a comment/check but NEVER fails a PR. The CI `coverage` job
+# is likewise kept out of the merge-gate `needs:` (see .github/workflows/ci.yml),
+# so coverage cannot block a merge from either side.
+
+coverage:
+  # `auto` = compare against the PR base; range only tunes the red->green
+  # gradient in the UI, it does not gate anything while informational is on.
+  range: "50...90"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 100%
+        informational: true
+    patch:
+      default:
+        target: auto
+        threshold: 100%
+        informational: true
+
+# Per-runtime flags so the two uploads are attributed separately in the UI.
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: python
+      paths:
+        - plugins/
+    - name: javascript
+      paths:
+        - tests/
+
+# Non-blocking PR comment summarizing the two flags. `require_changes: false`
+# so it posts even when coverage is unchanged (useful while establishing a
+# baseline).
+comment:
+  layout: "reach, diff, flags, files"
+  require_changes: false
+  behavior: default
+
+# Never let a Codecov-side hiccup (missing token, upload retry) turn a check
+# red — reinforces fail_ci_if_error: false on the action side.
+github_checks:
+  annotations: true

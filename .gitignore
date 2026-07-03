@@ -92,6 +92,17 @@ __pycache__/
 .ruff_cache/
 
 # ============================================================================
+# COVERAGE (Codecov reporting artifacts — see tests/coverage-*.sh, #186)
+# ============================================================================
+
+# Python (coverage.py) and JS (c8) reports are generated on demand by
+# `just coverage` / CI and uploaded to Codecov; they are never committed.
+.coverage
+.coverage.*
+coverage.xml
+coverage/
+
+# ============================================================================
 # CODEGRAPH (CODE KNOWLEDGE GRAPH)
 # ============================================================================
 

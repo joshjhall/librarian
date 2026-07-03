@@ -31,6 +31,14 @@ fmt:
 test:
     bash tests/run-all.sh
 
+# Generate coverage reports for the instrumented runtimes — Python patterns.py
+# ports (coverage.xml) + the .mjs validators (coverage/lcov.info). Mirrors CI's
+# `coverage` job; additive and non-blocking (NOT part of `just test`). The bash
+# patterns.sh fallback is intentionally not measured — see codecov.yml.
+coverage:
+    bash tests/coverage-python.sh
+    bash tests/coverage-mjs.sh
+
 # Install lefthook git hooks
 install-hooks:
     lefthook install
