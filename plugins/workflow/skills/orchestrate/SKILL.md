@@ -1,17 +1,21 @@
 ---
-description: Master orchestrator for PR-per-golem parallel work. Dispatch golems (one issue/branch/worktree/PR each) running the autonomous pipeline, monitor PR + issue-label state, surface progress, rebase across PRs, and run an integration train that lands a batch of green PRs (merge→rebase→merge) with one approval. Use when running 2+ independent issues in parallel, watching golem PRs, or integrating agent work. Local-merge topology preserved as opt-in.
+description: Master orchestrator for PR-per-golem parallel work. Dispatch golems (one issue/branch/worktree/PR each) running the next-issue → ship-issue pipeline at a chosen autonomy level (L1–L4), monitor PR + issue-label state, surface progress, rebase across PRs, and run an integration train that lands a batch of green PRs (merge→rebase→merge) with one approval. Use when running 2+ independent issues in parallel, watching golem PRs, or integrating agent work. Local-merge topology preserved as opt-in.
 ---
 
 # Orchestrate
 
 The default topology is **PR-per-golem**: the orchestrator is a **live
 interactive session** that dispatches **golems** (each a PROCESS owning one
-issue → branch → worktree → PR, running the autonomous `/next-issue --autonomous` →
-`/ship-issue` pipeline), then monitors, surfaces, and rebases across their
-PRs. **The orchestrator never merges golem branches into its own** — humans
-merge PRs (or per-golem auto-merge, which for an autonomous golem requires BOTH
-`AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` — see `ship-issue` §
-Environment Variables).
+issue → branch → worktree → PR, running the `/next-issue` → `/ship-issue`
+pipeline at a chosen **autonomy level** — L1–L4, per
+`autonomy-levels.md`; passed as `--level {N}`, or its L4 alias `--autonomous`),
+then monitors, surfaces, and rebases across their PRs. **The orchestrator never
+merges golem branches into its own** — a golem's own `/ship-issue` merges its PR
+as the **level-aware routine gate** (auto at L3–L4, human at L1–L2, always
+subject to the green-CI + clean-review merge invariant); the humans in the loop
+merge anything a golem leaves for them. (The legacy `AUTOMERGE` /
+`AUTOMERGE_AUTONOMOUS` double-consent is retired as that path and deprecated —
+see `ship-issue` § Environment Variables and #209.)
 
 **Hard constraints** (architecture — do not violate):
 
@@ -26,6 +30,13 @@ Environment Variables).
   rebase dispatch.
 - **PR + issue-label state are authoritative**; `.worktrees/.status/*.json` is a
   fast cache consulted only to fill display gaps.
+- **Never time out a human gate.** Every gate kept for a human — the track-setup
+  approval flow (propose → approve → choose L1–L4), a golem's plan-approval
+  checkpoint, a mid-flight command or escalation, and a dead-end at any level —
+  **waits indefinitely for the answer; never lapse-and-default because the
+  operator stepped away.** Only genuine level auto-passing (routine at L3–L4,
+  escalation at L4) resolves a gate without a human; a dead-end waits even at L4.
+  See `autonomy-levels.md` § *Standing rule: wait indefinitely at a human gate*.
 
 **Companion files** (load before the matching phase):
 
@@ -73,8 +84,11 @@ dispatch is sequential and cheap — **not** workflow-driven.
    `next-issue/state-format.md` (exclude issues already labeled
    `status/in-progress`, `status/pr-pending`, `status/commit-pending`,
    `status/on-hold`). Accept explicit issue numbers if provided. **Read each
-   selected issue's `effort/*` and `severity/*` labels now** — they decide
-   whether the golem launches fully-autonomous or **plan-gated** (step 3).
+   selected issue's `severity/*` label now** — a `severity/critical` issue is
+   **capped at L3**, so it always keeps its plan gate regardless of the level
+   requested (step 3). The **autonomy level** (not the effort labels) decides
+   whether the golem's plan checkpoint is auto-passed: skipped only at L4,
+   kept at L1–L3.
 
 1. **Choose the dispatch mode** per issue from `mode-protocol.md`:
 
@@ -148,7 +162,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
    (the rules-of-engagement chosen at setup), **not** its effort labels.
    `/next-issue` resolves it through
    `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) and persists the
-   `plan_gated` mirror (see `next-issue/SKILL.md` § Autonomous Mode):
+   `plan_gated` mirror (see `next-issue/SKILL.md` § Autonomy Levels):
 
    - **`plan_gated == false` (an L4 golem, critical cap did not fire)** →
      fully autonomous, no plan stop. The launch above runs unattended to a PR.
@@ -165,7 +179,8 @@ dispatch is sequential and cheap — **not** workflow-driven.
    the SAME session continue autonomously to a PR, but selecting it trips the
    auto-mode classifier when an orchestrating agent relays it — so a human must
    press it in a real TTY (attach via `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh
-   {N}`). When dispatching plan-gated (medium+/critical) golems, surface this:
+   {N}`). When dispatching plan-gated golems (any run below L4, incl. a capped
+   `severity/critical`), surface this:
    their plan approval is a human keystroke at the attached TTY, not something the
    orchestrator can answer for them. See `mode-protocol.md` § *Plan gate by level*
    for the full option-1-vs-option-2 classifier contract.
@@ -179,9 +194,11 @@ dispatch is sequential and cheap — **not** workflow-driven.
    critical cap holds it at L3 regardless of `--force-auto`.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
-   for a plan-gated golem), or, per-golem, queues GitHub auto-merge when BOTH
-   `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` are set — `AUTOMERGE=1` alone is a
-   no-op for an autonomous golem and falls through to human merge.
+   for a plan-gated golem below L4); its own `/ship-issue` then merges as the
+   level-aware routine gate — **auto at L3–L4**, **human at L1–L2** — always
+   subject to the green-CI + clean-review merge invariant. (The legacy
+   `AUTOMERGE` / `AUTOMERGE_AUTONOMOUS` double-consent is retired as that path and
+   deprecated — #209.)
 
 1. **Label + cache**: ensure each dispatched issue is `status/in-progress`
    (the autonomous `/next-issue` does this) and write the initial golem cache
@@ -287,8 +304,8 @@ detaches. Golems run interactive under `auto` mode — never headless
 `--dangerously-skip-permissions`. See `mode-protocol.md` §
 *Supervised launch & central feed*.
 
-**Plan-gated golems block early, by design.** A golem dispatched on an
-`effort/medium`/`large` or `severity/critical` issue (see Phase D step 3) pauses
+**Plan-gated golems block early, by design.** A golem dispatched **below L4**
+(or a capped `severity/critical`, see Phase D step 3) pauses
 at its plan checkpoint (`ExitPlanMode`) before writing any code, so it appears
 BLOCKED in `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` shortly after launch — that is the human plan
 checkpoint, not a stall. Attach with `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refine and approve
@@ -384,12 +401,13 @@ is **not** a new merge mechanism but **sequencing + batch authorization** over
 existing pieces: order computed by `workflow.js` (`mode: 'train'`), each rebase is
 Phase R (`poll+rebase`), every outward action still flows through the live
 session's `ask` gates. The flow: assemble the merge-ready batch → one up-front
-`AskUserQuestion` batch approval (skipped when autonomous) → compute
-`{ independents, chains, waves, order }` from pairwise file-overlap → drive the
-merge/rebase/merge loop wave by wave, honoring the `pool.json` drain signal.
-Autonomous runs keep every outward-action `ask` gate and the `AUTOMERGE` +
-`AUTOMERGE_AUTONOMOUS` double-consent; a genuine conflict still stops the train.
-The orchestrator still never merges a golem branch into its own.
+`AskUserQuestion` batch approval (the train's escalation gate — auto-passed only
+at L4) → compute `{ independents, chains, waves, order }` from pairwise
+file-overlap → drive the merge/rebase/merge loop wave by wave, honoring the
+`pool.json` drain signal. Below L4 the batch approval stays human; the batch
+merges themselves are the routine gate (auto at L3–L4). A genuine conflict is a
+dead-end that **stops the train and waits for a human at every level, L4
+included**. The orchestrator still never merges a golem branch into its own.
 
 ## Surface — Mid-Flight Commands
 

@@ -37,7 +37,7 @@ in SKILL.md Step 4 (the level-aware merge gate), after the review loop.
 These env vars toggle non-default behavior; all are opt-in:
 
 - `AUTOMERGE=1` / `AUTOMERGE_AUTONOMOUS=1` — **retired as the merge path**
-  (deprecated; removed by #178). These once queued `gh pr merge --auto`
+  (deprecated; removed by #209). These once queued `gh pr merge --auto`
   **before** the review loop as an escape hatch from the review gate, guarded by
   a two-variable consent when autonomous. That review-*skipping* merge is **gone**
   — there is no unreviewed merge path anymore. Merge is now the level-aware

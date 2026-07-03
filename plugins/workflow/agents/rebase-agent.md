@@ -169,6 +169,13 @@ emits the `dead-end` feed marker (`DEAD-END:` — see
 `orchestrate/mode-protocol.md` § *Feed event vocabulary*); you supply the
 structured content it surfaces.
 
+Once surfaced, that dead-end is a **human gate the orchestrator waits on
+indefinitely — never lapse-and-default**, at every level including L4 (there is
+nothing safe to auto-decide when the merge invariant would otherwise be crossed).
+Do NOT guess a side to unblock the run; leave the choice to the human. See
+`orchestrate/autonomy-levels.md` § *Standing rule: wait indefinitely at a human
+gate*.
+
 ## Error Handling
 
 - **Package manager fails during lockfile regeneration**: mark the file as

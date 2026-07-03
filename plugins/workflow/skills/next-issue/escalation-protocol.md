@@ -66,7 +66,7 @@ has everything needed without re-deriving context:
 ## Disposition by level
 
 Read the run's level from `autonomy_level` in the state file (see
-`autonomous-mode.md` § *Level selection*; legacy `autonomous:true` → L4).
+`autonomy.md` § *Level selection*; legacy `autonomous:true` → L4).
 
 - **L1–L3 — BLOCK and wait for a human.**
   1. Emit the payload to the orchestrate feed classified as an `escalation` (so

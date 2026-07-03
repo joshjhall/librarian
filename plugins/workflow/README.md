@@ -3,9 +3,19 @@
 Part of the [librarian](../../README.md) Claude Code plugin marketplace.
 
 Issue-driven and parallel-automation workflow: pick the next issue, run the
-autonomous pipeline, and fan work out across per-issue golems (one
-issue/branch/worktree/PR each) — on a host, on bare Linux, or inside a
-devcontainer.
+`/next-issue` → `/ship-issue` pipeline at a chosen **autonomy level** (L1–L4),
+and fan work out across per-issue golems (one issue/branch/worktree/PR each) — on
+a host, on bare Linux, or inside a devcontainer.
+
+The autonomy level is the single dial for how much the pipeline decides on its
+own: routine gates (push, PR-open, merge-on-green, prune) auto-pass at L3–L4 and
+ask at L1–L2; escalation gates (plan approval, a mid-flight fork, a dead-end)
+auto-pass at L4 only. It is set with `--level {1,2,3,4}` (the legacy
+`--autonomous` / `--auto` / `NEXT_ISSUE_AUTONOMOUS=1` signals are **aliases for
+L4**), and `severity/critical` issues cap at L3. A human gate is never timed out —
+it waits indefinitely. See
+[`skills/orchestrate/autonomy-levels.md`](skills/orchestrate/autonomy-levels.md)
+for the authoritative model.
 
 ## First-run setup: authorize golem launch permissions
 
@@ -111,10 +121,10 @@ authoritative and documents the same vars in the same order.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `AUTOMERGE` | _unset_ | `1` queues the PR for GitHub native auto-merge on creation (skips the review loop) |
-| `AUTOMERGE_AUTONOMOUS` | _unset_ | `1` is the required second consent for `AUTOMERGE` in autonomous runs |
+| `AUTOMERGE` | _unset_ | **Deprecated** (retired as the merge path; removal tracked in #209). Merging is now the level-aware routine gate — auto at L3–L4, human at L1–L2 |
+| `AUTOMERGE_AUTONOMOUS` | _unset_ | **Deprecated** — was the second consent for `AUTOMERGE`; superseded by the L1–L4 merge gate (#209) |
 | `PRE_REVIEW_STRICT` | _unset_ | `true` blocks PR creation on HIGH-certainty pre-review findings |
 | `REVIEW_MAX_CYCLES` | `3` | Post-CI adversarial review threshold — caps review cycles (the review action's cut-short/extend lever) |
 | `REVIEW_STRICT` | _unset_ | `true` treats MEDIUM-certainty review findings as blocking |
-| `LIBRARIAN_CI_WAIT_TIMEOUT` | `15 min` | CI-wait threshold; at the checkpoint, prompt cut-short/extend (autonomous: auto-extend up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times then stop) |
-| `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | Autonomous-only: extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals before giving up on pending CI (no hang) |
+| `LIBRARIAN_CI_WAIT_TIMEOUT` | `15 min` | CI-wait threshold; at the checkpoint, prompt cut-short/extend (at L3–L4: auto-extend up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times then stop). A machine timer for _pending CI_, not a human gate — the never-time-out rule governs human gates, not this bounded wait |
+| `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | L3–L4 only: extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals before giving up on pending CI (no hang) |

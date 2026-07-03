@@ -108,7 +108,11 @@ harness, not by you — fix the failure you are given and report the result.
    that summary's *what was attempted* / *why it's a dead-end* sections: state
    the concrete fixes you tried and the exact error that persisted, not a vague
    "could not fix". You never emit the dead-end feed event or stop the run
-   yourself — you return the material `ship-issue` surfaces.
+   yourself — you return the material `ship-issue` surfaces. Once surfaced, that
+   dead-end is a **human gate `ship-issue` waits on indefinitely — never
+   lapse-and-default**, at every level including L4 (merging still-red CI would
+   cross the merge invariant). See `orchestrate/autonomy-levels.md` § *Standing
+   rule: wait indefinitely at a human gate*.
 
 ## Fix Strategies by Failure Type
 
