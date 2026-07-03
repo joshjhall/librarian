@@ -161,7 +161,9 @@ dispatch is sequential and cheap — **not** workflow-driven.
    `/next-issue`); dispatch only needs to **expect** medium+/critical golems to
    block at the plan step. To override per golem, append `--plan-gate` (force the
    checkpoint on a small issue) or `--force-auto` (force full autonomy on a
-   medium+/critical one) to the `/next-issue {N} --autonomous` prompt.
+   **medium/large** one) to the `/next-issue {N} --autonomous` prompt. A
+   `severity/critical` golem cannot be forced past its plan gate — the critical
+   cap holds it at L3 regardless of `--force-auto`.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem), or, per-golem, queues GitHub auto-merge when BOTH
