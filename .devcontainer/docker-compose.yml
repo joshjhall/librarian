@@ -9,27 +9,30 @@ services:
         PROJECT_NAME: librarian
         USERNAME: vscode
         WORKING_DIR: /workspace/librarian
-        # Passwordless sudo (NOPASSWD:ALL for the vscode user) — accepted
-        # dev-only risk, documented here so it is a deliberate posture, not an
-        # oversight. It is REQUIRED, not merely convenient: the image's final
-        # USER is vscode (containers/Dockerfile), so the entrypoint runs
-        # unprivileged and its run_privileged() helper falls back to `sudo` for
-        # the startup permission/mount reconciliation — the bindfs FUSE overlay
-        # plus the /cache and /run chowns (containers v4.19.10
-        # lib/runtime/entrypoint.sh + lib/runtime/lib/*). Setting this "false"
-        # would make `sudo -n` fail at startup, silently skipping those steps
-        # and reintroducing the macOS VirtioFS permission bug bindfs exists to
-        # fix — so it must stay "true" for this dev image.
-        # Accepted exposure: any process running as vscode (a shell, a Claude
-        # Code tool call, a compromised npm dep) can reach root for the
-        # container's lifetime, and via the ..:/workspace bind mount below could
-        # touch the host project dir. Mitigating context: this is a dev-only
-        # container (production builds set ENABLE_PASSWORDLESS_SUDO=false).
-        # Follow-up (#157): replace NOPASSWD:ALL with a scoped sudoers.d
-        # allowlist (bindfs, chown) in the pinned containers submodule's
-        # lib/base/user.sh + bump the pin — the real least-privilege fix, which
-        # cannot be made from this repo.
-        ENABLE_PASSWORDLESS_SUDO: "true"
+        # Command-scoped passwordless sudo (least privilege) — the vscode user
+        # may run ONLY the startup-reconciliation commands passwordless, not
+        # arbitrary root. Passwordless sudo is REQUIRED, not merely convenient:
+        # the image's final USER is vscode (containers/Dockerfile), so the
+        # entrypoint runs unprivileged and its run_privileged() helper falls
+        # back to `sudo` for startup permission/mount reconciliation — the
+        # bindfs FUSE overlay plus the /cache and /run chowns (containers
+        # v4.19.11 lib/runtime/entrypoint.sh + lib/runtime/lib/*). Setting this
+        # "false" would make `sudo -n` fail at startup, silently skipping those
+        # steps and reintroducing the macOS VirtioFS permission bug bindfs
+        # exists to fix — so it must stay enabled for this dev image.
+        # "scoped" renders a command-scoped /etc/sudoers.d/vscode via
+        # render_scoped_sudoers (containers lib/base/sudoers.sh): a Cmnd_Alias
+        # limited to bindfs, the docker-socket groupadd/chmod/usermod, and two
+        # path-hardcoded wrapper commands (reconcile-cache-owner /
+        # reconcile-run-owner) for the variable-uid chowns — never a bare
+        # `chown` (which sudo's fnmatch arg-joining would let escape to
+        # /etc/sudoers.d and full root). This closes the NOPASSWD:ALL exposure
+        # that #97 flagged: a compromised process running as vscode (a shell, a
+        # Claude Code tool call, a pulled-in npm dep) can no longer become root.
+        # Legacy "true" (full NOPASSWD:ALL) and "false" (password required)
+        # remain available; "scoped" is the recommended dev posture. Closes #157
+        # (cross-repo follow-up to #97).
+        ENABLE_PASSWORDLESS_SUDO: "scoped"
         # Dev tooling: dprint, taplo, shellcheck, shfmt, lefthook, conform,
         # gitleaks, actionlint, rumdl, typos, just, Claude Code CLI.
         INCLUDE_DEV_TOOLS: "true"
