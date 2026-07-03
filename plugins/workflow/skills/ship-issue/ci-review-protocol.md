@@ -17,8 +17,8 @@ Ask the user:
 - **Wait for CI** — monitor checks and auto-fix failures if possible
 - **Skip CI monitoring** — proceed to labeling immediately
 
-When autonomous, do not prompt — ALWAYS wait for CI and auto-fix (proceed
-as if the user chose "Wait for CI").
+At **L3–L4**, do not prompt — ALWAYS wait for CI and auto-fix (proceed
+as if the user chose "Wait for CI"). **L1–L2** asks.
 
 If the user chooses to wait:
 
@@ -31,16 +31,18 @@ slow CI run never blocks indefinitely):
 - **Threshold checkpoint** — track cumulative wait time. Once it crosses
   `LIBRARIAN_CI_WAIT_TIMEOUT` minutes (default 15), do NOT keep polling
   blindly:
-  - **Interactive**: prompt — **Cut short** (stop waiting; proceed to
+  - **L1–L2** (interactive): prompt — **Cut short** (stop waiting; proceed to
     labeling, noting CI was still pending) or **Extend** (wait another
     `LIBRARIAN_CI_WAIT_TIMEOUT` minutes, then re-checkpoint).
-  - **Autonomous**: do NOT prompt. Auto-extend up to
+  - **L3–L4**: do NOT prompt. Auto-extend up to
     `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times (default 2 → 45 min total), then
     **STOP** — proceed to the completion summary with a STOP note ("CI still
     pending after {total} min — not waited further"), mirroring the
-    autonomous CI-failure STOP below. Never hang waiting on a prompt.
+    L3–L4 CI-failure STOP below. Never hang waiting on a prompt.
 
-b. **If all checks pass**: inform the user and proceed to labeling
+b. **If all checks pass** (CI green): inform the user and proceed to the
+multi-cycle review loop below; green CI is one half of the merge invariant, and
+the merge gate (SKILL.md Step 4) fires only once the review loop is also clean.
 
 c. **If checks fail — triage infra-flake vs real regression FIRST**
 (classification, not a new retry layer). Before handing anything to
@@ -122,14 +124,17 @@ iteration counter by hand.
     the completion summary) as "ci-fixer attempted a CI-config edit
     ({path}) — skipped; manual review required." Never let an automated CI
     fix rewrite the CI definition that gates it.
-  - For each result with `fixed: false`: inform the user "CI check {check}
-    appears to be {failure_type} — {summary}. Remaining: {remainingFailures}.
-    Requires manual intervention." Ask: **Fix manually now, or ship with
-    failing CI?** If fix manually, pause then go back to (a); if ship anyway,
-    proceed to labeling. **When autonomous**: do NOT prompt — STOP and emit
-    the structured completion summary (see "Autonomous completion summary"
-    in SKILL.md) noting the unresolved CI failure; do not leave the run in a
-    prompting state.
+  - For each result with `fixed: false`: red CI that `ci-fixer` cannot resolve
+    is a **dead-end** — the merge invariant forbids merging it at every level,
+    L4 included, so **no path merges here**. At **L1–L2** inform the user "CI
+    check {check} appears to be {failure_type} — {summary}. Remaining:
+    {remainingFailures}. Requires manual intervention." and ask: **Fix manually
+    now, or ship with failing CI (no merge)?** If fix manually, pause then go
+    back to (a); if ship-as-is, push the branch and stop for a human (the PR is
+    parked, not merged). At **L3–L4**: do NOT prompt — STOP and emit the
+    dead-end / completion summary (see "Completion summary" in SKILL.md) noting
+    the unresolved CI failure; leave the PR parked with `status/pr-pending`, do
+    not merge, and do not leave the run in a prompting state.
 
 The harness stops on its own once the per-check cap or the shared budget is
 reached, so there is no separate "after 3 attempts" step — surface any
@@ -144,7 +149,8 @@ never blocks shipping.
 Re-review the PR after fixes land, because resolving one finding (or a CI fix)
 can silently introduce another. Each cycle re-runs the adversarial review
 harness **and** folds in open PR review comments, then resolves-or-defers
-everything. Skipped entirely when `AUTOMERGE=1` took the auto-merge fast path.
+everything. This loop **always runs before any merge** — it is the "review is
+clean" half of the merge invariant, and there is no path that skips it.
 
 Run the loop with `cycle = 1` and `cap = REVIEW_MAX_CYCLES` (default 3):
 
@@ -195,17 +201,28 @@ e. **If any fixes were applied this cycle**: commit
 `fix(review): address cycle {cycle} findings`, `git push`, and re-run the
 CI-monitor sub-step above (wait for green, auto-fix via `ci-fixer`).
 
-f. **Terminate the loop** when ALL of the following hold:
+f. **Terminate the loop — green + clean** when ALL of the following hold:
 
 - `clean` is true (no blocking findings remain), **and**
 - CI is green, **and**
 - every PR comment is resolved-or-deferred (none left unaddressed).
 
-Otherwise `cycle++`; if `cycle` exceeds `cap`, **STOP** and surface the
-remaining blocking findings / unresolved comments. **Interactive**: ask
-**Keep fixing, ship as-is, or defer the rest?** **Autonomous**: do NOT
-prompt — STOP and record the remaining items for the completion summary
-(Review status: stopped-with-blocking).
+This green + clean state is exactly the **merge invariant** precondition. On
+reaching it, hand control back to SKILL.md Step 4's **level-aware merge gate**:
+at **L3–L4** ship auto-merges (squash, delete-branch) then prunes; at **L1–L2**
+it stops for a human merge with the completion summary. The merge decision has a
+**single site** (Step 4) — this loop only establishes green + clean and never
+merges directly.
+
+Otherwise `cycle++`; if `cycle` exceeds `cap`, the PR is **not** green + clean —
+this is a **dead-end** (`orchestrate/autonomy-levels.md` § dead-end rule; #181).
+**STOP at every level, L4 included** — the merge invariant forbids merging an
+unclean PR, so there is nothing safe to auto-decide. Surface the remaining
+blocking findings / unresolved comments. At **L1–L2** (interactive): ask **Keep
+fixing, ship as-is, or defer the rest?** At **L3–L4**: do NOT prompt — STOP,
+leave the PR parked with `status/pr-pending`, and record the remaining items for
+the dead-end / completion summary (Review status: stopped-with-blocking). Never
+merge past this point.
 
 The cap and budget bound the loop: `workflow.js` runs one cycle per
 invocation and returns partial results if its shared budget is exhausted, so

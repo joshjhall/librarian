@@ -21,41 +21,34 @@ make the review harness invocation throw.
 
 ## Environment Variables
 
+### The merge invariant (all levels)
+
+**Never merge unless CI is green *and* the PR review loop terminated clean.** This
+is uncrossable at **every** level, L4 included — no env var, flag, or level
+crosses it (`orchestrate/autonomy-levels.md` § merge invariant). Merge is a
+**routine gate**: the level decides whether merging needs a human keystroke
+(L3–L4 auto, L1–L2 human), never whether an un-green or un-reviewed PR may merge.
+If the CI-wait + review loop cannot reach green + clean, that is a **dead-end**
+(#181) — park the PR and wait for a human at every level. The merge itself lives
+in SKILL.md Step 4 (the level-aware merge gate), after the review loop.
+
+### Toggles
+
 These env vars toggle non-default behavior; all are opt-in:
 
-- `AUTOMERGE=1` — in Option 1 (Branch + PR), queue the PR for GitHub's
-  native auto-merge via `gh pr merge --auto --squash --delete-branch`
-  immediately after PR creation and exit, skipping the CI-wait loop. Because
-  the fast path exits before the post-CI multi-cycle review loop, it
-  **intentionally skips that loop** — `AUTOMERGE=1` is the per-invocation
-  escape hatch from the review gate. GitHub only. Skipped for
-  `severity/critical` issues. Falls through to the normal CI-wait loop if
-  `gh pr merge --auto` fails (e.g., auto-merge not enabled on the repo). See
-  Option 1 "Auto-merge fast path" in SKILL.md. The orchestrate **integration
-  train** (`orchestrate` § Phase T) is the batch consumer of this same
-  `gh pr merge --auto` settle-on-green path: it lands a set of PRs with one
-  up-front approval, relying on `--auto` to merge each as its (already-green)
-  checks settle rather than a manual merge + wait per PR.
-- `AUTOMERGE_AUTONOMOUS=1` — **required second consent** to allow the
-  `AUTOMERGE=1` fast path *while autonomous*. Auto-merge skips the entire
-  adversarial review loop, and an autonomous golem sets autonomy from the
-  environment — so `AUTOMERGE=1` alone in an autonomous run would merge to the
-  default branch unreviewed and unseen. To prevent that, when the run is
-  autonomous the auto-merge fast path is taken ONLY if BOTH `AUTOMERGE=1` and
-  `AUTOMERGE_AUTONOMOUS=1` are set. If `AUTOMERGE=1` is set but
-  `AUTOMERGE_AUTONOMOUS=1` is not, the run ignores auto-merge and falls through
-  to the normal CI-wait loop + review, stopping at green CI for human merge.
-  Has no effect in non-autonomous runs (interactive `AUTOMERGE=1` is unchanged
-  — the human is already in the loop). **Operational note:** the two-variable
-  scheme is a real consent gate only if the variables come from *separate*
-  sources — setting both in the same `.env` block, compose `environment:`, or
-  CI secret group defeats the "second consent" intent (one copy-paste enables
-  unreviewed merges). Inject `AUTOMERGE_AUTONOMOUS=1` from a distinct
-  configuration source (e.g. a separate 1Password entry / secret group) than
-  `AUTOMERGE=1`, and only for golem environments that are meant to auto-merge.
-  The integration train does **not** weaken this: its single batch approval
-  authorizes the *sequence* of merges, but each PR's auto-merge still requires
-  BOTH `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1` when the train runs autonomously.
+- `AUTOMERGE=1` / `AUTOMERGE_AUTONOMOUS=1` — **retired as the merge path**
+  (deprecated; removed by #178). These once queued `gh pr merge --auto`
+  **before** the review loop as an escape hatch from the review gate, guarded by
+  a two-variable consent when autonomous. That review-*skipping* merge is **gone**
+  — there is no unreviewed merge path anymore. Merge is now the level-aware
+  routine gate in SKILL.md Step 4: at **L3–L4** ship auto-merges (squash,
+  delete-branch) **after** the CI-wait + review loop terminates green + clean; at
+  **L1–L2** it stops for a human. The vars are still parsed for one release so
+  existing golem environments don't break, but they **no longer bypass review**;
+  setting them has no effect on the merge decision. The orchestrate **integration
+  train** (`orchestrate` § Phase T) lands a batch of already-green, already-clean
+  PRs under the same invariant — one up-front approval authorizes the sequence,
+  but no PR merges un-green or un-reviewed.
 - `PRE_REVIEW_STRICT=true` — pre-review gates (Step 3.5) block Option 1 PR
   creation on HIGH certainty findings instead of warning only.
 - `REVIEW_MAX_CYCLES` — integer, default `3`. Caps the post-CI multi-cycle
@@ -66,16 +59,16 @@ These env vars toggle non-default behavior; all are opt-in:
   default HIGH-certainty blocking set. Parallels `PRE_REVIEW_STRICT`.
 - `LIBRARIAN_CI_WAIT_TIMEOUT` — integer **minutes**, default `15`. Threshold for
   the "Wait for CI" poll loop (Step 4 Option 1): once cumulative wait crosses
-  this, the loop hits a **checkpoint** instead of polling forever. Interactive:
-  prompt **cut short** vs **extend** (another interval). Autonomous: extend
-  automatically up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times, then STOP — see
-  the CI-monitor sub-step. The 30 s poll cadence is unchanged; this only bounds
-  total wait.
-- `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` — integer, default `2`. In autonomous runs,
-  how many extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals the CI-wait loop adds
-  before giving up (default `15` + 2×`15` = 45 min total), so a headless golem
-  polling a stuck CI run cannot hang. Ignored interactively (the human chooses
-  cut-short/extend at each checkpoint).
+  this, the loop hits a **checkpoint** instead of polling forever. At **L1–L2**
+  (interactive): prompt **cut short** vs **extend** (another interval). At
+  **L3–L4**: extend automatically up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times,
+  then STOP — see the CI-monitor sub-step. The 30 s poll cadence is unchanged;
+  this only bounds total wait.
+- `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` — integer, default `2`. At **L3–L4**, how
+  many extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals the CI-wait loop adds before
+  giving up (default `15` + 2×`15` = 45 min total), so a headless golem polling a
+  stuck CI run cannot hang. Ignored at L1–L2 (the human chooses cut-short/extend
+  at each checkpoint).
 - `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra/setup step
   names that mark a CI failure as a **likely flake** rather than a code
   regression (CI-failure triage, Step 4 Option 1). Default:
@@ -95,5 +88,5 @@ These env vars toggle non-default behavior; all are opt-in:
 > **Review threshold:** the adversarial **review** loop is bounded by
 > `REVIEW_MAX_CYCLES` (above), not a wall-clock timer — that cap, plus the
 > harness's token budget, already gives the issue's cut-short/extend +
-> non-interactive-fallback semantics (prompt to fix/ship/defer at the cap;
-> autonomous defers). There is intentionally no separate review timeout var.
+> non-interactive-fallback semantics (L1–L2 prompt to fix/ship/defer at the cap;
+> L3–L4 defers). There is intentionally no separate review timeout var.
