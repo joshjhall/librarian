@@ -13,7 +13,21 @@
 #   1 = usage error (missing argument)
 #
 # Note: Uses full paths for commands per project shell-scripting conventions.
+#
+# Runtime: this tool has a Python 3.11+ primary implementation (patterns.py) and
+# this bash script as the portable fallback. When a python3>=3.11 is available
+# the shim below execs patterns.py (identical TSV contract); otherwise the bash
+# body runs. Set PATTERNS_FORCE_BASH=1 to force the fallback (used by the parity
+# test). See CLAUDE.md § Key conventions (runtime policy).
 set -euo pipefail
+
+# --- runtime selection: prefer python3>=3.11, else this bash fallback --------
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/patterns.py" ] &&
+    command -v python3 >/dev/null 2>&1 &&
+    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    exec python3 "$_here/patterns.py" "$@"
+fi
 
 FILE_LIST="${1:?Usage: patterns.sh <file-list>}"
 
