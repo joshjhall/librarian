@@ -12,10 +12,11 @@
 # Two CO-EQUAL channels, each catching what the other misses:
 #
 #   feed  — `<GOLEM_STATUS_DIR>/feed.jsonl`, written by the Notification hook
-#           (golem-notify.sh) and classified `gate` vs `idle`. TTY-free, works
-#           for ALL golems incl. headless/container, carries golem-id
-#           attribution. A plan-gate `ExitPlanMode` shows only as a generic
-#           `gate` here.
+#           (golem-notify.sh) and classified `gate` vs `idle` vs `escalation`.
+#           TTY-free, works for ALL golems incl. headless/container, carries
+#           golem-id attribution. A plan-gate `ExitPlanMode` shows only as a
+#           generic `gate` here; a mid-flight `escalation` (issue #176) surfaces
+#           in the same BLOCKED set but is labelled distinctly ("escalation — …").
 #   panes — `tmux capture-pane` on live `golem-*` sessions, matched against the
 #           modal PROMPT OVERLAY ("Do you want to proceed?" / the ExitPlanMode
 #           plan prompt). The "capture-pane is blank until exit" caveat applies
@@ -92,8 +93,10 @@ resolve_status_dir() {
 # ---------------------------------------------------------------------------
 # Print the current fresh-gate set from the feed, one "<golem>\t<message>" line
 # each. A golem is gated only when its MOST-RECENT feed line is a `gate` (or
-# legacy `blocked`) within the freshness window — identical semantics to the
-# golem-status.sh BLOCKED list (kept in lockstep so the two never drift).
+# legacy `blocked`, or a mid-flight `escalation`) within the freshness window —
+# identical semantics to the golem-status.sh BLOCKED list (kept in lockstep so
+# the two never drift). An `escalation` line is labelled "escalation — <message>"
+# so the reader can tell a judgement call apart from a routine permission gate.
 # Requires jq; a no-op (no output, success) when jq or the feed is absent.
 feed_snapshot() {
     local feed="$1"
@@ -113,11 +116,14 @@ feed_snapshot() {
             (now) as $now
             | group_by(.golem)
             | map(.[-1])
-            | map(select((.event == "gate" or .event == "blocked")
+            | map(select((.event == "gate" or .event == "blocked" or .event == "escalation")
                          and (if (.ts | type) == "string" and .ts != ""
                               then (($now - (.ts | fromdateiso8601)) < $ttl)
                               else true end)))
-            | .[] | "\(.golem)\t\(.message // "awaiting decision")"
+            | .[]
+            | (.message // "awaiting decision") as $m
+            | if .event == "escalation" then "\(.golem)\tescalation — \($m)"
+              else "\(.golem)\t\($m)" end
           ' 2>/dev/null |
         /usr/bin/sort -u
 }

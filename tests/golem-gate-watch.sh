@@ -255,6 +255,33 @@ test_empty_ts_treated_as_fresh() {
     assert_contains "$SNAP_OUT" "golem-empty" "Empty-ts golem is honored as fresh"
 }
 
+# Escalation (#176): a mid-flight `escalation` event surfaces in the BLOCKED feed
+# set alongside `gate`/`blocked`, is labelled distinctly ("escalation — …") so a
+# judgement call is not lost among routine permission gates, while an `idle` in
+# the same feed is still excluded. Guards the three-way select and the jq label
+# branch together.
+test_escalation_surfaces_labelled() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed_snapshot no-ops without jq)"
+        return 0
+    fi
+
+    _run_once_snapshot 999999999999 \
+        '{"golem":"golem-esc","event":"escalation","message":"ESCALATION: reuse state file or sidecar?","ts":"2026-06-27T10:00:00Z"}' \
+        '{"golem":"golem-gate","event":"gate","message":"push gate","ts":"2026-06-27T10:00:00Z"}' \
+        '{"golem":"golem-idle","event":"idle","message":"Claude is waiting for your input","ts":"2026-06-27T10:00:00Z"}'
+
+    assert_equals "0" "$SNAP_RC" "Snapshot exits 0 with an escalation line"
+    assert_contains "$SNAP_OUT" "golem-esc" "Escalation golem surfaces in the BLOCKED set"
+    assert_contains "$SNAP_OUT" "escalation — ESCALATION: reuse state file or sidecar?" \
+        "Escalation is labelled distinctly (escalation — …)"
+    assert_contains "$SNAP_OUT" "golem-gate" "A routine gate still surfaces alongside the escalation"
+    # The gate line must NOT carry the escalation label.
+    assert_not_contains "$SNAP_OUT" "escalation — push gate" \
+        "A routine gate is not mislabelled as an escalation"
+    assert_not_contains "$SNAP_OUT" "golem-idle" "An idle in the same feed is still excluded"
+}
+
 # jq-absent contract (#28): feed_snapshot() guards on `command -v jq ... ||
 # return 0`, so with jq off $PATH the `--once` snapshot is a silent no-op —
 # exit 0, EMPTY output — EVEN with a fresh gated entry in the feed. This pins
@@ -467,6 +494,7 @@ test_emit_transitions_dedup() {
 run_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not drop all BLOCKED golems"
 run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
+run_test test_escalation_surfaces_labelled "Escalation surfaces in BLOCKED, labelled distinctly; idle excluded"
 run_test test_jq_absent_is_silent_noop "jq absent from PATH: --once is a silent no-op despite a fresh gate"
 run_test test_liveness_fresh_is_alive "Liveness: fresh-activity golem reports alive/advancing"
 run_test test_liveness_stale_is_possible_stall "Liveness: old-activity golem flagged a possible stall (exit 0)"
