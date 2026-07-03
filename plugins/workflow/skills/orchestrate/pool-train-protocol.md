@@ -58,15 +58,22 @@ existing cadence is the clock):
      pool:     { size: <N>, accepting: "<state>" },
      inflight: [{ issue, golem, branch, files: [<paths>] }, …],
      backlog:  [{ issue, files: [<predicted paths>] }, …],
+
+     // OPTIONAL — lane-aware serial refill (when tracks are active). Omit both
+     // for a plain flat pool (behavior unchanged).
+     tracks:    [{ lane, queue: [{ issue, files: [<paths>] }, …] }, …],
+     laneSlots: [<lane index per free lane slot this sweep>, …],
    }
    ```
 
    The harness is **pure computation** — it never dispatches, merges, or pushes.
    It returns `pool` = `{ free_slots, picks, held, held_slots, excess }`:
 
-   - **`picks`** — the issues to dispatch into free slots, in priority order,
-     each predicted to collide with **neither** an in-flight golem **nor** an
-     earlier pick (keeps #602's merge train conflict-light).
+   - **`picks`** — the issues to dispatch into free slots, each predicted to
+     collide with **neither** an in-flight golem **nor** an earlier pick (keeps
+     #602's merge train conflict-light). **Lane-scoped when `tracks`/`laneSlots`
+     are supplied** (each freed lane's next queued issue, then a global-priority
+     fill for untagged / exhausted-lane slots); flat priority order otherwise.
    - **`held`** — candidates skipped this sweep on a predicted file overlap
      (with the colliding reason). A slot is held (left idle) rather than filled
      with a guaranteed-colliding pick when only colliding candidates remain.
@@ -139,10 +146,30 @@ It returns `tracks` = `{ tracks, deferred, cross_track_overlap, rationale }`:
 
 The composition persists to `.worktrees/.status/tracks.json` (schema:
 `schemas/tracks.schema.json`) once approved, carrying the per-track
-`autonomy_level` chosen at setup. Lane-aware **serial refill** (a freed slot pulls
-its own track's next queued issue rather than the global-priority winner) is a
-follow-up on top of this composition; until then the flat collision-aware refill
-above is the fallback.
+`autonomy_level` chosen at setup and a per-lane `head` pointer (the last-dispatched
+issue).
+
+**Lane-aware serial refill.** Once tracks are active, Phase P refill is
+lane-scoped: a freed slot pulls **its own track's next queued issue** rather than
+the global-priority winner. Each lane runs its issues **serially** — issue k+1
+dispatches only after issue k's PR merges — so within-track collisions are moot
+and the cross-track collisions were already minimized at composition. The live
+session drives this by, on each sweep:
+
+1. Noting which lanes freed a slot (a lane whose golem's PR merged), and advancing
+   that lane's `head` in `tracks.json`.
+2. Passing each open lane's **remaining** queue (the issues after `head`, with
+   predicted files) as `tracks` and the freed lane indices as `laneSlots` to the
+   `pool` mode call above.
+
+The harness then, per freed lane slot, dispatches that lane's queue head — unless
+it collides with in-flight or already-picked work, in which case it **holds the
+slot** (serial order is preserved: it never skips ahead within a lane nor steals
+another lane's work for that slot). A lane whose queue is **exhausted** (track
+complete) contributes its slot to the **global collision-aware fallback** — the
+same flat priority pick documented in the Refill loop above, which is also the
+entire behavior for a plain `pool <N>` run with no tracks. So dispatch degrades
+cleanly: lane-serial while a track has work, global-priority once it is drained.
 
 ### The setup flow (propose → approve → choose level → dispatch)
 
