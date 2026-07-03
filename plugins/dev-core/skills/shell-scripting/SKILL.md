@@ -79,3 +79,48 @@ test_function_basic_usage() {
 - Make incremental changes — one logical edit at a time
 - Prefer creating new files or wrapper scripts over complex in-place edits
 - Shell quoting rules are fragile: test thoroughly after any modification
+
+## Portability & Runtime Selection
+
+Scripts must run on **base macOS**, whose stock `/bin/bash` is **3.2** (2007).
+Keep every `*.sh` **bash-3.2 clean** — these bash-4+ constructs are banned and
+gated by `tests/lint-shell-portability.sh`:
+
+| Banned (bash 4+)                       | Portable replacement (bash 3.2)                          |
+| -------------------------------------- | -------------------------------------------------------- |
+| `declare -A` / `local -A` (assoc maps) | space-delimited string set + `case " $set " in *" x "*)` |
+| `mapfile` / `readarray`                | `while IFS= read -r line; do …; done < file`             |
+| `declare -n` / `local -n` (namerefs)   | pass values / use a flat `"key<TAB>val"` string map      |
+| `${v,,}` / `${v^^}` (case conversion)  | `tr '[:upper:]' '[:lower:]'` (and vice-versa)            |
+| `;;&` (case fallthrough)               | duplicate the arm, or restructure the `case`             |
+
+For a worked flat-map + string-set example, see
+`plugins/workflow/scripts/golem-gate-watch.sh`.
+
+**Runtime selection for code tools.** A pre-scan tool's primary implementation is
+Python **3.11+** (`patterns.py`); the same-dir `patterns.sh` is a thin selector
+that exec's it when a `python3>=3.11` is present and otherwise runs its own bash
+body as the fallback. Both emit the identical TSV contract
+(`file<TAB>line<TAB>category<TAB>evidence<TAB>certainty`); parity is pinned by
+`tests/validate-python-ports.sh`. The selector preamble:
+
+```bash
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/patterns.py" ] &&
+    command -v python3 >/dev/null 2>&1 &&
+    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    exec python3 "$_here/patterns.py" "$@"
+fi
+# bash fallback below…
+```
+
+**Fail loud when a required runtime is absent** — never silent-empty. When a
+script genuinely requires a newer bash, gate it up front:
+
+```bash
+if [ "${BASH_VERSION%%.*}" -lt 4 ]; then
+    echo "Error: this script requires Bash 4+ (found ${BASH_VERSION})" >&2
+    echo "  On macOS: brew install bash, then run under the newer bash." >&2
+    exit 1
+fi
+```

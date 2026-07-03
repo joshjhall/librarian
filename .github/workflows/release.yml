@@ -34,8 +34,15 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      # Match ci.yml's quality-gates toolchain so the release gate is a strict
+      # superset of the PR gate (jq + shellcheck for the shell gates, ruff for
+      # the Python lint gate) — otherwise those gates would skip-if-absent here
+      # and a tag could publish Python/shell the PR suite would have linted.
+      - name: Install jq + shellcheck
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+
+      - name: Install ruff
+        run: pipx install ruff
 
       # Single entry point — tests/run-all.sh owns the full gate list (manifest
       # validation, structural lint, contract + behavioral gates, action-pin

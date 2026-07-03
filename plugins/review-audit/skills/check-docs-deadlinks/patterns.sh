@@ -8,6 +8,16 @@
 # Output: TSV to stdout: file\tline\tcategory\tevidence\tcertainty
 set -euo pipefail
 
+# --- runtime selection: prefer python3>=3.11, else this bash fallback --------
+# Runtime: Python 3.11+ primary (patterns.py); this bash body is the portable
+# fallback. PATTERNS_FORCE_BASH=1 forces bash. See CLAUDE.md § Key conventions.
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/patterns.py" ] &&
+    command -v python3 >/dev/null 2>&1 &&
+    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    exec python3 "$_here/patterns.py" "$@"
+fi
+
 FILE_LIST="${1:?Usage: patterns.sh <file-list>}"
 
 if [ ! -f "$FILE_LIST" ]; then

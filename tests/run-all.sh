@@ -16,6 +16,10 @@
 #   9b. scanner test-file classification (tests/validate-scanner-classification.sh)
 #  10. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
 #  11. Action pin format (tests/lint-action-pins.sh)
+#  11b. Shell portability / bash-3.2 clean (tests/lint-shell-portability.sh)
+#  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
+#  11d. Shellcheck — bundled shell scripts (tests/lint-shellcheck.sh)
+#  11e. Python lint + format — ruff (tests/lint-python.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
 #  13. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
@@ -64,6 +68,10 @@ run_stage "shared scanner sync" bash "$SCRIPT_DIR/validate-shared-scanner-sync.s
 run_stage "scanner test-file classification" bash "$SCRIPT_DIR/validate-scanner-classification.sh"
 run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
+run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"
+run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
+run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck.sh"
+run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"

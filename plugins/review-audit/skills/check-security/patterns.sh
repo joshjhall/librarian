@@ -13,7 +13,21 @@
 #   1 = usage error (missing argument)
 #
 # Note: Uses full paths for commands per project shell-scripting conventions.
+#
+# Runtime: this tool has a Python 3.11+ primary implementation (patterns.py) and
+# this bash script as the portable fallback. When a python3>=3.11 is available
+# the shim below execs patterns.py (identical TSV contract); otherwise the bash
+# body runs. Set PATTERNS_FORCE_BASH=1 to force the fallback (used by the parity
+# test). See CLAUDE.md § Key conventions (runtime policy).
 set -euo pipefail
+
+# --- runtime selection: prefer python3>=3.11, else this bash fallback --------
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/patterns.py" ] &&
+    command -v python3 >/dev/null 2>&1 &&
+    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    exec python3 "$_here/patterns.py" "$@"
+fi
 
 FILE_LIST="${1:?Usage: patterns.sh <file-list>}"
 
@@ -77,8 +91,13 @@ while IFS= read -r file; do
         done || true
 
     # Generic password/secret/token assignment with string literal values
-    # (skip env var reads, placeholders, and comments)
-    /usr/bin/grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)\s*[=:]\s*["\x27][^"\x27]{8,}["\x27]' "$file" 2>/dev/null |
+    # (skip env var reads, placeholders, and comments). The quote delimiter class
+    # is ["'] — a double- or single-quote. It is written ["'\''] so the single
+    # quote is a real quote char: `'\''` closes the outer '-string, emits an
+    # escaped ', and reopens. (Earlier this was `["\x27]`, but GNU grep does not
+    # expand \x27 inside a bracket expression — it added literal \,x,2,7 to the
+    # class, so any value containing x/2/7 was silently missed. Fixed in #168.)
+    /usr/bin/grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)\s*[=:]\s*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
         /usr/bin/grep -viE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_|#|//|/\*)' |
         while IFS=: read -r line_num content; do
             evidence=$(/usr/bin/printf '%.80s' "$content")
@@ -92,7 +111,11 @@ while IFS= read -r file; do
     # SQL injection: f-string or string concat with SQL keywords
     case "$file" in
         *.py)
-            /usr/bin/grep -nE 'f["\x27](SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
+            # f"..." or f'...' opening a SQL statement. Quote class ["'] written
+            # as ["'\''] so the single quote is literal (see #168 — the old
+            # ["\x27] never matched f'SELECT because \x27 is not expanded in a
+            # bracket expression).
+            /usr/bin/grep -nE 'f["'\''](SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -169,9 +192,13 @@ while IFS= read -r file; do
 
     # --- Category: insecure-crypto ---
 
-    # MD5/SHA1 used for security (skip comments)
+    # MD5/SHA1 used for security (skip comment-only lines). The skip filter must
+    # match AFTER grep -n's "<lineno>:" prefix — anchoring at plain `^\s*#` never
+    # fired (the line always starts with a digit), so comment lines were flagged
+    # too. `^[0-9]+:\s*(#|...)` skips a line whose first non-space code char opens
+    # a comment. (Fixed in #168.)
     /usr/bin/grep -nEi '\b(md5|sha1)\s*\(' "$file" 2>/dev/null |
-        /usr/bin/grep -vE '^\s*(#|//|/\*|\*)' |
+        /usr/bin/grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
         while IFS=: read -r line_num content; do
             evidence=$(/usr/bin/printf '%.80s' "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -179,9 +206,10 @@ while IFS= read -r file; do
                 "Weak hash algorithm: ${evidence}" "HIGH"
         done || true
 
-    # ECB mode encryption
+    # ECB mode encryption (skip comment-only lines — same grep -n prefix fix as
+    # the weak-hash probe above; see #168).
     /usr/bin/grep -nEi '\bECB\b|MODE_ECB|mode.*ecb' "$file" 2>/dev/null |
-        /usr/bin/grep -vE '^\s*(#|//|/\*|\*)' |
+        /usr/bin/grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
         while IFS=: read -r line_num content; do
             evidence=$(/usr/bin/printf '%.80s' "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \

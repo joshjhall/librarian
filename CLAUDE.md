@@ -65,6 +65,23 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   `claude plugin update`) and the **repo-level release tag** (`vX.Y.Z`, what
   containers' `LIBRARIAN_REF` pins to). `bin/release.sh` re-aligns all plugin
   versions to the repo version on each release — see **Releases** below.
+- **Runtime policy: Python 3.11 floor, bash-3.2-clean fallback, fail loud.**
+  The skill code tools (`patterns.sh` pre-scan family) run on host / bare-linux /
+  container / **base macOS**, whose stock `/bin/bash` is 3.2 and which ships no
+  usable `python3`. So: (1) a tool's **primary** impl is Python **3.11+**
+  (`patterns.py`); a same-dir `patterns.sh` shim exec's it when a `python3>=3.11`
+  is present and otherwise runs the bash body as the **fallback** (set
+  `PATTERNS_FORCE_BASH=1` to force bash). Selection order is python3≥3.11 → bash,
+  and a tool must **fail loudly** (non-zero + actionable message) rather than
+  silently emit wrong/empty findings when its runtime is missing. (2) Every
+  `*.sh` in `plugins/ tests/ bin/` must stay **bash-3.2 clean** — no `declare -A`,
+  `mapfile`/`readarray`, namerefs, `${v,,}`/`${v^^}` case-conversion, or `;;&`.
+  `tests/lint-shell-portability.sh` enforces (2) and `tests/validate-python-ports.sh`
+  pins the bash↔python TSV parity of every port (both run by `tests/run-all.sh`,
+  so they gate CI and pre-push). The TSV contract
+  (`file\tline\tcategory\tevidence\tcertainty`) is the language boundary — a port
+  is a drop-in as long as its output matches. See `dev-core`'s `shell-scripting`
+  skill for the portable idioms and the fail-loud version-gate template.
 - **The `containers` submodule is pinned** (`update = none`). It exists only to
   build the devcontainer (`build.context: ../containers`). Bump it deliberately.
 - **GitHub Actions are SHA-pinned with a version comment.** Every `uses:` in
@@ -83,10 +100,21 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
 just              # list recipes
 just validate     # validate manifests
 just test         # run the full local test suite (tests/run-all.sh; mirrors CI)
-just lint         # dprint + taplo + rumdl + manifest validation
-just fmt          # format JSON/YAML/TOML/markdown
+just lint         # dprint + taplo + rumdl + ruff (check + format) + manifests
+just fmt          # format JSON/YAML/TOML/markdown/Python
 just install-hooks
 ```
+
+**Linting is language-by-language and gated in CI + pre-push.** Formatting/lint
+for JSON/YAML/TOML/markdown is dprint/taplo/rumdl (via `just lint`). The two
+in-repo languages each have a `tests/run-all.sh` gate: **shell** →
+`tests/lint-shellcheck.sh` (`shellcheck --severity=warning` over `plugins/ tests/
+bin/`) plus `tests/lint-shell-portability.sh` (bans bash-4 constructs, macOS
+bash-3.2 target); **Python** → `tests/lint-python.sh` (`ruff check` +
+`ruff format --check`, config in `ruff.toml`, py311 target). All three
+skip-if-absent locally but CI installs `shellcheck`/`ruff` (and asserts they are
+on PATH) so they actually run there — see `.github/workflows/ci.yml`. `ruff`,
+`shellcheck`, and `shfmt` also run in the lefthook pre-commit hook.
 
 ## Commits
 

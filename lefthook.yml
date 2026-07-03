@@ -36,6 +36,23 @@ pre-commit:
       run: shfmt -w -i 4 -ci {staged_files}
       stage_fixed: true
 
+    # --- Python lint + format (ruff) ---
+    # Mirrors tests/lint-python.sh. ruff-format rewrites and re-stages; ruff-check
+    # lints (config in ruff.toml). Both skip gracefully when ruff is absent.
+
+    ruff-format:
+      glob: "*.py"
+      skip:
+        - run: "! command -v ruff >/dev/null 2>&1"
+      run: ruff format {staged_files}
+      stage_fixed: true
+
+    ruff-check:
+      glob: "*.py"
+      skip:
+        - run: "! command -v ruff >/dev/null 2>&1"
+      run: ruff check {staged_files}
+
     # --- YAML / JSON formatting (dprint) ---
 
     dprint-yaml:
