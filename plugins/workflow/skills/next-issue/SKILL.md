@@ -36,7 +36,8 @@ rule):
   L1–L3. Because `severity/critical` caps at L3, a critical issue always keeps
   the plan gate. This is **level-driven, not effort-driven** — an L4 run skips
   the plan even on an `effort/medium` issue. The legacy `--plan-gate` /
-  `--force-auto` overrides still parse (map onto the level; removed in #179).
+  `--force-auto` overrides still parse and map onto the level; neither can lift
+  the critical cap (#179 removed the old env-var critical-bypass that once did).
 
 Adding the `--ship` flag (alias `--now`) — `/next-issue 123 --ship` — is a
 fast-path for **small work**: after plan approval and implementation it invokes
@@ -98,9 +99,8 @@ splits into **two dispositions**:
   the plan and STOPS at `ExitPlanMode` for human approval, then continues at the
   run's level through implement → review → push/PR. Because critical caps at L3,
   a critical issue always keeps the gate. This is level-driven, not
-  effort-driven. Legacy overrides still map onto the level; the
-  `FORCE_AUTO_CRITICAL` critical-bypass is now inert (the cap holds) and is
-  removed in #179.
+  effort-driven. Legacy overrides still map onto the level; the old env-var
+  critical-bypass has been **removed** (the cap subsumes it — #179).
 
 After implementation and testing complete, an **L3–L4** run **invokes
 `/ship-issue` in the same turn** (call the `Skill` tool) — never end the turn

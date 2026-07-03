@@ -144,8 +144,9 @@ This mirrors the `--ship` effort gate, which is likewise restricted to
 `effort/trivial`/`small`. The launch command does not change — the policy lives
 in `/next-issue`; dispatch just **expects** medium+/critical golems to block at
 the plan step. Per-golem overrides: append `--plan-gate` to force the checkpoint
-on a small issue, or `--force-auto` to force full autonomy on a medium+/critical
-one.
+on a small issue, or `--force-auto` to force full autonomy on a **medium/large**
+one. `--force-auto` cannot lift a `severity/critical` issue past L3 — the
+critical cap always keeps its plan gate human.
 
 **Plan approval is a human keystroke, not agent-drivable (#29).** At the golem's
 `ExitPlanMode` prompt the two "yes" options diverge under the auto-mode

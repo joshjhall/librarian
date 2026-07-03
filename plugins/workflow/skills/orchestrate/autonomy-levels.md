@@ -22,9 +22,9 @@ categories, the four levels, the merge invariant, the dead-end rule, and the
 
 Autonomy today is a **binary**: a run is either `--autonomous` — every gate
 takes its documented default, all the way to a pushed PR — or fully interactive.
-Under the hood that binary is really **two orthogonal on/off axes** (autonomy,
-and plan-gating) plus a `severity/critical` + `FORCE_AUTO_CRITICAL` special case
-guarding one corner. It is a switch, not a dial.
+Under the hood that binary was really **two orthogonal on/off axes** (autonomy,
+and plan-gating) plus a `severity/critical` double-consent special case guarding
+one corner. It was a switch, not a dial.
 
 Real sessions want a **dial**: *decide the obvious, stop for the real choices.*
 This spec replaces the switch with a **4-level model** (an SAE-driving analogy —
@@ -204,16 +204,17 @@ issue is silently reduced to L3** (the setup prompt offers L1–L3; `--level 4` 
 critical issue therefore always keeps its escalation gates — most importantly
 plan approval — in front of a human.
 
-This **replaces** today's scattered critical special-casing:
+This **replaced** the scattered critical special-casing the binary model carried:
 
-- Today, an autonomous critical run is forced *plan-gated*, and the *only* way to
-  bypass its plan gate is the `--force-auto` + `FORCE_AUTO_CRITICAL=1`
-  double-consent (a per-invocation flag plus a separately-sourced env var).
-- Under the level model that whole apparatus collapses to **"critical ⇒ cap at
-  L3"**: capping at L3 keeps escalation gates human, which keeps plan approval
-  human, which is exactly what the double-consent protected. The
-  `FORCE_AUTO_CRITICAL` env var, the `--force-auto`-on-critical branch, and their
-  scattered references are **removed** in #179.
+- Under the old model an autonomous critical run was forced *plan-gated*, and the
+  *only* way to bypass its plan gate was a double-consent — a per-invocation
+  `--force-auto` flag plus a separately-sourced env-var second-consent.
+- The level model collapses that whole apparatus to **"critical ⇒ cap at L3"**:
+  capping at L3 keeps escalation gates human, which keeps plan approval human,
+  which is exactly what the double-consent protected. The env-var second-consent,
+  the `--force-auto`-on-critical branch, and their scattered references were
+  **removed** (#179); `--force-auto` survives only as the general L4 plan-skip
+  flag, which the cap already overrides on a critical issue.
 
 ---
 
@@ -297,7 +298,7 @@ signals.
 | — (no distinct spelling today for "auto routine, human escalations") | **L3** (new) |
 | `--autonomous`, plan **skipped** (trivial/small, non-critical) | **L4**       |
 | `--autonomous`, plan **gated** (medium/large/no-effort/critical) | **L3** on the plan gate (escalation stays human); other gates auto |
-| `--force-auto` + `FORCE_AUTO_CRITICAL=1` on a critical issue   | **removed** — critical caps at L3, so this bypass no longer exists |
+| the old critical plan-gate bypass (a `--force-auto` flag + env-var second-consent) | **removed** — critical caps at L3, so this bypass no longer exists |
 
 L2 and L3 are the genuinely new dispositions the switch could not express; L4 is
 today's full autonomy, and L1 is today's interactive default.

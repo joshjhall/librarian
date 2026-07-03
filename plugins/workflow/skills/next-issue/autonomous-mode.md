@@ -101,20 +101,20 @@ golem environments, never in a shared interactive shell.)
   (it was plan-gated under the binary model); a `severity/critical` issue still
   keeps the plan gate because it caps at L3.
 
-  **Legacy overrides (superseded by the level; removed in #179).** The old
-  per-run plan-gate flags still parse and map onto the level for continuity:
-  `--plan-gate` (alias `--no-skip-plan`) ⇒ **keep the plan gate** (treat the run
-  as ≤ L3 for the plan checkpoint); `--force-auto` (alias `--skip-plan`) ⇒
-  **L4** (auto-pass the plan), still subject to the critical cap. If both appear,
-  `--plan-gate` wins (safer default).
+  **Legacy overrides (superseded by the level).** The old per-run plan-gate flags
+  still parse and map onto the level for continuity: `--plan-gate` (alias
+  `--no-skip-plan`) ⇒ **keep the plan gate** (treat the run as ≤ L3 for the plan
+  checkpoint); `--force-auto` (alias `--skip-plan`) ⇒ **L4** (auto-pass the
+  plan), still subject to the critical cap. If both appear, `--plan-gate` wins
+  (safer default).
 
-  The `FORCE_AUTO_CRITICAL=1` second-consent that once let `--force-auto` bypass
-  the plan gate on a `severity/critical` issue is now **inert**: the critical cap
-  holds a critical issue at L3, so its plan gate can no longer be auto-passed by
-  any flag. The env var and the `--force-auto`-on-critical branch are retained
-  only until #179 deletes them; do not rely on them, and never place
-  `--force-auto` in a templated golem launch command (it is operator-interactive
-  only).
+  On a `severity/critical` issue neither `--force-auto` nor an L4 selection can
+  auto-pass the plan gate: the **critical cap** holds the run at L3, and there is
+  no override that lifts it — a critical issue's plan gate is always human. (The
+  cap subsumes the old env-var second-consent that once let `--force-auto` bypass
+  a critical plan gate; see `orchestrate/autonomy-levels.md` § *The critical
+  carve-out*.) Never place `--force-auto` in a templated golem launch command —
+  it is operator-interactive only.
 - **Shipping handoff (L3–L4).** A run that reaches implementation without a
   human at every routine gate — L3 or L4 — must not stop before delivery. Once
   implementation and testing are complete — for a plan-gate-kept run, that means
