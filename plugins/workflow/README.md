@@ -7,6 +7,46 @@ autonomous pipeline, and fan work out across per-issue golems (one
 issue/branch/worktree/PR each) — on a host, on bare Linux, or inside a
 devcontainer.
 
+## First-run setup: authorize golem launch permissions
+
+`/orchestrate dispatch` launches each worktree golem with a bare
+`tmux new-session`. The Claude Code auto-mode classifier **denies** that shape
+(`[Create Unsafe Agents]`) until the launch rules are authorized — so on a fresh
+host the _first_ dispatch fails at an opaque wall before you ever see the
+remediation that `golem-launch.sh preflight` would print. Authorize the three
+rules once, before your first dispatch, by adding them to `permissions.allow`:
+
+```jsonc
+// in one settings scope's "permissions": { "allow": [ … ] }
+"Bash(tmux new-session:*)",
+"Bash(tmux ls:*)",
+"Bash(tmux kill-session:*)"
+```
+
+Pick **one** scope:
+
+- **project-local** — `.claude/settings.local.json` (this repo only)
+- **global** — `~/.claude/settings.json` (all repos on this host)
+
+Verify the rules are live in either scope with the bundled self-check:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh preflight
+```
+
+It is a no-op when the rules are present and prints the exact rules + scope
+choice (exit 3) when they are missing. The plugin never writes these for you —
+adding settings is itself permission-gated, so the flow is _suggest + ask, never
+write silently_.
+
+**Why this is a manual step:** a Claude Code plugin's bundled `settings.json`
+can only carry the `agent` / `subagentStatusLine` keys, not `permissions.allow`,
+so the launch rules must live in a user- or project-level scope. **Devcontainer
+users get them automatically** — the `containers` image seeds them into the
+default `~/.claude/settings.json` (see
+[joshjhall/containers#682](https://github.com/joshjhall/containers/issues/682)),
+so this manual step is only for host / bare-Linux installs.
+
 ## Skills (9)
 
 - `file-issue` — structured GitHub/GitLab issue creation with auto-labeling
