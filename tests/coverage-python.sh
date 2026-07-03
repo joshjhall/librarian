@@ -117,6 +117,83 @@ EOF
 # .env.example carrying a secret must be ignored by the skip-glob path.
 printf 'key = "%s"\n' "$STRIPE_TOK" >"$FIXDIR/secrets.env.example"
 
+# check-ai-config scans Claude Code CONFIG files (agent/skill frontmatter,
+# CLAUDE.md bloat, MCP config, hook safety, workflow.js harness logic), gated on
+# path globs the generic corpus above never matches. Build a small config-shaped
+# tree so its detectors execute for the coverage run. The BEHAVIORAL assertions
+# on these detectors live in tests/validate-checker-detectors.sh (#204) — this
+# corpus only drives line coverage; the gate is what pins correctness. Fixtures
+# use only PRESENT frontmatter fields so the bash fallback's missing-field crash
+# (#205) does not apply and both impls stay well-behaved.
+AICFG="$FIXDIR/ai/agents/rev"
+mkdir -p "$AICFG"
+cat >"$AICFG/rev.md" <<'EOF'
+---
+name: rev
+description: A reviewer agent.
+tools: '*'
+model: nope
+---
+# Reviewer
+EOF
+SKILLDIR="$FIXDIR/ai/skills/demo"
+mkdir -p "$SKILLDIR"
+cat >"$SKILLDIR/SKILL.md" <<'EOF'
+---
+name: demo
+---
+Prose with no structural section heading.
+EOF
+cat >"$FIXDIR/ai/mcp.json" <<'EOF'
+{ "a": "http://evil.example.com", "b": "http://localhost:1" }
+EOF
+cat >"$FIXDIR/ai/hook.sh" <<'EOF'
+#!/usr/bin/env bash
+rm -rf /tmp/x
+git reset --hard
+EOF
+printf 'echo %s\n' '$GITHUB_TOKEN' >>"$FIXDIR/ai/hook.sh"
+cat >"$FIXDIR/ai/demo.workflow.js" <<'EOF'
+const ref = `${a}:${b}:${c}`
+run(`x agentType: 'bare'`)
+sh(`claude --dangerously-skip-permissions ${task}`)
+sh("npm install")
+EOF
+cat >"$FIXDIR/ai/CLAUDE.md" <<'EOF'
+line one
+line two
+line three
+EOF
+# Wrong-basename agent (dir 'rev' but file 'other.md') -> naming arm.
+cat >"$AICFG/other.md" <<'EOF'
+---
+name: other
+description: d
+tools: Read
+model: opus
+---
+EOF
+# Agent with no opening frontmatter fence -> missing-frontmatter early return.
+NOFMDIR="$FIXDIR/ai/agents/nofm"
+mkdir -p "$NOFMDIR"
+printf '%s\n' "# no frontmatter" "body" >"$NOFMDIR/nofm.md"
+# Agent missing required fields (present-fence). Safe here: the coverage run uses
+# patterns.py directly, which handles a missing field correctly (the bash-only
+# #205 crash does not apply to the python primary).
+BAREDIR="$FIXDIR/ai/agents/bare"
+mkdir -p "$BAREDIR"
+printf '%s\n' "---" "unrelated: v" "---" "body" >"$BAREDIR/bare.md"
+# A docs/*.md over its (tuned) threshold -> DOC bloat arm.
+mkdir -p "$FIXDIR/ai/docs"
+printf '%s\n' "d1" "d2" "d3" "d4" >"$FIXDIR/ai/docs/guide.md"
+
+AICFG_LIST="$WORKDIR/ai-list.txt"
+printf '%s\n' \
+    "$AICFG/rev.md" "$AICFG/other.md" "$NOFMDIR/nofm.md" "$BAREDIR/bare.md" \
+    "$SKILLDIR/SKILL.md" "$FIXDIR/ai/mcp.json" "$FIXDIR/ai/hook.sh" \
+    "$FIXDIR/ai/demo.workflow.js" "$FIXDIR/ai/CLAUDE.md" "$FIXDIR/ai/docs/guide.md" \
+    >"$AICFG_LIST"
+
 # Single-arg corpus: a file list of every fixture above.
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
@@ -144,6 +221,17 @@ while IFS= read -r py; do
         */drift-detect/patterns.py)
             python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" >/dev/null 2>&1 || true
+            ;;
+        */check-ai-config/patterns.py)
+            # Drive this port over the config-shaped corpus (agent/skill/MCP/hook/
+            # workflow.js) instead of the generic one, with bloat thresholds tuned
+            # down so the tiny CLAUDE.md trips the warn/high arms. Also run the
+            # generic list so the no-match early-return globs stay covered.
+            CLAUDE_MD_WARN=1 CLAUDE_MD_HIGH=2 DOC_WARN=1 DOC_HIGH=3 \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$AICFG_LIST" >/dev/null 2>&1 || true
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$FILE_LIST" >/dev/null 2>&1 || true
             ;;
         *)
             python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
