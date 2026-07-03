@@ -100,6 +100,16 @@ harness, not by you — fix the failure you are given and report the result.
    }
    ```
 
+   **Your `fixed: false` return is what a dead-end is built from.** When you (and
+   the harness's retry cap) cannot make a check pass, `ship-issue` treats the red
+   CI as a **dead-end** — the merge invariant forbids merging it — and emits the
+   dead-end summary (`orchestrate/autonomy-levels.md` § *The dead-end summary
+   template*). Write `remainingFailures` and `summary` so they drop straight into
+   that summary's *what was attempted* / *why it's a dead-end* sections: state
+   the concrete fixes you tried and the exact error that persisted, not a vague
+   "could not fix". You never emit the dead-end feed event or stop the run
+   yourself — you return the material `ship-issue` surfaces.
+
 ## Fix Strategies by Failure Type
 
 ### Lint Failures

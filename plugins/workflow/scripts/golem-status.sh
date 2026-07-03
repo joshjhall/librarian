@@ -91,10 +91,11 @@ done
 # (--once snapshot) so this BLOCKED list and the proactive `--stream` watch
 # share ONE source of truth and can never drift. The helper applies the same
 # rule: a golem is BLOCKED only when its most-recent feed line is a fresh `gate`
-# (legacy `blocked` honored, or a mid-flight `escalation` per issue #176) within
-# GOLEM_BLOCK_TTL; an `idle` emitted once the golem resumes supersedes and clears
-# it. It emits "<golem>\t<message>", already labelling an escalation
-# "escalation — …"; reformat to the "  golem — message" display here.
+# (legacy `blocked` honored, a mid-flight `escalation` per issue #176, or a
+# `dead-end` per issue #180) within GOLEM_BLOCK_TTL; an `idle` emitted once the
+# golem resumes supersedes and clears it. It emits "<golem>\t<message>", already
+# labelling an escalation "escalation — …" and a dead-end "dead-end — …";
+# reformat to the "  golem — message" display here.
 if [ -f "$feed" ] && [ -x "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
     feed_blocked="$(
         "$SCRIPT_DIR/golem-gate-watch.sh" --once 2>/dev/null |

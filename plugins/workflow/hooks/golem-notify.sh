@@ -15,7 +15,7 @@
 # exits 0.
 #
 # Input  (stdin):  Notification hook JSON, e.g. {"message":"...", ...}
-# Output (feed):   {"ts","golem","event":"gate|idle|escalation","message"}
+# Output (feed):   {"ts","golem","event":"gate|idle|escalation|dead-end","message"}
 #
 # The `event` kind separates a real permission gate (a human decision the
 # orchestrator must surface) from a transient between-turn idle: Claude Code
@@ -69,12 +69,21 @@ fi
 #                viable path (issue #176). The next-issue escalation protocol
 #                emits it with a message beginning `ESCALATION:`; surfaced
 #                distinctly from a routine permission gate.
+#   dead-end   — an escalation whose only auto-resolution would violate the merge
+#                invariant (CI still red after ci-fixer exhausts, a contradictory
+#                conflict rebase-agent can't union, an unclean review that can't
+#                be mechanically fixed — issue #180). It blocks at EVERY level,
+#                L4 included, and carries a structured why/attempted/remaining
+#                summary. Emitted with a message beginning `DEAD-END:`.
 # Match case-insensitively on the message; default to `gate` so an unrecognized
 # notification surfaces (fail loud) rather than being silently dropped as idle.
-# The `escalation` branch precedes the `gate` default so its marker wins.
+# The `dead-end` and `escalation` branches precede the `gate` default so their
+# markers win; `dead-end` is matched before `escalation` because it is the more
+# specific kind (a dead-end IS an escalation that also blocks L4).
 case "$(printf '%s' "$message" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
     *"waiting for your input"*) event="idle" ;;
     *"waiting for input"*) event="idle" ;;
+    *"dead-end:"*) event="dead-end" ;;
     *"escalation:"*) event="escalation" ;;
     *) event="gate" ;;
 esac
@@ -122,8 +131,9 @@ else
     # remaining double quotes. Keeps every feed line valid JSON on this path.
     golem_safe="$(printf '%s' "${golem//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
     message_safe="$(printf '%s' "${message//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
-    # $event is a fixed literal (gate|idle|escalation) set by the case above,
-    # never attacker-derived, so it needs no sanitizing — interpolate it directly.
+    # $event is a fixed literal (gate|idle|escalation|dead-end) set by the case
+    # above, never attacker-derived, so it needs no sanitizing — interpolate it
+    # directly.
     printf '{"ts":"%s","golem":"%s","event":"%s","message":"%s"}\n' \
         "$ts" "${golem_safe//\"/\\\"}" "$event" "${message_safe//\"/\\\"}" \
         >>"$feed" 2>/dev/null || true

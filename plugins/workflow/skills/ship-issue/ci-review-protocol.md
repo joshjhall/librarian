@@ -126,15 +126,30 @@ iteration counter by hand.
     fix rewrite the CI definition that gates it.
   - For each result with `fixed: false`: red CI that `ci-fixer` cannot resolve
     is a **dead-end** — the merge invariant forbids merging it at every level,
-    L4 included, so **no path merges here**. At **L1–L2** inform the user "CI
-    check {check} appears to be {failure_type} — {summary}. Remaining:
-    {remainingFailures}. Requires manual intervention." and ask: **Fix manually
-    now, or ship with failing CI (no merge)?** If fix manually, pause then go
-    back to (a); if ship-as-is, push the branch and stop for a human (the PR is
-    parked, not merged). At **L3–L4**: do NOT prompt — STOP and emit the
-    dead-end / completion summary (see "Completion summary" in SKILL.md) noting
-    the unresolved CI failure; leave the PR parked with `status/pr-pending`, do
-    not merge, and do not leave the run in a prompting state.
+    L4 included, so **no path merges here**. Emit the **dead-end summary
+    template** (`orchestrate/autonomy-levels.md` § *The dead-end summary
+    template*) — the three sections *why it's a dead-end* (this CI check is red
+    after `ci-fixer` exhausted its cap and the failure exercises the diff, not
+    infra), *what was attempted* (the fix attempts + infra-flake triage already
+    run, so the human does not redo them), and *options that remain* (e.g. the
+    test expectation may be wrong; re-scope; ship-with-failing-CI is NOT an
+    option). Surface it on the feed as a `dead-end` event so the orchestrator
+    flags it distinctly (message begins `DEAD-END:`):
+
+    ```bash
+    printf '%s' '{"message":"DEAD-END: CI check {check} red after ci-fixer cap — see summary"}' \
+      | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
+    ```
+
+    At **L1–L2** additionally ask the user, after presenting the summary: **Fix
+    manually now, or ship with failing CI (no merge)?** If fix manually, pause
+    then go back to (a); if ship-as-is, push the branch and stop for a human (the
+    PR is parked, not merged). At **L3–L4**: do NOT prompt — STOP with the
+    dead-end summary folded into the completion summary (see "Completion summary"
+    in SKILL.md). In all cases leave the PR parked with `status/pr-pending`, do
+    not merge, do not leave the run in a prompting state, and **wait indefinitely
+    for the human** — never lapse-and-default (`autonomy-levels.md` § *Standing
+    rule*).
 
 The harness stops on its own once the per-check cap or the shared budget is
 reached, so there is no separate "after 3 attempts" step — surface any
@@ -217,12 +232,24 @@ merges directly.
 Otherwise `cycle++`; if `cycle` exceeds `cap`, the PR is **not** green + clean —
 this is a **dead-end** (`orchestrate/autonomy-levels.md` § dead-end rule; #181).
 **STOP at every level, L4 included** — the merge invariant forbids merging an
-unclean PR, so there is nothing safe to auto-decide. Surface the remaining
-blocking findings / unresolved comments. At **L1–L2** (interactive): ask **Keep
-fixing, ship as-is, or defer the rest?** At **L3–L4**: do NOT prompt — STOP,
-leave the PR parked with `status/pr-pending`, and record the remaining items for
-the dead-end / completion summary (Review status: stopped-with-blocking). Never
-merge past this point.
+unclean PR, so there is nothing safe to auto-decide. Emit the **dead-end summary
+template** (`orchestrate/autonomy-levels.md` § *The dead-end summary template*):
+*why it's a dead-end* (review still has blocking findings after `cap` cycles, so
+"review is clean" cannot be met), *what was attempted* (the fixes applied across
+the `cap` cycles and which findings resisted), *options that remain* (keep
+fixing manually, re-scope, or defer specific findings — never merge unclean).
+Surface it on the feed as a `dead-end` event (message begins `DEAD-END:`):
+
+```bash
+printf '%s' '{"message":"DEAD-END: review still blocking after {cap} cycles — see summary"}' \
+  | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
+```
+
+At **L1–L2** (interactive): after presenting the summary, ask **Keep fixing,
+ship as-is, or defer the rest?** At **L3–L4**: do NOT prompt — STOP, leave the PR
+parked with `status/pr-pending`, and fold the dead-end summary into the
+completion summary (Review status: stopped-with-blocking). Never merge past this
+point, and **wait indefinitely for the human** — never lapse-and-default.
 
 The cap and budget bound the loop: `workflow.js` runs one cycle per
 invocation and returns partial results if its shared budget is exhausted, so
