@@ -43,17 +43,23 @@
       "enum": ["github", "gitlab"],
       "description": "Issue tracker platform."
     },
+    "autonomy_level": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "Autonomy level 1-4 per orchestrate/autonomy-levels.md (#174) — the primary autonomy field. Chosen at setup or via --level N; --autonomous/--auto/NEXT_ISSUE_AUTONOMOUS=1 map to L4. Drives per-gate disposition (routine gates auto at L3-L4, escalation gates incl. plan approval auto at L4 only), with severity/critical capped at L3. Absent → L1 disposition (everything asks), unless a legacy autonomous:true is present (read as L4)."
+    },
     "autonomous": {
       "type": "boolean",
-      "description": "True when the run was started in autonomous mode (--autonomous flag, deprecated alias --auto, or NEXT_ISSUE_AUTONOMOUS=1). Gates resolve to documented defaults; no interactive prompts."
+      "description": "Back-compat mirror of autonomy_level (autonomous == level 4), retained so the not-yet-level-aware /ship-issue keeps working; dropped by #177. Legacy reads: a file with autonomous:true and no autonomy_level migrates to L4, autonomous:false/absent to L1. Prefer autonomy_level when both are present."
     },
     "plan_gated": {
       "type": "boolean",
-      "description": "True when an autonomous run keeps the human plan-approval checkpoint (EnterPlanMode/ExitPlanMode) instead of skipping it. Set true for autonomous runs on effort/medium, effort/large, severity/critical, or no-effort-label issues, or when --plan-gate is passed; false (fully-autonomous, skip plan) for effort/trivial|small non-critical issues, when --force-auto is passed, and for every non-autonomous run."
+      "description": "Back-compat mirror derived from autonomy_level: true when this run keeps the human plan-approval checkpoint (escalation gate is human at L1-L3, and severity/critical is capped at L3 so it is always kept), false when the plan gate is auto-passed (L4 on a non-critical issue). Retained for /ship-issue; dropped by #177. No longer computed from effort labels — the level (plus the critical cap) decides it."
     },
     "plan_comment_url": {
       "type": "string",
-      "description": "URL of the issue comment where the fully-autonomous plan was posted for traceability. Written only on the fully-autonomous path (plan_gated:false); omitted on plan-gated autonomous runs and all non-autonomous runs."
+      "description": "URL of the issue comment where the L4 plan was posted for traceability. Written only on the L4 plan-auto-passed path (plan_gated:false); omitted on plan-gate-kept runs (L1-L3, including a capped critical)."
     },
     "contexts": {
       "type": "array",

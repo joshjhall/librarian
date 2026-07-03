@@ -28,7 +28,8 @@ Write using the Write tool:
   "plan": "Validate session token expiry before granting access",
   "started": "2026-02-27",
   "platform": "github",
-  "autonomous": true,
+  "autonomy_level": 3,
+  "autonomous": false,
   "plan_gated": true,
   "contexts": ["security", "auth"],
   "active_loops": ["make-it-work", "make-it-secure", "make-it-tested"],
@@ -64,9 +65,10 @@ Write using the Write tool:
 | `plan`         | no       | One-line plan summary (set after plan)               |
 | `started`      | yes      | ISO date when work began                             |
 | `platform`     | yes      | `github` or `gitlab`                                 |
-| `autonomous`   | no       | True when started autonomously (`--autonomous`/`--auto`/env) |
-| `plan_gated`   | no       | True when an autonomous run keeps the plan checkpoint (medium+/critical/no-effort or `--plan-gate`); false skips plan |
-| `plan_comment_url` | no   | URL of posted plan comment (fully-autonomous only)   |
+| `autonomy_level` | no     | Autonomy level 1–4 per `orchestrate/autonomy-levels.md` (#174) — the primary autonomy field. `--level N`; `--autonomous`/`--auto`/env → L4; absent → L1. `severity/critical` caps at L3 |
+| `autonomous`   | no       | Back-compat mirror (`== level 4`); dropped by #177. Legacy `autonomous:true` with no `autonomy_level` reads as L4 |
+| `plan_gated`   | no       | Back-compat mirror: true when the plan gate is kept (level ≤ 3, incl. capped critical), false at L4. Level-driven, not effort-driven; dropped by #177 |
+| `plan_comment_url` | no   | URL of posted plan comment (L4 plan-auto-passed path only) |
 | `contexts`     | no       | Domain contexts for this issue                       |
 | `active_loops` | no       | Implementation loops to execute                      |
 | `checkpoint`   | no       | Phase transition checkpoint (see below)              |
@@ -186,19 +188,19 @@ same context (the small planning footprint does not justify a reset). The
 plan-approval gate itself is preserved, and `autonomous` stays false. For
 `effort/medium`/`large` the reset point is unaffected.
 
-\* **`--autonomous` exception**: when `/next-issue` is invoked with
-`--autonomous` (deprecated alias `--auto`) or `NEXT_ISSUE_AUTONOMOUS=1`,
-**every** reset point above is bypassed — the
-autonomous run invokes `/ship-issue` in the same turn (via the `Skill`
-tool) and never reaches the "After plan approval", "After review", or "After
-ship" boundaries as distinct resets. The orchestrate golem launch's
-`;`-chained `/ship-issue --autonomous` is the only resume path if the turn exits
-early. Unlike `--ship`, `--autonomous` sets `autonomous: true`. Whether it removes the
-**plan-approval gate** depends on `plan_gated` (see `SKILL.md` § Autonomous
-Mode): a fully-autonomous run (`effort/trivial`/`small`, non-critical, no
-`--plan-gate`) skips the gate; a plan-gated run (`effort/medium`/`large`,
-`severity/critical`, no-effort-label, or `--plan-gate`) keeps it and pauses at
-`ExitPlanMode` for human approval before continuing autonomously.
+\* **L3–L4 exception**: when `/next-issue` runs at **L3 or L4** — `--level 3`/`4`,
+or the L4 aliases `--autonomous` (deprecated `--auto`) / `NEXT_ISSUE_AUTONOMOUS=1`
+— **every** reset point above is bypassed: the run invokes `/ship-issue` in the
+same turn (via the `Skill` tool) and never reaches the "After plan approval",
+"After review", or "After ship" boundaries as distinct resets. The orchestrate
+golem launch's `;`-chained `/ship-issue --autonomous` is the only resume path if
+the turn exits early. Such a run sets `autonomy_level` (and the derived
+`autonomous` mirror = true only at L4). Whether it removes the **plan-approval
+gate** is level-driven (see `SKILL.md` § Autonomous Mode): an **L4** run
+(non-critical) auto-passes the plan gate; an **L1–L3** run — including a capped
+`severity/critical` — keeps it and pauses at `ExitPlanMode` for human approval
+before continuing. (An **L1–L2** run stops at the routine ship gates too, so it
+does not reach this in-turn ship handoff.)
 
 | Orchestrator Action | Reset Mode | Why                                                        |
 | ------------------- | ---------- | ---------------------------------------------------------- |
