@@ -30,25 +30,19 @@ EVIDENCE_CAP = 80  # matches printf '%.80s' in patterns.sh
 # intentional. Mirrors the leading `case "$file"` skip arm (substring globs).
 SKIP_GLOBS = ("*test*", "*spec*", "*fixture*", "*mock*", "*fake*")
 
-# FIDELITY NOTE (see #168 for the same bug in check-security): the bash regexes
-# below write the single-quote delimiter as `\x27` inside a POSIX bracket
-# expression. GNU grep does NOT expand `\x27` there — it adds the literal
-# characters \, x, 2, 7 to the class. So the real quote-delimiter class is
-# [ " \ x 2 7 ] (NOT [ " ' ]): a single-quoted secret value or f'...' string is
-# missed. This port REPLICATES that class exactly for byte-parity; the fix (use a
-# real ') is tracked as a follow-up, not this port. In the Python patterns below,
-# `["\\x27]` is that same buggy class (`\\` = literal backslash; x,2,7 literal).
+# The quote-delimiter class is ["'] — a double or single quote (matches the bash
+# regex fixed in #183; the earlier ["\x27] never matched single-quoted values).
 SECRET_KEYS = (
     r"(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token"
     r"|secret[_-]?key|password|passwd|private[_-]?key)"
 )
 SECRET_RE = re.compile(
-    SECRET_KEYS + r"""\s*[=:]\s*["\\x27][A-Za-z0-9+/=_-]{16,}""", re.IGNORECASE
+    SECRET_KEYS + r"""\s*[=:]\s*["'][A-Za-z0-9+/=_-]{16,}""", re.IGNORECASE
 )
 AWS_RE = re.compile(r"AKIA[0-9A-Z]{16}")
 
 # string-interpolation-query, per language.
-PY_SQL_RE = re.compile(r"""(execute|cursor)\s*\(\s*f["\\x27]""")
+PY_SQL_RE = re.compile(r"""(execute|cursor)\s*\(\s*f["']""")
 JS_SQL_RE = re.compile(r"(query|execute)\s*\(\s*`[^`]*(SELECT|INSERT|UPDATE|DELETE)")
 GO_SQL_RE = re.compile(r"(Exec|Query|QueryRow)\s*\(\s*fmt\.Sprintf")
 
@@ -56,16 +50,13 @@ GO_SQL_RE = re.compile(r"(Exec|Query|QueryRow)\s*\(\s*fmt\.Sprintf")
 DANGER_FN_RE = re.compile(
     r"\b(subprocess\.call\s*\(.*shell\s*=\s*True|child_process\.exec\s*\()"
 )
-# Unsafe deserialization. FIDELITY NOTE: the bash regex is
-# `\b(yaml\.load\s*\([^)]*\)(?!.*Loader)|marshal\.loads?\s*\()` run under
-# `grep -E` (POSIX ERE). ERE has no PCRE negative-lookahead: GNU grep parses the
-# `(?!.*Loader)` as a malformed group and the ENTIRE yaml.load alternative never
-# matches any input (verified: grep -E returns no match even for a line ending in
-# the literal "(?!.*Loader)"). So in practice bash flags marshal.loads ONLY, and
-# yaml.load detection is dead. This port replicates that observed behavior — only
-# the marshal.loads branch — so parity holds. Restoring real yaml.load-without-
-# Loader detection is a tracked follow-up, not this port.
-UNSAFE_DESERIALIZE_RE = re.compile(r"\bmarshal\.loads?\s*\(")
+# Unsafe deserialization: marshal.load(s) is always unsafe; yaml.load(...) is
+# unsafe only WITHOUT an explicit Loader= (a safe loader makes it benign). Two
+# stages, mirroring the fixed bash `grep -nE '...' | grep -vE 'Loader\s*='`
+# (#183): a positive match on yaml.load(/marshal.load( that is NOT excluded by a
+# Loader= on the same line.
+UNSAFE_DESERIALIZE_RE = re.compile(r"\b(yaml\.load\s*\(|marshal\.loads?\s*\()")
+LOADER_EXCLUDE_RE = re.compile(r"Loader\s*=")
 
 # denylist-validation (all languages).
 DENYLIST_RE = re.compile(
@@ -123,7 +114,7 @@ def scan_file(path: str, lines: list[str]) -> None:
         # --- Category: dangerous-function (all languages) ---
         if DANGER_FN_RE.search(line):
             emit(path, idx, "dangerous-function", "Dangerous function usage", line)
-        if UNSAFE_DESERIALIZE_RE.search(line):
+        if UNSAFE_DESERIALIZE_RE.search(line) and not LOADER_EXCLUDE_RE.search(line):
             emit(path, idx, "dangerous-function", "Unsafe deserialization", line)
 
         # --- Category: denylist-validation (all languages) ---

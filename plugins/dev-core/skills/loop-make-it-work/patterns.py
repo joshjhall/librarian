@@ -33,14 +33,15 @@ STUB_RE = re.compile(
     re.IGNORECASE,
 )
 
-# FIDELITY NOTE: the bash empty-body ERE for JS/Go uses `\{[\s]*\}`. In POSIX ERE
-# `[\s]` is a bracket class of the LITERAL characters backslash and 's' — NOT a
-# whitespace shorthand. So bash matches `{`, then zero+ of {backslash, s}, then
-# `}` — e.g. `{}`, `{s}`, `{\}`, `{ss}` — but NOT `{ }` (a real space). These
-# regexes replicate that exact class so parity holds; a follow-up may switch to
-# real whitespace (`\s*`).
-JS_EMPTY_BODY_RE = re.compile(r"(function\s+\w+|=>\s*)\{[\\s]*\}")
-GO_EMPTY_BODY_RE = re.compile(r"^func\s+.*\{[\\s]*\}")
+# Empty-brace body: `{` then only whitespace then `}`. The bash ERE now uses
+# `[[:space:]]*` (fixed in #183 — the old `[\s]*` matched literal backslash/'s',
+# not whitespace, so `{ }` slipped through).
+JS_EMPTY_BODY_RE = re.compile(r"(function\s+\w+|=>\s*)\{\s*\}")
+GO_EMPTY_BODY_RE = re.compile(r"^func\s+.*\{\s*\}")
+
+# Python empty-body: a `def` whose next non-blank line is only `pass` or `...`.
+PY_DEF_RE = re.compile(r"^\s*def\s+\w+")
+PY_EMPTY_BODY_RE = re.compile(r"^\s*(pass|\.\.\.)\s*$")
 
 PY_ASSERT_RE = re.compile(
     r"\b(assert|assertEqual|assertTrue|assertFalse|assertRaises|assertIn|pytest\.raises)\b"
@@ -57,6 +58,15 @@ def _bash_read_content(line: str) -> str:
 
 def emit(path: str, line_no: str, category: str, evidence: str) -> None:
     sys.stdout.write("\t".join((path, line_no, category, evidence, "HIGH")) + "\n")
+
+
+def _first_nonblank_after(lines: list[str], idx0: int) -> str:
+    """First non-blank line at or after 0-based index idx0 (matches the bash
+    `sed -n 'N,$p' | grep -m1 -E '\\S' | head -1`), or '' at EOF."""
+    for ln in lines[idx0:]:
+        if re.search(r"\S", ln):
+            return ln
+    return ""
 
 
 
@@ -76,14 +86,17 @@ def scan_file(path: str, lines: list[str]) -> None:
 
         # --- Category: empty-body (per language) ---
         if ext == "py":
-            # FIDELITY NOTE: the bash Python empty-body arm is DEAD. It computes
-            # the next non-blank line with `grep -m1 -nE '\S'` — the `-n` prepends
-            # a "<lineno>:" prefix, so the following `grep -qE '^\s*(pass|...)'`
-            # never matches (the string starts with a digit). So a Python
-            # `def f(): pass` is never flagged empty-body by bash. Replicated here
-            # (this arm emits nothing). The JS/Go arms below do NOT have this bug
-            # and are ported working. A follow-up may drop the stray `-n`.
-            pass
+            # A `def` whose next non-blank line is only `pass` or `...`. Matches
+            # the bash arm fixed in #183 (its stray `grep -n` had disabled this).
+            if PY_DEF_RE.search(content):
+                nxt = _first_nonblank_after(lines, idx)
+                if PY_EMPTY_BODY_RE.search(nxt):
+                    emit(
+                        path,
+                        str(idx),
+                        "empty-body",
+                        "Empty function body: " + _bash_read_content(content)[:EVIDENCE_CAP],
+                    )
         elif ext in ("ts", "js", "tsx", "jsx"):
             if JS_EMPTY_BODY_RE.search(content):
                 emit(

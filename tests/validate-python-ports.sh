@@ -64,6 +64,11 @@ GH_TOK="ghp_""ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
 AWS_TOK="AKIA""0123456789ABCDEF"
 STRIPE_TOK="sk_""live_""ABCDEFGHIJKLMNOPQRSTUV"
 
+# app.py also carries #183 regression lines: an x/2/7-bearing single-quoted
+# secret (loop-make-it-secure's fixed \x27 class), a yaml.load with and without a
+# Loader= (its fixed deserialization filter), and a def whose body is only `pass`
+# (loop-make-it-work's fixed empty-body arm). A divergence between the bash and
+# python impls on any of these fails the parity assertion below.
 /usr/bin/cat >"$FIXDIR/app.py" <<'EOF'
 import hashlib
 query = f"SELECT * FROM users WHERE id={user_id}"
@@ -74,14 +79,30 @@ xor_secret = "value_x2_7_here"
 # md5(commented) is skipped — the crypto comment-skip is live (#168)
 placeholder = "changeme_example_value"
 concat = "SELECT a FROM t" + tail
+api_key = 'sk2live7value_xx'
+loaded = yaml.load(payload)
+safe_loaded = yaml.load(payload, Loader=SafeLoader)
+def empty_impl():
+    pass
 EOF
 /usr/bin/printf 'gh = "%s"\n' "$GH_TOK" >>"$FIXDIR/app.py"
 
 /usr/bin/cat >"$FIXDIR/app.ts" <<'EOF'
 const sql = `SELECT * FROM t WHERE x=${val}`;
 node.innerHTML = raw;
+const spaced = () => { }
 EOF
 /usr/bin/printf 'const awsKey = "%s";\n' "$AWS_TOK" >>"$FIXDIR/app.ts"
+
+# app.go exercises loop-make-it-documented's fixed Go GoDoc arm and
+# loop-make-it-work's fixed empty-brace whitespace class (#183).
+/usr/bin/cat >"$FIXDIR/app.go" <<'EOF'
+package main
+
+func Undocumented() {}
+
+func Spaced() { }
+EOF
 
 /usr/bin/cat >"$FIXDIR/view.html" <<'EOF'
 <div v-html="userInput"></div>
@@ -99,7 +120,7 @@ EOF
 
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
-for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/view.html" \
+for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example"; do
     /usr/bin/printf '%s\n' "$f" >>"$FILE_LIST"
 done

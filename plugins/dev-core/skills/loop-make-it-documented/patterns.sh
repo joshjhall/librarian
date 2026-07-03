@@ -95,7 +95,10 @@ while IFS= read -r file; do
             ;;
         go)
             # --- Go: exported functions without GoDoc comments ---
-            /usr/bin/grep -n '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
+            # grep -nE (extended regex): the pattern uses `\(` for a literal
+            # paren, which in a BASIC regex opens an unclosed group (grep errors,
+            # matches nothing). With -E the arm actually runs (#183; it was dead).
+            /usr/bin/grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     func_name=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     prev_line=$((line_num - 1))
