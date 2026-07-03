@@ -1,5 +1,5 @@
 name: orchestrate
-version: "2.0"
+version: "2.1"
 
 # Status labels are read as authoritative during monitoring. They are owned and
 # created by next-issue / ship-issue — listed here for self-documentation.

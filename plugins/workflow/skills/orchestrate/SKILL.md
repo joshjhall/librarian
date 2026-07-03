@@ -44,6 +44,7 @@ Environment Variables).
 | ---------- | ----- |
 | `/orchestrate dispatch <N…>` or `dispatch <count>` | Phase D — Dispatch golems |
 | `/orchestrate pool <N>` | Phase P — Worker pool (set size, refill from backlog) |
+| `/orchestrate tracks [N]` | Phase P — Compose 2–4 ordered, low-collision tracks from the backlog |
 | `/orchestrate drain` / `pause` / `resume` | Phase P — Pool refill controls |
 | `/orchestrate` or `/orchestrate status` | Phase M — Monitor (one sweep) |
 | `/orchestrate monitor` / `watch` | Phase M — Monitor loop |
@@ -489,6 +490,8 @@ step-by-step in `merge-protocol.md` § *Local-Merge (OPT-IN, Legacy)*.
   (`/orchestrate train`)
 - Running a fixed-size worker pool that daisy-chains a backlog and drains on
   command (`/orchestrate pool <N>`, `drain`/`pause`/`resume`)
+- Composing the backlog into 2–4 ordered, low-collision tracks before dispatch
+  (`/orchestrate tracks [N]`)
 - Selecting an execution mode for a new task (`/orchestrate mode`)
 - Spawning / tearing down container golems (`/orchestrate spawn`, `teardown`)
 - Tightly-coupled worktree work with no PRs (opt-in local-merge)

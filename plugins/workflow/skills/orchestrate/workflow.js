@@ -19,6 +19,10 @@ export const meta = {
       title: 'Pool',
       detail: 'pool mode: compute collision-aware backlog refill for free worker-pool slots (pure computation)',
     },
+    {
+      title: 'Tracks',
+      detail: 'tracks mode: partition a priority backlog into 2-4 low-collision ordered tracks (pure computation)',
+    },
   ],
 }
 
@@ -34,17 +38,24 @@ export const meta = {
 //                             //   If omitted, train mode fetches it with a read-only poll agent.
 //     }],
 //     base: string,           // base branch the PRs target (default 'main')
-//     mode: 'poll' | 'poll+rebase' | 'train' | 'pool',
+//     mode: 'poll' | 'poll+rebase' | 'train' | 'pool' | 'tracks',
 //                             //   default 'poll'; 'poll+rebase' enables the Rebase phase;
 //                             //   'train' computes a merge order (no poll, no rebase, no I/O);
 //                             //   'pool' computes a collision-aware backlog refill plan
-//                             //   for the fixed-size worker pool (no poll, no I/O)
+//                             //   for the fixed-size worker pool (no poll, no I/O);
+//                             //   'tracks' partitions the backlog into 2-4 ordered,
+//                             //   low-collision tracks (no poll, no I/O)
 //     maxRebases?: number,    // default = prs.length — the harness owns this cap
 //
 //     // --- pool mode only (see the Pool branch below) ---
 //     pool?:     { size: number, accepting: 'accepting'|'draining'|'paused' },
 //     inflight?: [{ issue, golem?, branch?, files?: string[] }], // current golems
 //     backlog?:  [{ issue, files?: string[] }],   // candidates in priority order
+//
+//     // --- tracks mode only (see the Tracks branch below) ---
+//     //   reuses `backlog` (priority order, each with predicted files); plus:
+//     trackCount?: number,    // desired number of tracks (clamped to 2..4; default 3)
+//     trackSize?:  number,    // max issues per track (clamped to 3..5; default 5)
 //   }
 //
 // Returns:
@@ -55,13 +66,14 @@ export const meta = {
 //     escalations: [{ pr, file, reason, ours_summary?, theirs_summary? }],  // poll+rebase only
 //     train:       TRAIN,           // present only in train mode (merge-order plan)
 //     pool:        POOL,            // present only in pool mode (refill plan)
+//     tracks:      TRACKS,          // present only in tracks mode (composition plan)
 //     budget_exhausted: boolean,
 //     polled: number, rebased: number,
 //   }
-//   The train and pool branches return BEFORE the Poll phase, so they omit
-//   pr_status / rebases / escalations entirely (not empty arrays). A caller that
-//   reads those fields off a train/pool result must treat them as optional
-//   (e.g. `result.pr_status ?? []`).
+//   The train, pool, and tracks branches return BEFORE the Poll phase, so they
+//   omit pr_status / rebases / escalations entirely (not empty arrays). A caller
+//   that reads those fields off a train/pool/tracks result must treat them as
+//   optional (e.g. `result.pr_status ?? []`).
 //
 // The orchestrator session is LIVE/INTERACTIVE and is NOT this workflow — it
 // INVOKES this harness for one bounded sweep, reads the result, refreshes its
@@ -100,7 +112,11 @@ export const meta = {
 const prs = (args && Array.isArray(args.prs) ? args.prs : []).filter(Boolean)
 const base = args && typeof args.base === 'string' && args.base ? args.base : 'main'
 const MODE =
-  args && (args.mode === 'poll+rebase' || args.mode === 'train' || args.mode === 'pool')
+  args &&
+  (args.mode === 'poll+rebase' ||
+    args.mode === 'train' ||
+    args.mode === 'pool' ||
+    args.mode === 'tracks')
     ? args.mode
     : 'poll'
 const MAX_REBASES = args && Number.isInteger(args.maxRebases) ? args.maxRebases : prs.length
@@ -239,6 +255,18 @@ const PR_FILES = {
 //                               //   wave[k>0] = the k-th element of each chain long enough to have one
 //     order: number[],          // one conservative linear landing order (independents, then chains flat)
 //   }
+//
+// TRACKS is the harness's own return shape for tracks mode (not an agent gate):
+//   {
+//     tracks: [{                 // 2..4 tracks, priority order preserved within each
+//       lane:   number,          // 0-based lane index
+//       issues: number[],        // 3..trackSize issue numbers, in serial execution order
+//     }],
+//     deferred: number[],        // backlog issues that did not fit (lanes full / capped),
+//                                //   in priority order — a later sweep can compose them
+//     cross_track_overlap: number, // total shared-file pairs ACROSS tracks (lower is better)
+//     rationale: string[],       // deterministic, data-derived notes (counts / overlap) — no timestamps
+//   }
 
 // ---------------------------------------------------------------------------
 // Prompt-injection hardening for caller/LLM-derived strings.
@@ -354,6 +382,112 @@ const setsIntersect = (a, b) => {
   return false
 }
 
+// Count of shared paths between two file Sets. setsIntersect answers the boolean
+// "do they touch?" needed for the train overlap graph and the pool collision
+// check; tracks mode needs the *magnitude* of overlap to choose the lane a new
+// issue collides with LEAST across the other lanes. Same "iterate the smaller
+// set" idiom for the cheaper membership scan; returns 0 when disjoint or empty.
+const setsOverlapCount = (a, b) => {
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a]
+  let n = 0
+  for (const f of small) if (large.has(f)) n++
+  return n
+}
+
+// ---------------------------------------------------------------------------
+// Track composition (pure) — partition a priority-ordered backlog into 2..4
+//   ordered tracks that minimize CROSS-track file overlap while keeping each
+//   track internally orderable (its issues stay in priority order = the serial
+//   execution order the lane-aware refill will later consume). Pure and
+//   deterministic: no Date.now()/Math.random(); every choice is a function of
+//   input order + issue number, so the same backlog always yields the same
+//   partition. Exposed at module scope (before the orchestration boundary) so
+//   tests/validate-workflow-helpers.mjs can slice and unit-test it directly.
+//
+// The objective is fuzzy-priority (issue #178): a higher-priority issue MAY be
+//   deferred to balance tracks and avoid collisions — explicitly desired. The
+//   greedy heuristic: walk the backlog in priority order and drop each issue
+//   into the lane it overlaps MOST (co-locating overlapping work in one lane is
+//   what keeps *cross*-lane overlap low), preferring to open a fresh lane when
+//   the issue is disjoint from every open lane and lanes remain. A lane is
+//   capped at `trackSize`; an issue that fits nowhere is deferred.
+// ---------------------------------------------------------------------------
+const clampInt = (v, lo, hi, dflt) =>
+  Number.isInteger(v) ? Math.max(lo, Math.min(hi, v)) : dflt
+
+function composeTracks(backlog, opts) {
+  const trackCount = clampInt(opts && opts.trackCount, 2, 4, 3)
+  const trackSize = clampInt(opts && opts.trackSize, 3, 5, 5)
+
+  // Normalize the backlog into { issue, files:Set } in the given priority order,
+  // dropping malformed entries. Mirrors runPool's defensive parse.
+  const items = []
+  for (const c of Array.isArray(backlog) ? backlog : []) {
+    if (!c || !Number.isInteger(c.issue)) continue
+    const files = Array.isArray(c.files) ? c.files.filter(Boolean) : []
+    items.push({ issue: c.issue, files: new Set(files) })
+  }
+
+  // Each lane accumulates its issues (in priority order) and the union of their
+  // files, so a candidate's overlap with a lane is measured against everything
+  // already placed there.
+  const lanes = [] // [{ issues:number[], files:Set }]
+  const deferred = []
+
+  for (const it of items) {
+    // Best open lane = the one this issue shares the most files with and that
+    // still has room. Ties resolve to the lowest lane index (deterministic).
+    let best = -1
+    let bestOverlap = -1
+    for (let i = 0; i < lanes.length; i++) {
+      if (lanes[i].issues.length >= trackSize) continue
+      const ov = it.files.size ? setsOverlapCount(it.files, lanes[i].files) : 0
+      if (ov > bestOverlap) {
+        bestOverlap = ov
+        best = i
+      }
+    }
+
+    // Open a fresh lane when the issue collides with no open lane (bestOverlap
+    // <= 0) and we are still under trackCount — this spreads disjoint work
+    // across lanes. Otherwise fall into the best-overlapping lane with room.
+    if ((bestOverlap <= 0 && lanes.length < trackCount) || best === -1) {
+      if (lanes.length < trackCount) {
+        lanes.push({ issues: [it.issue], files: new Set(it.files) })
+        continue
+      }
+      // All lanes full or capped and nothing fits — defer.
+      deferred.push(it.issue)
+      continue
+    }
+
+    const lane = lanes[best]
+    lane.issues.push(it.issue)
+    for (const f of it.files) lane.files.add(f)
+  }
+
+  // Cross-track overlap: number of unordered lane pairs that share >= 1 file.
+  // A lower number means the composition kept lanes more independent.
+  let crossTrackOverlap = 0
+  for (let i = 0; i < lanes.length; i++) {
+    for (let j = i + 1; j < lanes.length; j++) {
+      if (setsIntersect(lanes[i].files, lanes[j].files)) crossTrackOverlap++
+    }
+  }
+
+  const tracks = lanes.map((l, i) => ({ lane: i, issues: l.issues }))
+  const rationale = [
+    `composed ${tracks.length} track(s) from ${items.length} backlog issue(s) ` +
+      `(target ${trackCount} x <=${trackSize})`,
+    `cross-track file-overlap pairs: ${crossTrackOverlap}`,
+  ]
+  if (deferred.length) {
+    rationale.push(`${deferred.length} issue(s) deferred — lanes full or capped`)
+  }
+
+  return { tracks, deferred, cross_track_overlap: crossTrackOverlap, rationale }
+}
+
 // ---------------------------------------------------------------------------
 // Pool mode — compute a collision-aware backlog refill plan for the fixed-size
 //   worker pool. No poll, no rebase, no merge, no push, no dispatch: this branch
@@ -447,6 +581,33 @@ function runPool() {
       held_slots: heldSlots,
       excess,
     },
+    budget_exhausted: false,
+    polled: 0,
+    rebased: 0,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tracks mode — partition the priority backlog into 2..4 ordered, low-collision
+//   tracks. Pure computation: no poll, no rebase, no merge, no push, no
+//   dispatch — this branch returns BEFORE the Poll phase like pool/train. The
+//   live session (SKILL.md setup flow, issue #178 Part B) consumes `tracks` to
+//   propose tracks to the operator, choose an autonomy level, and dispatch one
+//   golem per track head. The heavy lifting lives in the module-scope,
+//   unit-tested `composeTracks` helper above; this wrapper only reads args and
+//   assembles the return envelope.
+// ---------------------------------------------------------------------------
+function runTracks() {
+  phase('Tracks')
+
+  const tracks = composeTracks(args && args.backlog, {
+    trackCount: args && args.trackCount,
+    trackSize: args && args.trackSize,
+  })
+
+  return {
+    base,
+    tracks,
     budget_exhausted: false,
     polled: 0,
     rebased: 0,
@@ -731,5 +892,6 @@ async function runPollSweep() {
 // is gated on MODE inside it). This is the whole control flow of the harness.
 // ---------------------------------------------------------------------------
 if (MODE === 'pool') return runPool()
+if (MODE === 'tracks') return runTracks()
 if (MODE === 'train') return runTrain()
 return runPollSweep()
