@@ -9,10 +9,33 @@ it. It carries the level selection and aliases, the per-gate disposition, the
 plan-gate rule, the legacy overrides (superseded by the level; removed in #179),
 and the shipping handoff.
 
+> **The decision table is code, not prose.** Level selection, the critical cap,
+> per-gate disposition, the dead-end override, and the derived
+> `autonomous`/`plan_gated` mirrors are all computed by the resolver
+> **`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh`** (issue #190) — the
+> authoritative implementation of the `orchestrate/autonomy-levels.md` (#174)
+> contract. **Call it** rather than re-deriving the rules by hand; the tables and
+> pseudo-code below *describe* its behavior so a reader can follow along. Run
+> `autonomy-resolve.sh` with no args for usage.
+
 ## Level selection
 
 The run's **autonomy level** is an integer **1–4**, chosen once and persisted as
-`autonomy_level` in the state file. It is set by, in precedence order:
+`autonomy_level` in the state file. Compute it (plus the derived mirrors and the
+critical cap in one shot) by calling the resolver:
+
+```bash
+# $ARGS = this invocation's raw flag string (may hold --level/--autonomous/…);
+# $SEV = the issue's severity label ("critical" or "" — fetched in Phase 1).
+eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level \
+    --from-args "$ARGS" --env-autonomous "${NEXT_ISSUE_AUTONOMOUS:-0}" \
+    --severity "$SEV")"
+# -> sets autonomy_level, autonomous, plan_gated, capped, perm_mode
+```
+
+For a level chosen at setup (an orchestrator dispatch or the operator's
+interactive L1–L4 answer) with no CLI flag, pass it as `--chosen-level {N}`. The
+resolver applies this precedence:
 
 - an explicit **`--level {1,2,3,4}`** flag; else
 - **`--autonomous`** (or its deprecated alias **`--auto`**), or the environment
@@ -53,7 +76,9 @@ issue #177 lands.
 
 Each gate is **routine** or **escalation** (categories defined in
 `orchestrate/autonomy-levels.md`); the level decides whether it is auto-passed or
-raised to a human:
+raised to a human. Resolve any single gate with
+`autonomy-resolve.sh gate {routine|escalation} --level {N} [--dead-end]` →
+`disposition=auto|human`; the table below is the same rule, tabulated:
 
 | Gate class                                             | L1     | L2     | L3     | L4     |
 | ------------------------------------------------------ | ------ | ------ | ------ | ------ |
@@ -94,22 +119,23 @@ golem environments, never in a shared interactive shell.)
   waits each take their documented default with no interactive tool call. At
   L1–L2 these gates stay human.
 - **Plan-skipping (L4 only, minus the critical cap).** Whether the plan
-  checkpoint (`EnterPlanMode`/`ExitPlanMode`) is skipped depends on the level,
-  **not** the effort/severity labels:
+  checkpoint (`EnterPlanMode`/`ExitPlanMode`) is skipped is the **`plan_gated`
+  mirror** the resolver already emitted (`plan_gated=false` ⇒ skip; `true` ⇒
+  keep) — it depends on the level, **not** the effort/severity labels:
 
   ```text
-  IF level == 4 (and NOT severity/critical, which caps to L3):
+  IF plan_gated == false (i.e. level 4, and the critical cap did not fire):
       → PLAN AUTO-PASSED: skip plan mode entirely. Use the autonomous planning
         path in Phase 2 (state file + issue comment, no EnterPlanMode), then
-        implement and ship in-turn. (plan_gated mirror: false)
-  ELSE (level 1-3, OR severity/critical at any requested level):
+        implement and ship in-turn.
+  ELSE (plan_gated == true — level 1-3, a capped critical, or --plan-gate):
       → PLAN GATE KEPT: call EnterPlanMode, build the plan, and STOP at
         ExitPlanMode for human approval. A golem shows up BLOCKED in
         `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`; the human runs
         `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, reviews and refines
         the plan in the SAME session, then approves. Everything AFTER plan
         approval proceeds at the run's level (implement → test → adversarial
-        review → push/PR). (plan_gated mirror: true)
+        review → push/PR).
   ```
 
   This replaces the old effort-based rule: the level is the dial. Note the
@@ -118,11 +144,12 @@ golem environments, never in a shared interactive shell.)
   keeps the plan gate because it caps at L3.
 
   **Legacy overrides (superseded by the level).** The old per-run plan-gate flags
-  still parse and map onto the level for continuity: `--plan-gate` (alias
-  `--no-skip-plan`) ⇒ **keep the plan gate** (treat the run as ≤ L3 for the plan
-  checkpoint); `--force-auto` (alias `--skip-plan`) ⇒ **L4** (auto-pass the
-  plan), still subject to the critical cap. If both appear, `--plan-gate` wins
-  (safer default).
+  still parse and map onto the level for continuity — the resolver reads them
+  straight out of `--from-args`, so passing the raw invocation string is all that
+  is needed: `--plan-gate` (alias `--no-skip-plan`) ⇒ **keep the plan gate**
+  (forces `plan_gated=true`); `--force-auto` (alias `--skip-plan`) ⇒ **L4**
+  (auto-pass the plan), still subject to the critical cap. If both appear,
+  `--plan-gate` wins (safer default).
 
   On a `severity/critical` issue neither `--force-auto` nor an L4 selection can
   auto-pass the plan gate: the **critical cap** holds the run at L3, and there is
@@ -158,9 +185,10 @@ golem environments, never in a shared interactive shell.)
   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`), and the **never-time-out**
   rule at this gate. Err toward escalating when unsure.
 - **Persist the signals** to the state file: `"autonomy_level": <1-4>`, plus the
-  derived back-compat mirrors `"autonomous"` (= level 4) and `"plan_gated"` (true
-  when the plan gate is kept — L1–L3, or a capped critical) so `/ship-issue` and
-  any post-`/clear` resume inherit them (see Phase 1 and Phase 2 below).
+  derived back-compat mirrors `"autonomous"` and `"plan_gated"` — all three are
+  fields the `autonomy-resolve.sh level` call already emitted (do not recompute
+  them) — so `/ship-issue` and any post-`/clear` resume inherit them (see Phase 1
+  and Phase 2 below).
 
 At an **L1 disposition** (no level chosen — the interactive default), behavior is
 unchanged: every interactive prompt and plan-mode step below runs verbatim.

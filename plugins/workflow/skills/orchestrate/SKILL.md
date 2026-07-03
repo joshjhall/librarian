@@ -143,14 +143,17 @@ dispatch is sequential and cheap — **not** workflow-driven.
    {N}` emits just the launch line if you want to run the bare `tmux
    new-session` yourself.)
 
-   **Plan gate (from the labels read in step 1).** `--autonomous` is **not** a blanket
-   plan-skip — `/next-issue` decides per issue (see `next-issue/SKILL.md` §
-   Autonomous Mode):
+   **Plan gate (from the golem's autonomy level).** `--autonomous` is **not** a blanket
+   plan-skip — whether a golem stops for plan approval is set by its **level**
+   (the rules-of-engagement chosen at setup), **not** its effort labels.
+   `/next-issue` resolves it through
+   `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) and persists the
+   `plan_gated` mirror (see `next-issue/SKILL.md` § Autonomous Mode):
 
-   - **`effort/trivial` or `effort/small`, and NOT `severity/critical`** →
+   - **`plan_gated == false` (an L4 golem, critical cap did not fire)** →
      fully autonomous, no plan stop. The launch above runs unattended to a PR.
-   - **`effort/medium`, `effort/large`, `severity/critical`, or no `effort/*`
-     label** → **plan-gated**: the golem builds the plan and BLOCKS at
+   - **`plan_gated == true` (dispatched below L4, a capped `severity/critical`,
+     or `--plan-gate`)** → **plan-gated**: the golem builds the plan and BLOCKS at
      `ExitPlanMode` awaiting human approval (shown BLOCKED in
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`). The operator attaches via
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines and approves the
@@ -164,16 +167,16 @@ dispatch is sequential and cheap — **not** workflow-driven.
    press it in a real TTY (attach via `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh
    {N}`). When dispatching plan-gated (medium+/critical) golems, surface this:
    their plan approval is a human keystroke at the attached TTY, not something the
-   orchestrator can answer for them. See `mode-protocol.md` § *Plan gate by
-   effort/severity* for the full option-1-vs-option-2 classifier contract.
+   orchestrator can answer for them. See `mode-protocol.md` § *Plan gate by level*
+   for the full option-1-vs-option-2 classifier contract.
 
    The launch command is identical either way (the policy lives in
-   `/next-issue`); dispatch only needs to **expect** medium+/critical golems to
-   block at the plan step. To override per golem, append `--plan-gate` (force the
-   checkpoint on a small issue) or `--force-auto` (force full autonomy on a
-   **medium/large** one) to the `/next-issue {N} --autonomous` prompt. A
-   `severity/critical` golem cannot be forced past its plan gate — the critical
-   cap holds it at L3 regardless of `--force-auto`.
+   `/next-issue`); dispatch only needs to **expect** a golem dispatched below L4
+   (or a capped critical) to block at the plan step. To override per golem, append
+   `--plan-gate` (force the checkpoint on an L4 golem) or `--force-auto` (force
+   full autonomy on one dispatched lower) to the `/next-issue {N} --autonomous`
+   prompt. A `severity/critical` golem cannot be forced past its plan gate — the
+   critical cap holds it at L3 regardless of `--force-auto`.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem), or, per-golem, queues GitHub auto-merge when BOTH

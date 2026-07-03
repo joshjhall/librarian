@@ -45,7 +45,10 @@ each gate below is dispatched, per the contract in
 ship:
 
 - **Routine gates** (push, PR-open, **merge on green CI + clean review**, prune)
-  — **auto-passed at L3–L4**, **human-authorized at L1–L2**.
+  — **auto-passed at L3–L4**, **human-authorized at L1–L2**. Resolve the
+  disposition with
+  `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate routine --level {N}`
+  (→ `disposition=auto|human`, #190) rather than re-deriving the L3–L4 cutoff.
 - The **merge invariant** (below) is uncrossable at **every** level, L4 included.
 
 > **Level, not "autonomous".** The old binary `autonomous` flag is retired as the
@@ -110,11 +113,21 @@ relying on any of these toggles.
    field; feeds the level model above), `autonomous` (legacy boolean — read
    only for back-compat), and `plan_comment_url` (if present).
 
-   **Resolve the run's level** with this precedence (see
-   `next-issue/schemas/next-issue-state.schema.json`):
-   1. If `autonomy_level` is present, use it (1–4).
-   2. Else legacy `autonomous: true` → **L4**; `autonomous: false`/absent → **L1**.
-   3. When both are present, `autonomy_level` wins.
+   **Resolve the run's level** by calling the resolver (issue #190) — the same
+   authoritative implementation `/next-issue` uses — rather than re-deriving the
+   back-compat precedence by hand:
+
+   ```bash
+   # $STATE_LEVEL = the state file's autonomy_level ("" if absent);
+   # $STATE_AUTO  = the legacy autonomous boolean ("true"/"false"/"" if absent).
+   eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh read \
+       --state-level "$STATE_LEVEL" --state-autonomous "$STATE_AUTO")"
+   # -> sets autonomy_level (1-4)
+   ```
+
+   The resolver applies the precedence (see
+   `next-issue/schemas/next-issue-state.schema.json`): a present `autonomy_level`
+   wins (1–4); else legacy `autonomous: true` → **L4**, `false`/absent → **L1**.
 
    The level decides every gate below: **L1–L2** keep human gates (stop for a
    human at shipping mode and at merge), **L3–L4** auto-pass the routine gates

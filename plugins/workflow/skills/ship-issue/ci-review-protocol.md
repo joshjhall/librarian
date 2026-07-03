@@ -18,7 +18,9 @@ Ask the user:
 - **Skip CI monitoring** — proceed to labeling immediately
 
 At **L3–L4**, do not prompt — ALWAYS wait for CI and auto-fix (proceed
-as if the user chose "Wait for CI"). **L1–L2** asks.
+as if the user chose "Wait for CI"). **L1–L2** asks. (The CI-wait is a routine
+gate; `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate routine --level {N}`
+→ `disposition=auto|human` is the shared source of the L3–L4-auto cutoff, #190.)
 
 If the user chooses to wait:
 

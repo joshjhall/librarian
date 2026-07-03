@@ -73,6 +73,10 @@ Write using the Write tool:
 | `active_loops` | no       | Implementation loops to execute                      |
 | `checkpoint`   | no       | Phase transition checkpoint (see below)              |
 
+The `autonomy_level` / `autonomous` / `plan_gated` values are **computed by**
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level …` (#190), not
+hand-derived — the descriptions above tabulate what that resolver emits.
+
 ### State Lifecycle
 
 **Write state** — use Write tool with the JSON above.
