@@ -53,9 +53,12 @@ while IFS= read -r file; do
         *.py)
             /usr/bin/grep -nE '^\s*def\s+\w+' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    # Check if next non-blank line is pass or ...
+                    # Check if next non-blank line is pass or ... . NOTE: grep -m1
+                    # (NOT -nm1): a stray -n prefixed "<lineno>:" to next_line, so
+                    # the `^\s*(pass|...)` check never matched and this arm was
+                    # dead (#183).
                     next_line=$(/usr/bin/sed -n "$((line_num + 1)),\$p" "$file" |
-                        /usr/bin/grep -m1 -nE '\S' | /usr/bin/head -1)
+                        /usr/bin/grep -m1 -E '\S' | /usr/bin/head -1)
                     if echo "$next_line" | /usr/bin/grep -qE '^\s*(pass|\.\.\.)\s*$' 2>/dev/null; then
                         evidence=$(/usr/bin/printf '%.80s' "$content")
                         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -65,8 +68,11 @@ while IFS= read -r file; do
                 done || true
             ;;
         *.ts | *.js | *.tsx | *.jsx)
-            # TypeScript/JavaScript: function with empty braces {}
-            /usr/bin/grep -nE '(function\s+\w+|=>\s*)\{[\s]*\}' "$file" 2>/dev/null |
+            # TypeScript/JavaScript: function with empty braces {}. Uses
+            # [[:space:]]* for the inner whitespace — the old `[\s]*` was a bracket
+            # class of literal backslash/'s', not whitespace, so `{ }` (a real
+            # space) was missed (#183).
+            /usr/bin/grep -nE '(function\s+\w+|=>\s*)\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -75,8 +81,8 @@ while IFS= read -r file; do
                 done || true
             ;;
         *.go)
-            # Go: function with empty braces
-            /usr/bin/grep -nE '^func\s+.*\{[\s]*\}' "$file" 2>/dev/null |
+            # Go: function with empty braces ([[:space:]]* not [\s]*, see #183).
+            /usr/bin/grep -nE '^func\s+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \

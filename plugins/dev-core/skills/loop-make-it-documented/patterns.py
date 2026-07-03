@@ -139,16 +139,25 @@ def scan_js(path: str, lines: list[str]) -> None:
 
 
 def scan_go(path: str, lines: list[str]) -> None:
-    # FIDELITY NOTE: the bash Go arm is DEAD. It uses basic-regex `grep -n` (not
-    # `grep -nE`) with the pattern `^func [A-Z][a-zA-Z0-9]*\(` — in a basic regex
-    # `\(` opens a group that is never closed, so GNU grep errors ("Unmatched (
-    # or \(", exit 2) and the arm matches nothing on every file. So
-    # loop-make-it-documented never flags a Go function. This port replicates
-    # that: scan_go emits nothing. (The JS and Shell arms below also use basic
-    # `grep -n`, but their patterns ARE valid basic regex — verified they still
-    # match — so those are ported faithfully as working. Restoring real GoDoc
-    # detection is a tracked follow-up.)
-    return
+    # Go: an exported (capitalized) func whose preceding line is not a GoDoc
+    # comment `// <FuncName>`. Matches the bash `grep -nE '^func [A-Z]...\('`
+    # arm (fixed in #183 — it was dead under basic-regex `grep -n`).
+    for idx, content in enumerate(lines, start=1):
+        if not GO_FUNC_RE.search(content):
+            continue
+        m = re.search(r"^func ([A-Z][a-zA-Z0-9]*)", content)
+        func_name = m.group(1) if m else ""
+        prev = idx - 1
+        if prev > 0:
+            prev_content = lines[prev - 1]
+            if not re.search(r"^// " + re.escape(func_name), prev_content):
+                ev = _bash_read_content(content)[:EVIDENCE_CAP]
+                emit(
+                    path,
+                    idx,
+                    "undocumented-export",
+                    f"No GoDoc for {func_name}: " + ev,
+                )
 
 
 def scan_shell(path: str, lines: list[str]) -> None:

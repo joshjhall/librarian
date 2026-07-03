@@ -43,8 +43,12 @@ while IFS= read -r file; do
     esac
 
     # --- Category: hardcoded-secret ---
-    # High-entropy strings that look like API keys, tokens, or passwords
-    /usr/bin/grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)\s*[=:]\s*["\x27][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
+    # High-entropy strings that look like API keys, tokens, or passwords. The
+    # opening-quote class is ["'] — a double or single quote — written ["'\'']
+    # so the single quote is a real quote char (#183; the old ["\x27] never
+    # matched a single-quoted value because grep does not expand \x27 in a
+    # bracket expression).
+    /usr/bin/grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)\s*[=:]\s*["'\''][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(/usr/bin/printf '%.80s' "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -65,8 +69,11 @@ while IFS= read -r file; do
     # SQL queries built with string concatenation or f-strings
     case "$file" in
         *.py)
-            # Detect f-string or .format() used with SQL keywords
-            /usr/bin/grep -nE '(execute|cursor)\s*\(\s*f["\x27]' "$file" 2>/dev/null |
+            # Detect f-string or .format() used with SQL keywords. Quote class
+            # ["'] written ["'\''] so a single-quoted f'...' also matches (#183;
+            # the old ["\x27] missed f'... because \x27 is not expanded in a
+            # bracket expression).
+            /usr/bin/grep -nE '(execute|cursor)\s*\(\s*f["'\'']' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(/usr/bin/printf '%.80s' "$content")
                     /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -107,8 +114,14 @@ while IFS= read -r file; do
                 "Dangerous function usage: ${evidence}" "HIGH"
         done || true
 
-    # Unsafe deserialization patterns
-    /usr/bin/grep -nE '\b(yaml\.load\s*\([^)]*\)(?!.*Loader)|marshal\.loads?\s*\()' "$file" 2>/dev/null |
+    # Unsafe deserialization patterns. `marshal.load(s)` is always flagged;
+    # `yaml.load(...)` is flagged only WITHOUT an explicit Loader= (a safe loader
+    # makes it benign). POSIX ERE (grep -E) has no negative lookahead, so the
+    # yaml exclusion is a second `grep -v` on the line rather than an inline
+    # `(?!...)` — the old inline lookahead never matched anything, disabling
+    # yaml.load detection entirely (#183).
+    /usr/bin/grep -nE '\b(yaml\.load\s*\(|marshal\.loads?\s*\()' "$file" 2>/dev/null |
+        /usr/bin/grep -vE 'Loader\s*=' |
         while IFS=: read -r line_num content; do
             evidence=$(/usr/bin/printf '%.80s' "$content")
             /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
