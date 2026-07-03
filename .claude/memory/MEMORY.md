@@ -23,3 +23,7 @@
 - [ship-issue rename rationale](ship-issue-rename-rationale.md) — the ship skill is ship-issue (not next-issue-ship) on purpose; moved out of next-issue* prefix to fix a `nex` autocomplete collision; don't rename it back
 - [typos gate blocks push](typos-gate-blocks-push.md) — the `typos` pre-push hook fails the whole push on any misspelling in touched files, including pre-existing ones adjacent to your edits
 - [cosign bundle format](cosign-bundle-format.md) — release.yml signing must use --bundle (.sigstore.json); cosign 3.x ignores --output-signature/-certificate; v0.4.0 was first release to run cosign, publish job broke (PR #153)
+- [mjs coverage c8 excludes tests](mjs-coverage-c8-excludes-tests.md) — c8 excludes tests/ by default so covering tests/*.mjs needs --exclude override; NODE_V8_COVERAGE + c8 report merges multiple entry points (#186)
+- [pre-review-gates needs filelist](pre-review-gates-needs-filelist.md) — pre-review-gates.sh takes changed files as positional args; bare call errors with Usage
+- [coverage two surfaces](coverage-two-surfaces.md) — patterns.py Codecov number comes from coverage-python.sh's own corpus, not the behavioral test gates; extend both to lift coverage + assert behavior (#204)
+- [autonomy-resolver script](autonomy-resolver-script.md) — autonomy-resolve.{py,sh} is the single source of truth for the L1-L4 gate-disposition table (#190); skills call it, don't re-derive; killed the effort-vs-level drift
