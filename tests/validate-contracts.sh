@@ -123,10 +123,19 @@ extract_contract_categories() {
         command sort -u
 }
 
-# Extract category slugs from a patterns.sh script.
+# Extract category slugs from a skill's pre-scan implementation. A tool may ship
+# a bash impl (patterns.sh), a Python primary (patterns.py, issue #17), or both
+# behind the shared TSV contract; the emitted category is the same quoted slug in
+# either language. Union the slugs across whichever files exist so the contract
+# cross-check stays honest after a tool is ported to Python. `$1` is the
+# patterns.sh path (may be absent); the sibling patterns.py is derived from it.
 extract_patterns_categories() {
-    local file="$1"
-    command grep -oP '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$file" |
+    local sh_file="$1"
+    local py_file="${sh_file%patterns.sh}patterns.py"
+    {
+        [ -f "$sh_file" ] && command grep -oP '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$sh_file"
+        [ -f "$py_file" ] && command grep -oP '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$py_file"
+    } |
         command sed 's/"//g' |
         command sort -u
 }

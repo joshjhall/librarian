@@ -122,29 +122,75 @@ feed_snapshot() {
         /usr/bin/sort -u
 }
 
+# --- portable string→string map (bash 3.2 has no `declare -A`) --------------
+# Backs emit_transitions' cross-call state without bash-4 associative arrays, so
+# this script runs under macOS's stock bash 3.2. The map is a newline-separated
+# string of "<key>\t<value>" records; keys (golem ids) carry no tab/newline and
+# values (gate messages) carry no newline. Linear scan is ample for the handful
+# of golems ever tracked at once. See CLAUDE.md § Key conventions (runtime policy).
+_map_get() { # _map_get <map> <key> -> value on stdout (empty when absent)
+    local map="$1" key="$2" k v
+    while IFS=$'\t' read -r k v; do
+        [ "$k" = "$key" ] && {
+            command printf '%s' "$v"
+            return 0
+        }
+    done <<<"$map"
+    return 0
+}
+
+_map_set() { # _map_set <map> <key> <value> -> new map on stdout (upsert)
+    local map="$1" key="$2" val="$3" k v found=0 out=""
+    while IFS=$'\t' read -r k v; do
+        [ -z "$k" ] && continue
+        if [ "$k" = "$key" ]; then
+            out="${out}${key}"$'\t'"${val}"$'\n'
+            found=1
+        else
+            out="${out}${k}"$'\t'"${v}"$'\n'
+        fi
+    done <<<"$map"
+    [ "$found" -eq 1 ] || out="${out}${key}"$'\t'"${val}"$'\n'
+    command printf '%s' "$out"
+}
+
+# _set_has <space-delimited-set> <token> — membership test, boundary-safe.
+_set_has() {
+    case " ${1} " in
+        *" ${2} "*) return 0 ;;
+    esac
+    return 1
+}
+
 # Emit only on TRANSITION into a fresh gate. Tracks the last-emitted message per
-# golem in an associative array: a standing gate (same golem, same message) is
-# suppressed; a golem that clears (drops out of the snapshot) is forgotten so a
-# later re-gate fires again; a changed message re-emits. `prime=1` records the
+# golem in the flat-string map above: a standing gate (same golem, same message)
+# is suppressed; a golem that clears (drops out of the snapshot) is forgotten so
+# a later re-gate fires again; a changed message re-emits. `prime=1` records the
 # current state WITHOUT emitting (so --stream does not dump pre-existing gates as
 # if they were new on startup).
-declare -A LAST_EMIT
+LAST_EMIT=""
 emit_transitions() {
     local snapshot="$1" prime="${2:-0}"
-    declare -A seen=()
-    local golem msg
+    local seen=" " golem msg prev
     while IFS=$'\t' read -r golem msg; do
         [ -z "$golem" ] && continue
-        seen["$golem"]=1
-        if [ "${LAST_EMIT[$golem]:-}" != "$msg" ]; then
-            LAST_EMIT["$golem"]="$msg"
+        seen="${seen}${golem} "
+        prev="$(_map_get "$LAST_EMIT" "$golem")"
+        if [ "$prev" != "$msg" ]; then
+            LAST_EMIT="$(_map_set "$LAST_EMIT" "$golem" "$msg")"
             [ "$prime" = "1" ] || /usr/bin/printf '%s\t%s\n' "$golem" "$msg"
         fi
     done <<<"$snapshot"
-    # Forget golems no longer gated, so a future re-gate is a fresh transition.
-    for golem in "${!LAST_EMIT[@]}"; do
-        [ -n "${seen[$golem]:-}" ] || unset 'LAST_EMIT[$golem]'
-    done
+    # Forget golems no longer gated, so a future re-gate is a fresh transition:
+    # keep only records whose key is in this snapshot's `seen` set.
+    local k v newmap=""
+    while IFS=$'\t' read -r k v; do
+        [ -z "$k" ] && continue
+        if _set_has "$seen" "$k"; then
+            newmap="${newmap}${k}"$'\t'"${v}"$'\n'
+        fi
+    done <<<"$LAST_EMIT"
+    LAST_EMIT="$newmap"
 }
 
 # ---------------------------------------------------------------------------
@@ -255,12 +301,14 @@ liveness_snapshot() {
     [ -z "$root" ] && return 0
 
     # Set of golem numbers to consider: union of live sessions + cache files.
-    declare -A golems=()
-    local sess n f
+    # Space-delimited string set (dedup on insert) — bash 3.2 has no associative
+    # arrays; keys are bare integers so a space-delimited set is exact and cheap.
+    local golems=" " sess n f
     if command -v tmux >/dev/null 2>&1; then
         while IFS= read -r sess; do
             [ -z "$sess" ] && continue
-            golems["${sess#golem-}"]=1
+            n="${sess#golem-}"
+            _set_has "$golems" "$n" || golems="${golems}${n} "
         done < <(tmux ls 2>/dev/null | /usr/bin/grep -oE '^golem-[0-9]+' || true)
     fi
     if [ -n "$status_dir" ] && [ -d "$status_dir" ]; then
@@ -272,27 +320,30 @@ liveness_snapshot() {
             n="${n%.json}"
             case "$n" in
                 '' | *[!0-9]*) continue ;;
-                *) golems["$n"]=1 ;;
+                *) _set_has "$golems" "$n" || golems="${golems}${n} " ;;
             esac
         done
     fi
-    [ "${#golems[@]}" -eq 0 ] && return 0
+    # Empty set is exactly the sentinel single space.
+    [ "$golems" = " " ] && return 0
 
     # Golems currently at a fresh feed gate — reported as gated, not stalled.
-    declare -A gated=()
+    local gated=" "
     if [ -n "$feed" ] && [ -f "$feed" ]; then
         local g rest
         while IFS=$'\t' read -r g rest; do
             [ -z "$g" ] && continue
-            gated["${g#golem-}"]=1
+            n="${g#golem-}"
+            _set_has "$gated" "$n" || gated="${gated}${n} "
         done < <(feed_snapshot "$feed")
     fi
 
     local now act age
     now="$(/usr/bin/date +%s)"
     # Stable numeric order so successive snapshots line up for the operator.
-    for n in $(command echo "${!golems[@]}" | /usr/bin/tr ' ' '\n' | /usr/bin/sort -n); do
-        if [ -n "${gated[$n]:-}" ]; then
+    for n in $(command echo "$golems" | /usr/bin/tr ' ' '\n' | /usr/bin/sort -n); do
+        [ -z "$n" ] && continue
+        if _set_has "$gated" "$n"; then
             /usr/bin/printf '%s\t%s\n' "golem-$n" "gated — awaiting decision (not a stall)"
             continue
         fi
