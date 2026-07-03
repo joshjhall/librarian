@@ -51,6 +51,11 @@ export const meta = {
 //     pool?:     { size: number, accepting: 'accepting'|'draining'|'paused' },
 //     inflight?: [{ issue, golem?, branch?, files?: string[] }], // current golems
 //     backlog?:  [{ issue, files?: string[] }],   // candidates in priority order
+//     // lane-aware serial refill (issue #199) — both optional; omit for a plain,
+//     //   flat `pool <N>` run (behavior unchanged):
+//     tracks?:   [{ lane: number, queue: [{ issue, files?: string[] }] }],
+//                             //   each open lane's REMAINING issues, head-first (serial order)
+//     laneSlots?: number[],   //   which lanes freed a slot this sweep (one entry per free lane slot)
 //
 //     // --- tracks mode only (see the Tracks branch below) ---
 //     //   reuses `backlog` (priority order, each with predicted files); plus:
@@ -239,9 +244,14 @@ const PR_FILES = {
 //     accepting: string,       // echoed 'accepting' | 'draining' | 'paused'
 //     inflight_count: number,  // live golems at sweep time
 //     free_slots: number,      // max(0, size - inflight_count)
-//     picks: number[],         // issues to dispatch into free slots (collision-free,
-//                              //   priority order). Empty when draining/paused.
+//     picks: number[],         // issues to dispatch into free slots (collision-free).
+//                              //   Lane-scoped when `tracks`/`laneSlots` are given
+//                              //   (each freed lane's next queued issue first, then a
+//                              //   global-priority fill for untagged/exhausted-lane
+//                              //   slots); flat priority order otherwise. Empty when
+//                              //   draining/paused.
 //     held: [{ issue, reason }], // candidates skipped this sweep on predicted overlap
+//                              //   (a colliding lane head HOLDS its lane — serial order)
 //     held_slots: number,      // free slots left unfilled (backlog dry / all colliding / not accepting)
 //     excess: [{ issue, golem }], // golems beyond `size` after a shrink — let DRAIN, never kill
 //   }
@@ -488,6 +498,121 @@ function composeTracks(backlog, opts) {
   return { tracks, deferred, cross_track_overlap: crossTrackOverlap, rationale }
 }
 
+// Normalize the optional `args.tracks` lane state into
+// [{ lane, queue:[{issue,files:Set}] }] — each lane's REMAINING issues in serial
+// (head-first) order, with predicted files as Sets. Malformed entries are
+// dropped. Returns [] when no lane state was supplied (the no-tracks path).
+function parseLanes(tracks) {
+  const out = []
+  for (const t of Array.isArray(tracks) ? tracks : []) {
+    if (!t || !Number.isInteger(t.lane)) continue
+    const queue = []
+    for (const c of Array.isArray(t.queue) ? t.queue : []) {
+      if (!c || !Number.isInteger(c.issue)) continue
+      const files = Array.isArray(c.files) ? c.files.filter(Boolean) : []
+      queue.push({ issue: c.issue, files: new Set(files) })
+    }
+    out.push({ lane: t.lane, queue })
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// planRefill — the pure pick planner shared by every pool refill (issue #199).
+//   Given the free-slot count, the accepting policy, the in-flight file
+//   footprint, the priority-ordered global candidates, and (optionally) per-lane
+//   serial queues + which lanes freed a slot this sweep, decide which issues to
+//   dispatch. Pure and deterministic (no I/O, no Date.now/Math.random); returns
+//   { picks, held, held_slots }. Extracted from runPool so the pick logic — the
+//   collision heuristic AND the new lane-awareness — is directly unit-testable
+//   via the helper-slice harness.
+//
+// Two passes share ONE `claimed` Set (union of in-flight files + every pick made
+// this sweep), so a lane pick and a global pick can never collide with each
+// other:
+//   1. Lane-aware pass (only when lanes + laneSlots are given): for each freed
+//      lane slot, take that lane's queue HEAD. If it clears the collision guard,
+//      pick it and advance the lane; if it collides, HOLD the slot — serial
+//      track order is preserved, so we never skip ahead within a lane nor steal
+//      another lane's work for that slot. A lane whose queue is already empty
+//      (exhausted track) contributes its slot to the global fallback.
+//   2. Global fallback pass: fill every still-free slot from the priority-ordered
+//      global candidates (skipping any already taken as a lane pick), holding a
+//      candidate that collides. This is the ENTIRE behavior when no lane state is
+//      supplied — a plain `pool <N>` run is unchanged.
+//
+// Collision avoidance is heuristic and conservative: a slot is held ONLY on a
+// PREDICTED file overlap — never on mere unknown. A candidate with no predicted
+// files never intersects, so it is always dispatchable (ranked last in the
+// global order).
+// ---------------------------------------------------------------------------
+function planRefill(input) {
+  const freeSlots = Number.isInteger(input.freeSlots) ? Math.max(0, input.freeSlots) : 0
+  const accepting = input.accepting
+  const candidates = Array.isArray(input.candidates) ? input.candidates : []
+  const lanes = Array.isArray(input.lanes) ? input.lanes : []
+  const laneSlots = Array.isArray(input.laneSlots) ? input.laneSlots : []
+
+  const picks = []
+  const held = []
+  const claimed = new Set(input.inflightFiles instanceof Set ? input.inflightFiles : [])
+
+  // Draining/paused: refill nothing. Still report held_slots for display.
+  if (accepting !== 'accepting') {
+    return { picks, held, held_slots: freeSlots }
+  }
+
+  const laneByIndex = new Map(lanes.map((l) => [l.lane, l]))
+  const takenIssues = new Set() // lane picks so the global pass won't re-pick them
+
+  // Count how many of the freed slots still need filling by the global pass —
+  // start from the total and subtract each slot a lane pass resolves (pick OR
+  // deliberate hold), so an exhausted-lane slot flows through to global.
+  let globalSlots = freeSlots
+
+  // --- Pass 1: lane-aware, one freed slot at a time, in laneSlots order. -----
+  for (const laneIdx of laneSlots) {
+    if (picks.length >= freeSlots) break
+    const lane = laneByIndex.get(laneIdx)
+    // Exhausted track (unknown lane, or empty queue) → leave the slot for the
+    // global fallback pass; do not decrement globalSlots.
+    if (!lane || lane.queue.length === 0) continue
+
+    const head = lane.queue.shift()
+    if (head.files.size && setsIntersect(head.files, claimed)) {
+      // Serial invariant: a colliding lane head HOLDS its slot. Do not advance
+      // to the lane's next issue and do not fall back to global for this slot.
+      held.push({ issue: head.issue, reason: 'lane head predicted overlap — holding lane (serial order)' })
+      globalSlots--
+      continue
+    }
+    picks.push(head.issue)
+    takenIssues.add(head.issue)
+    for (const f of head.files) claimed.add(f)
+    globalSlots--
+  }
+
+  // --- Pass 2: global fallback for the remaining (untagged + exhausted) slots.
+  const globalCap = Math.max(0, Math.min(globalSlots, freeSlots - picks.length))
+  let filledGlobal = 0
+  for (const c of candidates) {
+    if (filledGlobal >= globalCap) break
+    if (takenIssues.has(c.issue)) continue
+    if (c.files.size && setsIntersect(c.files, claimed)) {
+      held.push({ issue: c.issue, reason: 'predicted file overlap with in-flight or picked work' })
+      continue
+    }
+    picks.push(c.issue)
+    filledGlobal++
+    for (const f of c.files) claimed.add(f)
+  }
+
+  // Slots left empty after both passes (backlog/lanes exhausted or all-colliding)
+  // — surfaced so the operator sees an idle slot is intentional.
+  const held_slots = Math.max(0, freeSlots - picks.length)
+  return { picks, held, held_slots }
+}
+
 // ---------------------------------------------------------------------------
 // Pool mode — compute a collision-aware backlog refill plan for the fixed-size
 //   worker pool. No poll, no rebase, no merge, no push, no dispatch: this branch
@@ -495,11 +620,11 @@ function composeTracks(backlog, opts) {
 //   (SKILL.md Phase P) consumes `pool` to drive the gated worktree-new + Phase D
 //   dispatch into each free slot. The harness NEVER launches a golem.
 //
-// Collision avoidance is heuristic and conservative: a slot is held ONLY on a
-// PREDICTED file overlap (candidate's predicted files vs an in-flight golem's
-// files, OR vs an already-picked candidate this sweep) — never on mere unknown.
-// A candidate with no predicted files is dispatchable but ranked LAST, so the
-// pool prefers known-disjoint work and doesn't starve on pure uncertainty.
+// The pick planning is delegated to the pure `planRefill` helper above (shared,
+// unit-tested). When lane state (`args.tracks` + `args.laneSlots`) is present, a
+// freed slot pulls its own track's next queued issue and only falls back to the
+// global priority pick when that track is exhausted (issue #199); when absent,
+// refill is the flat collision-aware global pick unchanged.
 // ---------------------------------------------------------------------------
 function runPool() {
   phase('Pool')
@@ -530,10 +655,10 @@ function runPool() {
     if (Array.isArray(g.files)) for (const f of g.files) if (f) inflightFiles.add(f)
   }
 
-  // Stable, deterministic candidate order: backlog priority order is the
-  // caller's responsibility (next-issue severity x effort); within that we keep
-  // the given order but float no-file ("unknown") candidates to the back so
-  // known-disjoint work is preferred. No Date.now()/Math.random() (both banned).
+  // Normalize the backlog into { issue, files:Set } in the caller's priority
+  // order (next-issue severity x effort), floating no-file ("unknown")
+  // candidates to the back so known-disjoint work is preferred. No
+  // Date.now()/Math.random() (both banned).
   const withFiles = []
   const noFiles = []
   for (const c of backlog) {
@@ -542,32 +667,24 @@ function runPool() {
   }
   const candidates = [...withFiles, ...noFiles]
 
-  const picks = []
-  const held = []
-  // Files claimed by picks already made THIS sweep — a later pick must avoid
-  // colliding with an earlier pick too, not just with in-flight golems.
-  const claimed = new Set(inflightFiles)
+  // Parse optional lane state (issue #199 — lane-aware serial refill). When
+  // absent, planRefill is exactly the flat global pick loop this replaced, so a
+  // plain `pool <N>` run is byte-for-byte unchanged. `tracks` carries each open
+  // lane's REMAINING queue (head-first, in serial order); `laneSlots` is which
+  // lanes freed a slot this sweep (one entry per free lane slot).
+  const lanes = parseLanes(args && args.tracks)
+  const laneSlots = Array.isArray(args && args.laneSlots)
+    ? args.laneSlots.filter((n) => Number.isInteger(n))
+    : []
 
-  // Draining/paused: refill nothing. Still report free_slots/excess for display.
-  if (accepting === 'accepting') {
-    for (const c of candidates) {
-      if (picks.length >= freeSlots) break
-      // A candidate with predicted files that intersect in-flight OR an
-      // earlier pick collides — hold it (record why); otherwise pick it and
-      // claim its files. A no-file candidate never intersects, so it is always
-      // dispatchable (ranked last above).
-      if (c.files.size && setsIntersect(c.files, claimed)) {
-        held.push({ issue: c.issue, reason: 'predicted file overlap with in-flight or picked work' })
-        continue
-      }
-      picks.push(c.issue)
-      for (const f of c.files) claimed.add(f)
-    }
-  }
-
-  // Slots left empty after the pass (backlog exhausted, all-colliding, or not
-  // accepting) — surfaced so the operator sees an idle slot is intentional.
-  const heldSlots = accepting === 'accepting' ? Math.max(0, freeSlots - picks.length) : freeSlots
+  const { picks, held, held_slots: heldSlots } = planRefill({
+    freeSlots,
+    accepting,
+    inflightFiles,
+    candidates,
+    lanes,
+    laneSlots,
+  })
 
   return {
     base,

@@ -200,7 +200,11 @@ lives in `.worktrees/.status/pool.json` (schema `schemas/pool-status.schema.json
 — `size` and the three-state `accepting` (`accepting`/`draining`/`paused`). The
 refill loop advances on each Phase M sweep (no daemon) via `workflow.js`
 (`mode: "pool"`); live controls (`pool <N>`/`drain`/`pause`/`resume`) flip
-`pool.json` for the next sweep.
+`pool.json` for the next sweep. When **tracks** are active (composed via
+`/orchestrate tracks`), refill is **lane-aware**: a freed slot pulls its own
+track's next queued issue and only falls back to the global collision-aware pick
+once that track is exhausted — see `pool-train-protocol.md` § Lane-aware serial
+refill.
 
 ## Phase M — Monitor
 

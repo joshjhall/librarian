@@ -415,6 +415,148 @@ for (const path of [ORCH, REBASE]) {
 }
 
 // =============================================================================
+// orchestrate — planRefill (pool pick planner: global + lane-aware; issue #199)
+// =============================================================================
+{
+  const { planRefill } = extractHelpers(ORCH, ["planRefill"]);
+
+  // Build a candidate { issue, files:Set } the way runPool normalizes backlog.
+  const cand = (issue, files = []) => ({ issue, files: new Set(files) });
+  const lane = (l, queue) => ({
+    lane: l,
+    queue: queue.map(([issue, files]) => cand(issue, files)),
+  });
+
+  // --- Global fallback (no lanes) reproduces the pre-#199 behavior. -----------
+  {
+    const r = planRefill({
+      freeSlots: 2,
+      accepting: "accepting",
+      inflightFiles: new Set(["z.js"]),
+      candidates: [cand(1, ["a.js"]), cand(2, ["z.js"]), cand(3, ["b.js"])],
+      lanes: [],
+      laneSlots: [],
+    });
+    eq(JSON.stringify(r.picks), JSON.stringify([1, 3]), "planRefill: global picks first two non-colliding in priority order");
+    eq(r.held.length, 1, "planRefill: the in-flight collision is held");
+    eq(r.held[0].issue, 2, "planRefill: #2 (collides with in-flight z.js) is the held one");
+    eq(r.held_slots, 0, "planRefill: both slots filled → no held slots");
+  }
+
+  // Draining/paused refills nothing but reports the free slots as held.
+  {
+    const r = planRefill({
+      freeSlots: 3, accepting: "draining", inflightFiles: new Set(),
+      candidates: [cand(1, ["a"])], lanes: [], laneSlots: [],
+    });
+    eq(r.picks.length, 0, "planRefill: draining refills nothing");
+    eq(r.held_slots, 3, "planRefill: draining reports all free slots as held");
+  }
+
+  // No-file candidates are always dispatchable (never collide).
+  {
+    const r = planRefill({
+      freeSlots: 2, accepting: "accepting", inflightFiles: new Set(["a"]),
+      candidates: [cand(1, ["a"]), cand(2, [])], lanes: [], laneSlots: [],
+    });
+    ok(r.picks.includes(2), "planRefill: a no-file candidate is dispatchable despite in-flight files");
+    ok(!r.picks.includes(1), "planRefill: the colliding candidate is still held");
+  }
+
+  // --- Lane-aware: a freed lane slot pulls THAT lane's head, not global. ------
+  {
+    const r = planRefill({
+      freeSlots: 1,
+      accepting: "accepting",
+      inflightFiles: new Set(),
+      // Global priority would pick #9 first, but the freed slot belongs to lane 0.
+      candidates: [cand(9, ["g.js"])],
+      lanes: [lane(0, [[1, ["a.js"]], [2, ["a2.js"]]]), lane(1, [[5, ["b.js"]]])],
+      laneSlots: [0],
+    });
+    eq(JSON.stringify(r.picks), JSON.stringify([1]), "planRefill: freed lane-0 slot pulls lane 0's head (#1), not global #9");
+  }
+
+  // Two freed slots for the same lane pull its first TWO issues in order.
+  {
+    const r = planRefill({
+      freeSlots: 2, accepting: "accepting", inflightFiles: new Set(),
+      candidates: [],
+      lanes: [lane(0, [[1, ["a.js"]], [2, ["b.js"]], [3, ["c.js"]]])],
+      laneSlots: [0, 0],
+    });
+    eq(JSON.stringify(r.picks), JSON.stringify([1, 2]), "planRefill: two lane-0 slots pull #1 then #2 (serial order survives)");
+  }
+
+  // --- Exhausted lane falls back to the global pick for that slot. ------------
+  {
+    const r = planRefill({
+      freeSlots: 1, accepting: "accepting", inflightFiles: new Set(),
+      candidates: [cand(7, ["g.js"])],
+      lanes: [lane(0, [])], // lane 0's queue is empty (track exhausted)
+      laneSlots: [0],
+    });
+    eq(JSON.stringify(r.picks), JSON.stringify([7]), "planRefill: an exhausted lane slot falls back to the global pick (#7)");
+  }
+  // An unknown lane index is likewise treated as exhausted → global fallback.
+  {
+    const r = planRefill({
+      freeSlots: 1, accepting: "accepting", inflightFiles: new Set(),
+      candidates: [cand(7, ["g.js"])], lanes: [lane(0, [[1, ["a"]]])], laneSlots: [5],
+    });
+    eq(JSON.stringify(r.picks), JSON.stringify([7]), "planRefill: an unknown freed-lane index falls back to global");
+  }
+
+  // --- Serial hold: a colliding lane head HOLDS its slot (no skip / no steal).
+  {
+    const r = planRefill({
+      freeSlots: 1,
+      accepting: "accepting",
+      inflightFiles: new Set(["a.js"]), // collides with lane 0's head
+      candidates: [cand(9, ["free.js"])], // global work IS available and disjoint
+      lanes: [lane(0, [[1, ["a.js"]], [2, ["b.js"]]])],
+      laneSlots: [0],
+    });
+    eq(r.picks.length, 0, "planRefill: a colliding lane head does not dispatch");
+    ok(!r.picks.includes(2), "planRefill: serial invariant — does NOT skip to the lane's 2nd issue");
+    ok(!r.picks.includes(9), "planRefill: serial invariant — does NOT steal global work for a held lane slot");
+    eq(r.held[0].issue, 1, "planRefill: the held lane head is reported");
+    eq(r.held_slots, 1, "planRefill: the held lane slot is counted");
+  }
+
+  // --- Mixed: one live lane + one exhausted lane; global fills the rest. ------
+  {
+    const r = planRefill({
+      freeSlots: 3,
+      accepting: "accepting",
+      inflightFiles: new Set(),
+      candidates: [cand(8, ["g8.js"]), cand(9, ["g9.js"])],
+      lanes: [lane(0, [[1, ["a.js"]]]), lane(1, [])],
+      laneSlots: [0, 1], // lane 0 lives (→ #1), lane 1 exhausted (→ global)
+    });
+    ok(r.picks.includes(1), "planRefill: live lane 0 contributes its head #1");
+    ok(r.picks.includes(8), "planRefill: exhausted lane 1's slot + spare go to global (#8)");
+    eq(r.picks.length, 3, "planRefill: all three slots filled (1 lane + 2 global)");
+    // Lane pick and global picks never collide (shared claimed set).
+    eq(new Set(r.picks).size, 3, "planRefill: no duplicate picks across passes");
+  }
+
+  // --- Determinism: identical input → identical output. -----------------------
+  {
+    const build = () => ({
+      freeSlots: 2, accepting: "accepting", inflightFiles: new Set(["z"]),
+      candidates: [cand(1, ["a"]), cand(2, ["z"]), cand(3, ["b"])],
+      lanes: [lane(0, [[4, ["c"]]])], laneSlots: [0],
+    });
+    eq(
+      JSON.stringify(planRefill(build())),
+      JSON.stringify(planRefill(build())),
+      "planRefill: deterministic — same input yields identical output",
+    );
+  }
+}
+
+// =============================================================================
 // ci-fixer — defaultVerdict
 // =============================================================================
 {
