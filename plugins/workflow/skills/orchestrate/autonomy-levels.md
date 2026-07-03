@@ -15,6 +15,17 @@ categories, the four levels, the merge invariant, the dead-end rule, and the
 > / override removal), and #181 (language reconciliation) land. Read this to
 > understand the target model and to know which section your issue implements —
 > see the **Consuming-issue index** at the end.
+>
+> **The disposition table is implemented in code (#190).** This doc is the
+> *contract*; its decision table — level selection, the critical cap, per-gate
+> disposition, the dead-end override, and the derived `autonomous`/`plan_gated`
+> mirrors — is computed by the resolver
+> `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (Python primary
+> `autonomy-resolve.py` + bash fallback), the **authoritative implementation**
+> the skills call. When this prose and the resolver ever disagree, the resolver's
+> `tests/validate-autonomy-resolve.sh` decision table is the tiebreak — update
+> the prose, not the test. `/next-issue`, `/ship-issue`, and `/orchestrate` all
+> call the resolver instead of re-deriving these rules.
 
 ---
 

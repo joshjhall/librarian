@@ -6,7 +6,10 @@ a decision that is **not mechanical** — a genuine architectural or directional
 fork, or a wall with more than one viable path forward. This is the **escalation
 gate** defined in `orchestrate/autonomy-levels.md` (#174): a judgement call that
 is human at **L1–L3** and auto-resolved (the agent picks its recommendation) at
-**L4**, except a **dead-end**, which blocks at every level including L4.
+**L4**, except a **dead-end**, which blocks at every level including L4. Resolve
+the disposition with
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate escalation --level {N} [--dead-end]`
+(→ `disposition=auto|human`, #190) rather than re-deriving the cutoff.
 
 The plan-approval checkpoint is also an escalation gate, but it is handled
 structurally in Phase 2 (`EnterPlanMode`/`ExitPlanMode`). This protocol is for

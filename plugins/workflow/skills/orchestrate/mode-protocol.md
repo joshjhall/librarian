@@ -122,16 +122,19 @@ prompt re-reads the state file and delivers (a near no-op if the first already
 pushed a PR). Use `;`, NOT `&&`: the backstop must run even when the first prompt
 exits non-zero before shipping, which is exactly the case `&&` would skip.
 
-### Plan gate by effort/severity
+### Plan gate by level
 
-`--autonomous` skips the plan checkpoint **conditionally**, not always. `/next-issue`
-reads the issue's labels and chooses (see `next-issue/SKILL.md` § Autonomous
-Mode):
+Whether a golem skips the plan checkpoint is decided by its **autonomy level**,
+**not** its effort labels (the level model, #174/#175, replaced the old
+effort-based rule — an L4 golem on an `effort/medium` issue now skips the plan,
+which under the binary model it would not have). `/next-issue` resolves this via
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) and persists the
+`plan_gated` mirror; dispatch does not recompute it:
 
 ```text
-IF (effort/trivial OR effort/small) AND NOT severity/critical:
+plan_gated == false (level 4, critical cap did not fire):
   → fully autonomous — golem runs straight through to a PR, no plan stop.
-ELSE (effort/medium | effort/large | severity/critical | no effort label):
+plan_gated == true (level 1-3, a capped severity/critical, or --plan-gate):
   → plan-gated — golem builds the plan and BLOCKS at ExitPlanMode awaiting a
     human. It shows BLOCKED in `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`; the operator runs
     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines + approves the plan in-session, and the
@@ -140,12 +143,11 @@ ELSE (effort/medium | effort/large | severity/critical | no effort label):
     AND the antagonistic pre-PR review, not just the first edit.
 ```
 
-This mirrors the `--ship` effort gate, which is likewise restricted to
-`effort/trivial`/`small`. The launch command does not change — the policy lives
-in `/next-issue`; dispatch just **expects** medium+/critical golems to block at
+The launch command does not change — the policy lives in `/next-issue`; dispatch
+just **expects** a golem dispatched below L4 (or a capped critical) to block at
 the plan step. Per-golem overrides: append `--plan-gate` to force the checkpoint
-on a small issue, or `--force-auto` to force full autonomy on a **medium/large**
-one. `--force-auto` cannot lift a `severity/critical` issue past L3 — the
+on an L4 golem, or `--force-auto` to force full autonomy (L4) on one dispatched
+lower. `--force-auto` cannot lift a `severity/critical` issue past L3 — the
 critical cap always keeps its plan gate human.
 
 **Plan approval is a human keystroke, not agent-drivable (#29).** At the golem's

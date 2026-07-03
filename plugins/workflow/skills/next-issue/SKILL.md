@@ -78,8 +78,10 @@ directory — load it to decide the run's level and apply it. It carries the lev
 selection + aliases, the per-gate disposition table, the plan-gate rule, the
 legacy `--plan-gate` / `--force-auto` overrides (superseded by the level; removed
 in #179), and the shipping handoff. The authoritative model is
-`orchestrate/autonomy-levels.md` (#174). The summary below is the operational
-gist.
+`orchestrate/autonomy-levels.md` (#174), implemented by the resolver
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) — **call it** to
+compute the level, mirrors, and per-gate disposition rather than re-deriving them
+here. The summary below is the operational gist.
 
 The run's **autonomy level** (int 1–4) is set by `--level {1,2,3,4}`; by
 `--autonomous` / deprecated `--auto` / `NEXT_ISSUE_AUTONOMOUS=1` (each an **alias
@@ -333,18 +335,27 @@ or has no `files_planned` (nothing to re-present).
    }
    ```
 
-   Set `"autonomy_level"` from level selection (see `## Autonomous Mode`):
-   `--level {1,2,3,4}`; else `--autonomous`/`--auto`/`NEXT_ISSUE_AUTONOMOUS=1` →
-   `4`; else an orchestrator-passed `--level`; else the **operator's answer to
-   the L1–L4 rules-of-engagement question** asked above (lone interactive run);
-   else — only in a non-interactive context with no TTY — the **L1** fallback.
-   Then apply the **critical cap** to the just-fetched labels: if the issue is
-   `severity/critical` and the selected level is `4`, record `3`. Write
-   the two derived back-compat mirrors: `"autonomous"` = `(autonomy_level == 4)`;
-   `"plan_gated"` = `true` when the plan gate is **kept** — i.e. `autonomy_level
-   <= 3` (which includes every capped critical) — and `false` at L4. The legacy
-   `--plan-gate` override forces `plan_gated: true` (keep the gate); `--force-auto`
-   maps to L4 (subject to the cap). These no longer depend on effort labels.
+   Do **not** hand-derive these fields — call the resolver, which computes level
+   selection, the critical cap, and all mirrors in one shot (see `## Autonomous
+   Mode` and `autonomous-mode.md` § Level selection):
+
+   ```bash
+   eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level \
+       --from-args "$ARGS" --env-autonomous "${NEXT_ISSUE_AUTONOMOUS:-0}" \
+       --severity "$SEV" [--chosen-level "$CHOSEN"])"
+   ```
+
+   where `$ARGS` is this invocation's raw flag string (carrying any
+   `--level`/`--autonomous`/`--auto`/`--plan-gate`/`--force-auto`), `$SEV` is the
+   issue's severity label (`critical` or empty), and `$CHOSEN` is a level chosen
+   at setup — an orchestrator-passed `--level` or the **operator's answer to the
+   L1–L4 rules-of-engagement question** asked above (omit it for a pure-CLI run;
+   with no signal at all the resolver returns the **L1** fallback). The call sets
+   `autonomy_level`, `autonomous`, `plan_gated`, `capped`, and `perm_mode`; write
+   `autonomy_level`, `autonomous`, and `plan_gated` straight into the state file.
+   The `severity/critical` cap (L4 → L3, `capped=true`) and the legacy
+   `--plan-gate`/`--force-auto` overrides are all applied inside the resolver;
+   none of this depends on effort labels.
 
 ## Phase 2 — Plan
 
