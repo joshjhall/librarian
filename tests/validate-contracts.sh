@@ -233,8 +233,8 @@ test_next_issue_schema_accepts_valid_doc() {
     fi
     local tmpdoc
     tmpdoc="$(/usr/bin/mktemp)"
-    # Exercises plan_gated, plan_comment_url, and a full checkpoint object — the
-    # fields added for the plan-gate work.
+    # Exercises autonomy_level, plan_gated, plan_comment_url, and a full
+    # checkpoint object — the fields added for the autonomy-level + plan-gate work.
     cat >"$tmpdoc" <<'JSON'
 {
   "version": 2,
@@ -245,6 +245,7 @@ test_next_issue_schema_accepts_valid_doc() {
   "plan": "Validate session token expiry before granting access",
   "started": "2026-02-27",
   "platform": "github",
+  "autonomy_level": 4,
   "autonomous": true,
   "plan_gated": true,
   "plan_comment_url": "https://github.com/o/r/issues/101#issuecomment-1",
