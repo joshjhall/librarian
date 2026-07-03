@@ -24,9 +24,9 @@ mid-flight fork, a wall) are auto-passed at L4 only and human at L1–L3.
 **alias for L4**; absence of any signal is the interactive default (an **L1
 disposition** — every gate asks). `severity/critical` issues are **capped at L3**
 (an L4 request reduces to L3), so a critical issue always keeps its plan gate.
-See `## Autonomous Mode` below.
+See `## Autonomy Levels` below.
 
-The level splits into **two** dispositions (see `## Autonomous Mode` for the full
+The level splits into **two** dispositions (see `## Autonomy Levels` for the full
 rule):
 
 - **Gate-skipping** — at **L3–L4**, routine gates take their documented default
@@ -69,11 +69,11 @@ call is **deferred to Phase 2** (the `severity/critical` label that can cap L4�
 is not known until Phase 1): an **L4** run (non-critical) never calls
 `EnterPlanMode`/`ExitPlanMode` at all — the plan gate is auto-passed — while an
 **L1–L3** run (including any capped critical) calls both in Phase 2 and pauses at
-plan approval. See `## Autonomous Mode` below.
+plan approval. See `## Autonomy Levels` below.
 
-## Autonomous Mode
+## Autonomy Levels
 
-**Companion file**: the full rule lives in `autonomous-mode.md` in this skill
+**Companion file**: the full rule lives in `autonomy.md` in this skill
 directory — load it to decide the run's level and apply it. It carries the level
 selection + aliases, the per-gate disposition table, the plan-gate rule, the
 legacy `--plan-gate` / `--force-auto` overrides (superseded by the level; removed
@@ -113,6 +113,15 @@ post-`/clear` resume inherit the level.
 At an **L1 disposition** (no level chosen), behavior is unchanged — every
 interactive prompt and plan-mode step below runs verbatim as the default.
 
+**Standing rule — never time out a human gate.** Whenever a gate below is kept
+for a human — every `AskUserQuestion`, the plan-approval checkpoint, the
+mid-flight escalation gate, and a dead-end at any level — **wait indefinitely for
+the answer; never lapse-and-default because the operator stepped away.** The only
+thing that resolves a gate without a human is genuine level auto-passing (routine
+at L3–L4, escalation at L4); a dead-end waits at every level, L4 included. See
+`orchestrate/autonomy-levels.md` § *Standing rule: wait indefinitely at a human
+gate*.
+
 ## Agent Worktree Mode
 
 Before starting Phase 0, check if the current branch is an agent worktree:
@@ -144,7 +153,7 @@ Proceed with Phase 0 as normal regardless of mode.
    would stay blocked). The plan-mode call is made in Phase 2 once the effective
    level is known: an **L1–L3** run (including a capped critical) calls
    `EnterPlanMode` there (then `ExitPlanMode` for approval); an **L4**
-   (non-critical) run never enters plan mode at all. See `## Autonomous Mode`.
+   (non-critical) run never enters plan mode at all. See `## Autonomy Levels`.
 
 1. **Legacy migration** — run in order:
 
@@ -309,7 +318,7 @@ or has no `files_planned` (nothing to re-present).
    question entirely when the level is already set (flag / env / orchestrator
    `--level`), and in a non-interactive context with no TTY fall back to the L1
    disposition rather than hang. This resolves `autonomy_level` **before** the
-   Phase 2 plan-mode decision, which depends on it. See `## Autonomous Mode` §
+   Phase 2 plan-mode decision, which depends on it. See `## Autonomy Levels` §
    Level selection.
 
 1. Assign the issue to yourself
@@ -336,8 +345,8 @@ or has no `files_planned` (nothing to re-present).
    ```
 
    Do **not** hand-derive these fields — call the resolver, which computes level
-   selection, the critical cap, and all mirrors in one shot (see `## Autonomous
-   Mode` and `autonomous-mode.md` § Level selection):
+   selection, the critical cap, and all mirrors in one shot (see `## Autonomy
+   Levels` and `autonomy.md` § Level selection):
 
    ```bash
    eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level \
@@ -423,7 +432,7 @@ or has no `files_planned` (nothing to re-present).
    `EnterPlanMode`/`ExitPlanMode` instead and must NOT add it.
 
 1. **Autonomous planning path** — branches on the plan gate (`"plan_gated"`
-   from Phase 1 / `## Autonomous Mode`):
+   from Phase 1 / `## Autonomy Levels`):
 
    > **Note (dependency queue):** if Phase 1 built a dependency queue for an
    > explicitly-named blocked issue, the `active` issue selected there — a
@@ -482,8 +491,10 @@ or has no `files_planned` (nothing to re-present).
 1. **Exit plan mode** (call `ExitPlanMode` tool) — this presents the plan to
    the user for approval before implementation begins. Skipped only on the
    **L4 (non-critical)** path; an **L1–L3** run (including a capped critical)
-   DOES call `ExitPlanMode` here and waits for human approval (see the autonomous
-   planning path above).
+   DOES call `ExitPlanMode` here and **waits indefinitely** for human approval —
+   never lapse-and-default and start implementing because the operator stepped
+   away (the standing rule above; `autonomy-levels.md` § *Standing rule*). See
+   the autonomous planning path above.
 
 1. **Implement** — after plan approval, carry out the plan: make the changes
    and run the tests. The two steps below fire only **once implementation and

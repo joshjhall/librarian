@@ -77,6 +77,14 @@ never whether an un-green or un-reviewed PR may merge.
 When at an **L1 disposition** (the interactive default), behavior is unchanged —
 every prompt below runs verbatim.
 
+**Standing rule — never time out a human gate.** Every gate this skill keeps for
+a human — the shipping-mode prompt (Step 3) and the L1–L2 stop-for-human-merge
+gate, plus a dead-end at any level — **waits indefinitely for the answer; never
+lapse-and-default because the operator stepped away.** Only genuine level
+auto-passing (routine at L3–L4) resolves a gate without a human; a dead-end waits
+even at L4. See `orchestrate/autonomy-levels.md` § *Standing rule: wait
+indefinitely at a human gate*.
+
 ## Golem Execution Model & Environment Variables
 
 **Companion file**: `ship-protocol.md` in this skill directory carries (1) the
@@ -89,7 +97,7 @@ Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_STRICT` / `REVIEW_MAX_CYCLES
 infra-flake triage tuning). The legacy `AUTOMERGE` / `AUTOMERGE_AUTONOMOUS`
 double-consent is **retired as the merge path** — merge is now the level-aware
 routine gate in Step 4 (L3–L4 auto after green + clean; L1–L2 human). The vars are
-retained-but-deprecated until #178 removes them. Load `ship-protocol.md` before
+retained-but-deprecated until #209 removes them. Load `ship-protocol.md` before
 relying on any of these toggles.
 
 ## Step 1 — Read State
@@ -298,7 +306,7 @@ for the per-check commands, tables, and per-level rules.
    > unreviewed merge anymore. Merge is now a **routine gate** that fires **after**
    > the CI-wait + review loop terminates green **and** clean (see the merge step
    > below). The env vars are retained-but-deprecated for one release; their
-   > removal is #178's cleanup sweep. See `ship-protocol.md` § Environment
+   > removal is #209's cleanup sweep. See `ship-protocol.md` § Environment
    > Variables.
 
 1. **Monitor CI, run the multi-cycle review loop, and file deferred findings**

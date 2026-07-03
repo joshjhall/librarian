@@ -208,7 +208,7 @@ composition into running golems is the four-step **setup flow** from
    launch {head}`, one bare `tmux new-session` per head); the rest of each track
    **queues** behind its head for lane-aware serial refill. Pass the level into
    the golem as `--level {N}` on its `/next-issue` prompt so the run's state file
-   records it (see `next-issue/autonomous-mode.md` § *Level selection*).
+   records it (see `next-issue/autonomy.md` § *Level selection*).
 
 **Autonomous orchestrator.** When the orchestrator itself runs unattended, the
 two `AskUserQuestion` gates are authorized by the autonomous invocation (as the

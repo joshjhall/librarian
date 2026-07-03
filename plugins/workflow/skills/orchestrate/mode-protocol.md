@@ -354,9 +354,11 @@ ELSE (single issue):
 
 The master orchestrator (a live interactive session) dispatches golems, then
 monitors PR + issue-label state and rebases across PRs. It NEVER merges a
-golem's branch into its own — humans merge PRs (or per-golem auto-merge, which
-for an autonomous golem requires both `AUTOMERGE=1` and `AUTOMERGE_AUTONOMOUS=1`).
-See `SKILL.md` Phases D / M / R.
+golem's branch into its own — a golem's own `/ship-issue` merges its PR as the
+**level-aware routine gate** (auto at L3–L4, human at L1–L2, always subject to the
+green-CI + clean-review merge invariant); humans merge whatever a golem leaves for
+them. (The legacy `AUTOMERGE` / `AUTOMERGE_AUTONOMOUS` double-consent is retired as
+that path and deprecated — #209.) See `SKILL.md` Phases D / M / R.
 
 ### Worker Pool (fixed-size, self-refilling)
 

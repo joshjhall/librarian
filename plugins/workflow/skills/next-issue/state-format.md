@@ -200,7 +200,7 @@ same turn (via the `Skill` tool) and never reaches the "After plan approval",
 golem launch's `;`-chained `/ship-issue --autonomous` is the only resume path if
 the turn exits early. Such a run sets `autonomy_level` (and the derived
 `autonomous` mirror = true only at L4). Whether it removes the **plan-approval
-gate** is level-driven (see `SKILL.md` § Autonomous Mode): an **L4** run
+gate** is level-driven (see `SKILL.md` § Autonomy Levels): an **L4** run
 (non-critical) auto-passes the plan gate; an **L1–L3** run — including a capped
 `severity/critical` — keeps it and pauses at `ExitPlanMode` for human approval
 before continuing. (An **L1–L2** run stops at the routine ship gates too, so it
@@ -255,8 +255,8 @@ blocked-by references.
 ## Blocked-by Exclusion
 
 Selection must never dispatch an issue whose declared dependencies are still
-open — a golem would plan against an unresolved blocker and, on a
-fully-autonomous path, could resolve the upstream decision by fiat. The
+open — a golem would plan against an unresolved blocker and, on an **L4**
+(gate-skipping) path, could resolve the upstream decision by fiat. The
 blocked-by exclusion is a **sibling of the status-label exclusion above**: it is
 applied at the same point in the priority loop, so `orchestrate` dispatch and
 pool refill (which reuse this ordering) inherit it automatically.
@@ -343,7 +343,7 @@ the body references (`Blocked by #N` / `Depends on #N`) and the
   > it explicitly with --force-target; the plan gate is your backstop.`
 
   With `--force-target`, proceed directly to Phase 2 for the named issue; the
-  plan gate (see `SKILL.md` § Autonomous Mode) remains the human checkpoint for
+  plan gate (see `SKILL.md` § Autonomy Levels) remains the human checkpoint for
   a plan-gated run. A detected dependency **cycle** also stops queuing and falls
   back to the same escape hatch (see `## Dependency Queue`), so an
   explicitly-named issue is never hard-blocked.
@@ -467,19 +467,19 @@ An explicit `/next-issue {other}` while a queue exists starts fresh for
 global priority override. (If `{other}` itself has open blockers, it builds its
 own queue, replacing the file.)
 
-### Autonomous interaction
+### Gate-skipping (L3–L4) interaction
 
-An autonomous explicit run (`/next-issue 5 --autonomous`, as `orchestrate`
-always dispatches) **queues and works the first unblocked dependency** this
-turn — planning it, implementing it, and shipping its own PR — then leaves the
-queue file for the next cycle. It does **not** auto-advance the whole chain
-within one turn: each dependency is one golem / one PR (the natural PR-per-golem
-granularity). Because `orchestrate`'s priority walk already **skips** blocked
-issues, once a dependency PR merges the next dependency becomes unblocked and is
-re-selected by ordinary priority selection — the queue file is primarily a
-resume aid for a plain interactive `/next-issue` walking toward the target.
-`--force-target` on an autonomous run restores warn-and-proceed and plans the
-named target directly.
+A gate-skipping explicit run (`/next-issue 5 --level 4`, or its L4 alias
+`--autonomous`, as `orchestrate` always dispatches) **queues and works the first
+unblocked dependency** this turn — planning it, implementing it, and shipping its
+own PR — then leaves the queue file for the next cycle. It does **not**
+auto-advance the whole chain within one turn: each dependency is one golem / one
+PR (the natural PR-per-golem granularity). Because `orchestrate`'s priority walk
+already **skips** blocked issues, once a dependency PR merges the next dependency
+becomes unblocked and is re-selected by ordinary priority selection — the queue
+file is primarily a resume aid for a plain interactive `/next-issue` walking
+toward the target. `--force-target` on such a run restores warn-and-proceed and
+plans the named target directly.
 
 #### Orchestrate dispatch — golem-cache coherence
 
