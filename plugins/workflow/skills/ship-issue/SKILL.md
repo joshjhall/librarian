@@ -22,49 +22,34 @@ the `next-issue` skill for the rationale). The hand-off is the state file
 - **Manually** after a `/clear` — the normal flow for `effort/medium`/`large`
   work, where planning context was reset before implementation.
 - **Auto-invoked by `/next-issue --ship`** (alias `--now`) — the fast-path for
-  `effort/trivial`/`small` issues, which chains here in the same context with
-  no `/clear`. Being reached this way is **not an autonomy signal**: the `--ship`
-  fast-path keeps the plan-approval gate and leaves the level at **L1**, so this
-  run still prompts for shipping mode (Step 3) and every other interactive gate.
+  `effort/trivial`/`small` issues, chaining here in the same context with no
+  `/clear`. **Not an autonomy signal**: it keeps the plan-approval gate and leaves
+  the level at **L1**, so this run still prompts for shipping mode (Step 3) and
+  every other interactive gate.
 - **Auto-chained by `/next-issue --level 3|4`** — the higher-autonomy flow, which
-  persists `autonomy_level` in the state file (see below). That `/next-issue`
-  invokes this skill **in the same turn** (via the `Skill` tool) once
-  implementation and testing complete — it
-  does not stop and suggest a manual run. This skill therefore must work whether
-  reached in-turn (state file already current in context) or fresh after a
-  turn-exit (re-read from the state file in Step 1); both paths resolve the level
-  from `autonomy_level` in Step 1.
+  persists `autonomy_level` (see below) and invokes this skill **in the same
+  turn** (via the `Skill` tool) once implementation + testing complete, without
+  suggesting a manual run. Ship must work whether reached in-turn (state current
+  in context) or fresh after a turn-exit (re-read in Step 1); both resolve the
+  level from `autonomy_level` in Step 1.
 
 ## Autonomy Level
 
 Ship reads the run's **autonomy level** (L1–L4) from the state file's
 `autonomy_level` (Step 1); absent, it defaults to L1. The level — not a binary
 flag — decides how each gate below is dispatched, per the contract in
-`orchestrate/autonomy-levels.md` (#174). The two gate dispositions that matter to
-ship:
+`orchestrate/autonomy-levels.md` (#174). Resolve a routine-gate disposition with
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate routine --level {N}`
+(→ `disposition=auto|human`, #190) rather than re-deriving the L3–L4 cutoff.
+`autonomy_level` is the sole control — the old binary `autonomous`/`plan_gated`
+mirrors and the `--autonomous`/`--auto`/`NEXT_ISSUE_AUTONOMOUS` aliases were
+removed in #215 (and GitHub's `gh pr merge --auto` / the harness's
+`--permission-mode auto` are unrelated).
 
-- **Routine gates** (push, PR-open, **merge on green CI + clean review**, prune)
-  — **auto-passed at L3–L4**, **human-authorized at L1–L2**. Resolve the
-  disposition with
-  `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate routine --level {N}`
-  (→ `disposition=auto|human`, #190) rather than re-deriving the L3–L4 cutoff.
-- The **merge invariant** (below) is uncrossable at **every** level, L4 included.
-
-> **Level, not "autonomous".** `autonomy_level` (1–4) is the sole control; the old
-> binary `autonomous`/`plan_gated` state-file mirrors and the `--autonomous`/
-> `--auto`/`NEXT_ISSUE_AUTONOMOUS` aliases were removed in #215. `gh pr merge
-> --auto` (GitHub's auto-merge flag) and `--permission-mode auto` (the harness
-> flag) are unrelated to the autonomy level.
-
-**Behavior by level:**
-
-- **L3–L4** — do NOT call `AskUserQuestion`; every gate takes its documented
-  default. Always Branch + PR (Option 1), regardless of branch name. Always wait
-  for CI and auto-fix failures. After **green CI + clean review**, **auto-merge**
-  (squash, delete-branch) then prune — this is the routine-gate merge (see Step 4).
-- **L1–L2** — every interactive prompt runs verbatim: prompt for shipping mode
-  (Step 3), and **stop at green CI + clean review with the completion summary for
-  a human to merge**. Ship never merges at L1–L2.
+| Level | Shipping mode (Step 3) | CI | Merge (Step 4) |
+| ----- | ---------------------- | -- | -------------- |
+| **L3–L4** | no prompt — always Branch + PR (Option 1) | always wait + auto-fix | **auto-merge** squash+delete-branch, then prune |
+| **L1–L2** | prompt for mode | wait | **stop** at green+clean with the completion summary — human merges |
 
 **The merge invariant (all levels, including L4).** Never merge unless CI is green
 **and** the PR review loop terminated clean. If either fails and cannot be
@@ -73,29 +58,24 @@ mechanically resolved, it is a **dead-end** (see `orchestrate/autonomy-levels.md
 human — **even at L4**. The level decides whether merging needs a human keystroke,
 never whether an un-green or un-reviewed PR may merge.
 
-When at an **L1 disposition** (the interactive default), behavior is unchanged —
-every prompt below runs verbatim.
-
 **Standing rule — never time out a human gate.** Every gate this skill keeps for
-a human — the shipping-mode prompt (Step 3) and the L1–L2 stop-for-human-merge
-gate, plus a dead-end at any level — **waits indefinitely for the answer; never
-lapse-and-default because the operator stepped away.** Only genuine level
-auto-passing (routine at L3–L4) resolves a gate without a human; a dead-end waits
-even at L4. See `orchestrate/autonomy-levels.md` § *Standing rule: wait
-indefinitely at a human gate*.
+a human — the shipping-mode prompt (Step 3), the L1–L2 stop-for-human-merge gate,
+and a dead-end at any level — **waits indefinitely; never lapse-and-default
+because the operator stepped away.** Only genuine level auto-passing (routine at
+L3–L4) resolves a gate without a human; a dead-end waits even at L4. See
+`orchestrate/autonomy-levels.md` § *Standing rule: wait indefinitely at a human
+gate*.
 
 ## Golem Execution Model & Environment Variables
 
 **Companion file**: `ship-protocol.md` in this skill directory carries (1) the
-**Golem Execution Model** — a golem running this skill is an OS **process**,
-never a Workflow subagent, because the one permitted Workflow nesting level is
-reserved for this skill's review harness; orchestrators MUST spawn golems as
-processes (subprocess / container / worktree), and (2) the full **Environment
-Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_STRICT` / `REVIEW_MAX_CYCLES`
-(review gating), and the `LIBRARIAN_CI_*` family (CI-wait threshold/extensions and
-infra-flake triage tuning). Merge is the level-aware routine gate in Step 4
-(L3–L4 auto after green + clean; L1–L2 human). Load `ship-protocol.md` before
-relying on any of these toggles.
+**Golem Execution Model** — a golem running this skill is an OS **process**, never
+a Workflow subagent (the one permitted Workflow nesting level is reserved for this
+skill's review harness), so orchestrators MUST spawn golems as processes
+(subprocess / container / worktree); and (2) the full **Environment Variables**
+contract: `PRE_REVIEW_STRICT` / `REVIEW_STRICT` / `REVIEW_MAX_CYCLES` (review
+gating) and the `LIBRARIAN_CI_*` family (CI-wait threshold/extensions, infra-flake
+triage). Load it before relying on any of these toggles.
 
 ## Step 1 — Read State
 
@@ -142,12 +122,8 @@ relying on any of these toggles.
    > `next-issue/state-format.md` § Dependency Queue). Shipping only deletes the
    > per-issue `next-issue-{N}.json`, never the queue file.
 
-1. If no state file is found, tell the user:
-
-   > No in-progress issue found. Run `/next-issue` first to select and plan
-   > an issue.
-
-   Then stop.
+   (If no state file is found, stop and tell the user: *"No in-progress issue
+   found. Run `/next-issue` first to select and plan an issue."*)
 
 ## Step 2 — Detect Platform
 
@@ -290,201 +266,34 @@ for the per-check commands, tables, and per-level rules.
        --description "## Summary\n- {what changed and why}\n\n## Test plan\n- {how this was tested}\n\nCloses #{N}"
      ```
 
-1. **Monitor CI, run the multi-cycle review loop, and file deferred findings**
-   — **Companion file**: `ci-review-protocol.md` in this skill directory carries
-   the full protocol for these three post-PR-creation steps. This loop always
-   runs before any merge — there is no path that skips it. In brief:
+1. **After the PR is open — Companion file**: the rest of Option 1 lives in
+   `execute-protocol.md` § *Option 1 — Branch + PR: after the PR is open* — load
+   it now. It carries, in order: **monitor CI + multi-cycle review loop + file
+   deferred findings** (full protocol in `ci-review-protocol.md`; always runs
+   before any merge) → the **level-aware merge gate** (the merge invariant is
+   checked first at every level incl. L4 — a not-green-and-clean loop is a
+   **dead-end** that parks the PR and waits for a human; with the invariant
+   satisfied, **L3–L4** auto-merge squash+delete-branch then prune inline, **L1–L2**
+   stop for a human merge) → **label** `status/pr-pending` (remove
+   `status/in-progress`) → **comment**, **checkout main**, **delete state file**,
+   **show the PR URL** → the **L2 completion summary** block. Squash by default:
+   single-issue PRs keep history linear.
 
-   - **Monitor CI and remediate failures** (advisory; `ci-fixer` caps fixes at 3
-     attempts per check). An L3–L4 run always waits. Poll `gh pr checks` every
-     30 s against the `LIBRARIAN_CI_WAIT_TIMEOUT` checkpoint (L3–L4 auto-extends
-     up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS`, then STOPs). On failure, **triage
-     infra-flake vs real first** (classify by failing-step name vs the diff;
-     auto-retry an infra flake once via `gh run rerun --failed`; collapse cascade
-     failures to their root cause), then hand real failures to the `ci-fixer`
-     `workflow.js` harness — applying its commits (hard-filtered against the
-     CI-config denylist), pushing, and re-polling.
-   - **Multi-cycle PR review loop** (after green CI) — re-run the `workflow.js`
-     harness (`phase: "pr-cycle"`) folding in open PR comments, resolve `blocking`
-     / file `deferrable`, commit + push + re-check CI each cycle, terminate when
-     clean + green + every comment resolved-or-deferred (cap `REVIEW_MAX_CYCLES`).
-   - **File deferred review findings** — file each via `/file-issue` (autonomous
-     fallback: `gh issue create --body-file`, never interpolating LLM text into a
-     shell arg), link them on the PR, and append a "Review findings" section to
-     the PR body. Nothing is silently dropped.
+### Options 2 & 3
 
-   Every sub-step degrades gracefully (a missing harness/`gh` is skipped with a
-   note, never a hard-fail) and never prompts at L3–L4. See
-   `ci-review-protocol.md` for the commands, the failure-triage classifier, the
-   loop-termination rule, and the deferred-filing safety contract.
-
-1. **Merge gate — level-aware, merge on green CI + clean review.** Reached only
-   once the loop above **terminated green + clean** (CI green, `clean` true, every
-   PR comment resolved-or-deferred). This is the **routine-gate merge** — merge
-   *because* CI is green AND the review loop ran AND came back clean.
-
-   **The merge invariant is checked first, at every level (incl. L4):** if the
-   loop did **not** reach green + clean — CI still red after `ci-fixer`'s cap, an
-   unresolved blocking finding, or an unaddressed comment — this is a **dead-end**
-   (`orchestrate/autonomy-levels.md`; #181). Do **NOT** merge at any level. Park
-   the PR, emit the dead-end summary (what is un-green/unclean, what was
-   attempted, what remains), leave `status/pr-pending` on the issue, and STOP for
-   a human. Then skip the rest of this step.
-
-   With the invariant satisfied, dispatch by level:
-
-   - **L3–L4 — auto-merge, then prune.** Merge the PR yourself (squash,
-     delete-branch), then do the cleanup inline:
-
-     ```bash
-     gh pr merge "$PR_NUM" --squash --delete-branch
-     ```
-
-     a. Label the issue `status/pr-pending` → the `Closes #{N}` in the PR body
-     closes it on merge; remove `status/in-progress`:
-
-        ```bash
-        gh issue edit {N} --add-label "status/pr-pending" --remove-label "status/in-progress"
-        ```
-
-     b. Comment on the issue:
-
-        ```bash
-        gh issue comment {N} --body "Fix merged in PR #{pr_number} (squash + delete-branch) after green CI + clean review."
-        ```
-
-     c. `git checkout main` (then `git pull` to fast-forward the merge)
-     d. Delete the state file (`.claude/memory/tmp/next-issue-{N}.json`)
-     e. Show the PR URL, then **exit** — skip the L1–L2 labeling/comment steps
-     below and Step 5.
-
-     If `gh pr merge` exits non-zero (e.g., branch protection needs a human
-     approval the golem can't supply, or auto-merge/merge is disabled), treat it
-     as a **dead-end**: log the error, leave the PR open + labeled, emit the
-     dead-end summary, and STOP for a human. Never loop-retry a merge that the
-     platform refused.
-
-   - **L1–L2 — stop for a human merge.** Do NOT merge. Emit the completion
-     summary (CI green, review clean, PR URL) and hand off to a human to merge —
-     today's default behavior. Continue to the labeling + comment steps below,
-     then Step 5.
-
-   **Squash-by-default rationale**: `/next-issue` PRs are single-issue,
-   single-deliverable units; squash keeps history linear and the merged commit
-   still references the issue.
-
-1. **Label the issue** `status/pr-pending` and remove `status/in-progress`
-   (L1–L2 path; the L3–L4 path already did this inline above):
-
-   - GitHub: `gh issue edit {N} --add-label "status/pr-pending" --remove-label "status/in-progress"`
-   - GitLab: `glab issue update {N} --label "status/pr-pending" --unlabel "status/in-progress"`
-
-1. **Comment on the issue**:
-
-   If CI remediation was performed, include a summary in the comment:
-
-   - GitHub: `gh issue comment {N} --body "Fix submitted in PR #{pr_number}. CI remediation: {N} fix(es) applied automatically."`
-   - GitLab: `glab issue note {N} --message "Fix submitted in MR !{mr_number}. CI remediation: {N} fix(es) applied automatically."`
-
-   If no CI remediation was needed or CI was skipped:
-
-   - GitHub: `gh issue comment {N} --body "Fix submitted in PR #{pr_number}"`
-   - GitLab: `glab issue note {N} --message "Fix submitted in MR !{mr_number}"`
-
-1. **Checkout main**: `git checkout main`
-
-1. **Delete state file** (remove `.claude/memory/tmp/next-issue-{N}.json`)
-
-1. **Show the PR/MR URL** to the user
-
-1. **Completion summary** (L2 only; L1 falls through to the interactive Step 5) —
-   after green CI + clean review, labeling, and the issue comment, emit a
-   STRUCTURED COMPLETION SUMMARY and STOP for a human to merge. (An L3–L4 run
-   already merged and exited above; an L1 interactive run uses Step 5's prompt.)
-   Format as a markdown block:
-
-   ```markdown
-   ## Ship summary (L{1-2} — ready for human merge)
-
-   - **Issue**: #{N} — {title}
-   - **PR/MR**: {pr_or_mr_url}
-   - **Branch**: {branch}
-   - **CI**: {green | stopped-with-failure: {detail}}
-   - **CI fixes applied**: {count} — {one-line summaries}
-   - **Review cycles**: {cycles} run (cap {REVIEW_MAX_CYCLES})
-   - **Review status**: {clean | stopped-with-blocking: {detail}}
-   - **Findings fixed**: {count} blocking, on this PR
-   - **Findings deferred**: {#A, #B (filed), or "none"}
-   - **Comments resolved-or-deferred**: {n}/{total}
-   - **Deferred notes**: {drift / branch-freshness / pre-review findings, or "none"}
-   - **Plan comment**: {plan_comment_url, if present}
-
-   CI green + review clean. At L1–L2 the merge gate is a human's — ready for
-   human merge. (An L3–L4 run would have auto-merged.)
-   ```
-
-   Then STOP — do not proceed to Step 5.
-
-### Option 2 — Commit to main + push
-
-1. Ensure on `main` (or warn if on a different branch and confirm)
-
-1. **Stage and commit** with `Closes #{N}` in the body (same format as above)
-
-1. **Verify** the commit message includes `Closes #{N}`
-
-1. **Push**:
-
-   ```bash
-   git push origin main
-   ```
-
-1. **Remove `status/in-progress` label**:
-
-   - GitHub: `gh issue edit {N} --remove-label "status/in-progress"`
-   - GitLab: `glab issue update {N} --unlabel "status/in-progress"`
-
-1. **Delete state file** (remove `.claude/memory/tmp/next-issue-{N}.json`;
-   the `Closes` keyword auto-closes the issue on push)
-
-1. Tell the user the issue will auto-close when the push is processed
-
-### Option 3 — Commit only (no push)
-
-1. **Stage and commit** with `Closes #{N}` in the body (same format as above)
-1. **Verify** the commit message includes `Closes #{N}`
-1. **Do NOT push**
-1. **Label the issue** `status/commit-pending` and remove `status/in-progress`:
-   - GitHub: `gh issue edit {N} --add-label "status/commit-pending" --remove-label "status/in-progress"`
-   - GitLab: `glab issue update {N} --label "status/commit-pending" --unlabel "status/in-progress"`
-1. **Comment on the issue** with the commit SHA:
-   - **Agent mode** (branch matches `^agent`):
-     - GitHub: `gh issue comment {N} --body "Agent {branch} committed fix. Ready for orchestrator review. Commit: {sha}"`
-     - GitLab: `glab issue note {N} --message "Agent {branch} committed fix. Ready for orchestrator review. Commit: {sha}"`
-   - **Normal mode**:
-     - GitHub: `gh issue comment {N} --body "Fix committed locally (not yet pushed). Commit: {sha}"`
-     - GitLab: `glab issue note {N} --message "Fix committed locally (not yet pushed). Commit: {sha}"`
-1. **Delete state file** (remove `.claude/memory/tmp/next-issue-{N}.json`)
-1. Tell the user the commit is local and needs to be pushed later
+**Companion file**: `execute-protocol.md` also carries **Option 2 — Commit to
+main + push** and **Option 3 — Commit only (no push)** in full. Both commit with
+`Closes #{N}` in the body; Option 2 pushes to `main` (auto-closes the issue) and
+removes `status/in-progress`; Option 3 does not push, labels
+`status/commit-pending`, and comments the commit SHA (agent-mode vs normal-mode
+wording). Both delete the state file. Load it when the chosen mode is 2 or 3.
 
 ## Step 5 — Context Reset & Continue
 
-At **L2–L4**, skip this step entirely — an L3–L4 run already merged and exited,
-and an L2 run already emitted its completion summary (see Option 1 "Completion
-summary") and stops for a human merge. A single golem owns one issue; looping is
-the orchestrator's responsibility and out of scope here. Only an **L1**
-interactive run reaches the prompt below.
-
-After shipping, tell the user:
-
-> Issue #{N} shipped. Run `/clear` to start fresh, then `/next-issue` to
-> pick up the next issue.
-
-Then ask with `AskUserQuestion`:
-
-- **Pick next issue** — invoke `/next-issue` to select and plan the next one
-- **Stop** — end the session
-
-**Agent worktree mode**: When running on an agent branch (`^agent`), this
-behavior persists across invocations — `/ship-issue` will always
-auto-select commit-only mode (Option 3) without prompting.
+**Companion file**: `ship-protocol.md` § *Step 5 — Context Reset & Continue*
+carries this step. In brief: **L2–L4 skip it** (an L3–L4 run already merged and
+exited; an L2 run already emitted its completion summary and stops for a human
+merge). Only an **L1** interactive run reaches the loop-back — after shipping,
+tell the user the issue is shipped and `AskUserQuestion` **Pick next issue**
+(invoke `/next-issue`) vs **Stop**. On an `^agent` branch, commit-only (Option 3)
+persists across invocations without prompting.

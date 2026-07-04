@@ -77,3 +77,27 @@ These env vars toggle non-default behavior; all are opt-in:
 > harness's token budget, already gives the issue's cut-short/extend +
 > non-interactive-fallback semantics (L1–L2 prompt to fix/ship/defer at the cap;
 > L3–L4 defers). There is intentionally no separate review timeout var.
+
+## Step 5 — Context Reset & Continue
+
+Loaded from SKILL.md Step 5 (the interactive loop-back).
+
+At **L2–L4**, skip this step entirely — an L3–L4 run already merged and exited,
+and an L2 run already emitted its completion summary (see `execute-protocol.md`
+Option 1 "Completion summary") and stops for a human merge. A single golem owns
+one issue; looping is the orchestrator's responsibility and out of scope here.
+Only an **L1** interactive run reaches the prompt below.
+
+After shipping, tell the user:
+
+> Issue #{N} shipped. Run `/clear` to start fresh, then `/next-issue` to
+> pick up the next issue.
+
+Then ask with `AskUserQuestion`:
+
+- **Pick next issue** — invoke `/next-issue` to select and plan the next one
+- **Stop** — end the session
+
+**Agent worktree mode**: When running on an agent branch (`^agent`), this
+behavior persists across invocations — `/ship-issue` will always
+auto-select commit-only mode (Option 3) without prompting.
