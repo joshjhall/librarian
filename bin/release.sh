@@ -133,6 +133,20 @@ if [ "$CURRENT_VERSION" = "$NEW_VERSION" ] && [ "$FORCE_UPDATE" = "false" ]; the
     exit 1
 fi
 
+# Regenerate CHANGELOG.md in place from conventional commits for $new_version
+# ($1), via git-cliff. This mutates CHANGELOG.md as a side effect. Return paths
+# and the resulting file state:
+#   --skip-changelog set   -> returns 0, file left untouched.
+#   git-cliff unavailable  -> returns 1, file left untouched.
+#   git-cliff run failed   -> returns 1; CHANGELOG.md left in whatever partial
+#                             state git-cliff wrote before failing — do NOT trust it.
+#   empty-render guard hit -> returns 1 (no "## [$new_version]" section, i.e.
+#                             git-cliff produced a headerless changelog); file
+#                             is left as git-cliff wrote it — do NOT commit it.
+#   success                -> returns 0, file regenerated with trailing blank
+#                             lines trimmed (MD012).
+# The sole caller swallows the exit code (`generate_changelog ... || true`), so
+# anything relying on the outcome must inspect CHANGELOG.md's content itself.
 generate_changelog() {
     local new_version="$1"
 
