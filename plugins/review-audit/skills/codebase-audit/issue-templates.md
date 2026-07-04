@@ -309,9 +309,11 @@ to the tree instead of filing tracker issues. Layout under the audit root
   ```
 
 - Each **`{category}--{slug}.md`** is one issue group rendered from the same
-  `issue_template` an issue body uses — `{slug}` is the group title lowercased
-  with non-alphanumeric runs collapsed to hyphens (e.g.
-  `security--hardcoded-secrets.md`, `code-health--oversized-files.md`).
+  `issue_template` an issue body uses (e.g. `security--hardcoded-secrets.md`,
+  `code-health--oversized-files.md`). The harness computes this basename in code
+  (`slugify` of category + title, de-duplicated) and hands it to the
+  artifact-writer as `group.filename` — the untrusted `category`/`title` never
+  build a filesystem path in the agent, closing a path-traversal write vector.
 
 **`.gitignore` is intentionally not managed.** Whether `./audit/` is committed
 (reviewable in a PR, diffable over time) or ignored (local scratch) depends on

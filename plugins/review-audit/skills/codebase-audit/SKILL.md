@@ -20,8 +20,8 @@ Accept these from the user's invocation (all optional):
 | `categories`         | all discovered   | Scanner names to run (comma-separated)                                          |
 | `depth`              | `standard`       | `quick`: last 50 commits; `standard`: full; `deep`: + git history               |
 | `severity-threshold` | `medium`         | Minimum severity to report                                                      |
-| `output`             | _asked per run_  | Objective artifact: `issues` (file in tracker) or `files` (write `./audit/…`). Asked interactively when omitted; see § Resolve the Objective |
-| `report`             | `true`           | Also persist the report summary to `./audit/{timestamp}-audit-report.md`        |
+| `output`             | *asked per run*  | Objective artifact: `issues` (file in tracker) or `files` (write `./audit/…`). Asked interactively when omitted; see § Resolve the Objective |
+| `report`             | `true`           | Also persist the report summary to `./audit/{timestamp}-audit-report.md` (passed to the harness as `writeReport`) |
 
 > **`dry-run` is gone.** The audit no longer has a "preview, produce nothing"
 > mode — every run yields durable artifacts, and the only question is *what
@@ -74,6 +74,17 @@ as `args`:
 The **report summary** is written by default (`report: true`) regardless of
 objective; pass `report: false` only if the user asked to suppress the file
 (the roll-up is still returned to chat either way).
+
+> **Design note — ask, don't auto-file.** Issue #214 sketched a precedence of
+> "explicit arg → future config → detected platform → files", which implied a
+> GitHub/GitLab repo would *default* to filing issues (the old `dryRun:false`
+> behavior). We deliberately resolve an omitted `output` by **asking** (or, when
+> headless, defaulting to `files`) instead of silently filing: creating tracker
+> issues is an outward, hard-to-undo side effect, and the whole point of this
+> change is that the objective is a per-run choice. A detected platform gates
+> whether `issues` is *offered*, not whether it is chosen unprompted. Pass
+> `output: issues` explicitly (or answer the prompt) for the classic file-issues
+> flow.
 
 ### Invoke the Harness
 

@@ -251,6 +251,84 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
 }
 
 // =============================================================================
+// codebase-audit — artifact-type routing consts + path-safety helpers (#214)
+// The File-phase objective/report consts and the slugify/sanitizeDir helpers
+// are security-and-correctness controls (they feed ./audit/ paths handed to a
+// Bash+Write agent), so they get the same runtime coverage sanitize() gets.
+// =============================================================================
+{
+  const { slugify, sanitizeDir, dedupeFilenames } = extractHelpers(CA, [
+    "slugify",
+    "sanitizeDir",
+    "dedupeFilenames",
+  ]);
+
+  // slugify: reduce untrusted category/title to ONE safe path component. This
+  // is the path-traversal control — `/`, `\`, `..` must not survive as a
+  // separator or parent ref.
+  eq(slugify("Oversized files"), "oversized-files", "slugify: spaces -> single hyphen, lowercased");
+  eq(slugify("../../../etc/passwd"), "etc-passwd", "slugify: traversal separators collapse; no .. survives");
+  eq(slugify("a/b\\c"), "a-b-c", "slugify: both slash kinds become hyphens");
+  ok(!slugify("../../evil").includes("/"), "slugify: never yields a path separator");
+  ok(!slugify("../../evil").includes(".."), "slugify: never yields a .. segment");
+  eq(slugify(""), "untitled", "slugify: empty -> non-empty fallback");
+  eq(slugify("---"), "untitled", "slugify: all-separator input -> fallback (not empty)");
+  eq(slugify(null), "untitled", "slugify: null -> fallback");
+  ok(slugify("a".repeat(200)).length <= 60, "slugify: clamps length");
+
+  // sanitizeDir: safe RELATIVE dir — strips leading / (no absolute) and every
+  // .. segment (no traversal), symmetric with the timestamp sanitizer.
+  eq(sanitizeDir("./audit"), "./audit", "sanitizeDir: ./audit round-trips");
+  eq(sanitizeDir("/etc/evil"), "./etc/evil", "sanitizeDir: leading slash stripped (no absolute path)");
+  eq(sanitizeDir("../../etc"), "./etc", "sanitizeDir: .. segments removed (no traversal)");
+  eq(sanitizeDir("audit/runs"), "./audit/runs", "sanitizeDir: legitimate nested dir preserved, re-anchored");
+  eq(sanitizeDir(""), "./audit", "sanitizeDir: empty -> default");
+  eq(sanitizeDir(".."), "./audit", "sanitizeDir: pure traversal collapses to default");
+  ok(!sanitizeDir("a\nb").includes("\n"), "sanitizeDir: control chars stripped");
+
+  // dedupeFilenames: two groups slugging to the same basename must not clobber.
+  const deduped = dedupeFilenames([
+    { filename: "security--x.md" },
+    { filename: "security--x.md" },
+    { filename: "security--x.md" },
+    { filename: "docs--y.md" },
+  ]);
+  eq(deduped[0].filename, "security--x.md", "dedupeFilenames: first keeps base name");
+  eq(deduped[1].filename, "security--x-2.md", "dedupeFilenames: second gets -2 suffix");
+  eq(deduped[2].filename, "security--x-3.md", "dedupeFilenames: third gets -3 suffix");
+  eq(deduped[3].filename, "docs--y.md", "dedupeFilenames: distinct name untouched");
+}
+
+// Config-derivation consts resolve per-args: `output` only becomes 'issues' for
+// the exact literal (never coerced from garbled input), timestamp strips
+// path-hostile chars, and reportPath/outDir compose from the sanitized values.
+{
+  const bad = extractHelpers(
+    CA,
+    ["output", "writeReport", "auditDir", "timestamp", "reportPath", "outDir"],
+    { output: "ISSUES; rm -rf /", timestamp: "../../etc/passwd", auditDir: "/tmp/../etc" },
+  );
+  eq(bad.output, "files", "output: garbled args.output falls back to files (never issues)");
+  ok(!bad.timestamp.includes("/"), "timestamp: path separators stripped");
+  ok(!bad.timestamp.includes(" "), "timestamp: no spaces survive");
+  ok(!/^\/[^.]/.test(bad.auditDir), "auditDir: not an absolute path (leading slash stripped)");
+  ok(!bad.auditDir.includes(".."), "auditDir: .. segments removed");
+  ok(bad.outDir.startsWith(bad.auditDir + "/"), "outDir: composed under sanitized auditDir");
+
+  const iss = extractHelpers(CA, ["output"], { output: "issues" });
+  eq(iss.output, "issues", "output: exact literal 'issues' is honored");
+
+  const defs = extractHelpers(CA, ["auditDir", "timestamp", "reportPath", "writeReport"], {});
+  eq(defs.auditDir, "./audit", "auditDir: default when omitted");
+  eq(defs.timestamp, "audit", "timestamp: literal fallback when omitted");
+  eq(defs.writeReport, true, "writeReport: defaults true");
+  eq(defs.reportPath, "./audit/audit-audit-report.md", "reportPath: composed from defaults");
+
+  const noReport = extractHelpers(CA, ["reportPath"], { writeReport: false });
+  eq(noReport.reportPath, "", "reportPath: empty when writeReport is false");
+}
+
+// =============================================================================
 // orchestrate / rebase-agent — safeRef / field / setsIntersect
 // (safeRef + field are byte-identical across both harnesses; test each source.)
 // =============================================================================
