@@ -10,11 +10,14 @@
 # Authoritative contract: skills/orchestrate/autonomy-levels.md (#174).
 #
 # Subcommands (each emits `key=value` lines to stdout):
-#   level [--from-args STR] [--env-autonomous 0|1] [--chosen-level N]
-#         [--severity LABEL]
+#   level [--from-args STR] [--chosen-level N] [--severity LABEL]
 #         -> autonomy_level, autonomous, plan_gated, capped, perm_mode
 #   gate  <routine|escalation> --level N [--dead-end]  -> disposition (auto|human)
-#   read  [--state-level N] [--state-autonomous true|false]  -> autonomy_level
+#   read  [--state-level N]  -> autonomy_level
+#
+# --level {1,2,3,4} is the sole autonomy input; the old alias flags
+# (--autonomous/--auto/--force-auto/--skip-plan/--plan-gate) and the
+# NEXT_ISSUE_AUTONOMOUS env var were removed in #215.
 #
 # Exit codes: 0 = success; 2 = usage error (bad subcommand / flag / level).
 #
@@ -36,9 +39,9 @@ if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/autonomy-resolve.py" ]
 fi
 
 USAGE="Usage: autonomy-resolve <level|gate|read> [options]
-  level [--from-args STR] [--env-autonomous 0|1] [--chosen-level N] [--severity LABEL]
+  level [--from-args STR] [--chosen-level N] [--severity LABEL]
   gate <routine|escalation> --level N [--dead-end]
-  read [--state-level N] [--state-autonomous true|false]"
+  read [--state-level N]"
 
 # die <message> — fail loud: actionable message + usage on stderr, exit 2.
 die() {
@@ -77,19 +80,6 @@ opt() {
     return "$_opt_found"
 }
 
-# has_flag <token-string> <name...> — 0 if any <name> is a whole word in the
-# space-separated token string.
-has_flag() {
-    _hf_tokens=" $1 "
-    shift
-    for _hf_name in "$@"; do
-        case "$_hf_tokens" in
-            *" $_hf_name "*) return 0 ;;
-        esac
-    done
-    return 1
-}
-
 # valid_level <value> — 0 if value is 1-4, else 1.
 valid_level() {
     case "$1" in
@@ -108,8 +98,6 @@ is_critical() {
 
 cmd_level() {
     from_args="$(opt --from-args 1 -- "$@" || true)"
-    env_autonomous="$(opt --env-autonomous 0 -- "$@" || true)"
-    [ -n "$env_autonomous" ] || env_autonomous="0"
     severity="$(opt --severity 0 -- "$@" || true)"
 
     # args_level: an embedded --level inside --from-args.
@@ -128,22 +116,11 @@ cmd_level() {
         fi
     fi
 
-    autonomous_alias=1
-    if has_flag "$from_args" --autonomous --auto --force-auto --skip-plan ||
-        [ "$env_autonomous" = "1" ]; then
-        autonomous_alias=0
-    fi
-    force_plan_gate=1
-    if has_flag "$from_args" --plan-gate --no-skip-plan; then
-        force_plan_gate=0
-    fi
-
-    # Level selection precedence: explicit --level, then an L4 alias, then a
-    # level chosen at setup (orchestrator / interactive answer), then L1.
+    # Level selection precedence: explicit --level, then a level chosen at setup
+    # (orchestrator / interactive answer), then L1. --level {1,2,3,4} is the sole
+    # autonomy input (#215).
     if [ -n "$args_level" ]; then
         level="$args_level"
-    elif [ "$autonomous_alias" = "0" ]; then
-        level="4"
     elif [ -n "$chosen_level" ]; then
         level="$chosen_level"
     else
@@ -163,8 +140,9 @@ cmd_level() {
     else
         autonomous="false"
     fi
-    # plan_gated: kept at L1-L3 (incl. a capped critical); --plan-gate forces it.
-    if [ "$level" != "4" ] || [ "$force_plan_gate" = "0" ]; then
+    # plan_gated: the plan gate (escalation) is kept for a human at L1-L3 (incl.
+    # a capped critical) and auto-passed only at L4.
+    if [ "$level" != "4" ]; then
         plan_gated="true"
     else
         plan_gated="false"
@@ -224,15 +202,12 @@ cmd_gate() {
 
 cmd_read() {
     state_level="$(opt --state-level 0 -- "$@" || true)"
-    state_autonomous="$(opt --state-autonomous 0 -- "$@" || true)"
 
     if [ -n "$state_level" ]; then
         if ! valid_level "$state_level"; then
             die "autonomy-resolve: state-level must be 1-4, got '$state_level'"
         fi
         level="$state_level"
-    elif [ "$state_autonomous" = "true" ]; then
-        level="4"
     else
         level="1"
     fi

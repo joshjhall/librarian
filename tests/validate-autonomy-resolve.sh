@@ -4,12 +4,14 @@
 # autonomy-resolve.{py,sh} is the single source of truth for the L1-L4 autonomy
 # decision table (orchestrate/autonomy-levels.md, #174): level selection, the
 # severity/critical cap, per-gate disposition, the dead-end override, and the
-# derived autonomous/plan_gated mirrors. This gate pins that table exhaustively —
-# something impossible against the prose the resolver replaced. It asserts:
+# derived autonomous/plan_gated dispositions. This gate pins that table
+# exhaustively — something impossible against the prose the resolver replaced.
+# It asserts:
 #
 #   1. Every (level x gate-class x dead-end) disposition cell.
-#   2. Level selection precedence, the critical cap, and every mirror field.
-#   3. The legacy `read` back-compat cells (state-level vs autonomous boolean).
+#   2. Level selection precedence, the critical cap, and every derived field.
+#   3. The `read` state-level resolution cells (and that the removed alias flags
+#      / --state-autonomous boolean no longer resolve to L4 — #215).
 #   4. Fail-loud exit codes + a `Usage` message on malformed input.
 #   5. bash<->python PARITY — the bash fallback (forced via PATTERNS_FORCE_BASH=1)
 #      and, when a python3>=3.11 is present, the python primary emit byte-identical
@@ -111,54 +113,62 @@ test_level_no_signal_is_l1() {
     assert_resolves "$(lvl_block 1 false true false acceptEdits)" level
 }
 
-test_level_autonomous_alias_is_l4() {
-    assert_resolves "$(lvl_block 4 true false false auto)" level --from-args "--autonomous"
-    assert_resolves "$(lvl_block 4 true false false auto)" level --from-args "--auto"
-    assert_resolves "$(lvl_block 4 true false false auto)" level --from-args "--force-auto"
-    assert_resolves "$(lvl_block 4 true false false auto)" level --from-args "--skip-plan"
-    assert_resolves "$(lvl_block 4 true false false auto)" level --env-autonomous 1
+test_level_deprecated_aliases_removed() {
+    # The old L4 alias flags and the NEXT_ISSUE_AUTONOMOUS env var were removed
+    # in #215: they are now unrecognized tokens, so with no --level the run
+    # falls through to the L1 default rather than L4.
+    assert_resolves "$(lvl_block 1 false true false acceptEdits)" level --from-args "--autonomous"
+    assert_resolves "$(lvl_block 1 false true false acceptEdits)" level --from-args "--auto"
+    assert_resolves "$(lvl_block 1 false true false acceptEdits)" level --from-args "--force-auto"
+    assert_resolves "$(lvl_block 1 false true false acceptEdits)" level --from-args "--skip-plan"
+    # The former top-level --env-autonomous input is no longer read.
+    assert_resolves "$(lvl_block 1 false true false acceptEdits)" level --env-autonomous 1
+    # --level 4 is now the only way to reach L4.
+    assert_resolves "$(lvl_block 4 true false false auto)" level --from-args "--level 4"
 }
 
 test_level_explicit_flag_wins() {
     assert_resolves "$(lvl_block 2 false true false auto)" level --from-args "--level 2"
     assert_resolves "$(lvl_block 3 false true false auto)" level --from-args "--level 3"
-    # An explicit --level beats an L4 env signal (precedence).
-    assert_resolves "$(lvl_block 2 false true false auto)" level --from-args "--level 2" --env-autonomous 1
+    # An explicit --level beats a chosen setup level (precedence).
+    assert_resolves "$(lvl_block 2 false true false auto)" level --from-args "--level 2" --chosen-level 4
 }
 
 test_level_chosen_setup_level() {
     # A level chosen at setup (orchestrator dispatch / interactive answer) is used
-    # when there is no CLI flag or env alias.
+    # when there is no explicit --level flag.
     assert_resolves "$(lvl_block 2 false true false auto)" level --chosen-level 2
     assert_resolves "$(lvl_block 3 false true false auto)" level --chosen-level 3
-    # ...but an autonomous alias still outranks it.
-    assert_resolves "$(lvl_block 4 true false false auto)" level --chosen-level 2 --from-args "--autonomous"
+    # ...but an explicit --level still outranks it.
+    assert_resolves "$(lvl_block 4 true false false auto)" level --chosen-level 2 --from-args "--level 4"
 }
 
 test_level_critical_cap() {
     # L4 request on a critical issue caps to L3 (capped=true), keeping the plan gate.
-    assert_resolves "$(lvl_block 3 false true true auto)" level --from-args "--autonomous" --severity critical
-    assert_resolves "$(lvl_block 3 false true true auto)" level --from-args "--auto" --severity severity/critical
+    assert_resolves "$(lvl_block 3 false true true auto)" level --from-args "--level 4" --severity critical
+    assert_resolves "$(lvl_block 3 false true true auto)" level --from-args "--level 4" --severity severity/critical
     assert_resolves "$(lvl_block 3 false true true auto)" level --chosen-level 4 --severity critical
     # L3 (or below) on a critical issue is NOT capped (already <= L3).
     assert_resolves "$(lvl_block 3 false true false auto)" level --from-args "--level 3" --severity critical
 }
 
-test_level_plan_gate_override() {
-    # --plan-gate / --no-skip-plan force plan_gated=true even at L4 (plan gate kept).
-    assert_resolves "$(lvl_block 4 true true false auto)" level --from-args "--level 4 --plan-gate"
-    assert_resolves "$(lvl_block 4 true true false auto)" level --from-args "--level 4 --no-skip-plan"
+test_level_plan_gate_not_forceable() {
+    # The removed --plan-gate / --no-skip-plan overrides are now inert tokens:
+    # an L4 run auto-passes the plan gate (plan_gated=false) regardless. "L4 but
+    # keep the plan gate" is expressed as L3 (#215).
+    assert_resolves "$(lvl_block 4 true false false auto)" level --from-args "--level 4 --plan-gate"
+    assert_resolves "$(lvl_block 4 true false false auto)" level --from-args "--level 4 --no-skip-plan"
 }
 
 # --- legacy `read` back-compat -----------------------------------------------
 
-test_read_backcompat() {
-    assert_resolves "autonomy_level=4" read --state-autonomous true
-    assert_resolves "autonomy_level=1" read --state-autonomous false
+test_read_state_level() {
+    # `read` resolves a persisted state file's autonomy_level: a present
+    # state-level wins (validated 1-4); absent -> L1. The legacy
+    # --state-autonomous boolean was removed in #215.
     assert_resolves "autonomy_level=1" read
     assert_resolves "autonomy_level=3" read --state-level 3
-    # A present state-level wins over the legacy boolean.
-    assert_resolves "autonomy_level=2" read --state-level 2 --state-autonomous true
+    assert_resolves "autonomy_level=2" read --state-level 2
 }
 
 # --- fail-loud on malformed input --------------------------------------------
@@ -196,12 +206,12 @@ run_test test_gate_routine "routine gate: auto at L3-L4, human at L1-L2"
 run_test test_gate_escalation "escalation gate: auto at L4 only, human at L1-L3"
 run_test test_gate_dead_end_overrides "dead-end: human at every level incl. L4"
 run_test test_level_no_signal_is_l1 "level: no signal -> L1 default"
-run_test test_level_autonomous_alias_is_l4 "level: --autonomous/--auto/--force-auto/--skip-plan/env -> L4"
-run_test test_level_explicit_flag_wins "level: explicit --level wins over aliases"
-run_test test_level_chosen_setup_level "level: chosen setup level used, alias outranks it"
+run_test test_level_deprecated_aliases_removed "level: removed aliases/env -> L1 (only --level 4 reaches L4)"
+run_test test_level_explicit_flag_wins "level: explicit --level wins"
+run_test test_level_chosen_setup_level "level: chosen setup level used, explicit --level outranks it"
 run_test test_level_critical_cap "level: critical caps L4 -> L3 (capped=true)"
-run_test test_level_plan_gate_override "level: --plan-gate forces plan_gated even at L4"
-run_test test_read_backcompat "read: state-level wins; autonomous:true->L4, else L1"
+run_test test_level_plan_gate_not_forceable "level: removed --plan-gate cannot force plan_gated at L4"
+run_test test_read_state_level "read: state-level wins; absent -> L1"
 run_test test_usage_errors "malformed input: exit 2 + Usage on both runtimes"
 run_test test_resolver_present_and_executable "resolver script present + executable"
 run_test test_parity_runtime "parity runtime available"

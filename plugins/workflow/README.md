@@ -10,10 +10,10 @@ a host, on bare Linux, or inside a devcontainer.
 The autonomy level is the single dial for how much the pipeline decides on its
 own: routine gates (push, PR-open, merge-on-green, prune) auto-pass at L3–L4 and
 ask at L1–L2; escalation gates (plan approval, a mid-flight fork, a dead-end)
-auto-pass at L4 only. It is set with `--level {1,2,3,4}` (the legacy
-`--autonomous` / `--auto` / `NEXT_ISSUE_AUTONOMOUS=1` signals are **aliases for
-L4**), and `severity/critical` issues cap at L3. A human gate is never timed out —
-it waits indefinitely. See
+auto-pass at L4 only. It is set with `--level {1,2,3,4}` (the sole autonomy dial;
+the old `--autonomous` / `--auto` / `NEXT_ISSUE_AUTONOMOUS` aliases were removed
+in #215), and `severity/critical` issues cap at L3. A human gate is never timed
+out — it waits indefinitely. See
 [`skills/orchestrate/autonomy-levels.md`](skills/orchestrate/autonomy-levels.md)
 for the authoritative model.
 

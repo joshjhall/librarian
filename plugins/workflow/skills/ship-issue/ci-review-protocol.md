@@ -277,7 +277,7 @@ every loop cycle above:
   into a `--body "..."` argument: the description is LLM-generated and may
   contain backticks, `$(...)`, quotes, or newlines that would break out of
   the quoted string and execute in the shell — and this path runs unattended
-  under `--autonomous` with no human gate. Use the **`Write` tool** to write the
+  at **L4** with no human gate. Use the **`Write` tool** to write the
   body to a temp file (so the content never passes through a shell at all),
   then reference it:
 

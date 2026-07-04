@@ -8,7 +8,7 @@ The default topology is **PR-per-golem**: the orchestrator is a **live
 interactive session** that dispatches **golems** (each a PROCESS owning one
 issue → branch → worktree → PR, running the `/next-issue` → `/ship-issue`
 pipeline at a chosen **autonomy level** — L1–L4, per
-`autonomy-levels.md`; passed as `--level {N}`, or its L4 alias `--autonomous`),
+`autonomy-levels.md`; passed as `--level {N}`),
 then monitors, surfaces, and rebases across their PRs. **The orchestrator never
 merges golem branches into its own** — a golem's own `/ship-issue` merges its PR
 as the **level-aware routine gate** (auto at L3–L4, human at L1–L2, always
@@ -127,14 +127,14 @@ dispatch is sequential and cheap — **not** workflow-driven.
    # The explicit flag is required: a fresh worktree is untrusted, so Claude Code
    # does NOT load its copied settings.local.json `defaultMode: auto` and would
    # fall back to `default` and prompt-storm (#585). The harness
-   # `--permission-mode auto` is distinct from the `/next-issue` `--autonomous`
-   # skill flag (deprecated alias `--auto`) — both are needed.
-   # Autonomous /next-issue invokes /ship-issue in-turn, so the first prompt
+   # `--permission-mode auto` is distinct from the `/next-issue` `--level {N}`
+   # skill flag (the autonomy dial) — both are needed.
+   # An L4 /next-issue invokes /ship-issue in-turn, so the first prompt
    # reaches Branch + PR on its own. The `;`-chained second prompt is a resume
    # backstop, NOT `&&`: it must run even if the first exits non-zero before
    # shipping. If the first already shipped (state file deleted), the second is a
    # near no-op ("No in-progress issue found" → stop):
-   claude --permission-mode auto "/workflow:next-issue {N} --autonomous" ; claude --permission-mode auto "/workflow:ship-issue --autonomous"
+   claude --permission-mode auto "/workflow:next-issue {N} --level 4" ; claude --permission-mode auto "/workflow:ship-issue"
    ```
 
    For a **worktree golem** the process is started by a `tmux new-session`.
@@ -155,17 +155,18 @@ dispatch is sequential and cheap — **not** workflow-driven.
    {N}` emits just the launch line if you want to run the bare `tmux
    new-session` yourself.)
 
-   **Plan gate (from the golem's autonomy level).** `--autonomous` is **not** a blanket
-   plan-skip — whether a golem stops for plan approval is set by its **level**
-   (the rules-of-engagement chosen at setup), **not** its effort labels.
-   `/next-issue` resolves it through
-   `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) and persists the
-   `plan_gated` mirror (see `next-issue/SKILL.md` § Autonomy Levels):
+   **Plan gate (from the golem's autonomy level).** `--level 4` is **not** a blanket
+   plan-skip beyond its own level — whether a golem stops for plan approval is set
+   by its **level** (the rules-of-engagement chosen at setup), **not** its effort
+   labels. `/next-issue` resolves it through
+   `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190), which derives the
+   `plan_gated` disposition from the level (see `next-issue/SKILL.md` § Autonomy
+   Levels):
 
    - **`plan_gated == false` (an L4 golem, critical cap did not fire)** →
      fully autonomous, no plan stop. The launch above runs unattended to a PR.
-   - **`plan_gated == true` (dispatched below L4, a capped `severity/critical`,
-     or `--plan-gate`)** → **plan-gated**: the golem builds the plan and BLOCKS at
+   - **`plan_gated == true` (dispatched below L4, or a capped `severity/critical`)**
+     → **plan-gated**: the golem builds the plan and BLOCKS at
      `ExitPlanMode` awaiting human approval (shown BLOCKED in
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`). The operator attaches via
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines and approves the
@@ -185,11 +186,11 @@ dispatch is sequential and cheap — **not** workflow-driven.
 
    The launch command is identical either way (the policy lives in
    `/next-issue`); dispatch only needs to **expect** a golem dispatched below L4
-   (or a capped critical) to block at the plan step. To override per golem, append
-   `--plan-gate` (force the checkpoint on an L4 golem) or `--force-auto` (force
-   full autonomy on one dispatched lower) to the `/next-issue {N} --autonomous`
-   prompt. A `severity/critical` golem cannot be forced past its plan gate — the
-   critical cap holds it at L3 regardless of `--force-auto`.
+   (or a capped critical) to block at the plan step. To change a golem's behavior,
+   dispatch it at a different `--level {N}`: an L4 golem runs fully autonomous with
+   no plan stop, an L3 golem keeps the plan gate but auto-passes routine gates.
+   A `severity/critical` golem cannot exceed its plan gate — the critical cap holds
+   it at L3 regardless of the requested level.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem below L4); its own `/ship-issue` then merges as the
