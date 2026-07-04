@@ -39,7 +39,12 @@ lives in `finding-schema.md`; grouping templates and platform commands live in
    env files are local-only and not a repository risk)
 5. Detect language(s) from config files (`package.json`, `pyproject.toml`,
    `Cargo.toml`, `go.mod`, `Gemfile`, `build.gradle`, etc.)
-6. Detect platform (GitHub or GitLab) from `git remote -v`
+6. Detect platform (GitHub or GitLab) from `git remote -v`. Beyond selecting the
+   `gh`/`glab` CLI, this gates the **objective**: the `issues` output is offered
+   only when a tracker platform exists (otherwise the run uses `files`). Platform
+   detection is the seam for a future explicit project-management config (e.g. a
+   `[tool.codebase-audit]` `tracker` key selecting Jira / Linear / ClickUp /
+   Trello) — for now GitHub vs GitLab is the whole scope
 7. For `quick` depth: run `git log --oneline -50 --name-only` to limit to
    recently changed files. For `deep` depth: run `git log --format='%aN' --name-only` for contributor stats per file
 8. **Discover project-level audit agents**: Glob for
@@ -251,13 +256,28 @@ The harness collects every verified finding and drives one `checker`
 Acknowledged findings (`acknowledged_findings` from each scan) flow through to
 the harness's `report_markdown` for the final report.
 
-## Step 5: Create Issues (or Dry-Run Report) (harness File phase)
+## Step 5: Route Artifacts by Objective (harness File phase)
 
-**If `dryRun` is true**: the harness returns `report_markdown` (the Dry-Run
-Output Format from `issue-templates.md`) and files nothing.
+The audit **always** produces artifacts — the objective (`output`, resolved by
+the skill layer before the harness runs; see `SKILL.md` § Resolve the Objective)
+decides which. The report summary (the format formerly called "Dry-Run Output";
+now "Report Summary Format" in `issue-templates.md`) is written under `./audit/`
+in every case unless `writeReport` is false.
 
-**If `dryRun` is false**: the harness fans one `issue-writer` per group in
+**If `output` is `issues`**: the harness fans one `issue-writer` per group in
 parallel, each handling duplicate detection + issue creation independently
-(Issue-Writer Sub-Agent Protocol in `issue-templates.md`). If no `gh`/`glab`
-platform was detected, it falls back to the dry-run report. The returned
-`issues[]` array carries each writer's `{action, url, title, reason}`.
+(Issue-Writer Sub-Agent Protocol in `issue-templates.md`). The returned
+`issues[]` array carries each writer's `{action, url, title, reason}`. When
+`writeReport` is true, a report-only `artifact-writer` dispatch also writes the
+report summary md.
+
+**If `output` is `files`** (or the objective was `issues` but no `gh`/`glab`
+platform exists — the harness coerces to `files` rather than mutate a tracker
+unprompted): the harness dispatches one `artifact-writer` (File Artifacts format
+in `issue-templates.md`) that writes `./audit/{timestamp}/findings.json`, one
+`{category}--{slug}.md` per group, and the report summary. The returned
+`artifacts` object carries `{action, out_dir, files_written, report_path,
+reason}`.
+
+A **clean audit** (zero confirmed findings) still writes the report summary when
+requested — the "always produce artifacts" objective holds at zero findings.

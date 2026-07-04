@@ -14,13 +14,20 @@ when running an audit.
 
 Accept these from the user's invocation (all optional):
 
-| Parameter            | Default        | Description                                                       |
-| -------------------- | -------------- | ----------------------------------------------------------------- |
-| `scope`              | entire repo    | Directory or glob pattern to limit the scan                       |
-| `categories`         | all discovered | Scanner names to run (comma-separated)                            |
-| `depth`              | `standard`     | `quick`: last 50 commits; `standard`: full; `deep`: + git history |
-| `severity-threshold` | `medium`       | Minimum severity to report                                        |
-| `dry-run`            | `false`        | Output findings report without creating issues                    |
+| Parameter            | Default          | Description                                                                     |
+| -------------------- | ---------------- | ------------------------------------------------------------------------------- |
+| `scope`              | entire repo      | Directory or glob pattern to limit the scan                                     |
+| `categories`         | all discovered   | Scanner names to run (comma-separated)                                          |
+| `depth`              | `standard`       | `quick`: last 50 commits; `standard`: full; `deep`: + git history               |
+| `severity-threshold` | `medium`         | Minimum severity to report                                                      |
+| `output`             | _asked per run_  | Objective artifact: `issues` (file in tracker) or `files` (write `./audit/…`). Asked interactively when omitted; see § Resolve the Objective |
+| `report`             | `true`           | Also persist the report summary to `./audit/{timestamp}-audit-report.md`        |
+
+> **`dry-run` is gone.** The audit no longer has a "preview, produce nothing"
+> mode — every run yields durable artifacts, and the only question is *what
+> kind*. A run that used `dry-run: true` to avoid touching the tracker maps to
+> `output: files` (structured findings + a report written under `./audit/`,
+> tracker untouched). See § Resolve the Objective and the CHANGELOG note.
 
 ## Orchestration Protocol
 
@@ -43,10 +50,35 @@ harness drives in discriminated **modes** (`map`, `scan:<domain>`, `verify`,
 `scan` modes — they are the reference the harness and agents follow, not a
 separate hand-run pass.
 
+### Resolve the Objective (before invoking the harness)
+
+The harness runs in the sandboxed Workflow JS engine — it **cannot** call
+`AskUserQuestion` (to ask the objective per run) or `Date` (to stamp the run).
+So this skill (the main agent) resolves two things **first** and passes them in
+as `args`:
+
+1. **Objective (`output`)** — where the actionable findings go:
+   - If the user gave `output` (or the legacy intent "don't file issues" → map
+     to `files`), honor it without asking.
+   - Otherwise **ask** with `AskUserQuestion`: **File issues** (create tracker
+     issues) vs **Generate files** (write `./audit/{timestamp}/`). Offer the
+     `issues` option **only** when a tracker platform exists — detect it with
+     `git remote -v` (`github.com`/`ghe.` → GitHub; `gitlab.com`/`gitlab.` →
+     GitLab). With no platform, don't offer `issues`; use `files`.
+   - In a **non-interactive / headless** context (no TTY to ask), default to
+     `files` — never mutate a tracker unprompted.
+2. **Timestamp** — compute a filesystem-safe run stamp via Bash, e.g.
+   `date -u +%Y-%m-%dT%H%M`, and pass it as `timestamp`. It becomes the
+   `./audit/{timestamp}/` subdir and the `{timestamp}-audit-report.md` name.
+
+The **report summary** is written by default (`report: true`) regardless of
+objective; pass `report: false` only if the user asked to suppress the file
+(the roll-up is still returned to chat either way).
+
 ### Invoke the Harness
 
 **Invoke the `Workflow` tool** with the script bundled alongside this skill at
-`~/.claude/skills/codebase-audit/workflow.js`, passing the user's parameters:
+`~/.claude/skills/codebase-audit/workflow.js`, passing the resolved parameters:
 
 ```text
 args: {
@@ -54,7 +86,10 @@ args: {
   categories:        [<scanner/domain names>, …],   // omit for all discovered
   depth:             "quick" | "standard" | "deep",  // default "standard"
   severityThreshold: "critical" | "high" | "medium" | "low",  // default "medium"
-  dryRun:            <true|false>                    // default false
+  output:            "issues" | "files",             // resolved above (asked if omitted)
+  writeReport:       <true|false>,                   // default true
+  timestamp:         "<YYYY-MM-DDTHHMM>",             // computed above (engine has no Date)
+  auditDir:          "./audit"                        // default; root for file artifacts
 }
 ```
 
@@ -70,14 +105,19 @@ The harness phases are **Map → Scan → Verify → Aggregate → File**:
   verify as soon as they finish scanning, not after all scans complete.
 - **Aggregate** — a barrier `checker` step (`mode: aggregate`) applies Step 4
   dedup + cross-scanner correlation and Step 5 grouping, returning issue
-  payloads keyed by finding ref plus the dry-run report.
-- **File** — if `dryRun`, the harness returns the report and stops; otherwise
-  it fans one `issue-writer` per group in parallel (dedupe-before-create), and
-  falls back to a dry-run report when no `gh`/`glab` platform is detected.
+  payloads keyed by finding ref plus the report summary.
+- **File** — routes by objective: `output: issues` fans one `issue-writer` per
+  group in parallel (dedupe-before-create); `output: files` dispatches one
+  `artifact-writer` to write `./audit/{timestamp}/findings.json` + one markdown
+  file per group. The report summary (`writeReport`) is written under `./audit/`
+  in either case. With no `gh`/`glab` platform, an `issues` objective is
+  coerced to `files` (the tracker is never mutated unprompted).
 
-The harness returns `{ scanner, dry_run, platform, scanned_domains, totals,
-report_markdown, issues[], summary, budget_exhausted }`. Surface
-`report_markdown` to the user, and list the created issues from `issues[]`.
+The harness returns `{ scanner, output, report_path, platform,
+scanned_domains, totals, report_markdown, issues[], artifacts, summary,
+budget_exhausted }`. Surface `report_markdown` to the user; for `output:
+issues` list the created issues from `issues[]`, and for `output: files` report
+`artifacts.files_written` and `report_path`.
 
 The remaining domain knowledge — the file-routing manifest, the deterministic
 prescan contract, and the dedup / grouping rules the harness and agents consume
@@ -100,8 +140,10 @@ aggregation are the harness's job.
   each manifest.
 - **Step 4 — Aggregate & Deduplicate**: within-scanner dedup, cross-scanner
   correlation, filter, sort, group into issue payloads.
-- **Step 5 — Create Issues (or Dry-Run Report)**: fan one `issue-writer` per
-  group, or return the dry-run report.
+- **Step 5 — Route Artifacts by Objective**: for `output: issues` fan one
+  `issue-writer` per group; for `output: files` dispatch one `artifact-writer`
+  to write `./audit/{timestamp}/`. The report summary is written under `./audit/`
+  either way (unless `writeReport` is false).
 
 See `orchestration-protocol.md` for the full step-by-step reference.
 
@@ -188,6 +230,10 @@ effort.
   findings, note in the final report
 - If a scanner returns zero findings: include it in the summary with zero
   counts (this is normal, not an error)
-- If `gh`/`glab` is not available and `dry-run` is false: fall back to
-  dry-run mode and inform the user
+- If the objective is `issues` but no `gh`/`glab` platform is detected: the
+  harness coerces the run to `files` (writes `./audit/{timestamp}/` instead of
+  filing) and logs the substitution — the tracker is never mutated unprompted.
+  Inform the user their findings were written to files.
+- If the `artifact-writer` fails to write (permissions, disk): the run is marked
+  a partial failure; surface `artifacts.reason` to the user.
 - If no source files match the scope: report early with a clear message

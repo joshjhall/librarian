@@ -204,15 +204,20 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
   );
 
   // finalResult: ALWAYS returns the required top-level keys + a summary carrying
-  // dropped_groups, regardless of which `extra` fields are passed.
+  // dropped_groups, regardless of which `extra` fields are passed. The old
+  // boolean `dry_run` was replaced (#214) by the `output` objective plus
+  // `report_path` + `artifacts` — the artifact-type routing that superseded the
+  // dry-run gate. Guarding the key SET here is what caught the rename in review.
   const REQUIRED = [
     "scanner",
-    "dry_run",
+    "output",
+    "report_path",
     "platform",
     "scanned_domains",
     "totals",
     "report_markdown",
     "issues",
+    "artifacts",
     "acknowledged",
     "summary",
     "budget_exhausted",
@@ -230,8 +235,19 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
       r.summary && Object.prototype.hasOwnProperty.call(r.summary, "dropped_groups"),
       `finalResult: summary always carries dropped_groups (extra=${JSON.stringify(variant)})`,
     );
+    // dry_run is GONE — a lingering reference would mean the migration was
+    // incomplete somewhere the schema still echoes.
+    ok(
+      !Object.prototype.hasOwnProperty.call(r, "dry_run"),
+      `finalResult: no legacy dry_run key (extra=${JSON.stringify(variant)})`,
+    );
   }
   eq(finalResult({}).scanner, "codebase-audit", "finalResult: scanner is fixed");
+  // `output` defaults to 'files' under the test's args={} (never 'issues'
+  // unprompted), and report_path/artifacts have safe empty defaults.
+  eq(finalResult({}).output, "files", "finalResult: output defaults to files");
+  eq(finalResult({}).report_path, "", "finalResult: report_path defaults to empty");
+  eq(finalResult({}).artifacts, null, "finalResult: artifacts defaults to null");
 }
 
 // =============================================================================

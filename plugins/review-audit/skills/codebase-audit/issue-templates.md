@@ -154,7 +154,7 @@ glab issue list --opened --label "audit/{category}" --search "{file path}"
 
 If a matching issue exists (same category + overlapping files):
 
-- **Skip creation** and note in the dry-run report
+- **Skip creation** and note it in the report summary
 - Optionally **add a comment** to the existing issue with updated findings
 
 ---
@@ -226,9 +226,13 @@ Each issue-writer returns:
 
 ---
 
-## Dry-Run Output Format
+## Report Summary Format
 
-When `dry-run` is enabled, output a summary table instead of creating issues:
+The report summary is the human-readable roll-up of the audit. It is **always**
+produced by the aggregate step and returned to the caller as `report_markdown`;
+unless `writeReport` is false it is also persisted to
+`./audit/{timestamp}-audit-report.md` (by the `artifact-writer`, alongside issue
+filing or file output alike). Format:
 
 ```markdown
 ## Codebase Audit Report — {date}
@@ -270,3 +274,48 @@ When `dry-run` is enabled, output a summary table instead of creating issues:
 | `.claude/skills/custom/SKILL.md` | skill-quality | 2025-09-01                | Broad scope is intentional        |
 | ...                              |               |                           |                                   |
 ```
+
+---
+
+## File Artifacts (`output: files`)
+
+When the objective is `files`, the `artifact-writer` sub-agent writes the audit
+to the tree instead of filing tracker issues. Layout under the audit root
+(default `./audit`, override with `auditDir`):
+
+```text
+./audit/
+  {timestamp}-audit-report.md        # the Report Summary (unless writeReport is false)
+  {timestamp}/
+    findings.json                    # full structured findings (machine-readable)
+    {category}--{slug}.md            # one file per issue group (issue-body content)
+    ...
+```
+
+- `{timestamp}` is the run stamp the skill layer computed (e.g.
+  `2026-07-04T1530`) — the JS engine has no `Date`, so it is passed in.
+- The report md lives at the `./audit` **root** (a sibling of the timestamped
+  subdir) so it is easy to find across runs.
+- **`findings.json`** carries the full finding objects (the `finding-schema.md`
+  shape, minus the harness-internal `ref`):
+
+  ```json
+  {
+    "scanner": "codebase-audit",
+    "generated": "{timestamp}",
+    "totals": { "critical": 1, "high": 11, "medium": 16, "low": 6 },
+    "findings": [ /* every confirmed finding */ ]
+  }
+  ```
+
+- Each **`{category}--{slug}.md`** is one issue group rendered from the same
+  `issue_template` an issue body uses — `{slug}` is the group title lowercased
+  with non-alphanumeric runs collapsed to hyphens (e.g.
+  `security--hardcoded-secrets.md`, `code-health--oversized-files.md`).
+
+**`.gitignore` is intentionally not managed.** Whether `./audit/` is committed
+(reviewable in a PR, diffable over time) or ignored (local scratch) depends on
+the team's workflow — the audit writes the files and leaves that choice to you.
+
+See the **Artifact-Writer Sub-Agent** (`agents/artifact-writer.md`) for the
+input payload and per-file write contract.
