@@ -86,11 +86,12 @@ with a background PR poller, autonomous pipeline in tmux) — lives in
 1. **Write `.worktrees/docker-compose.agents.yml`** from the devcontainer
    config: same base image / Dockerfile / `INCLUDE_*` flags, plus
    `SKIP_LSP_INSTALL=true`, per-agent worktree + `.status` volumes, the golem
-   environment (`NEXT_ISSUE_AUTONOMOUS=1`, `AGENT_ISSUE`, `REVIEW_MAX_CYCLES`,
-   pass-through `GITHUB_TOKEN`/`GH_TOKEN`), `deploy.resources.limits` (4 CPU / 8 GB defaults via
+   environment (`AGENT_ISSUE`, `REVIEW_MAX_CYCLES`, pass-through
+   `GITHUB_TOKEN`/`GH_TOKEN`; autonomy is set on the launch line via `--level 4`),
+   `deploy.resources.limits` (4 CPU / 8 GB defaults via
    `AGENT_CPUS`/`AGENT_MEMORY`), `init: true`, and `command: sleep infinity`.
 1. **Write `.worktrees/agent-entrypoint.sh`** — verifies git-host auth, then
-   launches the autonomous golem pipeline (`/next-issue --autonomous` →
+   launches the autonomous golem pipeline (`/next-issue --level 4` →
    `/ship-issue`) in a named tmux session with a background PR-state poller.
 
 See `provision-protocol.md` for the verbatim YAML and entrypoint script.
@@ -152,7 +153,7 @@ For each agent to provision (e.g., agent01 through agent{N}):
    ```
 
    The container's `agent-entrypoint.sh` owns pipeline startup (auth check →
-   `/next-issue --autonomous` → `/ship-issue` in the `claude` tmux session), so
+   `/next-issue --level 4` → `/ship-issue` in the `claude` tmux session), so
    no separate `docker exec ... tmux new-session` is needed here.
 
 ## Step 5 — Report

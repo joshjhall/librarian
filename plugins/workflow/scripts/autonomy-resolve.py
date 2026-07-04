@@ -19,16 +19,16 @@ CLAUDE.md § Key conventions (runtime policy).
 
 Subcommands (each emits `key=value` lines to stdout, one per line):
 
-  level  [--from-args STR] [--env-autonomous 0|1] [--chosen-level N]
-         [--severity LABEL]
+  level  [--from-args STR] [--chosen-level N] [--severity LABEL]
          -> autonomy_level, autonomous, plan_gated, capped, perm_mode
-     Resolve the run's level from flags/env/setup answer, apply the critical
-     cap, and emit the derived mirrors. --from-args is the raw invocation
-     argument string, scanned for --level N / --autonomous / --auto /
-     --force-auto / --skip-plan / --plan-gate / --no-skip-plan. --chosen-level
-     is a level resolved from a non-CLI source (an orchestrator dispatch or the
+     Resolve the run's level from the --level flag / setup answer, apply the
+     critical cap, and emit the derived dispositions. --from-args is the raw
+     invocation argument string, scanned for --level N. --chosen-level is a
+     level resolved from a non-CLI source (an orchestrator dispatch or the
      operator's interactive L1-L4 answer). --severity accepts `critical` or
-     `severity/critical`.
+     `severity/critical`. --level {1,2,3,4} is the sole autonomy input; the old
+     alias flags (--autonomous/--auto/--force-auto/--skip-plan/--plan-gate) and
+     the NEXT_ISSUE_AUTONOMOUS env var were removed in #215.
 
   gate <routine|escalation> --level N [--dead-end]
          -> disposition (auto|human)
@@ -36,11 +36,10 @@ Subcommands (each emits `key=value` lines to stdout, one per line):
      escalation gates auto-pass at L4 only (human at L1-L3); a --dead-end defers
      to a human at every level, L4 included.
 
-  read [--state-level N] [--state-autonomous true|false]
+  read [--state-level N]
          -> autonomy_level
-     Resolve the level a persisted state file records, applying back-compat:
-     a present state-level wins; else legacy autonomous:true -> L4,
-     false/absent -> L1.
+     Resolve the level a persisted state file records: a present state-level
+     wins (validated 1-4); absent -> L1.
 
 Exit codes:
   0 = success
@@ -53,10 +52,9 @@ import sys
 
 USAGE = (
     "Usage: autonomy-resolve <level|gate|read> [options]\n"
-    "  level [--from-args STR] [--env-autonomous 0|1] [--chosen-level N] "
-    "[--severity LABEL]\n"
+    "  level [--from-args STR] [--chosen-level N] [--severity LABEL]\n"
     "  gate <routine|escalation> --level N [--dead-end]\n"
-    "  read [--state-level N] [--state-autonomous true|false]"
+    "  read [--state-level N]"
 )
 
 
@@ -74,7 +72,7 @@ def opt(args: list[str], name: str, allow_flag_value: bool = False) -> str | Non
     like another flag) yields an empty string, which the numeric validators
     below reject — so a malformed `--level` fails loud rather than silently.
     `allow_flag_value=True` lifts the flag-like guard for options whose value is
-    itself a flag string — notably `--from-args "--autonomous"`.
+    itself a flag string — notably `--from-args "--level 4"`.
     """
     for i, tok in enumerate(args):
         if tok == name:
@@ -84,11 +82,6 @@ def opt(args: list[str], name: str, allow_flag_value: bool = False) -> str | Non
                 return args[i + 1]
             return ""
     return None
-
-
-def has_flag(tokens: list[str], *names: str) -> bool:
-    """True if any of `names` appears as a whole token in `tokens`."""
-    return any(n in tokens for n in names)
 
 
 def parse_level(value: str | None) -> int | None:
@@ -107,7 +100,6 @@ def is_critical(severity: str) -> bool:
 
 def cmd_level(args: list[str]) -> int:
     from_args = opt(args, "--from-args", allow_flag_value=True) or ""
-    env_autonomous = opt(args, "--env-autonomous") or "0"
     severity = opt(args, "--severity") or ""
 
     tokens = from_args.split()
@@ -118,19 +110,12 @@ def cmd_level(args: list[str]) -> int:
     except ValueError as exc:
         return die("autonomy-resolve: level must be 1-4, got '" + str(exc) + "'")
 
-    autonomous_alias = (
-        has_flag(tokens, "--autonomous", "--auto", "--force-auto", "--skip-plan")
-        or env_autonomous == "1"
-    )
-    force_plan_gate = has_flag(tokens, "--plan-gate", "--no-skip-plan")
-
-    # Level selection precedence: an explicit --level flag, then an L4 alias,
-    # then a level chosen at setup (orchestrator dispatch / interactive answer),
-    # then the L1 default. (orchestrate/autonomy-levels.md § Level selection.)
+    # Level selection precedence: an explicit --level flag, then a level chosen
+    # at setup (orchestrator dispatch / interactive answer), then the L1 default.
+    # --level {1,2,3,4} is the sole autonomy input (#215). (See
+    # orchestrate/autonomy-levels.md § Level selection.)
     if args_level is not None:
         level = args_level
-    elif autonomous_alias:
-        level = 4
     elif chosen_level is not None:
         level = chosen_level
     else:
@@ -144,9 +129,9 @@ def cmd_level(args: list[str]) -> int:
         capped = True
 
     autonomous = level == 4
-    # plan_gated mirror: the plan gate is kept at L1-L3 (incl. a capped
-    # critical); --plan-gate forces it kept even at L4 (plan checkpoint only).
-    plan_gated = level <= 3 or force_plan_gate
+    # plan_gated: the plan gate (escalation) is kept for a human at L1-L3 (incl.
+    # a capped critical) and auto-passed only at L4.
+    plan_gated = level <= 3
     perm_mode = "acceptEdits" if level == 1 else "auto"
 
     sys.stdout.write("autonomy_level=" + str(level) + "\n")
@@ -191,7 +176,6 @@ def cmd_gate(args: list[str]) -> int:
 
 def cmd_read(args: list[str]) -> int:
     state_level = opt(args, "--state-level")
-    state_autonomous = opt(args, "--state-autonomous") or ""
 
     if state_level:
         try:
@@ -200,8 +184,6 @@ def cmd_read(args: list[str]) -> int:
             return die(
                 "autonomy-resolve: state-level must be 1-4, got '" + str(exc) + "'"
             )
-    elif state_autonomous == "true":
-        level = 4
     else:
         level = 1
 

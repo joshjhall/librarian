@@ -219,7 +219,7 @@ test_next_issue_schema_valid() {
         "next-issue-state.schema.json must set top-level additionalProperties:false"
 }
 
-# A representative state doc (including plan_gated) validates against the schema.
+# A representative state doc validates against the schema.
 test_next_issue_schema_accepts_valid_doc() {
     if [ "$HAVE_JQ" -ne 1 ]; then
         skip_test "jq not available — cannot validate next-issue-state sample doc"
@@ -233,8 +233,9 @@ test_next_issue_schema_accepts_valid_doc() {
     fi
     local tmpdoc
     tmpdoc="$(/usr/bin/mktemp)"
-    # Exercises autonomy_level, plan_gated, plan_comment_url, and a full
-    # checkpoint object — the fields added for the autonomy-level + plan-gate work.
+    # Exercises autonomy_level, plan_comment_url, and a full checkpoint object —
+    # the fields the autonomy-level work relies on (#215 dropped the autonomous /
+    # plan_gated mirror fields; the schema now rejects them).
     cat >"$tmpdoc" <<'JSON'
 {
   "version": 2,
@@ -246,8 +247,6 @@ test_next_issue_schema_accepts_valid_doc() {
   "started": "2026-02-27",
   "platform": "github",
   "autonomy_level": 4,
-  "autonomous": true,
-  "plan_gated": true,
   "plan_comment_url": "https://github.com/o/r/issues/101#issuecomment-1",
   "contexts": ["security", "auth"],
   "active_loops": ["make-it-work", "make-it-secure"],
@@ -262,11 +261,12 @@ test_next_issue_schema_accepts_valid_doc() {
 }
 JSON
     assert_true "jq_validate_against_schema '$schema_file' '$tmpdoc'" \
-        "valid next-issue-state doc (with plan_gated) rejected by schema validator"
+        "valid next-issue-state doc rejected by schema validator"
     /usr/bin/rm -f "$tmpdoc"
 }
 
-# additionalProperties:false rejects a doc carrying an unknown top-level key.
+# additionalProperties:false rejects a doc carrying an unknown top-level key —
+# including the plan_gated / autonomous mirror fields dropped in #215.
 test_next_issue_schema_rejects_unknown_property() {
     if [ "$HAVE_JQ" -ne 1 ]; then
         skip_test "jq not available — cannot validate next-issue-state rejection"
@@ -280,7 +280,8 @@ test_next_issue_schema_rejects_unknown_property() {
     fi
     local tmpdoc
     tmpdoc="$(/usr/bin/mktemp)"
-    # Same minimal-valid doc plus a bogus top-level key that must be rejected.
+    # Same minimal-valid doc plus the removed plan_gated mirror, which is now an
+    # unknown top-level key that must be rejected (#215).
     cat >"$tmpdoc" <<'JSON'
 {
   "version": 2,
@@ -289,12 +290,12 @@ test_next_issue_schema_rejects_unknown_property() {
   "phase": "select",
   "started": "2026-02-27",
   "platform": "github",
-  "bogus_unknown_field": "should be rejected"
+  "plan_gated": true
 }
 JSON
     # The validator must FAIL here (unknown key under additionalProperties:false).
     assert_true "! jq_validate_against_schema '$schema_file' '$tmpdoc'" \
-        "schema validator accepted an unknown top-level property"
+        "schema validator accepted the removed plan_gated mirror field"
     /usr/bin/rm -f "$tmpdoc"
 }
 
@@ -597,7 +598,7 @@ test_category_cross_check() {
 run_test test_finding_schema_valid "finding-schema.schema.json is valid JSON"
 run_test test_loop_report_schema_valid "loop-report.schema.json is valid JSON"
 run_test test_next_issue_schema_valid "next-issue-state.schema.json is valid JSON + additionalProperties:false"
-run_test test_next_issue_schema_accepts_valid_doc "next-issue-state schema accepts a valid doc (plan_gated)"
+run_test test_next_issue_schema_accepts_valid_doc "next-issue-state schema accepts a valid doc"
 run_test test_next_issue_schema_rejects_unknown_property "next-issue-state schema rejects unknown property"
 run_test test_next_issue_queue_schema_valid "next-issue-queue.schema.json is valid JSON + additionalProperties:false"
 run_test test_next_issue_queue_schema_accepts_valid_doc "next-issue-queue schema accepts a valid doc"

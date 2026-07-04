@@ -7,19 +7,18 @@ the shared vocabulary the whole autonomy epic is built on: the two gate
 categories, the four levels, the merge invariant, the dead-end rule, and the
 `autonomy_level` field.
 
-> **Spec-only doc — no behavior change ships with it.** This file is the
-> authoritative contract that the consuming issues cite; it does **not** wire any
-> skill to a new code path. Today's binary `--autonomous` toggle still governs
-> the running pipeline until #175 (`next-issue autonomy_level`), #177
+> **Authoritative contract — now live.** The level model this file specifies is
+> wired into the running pipeline: #175 (`next-issue autonomy_level`), #177
 > (`ship-issue` merge gate), #178 (`orchestrate` setup flow), #179 (critical cap
-> / override removal), and #181 (language reconciliation) land. Read this to
-> understand the target model and to know which section your issue implements —
-> see the **Consuming-issue index** at the end.
+> / override removal), #181 (language reconciliation), and #215 (hard-removal of
+> the deprecated `--autonomous`/`--auto`/`--plan-gate`/`--force-auto` aliases and
+> the `NEXT_ISSUE_AUTONOMOUS` env var) have all landed. **`--level {1,2,3,4}` is
+> the sole autonomy dial.**
 >
 > **The disposition table is implemented in code (#190).** This doc is the
 > *contract*; its decision table — level selection, the critical cap, per-gate
 > disposition, the dead-end override, and the derived `autonomous`/`plan_gated`
-> mirrors — is computed by the resolver
+> dispositions — is computed by the resolver
 > `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (Python primary
 > `autonomy-resolve.py` + bash fallback), the **authoritative implementation**
 > the skills call. When this prose and the resolver ever disagree, the resolver's
@@ -31,7 +30,7 @@ categories, the four levels, the merge invariant, the dead-end rule, and the
 
 ## Why levels instead of a switch
 
-Autonomy today is a **binary**: a run is either `--autonomous` — every gate
+Autonomy **was** a **binary**: a run was either `--autonomous` — every gate
 takes its documented default, all the way to a pushed PR — or fully interactive.
 Under the hood that binary was really **two orthogonal on/off axes** (autonomy,
 and plan-gating) plus a `severity/critical` double-consent special case guarding
@@ -210,10 +209,10 @@ Rules that hold for every dead-end summary, at every level:
 ## The critical carve-out
 
 `severity/critical` issues offer **L1–L3 only**. An **L4 request on a critical
-issue is silently reduced to L3** (the setup prompt offers L1–L3; `--level 4` /
-`--autonomous` on a critical issue resolves to L3 with a one-line note). A
-critical issue therefore always keeps its escalation gates — most importantly
-plan approval — in front of a human.
+issue is silently reduced to L3** (the setup prompt offers L1–L3; `--level 4` on
+a critical issue resolves to L3 with a one-line note). A critical issue therefore
+always keeps its escalation gates — most importantly plan approval — in front of
+a human.
 
 This **replaced** the scattered critical special-casing the binary model carried:
 
@@ -222,10 +221,10 @@ This **replaced** the scattered critical special-casing the binary model carried
   `--force-auto` flag plus a separately-sourced env-var second-consent.
 - The level model collapses that whole apparatus to **"critical ⇒ cap at L3"**:
   capping at L3 keeps escalation gates human, which keeps plan approval human,
-  which is exactly what the double-consent protected. The env-var second-consent,
-  the `--force-auto`-on-critical branch, and their scattered references were
-  **removed** (#179); `--force-auto` survives only as the general L4 plan-skip
-  flag, which the cap already overrides on a critical issue.
+  which is exactly what the double-consent protected. The env-var second-consent
+  and the `--force-auto`-on-critical branch were **removed** (#179), and the
+  `--force-auto`/`--plan-gate` override flags themselves were hard-removed (#215)
+  — the cap now stands alone: nothing lifts a critical issue past L3.
 
 ---
 
@@ -279,40 +278,42 @@ consuming issues (this doc changes no schema). Where it will live:
 
 ---
 
-## Back-compat aliases
+## Removed vocabulary (#215)
 
-The old vocabulary maps onto the new levels so existing launch commands and env
-keep working:
+`--level {1,2,3,4}` (added in #175) is the **sole** autonomy signal. The old
+alias vocabulary was hard-removed in #215 — there is no deprecation window:
 
-| Legacy signal              | Resolves to                                        |
+| Removed signal             | Replacement                                        |
 | -------------------------- | -------------------------------------------------- |
-| `--autonomous`             | **L4** (alias)                                     |
-| `--auto` (deprecated)      | **L4** (alias)                                     |
-| `NEXT_ISSUE_AUTONOMOUS=1`  | **L4**                                            |
-| *(no autonomy signal)*     | interactive — **L1 disposition** (everything asks) unless a level is chosen at setup |
-| legacy `"autonomous": true` in a state file | **L4** on read |
+| `--autonomous` / `--auto`  | `--level 4`                                        |
+| `--force-auto` / `--skip-plan` | `--level 4`                                     |
+| `--plan-gate` / `--no-skip-plan` | `--level 3` ("auto routine, keep the plan gate") |
+| `NEXT_ISSUE_AUTONOMOUS=1`  | `--level 4` on the launch line                     |
+| `"autonomous"` / `"plan_gated"` state-file mirror fields | dropped — `autonomy_level` is the only field |
 
-The explicit `--level {1,2,3,4}` flag (added in #175) is the forward form; the
-aliases above are retained for continuity. Note that `--permission-mode auto`
-(the Claude Code harness flag), `gh pr merge --auto`, and `bin/release.sh`'s
+*(no autonomy signal)* still means interactive — an **L1 disposition**
+(everything asks) unless a level is chosen at setup. Note that `--permission-mode
+auto` (the Claude Code harness flag), `gh pr merge --auto`, and `bin/release.sh`'s
 `--auto-*` flags are **unrelated** spellings of "auto" and are **not** autonomy
-signals.
+signals — they were untouched by #215.
 
 ---
 
 ## Migration map: today → the level model
 
-| Today (two binary axes + critical guard)                       | Level        |
+| Old binary model (two axes + critical guard)                   | Level        |
 | -------------------------------------------------------------- | ------------ |
 | Not autonomous (every prompt + plan mode runs)                 | **L1**       |
-| — (no distinct spelling today for "act, but ask at every gate")| **L2** (new) |
-| — (no distinct spelling today for "auto routine, human escalations") | **L3** (new) |
-| `--autonomous`, plan **skipped** (trivial/small, non-critical) | **L4**       |
-| `--autonomous`, plan **gated** (medium/large/no-effort/critical) | **L3** on the plan gate (escalation stays human); other gates auto |
+| "act, but ask at every gate" (no old spelling)                 | **L2**       |
+| "auto routine, human escalations" (was `--plan-gate`)          | **L3**       |
+| `--autonomous`, plan **skipped** (was trivial/small, non-critical) | **L4**   |
+| `--autonomous`, plan **gated** (was medium/large/no-effort/critical) | **L3** on the plan gate (escalation stays human); other gates auto |
 | the old critical plan-gate bypass (a `--force-auto` flag + env-var second-consent) | **removed** — critical caps at L3, so this bypass no longer exists |
 
-L2 and L3 are the genuinely new dispositions the switch could not express; L4 is
-today's full autonomy, and L1 is today's interactive default.
+L2 and L3 are the genuinely new dispositions the old switch could not express; L4
+is full autonomy, and L1 is the interactive default. The `--autonomous` /
+`--plan-gate` / `--force-auto` flags in the left column are gone (#215) — the
+right column is now the only spelling.
 
 ---
 

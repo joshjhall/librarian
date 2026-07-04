@@ -98,7 +98,7 @@ docker exec -it project-agent01-1 tmux attach -t claude
 
 A **golem** is a per-issue sub-orchestrator: a PROCESS that owns one issue →
 branch → worktree → PR and runs the autonomous pipeline (`/next-issue <N>
---autonomous`, which invokes `/ship-issue` in-turn → Branch + PR) unattended to
+--level 4`, which invokes `/ship-issue` in-turn → Branch + PR) unattended to
 a green, review-clean PR. Golems are not a new isolation mechanism — they are
 the **existing Mode 2 or Mode 3** with an autonomous payload and a PR exit.
 
@@ -108,13 +108,13 @@ The launch is **interactive** in tmux with `--permission-mode auto` passed
 issues #570, #585). The explicit flag is required because a fresh worktree is untrusted,
 so Claude Code does not load its copied `settings.local.json` `defaultMode: auto`
 and would otherwise fall back to `default`. The harness `--permission-mode auto`
-is distinct from the `/next-issue` `--autonomous` skill flag (deprecated alias
-`--auto`) — both are needed.
-Autonomous `/next-issue` invokes `/ship-issue` in-turn, so the single prompt
+is distinct from the `/next-issue` `--level {N}` skill flag (the autonomy dial) —
+both are needed.
+An L4 `/next-issue` invokes `/ship-issue` in-turn, so the single prompt
 reaches a PR on its own. A `;`-chained second prompt is the resume backstop:
 
 ```bash
-claude --permission-mode auto "/workflow:next-issue <N> --autonomous" ; claude --permission-mode auto "/workflow:ship-issue --autonomous"
+claude --permission-mode auto "/workflow:next-issue <N> --level 4" ; claude --permission-mode auto "/workflow:ship-issue"
 ```
 
 — so that a premature turn-exit after `/next-issue` still ships: the second
@@ -128,13 +128,13 @@ Whether a golem skips the plan checkpoint is decided by its **autonomy level**,
 **not** its effort labels (the level model, #174/#175, replaced the old
 effort-based rule — an L4 golem on an `effort/medium` issue now skips the plan,
 which under the binary model it would not have). `/next-issue` resolves this via
-`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) and persists the
-`plan_gated` mirror; dispatch does not recompute it:
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190), which derives the
+`plan_gated` disposition from the level; dispatch does not recompute it:
 
 ```text
 plan_gated == false (level 4, critical cap did not fire):
   → fully autonomous — golem runs straight through to a PR, no plan stop.
-plan_gated == true (level 1-3, a capped severity/critical, or --plan-gate):
+plan_gated == true (level 1-3, incl. a capped severity/critical):
   → plan-gated — golem builds the plan and BLOCKS at ExitPlanMode awaiting a
     human. It shows BLOCKED in `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`; the operator runs
     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines + approves the plan in-session, and the
@@ -145,10 +145,10 @@ plan_gated == true (level 1-3, a capped severity/critical, or --plan-gate):
 
 The launch command does not change — the policy lives in `/next-issue`; dispatch
 just **expects** a golem dispatched below L4 (or a capped critical) to block at
-the plan step. Per-golem overrides: append `--plan-gate` to force the checkpoint
-on an L4 golem, or `--force-auto` to force full autonomy (L4) on one dispatched
-lower. `--force-auto` cannot lift a `severity/critical` issue past L3 — the
-critical cap always keeps its plan gate human.
+the plan step. To change a golem's behavior, dispatch it at a different
+`--level {N}`: L4 runs fully autonomous with no plan stop, L3 keeps the plan gate
+while auto-passing routine gates. A `severity/critical` issue cannot exceed L3 —
+the critical cap always keeps its plan gate human, whatever level is requested.
 
 **Plan approval is a human keystroke, not agent-drivable (#29).** At the golem's
 `ExitPlanMode` prompt the two "yes" options diverge under the auto-mode
@@ -166,12 +166,12 @@ classifier:
 So the documented "human approves plan → golem continues autonomously to PR"
 flow works **only when a human presses option 1 in a real TTY** (attach via
 `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`); it is not something the orchestrator can
-answer on the human's behalf. To skip the gate entirely on a medium issue, use
-`--force-auto` (full autonomy, no plan checkpoint).
+answer on the human's behalf. To skip the gate entirely on a medium issue,
+dispatch it at `--level 4` (full autonomy, no plan checkpoint).
 
 | Realization        | Built on | Payload (process)                         | Exit                            |
 | ------------------ | -------- | ----------------------------------------- | ------------------------------- |
-| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/workflow:next-issue <N> --autonomous" ; claude --permission-mode auto "/workflow:ship-issue --autonomous"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
+| **Worktree golem** | Mode 2   | `claude --permission-mode auto "/workflow:next-issue <N> --level 4" ; claude --permission-mode auto "/workflow:ship-issue"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
 | **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (merge is the level-aware routine gate: auto at L3–L4 after green CI + clean review) |
 
 > **Hard constraint — golems are processes, never Workflow subagents.** The
@@ -205,7 +205,7 @@ which runs exactly the bare new-session below (one issue per call):
 
 ```bash
 tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
-  "claude --permission-mode auto '/workflow:next-issue {N} --autonomous' ; claude --permission-mode auto '/workflow:ship-issue --autonomous'"
+  "claude --permission-mode auto '/workflow:next-issue {N} --level 4' ; claude --permission-mode auto '/workflow:ship-issue'"
 ```
 
 **Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is

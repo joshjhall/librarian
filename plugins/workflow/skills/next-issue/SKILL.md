@@ -20,11 +20,10 @@ run's **autonomy level** (L1–L4) per the contract in
 each gate is dispatched: routine gates (push, PR-open, merge-on-green, prune) are
 auto-passed at L3–L4 and human at L1–L2; escalation gates (plan approval, a
 mid-flight fork, a wall) are auto-passed at L4 only and human at L1–L3.
-`--autonomous` (deprecated alias `--auto`, or `NEXT_ISSUE_AUTONOMOUS=1`) is an
-**alias for L4**; absence of any signal is the interactive default (an **L1
-disposition** — every gate asks). `severity/critical` issues are **capped at L3**
-(an L4 request reduces to L3), so a critical issue always keeps its plan gate.
-See `## Autonomy Levels` below.
+`--level {1,2,3,4}` is the sole autonomy dial; absence of any signal is the
+interactive default (an **L1 disposition** — every gate asks). `severity/critical`
+issues are **capped at L3** (an L4 request reduces to L3), so a critical issue
+always keeps its plan gate. See `## Autonomy Levels` below.
 
 The level splits into **two** dispositions (see `## Autonomy Levels` for the full
 rule):
@@ -35,16 +34,16 @@ rule):
   **escalation gate**: auto-passed at **L4 only**, kept (human approval) at
   L1–L3. Because `severity/critical` caps at L3, a critical issue always keeps
   the plan gate. This is **level-driven, not effort-driven** — an L4 run skips
-  the plan even on an `effort/medium` issue. The legacy `--plan-gate` /
-  `--force-auto` overrides still parse and map onto the level; neither can lift
-  the critical cap (#179 removed the old env-var critical-bypass that once did).
+  the plan even on an `effort/medium` issue. There is no override that keeps the
+  plan gate on an L4 run: "L4 but keep the plan gate" is simply **L3** (the old
+  `--plan-gate` / `--force-auto` overrides were removed in #215).
 
 Adding the `--ship` flag (alias `--now`) — `/next-issue 123 --ship` — is a
 fast-path for **small work**: after plan approval and implementation it invokes
 `/ship-issue` directly instead of suggesting a `/clear` + manual resume.
 `--ship` is **not** autonomy — it keeps the interactive plan-approval gate
-(`EnterPlanMode`/`ExitPlanMode`) and leaves `autonomous` false; it only removes
-the context-reset ceremony between implement and ship. It is honored **only for
+(`EnterPlanMode`/`ExitPlanMode`) and never selects L4; it only removes the
+context-reset ceremony between implement and ship. It is honored **only for
 `effort/trivial` and `effort/small`** issues; for `effort/medium`/`large` (or
 no effort label) it is ignored with a one-line note, preserving the `/clear`
 boundary that keeps planning context out of the longer implement/review budget.
@@ -57,8 +56,8 @@ dependencies are still open **queues those dependencies first** and works them
 toward the named target (see Phase 1 below and `state-format.md` §
 Dependency Queue). `--force-target` restores the legacy warn-and-proceed: it
 plans the named issue directly, ignoring its open blockers, with the plan gate
-as the only backstop. It is orthogonal to `--force-auto` (which governs
-plan-skipping, not dependencies) — do not conflate the two.
+as the only backstop. It governs dependency handling only — orthogonal to the
+`--level` autonomy dial.
 
 **IMPORTANT — Plan mode**: At an **L1 disposition** (no level chosen — the
 interactive default), use the `EnterPlanMode` tool immediately at the start of
@@ -75,22 +74,19 @@ plan approval. See `## Autonomy Levels` below.
 
 **Companion file**: the full rule lives in `autonomy.md` in this skill
 directory — load it to decide the run's level and apply it. It carries the level
-selection + aliases, the per-gate disposition table, the plan-gate rule, the
-legacy `--plan-gate` / `--force-auto` overrides (superseded by the level; removed
-in #179), and the shipping handoff. The authoritative model is
-`orchestrate/autonomy-levels.md` (#174), implemented by the resolver
-`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) — **call it** to
-compute the level, mirrors, and per-gate disposition rather than re-deriving them
-here. The summary below is the operational gist.
+selection (`--level {1,2,3,4}` is the sole dial; #215 removed the old aliases and
+overrides), the per-gate disposition table, the plan-gate rule, and the shipping
+handoff. The authoritative model is `orchestrate/autonomy-levels.md` (#174),
+implemented by the resolver `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh`
+(#190) — **call it** to compute the level and per-gate disposition rather than
+re-deriving them here. The summary below is the operational gist.
 
-The run's **autonomy level** (int 1–4) is set by `--level {1,2,3,4}`; by
-`--autonomous` / deprecated `--auto` / `NEXT_ISSUE_AUTONOMOUS=1` (each an **alias
-for L4**); or, absent any signal, defaults to an **L1 disposition** (every gate
-asks). A `severity/critical` issue **caps at L3**. The level is persisted as
-`autonomy_level`, with derived `autonomous` (= L4) and `plan_gated` mirrors
-written for the not-yet-level-aware `/ship-issue` (dropped by #177); a legacy
-`autonomous: true` file with no `autonomy_level` reads as **L4**. The level
-splits into **two dispositions**:
+The run's **autonomy level** (int 1–4) is set by `--level {1,2,3,4}` (the sole
+autonomy dial); or, absent any signal, defaults to an **L1 disposition** (every
+gate asks). A `severity/critical` issue **caps at L3**. The level is persisted
+as `autonomy_level` (the only autonomy field in the state file); the run-time
+`plan_gated` / `perm_mode` dispositions are computed from it by the resolver, not
+stored. The level splits into **two dispositions**:
 
 - **Gate-skipping (L3–L4).** At L3–L4, do NOT call `AskUserQuestion` for a
   routine gate — issue acceptance, branch-freshness, drift, shipping mode, CI
@@ -101,14 +97,14 @@ splits into **two dispositions**:
   the plan and STOPS at `ExitPlanMode` for human approval, then continues at the
   run's level through implement → review → push/PR. Because critical caps at L3,
   a critical issue always keeps the gate. This is level-driven, not
-  effort-driven. Legacy overrides still map onto the level; the old env-var
-  critical-bypass has been **removed** (the cap subsumes it — #179).
+  effort-driven. There is no override that lifts the plan gate on an L1–L3 run —
+  "L4 but keep the plan gate" is simply **L3** (#215; the old
+  `--plan-gate`/`--force-auto` overrides were removed).
 
 After implementation and testing complete, an **L3–L4** run **invokes
 `/ship-issue` in the same turn** (call the `Skill` tool) — never end the turn
-with only a "next step" note. Persist `"autonomy_level"` (plus the derived
-`"autonomous"` / `"plan_gated"` mirrors) to the state file so ship and any
-post-`/clear` resume inherit the level.
+with only a "next step" note. Persist `"autonomy_level"` to the state file so
+ship and any post-`/clear` resume inherit the level.
 
 At an **L1 disposition** (no level chosen), behavior is unchanged — every
 interactive prompt and plan-mode step below runs verbatim as the default.
@@ -154,15 +150,6 @@ Proceed with Phase 0 as normal regardless of mode.
    level is known: an **L1–L3** run (including a capped critical) calls
    `EnterPlanMode` there (then `ExitPlanMode` for approval); an **L4**
    (non-critical) run never enters plan mode at all. See `## Autonomy Levels`.
-
-1. **Legacy migration** — run in order:
-
-   a. If `.claude/memory/tmp/next-issue-state.md` exists (legacy singleton),
-   read its `issue:` field, rename to `.claude/memory/tmp/next-issue-{N}.md`
-
-   b. If any `.claude/memory/tmp/next-issue-*.md` files exist (YAML format),
-   migrate each to `.json`: read the YAML frontmatter fields, write a new
-   `.json` file with those fields plus `"version": 2`, delete the `.md` file
 
 1. **Discover state files** (the singleton `next-issue-queue.json` is NOT a
    per-issue state file — exclude it from this glob):
@@ -226,11 +213,11 @@ Proceed with Phase 0 as normal regardless of mode.
     non-interactively (the state file is already validated open above);
     otherwise start fresh for that issue
 
-**Plan-gated resume sub-case.** When the resumed state file has
-`"plan_gated": true`, `"phase": "plan"`, and a populated `checkpoint`
-(`completed_phase: "plan"`, `files_planned`, `key_decisions`), the plan was
-already built and the run paused at the human plan-approval gate before a prior
-context loss. Do **NOT** re-enter Phase 2 and re-run exploration from scratch
+**Plan-gated resume sub-case.** When the resumed state file has a plan-gated
+level (`autonomy_level` 1–3, i.e. the plan gate is kept), `"phase": "plan"`, and
+a populated `checkpoint` (`completed_phase: "plan"`, `files_planned`,
+`key_decisions`), the plan was already built and the run paused at the human
+plan-approval gate before a prior context loss. Do **NOT** re-enter Phase 2 and re-run exploration from scratch
 (that discards the stored plan and burns the budget re-deriving it). Instead
 jump straight to **re-presenting the stored plan for approval**: reconstruct the
 plan from the checkpoint (`plan` one-liner + `files_planned` + `key_decisions` +
@@ -302,10 +289,10 @@ or has no `files_planned` (nothing to re-present).
 1. Show the selected issue to the user — title, labels, body excerpt
 
 1. Ask: **Work on this issue?** (user can accept, skip to next, or pick
-   a different one) — when the run is already known to be autonomous (an
-   `--autonomous`/`--auto`/`--level` flag or an orchestrator-passed level, i.e.
-   issue acceptance is a routine gate at **L3–L4**), accept the selected issue
-   automatically (no prompt).
+   a different one) — when the run's level is already known to be **L3–L4** (a
+   `--level` flag or an orchestrator-passed level, i.e. issue acceptance is a
+   routine gate that auto-passes), accept the selected issue automatically (no
+   prompt).
 
 1. **Choose the rules of engagement (autonomy level)** — for a **lone
    interactive `/next-issue`** whose level was NOT already fixed by a flag or an
@@ -315,9 +302,9 @@ or has no `files_planned` (nothing to re-present).
    apply the **critical cap**: a `severity/critical` issue offers **L1–L3 only**.
    **Wait indefinitely** for the answer — never lapse-and-default to L1 because
    the operator stepped away (`autonomy-levels.md` § *Standing rule*). Skip this
-   question entirely when the level is already set (flag / env / orchestrator
-   `--level`), and in a non-interactive context with no TTY fall back to the L1
-   disposition rather than hang. This resolves `autonomy_level` **before** the
+   question entirely when the level is already set (a `--level` flag or an
+   orchestrator-passed level), and in a non-interactive context with no TTY fall
+   back to the L1 disposition rather than hang. This resolves `autonomy_level` **before** the
    Phase 2 plan-mode decision, which depends on it. See `## Autonomy Levels` §
    Level selection.
 
@@ -338,33 +325,29 @@ or has no `files_planned` (nothing to re-present).
      "phase": "select",
      "started": "{YYYY-MM-DD}",
      "platform": "{github|gitlab}",
-     "autonomy_level": {1-4},
-     "autonomous": {true|false},
-     "plan_gated": {true|false}
+     "autonomy_level": {1-4}
    }
    ```
 
-   Do **not** hand-derive these fields — call the resolver, which computes level
-   selection, the critical cap, and all mirrors in one shot (see `## Autonomy
-   Levels` and `autonomy.md` § Level selection):
+   Do **not** hand-derive the level — call the resolver, which computes level
+   selection and the critical cap in one shot (see `## Autonomy Levels` and
+   `autonomy.md` § Level selection):
 
    ```bash
    eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level \
-       --from-args "$ARGS" --env-autonomous "${NEXT_ISSUE_AUTONOMOUS:-0}" \
-       --severity "$SEV" [--chosen-level "$CHOSEN"])"
+       --from-args "$ARGS" --severity "$SEV" [--chosen-level "$CHOSEN"])"
    ```
 
-   where `$ARGS` is this invocation's raw flag string (carrying any
-   `--level`/`--autonomous`/`--auto`/`--plan-gate`/`--force-auto`), `$SEV` is the
-   issue's severity label (`critical` or empty), and `$CHOSEN` is a level chosen
-   at setup — an orchestrator-passed `--level` or the **operator's answer to the
-   L1–L4 rules-of-engagement question** asked above (omit it for a pure-CLI run;
-   with no signal at all the resolver returns the **L1** fallback). The call sets
-   `autonomy_level`, `autonomous`, `plan_gated`, `capped`, and `perm_mode`; write
-   `autonomy_level`, `autonomous`, and `plan_gated` straight into the state file.
-   The `severity/critical` cap (L4 → L3, `capped=true`) and the legacy
-   `--plan-gate`/`--force-auto` overrides are all applied inside the resolver;
-   none of this depends on effort labels.
+   where `$ARGS` is this invocation's raw flag string (carrying any `--level N`),
+   `$SEV` is the issue's severity label (`critical` or empty), and `$CHOSEN` is a
+   level chosen at setup — an orchestrator-passed `--level` or the **operator's
+   answer to the L1–L4 rules-of-engagement question** asked above (omit it for a
+   pure-CLI run; with no signal at all the resolver returns the **L1** fallback).
+   The call sets `autonomy_level`, `plan_gated`, `capped`, and `perm_mode`; write
+   only `autonomy_level` into the state file (the `plan_gated`/`perm_mode`
+   dispositions are consumed at runtime, not persisted). The `severity/critical`
+   cap (L4 → L3, `capped=true`) is applied inside the resolver; none of this
+   depends on effort labels.
 
 ## Phase 2 — Plan
 
@@ -407,8 +390,6 @@ or has no `files_planned` (nothing to re-present).
      "started": "{date}",
      "platform": "{platform}",
      "autonomy_level": {1-4},
-     "autonomous": {true|false},
-     "plan_gated": {true|false},
      "checkpoint": {
        "completed_phase": "plan",
        "key_decisions": ["{non-obvious choice 1}", "{non-obvious choice 2}"],
@@ -420,9 +401,9 @@ or has no `files_planned` (nothing to re-present).
    }
    ```
 
-   Carry `"autonomy_level"` (and its derived `"autonomous"` / `"plan_gated"`
-   mirrors) forward from Phase 1 unchanged — the level is fixed at selection,
-   including the critical cap. Note `--ship`/`--now` is **not autonomy** and never
+   Carry `"autonomy_level"` forward from Phase 1 unchanged — the level is fixed
+   at selection, including the critical cap. Note `--ship`/`--now` is **not
+   autonomy** and never
    selects L4 — it keeps the interactive plan gate and only skips the `/clear`; a
    lone `--ship` run still answers the L1–L4 question in Phase 1 (any of L1–L3),
    and its plan-approval gate is preserved at every one of those. The
@@ -431,8 +412,9 @@ or has no `files_planned` (nothing to re-present).
    where the plan is posted as an issue comment. An **L1–L3** run uses
    `EnterPlanMode`/`ExitPlanMode` instead and must NOT add it.
 
-1. **Autonomous planning path** — branches on the plan gate (`"plan_gated"`
-   from Phase 1 / `## Autonomy Levels`):
+1. **Autonomous planning path** — branches on the plan gate (`plan_gated`,
+   derived from `autonomy_level` — kept at L1–L3, auto-passed at L4; see
+   `## Autonomy Levels`):
 
    > **Note (dependency queue):** if Phase 1 built a dependency queue for an
    > explicitly-named blocked issue, the `active` issue selected there — a
@@ -479,13 +461,12 @@ or has no `files_planned` (nothing to re-present).
    gate was kept) or before the work exists. Do NOT stop after implementation to
    *suggest* shipping, and do NOT merely print a "next step: /ship-issue" line —
    actually invoke it. This is the whole point of L3–L4: a single
-   `claude '/next-issue <N> --autonomous'` (i.e. `--level 4`) prompt must reach a
-   pushed PR + labeled issue without a second manual command. Ending the turn
-   after `/next-issue` leaves the work uncommitted with no PR. (As a
-   belt-and-suspenders for a premature turn-exit, the orchestrate golem launch
-   also chains a second `; claude '/ship-issue --autonomous'` prompt — see the
-   orchestrate skill — but the in-turn invocation here is the primary path and
-   must not be skipped.) An **L1–L2** run instead stops for the human at the
+   `claude '/next-issue <N> --level 4'` prompt must reach a pushed PR + labeled
+   issue without a second manual command. Ending the turn after `/next-issue`
+   leaves the work uncommitted with no PR. (As a belt-and-suspenders for a
+   premature turn-exit, the orchestrate golem launch also chains a second
+   `; claude '/ship-issue'` prompt — see the orchestrate skill — but the in-turn
+   invocation here is the primary path and must not be skipped.) An **L1–L2** run instead stops for the human at the
    routine ship gates — follow the default hand-off below.
 
 1. **Exit plan mode** (call `ExitPlanMode` tool) — this presents the plan to
@@ -523,8 +504,8 @@ or has no `files_planned` (nothing to re-present).
      suggest a `/clear`. Invoke `/ship-issue` directly to deliver in this
      same context. The plan was still approved interactively above, so the
      human remains in the loop; only the reset ceremony is skipped. The run stays
-     **L1** (`autonomy_level: 1`, `autonomous: false`) — the ship run will still
-     prompt for shipping mode etc.
+     at its chosen level (an L1–L3 answer; `--ship` never selects L4) — the ship
+     run will still stop for the human at any routine gate that level keeps.
 
    - **`--ship`/`--now` set BUT effort is `medium`/`large` (or there is no
      `effort/*` label)**: emit a one-line note — "`--ship` skipped for

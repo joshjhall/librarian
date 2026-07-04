@@ -26,10 +26,10 @@ the `next-issue` skill for the rationale). The hand-off is the state file
   no `/clear`. Being reached this way is **not an autonomy signal**: the `--ship`
   fast-path keeps the plan-approval gate and leaves the level at **L1**, so this
   run still prompts for shipping mode (Step 3) and every other interactive gate.
-- **Auto-chained by `/next-issue --level 3|4`** (or the `--autonomous`/`--auto`
-  L4 aliases) — the higher-autonomy flow, which persists `autonomy_level` in the
-  state file (see below). That `/next-issue` invokes this skill **in the same
-  turn** (via the `Skill` tool) once implementation and testing complete — it
+- **Auto-chained by `/next-issue --level 3|4`** — the higher-autonomy flow, which
+  persists `autonomy_level` in the state file (see below). That `/next-issue`
+  invokes this skill **in the same turn** (via the `Skill` tool) once
+  implementation and testing complete — it
   does not stop and suggest a manual run. This skill therefore must work whether
   reached in-turn (state file already current in context) or fresh after a
   turn-exit (re-read from the state file in Step 1); both paths resolve the level
@@ -38,9 +38,8 @@ the `next-issue` skill for the rationale). The hand-off is the state file
 ## Autonomy Level
 
 Ship reads the run's **autonomy level** (L1–L4) from the state file's
-`autonomy_level` (Step 1), falling back to the legacy `autonomous` boolean
-(`true` → L4, `false`/absent → L1). The level — not a binary flag — decides how
-each gate below is dispatched, per the contract in
+`autonomy_level` (Step 1); absent, it defaults to L1. The level — not a binary
+flag — decides how each gate below is dispatched, per the contract in
 `orchestrate/autonomy-levels.md` (#174). The two gate dispositions that matter to
 ship:
 
@@ -51,11 +50,11 @@ ship:
   (→ `disposition=auto|human`, #190) rather than re-deriving the L3–L4 cutoff.
 - The **merge invariant** (below) is uncrossable at **every** level, L4 included.
 
-> **Level, not "autonomous".** The old binary `autonomous` flag is retired as the
-> control (its state-file mirror is read only for back-compat, mapping to L4/L1).
-> `--autonomous`/`--auto`/`NEXT_ISSUE_AUTONOMOUS=1` remain **aliases for L4**.
-> `gh pr merge --auto` (GitHub's auto-merge flag) and `--permission-mode auto`
-> (the harness flag) are unrelated to the autonomy level.
+> **Level, not "autonomous".** `autonomy_level` (1–4) is the sole control; the old
+> binary `autonomous`/`plan_gated` state-file mirrors and the `--autonomous`/
+> `--auto`/`NEXT_ISSUE_AUTONOMOUS` aliases were removed in #215. `gh pr merge
+> --auto` (GitHub's auto-merge flag) and `--permission-mode auto` (the harness
+> flag) are unrelated to the autonomy level.
 
 **Behavior by level:**
 
@@ -107,33 +106,27 @@ relying on any of these toggles.
      `ls .claude/memory/tmp/next-issue-*.json 2>/dev/null | command grep -v '/next-issue-queue\.json$'`
    - **If multiple files exist**: list them and ask which issue to ship
    - **If exactly one file**: use it
-   - **If none exist**: check for legacy `.md` files:
-     - `ls .claude/memory/tmp/next-issue-*.md 2>/dev/null`
-     - If found, migrate to `.json`: read YAML frontmatter fields, write `.json`
-       with those fields plus `"version": 2`, delete the `.md` file
-     - Also check for `.claude/memory/tmp/next-issue-state.md` (legacy singleton)
-       — read its `issue:` field, migrate to `.claude/memory/tmp/next-issue-{N}.json`
+   - **If none exist**: there is nothing to ship — stop and tell the user to run
+     `/next-issue` first.
 
 1. Extract: `issue` (number), `title`, `platform` (`github` or `gitlab`),
-   `branch` (if set), `autonomy_level` (integer 1–4 — the primary autonomy
-   field; feeds the level model above), `autonomous` (legacy boolean — read
-   only for back-compat), and `plan_comment_url` (if present).
+   `branch` (if set), `autonomy_level` (integer 1–4 — the sole autonomy field;
+   feeds the level model above), and `plan_comment_url` (if present).
 
    **Resolve the run's level** by calling the resolver (issue #190) — the same
-   authoritative implementation `/next-issue` uses — rather than re-deriving the
-   back-compat precedence by hand:
+   authoritative implementation `/next-issue` uses — rather than validating the
+   level by hand:
 
    ```bash
-   # $STATE_LEVEL = the state file's autonomy_level ("" if absent);
-   # $STATE_AUTO  = the legacy autonomous boolean ("true"/"false"/"" if absent).
+   # $STATE_LEVEL = the state file's autonomy_level ("" if absent).
    eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh read \
-       --state-level "$STATE_LEVEL" --state-autonomous "$STATE_AUTO")"
+       --state-level "$STATE_LEVEL")"
    # -> sets autonomy_level (1-4)
    ```
 
-   The resolver applies the precedence (see
+   The resolver applies the rule (see
    `next-issue/schemas/next-issue-state.schema.json`): a present `autonomy_level`
-   wins (1–4); else legacy `autonomous: true` → **L4**, `false`/absent → **L1**.
+   wins (validated 1–4); absent → **L1**.
 
    The level decides every gate below: **L1–L2** keep human gates (stop for a
    human at shipping mode and at merge), **L3–L4** auto-pass the routine gates

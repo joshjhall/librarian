@@ -29,8 +29,6 @@ Write using the Write tool:
   "started": "2026-02-27",
   "platform": "github",
   "autonomy_level": 3,
-  "autonomous": false,
-  "plan_gated": true,
   "contexts": ["security", "auth"],
   "active_loops": ["make-it-work", "make-it-secure", "make-it-tested"],
   "checkpoint": {
@@ -65,17 +63,18 @@ Write using the Write tool:
 | `plan`         | no       | One-line plan summary (set after plan)               |
 | `started`      | yes      | ISO date when work began                             |
 | `platform`     | yes      | `github` or `gitlab`                                 |
-| `autonomy_level` | no     | Autonomy level 1–4 per `orchestrate/autonomy-levels.md` (#174) — the primary autonomy field. `--level N`; `--autonomous`/`--auto`/env → L4; absent → L1. `severity/critical` caps at L3 |
-| `autonomous`   | no       | Back-compat mirror (`== level 4`); dropped by #177. Legacy `autonomous:true` with no `autonomy_level` reads as L4 |
-| `plan_gated`   | no       | Back-compat mirror: true when the plan gate is kept (level ≤ 3, incl. capped critical), false at L4. Level-driven, not effort-driven; dropped by #177 |
+| `autonomy_level` | no     | Autonomy level 1–4 per `orchestrate/autonomy-levels.md` (#174) — the sole autonomy field. Set via `--level N`; absent → L1. `severity/critical` caps at L3 |
 | `plan_comment_url` | no   | URL of posted plan comment (L4 plan-auto-passed path only) |
 | `contexts`     | no       | Domain contexts for this issue                       |
 | `active_loops` | no       | Implementation loops to execute                      |
 | `checkpoint`   | no       | Phase transition checkpoint (see below)              |
 
-The `autonomy_level` / `autonomous` / `plan_gated` values are **computed by**
+The `autonomy_level` value is **computed by**
 `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level …` (#190), not
-hand-derived — the descriptions above tabulate what that resolver emits.
+hand-derived — the description above tabulates what that resolver emits. (The
+resolver also emits runtime-only `plan_gated`/`perm_mode` dispositions; those are
+consumed in-session, not persisted. The `autonomous`/`plan_gated` state-file
+mirror fields were dropped in #215.)
 
 ### State Lifecycle
 
@@ -107,29 +106,6 @@ disambiguation when multiple agents are working in parallel.
 1. Check if the branch exists: `git branch --list {branch}`
 1. If issue is closed or branch is gone → silently delete the state file and
    proceed to Phase 1 (don't ask the user about stale work)
-
----
-
-## Backward Compatibility
-
-### Stage 1: Legacy Singleton Migration (existing)
-
-If `.claude/memory/tmp/next-issue-state.md` exists, read its `issue:` field,
-rename to `.claude/memory/tmp/next-issue-{N}.md`, then proceed to Stage 2.
-
-### Stage 2: YAML Frontmatter → JSON Migration (new)
-
-If `.claude/memory/tmp/next-issue-{N}.md` files exist (YAML frontmatter
-format), migrate each to `.json`:
-
-1. Read the `.md` file and extract YAML frontmatter fields
-1. Write a new `.json` file with the same fields plus `"version": 2`
-1. Delete the `.md` file
-
-**Edge case**: If both `.md` and `.json` exist for the same issue number,
-prefer the `.json` file and delete the `.md` duplicate.
-
-The migration is automatic and happens once during Phase 0 discovery.
 
 ---
 
@@ -189,18 +165,17 @@ safely cleared. The state file (with checkpoint) preserves continuity.
 (or `--now`) on an `effort/trivial`/`small` issue, the "After plan approval"
 reset is **skipped** — the run chains straight into `/ship-issue` in the
 same context (the small planning footprint does not justify a reset). The
-plan-approval gate itself is preserved, and `autonomous` stays false. For
+plan-approval gate itself is preserved, and the run never selects L4. For
 `effort/medium`/`large` the reset point is unaffected.
 
-\* **L3–L4 exception**: when `/next-issue` runs at **L3 or L4** — `--level 3`/`4`,
-or the L4 aliases `--autonomous` (deprecated `--auto`) / `NEXT_ISSUE_AUTONOMOUS=1`
+\* **L3–L4 exception**: when `/next-issue` runs at **L3 or L4** (`--level 3`/`4`)
 — **every** reset point above is bypassed: the run invokes `/ship-issue` in the
 same turn (via the `Skill` tool) and never reaches the "After plan approval",
 "After review", or "After ship" boundaries as distinct resets. The orchestrate
-golem launch's `;`-chained `/ship-issue --autonomous` is the only resume path if
-the turn exits early. Such a run sets `autonomy_level` (and the derived
-`autonomous` mirror = true only at L4). Whether it removes the **plan-approval
-gate** is level-driven (see `SKILL.md` § Autonomy Levels): an **L4** run
+golem launch's `;`-chained `/ship-issue` is the only resume path if
+the turn exits early. Such a run sets `autonomy_level`. Whether it removes the
+**plan-approval gate** is level-driven (see `SKILL.md` § Autonomy Levels): an
+**L4** run
 (non-critical) auto-passes the plan gate; an **L1–L3** run — including a capped
 `severity/critical` — keeps it and pauses at `ExitPlanMode` for human approval
 before continuing. (An **L1–L2** run stops at the routine ship gates too, so it
@@ -469,9 +444,8 @@ own queue, replacing the file.)
 
 ### Gate-skipping (L3–L4) interaction
 
-A gate-skipping explicit run (`/next-issue 5 --level 4`, or its L4 alias
-`--autonomous`, as `orchestrate` always dispatches) **queues and works the first
-unblocked dependency** this turn — planning it, implementing it, and shipping its
+A gate-skipping explicit run (`/next-issue 5 --level 4`, as `orchestrate` always
+dispatches) **queues and works the first unblocked dependency** this turn — planning it, implementing it, and shipping its
 own PR — then leaves the queue file for the next cycle. It does **not**
 auto-advance the whole chain within one turn: each dependency is one golem / one
 PR (the natural PR-per-golem granularity). Because `orchestrate`'s priority walk
@@ -486,7 +460,7 @@ plans the named target directly.
 `orchestrate` dispatch (`/orchestrate dispatch 5`) labels `#5`
 `status/in-progress`, writes a golem-status cache row keyed `issue: 5`
 (`orchestrate/schemas/golem-status.schema.json`), and launches
-`/next-issue 5 --autonomous` inside `golem-5`'s worktree. If `#5` has open
+`/next-issue 5 --level 4` inside `golem-5`'s worktree. If `#5` has open
 blockers, the default queuing behavior redirects that golem to a **dependency**
 (say `#2`) — it commits `next-issue-2.json` and a PR for `#2`, while the golem
 process is still cached as `golem-5 / issue: 5`. That is a cache-vs-reality
@@ -503,7 +477,7 @@ golem-status cache learns about queue redirects:
   desync.
 - **Force-dispatch — pass `--force-target`.** An operator who deliberately
   force-dispatches a specific blocked issue should pass
-  `/next-issue 5 --force-target --autonomous` so the golem works exactly the
+  `/next-issue 5 --force-target --level 4` so the golem works exactly the
   cached issue (`#5`), keeping `golem-5` coherent (the plan gate is the
   backstop).
 
