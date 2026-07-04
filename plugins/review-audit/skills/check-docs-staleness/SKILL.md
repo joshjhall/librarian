@@ -77,7 +77,7 @@ Evidence: the date found, the threshold, how far past threshold
 
 - Focus on documentation that is **wrong** over documentation that is
   **missing** — misleading docs are worse than no docs
-- Do not flag TODO/FIXME comments (handled by check-health-tech-debt)
+- Do not flag TODO/FIXME comments (handled by check-code-health)
 - Do not flag sparse documentation in early-stage or prototype code
 - For README analysis, compare installation commands against actual project
   files (package.json, pyproject.toml, Makefile, etc.)
