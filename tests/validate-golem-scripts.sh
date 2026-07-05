@@ -146,6 +146,12 @@ test_launch_print_emits_new_session() {
     assert_contains "$RUN_OUT" "tmux new-session" "print emits a tmux new-session line"
     assert_contains "$RUN_OUT" "golem-5" "the line targets golem-5"
     assert_contains "$RUN_OUT" "/workflow:next-issue 5" "the line resumes the issue's namespaced next-issue run"
+    # Pin the namespaced form: the pre-#230 regression emitted a bare
+    # "'/next-issue" (the exact string the active plugin rejects as Unknown
+    # command). Assert it never reappears — the ' before it disambiguates from
+    # the "workflow:next-issue" substring, which also contains "next-issue".
+    assert_not_contains "$RUN_OUT" "'/next-issue" "never emits the bare (un-namespaced) /next-issue"
+    assert_not_contains "$RUN_OUT" "'/ship-issue" "never emits the bare (un-namespaced) /ship-issue"
 }
 
 # `print` with a non-numeric argument → exit 2.
@@ -235,6 +241,165 @@ EOF
     assert_exit 3 "$RUN_RC" "preflight with a missing rule exits 3"
     assert_contains "$RUN_OUT" "NOT authorized" "surfaces the unauthorized state"
     assert_contains "$RUN_OUT" "Bash(tmux kill-session:*)" "lists the rules to add"
+}
+
+# --- golem-launch.sh version-skew guard (#230) ------------------------------
+# The running helper's plugin version is read from the repo's real
+# plugins/workflow/.claude-plugin/plugin.json; tests fabricate the ACTIVE-install
+# version via CLAUDE_INSTALLED_PLUGINS to force the equal / differ branches
+# without touching the operator's real ~/.claude install.
+
+# The name+version this running golem-launch.sh belongs to (its sibling
+# manifest). jq-gated at the call site; here it seeds the fabricated registry.
+PLUGIN_MANIFEST="$REPO_ROOT/plugins/workflow/.claude-plugin/plugin.json"
+
+# write_installed_plugins <path> <version> — fabricate an installed_plugins.json
+# whose workflow@librarian record carries <version>.
+write_installed_plugins() {
+    /usr/bin/cat >"$1" <<EOF
+{ "plugins": { "workflow@librarian": [ { "version": "$2" } ] } }
+EOF
+}
+
+# launch with the active install version EQUAL to the running version → the skew
+# guard passes silently; the run falls through to its normal missing-worktree
+# exit 2 (no worktree in the sandbox). Proves a matched version never blocks.
+test_launch_version_match_passes() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (version guard no-ops without jq)"
+        return 0
+    fi
+    local sb ver
+    new_sandbox sb
+    ver="$(jq -r '.version' "$PLUGIN_MANIFEST")"
+    write_installed_plugins "$sb/installed.json" "$ver"
+    /usr/bin/printf '{}\n' >"$sb/proj-settings.json"
+    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
+            CLAUDE_PROJECT_SETTINGS=proj-settings.json \
+            CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
+            "$REAL_BASH" "$LAUNCH" launch 999 2>&1)" || RUN_RC=$?
+    assert_exit 2 "$RUN_RC" "matched version passes the guard, reaches missing-worktree exit 2"
+    assert_not_contains "$RUN_OUT" "version skew" "no skew message when versions agree"
+}
+
+# launch with the active install version DIFFERING from the running version →
+# the guard REFUSES with exit 3 and an actionable message naming both versions,
+# BEFORE any tmux side effect (worktree absence never reached).
+test_launch_version_skew_refuses_exit_3() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (version guard no-ops without jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    write_installed_plugins "$sb/installed.json" "0.0.1-stale"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
+            "$REAL_BASH" "$LAUNCH" launch 999 2>&1)" || RUN_RC=$?
+    assert_exit 3 "$RUN_RC" "version skew refuses dispatch with exit 3"
+    assert_contains "$RUN_OUT" "version skew" "surfaces the skew"
+    assert_contains "$RUN_OUT" "0.0.1-stale" "names the active install version"
+    assert_contains "$RUN_OUT" "REFUSING" "refuses rather than dispatching a wedged golem"
+}
+
+# GOLEM_SKIP_VERSION_CHECK=1 with a differing version → the refusal downgrades to
+# a warning and the run PROCEEDS past the guard (reaching missing-worktree exit
+# 2). Proves the escape hatch for legitimate mid-release / worktree dispatch.
+test_launch_version_skew_escape_hatch() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (version guard no-ops without jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    write_installed_plugins "$sb/installed.json" "0.0.1-stale"
+    /usr/bin/printf '{}\n' >"$sb/proj-settings.json"
+    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_SKIP_VERSION_CHECK=1 \
+            CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
+            CLAUDE_PROJECT_SETTINGS=proj-settings.json \
+            CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
+            "$REAL_BASH" "$LAUNCH" launch 999 2>&1)" || RUN_RC=$?
+    assert_exit 2 "$RUN_RC" "escape hatch proceeds past the guard to missing-worktree exit 2"
+    assert_contains "$RUN_OUT" "proceeding anyway" "warns but continues under the escape hatch"
+}
+
+# The registry's active record carries the in-band sentinel "version": "unknown"
+# (Claude Code writes this for plugins it can't version-pin — most of a real
+# installed_plugins.json). It must be treated as undeterminable, NOT as a real
+# value that mismatches the running semver → the guard skips, launch reaches its
+# normal missing-worktree exit 2. Guards against a false-positive refusal.
+test_launch_version_unknown_sentinel_skips() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (version guard no-ops without jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    write_installed_plugins "$sb/installed.json" "unknown"
+    /usr/bin/printf '{}\n' >"$sb/proj-settings.json"
+    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
+            CLAUDE_PROJECT_SETTINGS=proj-settings.json \
+            CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
+            "$REAL_BASH" "$LAUNCH" launch 999 2>&1)" || RUN_RC=$?
+    assert_exit 2 "$RUN_RC" "unknown-sentinel version skips the guard, reaches missing-worktree exit 2"
+    assert_not_contains "$RUN_OUT" "version skew" "the 'unknown' sentinel is not treated as a real mismatch"
+}
+
+# With HOME unset and no CLAUDE_INSTALLED_PLUGINS override, the registry path
+# default must degrade to an unreadable path (→ skip), NOT abort the whole script
+# with `HOME: unbound variable` under `set -u`. `print` still exits 0.
+test_launch_unset_home_does_not_crash() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    # Deliberately DO NOT pass HOME or CLAUDE_INSTALLED_PLUGINS.
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=HOME \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "unset HOME does not crash the guard (print exits 0)"
+    assert_contains "$RUN_OUT" "tmux new-session" "print still emits its line with HOME unset"
+    assert_not_contains "$RUN_OUT" "unbound variable" "no nounset abort on the HOME default"
+}
+
+# No installed-plugins registry (the common host / bare-linux case) → the active
+# version is undeterminable, so the guard SKIPS silently. `print` emits its line
+# with no skew warning.
+test_launch_version_undeterminable_skips() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            CLAUDE_INSTALLED_PLUGINS="$sb/no-such-registry.json" \
+            "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "undeterminable version skips the guard, print exits 0"
+    assert_contains "$RUN_OUT" "tmux new-session" "print still emits its line"
+    assert_not_contains "$RUN_OUT" "version skew" "no skew warning when undeterminable"
 }
 
 # --- worktree-new.sh --------------------------------------------------------
@@ -410,6 +575,12 @@ run_test test_launch_print_non_numeric_exits_2 "golem-launch: print with a non-n
 run_test test_launch_missing_worktree_exits_2 "golem-launch: launch with a missing worktree exits 2"
 run_test test_launch_preflight_rules_present_exits_0 "golem-launch: preflight with all rules present exits 0"
 run_test test_launch_preflight_rules_missing_exits_3 "golem-launch: preflight with a missing rule exits 3"
+run_test test_launch_version_match_passes "golem-launch: matched plugin version passes the skew guard"
+run_test test_launch_version_skew_refuses_exit_3 "golem-launch: version skew refuses dispatch (exit 3)"
+run_test test_launch_version_skew_escape_hatch "golem-launch: GOLEM_SKIP_VERSION_CHECK downgrades skew to a warning"
+run_test test_launch_version_unknown_sentinel_skips "golem-launch: 'unknown' sentinel version skips the guard (no false positive)"
+run_test test_launch_unset_home_does_not_crash "golem-launch: unset HOME does not crash the version guard"
+run_test test_launch_version_undeterminable_skips "golem-launch: undeterminable version skips the guard"
 run_test test_worktree_new_non_integer_exits_2 "worktree-new: non-integer arg exits 2"
 run_test test_worktree_new_creates_worktree "worktree-new: creates the issue worktree + branch"
 run_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree exits 1"
