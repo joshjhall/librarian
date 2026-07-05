@@ -273,11 +273,15 @@ for the per-check commands, tables, and per-level rules.
    before any merge) → the **level-aware merge gate** (the merge invariant is
    checked first at every level incl. L4 — a not-green-and-clean loop is a
    **dead-end** that parks the PR and waits for a human; with the invariant
-   satisfied, **L3–L4** auto-merge squash+delete-branch then prune inline, **L1–L2**
-   stop for a human merge) → **label** `status/pr-pending` (remove
-   `status/in-progress`) → **comment**, **checkout main**, **delete state file**,
-   **show the PR URL** → the **L2 completion summary** block. Squash by default:
-   single-issue PRs keep history linear.
+   satisfied, **L3–L4** auto-merge squash+delete-branch then prune inline —
+   **worktree-aware**: from a linked worktree it merges without `--delete-branch`,
+   deletes the remote branch via `git push origin --delete`, skips the local
+   `checkout main`, and treats a non-zero `gh pr merge` whose PR is in fact
+   `MERGED` as post-merge cleanup (not a dead-end) — **L1–L2** stop for a human
+   merge) → **label** `status/pr-pending` (remove `status/in-progress`) →
+   **comment**, **checkout main** (skipped in a linked worktree), **delete state
+   file**, **show the PR URL** → the **L2 completion summary** block. Squash by
+   default: single-issue PRs keep history linear.
 
 ### Options 2 & 3
 
