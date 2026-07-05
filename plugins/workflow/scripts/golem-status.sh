@@ -112,8 +112,10 @@ fi
 # BLOCKED gate list above. Delegated to golem-gate-watch.sh --once-liveness so
 # the pulled status view and the proactive --stream-liveness watch share ONE
 # source of truth (same rule, same stall threshold) and can never drift. Each
-# line is either "golem-N alive, advancing ..." or "golem-N possible stall ...";
-# a golem at a fresh gate is reported as gated here, not stalled. Never
+# line is "golem-N alive, working ..." (pane spinner active), "golem-N ⚠ idle at
+# prompt ..." (errored/idle pane, issue #229), "golem-N alive (process up ...)"
+# (mtime heartbeat only), or "golem-N possible stall ..."; a golem at a fresh
+# gate is reported as gated here, not stalled. Never
 # kills/blocks a golem — it only points the operator at the suspect ones.
 if [ -x "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
     command echo ""

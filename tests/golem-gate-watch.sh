@@ -33,7 +33,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 GATE_WATCH="$REPO_ROOT/plugins/workflow/scripts/golem-gate-watch.sh"
 
-test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82)"
+test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229)"
 
 # _pane_rc <function-name> <text> — source the script (the main-guard makes it
 # sourceable without running the drive block) in a subshell and call one of its
@@ -305,14 +305,23 @@ test_jq_absent_is_silent_noop() {
 }
 
 # Liveness (#38): a golem whose activity proxy is INSIDE the stall window is a
-# positive heartbeat — "alive, advancing", exit 0, never a stall.
+# positive heartbeat — "alive (process up ...)", exit 0, never a stall. The
+# wording is "process up", not "advancing" (#229): with no live tmux pane the
+# sweep falls through to the mtime heartbeat, which proves only that the process
+# is up, not that work is happening.
 test_liveness_fresh_is_alive() {
     # age 0 (now), generous threshold -> alive.
     _run_liveness_snapshot 1200 0
 
     assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for a fresh golem"
     assert_contains "$LIVE_OUT" "golem-7" "Fresh golem appears in the liveness sweep"
-    assert_contains "$LIVE_OUT" "alive" "Fresh golem is reported alive/advancing"
+    assert_contains "$LIVE_OUT" "alive" "Fresh golem is reported alive"
+    # #229: the mtime heartbeat must NOT be worded "advancing" (reads as progress
+    # when it only proves the process is up); it is "process up" instead. The
+    # test env has no golem-7 tmux session, so the pane check falls through to
+    # this reworded mtime heartbeat.
+    assert_contains "$LIVE_OUT" "process up" "Fresh golem heartbeat is worded 'process up', not 'advancing'"
+    assert_not_contains "$LIVE_OUT" "advancing" "The misleading 'advancing' wording is gone (#229)"
     local stall_present=0
     case "$LIVE_OUT" in
         *stall*) stall_present=1 ;;
@@ -437,6 +446,35 @@ test_pane_is_plan_gate() {
         "Unrelated work output is NOT a plan gate"
 }
 
+# pane_liveness_class (#229): source the script (main-guard makes it sourceable)
+# in a subshell and echo the class the classifier prints for a pane sample.
+_pane_class() {
+    local text="$1"
+    (
+        source "$GATE_WATCH"
+        pane_liveness_class "$text"
+    ) 2>/dev/null
+}
+
+# pane_liveness_class (#229): the run-spinner marks "working"; the #229 error
+# signature and a bare auto-mode footer mark "idle"; the spinner WINS over the
+# footer (a working golem still paints the footer); unrelated text is "".
+test_pane_liveness_class() {
+    assert_equals "working" "$(_pane_class "... ⏵⏵ esc to interrupt")" \
+        "'esc to interrupt' spinner marks the pane working"
+    assert_equals "idle" "$(_pane_class "⏺ Unknown command: /next-issue")" \
+        "The #229 'Unknown command' failure marks the pane idle"
+    assert_equals "idle" "$(_pane_class "❯"$'\n'"  ⏵⏵ auto mode on")" \
+        "A bare 'auto mode on' footer (no spinner) marks the pane idle"
+    # Spinner precedence: both the working spinner AND the auto-mode footer on
+    # screen must resolve to working, not idle (a working auto-mode golem shows
+    # both). Guards the check order in the classifier.
+    assert_equals "working" "$(_pane_class "esc to interrupt"$'\n'"  ⏵⏵ auto mode on")" \
+        "The spinner wins over the auto-mode footer -> working"
+    assert_equals "" "$(_pane_class "just some scrolling build output")" \
+        "Unrelated pane text is indeterminate (empty class)"
+}
+
 # pane_is_gate: the generic permission-decision overlay matches (rc 0); other
 # text does not (rc 1). Distinct from the plan-gate matcher.
 test_pane_is_gate() {
@@ -496,7 +534,7 @@ run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts gole
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
 run_test test_escalation_surfaces_labelled "Escalation surfaces in BLOCKED, labelled distinctly; idle excluded"
 run_test test_jq_absent_is_silent_noop "jq absent from PATH: --once is a silent no-op despite a fresh gate"
-run_test test_liveness_fresh_is_alive "Liveness: fresh-activity golem reports alive/advancing"
+run_test test_liveness_fresh_is_alive "Liveness: fresh-activity golem reports alive (process up), not 'advancing'"
 run_test test_liveness_stale_is_possible_stall "Liveness: old-activity golem flagged a possible stall (exit 0)"
 run_test test_liveness_gated_not_stalled "Liveness: gated golem reported gated, not stalled"
 run_test test_liveness_threshold_env_overridable "Liveness: GOLEM_STALL_THRESHOLD is env-overridable"
@@ -505,6 +543,7 @@ run_test test_no_arg_defaults_to_once "No argument defaults to --once (not the e
 run_test test_fmt_age_formats "_fmt_age: seconds vs whole-minute formatting"
 run_test test_pane_is_plan_gate "pane_is_plan_gate matches plan overlays, not work output"
 run_test test_pane_is_gate "pane_is_gate matches the generic permission overlay only"
+run_test test_pane_liveness_class "pane_liveness_class: spinner=working, error/idle footer=idle, spinner wins"
 run_test test_emit_transitions_dedup "emit_transitions: prime/standing/new/changed/re-gate dedup"
 
 generate_report

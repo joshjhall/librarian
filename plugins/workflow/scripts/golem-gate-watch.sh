@@ -34,8 +34,17 @@
 # from a hung one. The liveness sweep turns "absence of a gate" into a positive
 # heartbeat: per live/cached golem it derives a cheap progress proxy (the newest
 # mtime among its worktree index/dir and status-cache file) and classifies it
-#   "golem-N alive, advancing" (activity within GOLEM_STALL_THRESHOLD), or
+#   "golem-N alive (process up, last activity Ns ago)" (mtime within
+#     GOLEM_STALL_THRESHOLD), or
 #   "golem-N: possible stall — no progress for Nm" (older).
+# The mtime heartbeat proves only that the PROCESS/worktree is live, NOT that
+# work is happening — right after launch those mtimes are fresh even if the
+# session errored on line 1 and went idle at its prompt (issue #229). So when a
+# live golem-* tmux pane is scrapeable, `pane_liveness_class` overrides the mtime
+# proxy with a stronger read: "alive, working" when the `esc to interrupt` run-
+# spinner is on screen, or "⚠ idle at prompt" on an error/idle signature. The
+# pane check is best-effort — headless/container golems the host tmux can't see
+# fall back to the reworded mtime heartbeat.
 # A golem currently sitting at a fresh feed gate is reported as gated, NOT
 # stalled (the two are distinct — a gate is expected supervision; a stall is
 # the suspect case). This is a SOFT, advisory signal: it never kills, blocks, or
@@ -246,6 +255,40 @@ panes_snapshot() {
     done
 }
 
+# Classify a captured pane for the liveness sweep (issue #229). Unlike the
+# gate matchers above (which detect a modal permission/plan OVERLAY), this reads
+# the ordinary session surface to tell "actually working" from "idle/errored at
+# the prompt" — the distinction the mtime heartbeat cannot make.
+#   "working" — the `esc to interrupt` run-spinner hint is on screen; the
+#               reliable positive "a command is executing right now" marker.
+#   "idle"    — an error/idle signature: the exact #229 `Unknown command`
+#               failure, or the bare `auto mode on` footer with no spinner above
+#               it (orchestrate golems always run auto mode, so that footer with
+#               no spinner means the session is parked at its prompt).
+#   ""        — indeterminate (e.g. a transient mid-render capture); the caller
+#               falls back to the mtime heartbeat.
+# The spinner is checked FIRST so it wins even when the `auto mode on` footer is
+# also painted (a working golem still shows the footer). Prints the class.
+pane_liveness_class() {
+    case "$1" in
+        *"esc to interrupt"*)
+            command echo "working"
+            return 0
+            ;;
+    esac
+    case "$1" in
+        *"Unknown command"*)
+            command echo "idle"
+            return 0
+            ;;
+        *"auto mode on"*)
+            command echo "idle"
+            return 0
+            ;;
+    esac
+    command echo ""
+}
+
 # ---------------------------------------------------------------------------
 # Liveness channel (issue #38)
 # ---------------------------------------------------------------------------
@@ -348,7 +391,7 @@ liveness_snapshot() {
         done < <(feed_snapshot "$feed")
     fi
 
-    local now act age
+    local now act age pane pclass
     now="$(/usr/bin/date +%s)"
     # Stable numeric order so successive snapshots line up for the operator.
     for n in $(command echo "$golems" | /usr/bin/tr ' ' '\n' | /usr/bin/sort -n); do
@@ -357,6 +400,27 @@ liveness_snapshot() {
             /usr/bin/printf '%s\t%s\n' "golem-$n" "gated — awaiting decision (not a stall)"
             continue
         fi
+        # Prefer a live pane read over the mtime heartbeat: it can tell "actually
+        # working" (run-spinner) from "idle/errored at the prompt" (#229), which
+        # the mtime proxy cannot. Best-effort — a headless/container golem with
+        # no host-visible tmux session yields no class and falls through to the
+        # mtime heartbeat below.
+        if command -v tmux >/dev/null 2>&1 && tmux has-session -t "golem-$n" 2>/dev/null; then
+            pane="$(tmux capture-pane -p -t "golem-$n" 2>/dev/null || true)"
+            if [ -n "$pane" ]; then
+                pclass="$(pane_liveness_class "$pane")"
+                case "$pclass" in
+                    working)
+                        /usr/bin/printf '%s\t%s\n' "golem-$n" "alive, working (esc-to-interrupt active)"
+                        continue
+                        ;;
+                    idle)
+                        /usr/bin/printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (check pane)"
+                        continue
+                        ;;
+                esac
+            fi
+        fi
         act="$(_golem_last_activity "$n" "$root" "$status_dir")"
         [ -z "$act" ] && continue
         age=$((now - act))
@@ -364,7 +428,7 @@ liveness_snapshot() {
         if [ "$age" -gt "$stall_threshold" ]; then
             /usr/bin/printf '%s\t%s\n' "golem-$n" "possible stall — no progress for $(_fmt_age "$age")"
         else
-            /usr/bin/printf '%s\t%s\n' "golem-$n" "alive, advancing (last activity $(_fmt_age "$age") ago)"
+            /usr/bin/printf '%s\t%s\n' "golem-$n" "alive (process up, last activity $(_fmt_age "$age") ago)"
         fi
     done
 }
