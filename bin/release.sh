@@ -31,6 +31,8 @@ export BIN_DIR
 . "${BIN_DIR}/lib/version-utils.sh"
 # shellcheck source=lib/release/git-cliff.sh
 . "${BIN_DIR}/lib/release/git-cliff.sh"
+# shellcheck source=lib/release/changelog.sh
+. "${BIN_DIR}/lib/release/changelog.sh"
 # shellcheck source=lib/release/git-automation.sh
 . "${BIN_DIR}/lib/release/git-automation.sh"
 
@@ -133,61 +135,6 @@ if [ "$CURRENT_VERSION" = "$NEW_VERSION" ] && [ "$FORCE_UPDATE" = "false" ]; the
     exit 1
 fi
 
-# Regenerate CHANGELOG.md in place from conventional commits for $new_version
-# ($1), via git-cliff. This mutates CHANGELOG.md as a side effect. Return paths
-# and the resulting file state:
-#   --skip-changelog set   -> returns 0, file left untouched.
-#   git-cliff unavailable  -> returns 1, file left untouched.
-#   git-cliff run failed   -> returns 1; CHANGELOG.md left in whatever partial
-#                             state git-cliff wrote before failing — do NOT trust it.
-#   empty-render guard hit -> returns 1 (no "## [$new_version]" section, i.e.
-#                             git-cliff produced a headerless changelog); file
-#                             is left as git-cliff wrote it — do NOT commit it.
-#   success                -> returns 0, file regenerated with trailing blank
-#                             lines trimmed (MD012).
-# The sole caller swallows the exit code (`generate_changelog ... || true`), so
-# anything relying on the outcome must inspect CHANGELOG.md's content itself.
-generate_changelog() {
-    local new_version="$1"
-
-    if [ "$SKIP_CHANGELOG" = "true" ]; then
-        command echo "Skipping CHANGELOG generation"
-        return 0
-    fi
-
-    command echo "Generating CHANGELOG.md..."
-    if ! ensure_git_cliff; then
-        command echo "Warning: git-cliff unavailable, skipping CHANGELOG generation" >&2
-        command echo "  Install git-cliff, then: git-cliff -o CHANGELOG.md --tag v$new_version --include-path '**/*'" >&2
-        return 1
-    fi
-
-    # --include-path '**/*' forces full-repo commit scope. git-cliff 2.x
-    # otherwise scopes commits to the current directory, so running this script
-    # from a subdirectory or a linked worktree (e.g. .claude/worktrees/*, as in
-    # a bare-repo checkout) yields an EMPTY changelog while still exiting 0 — a
-    # silent wipe of the existing history. The glob pins scope to the whole repo
-    # regardless of the working directory the release is cut from.
-    if git-cliff -o CHANGELOG.md --tag "v$new_version" --include-path '**/*'; then
-        # Guard against a silent empty render: git-cliff exits 0 even when it
-        # produces only the header (no version sections), which would commit a
-        # wiped changelog. Require the new version's section to be present.
-        if ! command grep -q "## \[$new_version\]" CHANGELOG.md; then
-            command echo "Error: generated CHANGELOG.md has no [$new_version] section" >&2
-            command echo "  (git-cliff produced an empty/headerless changelog — refusing to wipe history)" >&2
-            return 1
-        fi
-        # Trim trailing blank lines so the file passes markdown lint (MD012).
-        local tmp_file
-        tmp_file="$(command mktemp)"
-        command sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' CHANGELOG.md >"$tmp_file" && command mv "$tmp_file" CHANGELOG.md
-        command echo "✓ Generated CHANGELOG.md"
-        return 0
-    fi
-    command echo "Warning: failed to generate CHANGELOG.md" >&2
-    return 1
-}
-
 if [ "$NON_INTERACTIVE" = "false" ]; then
     command echo ""
     read -r -p "Continue with release v$NEW_VERSION? (y/n) " -n 1 reply
@@ -207,12 +154,38 @@ node "${BIN_DIR}/stamp-versions.mjs" "$NEW_VERSION"
 node "${PROJECT_ROOT}/tests/validate-manifests.mjs"
 
 # 3. Regenerate the changelog.
+#
+# Capture the exit code rather than swallowing it with `|| true`. A non-zero
+# return means CHANGELOG.md is in a bad state (git-cliff unavailable, a partial
+# write, or a headerless/wiped render — see generate_changelog's contract). When
+# the release would otherwise be automated (any of --auto-commit/--auto-tag/
+# --auto-push, i.e. --full-auto), a broken changelog must HARD-ABORT here: the
+# pushed tag triggers release.yml to cosign-sign and publish a release built
+# from whatever CHANGELOG.md holds, with no human to notice the stderr warning
+# in a --non-interactive CI run (issue #233). A purely interactive prepare (no
+# auto flags) stays tolerant — warn and let the human inspect the file before
+# committing by hand.
 command echo ""
-generate_changelog "$NEW_VERSION" || true
+changelog_rc=0
+generate_changelog "$NEW_VERSION" || changelog_rc=$?
+if [ "$changelog_rc" -ne 0 ] && [ "$SKIP_CHANGELOG" = "false" ] &&
+    { [ "$AUTO_COMMIT" = "true" ] || [ "$AUTO_TAG" = "true" ] || [ "$AUTO_PUSH" = "true" ]; }; then
+    command echo "Error: CHANGELOG generation failed — refusing to commit/tag/push a release with a broken changelog." >&2
+    command echo "  Fix the changelog (or re-run with --skip-changelog to bypass) before automating the release." >&2
+    exit 1
+fi
+
+# If changelog generation failed on a non-automated prepare (tolerated above),
+# warn explicitly and DON'T claim CHANGELOG.md was updated in the summary — the
+# file may be stale, partially wiped, or headerless (see generate_changelog's
+# contract), so the operator must inspect it before committing by hand.
+if [ "$changelog_rc" -ne 0 ] && [ "$SKIP_CHANGELOG" = "false" ]; then
+    command echo "Warning: CHANGELOG generation FAILED — inspect CHANGELOG.md before committing." >&2
+fi
 
 command echo ""
 command echo "✓ Release $NEW_VERSION prepared."
-command echo "Updated: VERSION, marketplace.json, plugins/*/plugin.json$([ "$SKIP_CHANGELOG" = "false" ] && command echo ", CHANGELOG.md")"
+command echo "Updated: VERSION, marketplace.json, plugins/*/plugin.json$([ "$SKIP_CHANGELOG" = "false" ] && [ "$changelog_rc" -eq 0 ] && command echo ", CHANGELOG.md")"
 command echo ""
 
 # 4. Optional git automation (commit / tag / push / GitHub release).
