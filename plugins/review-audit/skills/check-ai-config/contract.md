@@ -17,6 +17,8 @@ compatible_with: "finding-schema.md >= 1.0"
 | `agent-frontmatter`    | HIGH      | deterministic | >= 0.9     |
 | `skill-frontmatter`    | HIGH      | deterministic | >= 0.9     |
 | `ai-file-bloat`        | HIGH      | deterministic | >= 0.9     |
+| `doc-file-bloat`       | HIGH      | deterministic | >= 0.9     |
+| `claude-md-drift`      | MEDIUM    | heuristic     | 0.7-0.9    |
 | `config-inconsistency` | MEDIUM    | heuristic     | 0.7-0.9    |
 | `mcp-misconfiguration` | HIGH      | deterministic | >= 0.9     |
 | `hook-safety`          | HIGH      | deterministic | >= 0.9     |

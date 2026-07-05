@@ -222,11 +222,16 @@ check_skill_frontmatter() {
 
 check_ai_file_bloat() {
     local file="$1"
-    local basename lines threshold_warn threshold_high file_type
+    local basename lines threshold_warn threshold_high file_type category
 
     basename=$(/usr/bin/basename "$file")
     lines=$(/usr/bin/wc -l <"$file" 2>/dev/null) || return
     lines=$((lines + 0)) # ensure numeric
+
+    # `category` splits documentation bloat (docs/*.md) into its own
+    # `doc-file-bloat` slug — the canonical name in finding-schema.md — while the
+    # AI-instruction files (CLAUDE.md / SKILL.md / agent md) stay `ai-file-bloat`.
+    category="ai-file-bloat"
 
     # Determine file type and thresholds
     case "$file" in
@@ -249,19 +254,102 @@ check_ai_file_bloat() {
             threshold_warn=$DOC_WARN
             threshold_high=$DOC_HIGH
             file_type="documentation"
+            category="doc-file-bloat"
             ;;
         *) return ;;
     esac
 
     if [ "$lines" -gt "$threshold_high" ]; then
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
-            "$file" "1" "ai-file-bloat" \
+            "$file" "1" "$category" \
             "${file_type} exceeds high threshold: ${lines} lines (>${threshold_high})" "HIGH"
     elif [ "$lines" -gt "$threshold_warn" ]; then
         /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
-            "$file" "1" "ai-file-bloat" \
+            "$file" "1" "$category" \
             "${file_type} exceeds warning threshold: ${lines} lines (>${threshold_warn})" "MEDIUM"
     fi
+}
+
+# =============================================================================
+# Category: claude-md-drift
+# CLAUDE.md / AGENTS.md referencing a relative file path that does not exist
+# (resolved against the document's own directory, like check-docs-deadlinks).
+# MEDIUM — the LLM pass separates literal drift from illustrative paths and
+# verifies referenced *commands* (not checked here).
+# =============================================================================
+
+check_claude_md_drift() {
+    local file="$1"
+
+    case "$file" in
+        */CLAUDE.md | */AGENTS.md) ;;
+        *) return ;;
+    esac
+
+    local file_dir
+    file_dir=$(/usr/bin/dirname "$file")
+
+    # Backtick-quoted relative path with a source-file extension and >=1 `/`. The
+    # char class [A-Za-z0-9_.-] excludes `$ { } * :`, so `${VAR}` templates,
+    # globs, and `scheme://` URLs cannot match — the skip is built into the regex.
+    /usr/bin/grep -noE '`[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.(sh|py|js|mjs|ts|json|ya?ml|md|toml)`' "$file" 2>/dev/null |
+        while IFS=: read -r line_num match; do
+            target="${match#\`}"
+            target="${target%\`}"
+            if [ ! -e "${file_dir}/${target}" ]; then
+                evidence=$(truncate_chars 80 "$target")
+                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "claude-md-drift" \
+                    "Referenced path not found: ${evidence}" "MEDIUM"
+            fi
+        done || true
+}
+
+# =============================================================================
+# Category: config-inconsistency
+# Skill/agent markdown citing a `<plugin>:<name>` agent or skill that does not
+# exist. Only fires when `<plugins>/<plugin>/` is a real plugin dir but neither
+# agents/<name>.md nor skills/<name>/SKILL.md resolves under it — so non-plugin
+# `foo:bar` tokens (e.g. `go:generate`) are ignored. MEDIUM.
+# =============================================================================
+
+check_config_inconsistency() {
+    local file="$1"
+
+    case "$file" in
+        */skills/*.md | */agents/*.md) ;;
+        *) return ;;
+    esac
+
+    # The <root>/plugins dir this file lives under (first occurrence, mirroring
+    # python's path.split("/plugins/")[0]).
+    local plugins_dir
+    case "$file" in
+        */plugins/*) plugins_dir="${file%%/plugins/*}/plugins" ;;
+        plugins/*) plugins_dir="plugins" ;;
+        *) return ;;
+    esac
+
+    # Backtick-quoted `<plugin>:<name>` (lowercase kebab both sides). The match
+    # itself carries a colon, so split the grep `line:match` prefix manually
+    # rather than via IFS=:.
+    /usr/bin/grep -noE '`[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*`' "$file" 2>/dev/null |
+        while IFS= read -r row; do
+            line_num="${row%%:*}"
+            match="${row#*:}"
+            token="${match#\`}"
+            token="${token%\`}"
+            plugin="${token%%:*}"
+            name="${token##*:}"
+            [ -d "${plugins_dir}/${plugin}" ] || continue
+            if [ ! -f "${plugins_dir}/${plugin}/agents/${name}.md" ] &&
+                [ ! -f "${plugins_dir}/${plugin}/skills/${name}/SKILL.md" ]; then
+                evidence=$(truncate_chars 80 "${plugin}:${name}")
+                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "config-inconsistency" \
+                    "Referenced agent/skill not found: ${evidence}" "MEDIUM"
+            fi
+        done || true
 }
 
 # =============================================================================
@@ -402,6 +490,8 @@ while IFS= read -r file; do
     check_agent_frontmatter "$file"
     check_skill_frontmatter "$file"
     check_ai_file_bloat "$file"
+    check_claude_md_drift "$file"
+    check_config_inconsistency "$file"
     check_mcp_config "$file"
     check_hook_safety "$file"
     check_harness_logic "$file"

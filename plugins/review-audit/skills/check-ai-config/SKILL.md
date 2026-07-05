@@ -38,13 +38,40 @@ other skills, missing output format specification.
 
 ### ai-file-bloat (deterministic)
 
-Pre-scan detects all instances via line counting against configurable
+Pre-scan detects all AI-instruction files (CLAUDE.md/AGENTS.md, skill
+definitions, agent definitions) via line counting against configurable
 thresholds. LLM confirms whether large files contain decomposable sections.
+Documentation files (`docs/*.md`) are counted under `doc-file-bloat` instead.
 
-### config-inconsistency (heuristic)
+### doc-file-bloat (deterministic)
 
-LLM checks: skills referencing non-existent agents, CLAUDE.md claims that
-don't match the codebase, contradictions between skill and agent instructions.
+Pre-scan detects oversized documentation files (`docs/*.md`) via line counting
+against the `doc_md` thresholds in `thresholds.yml` (warning 500 / high 800 by
+default). Split out of `ai-file-bloat` so documentation bloat carries its own
+canonical slug. LLM confirms whether the file is decomposable.
+
+### claude-md-drift (deterministic pre-scan + heuristic)
+
+Pre-scan detects: backtick-quoted relative file paths in `CLAUDE.md` /
+`AGENTS.md` that do not resolve against the document's own directory. It is
+conservative by design (emits MEDIUM): the char class excludes `${VAR}`
+templates, globs, and URLs, and only file/dir paths with a source-file
+extension are checked. LLM adds: separates literal drift from *illustrative*
+paths (a doc may legitimately name a path that does not exist at that
+location), and verifies referenced **commands** / directories the deterministic
+pass does not check.
+
+### config-inconsistency (deterministic pre-scan + heuristic)
+
+Pre-scan detects: skill/agent markdown citing a `` `<plugin>:<name>` `` agent or
+skill cross-reference where the plugin dir exists but neither
+`agents/<name>.md` nor `skills/<name>/SKILL.md` resolves — a broken reference.
+Non-plugin `foo:bar` tokens (e.g. `go:generate`) are ignored, so it emits
+MEDIUM for the LLM to confirm.
+
+LLM adds: CLAUDE.md claims that don't match the codebase, contradictions
+between skill and agent instructions, and cross-references the deterministic
+pass cannot resolve.
 
 ### mcp-misconfiguration (deterministic + heuristic)
 

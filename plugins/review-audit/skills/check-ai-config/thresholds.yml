@@ -16,6 +16,14 @@ severity:
   ai-file-bloat:
     over_warning: medium
     over_high: high
+  doc-file-bloat:
+    over_warning: medium
+    over_high: high
+  claude-md-drift:
+    broken_reference: medium
+  config-inconsistency:
+    missing_agent: medium
+    missing_skill: medium
   mcp-misconfiguration:
     insecure_http: high
   hook-safety:

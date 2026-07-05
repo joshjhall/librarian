@@ -339,6 +339,126 @@ test_harness_logic() {
         "harness-logic: namespaced agentType + lockfile-only install + indexed ref are silent"
 }
 
+# ============================================================================
+# doc-file-bloat — */docs/*.md over the DOC_WARN/DOC_HIGH thresholds. This is the
+# arm split out of ai-file-bloat (#222): a docs file must emit doc-file-bloat and
+# NOT ai-file-bloat.
+# ============================================================================
+test_doc_file_bloat() {
+    local d f list
+    d="$(fresh_dir)"
+
+    /usr/bin/mkdir -p "$d/docs"
+    f="$d/docs/guide.md"
+    /usr/bin/printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
+    list="$(list_of "$f")"
+
+    # 5-line docs file, HIGH driven to 3 -> exceeds high (HIGH), under doc-file-bloat.
+    assert_fires doc-file-bloat "$list" "documentation exceeds high threshold" \
+        "doc-file-bloat: docs/*.md over high threshold flagged" \
+        DOC_WARN=2 DOC_HIGH=3
+    # It must NOT surface under the old ai-file-bloat slug (the split is the point).
+    assert_silent ai-file-bloat "$list" \
+        "doc-file-bloat: docs bloat does not emit under ai-file-bloat" \
+        DOC_WARN=2 DOC_HIGH=3
+
+    # Warning arm (MEDIUM).
+    assert_fires doc-file-bloat "$list" "documentation exceeds warning threshold" \
+        "doc-file-bloat: docs/*.md over warning threshold flagged" \
+        DOC_WARN=3 DOC_HIGH=99
+
+    # Counter: comfortably under both -> silent.
+    assert_silent doc-file-bloat "$list" \
+        "doc-file-bloat: docs/*.md under thresholds is silent" \
+        DOC_WARN=50 DOC_HIGH=99
+}
+
+# ============================================================================
+# claude-md-drift — CLAUDE.md/AGENTS.md backtick paths that do not resolve.
+# ============================================================================
+test_claude_md_drift() {
+    local d f list
+    d="$(fresh_dir)"
+
+    # A real target (created) and a ghost target, plus a ${VAR} template, a glob,
+    # and a URL — only the ghost path must fire.
+    /usr/bin/mkdir -p "$d/bin"
+    : >"$d/bin/real.sh"
+    f="$d/CLAUDE.md"
+    {
+        /usr/bin/printf '%s\n' 'Good ref `bin/real.sh` here.'
+        /usr/bin/printf '%s\n' 'Bad ref `bin/ghost.sh` here.'
+        /usr/bin/printf '%s\n' 'Template `${ROOT}/scripts/x.sh` is skipped.'
+        /usr/bin/printf '%s\n' 'Glob `plugins/*/patterns.sh` is skipped.'
+        /usr/bin/printf '%s\n' 'URL https://x.example/a.md is skipped.'
+    } >"$f"
+    list="$(list_of "$f")"
+    assert_fires claude-md-drift "$list" "bin/ghost.sh" \
+        "claude-md-drift: missing backtick path flagged"
+
+    # Counter: a CLAUDE.md whose only backtick path exists is silent.
+    d="$(fresh_dir)"
+    /usr/bin/mkdir -p "$d/bin"
+    : >"$d/bin/present.sh"
+    f="$d/CLAUDE.md"
+    /usr/bin/printf '%s\n' 'Only ref `bin/present.sh` which exists.' >"$f"
+    list="$(list_of "$f")"
+    assert_silent claude-md-drift "$list" \
+        "claude-md-drift: an existing backtick path is silent"
+
+    # Counter: a template / glob / URL-only doc is silent (no literal path).
+    d="$(fresh_dir)"
+    f="$d/CLAUDE.md"
+    {
+        /usr/bin/printf '%s\n' 'Template `${ROOT}/scripts/x.sh` only.'
+        /usr/bin/printf '%s\n' 'Glob `plugins/*/patterns.sh` only.'
+    } >"$f"
+    list="$(list_of "$f")"
+    assert_silent claude-md-drift "$list" \
+        "claude-md-drift: template/glob tokens are silent"
+}
+
+# ============================================================================
+# config-inconsistency — skill/agent md citing a broken <plugin>:<name> ref.
+# The fixture must live under a real .../plugins/<plugin>/... tree so the
+# detector's plugins-root walk and existence checks resolve.
+# ============================================================================
+test_config_inconsistency() {
+    local d list f
+    d="$(fresh_dir)"
+
+    # A plugins tree with one real agent + one real skill in plugin "demo".
+    /usr/bin/mkdir -p "$d/plugins/demo/agents"
+    : >"$d/plugins/demo/agents/checker.md"
+    /usr/bin/mkdir -p "$d/plugins/demo/skills/build"
+    : >"$d/plugins/demo/skills/build/SKILL.md"
+
+    # The scanned skill md cites a real agent, a real skill, a non-plugin token,
+    # and a ghost — only the ghost must fire.
+    /usr/bin/mkdir -p "$d/plugins/demo/skills/host"
+    f="$d/plugins/demo/skills/host/SKILL.md"
+    {
+        /usr/bin/printf '%s\n' 'Real agent `demo:checker` ok.'
+        /usr/bin/printf '%s\n' 'Real skill `demo:build` ok.'
+        /usr/bin/printf '%s\n' 'Non-plugin `go:generate` skipped.'
+        /usr/bin/printf '%s\n' 'Ghost `demo:ghost` bad.'
+    } >"$f"
+    list="$(list_of "$f")"
+    assert_fires config-inconsistency "$list" "demo:ghost" \
+        "config-inconsistency: broken plugin:name cross-ref flagged"
+
+    # Counter: an agent md citing only resolvable refs is silent.
+    /usr/bin/mkdir -p "$d/plugins/demo/agents"
+    f="$d/plugins/demo/agents/clean.md"
+    {
+        /usr/bin/printf '%s\n' 'See `demo:checker` and `demo:build`.'
+        /usr/bin/printf '%s\n' 'And `go:generate` (non-plugin, ignored).'
+    } >"$f"
+    list="$(list_of "$f")"
+    assert_silent config-inconsistency "$list" \
+        "config-inconsistency: resolvable + non-plugin refs are silent"
+}
+
 # --- Drive -------------------------------------------------------------------
 if [ "$HAVE_PY" -eq 0 ] && [ ! -f "$SH" ]; then
     skip_test "no python3>=3.11 and no patterns.sh — nothing to assert"
@@ -352,5 +472,8 @@ run_test test_ai_file_bloat "ai-file-bloat: warn/high threshold arms (CLAUDE.md,
 run_test test_mcp_config "mcp-misconfiguration: insecure http:// vs localhost allowlist"
 run_test test_hook_safety "hook-safety: destructive commands + secret leaks vs benign"
 run_test test_harness_logic "harness-logic: ref-collision, bare agentType, unsafe interp, install"
+run_test test_doc_file_bloat "doc-file-bloat: docs/*.md warn/high arms, not ai-file-bloat"
+run_test test_claude_md_drift "claude-md-drift: missing backtick path vs existing/template/glob"
+run_test test_config_inconsistency "config-inconsistency: broken plugin:name ref vs resolvable/non-plugin"
 
 generate_report

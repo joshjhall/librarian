@@ -159,10 +159,27 @@ run(`x agentType: 'bare'`)
 sh(`claude --dangerously-skip-permissions ${task}`)
 sh("npm install")
 EOF
+# CLAUDE.md carries a broken backtick path (claude-md-drift fires) and a real one
+# (the exists-branch stays silent). `dir/ghost.sh` resolves under $FIXDIR/ai and
+# is absent; real.sh is created below.
+mkdir -p "$FIXDIR/ai/dir"
+: >"$FIXDIR/ai/dir/real.sh"
 cat >"$FIXDIR/ai/CLAUDE.md" <<'EOF'
-line one
-line two
+line one with a bad `dir/ghost.sh` reference
+line two with a good `dir/real.sh` reference
 line three
+EOF
+# A plugins-shaped tree so config-inconsistency's plugins-root walk resolves: a
+# real agent under plugin 'demo', and a host SKILL.md citing a real + ghost ref.
+mkdir -p "$FIXDIR/plugins/demo/agents"
+: >"$FIXDIR/plugins/demo/agents/checker.md"
+mkdir -p "$FIXDIR/plugins/demo/skills/host"
+cat >"$FIXDIR/plugins/demo/skills/host/SKILL.md" <<'EOF'
+---
+description: A host skill referencing agents.
+---
+## Workflow
+Uses `demo:checker` (real) and `demo:ghost` (missing) and `go:generate` (skip).
 EOF
 # Wrong-basename agent (dir 'rev' but file 'other.md') -> naming arm.
 cat >"$AICFG/other.md" <<'EOF'
@@ -192,6 +209,7 @@ printf '%s\n' \
     "$AICFG/rev.md" "$AICFG/other.md" "$NOFMDIR/nofm.md" "$BAREDIR/bare.md" \
     "$SKILLDIR/SKILL.md" "$FIXDIR/ai/mcp.json" "$FIXDIR/ai/hook.sh" \
     "$FIXDIR/ai/demo.workflow.js" "$FIXDIR/ai/CLAUDE.md" "$FIXDIR/ai/docs/guide.md" \
+    "$FIXDIR/plugins/demo/skills/host/SKILL.md" \
     >"$AICFG_LIST"
 
 # Single-arg corpus: a file list of every fixture above.
