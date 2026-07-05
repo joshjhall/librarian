@@ -55,12 +55,50 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
 
    With the invariant satisfied, dispatch by level:
 
-   - **L3–L4 — auto-merge, then prune.** Merge the PR yourself (squash,
-     delete-branch), then do the cleanup inline:
+   - **L3–L4 — auto-merge, then prune (worktree-aware).** Merge the PR yourself
+     (squash), then do the cleanup inline. First detect whether this run is in a
+     **linked worktree** — an `EnterWorktree` session or an `orchestrate`
+     per-golem worktree — because `main` is checked out in the **primary**
+     worktree and git refuses a second checkout of it. Use the same `git
+     rev-parse` idiom as `hooks/golem-notify.sh` and
+     `scripts/seed-worktree-trust.sh`: `git rev-parse --git-dir` != `git rev-parse
+     --git-common-dir` means a linked worktree (`IN_WORKTREE=1`); equal means the
+     primary checkout (`IN_WORKTREE=0`). Merge on that flag —
+
+     **Primary checkout** — merge with `--delete-branch`; `gh` fast-forwards the
+     local `main`:
 
      ```bash
      gh pr merge "$PR_NUM" --squash --delete-branch
      ```
+
+     **Linked worktree** — do NOT pass `--delete-branch` (it forces a local `git
+     checkout main` to prune, which fails with `'main' is already used by worktree
+     at …`). Merge without it, then delete the remote branch explicitly, which
+     needs no local checkout:
+
+     ```bash
+     gh pr merge "$PR_NUM" --squash
+     git push origin --delete "$BRANCH"   # remote prune; ignore "remote ref does not exist"
+     ```
+
+     **If `gh pr merge` exits non-zero, classify before calling it a dead-end.** A
+     post-merge **cleanup** failure (the local `checkout main` in a worktree) is
+     NOT a merge refusal — the server-side merge already landed. Check the PR's
+     real state with `gh pr view "$PR_NUM" --json state -q .state`: a state of
+     **`MERGED`** means the merge succeeded and the non-zero was cleanup — this is
+     **not** a dead-end, so finish the remote-branch delete if it did not run
+     (`git push origin --delete "$BRANCH"`, ignore "remote ref does not exist")
+     and continue to the cleanup steps below. **Any other state** (`OPEN`, blank)
+     is a genuine refusal (branch protection needs a human approval the golem
+     can't supply, or merge is disabled): treat it as a **dead-end** — log the
+     error, leave the PR open + labeled, emit the dead-end summary, and STOP for a
+     human. Never loop-retry a merge the platform refused.
+
+     The cleanup steps below run on **both** the clean-merge and the
+     MERGED-after-cleanup-failure paths. Steps a and b hit the API, not the local
+     tree, so a failed local checkout can never strand the label swap (the exact
+     half-finish issue #225 reports):
 
      a. Label the issue `status/pr-pending` → the `Closes #{N}` in the PR body
      closes it on merge; remove `status/in-progress`:
@@ -75,16 +113,13 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
         gh issue comment {N} --body "Fix merged in PR #{pr_number} (squash + delete-branch) after green CI + clean review."
         ```
 
-     c. `git checkout main` (then `git pull` to fast-forward the merge)
+     c. **Primary checkout only:** `git checkout main` (then `git pull` to
+     fast-forward the merge). **Skip in a linked worktree** (`IN_WORKTREE=1`) —
+     its HEAD need not move and the golem worktree is torn down by
+     `worktree-rm.sh`.
      d. Delete the state file (`.claude/memory/tmp/next-issue-{N}.json`)
      e. Show the PR URL, then **exit** — skip the L1–L2 labeling/comment steps
      below and Step 5.
-
-     If `gh pr merge` exits non-zero (e.g., branch protection needs a human
-     approval the golem can't supply, or auto-merge/merge is disabled), treat it
-     as a **dead-end**: log the error, leave the PR open + labeled, emit the
-     dead-end summary, and STOP for a human. Never loop-retry a merge that the
-     platform refused.
 
    - **L1–L2 — stop for a human merge.** Do NOT merge. Emit the completion
      summary (CI green, review clean, PR URL) and hand off to a human to merge —
@@ -113,7 +148,10 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    - GitHub: `gh issue comment {N} --body "Fix submitted in PR #{pr_number}"`
    - GitLab: `glab issue note {N} --message "Fix submitted in MR !{mr_number}"`
 
-1. **Checkout main**: `git checkout main`
+1. **Checkout main**: `git checkout main` — **skip in a linked worktree**
+   (`git rev-parse --git-dir` != `--git-common-dir`; see the L3–L4 detection
+   above), where `main` is checked out in the primary worktree and the checkout
+   would fail with `'main' is already used by worktree at …`.
 
 1. **Delete state file** (remove `.claude/memory/tmp/next-issue-{N}.json`)
 
