@@ -748,12 +748,21 @@ test_verify_sha512_download_failure_refuses() {
 test_verify_sha512_tampered_payload_refuses() {
     local sb rc=0
     gc_sandbox sb
+    local real bogus
     /usr/bin/printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
-    # The published checksum names a WRONG digest (a swapped/tampered asset):
-    # `<bogus-hex>  <asset>`. Real sha512sum -c must reject it.
-    /usr/bin/printf '%s  %s\n' \
-        "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" \
-        "$GC_ASSET" >"$sb/expected_sha"
+    # The published checksum names a WELL-FORMED but WRONG digest (a
+    # swapped/tampered asset). Derive it from the payload's REAL 128-hex digest
+    # with its first nibble flipped: this stays a valid 128-char SHA-512 line, so
+    # `sha512sum -c` reaches its DIGEST-COMPARISON path and reports a mismatch
+    # (`FAILED`) — NOT the "no properly formatted checksum lines found" PARSE
+    # rejection a wrong-length placeholder (e.g. 130 chars) would trip instead,
+    # which would leave the real mismatch path of this supply-chain gate untested.
+    real="$(cd "$sb/payload" && /usr/bin/sha512sum "$GC_ASSET" | /usr/bin/cut -c1-128)"
+    case "$real" in
+        0*) bogus="1${real#?}" ;;
+        *) bogus="0${real#?}" ;;
+    esac
+    /usr/bin/printf '%s  %s\n' "$bogus" "$GC_ASSET" >"$sb/expected_sha"
     gc_stub_curl "$sb" ok
     run_verify_sha512 "$sb" >/dev/null 2>&1 && rc=0 || rc=$?
     assert_exit 1 "$rc" "verify returns non-zero when the digest does not match the payload"

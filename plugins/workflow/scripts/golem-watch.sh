@@ -19,7 +19,16 @@ watch="$SCRIPT_DIR/golem-gate-watch.sh"
 
 command echo "Watching for golem permission gates (feed + panes). Ctrl-C to stop." >&2
 
-( "$watch" --stream-panes 2>/dev/null | /usr/bin/sed -u 's/^/[pane] /' ) &
+("$watch" --stream-panes 2>/dev/null | /usr/bin/sed -u 's/^/[pane] /') &
 pane_pid=$!
-trap '/usr/bin/kill "$pane_pid" 2>/dev/null || true' EXIT INT TERM
+# `pane_pid` is the backgrounded SUBSHELL wrapper `( watch | sed )`, not the
+# `golem-gate-watch.sh` worker running inside its pipeline. Killing only the
+# subshell orphans that worker (and the `sed`), leaving the pane watcher alive
+# past our exit — the very thing this trap exists to prevent. Reap the pipeline
+# CHILDREN first (`pkill -P`), then the subshell itself.
+cleanup_pane() {
+    /usr/bin/pkill -P "$pane_pid" 2>/dev/null || true
+    /usr/bin/kill "$pane_pid" 2>/dev/null || true
+}
+trap cleanup_pane EXIT INT TERM
 "$watch" --stream 2>/dev/null | /usr/bin/sed -u 's/^/[feed] /'
