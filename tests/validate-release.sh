@@ -624,6 +624,182 @@ test_release_changelog_failure_tolerated_without_auto() {
     assert_not_contains "$out" ", CHANGELOG.md" "the Updated: summary omits CHANGELOG.md on a failed generation"
 }
 
+# --- Group G: git-cliff.sh install + checksum verification (issue #221) ------
+#
+# git-cliff.sh exports ensure_git_cliff() (cargo/binary install dispatch) and
+# _git_cliff_verify_sha512() (the supply-chain checksum gate). Group E sources
+# git-cliff.sh only to satisfy changelog.sh and OVERRIDES ensure_git_cliff to a
+# stub, so neither function was ever exercised directly — a silent regression
+# (an inverted return code, a curl flag that no-ops the sha512 check) would ship
+# the broken control unnoticed. These source git-cliff.sh directly and drive
+# both functions with stubbed curl / a PATH-controlled digest tool — no network,
+# no sudo, no real install. _git_cliff_verify_sha512 takes three positional args
+# (<temp_dir> <asset> <asset_url>), so its four documented outcomes (download
+# fail, tampered payload, matched payload, no digest tool) can be driven in
+# isolation without touching ensure_git_cliff's install machinery.
+
+# shellcheck source=bin/lib/release/git-cliff.sh
+source "$REPO_ROOT/bin/lib/release/git-cliff.sh"
+
+# gc_sandbox <varname>
+# A fresh sandbox subdir holding a stubbin/ (prepended to PATH by the runners
+# below) plus an empty payload dir. Assigns the sandbox path to the caller's
+# named variable.
+gc_sandbox() {
+    local __out="$1" dir
+    dir="$(/usr/bin/mktemp -d "$WORKDIR/gc.XXXXXX")" || return 1
+    /usr/bin/mkdir -p "$dir/stubbin" "$dir/payload"
+    printf -v "$__out" '%s' "$dir"
+}
+
+# gc_stub_curl <sandbox> <mode>
+# Writes a `curl` stub into <sandbox>/stubbin. ensure_git_cliff / verify call it
+# as `curl -sfL <url> -o <outfile>`; the stub writes to the `-o` target so the
+# caller sees a downloaded file. Modes:
+#   ok       — write the sentinel checksum-file body (from <sandbox>/expected_sha)
+#              to the -o target and exit 0. Used for the matched/tampered digest
+#              cases, whose difference is only what expected_sha contains.
+#   fail     — exit 1 without writing (the undownloadable-checksum path).
+gc_stub_curl() {
+    local sb="$1" mode="$2"
+    /usr/bin/cat >"$sb/stubbin/curl" <<EOF
+#!/bin/sh
+# Parse out the -o target (the last arg after -o).
+out=""
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        -o) out="\$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+case "$mode" in
+    fail) exit 1 ;;
+    ok)
+        [ -n "\$out" ] || exit 1
+        /bin/cat "$sb/expected_sha" >"\$out"
+        exit 0 ;;
+esac
+EOF
+    /usr/bin/chmod +x "$sb/stubbin/curl"
+}
+
+# run_verify_sha512 <sandbox> <hermetic>
+# Sources git-cliff.sh in a subshell and runs
+# _git_cliff_verify_sha512 "$sb/payload" "$asset" "$url" with the stubbin on
+# PATH. The payload dir already holds the tarball named <asset>; the stub curl
+# writes <asset>.sha512 next to it. Echoes combined stdout+stderr, preserves the
+# exit code.
+#   hermetic="hermetic" → PATH = stubbin only (NO sha512sum/shasum anywhere), to
+#     drive the no-digest-tool fail-closed arm. The stub curl's /bin/sh shebang
+#     keeps it runnable; the function reaches coreutils via `command` builtins.
+#   otherwise           → stubbin prepended to a full PATH so real sha512sum runs.
+GC_ASSET="git-cliff-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
+GC_URL="https://example.invalid/${GC_ASSET}"
+run_verify_sha512() {
+    local sb="$1" hermetic="${2:-}" run_path
+    if [ "$hermetic" = "hermetic" ]; then
+        run_path="$sb/stubbin"
+    else
+        run_path="$sb/stubbin:$PATH"
+    fi
+    (
+        PATH="$run_path"
+        export PATH
+        # shellcheck source=bin/lib/release/git-cliff.sh
+        source "$REPO_ROOT/bin/lib/release/git-cliff.sh"
+        _git_cliff_verify_sha512 "$sb/payload" "$GC_ASSET" "$GC_URL"
+    ) 2>&1
+}
+
+test_ensure_git_cliff_short_circuits_when_present() {
+    local sb rc=0 out
+    gc_sandbox sb
+    # A stub `git-cliff` already on PATH: ensure_git_cliff must return 0 at the
+    # `command -v git-cliff` guard WITHOUT attempting any install. A marker file
+    # proves the install machinery (cargo/curl) was never reached — the stub
+    # git-cliff is inert (exit 0) and touches nothing.
+    /usr/bin/cat >"$sb/stubbin/git-cliff" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    /usr/bin/chmod +x "$sb/stubbin/git-cliff"
+    out="$(
+        run_path="$sb/stubbin:$PATH"
+        PATH="$run_path"
+        export PATH
+        # shellcheck source=bin/lib/release/git-cliff.sh
+        source "$REPO_ROOT/bin/lib/release/git-cliff.sh"
+        ensure_git_cliff 2>&1
+    )" || rc=$?
+    assert_exit 0 "$rc" "ensure_git_cliff returns 0 when git-cliff is already on PATH"
+    assert_not_contains "$out" "installing" "the short-circuit does not attempt an install"
+}
+
+test_verify_sha512_download_failure_refuses() {
+    local sb rc=0 out
+    gc_sandbox sb
+    /usr/bin/printf 'payload-bytes\n' >"$sb/payload/$GC_ASSET"
+    gc_stub_curl "$sb" fail
+    out="$(run_verify_sha512 "$sb")" || rc=$?
+    assert_exit 1 "$rc" "verify returns non-zero when the .sha512 cannot be downloaded"
+    assert_contains "$out" "Failed to download checksum" "reports the undownloadable checksum"
+}
+
+test_verify_sha512_tampered_payload_refuses() {
+    local sb rc=0
+    gc_sandbox sb
+    local real bogus
+    /usr/bin/printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
+    # The published checksum names a WELL-FORMED but WRONG digest (a
+    # swapped/tampered asset). Derive it from the payload's REAL 128-hex digest
+    # with its first nibble flipped: this stays a valid 128-char SHA-512 line, so
+    # `sha512sum -c` reaches its DIGEST-COMPARISON path and reports a mismatch
+    # (`FAILED`) — NOT the "no properly formatted checksum lines found" PARSE
+    # rejection a wrong-length placeholder (e.g. 130 chars) would trip instead,
+    # which would leave the real mismatch path of this supply-chain gate untested.
+    real="$(cd "$sb/payload" && /usr/bin/sha512sum "$GC_ASSET" | /usr/bin/cut -c1-128)"
+    case "$real" in
+        0*) bogus="1${real#?}" ;;
+        *) bogus="0${real#?}" ;;
+    esac
+    /usr/bin/printf '%s  %s\n' "$bogus" "$GC_ASSET" >"$sb/expected_sha"
+    gc_stub_curl "$sb" ok
+    run_verify_sha512 "$sb" >/dev/null 2>&1 && rc=0 || rc=$?
+    assert_exit 1 "$rc" "verify returns non-zero when the digest does not match the payload"
+}
+
+test_verify_sha512_matching_payload_succeeds() {
+    local sb rc=0
+    gc_sandbox sb
+    /usr/bin/printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
+    # The published checksum is the REAL digest of the payload — verify must pass.
+    # Compute `<hexdigest>  <asset>` exactly as sha512sum -c consumes it.
+    (
+        cd "$sb/payload" || exit 1
+        /usr/bin/sha512sum "$GC_ASSET"
+    ) >"$sb/expected_sha"
+    gc_stub_curl "$sb" ok
+    run_verify_sha512 "$sb" >/dev/null 2>&1 && rc=0 || rc=$?
+    assert_exit 0 "$rc" "verify returns 0 when the published digest matches the payload"
+}
+
+test_verify_sha512_no_digest_tool_fails_closed() {
+    local sb rc=0 out
+    gc_sandbox sb
+    /usr/bin/printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
+    # A valid matching checksum, so the ONLY reason to fail is the absent digest
+    # tool — proving the else-arm fails closed rather than skipping verification.
+    (
+        cd "$sb/payload" || exit 1
+        /usr/bin/sha512sum "$GC_ASSET"
+    ) >"$sb/expected_sha"
+    gc_stub_curl "$sb" ok
+    # hermetic PATH = stubbin only → no sha512sum / shasum resolvable.
+    out="$(run_verify_sha512 "$sb" hermetic)" || rc=$?
+    assert_exit 1 "$rc" "verify fails closed (non-zero) when no SHA-512 tool is available"
+    assert_contains "$out" "No SHA-512 tool" "explains the missing digest tool"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 run_test test_is_semver_accepts_valid "is_semver accepts a valid X.Y.Z"
@@ -662,5 +838,11 @@ run_test test_changelog_success_trims_trailing_blanks "changelog: a valid render
 run_test test_release_changelog_failure_aborts_under_auto_commit "release.sh: a changelog failure aborts under --auto-commit"
 run_test test_release_changelog_failure_aborts_under_auto_tag "release.sh: a changelog failure aborts under --auto-tag (second OR leg)"
 run_test test_release_changelog_failure_tolerated_without_auto "release.sh: a changelog failure is tolerated without auto flags"
+
+run_test test_ensure_git_cliff_short_circuits_when_present "git-cliff: ensure_git_cliff short-circuits when git-cliff is already on PATH"
+run_test test_verify_sha512_download_failure_refuses "git-cliff: verify refuses when the .sha512 cannot be downloaded"
+run_test test_verify_sha512_tampered_payload_refuses "git-cliff: verify refuses a tampered payload (digest mismatch)"
+run_test test_verify_sha512_matching_payload_succeeds "git-cliff: verify succeeds when the digest matches the payload"
+run_test test_verify_sha512_no_digest_tool_fails_closed "git-cliff: verify fails closed when no SHA-512 tool is available"
 
 generate_report
