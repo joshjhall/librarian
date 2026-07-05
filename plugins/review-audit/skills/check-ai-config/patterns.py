@@ -225,6 +225,10 @@ def check_skill_frontmatter(path: str, lines: list[str]) -> None:
 
 def check_ai_file_bloat(path: str, lines: list[str]) -> None:
     n = len(lines)
+    # `category` splits documentation bloat (docs/*.md) into its own
+    # `doc-file-bloat` slug — the canonical name in finding-schema.md — while the
+    # AI-instruction files (CLAUDE.md / SKILL.md / agent md) stay `ai-file-bloat`.
+    category = "ai-file-bloat"
     if _glob(path, "*/CLAUDE.md") or _glob(path, "*/AGENTS.md"):
         warn, high, ftype = (
             _int_env("CLAUDE_MD_WARN", 400),
@@ -244,10 +248,11 @@ def check_ai_file_bloat(path: str, lines: list[str]) -> None:
             "agent definition",
         )
     elif _glob(path, "*/docs/*.md"):
-        warn, high, ftype = (
+        warn, high, ftype, category = (
             _int_env("DOC_WARN", 500),
             _int_env("DOC_HIGH", 800),
             "documentation",
+            "doc-file-bloat",
         )
     else:
         return
@@ -256,7 +261,7 @@ def check_ai_file_bloat(path: str, lines: list[str]) -> None:
         emit(
             path,
             "1",
-            "ai-file-bloat",
+            category,
             f"{ftype} exceeds high threshold: {n} lines (>{high})",
             "HIGH",
         )
@@ -264,10 +269,80 @@ def check_ai_file_bloat(path: str, lines: list[str]) -> None:
         emit(
             path,
             "1",
-            "ai-file-bloat",
+            category,
             f"{ftype} exceeds warning threshold: {n} lines (>{warn})",
             "MEDIUM",
         )
+
+
+# Backtick-quoted relative path with a source-file extension and at least one
+# `/`. The char class [A-Za-z0-9_.-] excludes `$ { } * :`, so `${VAR}` templates,
+# globs, and `scheme://` URLs cannot match — the skip is built into the pattern.
+DRIFT_PATH_RE = re.compile(
+    r"`([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.(?:sh|py|js|mjs|ts|json|ya?ml|md|toml))`"
+)
+# Backtick-quoted `<plugin>:<name>` cross-reference (lowercase kebab both sides).
+CROSSREF_RE = re.compile(r"`([a-z0-9][a-z0-9-]*):([a-z0-9][a-z0-9-]*)`")
+
+
+def check_claude_md_drift(path: str, lines: list[str]) -> None:
+    """CLAUDE.md / AGENTS.md referencing a relative file path that does not exist
+    (resolved against the document's own directory, like check-docs-deadlinks).
+    MEDIUM — the LLM pass separates literal drift from illustrative paths and
+    verifies referenced *commands* (which this deterministic pass does not check).
+    """
+    if not (_glob(path, "*/CLAUDE.md") or _glob(path, "*/AGENTS.md")):
+        return
+    file_dir = path.rsplit("/", 1)[0] if "/" in path else "."
+    for idx, content in enumerate(lines, start=1):
+        for m in DRIFT_PATH_RE.finditer(content):
+            target = m.group(1)
+            if not os.path.exists(file_dir + "/" + target):
+                emit(
+                    path,
+                    str(idx),
+                    "claude-md-drift",
+                    "Referenced path not found: " + target[:EVIDENCE_CAP],
+                    "MEDIUM",
+                )
+
+
+def _plugins_dir_for(path: str) -> str | None:
+    """The `<root>/plugins` directory for a file living under it, or None."""
+    if "/plugins/" in path:
+        return path.split("/plugins/")[0] + "/plugins"
+    if path.startswith("plugins/"):
+        return "plugins"
+    return None
+
+
+def check_config_inconsistency(path: str, lines: list[str]) -> None:
+    """Skill/agent markdown citing a `<plugin>:<name>` agent or skill that does
+    not exist. Only fires when `<plugins>/<plugin>/` is a real plugin dir but
+    neither `agents/<name>.md` nor `skills/<name>/SKILL.md` resolves under it —
+    so non-plugin `foo:bar` tokens (e.g. `go:generate`) are ignored. MEDIUM.
+    """
+    if not (_glob(path, "*/skills/*.md") or _glob(path, "*/agents/*.md")):
+        return
+    plugins_dir = _plugins_dir_for(path)
+    if plugins_dir is None:
+        return
+    for idx, content in enumerate(lines, start=1):
+        for m in CROSSREF_RE.finditer(content):
+            plugin, name = m.group(1), m.group(2)
+            if not os.path.isdir(plugins_dir + "/" + plugin):
+                continue  # not a plugin reference — leave it alone
+            agent_md = plugins_dir + "/" + plugin + "/agents/" + name + ".md"
+            skill_md = plugins_dir + "/" + plugin + "/skills/" + name + "/SKILL.md"
+            if not os.path.isfile(agent_md) and not os.path.isfile(skill_md):
+                emit(
+                    path,
+                    str(idx),
+                    "config-inconsistency",
+                    "Referenced agent/skill not found: "
+                    + (plugin + ":" + name)[:EVIDENCE_CAP],
+                    "MEDIUM",
+                )
 
 
 def check_mcp_config(path: str, lines: list[str]) -> None:
@@ -371,6 +446,8 @@ def scan_file(path: str, lines: list[str]) -> None:
     check_agent_frontmatter(path, lines)
     check_skill_frontmatter(path, lines)
     check_ai_file_bloat(path, lines)
+    check_claude_md_drift(path, lines)
+    check_config_inconsistency(path, lines)
     check_mcp_config(path, lines)
     check_hook_safety(path, lines)
     check_harness_logic(path, lines)
