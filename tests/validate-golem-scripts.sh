@@ -456,6 +456,42 @@ test_worktree_new_existing_branch_exits_1() {
     assert_contains "$RUN_OUT" "branch" "explains the branch already exists"
 }
 
+# Regression (#228): the script must invoke coreutils/git via the `command`
+# builtin (PATH-resolved, alias-proof), NOT hardcoded /usr/bin/* paths — those
+# die with exit 127 on hosts where the tools live elsewhere (Nix/Homebrew,
+# external-volume checkouts, non-standard macOS), AFTER the worktree already
+# exists. Static guard: no /usr/bin/<tool> beyond the #!/usr/bin/env shebang.
+test_worktree_new_no_hardcoded_usr_bin() {
+    local hits
+    hits="$(command grep -nE '/usr/bin/(mkdir|cp|dirname|git|grep)' "$WT_NEW" || true)"
+    assert_output_empty "$hits" \
+        "worktree-new.sh invokes tools via \`command\`, not hardcoded /usr/bin/*"
+}
+
+# Regression (#228): the local-file copy step (the arm that failed at exit 127)
+# actually copies GOLEM_WORKTREE_LOCAL_FILES into the fresh worktree. The shared
+# run_in helper pins GOLEM_WORKTREE_LOCAL_FILES="" so it never exercises this;
+# override it here with a direct env invocation mirroring run_in's scrub/pin.
+test_worktree_new_copies_local_files() {
+    local sb
+    new_sandbox sb
+    /usr/bin/printf 'SECRET=1\n' >"$sb/.env"
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES=".env" \
+            "$REAL_BASH" "$WT_NEW" 35 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "worktree-new exits 0 when copying a local file"
+    assert_file_exists "$sb/.worktrees/issue-35/.env" \
+        "the machine-local .env was copied into the worktree"
+    assert_contains "$out" "copied .env" "reports the .env copy"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -585,6 +621,8 @@ run_test test_worktree_new_non_integer_exits_2 "worktree-new: non-integer arg ex
 run_test test_worktree_new_creates_worktree "worktree-new: creates the issue worktree + branch"
 run_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree exits 1"
 run_test test_worktree_new_existing_branch_exits_1 "worktree-new: lingering branch exits 1"
+run_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr/bin/* tool paths (#228)"
+run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTREE_LOCAL_FILES into the worktree (#228)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"

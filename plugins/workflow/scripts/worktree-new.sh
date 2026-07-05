@@ -15,7 +15,7 @@
 # Usage: worktree-new.sh <issue-number>
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
@@ -30,11 +30,11 @@ cd "$root"
 wt="$GOLEM_WORKTREE_DIR/issue-$N"
 br="${GOLEM_BRANCH_PREFIX}${N}"
 
-if /usr/bin/git worktree list --porcelain | /usr/bin/grep -qx "worktree $root/$wt"; then
+if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then
     command echo "worktree-new: $wt already exists — remove it first (worktree-rm.sh $N)" >&2
     exit 1
 fi
-if [ -n "$(/usr/bin/git branch --list "$br")" ]; then
+if [ -n "$(command git branch --list "$br")" ]; then
     command echo "worktree-new: branch $br already exists — delete it or pick another issue" >&2
     exit 1
 fi
@@ -45,16 +45,16 @@ case "$GOLEM_BASE_REF" in
     */*)
         base_remote="${GOLEM_BASE_REF%%/*}"
         base_branch="${GOLEM_BASE_REF#*/}"
-        /usr/bin/git fetch "$base_remote" "$base_branch" --quiet || true
+        command git fetch "$base_remote" "$base_branch" --quiet || true
         ;;
 esac
 
-/usr/bin/git worktree add "$wt" -b "$br" "$GOLEM_BASE_REF"
+command git worktree add "$wt" -b "$br" "$GOLEM_BASE_REF"
 
 for f in $GOLEM_WORKTREE_LOCAL_FILES; do
     if [ -e "$f" ]; then
-        /usr/bin/mkdir -p "$wt/$(/usr/bin/dirname "$f")"
-        /usr/bin/cp "$f" "$wt/$f"
+        command mkdir -p "$wt/$(command dirname "$f")"
+        command cp "$f" "$wt/$f"
         command echo "  copied $f"
     else
         command echo "  skipped $f (not present in main checkout)"
