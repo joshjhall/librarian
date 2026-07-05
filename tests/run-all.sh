@@ -27,6 +27,8 @@
 #  13. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #  14b. autonomy-resolver decision table + parity (tests/validate-autonomy-resolve.sh)
+#  14c. golem-notify Notification hook (tests/validate-golem-notify.sh)
+#  14d. golem-watch streaming dispatcher (tests/validate-golem-watch.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -83,6 +85,8 @@ run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
 run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate-autonomy-resolve.sh"
+run_stage "golem-notify Notification hook" bash "$SCRIPT_DIR/validate-golem-notify.sh"
+run_stage "golem-watch streaming dispatcher" bash "$SCRIPT_DIR/validate-golem-watch.sh"
 
 printf '\n========================================\n'
 if [ "$rc" -eq 0 ]; then
