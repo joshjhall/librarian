@@ -332,7 +332,9 @@ the model tier needed:
 | > 75%                  | sonnet           | LLM handles a few heuristic categories         |
 | < 50%                  | opus             | LLM performs most reasoning; quality compounds |
 
-Use `bin/check-patterns-coverage.sh` to measure current coverage per domain.
+Coverage per domain is measured by hand — diffing each `check-*` contract's
+category table against the categories its `patterns.sh`/`patterns.py` emits. The
+snapshot below is point-in-time, not a live metric.
 As of initial measurement: 22/28 categories (78%) are covered by patterns.sh.
 Four domains have 100% deterministic coverage (security, code-health,
 deadlinks, staleness) and could potentially downgrade to haiku for the LLM
