@@ -176,6 +176,22 @@ Do NOT guess a side to unblock the run; leave the choice to the human. See
 `orchestrate/autonomy-levels.md` § *Standing rule: wait indefinitely at a human
 gate*.
 
+## End State on Escalation
+
+Whenever you finish with a **non-empty** `escalated[]` (any file you could not
+mechanically resolve), you MUST leave the branch in a **defined, consistent
+state** before returning: run `git rebase --abort` to restore the head branch to
+its pre-rebase commit. Never return with a half-applied rebase in progress or
+conflict markers left in the working tree.
+
+This is what makes a partial result safe: the orchestrator reads `rebased:
+false` (the harness derives it from your non-empty `escalated[]`) and routes the
+PR to the human escalation/dead-end path instead of force-pushing it. A branch
+left mid-rebase would make that `false` a lie about the tree and risk a
+`--force-with-lease` clobbering the golem's pushed work. Aborting keeps the flag
+and the tree telling the same truth: nothing was landed, the branch is
+unchanged, a human decides.
+
 ## Error Handling
 
 - **Package manager fails during lockfile regeneration**: mark the file as
@@ -195,6 +211,7 @@ MUST NOT:
 - Skip re-test verification after resolving conflicts
 - Accept "theirs" or "ours" blindly for non-mechanical conflicts
 - Modify files that are not in the conflicted files list
+- Leave a rebase in progress when escalating — `git rebase --abort` first (see End State on Escalation)
 - Call `workflow()` — the harness drives you, and you may already run inside
   another workflow (e.g. orchestrate cross-PR rebase); nesting would throw
 
