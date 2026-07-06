@@ -379,12 +379,20 @@ Detect and rebase them — without merging anything into the orchestrator branch
    and blocks at every level; the `rebase-agent`'s `escalated[]` entry already
    carries the why/attempted/remaining content to fold in.
 
-1. **Push rebased branches** (the harness never pushes): for each rebased PR
-   branch, the orchestrator pushes under human supervision:
+1. **Push rebased branches** (the harness never pushes): for each PR whose
+   `rebases[]` entry has **`rebased: true`** (a complete mechanical resolution —
+   empty `escalated[]`), the orchestrator pushes under human supervision:
 
    ```bash
    git push --force-with-lease origin <branch>
    ```
+
+   **Never push a partial rebase.** An entry with `rebased: false` (non-empty
+   `escalated[]`) is an incomplete rebase — its branch may still hold conflict
+   markers or a half-applied rebase — and MUST NOT be force-pushed. It belongs to
+   the escalation/dead-end path in step 2 above; surface it there with the
+   branch's git state noted (the `rebase-agent` leaves it aborted/restored on
+   escalation), never here.
 
 1. **Never** merge a golem branch into the orchestrator branch.
 
