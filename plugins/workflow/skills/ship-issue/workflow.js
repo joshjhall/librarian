@@ -190,11 +190,15 @@ const FINDING_SCHEMA = {
 }
 
 // Step 1-2 of the code-reviewer agent: changed-file manifest + per-file type
-// classification + which conditional specialists are needed.
+// classification + which conditional specialists are needed. The manifest
+// deliberately does NOT carry the diff: transcribing it back through
+// StructuredOutput cost ~diff-size output tokens per cycle (paid once per
+// reviewer) and risked silent truncation/normalization (#267). Reviewers read
+// the caller's byte-faithful diff via diffSection() instead.
 const MANIFEST_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['files', 'classifications', 'needs', 'diff'],
+  required: ['files', 'classifications', 'needs'],
   properties: {
     files: { type: 'array', items: { type: 'string' } },
     classifications: {
@@ -218,7 +222,6 @@ const MANIFEST_SCHEMA = {
         devops: { type: 'boolean' },
       },
     },
-    diff: { type: 'string' },
   },
 }
 
@@ -326,13 +329,24 @@ const scopeHeader = () => {
   return fileList + diffBlock
 }
 
+// The diff a reviewer reads. Prefer the caller's byte-faithful `scopeDiff` (the
+// skill's own `git diff` output) so findings cite `file:line` against real bytes,
+// never a manifest transcription (#267). When no diff was supplied, instruct the
+// (Bash-capable) reviewer to derive it in-agent — the deliberate no-args.diff
+// fallback.
+const diffSection = () =>
+  scopeDiff
+    ? `Diff:\n${dataBlock('DIFF', scopeDiff)}\n\n`
+    : 'No diff supplied — derive it yourself with `git diff origin/main...HEAD` ' +
+      'and review those changes.\n\n'
+
 const manifestPrompt = () =>
   `Mode: manifest.\n${scopeHeader()}\n` +
   `Follow Steps 1-2 of your instructions: build the changed-file manifest, read each ` +
   `file for context, and classify every file's type(s). Decide which conditional ` +
   `specialists are needed: set needs.database=true if any file is type database, and ` +
   `needs.devops=true if any file is type ci or docker. Return the typed manifest ` +
-  `(files, per-file classifications, needs, and the diff text). ` +
+  `(files, per-file classifications, needs) — do NOT echo the diff back. ` +
   READONLY
 
 // Reused dimensions (security, correctness): defer to the agent's own
@@ -345,7 +359,7 @@ const reusedReviewerPrompt = (dim, manifest) =>
   `(empty if none).\n\n` +
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
   `Classifications: ${JSON.stringify(manifest.classifications)}\n\n` +
-  `Diff:\n${dataBlock('DIFF', manifest.diff)}\n\n` +
+  diffSection() +
   READONLY
 
 // New dimensions (tests, conventions, scope-drift): instructions supplied inline.
@@ -356,7 +370,7 @@ const newReviewerPrompt = (dim, manifest) =>
   `array (empty if none), using the same finding schema as your other reviews.\n\n` +
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
   `Classifications: ${JSON.stringify(manifest.classifications)}\n\n` +
-  `Diff:\n${dataBlock('DIFF', manifest.diff)}\n\n` +
+  diffSection() +
   READONLY
 
 const commentsPrompt = (manifest) =>
@@ -371,7 +385,7 @@ const commentsPrompt = (manifest) =>
   `code location, attach a finding (full finding schema, category="review-comment"). ` +
   `Key each decision to the comment by its id.\n\n` +
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
-  `Diff:\n${dataBlock('DIFF', manifest.diff)}\n\n` +
+  diffSection() +
   `Open PR review comments:\n${dataBlock('PR_COMMENTS', prComments)}\n\n` +
   READONLY
 

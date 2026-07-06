@@ -201,6 +201,12 @@ args: {
 }
 ```
 
+`diff` is the **authoritative bytes the reviewers read** (byte-faithful
+`git diff` from step a) — the manifest step no longer transcribes it, so pass the
+full diff here (#267). Omitting `diff` is supported but makes each reviewer derive
+it in-agent (`git diff origin/main...HEAD`), which costs extra tool calls; prefer
+supplying it.
+
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
 budget_exhausted, dimensions_skipped[], clean }`. `dimensions_skipped` names any
 review dimensions that did not run this cycle (skipped at the budget floor or

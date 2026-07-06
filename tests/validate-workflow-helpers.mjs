@@ -896,9 +896,15 @@ for (const path of [ORCH, REBASE]) {
     diff: "INJECT-DIFF-MARKER",
   };
   const findings = [{ ref: "a.js:1:bug#0", description: "INJECT-FINDING-MARKER" }];
-  const rp = reviewerPrompt("bug", manifest);
+  // Post-#267 the diff reaches reviewer prompts via diffSection() (scopeDiff /
+  // args.diff), not manifest.diff — but #260's fence must still wrap it. Seed a
+  // diff so diffSection() takes the supplied-bytes branch and assert the fence.
+  const { reviewerPrompt: rpWithDiff } = extractHelpers(REVIEW, ["reviewerPrompt"], {
+    diff: "INJECT-DIFF-MARKER",
+  });
+  const rp = rpWithDiff("bug", manifest);
   ok(
-    rp.includes("<<<DIFF") && rp.includes(dataBlock("DIFF", manifest.diff)),
+    rp.includes("<<<DIFF") && rp.includes(dataBlock("DIFF", "INJECT-DIFF-MARKER")),
     "reviewerPrompt (code-reviewer): diff is wrapped in a DIFF data block",
   );
   const rsp = rescorePrompt(findings);
@@ -919,6 +925,33 @@ for (const path of [ORCH, REBASE]) {
   ok(
     shDiff().includes("<<<DIFF") && shDiff().includes("SCOPE-DIFF-MARKER"),
     "scopeHeader (code-reviewer): a provided diff is wrapped in a DIFF data block",
+  );
+}
+
+// #267: diffSection feeds reviewers the caller's byte-faithful diff (never a
+// manifest transcription). With a diff supplied it must pass the exact bytes
+// through and NOT emit a derive instruction; with none supplied it must emit the
+// deliberate in-agent derive fallback with the harness-appropriate git command.
+{
+  const withDiff = extractHelpers(REVIEW, ["diffSection"], {
+    diff: "ABC-BYTE-FAITHFUL-XYZ",
+  });
+  ok(
+    withDiff.diffSection().includes("ABC-BYTE-FAITHFUL-XYZ"),
+    "diffSection (code-reviewer): supplied diff bytes pass through verbatim",
+  );
+  ok(
+    !/derive it yourself/.test(withDiff.diffSection()),
+    "diffSection (code-reviewer): no derive instruction when a diff is supplied",
+  );
+  const noDiff = extractHelpers(REVIEW, ["diffSection"], {});
+  ok(
+    /derive it yourself/.test(noDiff.diffSection()),
+    "diffSection (code-reviewer): no-diff path instructs in-agent derivation",
+  );
+  ok(
+    noDiff.diffSection().includes("git diff"),
+    "diffSection (code-reviewer): no-diff path names the git diff command",
   );
 }
 
@@ -997,32 +1030,40 @@ for (const path of [ORCH, REBASE]) {
     diff: "SHIP-DIFF-MARKER",
   };
   const shipFindings = [{ ref: "a.js:1:security#0", description: "SHIP-FINDING-MARKER" }];
-  const reused = reusedReviewerPrompt(
+  // Post-#267 the diff reaches reviewer/comment prompts via diffSection()
+  // (scopeDiff / args.diff), not manifest.diff — but #260's fence must still wrap
+  // it. Seed a diff so diffSection() takes the supplied-bytes branch.
+  const { reusedReviewerPrompt: reusedWithDiff, newReviewerPrompt: newWithDiff } = extractHelpers(
+    SHIP,
+    ["reusedReviewerPrompt", "newReviewerPrompt"],
+    { diff: "SHIP-DIFF-MARKER" },
+  );
+  const reused = reusedWithDiff(
     { name: "security", mode: "security", category: "security" },
     shipManifest,
   );
   ok(
-    reused.includes("<<<DIFF") && reused.includes(dataBlock("DIFF", shipManifest.diff)),
+    reused.includes("<<<DIFF") && reused.includes(dataBlock("DIFF", "SHIP-DIFF-MARKER")),
     "reusedReviewerPrompt (ship-issue): diff is wrapped in a DIFF data block",
   );
-  const fresh = newReviewerPrompt(
+  const fresh = newWithDiff(
     { name: "tests", category: "tests", instructions: "x" },
     shipManifest,
   );
   ok(
-    fresh.includes("<<<DIFF") && fresh.includes(dataBlock("DIFF", shipManifest.diff)),
+    fresh.includes("<<<DIFF") && fresh.includes(dataBlock("DIFF", "SHIP-DIFF-MARKER")),
     "newReviewerPrompt (ship-issue): diff is wrapped in a DIFF data block",
   );
-  // commentsPrompt reads prComments from module scope (args.prComments), so seed
-  // it via a fresh extraction that provides one.
+  // commentsPrompt reads prComments + scopeDiff from module scope, so seed both
+  // via a fresh extraction.
   const { commentsPrompt: cpWithComments } = extractHelpers(
     SHIP,
     ["commentsPrompt"],
-    { phase: "pr-cycle", prComments: [{ id: "c1", body: "COMMENT-MARKER" }] },
+    { phase: "pr-cycle", diff: "SHIP-DIFF-MARKER", prComments: [{ id: "c1", body: "COMMENT-MARKER" }] },
   );
   const cp = cpWithComments(shipManifest);
   ok(
-    cp.includes("<<<DIFF") && cp.includes(dataBlock("DIFF", shipManifest.diff)),
+    cp.includes("<<<DIFF") && cp.includes(dataBlock("DIFF", "SHIP-DIFF-MARKER")),
     "commentsPrompt (ship-issue): diff is wrapped in a DIFF data block",
   );
   ok(
@@ -1105,6 +1146,32 @@ for (const path of [ORCH, REBASE]) {
   ok(
     helpers && typeof helpers.sanitize === "function" && typeof helpers.dataBlock === "function",
     "ship-issue: sanitize + dataBlock are live after an issue-present load (#260)",
+  );
+}
+
+// #267: ship-issue's diffSection mirrors code-reviewer's but derives against
+// origin/main...HEAD on the no-diff fallback. Same guarantees: byte-faithful
+// pass-through when supplied, deliberate in-agent derive when not.
+{
+  const withDiff = extractHelpers(SHIP, ["diffSection"], {
+    diff: "SHIP-BYTE-FAITHFUL-QRS",
+  });
+  ok(
+    withDiff.diffSection().includes("SHIP-BYTE-FAITHFUL-QRS"),
+    "diffSection (ship-issue): supplied diff bytes pass through verbatim",
+  );
+  ok(
+    !/derive it yourself/.test(withDiff.diffSection()),
+    "diffSection (ship-issue): no derive instruction when a diff is supplied",
+  );
+  const noDiff = extractHelpers(SHIP, ["diffSection"], {});
+  ok(
+    /derive it yourself/.test(noDiff.diffSection()),
+    "diffSection (ship-issue): no-diff path instructs in-agent derivation",
+  );
+  ok(
+    noDiff.diffSection().includes("git diff origin/main...HEAD"),
+    "diffSection (ship-issue): no-diff path names git diff origin/main...HEAD",
   );
 }
 
