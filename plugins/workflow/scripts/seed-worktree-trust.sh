@@ -40,7 +40,31 @@
 #      refused. This is a hard refusal (non-zero) so an attacker-influenced
 #      target is never silently honoured; the legitimate caller always passes a
 #      `<repo>/<GOLEM_WORKTREE_DIR>/issue-N` path, which validates.
+#   4  cannot resolve the script's own directory (invoked by bare name with no
+#      path component) — refused rather than sourcing config.sh from cwd.
 set -euo pipefail
+
+# Resolve SCRIPT_DIR from this script's own path with pure-bash parameter
+# expansion (no external `dirname`), so it works even when a caller strips PATH
+# (as the jq-absent test does) without a PATH-dependent `command dirname`. cd/pwd
+# are builtins. If BASH_SOURCE has no directory component (script invoked by bare
+# name), we CANNOT trust `$(pwd)` as a stand-in for the install dir — sourcing
+# `$(pwd)/config.sh` would run whatever config.sh sits in the caller's cwd, a
+# code-injection vector in a script whose whole job is a trust boundary (#21).
+# Fail loud instead: this never happens for the real callers (worktree-new.sh and
+# the tests always pass an absolute path).
+_seed_src="${BASH_SOURCE[0]}"
+case "$_seed_src" in
+    */*)
+        SCRIPT_DIR="$(cd "${_seed_src%/*}" && pwd)"
+        ;;
+    *)
+        command echo "seed-worktree-trust: cannot resolve script dir from bare invocation '$_seed_src' — invoke with a path" >&2
+        exit 4
+        ;;
+esac
+# shellcheck source=./config.sh
+. "$SCRIPT_DIR/config.sh"
 
 wt_path="${1:-}"
 cfg="${2:-$HOME/.claude.json}"
@@ -51,15 +75,15 @@ if [ -z "$wt_path" ]; then
 fi
 
 # --- Validate the trust-grant target (issue #21) -----------------------------
-# Resolve this repository's root. Prefer --show-toplevel; fall back to the
-# common-dir parent (robust from inside a worktree / bare layout, matching
-# config.sh's repo_root). Both are evaluated from the script's cwd, which the
-# caller (worktree-new.sh) sets to the main checkout before invoking.
-repo_root="$(/usr/bin/git rev-parse --show-toplevel 2>/dev/null || true)"
-if [ -z "$repo_root" ]; then
-    common_dir="$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-    [ -n "$common_dir" ] && repo_root="$(/usr/bin/dirname "$common_dir")"
-fi
+# Resolve this repository's MAIN checkout root via config.sh's shared repo_root()
+# (dirname of `git rev-parse --git-common-dir`) — cwd- and worktree-independent,
+# and the exact resolver the caller worktree-new.sh already uses. The earlier
+# inline `--show-toplevel`-first resolution was cwd-DEPENDENT: from a shell whose
+# cwd is a sibling (or just-reaped) worktree — routine during /orchestrate lane
+# refill — `--show-toplevel` returns that OTHER worktree's toplevel, so a valid
+# new worktree under the main root was falsely judged "not under repo root" and
+# refused (issue #242). repo_root() has no such dependence.
+repo_root="$(repo_root 2>/dev/null || true)"
 if [ -z "$repo_root" ]; then
     command echo "seed-worktree-trust: refusing trust seed — not inside a git repository" >&2
     exit 3

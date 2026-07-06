@@ -73,6 +73,27 @@ new_sandbox() {
     printf -v "$__out" '%s' "$dir"
 }
 
+# new_sandbox_with_worktree <varname>
+# Like new_sandbox, but also seeds a HEAD commit and adds a real linked sibling
+# worktree at <sandbox>/.worktrees/issue-100. Used by the cwd-independence
+# regression (#242): `git worktree add` requires a commit, which the plain
+# sandbox lacks. All git calls are env-scrubbed so the added worktree is a
+# worktree of the SANDBOX, never the outer librarian repo.
+new_sandbox_with_worktree() {
+    local __out="$1" __sb
+    # Pass a caller-unique out-var name to new_sandbox: it has its own internal
+    # `local dir`, so reusing that name here would collide (no namerefs on
+    # bash 3.2).
+    new_sandbox __sb || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$__sb" -c user.email=t@t -c user.name=t \
+        commit -q --allow-empty -m init 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$__sb" worktree add -q "$__sb/.worktrees/issue-100" \
+        -b feature/issue-100 2>/dev/null || return 1
+    printf -v "$__out" '%s' "$__sb"
+}
+
 # Captured results of the most recent invocation.
 SEED_RC=0
 SEED_OUT=""
@@ -291,6 +312,102 @@ test_symlink_escape_refused() {
         "config is left untouched on a symlink-escape refusal"
 }
 
+# (n) Regression (#242): resolving the repo root must NOT depend on the caller's
+# cwd. From inside a DIFFERENT linked worktree of the same repo (the sibling /
+# just-reaped-worktree situation during /orchestrate lane refill), a valid
+# `issue-<N>` target still seeds trust. The old `--show-toplevel`-first resolver
+# returned the sibling worktree's own toplevel here and falsely refused (exit 3);
+# repo_root() (git-common-dir parent) resolves the main root regardless of cwd.
+test_cwd_independent_root_from_sibling_worktree() {
+    local sb
+    new_sandbox_with_worktree sb
+    SEED_RC=0
+    SEED_OUT="$(cd "$sb/.worktrees/issue-100" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-7" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    assert_exit 0 "$SEED_RC" \
+        "valid target seeds trust from a sibling-worktree cwd (exit 0, no false refusal)"
+    assert_contains "$SEED_OUT" "seeded workspace trust" "reports the trust seed"
+    assert_not_contains "$SEED_OUT" "not under repo root" \
+        "no false 'not under repo root' refusal from the sibling worktree cwd"
+    assert_file_contains "$sb/claude.json" '"hasTrustDialogAccepted": true' \
+        "config records the trust grant despite the sibling-worktree cwd"
+}
+
+# (o) Regression companion to (n): the REFUSE path must also survive a
+# sibling-worktree cwd. A target OUTSIDE the repo, invoked from inside a sibling
+# linked worktree, must still be refused (exit 3). Guards the more dangerous
+# direction of the resolver swap — repo_root() widening acceptance so an
+# out-of-tree target is falsely ACCEPTED — which (n)'s accept-only case can't see.
+test_outside_repo_refused_from_sibling_worktree() {
+    local sb
+    new_sandbox_with_worktree sb
+    /usr/bin/mkdir -p "$WORKDIR/elsewhere/issue-7"
+    SEED_RC=0
+    SEED_OUT="$(cd "$sb/.worktrees/issue-100" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$WORKDIR/elsewhere/issue-7" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    assert_exit 3 "$SEED_RC" \
+        "out-of-repo target is still refused from a sibling-worktree cwd (exit 3)"
+    assert_contains "$SEED_OUT" "not under repo root" "explains the root violation"
+    assert_file_not_contains "$sb/claude.json" "hasTrustDialogAccepted" \
+        "config is left untouched on refusal from the sibling cwd"
+}
+
+# (p) Regression (#242, literal case): cwd is a JUST-REMOVED worktree — the exact
+# reaped-worktree situation from the issue. A subshell cds into a linked worktree,
+# that worktree is then `git worktree remove`d out from under it, and the seed
+# script runs from the now-deleted cwd. getcwd() fails, so git resolves no repo
+# and the script refuses cleanly via its FIRST guard ("not inside a git
+# repository", exit 3) — it must NOT emit the old false "not under repo root"
+# refusal naming a stale worktree root. Trust is (correctly) not seeded here; the
+# real-world reap fix is that a FRESH cwd (the caller cds to a stable root) now
+# resolves correctly via (n) — this case pins the fail-safe for the degenerate
+# deleted-cwd path.
+test_removed_worktree_cwd_refuses_cleanly() {
+    local sb
+    new_sandbox_with_worktree sb
+    SEED_RC=0
+    SEED_OUT="$( (
+        cd "$sb/.worktrees/issue-100" &&
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                /usr/bin/git -C "$sb" worktree remove --force \
+                "$sb/.worktrees/issue-100" 2>/dev/null
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-7" \
+            "$sb/claude.json"
+    ) 2>&1)" || SEED_RC=$?
+    assert_exit 3 "$SEED_RC" "seed from a removed-worktree cwd refuses (exit 3)"
+    assert_contains "$SEED_OUT" "not inside a git repository" \
+        "degrades via the first guard, not a stale-root false refusal"
+    assert_not_contains "$SEED_OUT" "not under repo root" \
+        "no false 'not under repo root' naming a since-removed worktree"
+}
+
+# (q) SCRIPT_DIR resolution: a bare-name invocation (BASH_SOURCE with no slash,
+# e.g. `cd <dir> && bash seed-worktree-trust.sh`) must FAIL LOUD (exit 4) rather
+# than fall back to sourcing `$(pwd)/config.sh` — a code-injection vector in a
+# trust-boundary script (#21). Proven by planting a config.sh that would `echo
+# INJECTED` in the invocation dir and asserting it never runs.
+test_bare_name_invocation_refuses() {
+    local scriptdir
+    scriptdir="$(/usr/bin/mktemp -d "$WORKDIR/barename.XXXXXX")"
+    /usr/bin/cp "$SEED_SCRIPT" "$scriptdir/seed-worktree-trust.sh"
+    # A config.sh here would be sourced iff the fallback wrongly used $(pwd).
+    /usr/bin/printf 'echo INJECTED\n' >"$scriptdir/config.sh"
+    SEED_RC=0
+    SEED_OUT="$(cd "$scriptdir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" seed-worktree-trust.sh /tmp/x/issue-7 /tmp/x/cfg.json \
+            2>&1)" || SEED_RC=$?
+    assert_exit 4 "$SEED_RC" "bare-name invocation refuses with exit 4"
+    assert_contains "$SEED_OUT" "cannot resolve script dir" "explains the refusal"
+    assert_not_contains "$SEED_OUT" "INJECTED" \
+        "the cwd config.sh is never sourced (no injection)"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init`, so the whole suite needs git. Gate it
@@ -326,5 +443,9 @@ run_test test_malformed_config_skips "malformed config → jq-failure skip (exit
 run_test test_worktree_dir_override "GOLEM_WORKTREE_DIR override path is accepted (exit 0)"
 run_test test_worktree_dir_override_replaces_default "GOLEM_WORKTREE_DIR override replaces the default dir (exit 3)"
 run_test test_symlink_escape_refused "symlink escaping the repo root is refused (exit 3)"
+run_test test_cwd_independent_root_from_sibling_worktree "valid target seeds trust from a sibling-worktree cwd (#242, exit 0)"
+run_test test_outside_repo_refused_from_sibling_worktree "out-of-repo target still refused from a sibling-worktree cwd (#242, exit 3)"
+run_test test_removed_worktree_cwd_refuses_cleanly "seed from a since-removed worktree cwd refuses cleanly (#242, exit 3)"
+run_test test_bare_name_invocation_refuses "bare-name invocation refuses instead of sourcing cwd config.sh (exit 4)"
 
 generate_report
