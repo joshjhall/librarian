@@ -386,6 +386,28 @@ test_removed_worktree_cwd_refuses_cleanly() {
         "no false 'not under repo root' naming a since-removed worktree"
 }
 
+# (q) SCRIPT_DIR resolution: a bare-name invocation (BASH_SOURCE with no slash,
+# e.g. `cd <dir> && bash seed-worktree-trust.sh`) must FAIL LOUD (exit 4) rather
+# than fall back to sourcing `$(pwd)/config.sh` — a code-injection vector in a
+# trust-boundary script (#21). Proven by planting a config.sh that would `echo
+# INJECTED` in the invocation dir and asserting it never runs.
+test_bare_name_invocation_refuses() {
+    local scriptdir
+    scriptdir="$(/usr/bin/mktemp -d "$WORKDIR/barename.XXXXXX")"
+    /usr/bin/cp "$SEED_SCRIPT" "$scriptdir/seed-worktree-trust.sh"
+    # A config.sh here would be sourced iff the fallback wrongly used $(pwd).
+    /usr/bin/printf 'echo INJECTED\n' >"$scriptdir/config.sh"
+    SEED_RC=0
+    SEED_OUT="$(cd "$scriptdir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" seed-worktree-trust.sh /tmp/x/issue-7 /tmp/x/cfg.json \
+            2>&1)" || SEED_RC=$?
+    assert_exit 4 "$SEED_RC" "bare-name invocation refuses with exit 4"
+    assert_contains "$SEED_OUT" "cannot resolve script dir" "explains the refusal"
+    assert_not_contains "$SEED_OUT" "INJECTED" \
+        "the cwd config.sh is never sourced (no injection)"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init`, so the whole suite needs git. Gate it
@@ -424,5 +446,6 @@ run_test test_symlink_escape_refused "symlink escaping the repo root is refused 
 run_test test_cwd_independent_root_from_sibling_worktree "valid target seeds trust from a sibling-worktree cwd (#242, exit 0)"
 run_test test_outside_repo_refused_from_sibling_worktree "out-of-repo target still refused from a sibling-worktree cwd (#242, exit 3)"
 run_test test_removed_worktree_cwd_refuses_cleanly "seed from a since-removed worktree cwd refuses cleanly (#242, exit 3)"
+run_test test_bare_name_invocation_refuses "bare-name invocation refuses instead of sourcing cwd config.sh (exit 4)"
 
 generate_report

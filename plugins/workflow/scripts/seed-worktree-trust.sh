@@ -40,16 +40,28 @@
 #      refused. This is a hard refusal (non-zero) so an attacker-influenced
 #      target is never silently honoured; the legitimate caller always passes a
 #      `<repo>/<GOLEM_WORKTREE_DIR>/issue-N` path, which validates.
+#   4  cannot resolve the script's own directory (invoked by bare name with no
+#      path component) — refused rather than sourcing config.sh from cwd.
 set -euo pipefail
 
-# Resolve SCRIPT_DIR with pure-bash parameter expansion (no external `dirname`),
-# so it works even when a caller strips PATH (as the jq-absent test does) and
-# without hardcoding a /usr/bin/dirname the repo is retiring (see #241). cd/pwd
-# are builtins; the case arm handles a bare-name BASH_SOURCE (no slash).
+# Resolve SCRIPT_DIR from this script's own path with pure-bash parameter
+# expansion (no external `dirname`), so it works even when a caller strips PATH
+# (as the jq-absent test does) without a PATH-dependent `command dirname`. cd/pwd
+# are builtins. If BASH_SOURCE has no directory component (script invoked by bare
+# name), we CANNOT trust `$(pwd)` as a stand-in for the install dir — sourcing
+# `$(pwd)/config.sh` would run whatever config.sh sits in the caller's cwd, a
+# code-injection vector in a script whose whole job is a trust boundary (#21).
+# Fail loud instead: this never happens for the real callers (worktree-new.sh and
+# the tests always pass an absolute path).
 _seed_src="${BASH_SOURCE[0]}"
 case "$_seed_src" in
-    */*) SCRIPT_DIR="$(cd "${_seed_src%/*}" && pwd)" ;;
-    *) SCRIPT_DIR="$(pwd)" ;;
+    */*)
+        SCRIPT_DIR="$(cd "${_seed_src%/*}" && pwd)"
+        ;;
+    *)
+        command echo "seed-worktree-trust: cannot resolve script dir from bare invocation '$_seed_src' — invoke with a path" >&2
+        exit 4
+        ;;
 esac
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
