@@ -25,9 +25,14 @@ export const meta = {
 //
 // Returns (one cycle):
 //   { cycle, phase, scanner, blocking[], deferrable[], comments_addressed[],
-//     summary{...}, budget_exhausted, clean }
-//   `clean === (blocking.length === 0)` is the per-cycle termination signal the
-//   skill reads (combined by the skill with CI-green + comments-resolved).
+//     summary{...}, budget_exhausted, dimensions_skipped[], clean }
+//   `clean` is the per-cycle termination signal the skill reads (combined by the
+//   skill with CI-green + comments-resolved). It is true ONLY when nothing
+//   blocks, every PR comment is resolved-or-deferred, AND the cycle was complete
+//   (`!budget_exhausted` — no dimension skipped at build time or nulled
+//   mid-barrier). A budget-truncated cycle is PARTIAL and can never read as
+//   clean, so a review that mostly didn't run can never reach the merge gate;
+//   `dimensions_skipped` names the dimensions that did not run.
 //
 // Nesting: this harness drives the code-reviewer agent via `agentType` (NOT
 // `workflow()`), so the one allowed Workflow nesting level stays free and a
@@ -382,7 +387,18 @@ const classifyPrompt = (findings, budgetExhausted) =>
 // gatekeeper key off the exact same id we read back.
 const refOf = (f) => f.ref
 
-function emptyResult(budgetExhausted, note) {
+// The per-cycle `clean` predicate, shared by BOTH return paths (the
+// empty-findings early return and the final classified return). A cycle is clean
+// only when nothing blocks, every PR comment is resolved-or-deferred, AND the
+// cycle was complete (`!budgetExhausted` — no dimension skipped at build time or
+// nulled mid-barrier). Extracting it here — before the orchestration body — keeps
+// the merge-invariant guard unit-testable at every site (a budget-truncated
+// cycle can never read as clean, even with findings that all classify
+// deferrable), so `clean` stays unforgeable by truncation (#270).
+const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
+  blockingLen === 0 && unresolvedLen === 0 && !budgetExhausted
+
+function emptyResult(budgetExhausted, note, dimensionsSkipped) {
   if (note) log(note)
   return {
     cycle: CYCLE,
@@ -398,10 +414,12 @@ function emptyResult(budgetExhausted, note) {
       by_severity: { critical: 0, high: 0, medium: 0, low: 0 },
     },
     budget_exhausted: !!budgetExhausted,
-    // No blocking findings produced — but a manifest/early failure is not a
-    // clean signal, so callers pass clean explicitly where it matters. Default
-    // to true only for the genuinely-empty case.
-    clean: true,
+    dimensions_skipped: dimensionsSkipped || [],
+    // No blocking findings produced — but a budget-truncated cycle is PARTIAL
+    // (some dimension never ran), so it can never read as clean; nor can a
+    // manifest/early failure, for which callers still override clean explicitly.
+    // Default to clean only when the cycle was genuinely complete and empty.
+    clean: !budgetExhausted,
   }
 }
 
@@ -429,6 +447,12 @@ if (!manifest) {
 phase('Review')
 
 let budgetExhausted = false
+// Names of dimensions that never ran this cycle — skipped at build time (budget
+// floor) or nulled mid-barrier (agent threw / budget ran out). Any non-empty
+// list means the cycle is PARTIAL; it is surfaced as `dimensions_skipped` so the
+// skill can report which dimensions were missed, and it always accompanies
+// `budgetExhausted` (the flag `clean` actually gates on).
+const dimensionsSkipped = []
 const dimensions = []
 // Reused dimensions first (cheap, always run), then new dimensions, then any
 // conditional specialists the manifest asked for — each gated on the budget.
@@ -436,6 +460,7 @@ for (const d of REUSED_DIMENSIONS) dimensions.push({ kind: 'reused', dim: d })
 for (const d of NEW_DIMENSIONS) {
   if (budget.total && budget.remaining() < BUDGET_FLOOR) {
     budgetExhausted = true
+    dimensionsSkipped.push(d.name)
     log(`budget low — skipping dimension "${d.name}"`)
     continue
   }
@@ -448,6 +473,7 @@ if (manifest.needs.devops) conditional.push({ name: 'devops', mode: 'devops', ca
 for (const d of conditional) {
   if (budget.total && budget.remaining() < BUDGET_FLOOR) {
     budgetExhausted = true
+    dimensionsSkipped.push(d.name)
     log(`budget low — skipping conditional specialist "${d.name}"`)
     continue
   }
@@ -479,6 +505,7 @@ reviewResults.forEach((res, i) => {
     // so the classifier biases ambiguous findings to deferrable and the skill
     // does not treat a half-reviewed cycle as a clean pass.
     budgetExhausted = true
+    dimensionsSkipped.push(dimensions[i].dim.name)
     log(`dimension "${dimensions[i].dim.name}" failed — continuing without its findings (cycle now partial)`)
     return
   }
@@ -519,10 +546,13 @@ if (unresolvedComments.length) {
 }
 
 if (rawFindings.length === 0) {
-  const r = emptyResult(budgetExhausted, 'no findings this cycle')
+  const r = emptyResult(budgetExhausted, 'no findings this cycle', dimensionsSkipped)
   r.comments_addressed = commentsAddressed
-  // Clean only if every comment is resolved-or-deferred too.
-  r.clean = unresolvedComments.length === 0
+  // Clean only if every comment is resolved-or-deferred AND the cycle was
+  // complete: a budget-truncated cycle (some dimension never ran) is partial and
+  // must not read as clean, even when the dimensions that DID run found nothing.
+  // (blocking is empty on this path, so pass 0 for its length.)
+  r.clean = computeClean(0, unresolvedComments.length, budgetExhausted)
   return r
 }
 
@@ -607,7 +637,13 @@ return {
     by_severity: bySeverity,
   },
   budget_exhausted: budgetExhausted,
-  // A cycle is clean only when nothing blocks AND every PR comment is
-  // resolved-or-deferred. The skill additionally requires CI-green.
-  clean: blocking.length === 0 && unresolvedComments.length === 0,
+  dimensions_skipped: dimensionsSkipped,
+  // A cycle is clean only when nothing blocks, every PR comment is
+  // resolved-or-deferred, AND the cycle was complete (`!budgetExhausted` — no
+  // dimension skipped at build time or nulled mid-barrier). Gating on
+  // budget-exhaustion makes `clean` unforgeable by truncation: a partial review
+  // can never terminate the loop as clean and reach the merge gate — even when
+  // the surviving dimensions produced only deferrable findings. The skill
+  // additionally requires CI-green.
+  clean: computeClean(blocking.length, unresolvedComments.length, budgetExhausted),
 }
