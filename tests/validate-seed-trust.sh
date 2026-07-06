@@ -73,6 +73,27 @@ new_sandbox() {
     printf -v "$__out" '%s' "$dir"
 }
 
+# new_sandbox_with_worktree <varname>
+# Like new_sandbox, but also seeds a HEAD commit and adds a real linked sibling
+# worktree at <sandbox>/.worktrees/issue-100. Used by the cwd-independence
+# regression (#242): `git worktree add` requires a commit, which the plain
+# sandbox lacks. All git calls are env-scrubbed so the added worktree is a
+# worktree of the SANDBOX, never the outer librarian repo.
+new_sandbox_with_worktree() {
+    local __out="$1" __sb
+    # Pass a caller-unique out-var name to new_sandbox: it has its own internal
+    # `local dir`, so reusing that name here would collide (no namerefs on
+    # bash 3.2).
+    new_sandbox __sb || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$__sb" -c user.email=t@t -c user.name=t \
+        commit -q --allow-empty -m init 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$__sb" worktree add -q "$__sb/.worktrees/issue-100" \
+        -b feature/issue-100 2>/dev/null || return 1
+    printf -v "$__out" '%s' "$__sb"
+}
+
 # Captured results of the most recent invocation.
 SEED_RC=0
 SEED_OUT=""
@@ -291,6 +312,29 @@ test_symlink_escape_refused() {
         "config is left untouched on a symlink-escape refusal"
 }
 
+# (n) Regression (#242): resolving the repo root must NOT depend on the caller's
+# cwd. From inside a DIFFERENT linked worktree of the same repo (the sibling /
+# just-reaped-worktree situation during /orchestrate lane refill), a valid
+# `issue-<N>` target still seeds trust. The old `--show-toplevel`-first resolver
+# returned the sibling worktree's own toplevel here and falsely refused (exit 3);
+# repo_root() (git-common-dir parent) resolves the main root regardless of cwd.
+test_cwd_independent_root_from_sibling_worktree() {
+    local sb
+    new_sandbox_with_worktree sb
+    SEED_RC=0
+    SEED_OUT="$(cd "$sb/.worktrees/issue-100" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-7" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    assert_exit 0 "$SEED_RC" \
+        "valid target seeds trust from a sibling-worktree cwd (exit 0, no false refusal)"
+    assert_contains "$SEED_OUT" "seeded workspace trust" "reports the trust seed"
+    assert_not_contains "$SEED_OUT" "not under repo root" \
+        "no false 'not under repo root' refusal from the sibling worktree cwd"
+    assert_file_contains "$sb/claude.json" '"hasTrustDialogAccepted": true' \
+        "config records the trust grant despite the sibling-worktree cwd"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init`, so the whole suite needs git. Gate it
@@ -326,5 +370,6 @@ run_test test_malformed_config_skips "malformed config → jq-failure skip (exit
 run_test test_worktree_dir_override "GOLEM_WORKTREE_DIR override path is accepted (exit 0)"
 run_test test_worktree_dir_override_replaces_default "GOLEM_WORKTREE_DIR override replaces the default dir (exit 3)"
 run_test test_symlink_escape_refused "symlink escaping the repo root is refused (exit 3)"
+run_test test_cwd_independent_root_from_sibling_worktree "valid target seeds trust from a sibling-worktree cwd (#242, exit 0)"
 
 generate_report
