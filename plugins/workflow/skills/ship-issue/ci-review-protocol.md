@@ -202,7 +202,10 @@ args: {
 ```
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
-budget_exhausted, clean }`.
+budget_exhausted, dimensions_skipped[], clean }`. `dimensions_skipped` names any
+review dimensions that did not run this cycle (skipped at the budget floor or
+failed mid-barrier); a non-empty list means `budget_exhausted` is true and the
+cycle is **partial**.
 
 d. **Resolve or defer**:
 
@@ -222,7 +225,17 @@ f. **Terminate the loop — green + clean** when ALL of the following hold:
 
 - `clean` is true (no blocking findings remain), **and**
 - CI is green, **and**
-- every PR comment is resolved-or-deferred (none left unaddressed).
+- every PR comment is resolved-or-deferred (none left unaddressed), **and**
+- `budget_exhausted` is false — the cycle was **complete** (no dimension in
+  `dimensions_skipped`).
+
+The harness already folds the last clause into `clean` (a budget-truncated cycle
+returns `clean: false` even when the dimensions that *did* run found nothing), so
+`clean` alone is sufficient — but state it explicitly: a **budget-truncated
+"clean" cycle does NOT terminate the loop**. A review that mostly did not run is
+partial, not clean. Treat it like an unclean cycle: `cycle++` and re-run (each
+invocation gets a fresh budget), and if it keeps truncating past `cap`, take the
+dead-end below — **never merge on a partial review**.
 
 This green + clean state is exactly the **merge invariant** precondition. On
 reaching it, hand control back to SKILL.md Step 4's **level-aware merge gate**:

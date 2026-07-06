@@ -158,9 +158,11 @@ behavior is noted inline per check; environment variables referenced here
 
    The harness fans the dimensions as one parallel barrier under a single
    token budget, re-scores certainty with a fresh judge, and returns
-   `{ blocking[], deferrable[], summary, budget_exhausted, clean }`. The review
-   agents are **read-only** — applying fixes and filing deferrals is this
-   skill's job (below).
+   `{ blocking[], deferrable[], summary, budget_exhausted, dimensions_skipped[],
+   clean }`. `dimensions_skipped` names any dimensions that did not run this cycle
+   (budget floor or mid-barrier failure); a non-empty list means the cycle is
+   **partial** and `clean` is forced false. The review agents are **read-only** —
+   applying fixes and filing deferrals is this skill's job (below).
 
    c. **Resolve the blocking findings**: for each finding in `blocking`, make
    the fix in the working tree, then amend or add a commit. Re-run step (b)
@@ -174,9 +176,14 @@ behavior is noted inline per check; environment variables referenced here
 
    e. **Cap / budget exhaustion**: `REVIEW_MAX_CYCLES` (default 3) is the
    review action's threshold — the cut-short/extend checkpoint for review, the
-   analogue of `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop. If `cycle`
-   exceeds `REVIEW_MAX_CYCLES` or `budget_exhausted` is true with blocking
-   findings still open:
+   analogue of `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop. A
+   `budget_exhausted` cycle is **partial regardless of its findings**: the
+   harness returns `clean: false` for it even with zero blocking findings (some
+   dimension in `dimensions_skipped` never ran), so it never terminates the loop
+   as clean — it must be re-run (fresh budget) or, at the cap, hit the dead-end
+   below. Never merge on a budget-truncated cycle. If `cycle` exceeds
+   `REVIEW_MAX_CYCLES`, or `budget_exhausted` is true (whether or not blocking
+   findings remain):
 
    - **Interactive**: ask — **Fix remaining blocking findings now, ship anyway,
      or defer them?** (cut short the review vs. extend it by raising

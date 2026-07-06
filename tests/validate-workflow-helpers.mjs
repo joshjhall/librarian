@@ -681,18 +681,45 @@ for (const path of [ORCH, REBASE]) {
 {
   // ship-issue's emptyResult reads module-level CYCLE/PHASE/scopeFiles that
   // are derived from args at prefix load, so seed them through args.
-  const { refOf, emptyResult } = extractHelpers(
+  const { refOf, emptyResult, computeClean } = extractHelpers(
     SHIP,
-    ["refOf", "emptyResult"],
+    ["refOf", "emptyResult", "computeClean"],
     { cycle: 2, phase: "pr-cycle", files: ["x.js"] },
   );
   eq(refOf({ ref: "y:2:perf#1" }), "y:2:perf#1", "refOf (ship-issue): returns .ref");
   const r = emptyResult(false);
   eq(r.cycle, 2, "emptyResult: cycle reflects args");
   eq(r.phase, "pr-cycle", "emptyResult: phase reflects args");
-  eq(r.clean, true, "emptyResult: clean defaults true for the empty case");
+  eq(r.clean, true, "emptyResult: clean defaults true for the complete empty case");
   eq(r.blocking.length, 0, "emptyResult: no blocking findings");
   eq(r.summary.files_scanned, 1, "emptyResult: files_scanned from scopeFiles");
+  ok(
+    Array.isArray(r.dimensions_skipped) && r.dimensions_skipped.length === 0,
+    "emptyResult: dimensions_skipped is an empty array on the complete path",
+  );
+  // #270: a budget-truncated cycle is PARTIAL — never clean, even with no
+  // findings — and it names the dimensions that never ran. This is the
+  // merge-invariant guard: `clean` must be unforgeable by truncation.
+  const truncated = emptyResult(true, undefined, ["tests", "conventions"]);
+  eq(truncated.clean, false, "emptyResult: budget-truncated empty cycle is NOT clean");
+  eq(truncated.budget_exhausted, true, "emptyResult: budget_exhausted reflects the arg");
+  eq(
+    JSON.stringify(truncated.dimensions_skipped),
+    JSON.stringify(["tests", "conventions"]),
+    "emptyResult: dimensions_skipped names the dimensions that did not run",
+  );
+  // #270: computeClean is the shared predicate behind BOTH return paths,
+  // including the non-empty-findings path that sits past the ORCH_BOUNDARY and
+  // so is otherwise untestable. The merge-invariant guarantee — a truncated
+  // cycle is never clean even when nothing blocks — is asserted here directly.
+  eq(computeClean(0, 0, false), true, "computeClean: complete + no blockers + no open comments is clean");
+  eq(computeClean(1, 0, false), false, "computeClean: any blocking finding is not clean");
+  eq(computeClean(0, 1, false), false, "computeClean: any unresolved comment is not clean");
+  eq(
+    computeClean(0, 0, true),
+    false,
+    "computeClean: budget-truncated cycle is NOT clean even with zero blockers (merge invariant, #270)",
+  );
 }
 
 // =============================================================================
