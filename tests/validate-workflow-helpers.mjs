@@ -953,6 +953,39 @@ for (const path of [ORCH, REBASE]) {
     noDiff.diffSection().includes("git diff"),
     "diffSection (code-reviewer): no-diff path names the git diff command",
   );
+
+  // #267: the manifest no longer transcribes the diff — MANIFEST_SCHEMA must not
+  // require or define `diff` (that transcription is the whole cost/fidelity bug).
+  const { MANIFEST_SCHEMA } = extractHelpers(REVIEW, ["MANIFEST_SCHEMA"]);
+  ok(
+    !MANIFEST_SCHEMA.required.includes("diff"),
+    "MANIFEST_SCHEMA (code-reviewer): diff dropped from required",
+  );
+  ok(
+    !("diff" in MANIFEST_SCHEMA.properties),
+    "MANIFEST_SCHEMA (code-reviewer): diff dropped from properties",
+  );
+
+  // #267: wire-test the prompt BUILDER, not just diffSection() in isolation. The
+  // reviewer prompt must splice in the caller's diff bytes; a revert to the old
+  // `manifest.diff` embed would put `undefined` (diff is gone from the manifest)
+  // in the prompt instead — this asserts the byte-faithful wiring stays intact.
+  const { reviewerPrompt } = extractHelpers(REVIEW, ["reviewerPrompt"], {
+    diff: "ABC-BYTE-FAITHFUL-XYZ",
+  });
+  const manifest = {
+    files: ["a.js"],
+    classifications: [{ file: "a.js", types: ["source"] }],
+    needs: { database: false, devops: false },
+  };
+  ok(
+    reviewerPrompt("bug", manifest).includes("ABC-BYTE-FAITHFUL-XYZ"),
+    "reviewerPrompt (code-reviewer): splices the caller's diff bytes into the prompt",
+  );
+  ok(
+    !reviewerPrompt("bug", manifest).includes("undefined"),
+    "reviewerPrompt (code-reviewer): no stray `undefined` from a manifest.diff regression",
+  );
 }
 
 {
@@ -1173,6 +1206,54 @@ for (const path of [ORCH, REBASE]) {
     noDiff.diffSection().includes("git diff origin/main...HEAD"),
     "diffSection (ship-issue): no-diff path names git diff origin/main...HEAD",
   );
+
+  // #267: the manifest no longer transcribes the diff — MANIFEST_SCHEMA must not
+  // require or define `diff`.
+  const { MANIFEST_SCHEMA } = extractHelpers(SHIP, ["MANIFEST_SCHEMA"]);
+  ok(
+    !MANIFEST_SCHEMA.required.includes("diff"),
+    "MANIFEST_SCHEMA (ship-issue): diff dropped from required",
+  );
+  ok(
+    !("diff" in MANIFEST_SCHEMA.properties),
+    "MANIFEST_SCHEMA (ship-issue): diff dropped from properties",
+  );
+
+  // #267: wire-test all three reviewer/comment prompt builders that splice in the
+  // diff. Each must carry the caller's bytes and never a stray `undefined` from a
+  // reverted `manifest.diff` embed. commentsPrompt reads module-level prComments
+  // (derived from args at prefix load), so seed it alongside the diff.
+  const builders = extractHelpers(
+    SHIP,
+    ["reusedReviewerPrompt", "newReviewerPrompt", "commentsPrompt"],
+    { diff: "SHIP-BYTE-FAITHFUL-QRS", prComments: [{ id: "c1", body: "x" }] },
+  );
+  const manifest = {
+    files: ["a.js"],
+    classifications: [{ file: "a.js", types: ["source"] }],
+    needs: { database: false, devops: false },
+  };
+  const prompts = {
+    reusedReviewerPrompt: builders.reusedReviewerPrompt(
+      { mode: "security", category: "security" },
+      manifest,
+    ),
+    newReviewerPrompt: builders.newReviewerPrompt(
+      { name: "tests", category: "tests", instructions: "inline" },
+      manifest,
+    ),
+    commentsPrompt: builders.commentsPrompt(manifest),
+  };
+  for (const [name, prompt] of Object.entries(prompts)) {
+    ok(
+      prompt.includes("SHIP-BYTE-FAITHFUL-QRS"),
+      `${name} (ship-issue): splices the caller's diff bytes into the prompt`,
+    );
+    ok(
+      !prompt.includes("undefined"),
+      `${name} (ship-issue): no stray \`undefined\` from a manifest.diff regression`,
+    );
+  }
 }
 
 // =============================================================================

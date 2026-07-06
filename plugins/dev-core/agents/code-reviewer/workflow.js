@@ -221,7 +221,12 @@ const scopeHeader = () => {
 // skill's own `git diff` output) so findings cite `file:line` against real bytes,
 // never a manifest transcription (#267). When no diff was supplied, instruct the
 // (Bash-capable) reviewer to derive it in-agent — the deliberate no-args.diff
-// fallback.
+// fallback. NOTE: the fallback trades the pre-#267 single-snapshot guarantee for
+// cost savings — each parallel reviewer runs its own `git diff`, so a working
+// tree that mutates mid-barrier could yield diffs inconsistent with the once-
+// computed `manifest.files`/`classifications`. Callers wanting a consistent
+// snapshot across the barrier should pass `diff` explicitly (the docs recommend
+// it); the derive path is a best-effort convenience.
 const diffSection = () =>
   scopeDiff
     ? `Diff:\n${dataBlock('DIFF', scopeDiff)}\n\n`
