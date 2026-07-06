@@ -190,6 +190,17 @@ const verifyPrompt = (file, cls, attempt) =>
   `passes; set flaky=true if the failure looks transient (and may have been a ` +
   `parallel-run collision) so a retry may help; otherwise flaky=false.`
 
+// Escalation reason for a verify loop that never produced an ok verdict. A real
+// agent verdict's own summary always wins. Otherwise distinguish the two null
+// cases: the budget gate tripped before any verify ran (verdict === null,
+// budgetGated) vs. the agent returned null on its attempt. Without this, a
+// budget-gated exit is misreported as 'regen/re-test failed'.
+function verifyExitReason(verdict, budgetGated) {
+  if (verdict) return verdict.summary
+  if (budgetGated) return 'budget exhausted before verify'
+  return 'regen/re-test failed'
+}
+
 phase('Resolve')
 
 const resolved = []
@@ -271,9 +282,11 @@ const outcomes = await parallel(
         // over flaky re-tests. A regen/verify failure escalates THIS file only.
         let attempt = 0
         let verdict = null
+        let budgetGated = false
         while (attempt < MAX_FLAKES) {
           if (budget.total && budget.remaining() < BUDGET_FLOOR) {
             log(`budget low — stopping verify for "${file}" after ${attempt} attempt(s)`)
+            budgetGated = true
             break
           }
           attempt++
@@ -290,7 +303,7 @@ const outcomes = await parallel(
         return {
           file,
           kind: 'escalated',
-          reason: verdict ? verdict.summary : 'regen/re-test failed',
+          reason: verifyExitReason(verdict, budgetGated),
         }
       },
     )
