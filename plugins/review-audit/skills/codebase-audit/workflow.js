@@ -93,6 +93,46 @@ const timestamp =
 // harnesses (the house floor).
 const BUDGET_FLOOR = 40_000
 
+// Reserve for the TERMINAL single-agent stages (aggregate, artifact/report
+// writers). These are bare `await agent(...)` calls, not fan-out barriers: a
+// throw is NOT caught by pipeline()/parallel() and would kill the run AFTER
+// every scan+verify already completed — discarding the whole multi-domain audit.
+// `tailAgent` routes an exhausted-budget tail to the SAME null-fallback (return
+// raw findings / skip the write) each call site already handles. A tail stage
+// costs far less than the fan-out barrier, so a smaller reserve suffices.
+// DISTINCT identifier on purpose — the BUDGET_FLOOR house-value lint
+// (tests/lint-skills-agents.sh) greps `const BUDGET_FLOOR = …` and must never
+// match this.
+const TAIL_FLOOR = 8_000
+
+// True when the shared budget is too close to empty to spend on another tail
+// stage. Used both by tailAgent (to skip) and by callers deciding whether a null
+// tail result was a BUDGET situation (set budget_exhausted) versus a plain agent
+// failure (leave budget_exhausted honest, mark scan_failure instead) — this
+// harness deliberately keeps those two causes distinct (see the aggregate + scan
+// fallbacks).
+function budgetLow() {
+  return !!budget.total && budget.remaining() < TAIL_FLOOR
+}
+
+// Run a terminal single-agent stage without letting it throw the run away.
+// Returns the agent result, or `null` when the budget is too low to spend
+// (pre-check) OR the call throws anyway (a ceiling overshoot mid-tail) — both
+// degrade to the caller's existing null-handling. `fn` is a thunk so the agent()
+// call is only made when we decide to spend.
+async function tailAgent(fn, label) {
+  if (budgetLow()) {
+    log(`budget low — skipping ${label} (degrading to fallback)`)
+    return null
+  }
+  try {
+    return await fn()
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — degrading to fallback`)
+    return null
+  }
+}
+
 // Cap issues per group so one runaway domain can't open dozens of issues; the
 // aggregate step splits larger groups with (1/N) suffixes per issue-templates.md.
 const MAX_FINDINGS_PER_ISSUE = 10
@@ -795,17 +835,25 @@ if (allFindings.length === 0) {
   let cleanReportPath = ''
   if (writeReport) {
     phase('File')
-    const art = await agent(artifactWriterPrompt('', reportPath, cleanReport, [], [], { critical: 0, high: 0, medium: 0, low: 0 }), {
-      label: 'report',
-      phase: 'File',
-      agentType: 'review-audit:artifact-writer',
-      schema: ARTIFACT_WRITER_SCHEMA,
-    })
+    const art = await tailAgent(
+      () =>
+        agent(artifactWriterPrompt('', reportPath, cleanReport, [], [], { critical: 0, high: 0, medium: 0, low: 0 }), {
+          label: 'report',
+          phase: 'File',
+          agentType: 'review-audit:artifact-writer',
+          schema: ARTIFACT_WRITER_SCHEMA,
+        }),
+      'report artifact-writer'
+    )
     if (art) {
       cleanArtifacts = art
       cleanReportPath = art.report_path
       log(`wrote report summary to ${art.report_path || reportPath}`)
     } else {
+      // Report skipped/failed on a clean audit. Only flag budget_exhausted when
+      // the budget is genuinely the cause; a plain writer failure leaves the flag
+      // honest (the clean audit still returns its in-memory report_markdown).
+      if (budgetLow()) budgetExhausted = true
       log('report artifact-writer failed — clean audit, nothing else to write')
     }
   }
@@ -825,16 +873,25 @@ if (allFindings.length === 0) {
 // --- Aggregate (barrier: needs the full verified set to dedup + correlate) ---
 phase('Aggregate')
 
-const aggregate = await agent(aggregatePrompt(allFindings, acknowledgedAll), {
-  label: 'aggregate',
-  phase: 'Aggregate',
-  agentType: 'review-audit:checker',
-  schema: AGGREGATE_SCHEMA,
-})
+const aggregate = await tailAgent(
+  () =>
+    agent(aggregatePrompt(allFindings, acknowledgedAll), {
+      label: 'aggregate',
+      phase: 'Aggregate',
+      agentType: 'review-audit:checker',
+      schema: AGGREGATE_SCHEMA,
+    }),
+  'aggregate'
+)
 
 if (!aggregate) {
   // Without grouping we cannot file safely — return the raw findings as a report
-  // rather than open misgrouped issues.
+  // rather than open misgrouped issues. Only flag budget_exhausted when the
+  // budget is genuinely the cause (a tail skip/overshoot), NOT for a plain
+  // aggregate-agent failure — the two are kept distinct so the caller isn't told
+  // "re-run with more budget" when the real cause was an agent error. Either way
+  // scan_failure below marks the audit partial.
+  if (budgetLow()) budgetExhausted = true
   log('aggregate step failed — returning raw findings without filing')
   return finalResult({
     platform: map.platform,
@@ -895,14 +952,20 @@ phase('File')
 
 // Dispatch the artifact-writer for file output. `dirForFindings` is '' for a
 // report-only dispatch (issues objective + writeReport) so only the report md
-// is written. Returns the raw StructuredOutput (or null on agent failure).
+// is written. Returns the raw StructuredOutput (or null on agent failure OR a
+// budget-exhausted tail — tailAgent keeps a ceiling hit from throwing the whole
+// audit away after every scan+verify+aggregate already completed).
 const writeArtifacts = (dirForFindings) =>
-  agent(artifactWriterPrompt(dirForFindings, reportPath, aggregate.report_markdown, allFindings, groups, aggregate.totals), {
-    label: dirForFindings ? 'artifacts' : 'report',
-    phase: 'File',
-    agentType: 'review-audit:artifact-writer',
-    schema: ARTIFACT_WRITER_SCHEMA,
-  })
+  tailAgent(
+    () =>
+      agent(artifactWriterPrompt(dirForFindings, reportPath, aggregate.report_markdown, allFindings, groups, aggregate.totals), {
+        label: dirForFindings ? 'artifacts' : 'report',
+        phase: 'File',
+        agentType: 'review-audit:artifact-writer',
+        schema: ARTIFACT_WRITER_SCHEMA,
+      }),
+    dirForFindings ? 'artifact-writer' : 'report artifact-writer'
+  )
 
 // Objective FILES — or ISSUES with no tracker to file into (the SKILL layer
 // should prevent the latter, but the harness never mutates a tracker unprompted,
@@ -916,6 +979,9 @@ if (output === 'files' || map.platform === 'none') {
     log('artifact-writer failed — no files written')
     return finalResult({
       ...reportTail,
+      // reportTail froze budget_exhausted before this write; if the writer was
+      // skipped for BUDGET (not a plain agent failure), reflect that here.
+      budget_exhausted: budgetLow() || reportTail.budget_exhausted,
       artifacts: { action: 'error', out_dir: '', files_written: [], report_path: '', reason: 'artifact-writer failed (no result returned)' },
       scan_failure: true,
       summary: { ...baseSummary },
@@ -966,6 +1032,7 @@ log(`filed ${filed} issue(s), skipped ${skipped} duplicate(s), ${errored} error(
 // dispatch (no findings.json / group files — just the ./audit report md).
 let artifacts = null
 let artifactReportPath = ''
+let reportBudgetSkipped = false
 if (writeReport) {
   const art = await writeArtifacts('')
   if (art) {
@@ -973,6 +1040,9 @@ if (writeReport) {
     artifactReportPath = art.report_path
     log(`wrote report summary to ${art.report_path || reportPath}`)
   } else {
+    // Issues were still filed; only the accompanying report md is missing. Flag
+    // budget_exhausted below only if the budget was genuinely the cause.
+    reportBudgetSkipped = budgetLow()
     log('report artifact-writer failed — issues were still filed')
     artifacts = { action: 'error', out_dir: '', files_written: [], report_path: '', reason: 'report artifact-writer failed (no result returned)' }
   }
@@ -980,6 +1050,9 @@ if (writeReport) {
 
 return finalResult({
   ...reportTail,
+  // reportTail froze budget_exhausted before the report write; surface a
+  // budget-skipped report so a truncated tail is visible even though issues filed.
+  budget_exhausted: reportBudgetSkipped || reportTail.budget_exhausted,
   issues,
   report_path: artifactReportPath,
   artifacts,
