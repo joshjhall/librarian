@@ -402,6 +402,134 @@ test_launch_version_undeterminable_skips() {
     assert_not_contains "$RUN_OUT" "version skew" "no skew warning when undeterminable"
 }
 
+# --- golem-launch.sh auth-token injection (#244) ----------------------------
+# `launch` resolves ANTHROPIC_AUTH_TOKEN and passes it via `tmux -e`. To exercise
+# the real dispatch (past the missing-worktree guard) without a real tmux server,
+# each case prepends a `$sb/bin` stub `tmux` that logs its argv to
+# $sb/tmux-args.log and exits 0, and creates the .worktrees/issue-N dir so the
+# `[ -d ]` guard passes. Settings carry all rules so preflight is a silent no-op.
+# ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL are explicitly --unset so the suite's
+# own environment can never taint the resolution under test.
+
+# plant_tmux_stub <sandbox> — write $sb/bin/tmux that appends its args to
+# $sb/tmux-args.log then exits 0 (never spawns a session). Returns the dir to
+# prepend to PATH via stdout is unnecessary; callers use "$sb/bin".
+plant_tmux_stub() {
+    local sb="$1"
+    /usr/bin/mkdir -p "$sb/bin"
+    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: log argv, never start a real session.
+printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
+exit 0
+EOF
+    /usr/bin/chmod +x "$sb/bin/tmux"
+}
+
+# run_launch_auth <sandbox> [extra env KEY=VAL ...] — invoke `launch 7` with the
+# tmux stub on PATH, rules-present settings, a real worktree dir, and both
+# ANTHROPIC_* vars scrubbed. Extra positional args are prepended as env
+# assignments. Captures RUN_RC / RUN_OUT; the tmux argv lands in $sb/tmux-args.log.
+run_launch_auth() {
+    local sb="$1"
+    shift
+    plant_tmux_stub "$sb"
+    /usr/bin/mkdir -p "$sb/.worktrees/issue-7"
+    /usr/bin/printf '{ "permissions": { "allow": ["Bash(tmux new-session:*)", "Bash(tmux ls:*)", "Bash(tmux kill-session:*)"] } }\n' >"$sb/proj-settings.json"
+    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    # --unset=BASH_ENV is load-bearing: in the devcontainer BASH_ENV points at
+    # /etc/bash_env, which every non-interactive bash sources — and its
+    # /etc/bashrc.d/ scripts (a) hard-RESET $PATH (shadowing the $sb/bin stub
+    # tmux with the real one) and (b) re-source the real op-secrets cache
+    # (leaking a real ANTHROPIC_AUTH_TOKEN into the child, defeating the token
+    # scrub). Both would corrupt these PATH/env-sensitive cases; unsetting it
+    # makes the sandbox hermetic (see the devcontainer-bash-env-path-reset note).
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=ANTHROPIC_AUTH_TOKEN --unset=ANTHROPIC_BASE_URL \
+            --unset=OP_ANTHROPIC_AUTH_TOKEN_REF \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX_STUB_LOG="$sb/tmux-args.log" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            CLAUDE_PROJECT_SETTINGS=proj-settings.json \
+            CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
+            "$@" \
+            "$REAL_BASH" "$LAUNCH" launch 7 2>&1)" || RUN_RC=$?
+}
+
+# A readable op-secrets cache with a token + base URL → both are injected into
+# the tmux `-e` args, and the token is NEVER echoed to stdout/stderr.
+test_launch_auth_cache_injects_token() {
+    local sb log
+    new_sandbox sb
+    /usr/bin/printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://bifrost.example\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache"
+    assert_exit 0 "$RUN_RC" "launch with a cache token dispatches (exit 0)"
+    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244" "the resolved token is injected via tmux -e"
+    assert_contains "$log" "ANTHROPIC_BASE_URL=https://bifrost.example" "the cache base URL rides along"
+    assert_not_contains "$RUN_OUT" "sk-secret-tok-244" "the token is NEVER echoed to stdout/stderr"
+}
+
+# No cache, no op, no ref → no injection, no warning, exit 0. The dispatch is
+# byte-identical to pre-#244 (only GOLEM_ID in the env args).
+test_launch_auth_no_source_no_injection() {
+    local sb log
+    new_sandbox sb
+    # Point the cache default at a nonexistent path so /dev/shm is never read.
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache"
+    assert_exit 0 "$RUN_RC" "launch with no token source dispatches (exit 0)"
+    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no token is injected when none resolves"
+    assert_not_contains "$RUN_OUT" "WARNING" "no warning when there is no cache marker"
+}
+
+# `op read` hangs → the time-bounded wrapper kills it and dispatch still
+# completes. A fake `op` that sleeps 60s stands in; OP_ANTHROPIC_AUTH_TOKEN_REF is
+# set with no cache/env token, so resolution reaches the bounded op arm. Skipped
+# where neither timeout nor gtimeout exists (the arm no-ops there by design).
+test_launch_auth_op_hang_is_bounded() {
+    if ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
+        skip_test "neither timeout nor gtimeout available (bounded-op arm is a no-op)"
+        return 0
+    fi
+    local sb log
+    new_sandbox sb
+    /usr/bin/cat >"$sb/bin-op" <<'EOF'
+#!/usr/bin/env bash
+sleep 60
+EOF
+    # op must be on the same PATH dir as the tmux stub; plant it there after
+    # run_launch_auth creates bin/ — so pre-create bin/ and the op stub, then run.
+    /usr/bin/mkdir -p "$sb/bin"
+    /usr/bin/cp "$sb/bin-op" "$sb/bin/op"
+    /usr/bin/chmod +x "$sb/bin/op"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        OP_ANTHROPIC_AUTH_TOKEN_REF="op://vault/anthropic/token"
+    assert_exit 0 "$RUN_RC" "a hanging op read is bounded — dispatch still completes (exit 0)"
+    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "a timed-out op read injects no token"
+}
+
+# A cache marker exists but yields no token → warn (don't fail), still dispatch,
+# inject nothing. Exercises the elif warning arm.
+test_launch_auth_cache_marker_no_token_warns() {
+    local sb log
+    new_sandbox sb
+    # Cache is readable but exports something OTHER than the token.
+    /usr/bin/printf 'export SOME_OTHER_SECRET=1\n' >"$sb/op-cache"
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache"
+    assert_exit 0 "$RUN_RC" "an empty cache still dispatches (exit 0)"
+    assert_contains "$RUN_OUT" "WARNING" "warns when a cache marker is present but no token resolves"
+    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no empty token is injected"
+}
+
 # --- worktree-new.sh --------------------------------------------------------
 
 # Non-integer argument → exit 2 before touching git.
@@ -617,6 +745,10 @@ run_test test_launch_version_skew_escape_hatch "golem-launch: GOLEM_SKIP_VERSION
 run_test test_launch_version_unknown_sentinel_skips "golem-launch: 'unknown' sentinel version skips the guard (no false positive)"
 run_test test_launch_unset_home_does_not_crash "golem-launch: unset HOME does not crash the version guard"
 run_test test_launch_version_undeterminable_skips "golem-launch: undeterminable version skips the guard"
+run_test test_launch_auth_cache_injects_token "golem-launch: cache token is injected via tmux -e, never echoed (#244)"
+run_test test_launch_auth_no_source_no_injection "golem-launch: no token source → no injection, no warning (#244)"
+run_test test_launch_auth_op_hang_is_bounded "golem-launch: a hanging op read is time-bounded, dispatch completes (#244)"
+run_test test_launch_auth_cache_marker_no_token_warns "golem-launch: cache marker but no token warns, still dispatches (#244)"
 run_test test_worktree_new_non_integer_exits_2 "worktree-new: non-integer arg exits 2"
 run_test test_worktree_new_creates_worktree "worktree-new: creates the issue worktree + branch"
 run_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree exits 1"

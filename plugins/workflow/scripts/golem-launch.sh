@@ -23,6 +23,23 @@
 #                    is re-denied (#29). To dispatch a batch, call `launch <N>`
 #                    once per issue — never loop inside one Bash invocation.
 #
+#   3. auth inject — before dispatch, resolve ANTHROPIC_AUTH_TOKEN (and, when it
+#                    comes from the cache, ANTHROPIC_BASE_URL) and pass it to the
+#                    golem via `tmux -e` so its session env carries it (#244). A
+#                    `tmux`-spawned login shell does NOT re-source the container
+#                    startup cache /dev/shm/op-secrets-cache, so without this the
+#                    golem starts tokenless and dies at its first network call
+#                    (often its own /ship-issue), stranding work in the worktree.
+#                    This is an OPTIONAL accelerator, never a dependency: on a
+#                    bare host / macOS / OAuth setup (no cache, no `op`, no
+#                    OP_*_REF) resolution falls through SILENTLY and dispatches
+#                    exactly as before. Every probe is non-interactive and
+#                    time-bounded (`op read` is wrapped in `timeout` so a locked
+#                    op session can never wedge the launch); the token is only
+#                    injected when actually resolved (never an empty value that
+#                    could override what the golem's own shell init would supply)
+#                    and is NEVER echoed to a pane or log.
+#
 # Required launch permission rules (all three — dispatch, list, teardown):
 #   Bash(tmux new-session:*)   Bash(tmux ls:*)   Bash(tmux kill-session:*)
 #
@@ -41,6 +58,11 @@
 # Preflight scope overrides (env-overridable):
 #   CLAUDE_PROJECT_SETTINGS  (.claude/settings.local.json, repo-root-relative)
 #   CLAUDE_GLOBAL_SETTINGS   ($HOME/.claude/settings.json)
+# Auth-injection overrides (env-overridable; all optional — absence = skip):
+#   OP_SECRETS_CACHE         (/dev/shm/op-secrets-cache) — the container startup
+#                            cache sourced for ANTHROPIC_AUTH_TOKEN/BASE_URL.
+#   OP_ANTHROPIC_AUTH_TOKEN_REF (unset) — an `op://…` ref read (time-bounded) as
+#                            the last-resort token source when `op` is on PATH.
 # Version-skew overrides (env-overridable):
 #   CLAUDE_INSTALLED_PLUGINS ($HOME/.claude/plugins/installed_plugins.json) —
 #                            the active-install registry the guard reads.
@@ -70,6 +92,73 @@ REQUIRED_RULES=(
     'Bash(tmux ls:*)'
     'Bash(tmux kill-session:*)'
 )
+
+# _bounded_op_read <ref> — print the op secret at <ref> on stdout, wall-clock
+# bounded so a locked/absent op session can NEVER hang the dispatch (we have seen
+# `op` block on "connecting to desktop app"). Uses `timeout` if present, else
+# `gtimeout` (coreutils on macOS/Homebrew); when NEITHER exists the probe is
+# SKIPPED entirely (prints nothing) rather than risk an unbounded `op read` — a
+# base-macOS host without coreutils authenticates some other way. Any non-zero /
+# empty result → prints nothing. Never prints diagnostics (would risk leaking).
+_bounded_op_read() {
+    local ref="$1" to=""
+    [ -n "$ref" ] || return 0
+    command -v op >/dev/null 2>&1 || return 0
+    if command -v timeout >/dev/null 2>&1; then
+        to="timeout"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        to="gtimeout"
+    else
+        return 0
+    fi
+    "$to" 5 op read "$ref" 2>/dev/null || true
+}
+
+# resolve_auth_token — set RESOLVED_AUTH_TOKEN (and RESOLVED_BASE_URL when it
+# came from the cache) WITHOUT ever printing the value. Resolution order, first
+# hit wins:
+#   1. the launcher's own inherited env ($ANTHROPIC_AUTH_TOKEN);
+#   2. the container startup cache ($OP_SECRETS_CACHE, default
+#      /dev/shm/op-secrets-cache) — sourced in a SUBSHELL so its other exports
+#      never leak into the launcher, emitting just token<TAB>baseurl;
+#   3. a last-resort time-bounded `op read` of $OP_ANTHROPIC_AUTH_TOKEN_REF.
+# Every arm degrades to empty (→ no injection) when its source is absent, so on a
+# bare host / macOS / OAuth setup this is a silent no-op.
+RESOLVED_AUTH_TOKEN=""
+RESOLVED_BASE_URL=""
+resolve_auth_token() {
+    RESOLVED_AUTH_TOKEN=""
+    RESOLVED_BASE_URL=""
+
+    # 1. Already in the launcher's env — nothing to resolve.
+    if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+        RESOLVED_AUTH_TOKEN="$ANTHROPIC_AUTH_TOKEN"
+        RESOLVED_BASE_URL="${ANTHROPIC_BASE_URL:-}"
+        return 0
+    fi
+
+    # 2. Container startup cache. Source in a subshell (its other secrets stay
+    # out of the launcher env) and emit token<TAB>baseurl; the cache's own stdout
+    # is muted so a chatty cache can't corrupt the capture.
+    local cache="${OP_SECRETS_CACHE:-/dev/shm/op-secrets-cache}" line
+    if [ -r "$cache" ]; then
+        line="$(
+            # shellcheck disable=SC1090  # dynamic, host-provided cache path
+            . "$cache" >/dev/null 2>&1
+            command printf '%s\t%s' "${ANTHROPIC_AUTH_TOKEN:-}" "${ANTHROPIC_BASE_URL:-}"
+        )"
+        RESOLVED_AUTH_TOKEN="${line%%$'\t'*}"
+        RESOLVED_BASE_URL="${line#*$'\t'}"
+        [ -n "$RESOLVED_AUTH_TOKEN" ] && return 0
+        RESOLVED_BASE_URL=""
+    fi
+
+    # 3. Last resort: a time-bounded `op read` of the configured ref.
+    if [ -n "${OP_ANTHROPIC_AUTH_TOKEN_REF:-}" ]; then
+        RESOLVED_AUTH_TOKEN="$(_bounded_op_read "$OP_ANTHROPIC_AUTH_TOKEN_REF")"
+    fi
+    return 0
+}
 
 # settings_has_rules <file> — return 0 if the settings JSON's
 # permissions.allow array contains EVERY required rule, else 1. Missing file or
@@ -283,8 +372,29 @@ case "$cmd" in
             command echo "golem-launch: worktree $wt missing — run worktree-new.sh $N first" >&2
             exit 2
         fi
-        # Bare, standalone new-session — matches Bash(tmux new-session:*).
-        tmux new-session -d -s "golem-$N" -c "$wt" -e GOLEM_ID="golem-$N" \
+        # Resolve the auth token (#244) and build the tmux `-e` env args. Only
+        # inject ANTHROPIC_AUTH_TOKEN when it actually resolved — an empty value
+        # is NEVER passed (it could override a token the golem's own shell init
+        # would otherwise supply on a host). ANTHROPIC_BASE_URL rides along only
+        # when it came from the cache AND the launcher's own env lacks it.
+        resolve_auth_token
+        env_args=(-e "GOLEM_ID=golem-$N")
+        if [ -n "$RESOLVED_AUTH_TOKEN" ]; then
+            env_args+=(-e "ANTHROPIC_AUTH_TOKEN=$RESOLVED_AUTH_TOKEN")
+            if [ -n "$RESOLVED_BASE_URL" ] && [ -z "${ANTHROPIC_BASE_URL:-}" ]; then
+                env_args+=(-e "ANTHROPIC_BASE_URL=$RESOLVED_BASE_URL")
+            fi
+        elif [ -e "${OP_SECRETS_CACHE:-/dev/shm/op-secrets-cache}" ]; then
+            # A cache marker exists but nothing resolved — this env looks like it
+            # NEEDS a token, so warn (don't fail) rather than silently dispatch a
+            # golem that will die at ship time. Bare host / no cache falls through
+            # to no warning at all.
+            command echo "golem-launch: WARNING no ANTHROPIC_AUTH_TOKEN resolvable though an op-secrets cache is present; golem-$N may start unauthenticated. Dispatching anyway." >&2
+        fi
+        # Bare, standalone new-session — matches Bash(tmux new-session:*). The
+        # token lives only inside env_args (never echoed) so it can't leak to a
+        # pane or log.
+        tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
             "claude --permission-mode auto '/workflow:next-issue $N --level 4' ; claude --permission-mode auto '/workflow:ship-issue'"
         command echo "golem-launch: started golem-$N in $wt"
         ;;
