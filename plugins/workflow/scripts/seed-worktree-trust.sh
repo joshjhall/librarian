@@ -42,9 +42,15 @@
 #      `<repo>/<GOLEM_WORKTREE_DIR>/issue-N` path, which validates.
 set -euo pipefail
 
-# Absolute /usr/bin/dirname (not `command dirname`) to match this script's
-# convention and stay resolvable even when a caller strips PATH.
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve SCRIPT_DIR with pure-bash parameter expansion (no external `dirname`),
+# so it works even when a caller strips PATH (as the jq-absent test does) and
+# without hardcoding a /usr/bin/dirname the repo is retiring (see #241). cd/pwd
+# are builtins; the case arm handles a bare-name BASH_SOURCE (no slash).
+_seed_src="${BASH_SOURCE[0]}"
+case "$_seed_src" in
+    */*) SCRIPT_DIR="$(cd "${_seed_src%/*}" && pwd)" ;;
+    *) SCRIPT_DIR="$(pwd)" ;;
+esac
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 

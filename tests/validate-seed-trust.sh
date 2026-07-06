@@ -335,6 +335,57 @@ test_cwd_independent_root_from_sibling_worktree() {
         "config records the trust grant despite the sibling-worktree cwd"
 }
 
+# (o) Regression companion to (n): the REFUSE path must also survive a
+# sibling-worktree cwd. A target OUTSIDE the repo, invoked from inside a sibling
+# linked worktree, must still be refused (exit 3). Guards the more dangerous
+# direction of the resolver swap — repo_root() widening acceptance so an
+# out-of-tree target is falsely ACCEPTED — which (n)'s accept-only case can't see.
+test_outside_repo_refused_from_sibling_worktree() {
+    local sb
+    new_sandbox_with_worktree sb
+    /usr/bin/mkdir -p "$WORKDIR/elsewhere/issue-7"
+    SEED_RC=0
+    SEED_OUT="$(cd "$sb/.worktrees/issue-100" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$WORKDIR/elsewhere/issue-7" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    assert_exit 3 "$SEED_RC" \
+        "out-of-repo target is still refused from a sibling-worktree cwd (exit 3)"
+    assert_contains "$SEED_OUT" "not under repo root" "explains the root violation"
+    assert_file_not_contains "$sb/claude.json" "hasTrustDialogAccepted" \
+        "config is left untouched on refusal from the sibling cwd"
+}
+
+# (p) Regression (#242, literal case): cwd is a JUST-REMOVED worktree — the exact
+# reaped-worktree situation from the issue. A subshell cds into a linked worktree,
+# that worktree is then `git worktree remove`d out from under it, and the seed
+# script runs from the now-deleted cwd. getcwd() fails, so git resolves no repo
+# and the script refuses cleanly via its FIRST guard ("not inside a git
+# repository", exit 3) — it must NOT emit the old false "not under repo root"
+# refusal naming a stale worktree root. Trust is (correctly) not seeded here; the
+# real-world reap fix is that a FRESH cwd (the caller cds to a stable root) now
+# resolves correctly via (n) — this case pins the fail-safe for the degenerate
+# deleted-cwd path.
+test_removed_worktree_cwd_refuses_cleanly() {
+    local sb
+    new_sandbox_with_worktree sb
+    SEED_RC=0
+    SEED_OUT="$( (
+        cd "$sb/.worktrees/issue-100" &&
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                /usr/bin/git -C "$sb" worktree remove --force \
+                "$sb/.worktrees/issue-100" 2>/dev/null
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-7" \
+            "$sb/claude.json"
+    ) 2>&1)" || SEED_RC=$?
+    assert_exit 3 "$SEED_RC" "seed from a removed-worktree cwd refuses (exit 3)"
+    assert_contains "$SEED_OUT" "not inside a git repository" \
+        "degrades via the first guard, not a stale-root false refusal"
+    assert_not_contains "$SEED_OUT" "not under repo root" \
+        "no false 'not under repo root' naming a since-removed worktree"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init`, so the whole suite needs git. Gate it
@@ -371,5 +422,7 @@ run_test test_worktree_dir_override "GOLEM_WORKTREE_DIR override path is accepte
 run_test test_worktree_dir_override_replaces_default "GOLEM_WORKTREE_DIR override replaces the default dir (exit 3)"
 run_test test_symlink_escape_refused "symlink escaping the repo root is refused (exit 3)"
 run_test test_cwd_independent_root_from_sibling_worktree "valid target seeds trust from a sibling-worktree cwd (#242, exit 0)"
+run_test test_outside_repo_refused_from_sibling_worktree "out-of-repo target still refused from a sibling-worktree cwd (#242, exit 3)"
+run_test test_removed_worktree_cwd_refuses_cleanly "seed from a since-removed worktree cwd refuses cleanly (#242, exit 3)"
 
 generate_report
