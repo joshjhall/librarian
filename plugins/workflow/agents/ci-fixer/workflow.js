@@ -111,6 +111,72 @@ function defaultVerdict(check) {
   }
 }
 
+// Synthesized verdict for an iteration whose pipeline did NOT return a real
+// agent verify verdict (a null parse/fix/verify, or an unclassified failure).
+// `agentVerdict: false` is the marker applyResult() uses to keep the loop
+// retrying — a transient failure is NOT proof the check is unfixable. Crucially,
+// when stage 2 already applied a fix, its files_changed are preserved here so an
+// applied-but-unverified edit is never dropped (the "silent working-tree
+// mutation" bug). failure_type comes from the classify result when present.
+function transientVerdict(check, cls, fix) {
+  const applied = !!(fix && fix.applied)
+  return {
+    agentVerdict: false,
+    fixed: false,
+    remainingFailures: [check.name],
+    failure_type: cls && cls.failure_type ? cls.failure_type : 'other',
+    summary: fix && fix.summary ? fix.summary : 'transient agent failure — retrying',
+    files_changed: applied && Array.isArray(fix.files_changed) ? fix.files_changed : [],
+  }
+}
+
+// Wrap a verify-stage agent response for the pipeline: a real verdict is tagged
+// `agentVerdict: true` so applyResult() knows it may end the loop; a null verify
+// falls back to a transientVerdict that preserves stage 2's applied files_changed.
+// Extracted so the agentVerdict-tagging (the crux of the loop-control fix) is
+// directly unit-testable, since the stage closure that calls it cannot be.
+function wrapVerify(v, check, cls, fix) {
+  return v ? { ...v, agentVerdict: true } : transientVerdict(check, cls, fix)
+}
+
+// Fold one iteration's pipeline result into the carried verdict, returning the
+// next verdict plus whether the loop should stop. This is the fix for the
+// cause-conflation bug: only an agent-RETURNED verify verdict may end the loop,
+// and it only ends it on a genuine `other` + !fixed. A null pipeline result or a
+// synthesized transient verdict always retries (up to the harness cap).
+function applyResult(prev, result) {
+  // Null pipeline item (a stage threw / was skipped): purely transient. Keep the
+  // prior verdict untouched and retry — do NOT let the default 'other' break out.
+  if (!result) return { verdict: prev, stop: false }
+
+  // A real agent verify verdict: adopt it (dropping the internal marker). Break
+  // only on a genuine unfixable classification — never on the seeded default.
+  if (result.agentVerdict === true) {
+    const { agentVerdict, ...verdict } = result
+    const stop = verdict.failure_type === 'other' && !verdict.fixed
+    return { verdict, stop }
+  }
+
+  // Synthesized transient verdict: carry forward any applied files_changed so a
+  // fix applied before a null verify is still reported, but keep retrying
+  // (stop: false). Only let the transient's generic failure_type/summary
+  // OVERWRITE prev when prev is still the seeded default ('not attempted') — a
+  // prior real agent classification (e.g. 'lint' / 'still 3 errors in foo.js')
+  // must not be downgraded to 'transient agent failure — retrying', which would
+  // mislead the human-facing dead-end summary once the cap is hit.
+  const prevIsSeeded = prev.summary === 'not attempted'
+  return {
+    verdict: {
+      ...prev,
+      failure_type: prevIsSeeded ? result.failure_type : prev.failure_type,
+      summary: prevIsSeeded ? result.summary : prev.summary,
+      files_changed:
+        result.files_changed && result.files_changed.length ? result.files_changed : prev.files_changed,
+    },
+    stop: false,
+  }
+}
+
 phase('Fix')
 
 const results = await parallel(
@@ -125,6 +191,9 @@ const results = await parallel(
       }
       iteration++
 
+      // Each stage returns a typed object, never a bare null, so a transient
+      // agent failure surfaces as data (retryable) rather than nulling the whole
+      // pipeline item and reverting to the 'not attempted' default.
       const [result] = await pipeline(
         [check],
         (c) =>
@@ -133,26 +202,38 @@ const results = await parallel(
             phase: 'Fix',
             agentType: 'workflow:ci-fixer',
             schema: CLASSIFY_SCHEMA,
-          }),
-        (cls) =>
-          agent(fixPrompt(check, cls, iteration), {
+          }).then((cls) => ({ cls })),
+        ({ cls }) => {
+          // Guard the classify result before fixPrompt dereferences it — a null
+          // classify skips the fix agent instead of throwing mid-pipeline.
+          if (!cls) return { cls: null, fix: null }
+          return agent(fixPrompt(check, cls, iteration), {
             label: `fix:${check.name}#${iteration}`,
             phase: 'Fix',
             agentType: 'workflow:ci-fixer',
             schema: FIX_SCHEMA,
-          }),
-        () =>
-          agent(verifyPrompt(check, iteration), {
+          }).then((fix) => ({ cls, fix }))
+        },
+        ({ cls, fix }) => {
+          // Skip verify when nothing was classified/attempted.
+          if (!cls) return transientVerdict(check, cls, fix)
+          return agent(verifyPrompt(check, iteration), {
             label: `verify:${check.name}#${iteration}`,
             phase: 'Fix',
             agentType: 'workflow:ci-fixer',
             schema: VERIFY_SCHEMA,
-          }),
+            // A null verify preserves stage 2's applied files_changed so the
+            // edit is never silently unreported.
+          }).then((v) => wrapVerify(v, check, cls, fix))
+        },
       )
 
-      if (result) verdict = result
-      // Unfixable (infra/timeout/permissions) — no point retrying this branch.
-      if (verdict.failure_type === 'other' && !verdict.fixed) break
+      const step = applyResult(verdict, result)
+      verdict = step.verdict
+      // Stop only on a genuine agent-returned unfixable verdict — never on a
+      // transient null / synthesized result (which consumes the iteration and
+      // retries up to the cap).
+      if (step.stop) break
     }
 
     return { check: check.name, iterations: iteration, ...verdict }
