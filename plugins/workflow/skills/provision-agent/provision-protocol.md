@@ -61,6 +61,12 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
          REVIEW_MAX_CYCLES: "${REVIEW_MAX_CYCLES:-3}"
          GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
          GH_TOKEN: "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+         # Pass the Anthropic auth through so a container golem starts
+         # authenticated — the compose analogue of golem-launch.sh's `tmux -e`
+         # token injection (#244). Empty default: absent on the host → the
+         # golem authenticates however it already does (OAuth / inherited env).
+         ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN:-}"
+         ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
        init: true
        deploy:
          resources:
