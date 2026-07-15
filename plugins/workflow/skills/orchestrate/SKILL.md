@@ -359,8 +359,26 @@ attribution).
 When an earlier PR merges, later PRs touching the same files fall behind base.
 Detect and rebase them — without merging anything into the orchestrator branch.
 
+1. **Resolve each PR's worktree** before invoking the harness. The rebase-agent
+   must be told an explicit working directory — it must never improvise a
+   `git checkout` in the orchestrator's own root checkout (that mutates the live
+   session's tree and, since git refuses a branch already live in another
+   worktree, also just fails). For every PR in the set, look its head branch up
+   in the golem worktrees and pass the path as `prs[].worktree`:
+
+   ```bash
+   git worktree list --porcelain
+   # match "branch refs/heads/<pr-branch>" → the preceding "worktree <path>" line
+   ```
+
+   A PR whose branch has **no** worktree: **omit** `worktree` for it — do NOT
+   guess a path. The harness escalates any PR with no resolvable worktree as a
+   whole-PR manual-rebase review (`no resolvable worktree context`) rather than
+   dispatch the agent without an execution context.
+
 1. **Invoke the Workflow tool** on `~/.claude/skills/orchestrate/workflow.js`
-   with `mode: "poll+rebase"` (same `prs`/`base` args as Phase M). The harness:
+   with `mode: "poll+rebase"` (same `prs`/`base` args as Phase M, each `prs`
+   entry now carrying the resolved `worktree` from the step above). The harness:
 
    - polls all PRs, then loops over the `behind_base` subset (loop-until-dry,
      resumable),
