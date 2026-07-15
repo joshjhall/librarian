@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-07-15
+
+### Fixed
+
+- Normalize PR comment id comparison in ship-issue triage (#290)
+- Anchor pane_liveness_class to the pane footer region (#291)
+- Train mode fails closed on an unresolvable PR file list (#292)
+- Surface budget-skipped/scan-failed domains in audit report (#294)
+- Harden safeRef against traversal, absolute, and leading-dash values (#296)
+- Resolve config.sh repo_root() tools via PATH, not /usr/bin (#295)
+- Make code-review merge step ref-based to stop finding drift (#297)
+
+### Miscellaneous
+
+- Pin the rebase-agent's worktree context in poll+rebase (#293)
+
 ## [0.6.0] - 2026-07-15
 
 ### Added
@@ -246,6 +262,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.6.1]: https://github.com/joshjhall/librarian/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/joshjhall/librarian/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/joshjhall/librarian/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/joshjhall/librarian/compare/v0.3.0...v0.4.0
