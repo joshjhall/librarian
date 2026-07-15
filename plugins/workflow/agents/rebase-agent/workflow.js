@@ -59,6 +59,9 @@ const STRATEGIES = ['lockfile', 'generated', 'imports', 'union', 'version', 'whi
 // prompt-injection surface. Defenses, applied uniformly:
 //   1. Reject anything outside a strict path/ref allowlist ([A-Za-z0-9._/-]) —
 //      no whitespace, newlines, control chars, or NUL — BEFORE interpolation.
+//      The allowlist charset alone still admits path-shaped attacks, so also
+//      reject: a leading `/` (absolute path), a leading `-` (option injection —
+//      reads as a git flag), and any `..`/`.` path segment (traversal / cwd).
 //   2. Wrap each surviving value in a structured <tag>…</tag> delimiter so the
 //      agent reads it as a data field, not as prose to follow.
 //   3. Anchor the GUARDRAILS text BEFORE the tainted payload in every prompt.
@@ -72,7 +75,10 @@ const safeRef = (value, what) => {
     typeof value !== 'string' ||
     value.length === 0 ||
     value.length > 255 ||
-    !REF_ALLOWED.test(value)
+    !REF_ALLOWED.test(value) ||
+    value[0] === '/' ||
+    value[0] === '-' ||
+    value.split('/').some((seg) => seg === '..' || seg === '.')
   ) {
     throw new Error(`refused to interpolate untrusted ${what}: ${JSON.stringify(value)}`)
   }

@@ -391,6 +391,25 @@ for (const path of [ORCH, REBASE]) {
   throws(() => safeRef("a".repeat(256), "ref"), `safeRef (${path}): rejects >255 chars`);
   throws(() => safeRef(42, "ref"), `safeRef (${path}): rejects non-strings`);
   throws(() => safeRef("a;rm -rf", "ref"), `safeRef (${path}): rejects shell metachars`);
+  // #269 — the allowlist charset alone admits path-shaped attacks. Reject
+  // traversal, absolute paths, leading-dash (option injection), and a `.` cwd
+  // segment; keep legit repo-relative paths and dotfile segments (.github/…).
+  throws(() => safeRef("../x", "ref"), `safeRef (${path}): rejects a leading \`..\` segment`);
+  throws(() => safeRef("a/../b", "ref"), `safeRef (${path}): rejects an interior \`..\` segment`);
+  throws(() => safeRef("/etc/x", "ref"), `safeRef (${path}): rejects an absolute path`);
+  throws(() => safeRef("--force", "ref"), `safeRef (${path}): rejects a leading-dash (option) value`);
+  throws(() => safeRef("./x", "ref"), `safeRef (${path}): rejects a leading \`.\` segment`);
+  throws(() => safeRef("a/./b", "ref"), `safeRef (${path}): rejects an interior \`.\` segment`);
+  eq(
+    safeRef(".github/workflows/ci.yml", "ref"),
+    ".github/workflows/ci.yml",
+    `safeRef (${path}): passes a legit dotfile segment (not a \`.\`/\`..\` segment)`,
+  );
+  eq(
+    safeRef("src/a.b/c-d_e.ts", "ref"),
+    "src/a.b/c-d_e.ts",
+    `safeRef (${path}): passes a legit repo-relative path`,
+  );
 
   eq(
     field("branch", "main"),
@@ -400,11 +419,11 @@ for (const path of [ORCH, REBASE]) {
 }
 
 // =============================================================================
-// orchestrate — safeWorktreePath (#268)
-// A PATH is not a ref: safeRef's allowlist accepts `..`, which is traversal for
-// a filesystem path. safeWorktreePath adds the `..`-segment rejection while
-// keeping the ref character class (no shell metachars / angle brackets, so
-// field() delimiting stays safe). Only defined in the orchestrate harness.
+// orchestrate — safeWorktreePath (#268, #269)
+// safeRef now rejects `..` traversal too (#269), so the two agree on that. The
+// remaining distinction is absolute paths: `git worktree list` yields an
+// absolute checkout dir, so safeWorktreePath tolerates a leading `/` while
+// safeRef rejects it. Only defined in the orchestrate harness.
 // =============================================================================
 {
   const { safeWorktreePath, safeRef } = extractHelpers(ORCH, [
@@ -431,12 +450,17 @@ for (const path of [ORCH, REBASE]) {
     () => safeWorktreePath("../escape", "worktree"),
     "safeWorktreePath: rejects a leading `..` segment",
   );
-  // safeRef is the foil: proves the traversal string it lets through is exactly
-  // what safeWorktreePath is here to stop.
-  eq(
-    safeRef(".worktrees/../etc/passwd", "ref"),
-    ".worktrees/../etc/passwd",
-    "safeRef: (foil) accepts the `..` traversal safeWorktreePath rejects",
+  // safeRef agrees on traversal now (#269): the same `..` string it once let
+  // through is rejected by both.
+  throws(
+    () => safeRef(".worktrees/../etc/passwd", "ref"),
+    "safeRef: rejects the `..` traversal too (#269)",
+  );
+  // The remaining foil: safeWorktreePath tolerates an absolute worktree path
+  // (git worktree list yields one) that safeRef rejects as a leading `/`.
+  throws(
+    () => safeRef("/home/vscode/repo/.worktrees/issue-268", "ref"),
+    "safeRef: (foil) rejects the absolute path safeWorktreePath accepts",
   );
   throws(() => safeWorktreePath("", "worktree"), "safeWorktreePath: rejects empty string");
   throws(
@@ -459,6 +483,31 @@ for (const path of [ORCH, REBASE]) {
   throws(
     () => safeWorktreePath("a/<b>/c", "worktree"),
     "safeWorktreePath: rejects angle brackets (field() delimiter safety)",
+  );
+  // #269 — safeWorktreePath shares safeRef's leading-`-` (option-injection) and
+  // `.`/`..`-segment rejection; only the leading-`/` (absolute) case diverges.
+  throws(
+    () => safeWorktreePath("--force", "worktree"),
+    "safeWorktreePath: rejects a leading-dash (option) value like safeRef",
+  );
+  throws(
+    () => safeWorktreePath("-rf/x", "worktree"),
+    "safeWorktreePath: rejects a leading-dash path segment",
+  );
+  throws(
+    () => safeWorktreePath("./x", "worktree"),
+    "safeWorktreePath: rejects a leading `.` segment",
+  );
+  throws(
+    () => safeWorktreePath("a/./b", "worktree"),
+    "safeWorktreePath: rejects an interior `.` segment",
+  );
+  // The unique boundary: an ABSOLUTE path (tolerated) that ALSO contains a `..`
+  // segment must still be rejected — the leading-`/` allowance and the traversal
+  // rejection compose, they don't cancel.
+  throws(
+    () => safeWorktreePath("/home/vscode/repo/.worktrees/../../etc/passwd", "worktree"),
+    "safeWorktreePath: rejects traversal even inside an absolute path",
   );
 }
 

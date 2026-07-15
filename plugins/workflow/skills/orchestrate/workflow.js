@@ -298,6 +298,9 @@ const PR_FILES = {
 // attacker/repo") is a prompt-injection surface. Defenses, applied uniformly:
 //   1. Reject anything outside a strict ref/path allowlist ([A-Za-z0-9._/-]) —
 //      no whitespace, newlines, control chars, or NUL — BEFORE interpolation.
+//      The allowlist charset alone still admits path-shaped attacks, so also
+//      reject: a leading `/` (absolute path), a leading `-` (option injection —
+//      reads as a git flag), and any `..`/`.` path segment (traversal / cwd).
 //   2. Wrap each surviving value in a structured <tag>…</tag> delimiter so the
 //      agent reads it as a data field, not as prose to follow.
 //   3. Anchor the guardrail/standing-instruction text BEFORE the tainted
@@ -313,7 +316,10 @@ const safeRef = (value, what) => {
     typeof value !== 'string' ||
     value.length === 0 ||
     value.length > 255 ||
-    !REF_ALLOWED.test(value)
+    !REF_ALLOWED.test(value) ||
+    value[0] === '/' ||
+    value[0] === '-' ||
+    value.split('/').some((seg) => seg === '..' || seg === '.')
   ) {
     throw new Error(`refused to interpolate untrusted ${what}: ${JSON.stringify(value)}`)
   }
@@ -326,21 +332,25 @@ const safeRef = (value, what) => {
 const field = (tag, value) => `<${tag}>${value}</${tag}>`
 
 // Validate a filesystem path (the golem worktree the rebase-agent must operate
-// in) before interpolating it into a prompt. Distinct from safeRef because a
-// PATH is not a ref: safeRef's allowlist accepts `../foo` and `a/../b`, which
-// are fine for a ref name but are directory traversal for a path. This shares
-// safeRef's character class (so no shell metachars, whitespace, or angle
-// brackets survive — `field()` delimiting stays safe) but ADDITIONALLY rejects
-// any `..` path segment. Absolute paths are allowed: `git worktree list` yields
-// absolute checkout paths. Throws the same shape as safeRef so the poll+rebase
-// upfront catch handles a tainted/missing worktree uniformly with a tainted ref.
+// in) before interpolating it into a prompt. Distinct from safeRef in exactly
+// one direction: safeRef rejects a leading `/`, which would refuse the ABSOLUTE
+// checkout path that `git worktree list` yields — safeWorktreePath tolerates a
+// leading `/` for exactly that. Otherwise the two carry an IDENTICAL threat
+// posture: same character class (no shell metachars, whitespace, or angle
+// brackets survive — `field()` delimiting stays safe), the same leading-`-`
+// rejection (a worktree dir read as a git flag / `cd -…` is the same
+// option-injection surface safeRef guards), and the same `.`/`..` segment
+// rejection (traversal / cwd — a worktree path never legitimately contains
+// either segment). Throws the same shape as safeRef so the poll+rebase upfront
+// catch handles a tainted/missing worktree uniformly with a tainted ref.
 const safeWorktreePath = (value, what) => {
   if (
     typeof value !== 'string' ||
     value.length === 0 ||
     value.length > 255 ||
     !REF_ALLOWED.test(value) ||
-    value.split('/').some((seg) => seg === '..')
+    value[0] === '-' ||
+    value.split('/').some((seg) => seg === '..' || seg === '.')
   ) {
     throw new Error(`refused to interpolate untrusted ${what}: ${JSON.stringify(value)}`)
   }
