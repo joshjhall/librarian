@@ -654,15 +654,14 @@ test_config_repo_root_honors_path() {
         skip_test "git not on PATH — cannot build the shim wrapper"
         return 0
     fi
-    # A shim `git` that forwards to the real binary, placed in a dir that is the
-    # ONLY entry on PATH (no /usr/bin), so resolution must go through PATH.
+    # A `git` symlink to the real binary in a dir that is the ONLY entry on PATH
+    # (no /usr/bin). A symlink — not a `#!/usr/bin/env bash` wrapper — because
+    # PATH is stripped to just this dir, so a wrapper's interpreter (`bash`)
+    # would be unresolvable; the symlink needs no interpreter. repo_root's other
+    # tools (pwd/echo) are bash builtins, so git is the only PATH dependency.
     local shim="$sb/shim"
     /usr/bin/mkdir -p "$shim"
-    {
-        /usr/bin/printf '#!/usr/bin/env bash\n'
-        /usr/bin/printf 'exec %q "$@"\n' "$real_git"
-    } >"$shim/git"
-    /usr/bin/chmod +x "$shim/git"
+    /usr/bin/ln -s "$real_git" "$shim/git"
 
     local out rc=0
     out="$(cd "$sb" &&
