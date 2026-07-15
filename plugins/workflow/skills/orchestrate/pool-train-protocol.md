@@ -255,7 +255,7 @@ authorization** layered over the existing pieces: the order is computed by
    }
    ```
 
-   The harness returns `train` = `{ independents, chains, waves, order }`
+   The harness returns `train` = `{ independents, chains, waves, order, unresolved }`
    computed purely from pairwise file-overlap (no merge, no push, no rebase):
 
    - **`independents`** — PRs that share no changed file with any other; land in
@@ -265,6 +265,18 @@ authorization** layered over the existing pieces: the order is computed by
    - **`waves`** — wave 0 = all independents + every chain head (mergeable
      immediately, in parallel); wave *k* = the *k*-th link of each chain (only
      mergeable after the (*k*−1)-th merges).
+   - **`unresolved`** — `[{ pr, reason }]`: PRs whose changed-file set could
+     **not** be fetched this run (`reason` ∈ `budget-skipped` / `tainted-ref` /
+     `fetch-failed`). These are **fail-closed** (#272): excluded from the overlap
+     graph entirely, so they never appear in `independents`/`chains`/`waves`/
+     `order`. An unknown file set means unknown overlap — treating it as
+     no-overlap (wave 0) would merge it out of order ahead of a chain it might
+     collide with. **Do not merge these in wave 0.** Re-fetch each PR's files
+     (`gh pr view <N> --json files`) and re-run train to place it, or land them
+     **last and one at a time** after every wave, re-polling for CI/behind-base
+     between each. When `budget_exhausted` is also true, the budget floor was
+     hit mid-fetch — prefer re-running train (with a fresh budget or the files
+     supplied) over trusting a partial order.
 
 1. **Drive the loop** (loop-until-dry, resumable):
 
@@ -282,6 +294,13 @@ authorization** layered over the existing pieces: the order is computed by
       (the harness never pushes). Then merge it (`--auto` settle as above).
    1. **Repeat** until every wave is merged. Re-poll between waves to confirm CI
       stayed green and pick up any newly-behind PR.
+   1. **Land `unresolved` PRs last.** After every wave has merged, handle
+      `train.unresolved` (if non-empty) **one at a time**: re-fetch the PR's
+      files (`gh pr view <N> --json files`) and re-run train to sequence it
+      against `main` as it now stands, or merge it directly only once it is
+      confirmed green + behind-base-clean against the post-train base. Never fold
+      an `unresolved` PR into wave 0 — its overlap is unknown, so it must land
+      after the sequenced batch, not in parallel with it.
 
 1. **Bound CI cost.** A force-push after a rebase normally replays the full
    matrix. Reduce it per repo policy (see `merge-protocol.md`):
