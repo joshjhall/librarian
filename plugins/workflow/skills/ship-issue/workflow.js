@@ -144,6 +144,36 @@ const NEW_DIMENSIONS = [
 // throwing mid-barrier. Matches the ci-fixer / code-reviewer harnesses.
 const BUDGET_FLOOR = 40_000
 
+// Reserve for the TERMINAL single-agent stages (comment-triage, rescore,
+// classify). These are bare `await agent(...)` calls, not fan-out barriers: a
+// throw here is NOT caught by parallel()/pipeline() and would kill the whole
+// script, discarding every finding the cycle already paid for. `tailAgent`
+// below routes an exhausted-budget tail to the SAME null-fallback a barrier
+// thunk already gets, so a partial cycle still returns its classified findings.
+// A tail stage costs far less than a fan-out barrier, so a smaller reserve than
+// BUDGET_FLOOR suffices. DISTINCT identifier on purpose — the BUDGET_FLOOR
+// house-value lint (tests/lint-skills-agents.sh) greps `const BUDGET_FLOOR = …`
+// and must never match this.
+const TAIL_FLOOR = 8_000
+
+// Run a terminal single-agent stage without letting it throw the run away.
+// Returns the agent result, or `null` when the budget is too low to spend
+// (pre-check) OR the call throws anyway (a ceiling overshoot mid-tail) — both
+// degrade to the caller's existing `if (!result)` fallback. `fn` is a thunk so
+// the agent() call is only made when we decide to spend.
+async function tailAgent(fn, label) {
+  if (budget.total && budget.remaining() < TAIL_FLOOR) {
+    log(`budget low — skipping ${label} (degrading to fallback)`)
+    return null
+  }
+  try {
+    return await fn()
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — degrading to fallback`)
+    return null
+  }
+}
+
 const CERTAINTY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -568,12 +598,16 @@ reviewResults.forEach((res, i) => {
 const commentsAddressed = []
 if (PHASE === 'pr-cycle' && prComments.length) {
   phase('Comments')
-  const triage = await agent(commentsPrompt(manifest), {
-    label: 'comment-triage',
-    phase: 'Comments',
-    agentType: 'dev-core:code-reviewer',
-    schema: COMMENTS_SCHEMA,
-  })
+  const triage = await tailAgent(
+    () =>
+      agent(commentsPrompt(manifest), {
+        label: 'comment-triage',
+        phase: 'Comments',
+        agentType: 'dev-core:code-reviewer',
+        schema: COMMENTS_SCHEMA,
+      }),
+    'comment-triage'
+  )
   if (triage) {
     for (const t of triage.triaged) {
       commentsAddressed.push({ id: t.id, disposition: t.disposition, note: t.note })
@@ -584,6 +618,9 @@ if (PHASE === 'pr-cycle' && prComments.length) {
       }
     }
   } else {
+    // Triage skipped/failed: comments stay unresolved AND the cycle is now
+    // partial — mark it so it can never terminate the loop as a clean pass.
+    budgetExhausted = true
     log('comment-triage failed — PR comments left unresolved for this cycle')
   }
 }
@@ -619,15 +656,19 @@ rawFindings.forEach((f, i) => {
 // --- Rescore (fresh judge panel; no producer self-grading) ------------------
 phase('Rescore')
 
-const rescored = await agent(rescorePrompt(rawFindings), {
-  label: 'rescore',
-  phase: 'Rescore',
-  agentType: 'dev-core:code-reviewer',
-  // Escalate the fresh judge panel to fable: it is the last gate before a
-  // finding is surfaced, so its scoring accuracy compounds.
-  model: 'fable',
-  schema: RESCORE_SCHEMA,
-})
+const rescored = await tailAgent(
+  () =>
+    agent(rescorePrompt(rawFindings), {
+      label: 'rescore',
+      phase: 'Rescore',
+      agentType: 'dev-core:code-reviewer',
+      // Escalate the fresh judge panel to fable: it is the last gate before a
+      // finding is surfaced, so its scoring accuracy compounds.
+      model: 'fable',
+      schema: RESCORE_SCHEMA,
+    }),
+  'rescore'
+)
 
 if (rescored) {
   const scoreByRef = new Map(rescored.scores.map((s) => [s.ref, s.certainty]))
@@ -638,29 +679,47 @@ if (rescored) {
     }
   }
 } else {
+  // Rescore skipped/failed: keep producer certainty, and mark the cycle partial.
+  // The tail floor (TAIL_FLOOR) is below the fan-out floor, so rescore can be
+  // budget-skipped while a later classify still runs — without this flag such a
+  // truncated cycle could read as clean, breaking the "clean is unforgeable by
+  // truncation" invariant (#270). Matches the classify + comment-triage
+  // fallbacks here and the code-reviewer rescore fallback.
+  budgetExhausted = true
   log('rescore step failed — keeping producer certainty as a fallback')
 }
 
 // --- Classify (fresh gatekeeper: blocking vs deferrable) --------------------
 phase('Classify')
 
-const classified = await agent(classifyPrompt(rawFindings, budgetExhausted), {
-  label: 'classify',
-  phase: 'Classify',
-  agentType: 'dev-core:code-reviewer',
-  // Escalate the fresh gatekeeper to fable: the blocking-vs-deferrable verdict
-  // decides what stops a ship, so a wrong call is expensive either way.
-  model: 'fable',
-  schema: CLASSIFY_SCHEMA,
-})
+const classified = await tailAgent(
+  () =>
+    agent(classifyPrompt(rawFindings, budgetExhausted), {
+      label: 'classify',
+      phase: 'Classify',
+      agentType: 'dev-core:code-reviewer',
+      // Escalate the fresh gatekeeper to fable: the blocking-vs-deferrable
+      // verdict decides what stops a ship, so a wrong call is expensive either
+      // way.
+      model: 'fable',
+      schema: CLASSIFY_SCHEMA,
+    }),
+  'classify'
+)
 
 // Default disposition if the classifier dropped a finding or failed entirely:
 // when the budget was exhausted, defer (file it, never drop); otherwise treat
 // an unclassified finding as blocking so it is not silently ignored.
+if (!classified) {
+  // Classify skipped/failed: the cycle is partial. Mark it so unclassified
+  // findings default to deferrable (filed, never dropped) below, and so `clean`
+  // stays false — a cycle that never ran its gatekeeper must not read as clean.
+  budgetExhausted = true
+  log('classify step failed — applying default dispositions')
+}
 const dispByRef = new Map(
   classified ? classified.decisions.map((d) => [d.ref, d.disposition]) : []
 )
-if (!classified) log('classify step failed — applying default dispositions')
 
 const blocking = []
 const deferrable = []

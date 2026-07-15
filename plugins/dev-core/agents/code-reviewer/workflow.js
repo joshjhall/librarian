@@ -19,6 +19,10 @@ export const meta = {
 //
 // Returns the merge step's object: the `finding-schema.md` top-level structure
 //   { scanner, summary, findings, acknowledged_findings }
+// plus a partial-review signal spliced on by the harness:
+//   { budget_exhausted, reviewers_skipped }
+// so a caller can tell a full review from one that skipped a specialist, lost a
+// sub-reviewer mid-barrier, or truncated its rescore/merge tail on budget.
 //
 // The fan-out, the shared token budget, and per-step resume all live HERE in
 // the harness — NOT in the code-reviewer agent. The agent is one
@@ -39,6 +43,35 @@ const CORE_REVIEWERS = ['security', 'bug', 'performance', 'style']
 // to empty, so a partial review still returns merged findings instead of
 // throwing mid-barrier.
 const BUDGET_FLOOR = 40_000
+
+// Reserve for the TERMINAL single-agent stages (rescore, merge). These are bare
+// `await agent(...)` calls, not fan-out barriers: a throw is NOT caught by
+// parallel() and would kill the whole run, discarding every finding already
+// produced. `tailAgent` routes an exhausted-budget tail to the SAME null-
+// fallback (keep producer certainty / emptyReport) a barrier thunk already gets.
+// A tail stage costs far less than the barrier, so a smaller reserve suffices.
+// DISTINCT identifier on purpose — the BUDGET_FLOOR house-value lint
+// (tests/lint-skills-agents.sh) greps `const BUDGET_FLOOR = …` and must never
+// match this.
+const TAIL_FLOOR = 8_000
+
+// Run a terminal single-agent stage without letting it throw the run away.
+// Returns the agent result, or `null` when the budget is too low to spend
+// (pre-check) OR the call throws anyway (a ceiling overshoot mid-tail) — both
+// degrade to the caller's existing fallback. `fn` is a thunk so the agent() call
+// is only made when we decide to spend.
+async function tailAgent(fn, label) {
+  if (budget.total && budget.remaining() < TAIL_FLOOR) {
+    log(`budget low — skipping ${label} (degrading to fallback)`)
+    return null
+  }
+  try {
+    return await fn()
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — degrading to fallback`)
+    return null
+  }
+}
 
 const CERTAINTY_SCHEMA = {
   type: 'object',
@@ -302,6 +335,10 @@ function emptyReport(manifest) {
     },
     findings: [],
     acknowledged_findings: [],
+    // Partial-review signal defaults; the caller at the end of the harness
+    // overrides these onto whatever object it returns (report or emptyReport).
+    budget_exhausted: false,
+    reviewers_skipped: [],
   }
 }
 
@@ -327,9 +364,19 @@ const specialists = []
 if (manifest.needs.database) specialists.push('database')
 if (manifest.needs.devops) specialists.push('devops')
 
+// Partial-review signal. Set whenever a reviewer is skipped for budget, a
+// sub-reviewer nulls mid-barrier, or a tail stage truncates — so the returned
+// envelope tells callers a full review from a half-complete one (previously the
+// specialist skip was log-only, contradicting workflow-authoring SKILL.md § the
+// budget_exhausted/partial flag must be surfaced).
+let budgetExhausted = false
+const reviewersSkipped = []
+
 const reviewers = [...CORE_REVIEWERS]
 for (const s of specialists) {
   if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+    budgetExhausted = true
+    reviewersSkipped.push(s)
     log(`budget low — skipping conditional specialist "${s}"`)
     continue
   }
@@ -348,9 +395,13 @@ const reviewResults = await parallel(
 )
 
 // A sub-reviewer that threw resolves to null — log it and proceed with the rest.
+// A null mid-barrier is most often the shared budget running out, so mark the
+// review partial (same treatment as the fan-out harnesses).
 const rawFindings = []
 reviewResults.forEach((res, i) => {
   if (!res) {
+    budgetExhausted = true
+    reviewersSkipped.push(reviewers[i])
     log(`sub-reviewer "${reviewers[i]}" failed — continuing without its findings`)
     return
   }
@@ -359,7 +410,9 @@ reviewResults.forEach((res, i) => {
 
 if (rawFindings.length === 0) {
   log('no findings across all reviewers — changes look clean')
-  return emptyReport(manifest)
+  // Even with no findings the review may be PARTIAL (a specialist skipped, a
+  // sub-reviewer nulled): surface that so "clean" is not confused with "full".
+  return { ...emptyReport(manifest), budget_exhausted: budgetExhausted, reviewers_skipped: reviewersSkipped }
 }
 
 // Stamp a UNIQUE, stable ref onto every finding now that the full set is
@@ -373,15 +426,19 @@ rawFindings.forEach((f, i) => {
 // --- Rescore (fresh judge panel; no producer self-grading) ------------------
 phase('Rescore')
 
-const rescored = await agent(rescorePrompt(rawFindings), {
-  label: 'rescore',
-  phase: 'Rescore',
-  agentType: 'dev-core:code-reviewer',
-  // Escalate the fresh judge panel to fable: it is the last gate before a
-  // finding is surfaced, so its scoring accuracy compounds.
-  model: 'fable',
-  schema: RESCORE_SCHEMA,
-})
+const rescored = await tailAgent(
+  () =>
+    agent(rescorePrompt(rawFindings), {
+      label: 'rescore',
+      phase: 'Rescore',
+      agentType: 'dev-core:code-reviewer',
+      // Escalate the fresh judge panel to fable: it is the last gate before a
+      // finding is surfaced, so its scoring accuracy compounds.
+      model: 'fable',
+      schema: RESCORE_SCHEMA,
+    }),
+  'rescore'
+)
 
 const didRescore = !!rescored
 if (rescored) {
@@ -393,17 +450,31 @@ if (rescored) {
     }
   }
 } else {
+  // Rescore skipped/failed: keep producer certainty, and mark the review partial
+  // so the tail truncation is visible in the returned envelope.
+  budgetExhausted = true
   log('rescore step failed — keeping producer certainty as a fallback')
 }
 
 // --- Merge (acknowledge scan, dedup, correlate, emit finding-schema) --------
 phase('Merge')
 
-const report = await agent(mergePrompt(rawFindings, manifest, didRescore), {
-  label: 'merge',
-  phase: 'Merge',
-  agentType: 'dev-core:code-reviewer',
-  schema: MERGE_SCHEMA,
-})
+const report = await tailAgent(
+  () =>
+    agent(mergePrompt(rawFindings, manifest, didRescore), {
+      label: 'merge',
+      phase: 'Merge',
+      agentType: 'dev-core:code-reviewer',
+      schema: MERGE_SCHEMA,
+    }),
+  'merge'
+)
 
-return report || emptyReport(manifest)
+// A merge skip/failure loses the correlated report — fall back to emptyReport
+// (never a throw) and mark the review partial so the empty result is not read as
+// a genuinely clean pass.
+if (!report) budgetExhausted = true
+
+// Splice the partial-review signal onto whatever object we return, so both the
+// merge and the emptyReport fallback carry it uniformly.
+return { ...(report || emptyReport(manifest)), budget_exhausted: budgetExhausted, reviewers_skipped: reviewersSkipped }
