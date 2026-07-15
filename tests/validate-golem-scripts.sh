@@ -670,8 +670,14 @@ test_config_repo_root_honors_path() {
             PATH="$shim" \
             "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "repo_root exits 0 with git resolved via PATH only"
-    # repo_root prints the sandbox root; the git common dir's parent is $sb.
-    assert_contains "$out" "$sb" "repo_root resolves the repo root via PATH, not /usr/bin/git"
+    # repo_root prints the sandbox root (the git common dir's parent). git
+    # canonicalizes symlinks in that path (e.g. a symlinked /tmp on the CI
+    # runner), so compare realpaths, not the raw mktemp path.
+    local sb_real out_real
+    sb_real="$(cd "$sb" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sb_real" "$out_real" \
+        "repo_root resolves the repo root via PATH, not /usr/bin/git"
 }
 
 # --- worktree-rm.sh ---------------------------------------------------------
