@@ -480,6 +480,13 @@ const refOf = (f) => f.ref
 const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
   blockingLen === 0 && unresolvedLen === 0 && !budgetExhausted
 
+// PR comment ids arrive numeric from `gh pr view --json reviews,comments`, but
+// COMMENTS_SCHEMA coerces each triaged id to a string. Compare as strings so
+// neither side's type wins — a strict `===` between a number and a string never
+// matches, which would make every comment read as unresolved forever (clean
+// unreachable) or, if the caller stringifies, hide an omitted triage row (#261).
+const sameCommentId = (a, b) => String(a) === String(b)
+
 function emptyResult(budgetExhausted, note, dimensionsSkipped) {
   if (note) log(note)
   return {
@@ -609,7 +616,12 @@ if (PHASE === 'pr-cycle' && prComments.length) {
     'comment-triage'
   )
   if (triage) {
+    // Dedup by id (compared as strings): a triage response that repeats an id
+    // must not push its addressed entry or finding twice (#261).
+    const seenIds = []
     for (const t of triage.triaged) {
+      if (seenIds.some((s) => sameCommentId(s, t.id))) continue
+      seenIds.push(t.id)
       commentsAddressed.push({ id: t.id, disposition: t.disposition, note: t.note })
       // A blocking/deferrable comment with a concrete finding joins the stream
       // so it is rescored + classified like any other finding.
@@ -628,7 +640,7 @@ if (PHASE === 'pr-cycle' && prComments.length) {
 // Unresolved comments (no disposition, or triage failed) keep the loop honest:
 // the skill checks comments_addressed against the full comment set.
 const unresolvedComments = prComments.length
-  ? prComments.filter((c) => !commentsAddressed.some((a) => a.id === c.id))
+  ? prComments.filter((c) => !commentsAddressed.some((a) => sameCommentId(a.id, c.id)))
   : []
 if (unresolvedComments.length) {
   log(`${unresolvedComments.length} PR comment(s) not yet resolved-or-deferred`)

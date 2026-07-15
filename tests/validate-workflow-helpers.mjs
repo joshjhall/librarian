@@ -995,6 +995,7 @@ for (const path of [ORCH, REBASE]) {
     refOf,
     emptyResult,
     computeClean,
+    sameCommentId,
     dataBlock,
     sanitize,
     reusedReviewerPrompt,
@@ -1008,6 +1009,7 @@ for (const path of [ORCH, REBASE]) {
       "refOf",
       "emptyResult",
       "computeClean",
+      "sameCommentId",
       "dataBlock",
       "sanitize",
       "reusedReviewerPrompt",
@@ -1148,6 +1150,16 @@ for (const path of [ORCH, REBASE]) {
     false,
     "computeClean: budget-truncated cycle is NOT clean even with zero blockers (merge invariant, #270)",
   );
+  // #261: PR comment ids arrive numeric from `gh pr view` but COMMENTS_SCHEMA
+  // coerces triaged ids to strings. A strict `===` never matched, so every
+  // comment read as unresolved forever (clean unreachable). sameCommentId
+  // normalizes both sides — the numeric-vs-string path is the core regression.
+  eq(sameCommentId(123, "123"), true, "sameCommentId: numeric gh id matches its string schema id (#261)");
+  eq(sameCommentId("123", 123), true, "sameCommentId: order-independent numeric/string match");
+  eq(sameCommentId(123, 123), true, "sameCommentId: two numeric ids match");
+  eq(sameCommentId("abc", "abc"), true, "sameCommentId: two string ids match");
+  eq(sameCommentId(123, 456), false, "sameCommentId: distinct numeric ids do not match");
+  eq(sameCommentId("abc", "def"), false, "sameCommentId: distinct string ids do not match");
 }
 
 // #260 regression: the scope-drift dimension in NEW_DIMENSIONS calls
