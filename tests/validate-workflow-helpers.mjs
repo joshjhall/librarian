@@ -678,6 +678,79 @@ for (const path of [ORCH, REBASE]) {
 }
 
 // =============================================================================
+// orchestrate — buildTrainOrder (pure merge-order graph; issue #272)
+// The graph/wave computation was extracted from runTrain's async body so the
+// merge-sequencing correctness — the whole point of the train — is unit-tested.
+// It only ever receives RESOLVED PRs ({ pr, files }); a PR whose files could not
+// be fetched is routed to train.unresolved by runTrain and never reaches here,
+// which is the fail-closed fix (an unknown file set must NOT become wave 0).
+// =============================================================================
+{
+  const { buildTrainOrder } = extractHelpers(ORCH, ["buildTrainOrder"]);
+
+  // Two disjoint PRs → both independent, land together in a single wave.
+  {
+    const t = buildTrainOrder([
+      { pr: 1, files: ["a.js"] },
+      { pr: 2, files: ["b.js"] },
+    ]);
+    eq(JSON.stringify(t.independents), JSON.stringify([1, 2]), "buildTrainOrder: disjoint PRs are both independent");
+    eq(t.chains.length, 0, "buildTrainOrder: no chains when nothing overlaps");
+    eq(JSON.stringify(t.waves), JSON.stringify([[1, 2]]), "buildTrainOrder: disjoint PRs share one wave");
+    eq(JSON.stringify(t.order), JSON.stringify([1, 2]), "buildTrainOrder: linear order lists both independents");
+  }
+
+  // Two PRs sharing a file → one chain of length 2; wave 0 = head, wave 1 = link.
+  {
+    const t = buildTrainOrder([
+      { pr: 1, files: ["shared.js", "a.js"] },
+      { pr: 2, files: ["shared.js", "b.js"] },
+    ]);
+    eq(t.independents.length, 0, "buildTrainOrder: overlapping PRs are not independent");
+    eq(JSON.stringify(t.chains), JSON.stringify([[1, 2]]), "buildTrainOrder: overlapping PRs form one ordered chain");
+    eq(JSON.stringify(t.waves), JSON.stringify([[1], [2]]), "buildTrainOrder: chain head is wave 0, link is wave 1");
+    eq(JSON.stringify(t.order), JSON.stringify([1, 2]), "buildTrainOrder: chain laid out in sequence in the linear order");
+  }
+
+  // Mixed: an independent PR + a 2-PR chain. Wave 0 = independent + chain head.
+  {
+    const t = buildTrainOrder([
+      { pr: 1, files: ["x.js"] }, // independent
+      { pr: 2, files: ["c.js"] }, // chain with #3
+      { pr: 3, files: ["c.js"] },
+    ]);
+    eq(JSON.stringify(t.independents), JSON.stringify([1]), "buildTrainOrder: the disjoint PR is independent");
+    eq(JSON.stringify(t.chains), JSON.stringify([[2, 3]]), "buildTrainOrder: the overlapping pair is the chain");
+    eq(JSON.stringify(t.waves), JSON.stringify([[1, 2], [3]]), "buildTrainOrder: wave 0 = independent + chain head, wave 1 = link");
+  }
+
+  // Fail-closed contract (#272): the helper receives ONLY resolved PRs, so an
+  // empty resolved set (every PR unresolved) yields empty everything — the
+  // unresolved PRs are surfaced by runTrain's partition, never as wave 0 here.
+  {
+    const t = buildTrainOrder([]);
+    eq(JSON.stringify(t.independents), JSON.stringify([]), "buildTrainOrder: no resolved PRs → no independents (unknown PRs never enter wave 0)");
+    eq(JSON.stringify(t.chains), JSON.stringify([]), "buildTrainOrder: no resolved PRs → no chains");
+    eq(JSON.stringify(t.waves), JSON.stringify([]), "buildTrainOrder: no resolved PRs → no waves");
+    eq(JSON.stringify(t.order), JSON.stringify([]), "buildTrainOrder: no resolved PRs → empty order");
+  }
+
+  // Determinism: identical input → byte-identical output (no Date.now/Math.random).
+  {
+    const build = () => [
+      { pr: 3, files: ["c.js"] },
+      { pr: 1, files: ["a.js", "c.js"] },
+      { pr: 2, files: ["b.js"] },
+    ];
+    eq(
+      JSON.stringify(buildTrainOrder(build())),
+      JSON.stringify(buildTrainOrder(build())),
+      "buildTrainOrder: deterministic — same input yields identical output",
+    );
+  }
+}
+
+// =============================================================================
 // ci-fixer — defaultVerdict
 // =============================================================================
 {

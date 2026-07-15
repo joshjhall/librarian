@@ -264,6 +264,10 @@ const PR_FILES = {
 //     waves: number[][],        // parallelizable batches: wave[0] = independents + every chain head;
 //                               //   wave[k>0] = the k-th element of each chain long enough to have one
 //     order: number[],          // one conservative linear landing order (independents, then chains flat)
+//     unresolved: {pr,reason}[], // PRs whose changed-file set could NOT be fetched (budget-skipped,
+//                               //   tainted-ref, fetch-failed). Fail-closed (#272): excluded from the
+//                               //   overlap graph entirely — never in independents/chains/waves/order —
+//                               //   so an unknown-overlap PR is landed last/manually, not in wave 0.
 //   }
 //
 // TRACKS is the harness's own return shape for tracks mode (not an agent gate):
@@ -735,42 +739,17 @@ function runTracks() {
 }
 
 // ---------------------------------------------------------------------------
-// Train mode — compute a merge order from pairwise changed-file overlap.
-//   No poll, no rebase, no merge, no push: this branch returns BEFORE the Poll
-//   phase. The live session (SKILL.md Phase T) consumes `train` to drive the
-//   gated merge -> rebase -> merge loop with one up-front batch approval.
+// Train order computation — pure, side-effect-free graph builder over the PRs
+//   whose changed-file set was RESOLVED. `resolved` is [{ pr, files }] (a PR
+//   whose files could not be fetched is NOT passed here — runTrain routes it to
+//   `train.unresolved` instead; see the fail-closed note there). Returns
+//   `{ independents, chains, waves, order }` computed from pairwise file overlap.
+//   Extracted from runTrain so it is unit-tested (tests/validate-workflow-helpers.mjs)
+//   like composeTracks / planRefill — the merge-sequencing correctness is the
+//   whole point of the train, so it must not live only inside an async body.
 // ---------------------------------------------------------------------------
-async function runTrain() {
-  phase('Order')
-
-  // Resolve each PR's changed-file set: prefer the caller-supplied `files`
-  // (from `gh pr view --json files`), and only spend a read-only agent on the
-  // PRs that arrived without one. Budget-aware like the poll phase.
-  let trainBudgetExhausted = false
-  const withFiles = await parallel(
-    prs.map((pr) => async () => {
-      if (Array.isArray(pr.files)) return { pr: pr.number, files: pr.files.filter(Boolean) }
-      if (budget.total && budget.remaining() < BUDGET_FLOOR) {
-        trainBudgetExhausted = true
-        log(`budget low — skipped file-list fetch for PR #${pr.number} (treated as no-overlap)`)
-        return { pr: pr.number, files: [] }
-      }
-      let prompt
-      try {
-        prompt = filesPrompt(pr)
-      } catch (e) {
-        // Tainted branch/base name — drop this PR's file fetch (treated as
-        // no-overlap) rather than dispatch an agent with a poisoned prompt.
-        log(`file-list fetch SKIPPED for PR #${pr.number} — ${e.message}`)
-        return { pr: pr.number, files: [] }
-      }
-      const r = await agent(prompt, { label: `files:#${pr.number}`, phase: 'Order', schema: PR_FILES })
-      if (!r) log(`file-list fetch FAILED for PR #${pr.number} — treated as no-overlap this run`)
-      return { pr: pr.number, files: r ? r.files.filter(Boolean) : [] }
-    }),
-  )
-
-  const fileMap = new Map(withFiles.map((f) => [f.pr, new Set(f.files)]))
+function buildTrainOrder(resolved) {
+  const fileMap = new Map(resolved.map((f) => [f.pr, new Set(f.files)]))
   // Stable PR-number order makes every derived structure deterministic — no
   // Date.now()/Math.random() (both banned in workflow scripts anyway).
   const ordered = [...fileMap.keys()].sort((a, b) => a - b)
@@ -833,9 +812,67 @@ async function runTrain() {
   // independents first (cheapest — no rebase), then each chain laid out in full.
   const order = [...independents, ...chains.flat()]
 
+  return { independents, chains, waves, order }
+}
+
+// ---------------------------------------------------------------------------
+// Train mode — compute a merge order from pairwise changed-file overlap.
+//   No poll, no rebase, no merge, no push: this branch returns BEFORE the Poll
+//   phase. The live session (SKILL.md Phase T) consumes `train` to drive the
+//   gated merge -> rebase -> merge loop with one up-front batch approval.
+// ---------------------------------------------------------------------------
+async function runTrain() {
+  phase('Order')
+
+  // Resolve each PR's changed-file set: prefer the caller-supplied `files`
+  // (from `gh pr view --json files`), and only spend a read-only agent on the
+  // PRs that arrived without one. Budget-aware like the poll phase.
+  //
+  // Fail closed on an unresolvable file list (issue #272). A PR whose files
+  // cannot be fetched — budget-skipped, tainted ref, or a failed agent — used to
+  // get `files: []`, which has no edges in the overlap graph, so it landed in
+  // `independents` -> wave 0: the disposition reserved for PRs *proven* disjoint.
+  // The unknown-overlap case must NOT get the least-conservative treatment. So
+  // instead each such PR is tagged `{ pr, unresolved: <reason> }` and excluded
+  // from the graph entirely; runTrain surfaces it in `train.unresolved` for the
+  // live session to land last / manually (never silently in wave 0).
+  let trainBudgetExhausted = false
+  const withFiles = await parallel(
+    prs.map((pr) => async () => {
+      if (Array.isArray(pr.files)) return { pr: pr.number, files: pr.files.filter(Boolean) }
+      if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+        trainBudgetExhausted = true
+        log(`budget low — skipped file-list fetch for PR #${pr.number} (excluded from order — see unresolved)`)
+        return { pr: pr.number, unresolved: 'budget-skipped' }
+      }
+      let prompt
+      try {
+        prompt = filesPrompt(pr)
+      } catch (e) {
+        // Tainted branch/base name — drop this PR's file fetch (excluded from
+        // the order) rather than dispatch an agent with a poisoned prompt.
+        log(`file-list fetch SKIPPED for PR #${pr.number} — ${e.message} (excluded from order — see unresolved)`)
+        return { pr: pr.number, unresolved: 'tainted-ref' }
+      }
+      const r = await agent(prompt, { label: `files:#${pr.number}`, phase: 'Order', schema: PR_FILES })
+      if (!r) {
+        log(`file-list fetch FAILED for PR #${pr.number} — excluded from order this run (see unresolved)`)
+        return { pr: pr.number, unresolved: 'fetch-failed' }
+      }
+      return { pr: pr.number, files: r.files.filter(Boolean) }
+    }),
+  )
+
+  // Partition: only PRs with a resolved file set enter the overlap graph; the
+  // rest are surfaced as `unresolved` so they are never treated as no-overlap.
+  const resolved = withFiles.filter((f) => Array.isArray(f.files))
+  const unresolved = withFiles
+    .filter((f) => f.unresolved)
+    .map((f) => ({ pr: f.pr, reason: f.unresolved }))
+
   return {
     base,
-    train: { independents, chains, waves, order },
+    train: { ...buildTrainOrder(resolved), unresolved },
     budget_exhausted: trainBudgetExhausted,
     polled: 0,
     rebased: 0,
