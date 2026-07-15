@@ -79,7 +79,12 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_BASE_REF \
 # when not inside a git repository.
 repo_root() {
     local common_dir
-    common_dir="$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    # Resolve git via PATH (`command git`), not a hardcoded /usr/bin/git — on a
+    # host where git lives elsewhere (minimal container, NixOS, Homebrew-first
+    # macOS) the absolute path exits 127, gets swallowed by `|| true`, and this
+    # would silently return empty, tripping every caller's "not a repo" branch
+    # inside a valid repo (issue #278, sibling of #228/#241).
+    common_dir="$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
     if [ -z "$common_dir" ]; then
         command echo "repo-root: not inside a git repository" >&2
         return 1
@@ -87,7 +92,12 @@ repo_root() {
     # --path-format=absolute should guarantee absolute, but stay defensive.
     case "$common_dir" in
         /*) ;;
-        *) common_dir="$(/usr/bin/pwd)/$common_dir" ;;
+        *) common_dir="$(command pwd)/$common_dir" ;;
     esac
-    /usr/bin/dirname "$common_dir"
+    # Pure-bash dirname (no /usr/bin/dirname): strip the trailing /<name>. A
+    # path with no slash has no parent segment, so fall back to ".".
+    case "$common_dir" in
+        */*) command echo "${common_dir%/*}" ;;
+        *) command echo "." ;;
+    esac
 }

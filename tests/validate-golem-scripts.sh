@@ -39,6 +39,7 @@ WT_NEW="$SCRIPTS/worktree-new.sh"
 WT_RM="$SCRIPTS/worktree-rm.sh"
 ATTACH="$SCRIPTS/golem-attach.sh"
 STATUS="$SCRIPTS/golem-status.sh"
+CONFIG="$SCRIPTS/config.sh"
 
 # Resolve the real bash once so child invocations work even when PATH is
 # deliberately stripped (the no-jq cases).
@@ -620,6 +621,59 @@ test_worktree_new_copies_local_files() {
     assert_contains "$out" "copied .env" "reports the .env copy"
 }
 
+# --- config.sh repo_root() ----------------------------------------------------
+
+# Regression (#278): repo_root() must resolve its tools via PATH, not hardcoded
+# /usr/bin/*. Off the standard layout (git elsewhere) /usr/bin/git exits 127,
+# gets swallowed by `|| true`, and repo_root silently returns empty — tripping
+# every caller's "not a repo" branch inside a valid repo. Static guard mirroring
+# test_worktree_new_no_hardcoded_usr_bin (#228).
+test_config_repo_root_no_hardcoded_usr_bin() {
+    local body hits
+    # Scope to repo_root()'s body (the header comment legitimately shows a
+    # /usr/bin/dirname sourcing example) and drop comment lines, so only real
+    # tool invocations are checked.
+    body="$(/usr/bin/awk '/^repo_root\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$CONFIG")"
+    hits="$(command printf '%s\n' "$body" |
+        command grep -vE '^[[:space:]]*#' |
+        command grep -nE '/usr/bin/(git|pwd|dirname)' || true)"
+    assert_output_empty "$hits" \
+        "config.sh repo_root invokes git/pwd/dirname via \`command\`/bash, not hardcoded /usr/bin/*"
+}
+
+# Functional regression (#278): with git resolvable via PATH but ABSENT at
+# /usr/bin/git, repo_root() still resolves the repo root. A shim dir is prepended
+# to PATH holding a `git` wrapper; PATH is then stripped to ONLY that shim, so a
+# hardcoded /usr/bin/git would exit 127 and repo_root would return empty. Proves
+# the fix honors PATH. Skips cleanly if the real git can't be located to wrap.
+test_config_repo_root_honors_path() {
+    local sb real_git
+    new_sandbox sb
+    real_git="$(command -v git || true)"
+    if [ -z "$real_git" ]; then
+        skip_test "git not on PATH — cannot build the shim wrapper"
+        return 0
+    fi
+    # A shim `git` that forwards to the real binary, placed in a dir that is the
+    # ONLY entry on PATH (no /usr/bin), so resolution must go through PATH.
+    local shim="$sb/shim"
+    /usr/bin/mkdir -p "$shim"
+    {
+        /usr/bin/printf '#!/usr/bin/env bash\n'
+        /usr/bin/printf 'exec %q "$@"\n' "$real_git"
+    } >"$shim/git"
+    /usr/bin/chmod +x "$shim/git"
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            PATH="$shim" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 with git resolved via PATH only"
+    # repo_root prints the sandbox root; the git common dir's parent is $sb.
+    assert_contains "$out" "$sb" "repo_root resolves the repo root via PATH, not /usr/bin/git"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -755,6 +809,8 @@ run_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree e
 run_test test_worktree_new_existing_branch_exits_1 "worktree-new: lingering branch exits 1"
 run_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr/bin/* tool paths (#228)"
 run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTREE_LOCAL_FILES into the worktree (#228)"
+run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
+run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
