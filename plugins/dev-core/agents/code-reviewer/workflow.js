@@ -192,35 +192,101 @@ const RESCORE_SCHEMA = {
   },
 }
 
-// Step 7 of the agent: the finding-schema.md top-level object, unchanged.
+// Step 5-7 of the agent: dedup / correlate / suppress, returned as REFS into the
+// harness-held finding set — NOT the full finding objects echoed back (#266).
+// The merge agent used to return `{ scanner, summary, findings: object[] }` with
+// `findings` typed only as `items: { type: 'object' }` — the one untyped hole in
+// this file. Every review's output flowed through it, so the model could silently
+// drop a finding, mangle a field, or re-grade the certainty the fable-tier judge
+// panel had just set, and nothing detected it. Now the model returns only what it
+// legitimately authors (which input findings it kept/merged/suppressed, by their
+// unique `ref`, plus re-sequenced ids and dedup content) and the harness
+// reassembles the report from its own rescored copies — the ref-mapping pattern
+// codebase-audit's aggregate step uses (workflow.js:909-927). certainty, file,
+// category, and summary are harness-supplied and can never drift here.
+//
+//   kept:   findings carried through unchanged, referenced by `ref`.
+//   merged: a dedup of ≥2 same-category findings; the model authors the combined
+//           title/description/etc, but NOT file/category/certainty (harness takes
+//           those from the primary ref / the highest-certainty member).
+//   acknowledged_refs: input findings suppressed by an audit:acknowledge comment.
 const MERGE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['scanner', 'summary', 'findings', 'acknowledged_findings'],
+  required: ['kept', 'merged', 'acknowledged_refs'],
   properties: {
-    scanner: { type: 'string' },
-    summary: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['files_scanned', 'total_findings', 'by_severity'],
-      properties: {
-        files_scanned: { type: 'integer' },
-        total_findings: { type: 'integer' },
-        by_severity: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['critical', 'high', 'medium', 'low'],
-          properties: {
-            critical: { type: 'integer' },
-            high: { type: 'integer' },
-            medium: { type: 'integer' },
-            low: { type: 'integer' },
-          },
+    kept: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'ref', 'related_ids'],
+        properties: {
+          // Re-sequenced code-reviewer-<NNN> id assigned by the merge step.
+          id: { type: 'string' },
+          // The unique ref of the input finding this entry keeps, verbatim.
+          ref: { type: 'string' },
+          // Cross-reviewer correlation: ids of related findings (never a merge).
+          related_ids: { type: 'array', items: { type: 'string' } },
+          // Stale-acknowledgment re-raise (Step 5): a finding whose
+          // audit:acknowledge comment has expired (>12 months) stays active but
+          // is flagged. Optional; the merge step is the only step that scans
+          // acknowledgments, so it legitimately authors these (nothing else
+          // could). The harness copies them onto the reassembled finding.
+          acknowledged: { type: 'boolean' },
+          acknowledged_date: { type: 'string' },
         },
       },
     },
-    findings: { type: 'array', items: { type: 'object' } },
-    acknowledged_findings: { type: 'array', items: { type: 'object' } },
+    merged: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'id',
+          'refs',
+          'related_ids',
+          'severity',
+          'line_start',
+          'line_end',
+          'title',
+          'description',
+          'suggestion',
+          'effort',
+          'tags',
+        ],
+        properties: {
+          id: { type: 'string' },
+          // The ≥2 input refs this entry dedups (file/category/certainty are
+          // taken from these objects by the harness, not from the model).
+          // minItems:2 is a HARD trust-boundary guard: a `merged` entry is the
+          // one place the model authors severity/title/description, so a SINGLE
+          // ref here would let it rewrite one real finding's severity (e.g.
+          // downgrade a security finding) outside the tamper-proof `kept` path.
+          // The harness ALSO defensively demotes any <2-ref merge to a kept
+          // finding (reassembleReport), so the invariant holds even if the schema
+          // guard is bypassed.
+          refs: { type: 'array', items: { type: 'string' }, minItems: 2 },
+          related_ids: { type: 'array', items: { type: 'string' } },
+          severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+          line_start: { type: 'integer' },
+          line_end: { type: 'integer' },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          suggestion: { type: 'string' },
+          effort: { type: 'string', enum: ['trivial', 'small', 'medium', 'large'] },
+          tags: { type: 'array', items: { type: 'string' } },
+          // Stale-acknowledgment re-raise (see the kept schema above).
+          acknowledged: { type: 'boolean' },
+          acknowledged_date: { type: 'string' },
+        },
+      },
+    },
+    // Input findings FULLY suppressed by a live audit:acknowledge comment, by ref
+    // (a STALE acknowledgment instead re-raises the finding into kept/merged with
+    // acknowledged:true — it stays active, so it is not listed here).
+    acknowledged_refs: { type: 'array', items: { type: 'string' } },
   },
 }
 
@@ -295,24 +361,32 @@ const rescorePrompt = (findings) =>
   `Findings to re-score:\n${dataBlock('FINDINGS', findings)}\n\n` +
   READONLY
 
-const mergePrompt = (findings, manifest, didRescore) =>
+const mergePrompt = (findings, manifest) =>
   `Mode: merge.\n` +
-  (didRescore
-    ? `Follow Steps 5-7 of your instructions on the findings below (certainty already ` +
-      `re-scored by the judge panel — keep those values): `
-    : `Follow Steps 5-7 of your instructions on the findings below (NOTE: the rescore ` +
-      `step did not run — the certainty values are the producers' own; keep them as-is, ` +
-      `do not re-grade): `) +
-  `scan the changed files for ` +
-  `audit:acknowledge comments and apply the suppression map, perform within-reviewer ` +
-  `dedup and cross-reviewer correlation, re-sequence code-reviewer-<NNN> ids, sort, and ` +
-  `recompute summary counts. Emit the finding-schema.md top-level object unchanged ` +
-  `(scanner=code-reviewer, summary, findings, acknowledged_findings). ` +
-  `INTEGRITY: every input finding must end up in EXACTLY ONE of findings (kept, ` +
-  `possibly merged via dedup) or acknowledged_findings (suppressed) — never ` +
-  `silently dropped. Set summary.total_findings = findings.length and recompute ` +
-  `by_severity from the final findings array. ` +
-  `files_scanned = ${manifest.files.length}.\n\n` +
+  `Follow Steps 5-7 of your instructions on the findings below, but return only ` +
+  `REFERENCES into this set — the harness reassembles the full findings from its ` +
+  `own copies. Each finding carries a unique \`ref\`; copy those verbatim.\n` +
+  `Scan the changed files for audit:acknowledge comments and apply the suppression ` +
+  `map, perform within-reviewer dedup and cross-reviewer correlation, re-sequence ` +
+  `code-reviewer-<NNN> ids (sorted by file then line), and return:\n` +
+  `- kept: for each finding carried through unchanged, { id, ref, related_ids }. ` +
+  `related_ids is the ids of cross-reviewer-correlated findings (empty array if none).\n` +
+  `- merged: for each dedup of two-or-more same-reviewer findings on the same file ` +
+  `+ category + overlapping lines, { id, refs (the ≥2 input refs — a merge of a ` +
+  `SINGLE finding is invalid; keep it in kept instead), related_ids, severity, ` +
+  `line_start, line_end, title, description, suggestion, effort, tags } — author ` +
+  `the COMBINED content (broadest line range, combined evidence, highest ` +
+  `severity). Do NOT include file, category, certainty, or reviewer — the harness ` +
+  `takes those from the referenced findings.\n` +
+  `- acknowledged_refs: the refs of findings FULLY suppressed by a LIVE acknowledgment.\n` +
+  `STALE acknowledgment (date present and >12 months old): the finding stays ACTIVE — ` +
+  `put its ref in kept (or merged) and set acknowledged:true + acknowledged_date on ` +
+  `that entry, do NOT put it in acknowledged_refs.\n` +
+  `INTEGRITY: every input ref must appear in EXACTLY ONE of kept, merged, or ` +
+  `acknowledged_refs — never silently dropped, never in two buckets. Do NOT emit ` +
+  `scanner, summary, certainty, file, or category: the harness supplies them ` +
+  `(files_scanned = ${manifest.files.length}, and it preserves the judge panel's ` +
+  `rescored certainty byte-for-byte).\n\n` +
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
   `Findings:\n${dataBlock('FINDINGS', findings)}\n\n` +
   READONLY
@@ -339,6 +413,168 @@ function emptyReport(manifest) {
     // overrides these onto whatever object it returns (report or emptyReport).
     budget_exhausted: false,
     reviewers_skipped: [],
+  }
+}
+
+// Sort keys: severity critical-first, effort trivial-first (finding-schema.md
+// § Step 6). Unknown values sort last so a malformed field never crashes sort.
+const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 }
+const EFFORT_RANK = { trivial: 0, small: 1, medium: 2, large: 3 }
+const CERTAINTY_RANK = { HIGH: 0, MEDIUM: 1, LOW: 2 }
+const rank = (table, v) => (v in table ? table[v] : Object.keys(table).length)
+
+// The public projection of a finding: the harness-internal `ref` is stripped
+// (it is not part of finding-schema.md), everything else — including the rescored
+// `certainty` and the producing `reviewer` — is carried through verbatim.
+const publicFinding = (f) => {
+  const { ref, ...rest } = f
+  return rest
+}
+
+// Pick the highest certainty among a merged group's objects (HIGH>MEDIUM>LOW,
+// tie-broken by confidence), so a dedup keeps the strongest signal — computed in
+// code from the harness-held objects, never re-graded by the merge model (#266).
+const highestCertainty = (objs) =>
+  objs.reduce((best, o) => {
+    if (!best) return o.certainty
+    const c = o.certainty
+    if (rank(CERTAINTY_RANK, c.level) < rank(CERTAINTY_RANK, best.level)) return c
+    if (rank(CERTAINTY_RANK, c.level) === rank(CERTAINTY_RANK, best.level) && (c.confidence || 0) > (best.confidence || 0))
+      return c
+    return best
+  }, null)
+
+// Reassemble the finding-schema.md report from the merge model's REFS and the
+// harness's own rescored finding objects — the ref-mapping pattern from
+// codebase-audit's aggregate step (workflow.js:909-927). The model returned only
+// which refs it kept/merged/suppressed (plus dedup content it legitimately
+// authors); every field it must not touch — certainty, file, category, summary —
+// is supplied here from `rawFindings`, so it can never drift.
+//
+// Returns { report, dropped, unknownRefs, duplicates }:
+//   report      — the { scanner, summary, findings, acknowledged_findings } object
+//   dropped     — input refs that appeared in NO output bucket (silently lost by
+//                 the model — the code-review analog of audit's dropped_groups)
+//   unknownRefs — refs the model emitted that map to no input finding (invented)
+//   duplicates  — input refs claimed by more than one bucket (integrity breach)
+function reassembleReport(merge, rawFindings, manifest) {
+  const byRef = new Map(rawFindings.map((f) => [f.ref, f]))
+  const seen = new Set() // refs already MATERIALIZED into a bucket (first wins)
+  const duplicates = [] // refs the model placed in more than one bucket
+  const unknownRefs = []
+  // Claim a ref for the current bucket. Returns false — skip this placement —
+  // when the ref is invented (maps to no input finding) OR was already
+  // materialized by an earlier bucket. First-placement-wins guarantees the
+  // exactly-once integrity rule holds in the OUTPUT even when the model violates
+  // it in its refs (a duplicate is recorded + surfaced, never double-emitted).
+  const claim = (ref) => {
+    if (!byRef.has(ref)) {
+      unknownRefs.push(ref)
+      return false
+    }
+    if (seen.has(ref)) {
+      duplicates.push(ref)
+      return false
+    }
+    seen.add(ref)
+    return true
+  }
+
+  // A stale-acknowledgment re-raise (Step 5) stays an active finding but carries
+  // acknowledged:true + acknowledged_date. Only the merge step scans
+  // acknowledgments, so it authors these flags; splice them on only when set so a
+  // normal finding is not littered with acknowledged:false.
+  const reraise = (entry) => (entry.acknowledged ? { acknowledged: true, acknowledged_date: entry.acknowledged_date } : {})
+
+  // Emit a finding unchanged from its harness-held object — the model authored
+  // NOTHING about it except the id, the correlation ids, and the optional
+  // stale-acknowledgment flags. This is the tamper-proof path.
+  const keepObj = (obj, id, relatedIds, entry) => ({
+    ...publicFinding(obj),
+    id,
+    related_findings: relatedIds || [],
+    ...reraise(entry),
+  })
+
+  const findings = []
+  const invalidMerges = [] // ids of <2-ref "merges" defensively demoted to kept
+  for (const k of merge.kept || []) {
+    if (!claim(k.ref)) continue
+    findings.push(keepObj(byRef.get(k.ref), k.id, k.related_ids, k))
+  }
+  for (const m of merge.merged || []) {
+    const objs = (m.refs || []).filter((r) => claim(r)).map((r) => byRef.get(r))
+    if (objs.length === 0) continue // every ref invented or already claimed — nothing to merge onto
+    if (objs.length < 2) {
+      // A "merge" of a single real finding is not a dedup — it is the one shape
+      // that would let the model rewrite that finding's severity/title/desc
+      // outside the tamper-proof kept path (the schema's minItems:2 already
+      // rejects this; this is the defense-in-depth if that guard is ever
+      // bypassed). Demote it: emit the referenced finding UNCHANGED, discarding
+      // every model-authored content field. Surfaced via invalidMerges.
+      invalidMerges.push(m.id)
+      findings.push(keepObj(objs[0], m.id, m.related_ids, m))
+      continue
+    }
+    const primary = objs[0]
+    findings.push({
+      // Model-authored combined content (legitimate only for a real ≥2 dedup).
+      severity: m.severity,
+      line_start: m.line_start,
+      line_end: m.line_end,
+      title: m.title,
+      description: m.description,
+      suggestion: m.suggestion,
+      effort: m.effort,
+      tags: m.tags || [],
+      // Harness-supplied from the referenced objects — never re-serialized.
+      file: primary.file,
+      category: primary.category,
+      related_files: primary.related_files || [],
+      reviewer: primary.reviewer,
+      certainty: highestCertainty(objs),
+      id: m.id,
+      related_findings: m.related_ids || [],
+      ...reraise(m),
+    })
+  }
+
+  const acknowledged_findings = []
+  for (const ref of merge.acknowledged_refs || []) {
+    if (!claim(ref)) continue
+    acknowledged_findings.push(publicFinding(byRef.get(ref)))
+  }
+
+  findings.sort(
+    (a, b) => rank(SEVERITY_RANK, a.severity) - rank(SEVERITY_RANK, b.severity) || rank(EFFORT_RANK, a.effort) - rank(EFFORT_RANK, b.effort)
+  )
+
+  const by_severity = { critical: 0, high: 0, medium: 0, low: 0 }
+  for (const f of findings) if (f.severity in by_severity) by_severity[f.severity] += 1
+
+  // Dropped: an input finding materialized in no bucket — the model lost it (or,
+  // less commonly, only ever named it as a duplicate that lost the first-wins
+  // race, which the duplicates list already records). `duplicates` (built during
+  // claim) are refs the model placed more than once; the extra placements were
+  // dropped from the output so the exactly-once rule holds. Both are surfaced
+  // loudly by the caller, never swallowed.
+  const dropped = rawFindings.map((f) => f.ref).filter((r) => !seen.has(r))
+
+  return {
+    report: {
+      scanner: 'code-reviewer',
+      summary: {
+        files_scanned: manifest ? manifest.files.length : 0,
+        total_findings: findings.length,
+        by_severity,
+      },
+      findings,
+      acknowledged_findings,
+    },
+    dropped,
+    unknownRefs,
+    duplicates,
+    invalidMerges,
   }
 }
 
@@ -440,7 +676,6 @@ const rescored = await tailAgent(
   'rescore'
 )
 
-const didRescore = !!rescored
 if (rescored) {
   const scoreByRef = new Map(rescored.scores.map((s) => [s.ref, s.certainty]))
   for (const f of rawFindings) {
@@ -459,9 +694,9 @@ if (rescored) {
 // --- Merge (acknowledge scan, dedup, correlate, emit finding-schema) --------
 phase('Merge')
 
-const report = await tailAgent(
+const merge = await tailAgent(
   () =>
-    agent(mergePrompt(rawFindings, manifest, didRescore), {
+    agent(mergePrompt(rawFindings, manifest), {
       label: 'merge',
       phase: 'Merge',
       agentType: 'dev-core:code-reviewer',
@@ -473,7 +708,32 @@ const report = await tailAgent(
 // A merge skip/failure loses the correlated report — fall back to emptyReport
 // (never a throw) and mark the review partial so the empty result is not read as
 // a genuinely clean pass.
-if (!report) budgetExhausted = true
+let report = null
+if (merge) {
+  // Reassemble the report from the merge model's REFS and the harness's own
+  // rescored objects — the model never re-serialized a finding, so certainty and
+  // finding fidelity survive verbatim (#266). Any input ref the model failed to
+  // place (dropped), invented (unknown), or double-claimed (duplicate) is logged
+  // loudly and never swallowed — the code-review analog of audit's dropped_groups.
+  const { report: assembled, dropped, unknownRefs, duplicates, invalidMerges } = reassembleReport(merge, rawFindings, manifest)
+  report = assembled
+  // A dropped OR duplicate ref is a merge-integrity breach: the returned report
+  // is not a faithful, complete rendering of the reviewed findings. Mark the
+  // review partial so a caller consuming ONLY the returned object (not the log
+  // stream) can tell — never let a corrupted merge read as a clean, complete pass.
+  if (dropped.length) {
+    budgetExhausted = true
+    log(`merge DROPPED ${dropped.length} finding(s) — absent from every output bucket: ${dropped.join(', ')}`)
+  }
+  if (duplicates.length) {
+    budgetExhausted = true
+    log(`merge placed ${duplicates.length} finding ref(s) in more than one bucket (kept first placement, dropped the rest): ${duplicates.join(', ')}`)
+  }
+  if (unknownRefs.length) log(`merge emitted ${unknownRefs.length} unknown finding ref(s) (not in the input set) — ignored: ${unknownRefs.join(', ')}`)
+  if (invalidMerges.length) log(`merge emitted ${invalidMerges.length} single-ref "merged" entr(ies) — demoted to kept (model content discarded, harness severity/certainty preserved): ${invalidMerges.join(', ')}`)
+} else {
+  budgetExhausted = true
+}
 
 // Splice the partial-review signal onto whatever object we return, so both the
 // merge and the emptyReport fallback carry it uniformly.
