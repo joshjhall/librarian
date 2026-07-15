@@ -42,9 +42,13 @@
 # session errored on line 1 and went idle at its prompt (issue #229). So when a
 # live golem-* tmux pane is scrapeable, `pane_liveness_class` overrides the mtime
 # proxy with a stronger read: "alive, working" when the `esc to interrupt` run-
-# spinner is on screen, or "⚠ idle at prompt" on an error/idle signature. The
-# pane check is best-effort — headless/container golems the host tmux can't see
-# fall back to the reworded mtime heartbeat.
+# spinner is in the footer, or "⚠ idle at prompt" on an error/idle signature. The
+# match is anchored to the pane's FOOTER region (the last GOLEM_PANE_FOOTER_LINES
+# lines, where the spinner/input-box/footer chrome renders) rather than the whole
+# scrollback, so a golem cat-ing/grepping a file whose text happens to contain
+# those trigger phrases — this very script does — does not self-trip the
+# classifier (issue #246). The pane check is best-effort — headless/container
+# golems the host tmux can't see fall back to the reworded mtime heartbeat.
 # A golem currently sitting at a fresh feed gate is reported as gated, NOT
 # stalled (the two are distinct — a gate is expected supervision; a stall is
 # the suspect case). This is a SOFT, advisory signal: it never kills, blocks, or
@@ -65,6 +69,7 @@
 #   GOLEM_WATCH_INTERVAL     poll interval for --stream*, seconds (default 5)
 #   GOLEM_STALL_THRESHOLD    liveness stall window, seconds (default 1200)
 #   GOLEM_HEARTBEAT_INTERVAL liveness poll interval, seconds (default 60)
+#   GOLEM_PANE_FOOTER_LINES  pane_liveness_class footer window, lines (default 8)
 #
 # Never blocks a golem and never hangs on a missing feed/tmux: errors are
 # swallowed and a snapshot mode always exits 0. The `--stream*` loops carry NO
@@ -88,6 +93,7 @@ ttl="${GOLEM_BLOCK_TTL:-3600}"
 interval="${GOLEM_WATCH_INTERVAL:-5}"
 stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
 heartbeat_interval="${GOLEM_HEARTBEAT_INTERVAL:-60}"
+pane_footer_lines="${GOLEM_PANE_FOOTER_LINES:-8}"
 
 # Resolve the MAIN checkout's status dir (the feed lives there even when invoked
 # from a worktree). repo_root (from config.sh) is bare-repo-safe.
@@ -259,29 +265,42 @@ panes_snapshot() {
 # gate matchers above (which detect a modal permission/plan OVERLAY), this reads
 # the ordinary session surface to tell "actually working" from "idle/errored at
 # the prompt" — the distinction the mtime heartbeat cannot make.
-#   "working" — the `esc to interrupt` run-spinner hint is on screen; the
+#   "working" — the `esc to interrupt` run-spinner hint is in the footer; the
 #               reliable positive "a command is executing right now" marker.
 #   "idle"    — an error/idle signature: the exact #229 `Unknown command`
-#               failure, or the bare `auto mode on` footer with no spinner above
-#               it (orchestrate golems always run auto mode, so that footer with
-#               no spinner means the session is parked at its prompt).
+#               failure, or the bare `auto mode on` footer (the `⏵⏵ auto mode on`
+#               chrome) with no spinner above it (orchestrate golems always run
+#               auto mode, so that footer with no spinner means the session is
+#               parked at its prompt).
 #   ""        — indeterminate (e.g. a transient mid-render capture); the caller
 #               falls back to the mtime heartbeat.
-# The spinner is checked FIRST so it wins even when the `auto mode on` footer is
-# also painted (a working golem still shows the footer). Prints the class.
+# Matching is ANCHORED to the FOOTER region — only the last $pane_footer_lines
+# lines of the capture, where the spinner/input-box/footer chrome renders — NOT
+# the whole scrollback. Anchoring is what makes the classifier robust against a
+# golem whose scrolled conversation/code happens to contain a trigger phrase:
+# this very script's comments carry `esc to interrupt`, `Unknown command`, and
+# `auto mode on`, and a golem reading them would otherwise self-trip the match
+# (fail-loud a false idle, or fail-open a false working that suppresses #229
+# detection). See issue #246. The `auto mode on` idle footer additionally
+# requires its `⏵⏵` box-drawing glyph, so a bare-words mention that lands in the
+# window still stays indeterminate. The spinner is checked FIRST so it wins even
+# when the `auto mode on` footer is also painted (a working golem still shows the
+# footer). Prints the class.
 pane_liveness_class() {
-    case "$1" in
+    local footer
+    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    case "$footer" in
         *"esc to interrupt"*)
             command echo "working"
             return 0
             ;;
     esac
-    case "$1" in
+    case "$footer" in
         *"Unknown command"*)
             command echo "idle"
             return 0
             ;;
-        *"auto mode on"*)
+        *"⏵⏵"*"auto mode on"*)
             command echo "idle"
             return 0
             ;;

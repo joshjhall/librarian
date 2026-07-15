@@ -473,6 +473,29 @@ test_pane_liveness_class() {
         "The spinner wins over the auto-mode footer -> working"
     assert_equals "" "$(_pane_class "just some scrolling build output")" \
         "Unrelated pane text is indeterminate (empty class)"
+
+    # Footer anchoring (#246): the match is scoped to the last GOLEM_PANE_FOOTER_
+    # LINES lines (default 8), NOT the whole scrollback. A golem cat-ing/grepping
+    # a file whose text carries a trigger phrase (this very script does) must not
+    # self-trip the classifier. `filler` pushes the scrolled phrase out of the
+    # footer window.
+    local filler
+    filler=$'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10'
+    # (a) Fail-loud collision: `esc to interrupt` in SCROLLBACK above a real idle
+    # footer -> idle (not a false working). The spinner phrase is > 8 lines up.
+    assert_equals "idle" \
+        "$(_pane_class "grep esc to interrupt golem-gate-watch.sh"$'\n'"$filler"$'\n'"  ⏵⏵ auto mode on")" \
+        "A scrolled 'esc to interrupt' above an idle footer does not fake 'working'"
+    # (b) Fail-open collision: `auto mode on` / `Unknown command` in SCROLLBACK
+    # above a real run-spinner footer -> working (not a false idle that would
+    # suppress #229 detection).
+    assert_equals "working" \
+        "$(_pane_class "cat golem-launch.sh # auto mode on / Unknown command"$'\n'"$filler"$'\n'"  ⏵⏵ esc to interrupt")" \
+        "Scrolled idle phrases above a live spinner do not fake 'idle'"
+    # (c) The idle footer requires its `⏵⏵` chrome glyph: a bare-words 'auto mode
+    # on' line with no glyph, even inside the footer window, stays indeterminate.
+    assert_equals "" "$(_pane_class "the docs mention auto mode on here")" \
+        "A bare-words 'auto mode on' with no chrome glyph is indeterminate"
 }
 
 # pane_is_gate: the generic permission-decision overlay matches (rc 0); other
