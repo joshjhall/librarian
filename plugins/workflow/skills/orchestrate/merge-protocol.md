@@ -45,6 +45,14 @@ This decision tree is the source of the `workflow.js` conflict-class taxonomy
 (the `OVERLAP` gate and the `rebase-agent`'s `resolved`/`escalated` split) used
 in Phase R, and it also governs legacy local-merge conflicts.
 
+**Execution context (Phase R).** Every cross-PR rebase runs **inside the PR's
+own worktree** — the `<worktree>` path Phase R resolves (`git worktree list`)
+and passes to the harness. The `rebase-agent` `cd`s into it and never runs
+`git checkout`/rebase in the orchestrator's **root** working tree, which is the
+live human session's checkout. A PR whose branch has no resolvable worktree is
+**escalated** as a whole-PR manual review (`no resolvable worktree context`),
+never rebased against an improvised checkout (#268).
+
 When a PR branch is behind base and a rebase onto base reports conflicts (or
 when `git merge` reports conflicts in the legacy path):
 

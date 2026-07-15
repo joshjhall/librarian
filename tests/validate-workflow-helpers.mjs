@@ -355,6 +355,69 @@ for (const path of [ORCH, REBASE]) {
 }
 
 // =============================================================================
+// orchestrate — safeWorktreePath (#268)
+// A PATH is not a ref: safeRef's allowlist accepts `..`, which is traversal for
+// a filesystem path. safeWorktreePath adds the `..`-segment rejection while
+// keeping the ref character class (no shell metachars / angle brackets, so
+// field() delimiting stays safe). Only defined in the orchestrate harness.
+// =============================================================================
+{
+  const { safeWorktreePath, safeRef } = extractHelpers(ORCH, [
+    "safeWorktreePath",
+    "safeRef",
+  ]);
+
+  eq(
+    safeWorktreePath(".worktrees/issue-268", "worktree"),
+    ".worktrees/issue-268",
+    "safeWorktreePath: passes a clean repo-relative path through unchanged",
+  );
+  eq(
+    safeWorktreePath("/home/vscode/repo/.worktrees/issue-268", "worktree"),
+    "/home/vscode/repo/.worktrees/issue-268",
+    "safeWorktreePath: passes a clean absolute path through unchanged (git worktree list yields absolute)",
+  );
+  // The regression guard: the traversal blind spot safeRef does NOT catch.
+  throws(
+    () => safeWorktreePath(".worktrees/../etc/passwd", "worktree"),
+    "safeWorktreePath: rejects a `..` path segment (traversal)",
+  );
+  throws(
+    () => safeWorktreePath("../escape", "worktree"),
+    "safeWorktreePath: rejects a leading `..` segment",
+  );
+  // safeRef is the foil: proves the traversal string it lets through is exactly
+  // what safeWorktreePath is here to stop.
+  eq(
+    safeRef(".worktrees/../etc/passwd", "ref"),
+    ".worktrees/../etc/passwd",
+    "safeRef: (foil) accepts the `..` traversal safeWorktreePath rejects",
+  );
+  throws(() => safeWorktreePath("", "worktree"), "safeWorktreePath: rejects empty string");
+  throws(
+    () => safeWorktreePath("a".repeat(256), "worktree"),
+    "safeWorktreePath: rejects >255 chars",
+  );
+  throws(() => safeWorktreePath(42, "worktree"), "safeWorktreePath: rejects non-strings");
+  throws(
+    () => safeWorktreePath(null, "worktree"),
+    "safeWorktreePath: rejects null (missing worktree)",
+  );
+  throws(
+    () => safeWorktreePath("a b/c", "worktree"),
+    "safeWorktreePath: rejects whitespace",
+  );
+  throws(
+    () => safeWorktreePath("a;rm -rf/b", "worktree"),
+    "safeWorktreePath: rejects shell metachars",
+  );
+  throws(
+    () => safeWorktreePath("a/<b>/c", "worktree"),
+    "safeWorktreePath: rejects angle brackets (field() delimiter safety)",
+  );
+}
+
+// =============================================================================
 // rebase-agent — verifyExitReason (#259)
 // =============================================================================
 {
