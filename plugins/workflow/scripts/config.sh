@@ -94,10 +94,16 @@ repo_root() {
         /*) ;;
         *) common_dir="$(command pwd)/$common_dir" ;;
     esac
-    # Pure-bash dirname (no /usr/bin/dirname): strip the trailing /<name>. A
-    # path with no slash has no parent segment, so fall back to ".".
+    # Pure-bash dirname (no /usr/bin/dirname): strip the trailing /<name>.
+    # Stripping a single-slash path (e.g. "/.git", a bare repo rooted at /)
+    # leaves the empty string; GNU dirname returns "/" there, so fall back to
+    # "/" to match. A path with no slash has no parent segment → ".".
+    local parent
     case "$common_dir" in
-        */*) command echo "${common_dir%/*}" ;;
+        */*)
+            parent="${common_dir%/*}"
+            command echo "${parent:-/}"
+            ;;
         *) command echo "." ;;
     esac
 }

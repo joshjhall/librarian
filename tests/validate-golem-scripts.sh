@@ -679,6 +679,39 @@ test_config_repo_root_honors_path() {
         "repo_root resolves the repo root via PATH, not /usr/bin/git"
 }
 
+# Edge case (#278): repo_root()'s pure-bash dirname must match GNU `dirname` for
+# a single-slash git-common-dir (a bare repo rooted at "/" resolves to "/.git").
+# Stripping "/.git" via ${common_dir%/*} yields "" — the fix falls back to "/",
+# as `dirname /.git` does; without the ${parent:-/} guard repo_root would print
+# an empty root at exit 0. A shim `git` (bin dir first on PATH) forces the
+# --git-common-dir output to /.git; bash stays on PATH so the script shim runs.
+test_config_repo_root_dirname_root_edge() {
+    local sb bin
+    new_sandbox sb
+    bin="$sb/bin"
+    /usr/bin/mkdir -p "$bin"
+    {
+        /usr/bin/printf '#!/usr/bin/env bash\n'
+        # Only intercept the common-dir probe; anything else is unexpected here.
+        /usr/bin/printf 'case "$*" in\n'
+        /usr/bin/printf '  *--git-common-dir*) command echo "/.git" ;;\n'
+        /usr/bin/printf '  *) exit 1 ;;\n'
+        /usr/bin/printf 'esac\n'
+    } >"$bin/git"
+    /usr/bin/chmod +x "$bin/git"
+
+    # Unset BASH_ENV too: /etc/bash_env re-adds the real PATH on the devcontainer
+    # for non-interactive bash, which would let the real git outrank the shim.
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            PATH="$bin:$PATH" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 for a filesystem-root repo"
+    assert_equals "/" "$out" \
+        "repo_root returns '/' for a /.git common dir, matching GNU dirname"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -816,6 +849,7 @@ run_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr
 run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTREE_LOCAL_FILES into the worktree (#228)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
+run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
