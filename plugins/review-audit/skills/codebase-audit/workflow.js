@@ -664,6 +664,22 @@ const artifactWriterPrompt = (outDir, reportPath, reportMarkdown, findings, grou
 const stampRefs = (domainName, findings) =>
   findings.map((f, i) => ({ ...f, ref: `${domainName}:${f.file}:${f.line_start}:${f.category}#${i}` }))
 
+// Render the persisted report's coverage caveat. `skipped` is the list of
+// domains that never fully scanned ([{name, reason}] — budget-skipped or
+// scan-failed), so the durable artifact names the gaps instead of reading as
+// "audited clean" over partial coverage (issue #262 — "silence is not success").
+// Returns '' when nothing was skipped, keeping a fully-covered report unchanged.
+const coverageSection = (scanned, skipped) => {
+  if (!Array.isArray(skipped) || skipped.length === 0) return ''
+  const covered = Array.isArray(scanned) ? scanned : []
+  const gaps = skipped.map((d) => `- ${d.name} — ${d.reason}`).join('\n')
+  return (
+    `\n## Coverage\n\n` +
+    `Scanned ${covered.length} domain(s): ${covered.join(', ') || '(none)'}.\n\n` +
+    `⚠️ ${skipped.length} domain(s) NOT audited (findings may exist here):\n${gaps}\n`
+  )
+}
+
 function finalResult(extra) {
   return {
     scanner: 'codebase-audit',
@@ -686,6 +702,10 @@ function finalResult(extra) {
     // A scan/verify agent failed (distinct from budget exhaustion); the audit
     // is partial for a different reason than "ran out of tokens".
     scan_failure: !!extra.scan_failure,
+    // Domains that never fully scanned ([{name, reason}] — budget-skipped or
+    // scan-failed), so a caller sees WHICH coverage was lost, not just that the
+    // audit was partial (issue #262). Empty when coverage was complete.
+    skipped_domains: extra.skipped_domains || [],
   }
 }
 
@@ -735,6 +755,11 @@ let budgetExhausted = false
 // them would tell the caller "re-run with more budget" when the real cause was
 // an agent error. Both still mark the audit partial.
 let hadScanFailure = false
+// Domains dropped before producing findings, tracked BY NAME (not just the
+// booleans above) so the durable report can name the coverage gaps (#262). Only
+// scan-skip / scan-fail land here — a verify-stage budget skip keeps its scanned
+// findings (fail-open) and stays in scannedDomains, so it is not a gap.
+const skippedDomains = []
 
 const verified = await pipeline(
   domains,
@@ -743,6 +768,7 @@ const verified = await pipeline(
   (domain) => {
     if (budget.total && budget.remaining() < BUDGET_FLOOR) {
       budgetExhausted = true
+      skippedDomains.push({ name: domain.name, reason: 'budget low — scan skipped' })
       log(`budget low — skipped scan of domain "${domain.name}" (not in this audit)`)
       return Promise.resolve(null)
     }
@@ -754,6 +780,7 @@ const verified = await pipeline(
     }).then((r) => {
       if (!r) {
         hadScanFailure = true
+        skippedDomains.push({ name: domain.name, reason: 'scan failed' })
         log(`scan FAILED for domain "${domain.name}" — omitted from this audit`)
         return null
       }
@@ -828,7 +855,11 @@ for (const r of verified) {
 
 if (allFindings.length === 0) {
   log('no confirmed findings across all domains — codebase looks clean')
-  const cleanReport = `# Codebase Audit Report\n\n0 findings across ${scannedDomains.length} domain(s): ${scannedDomains.join(', ') || '(none)'}.\n`
+  // Append the coverage caveat BEFORE the writer call so the "0 findings" line
+  // can never stand alone over partial coverage in the persisted artifact (#262).
+  const cleanReport =
+    `# Codebase Audit Report\n\n0 findings across ${scannedDomains.length} domain(s): ${scannedDomains.join(', ') || '(none)'}.\n` +
+    coverageSection(scannedDomains, skippedDomains)
   // A clean audit is still a durable artifact when a report was requested — the
   // "always produce artifacts" objective holds even at zero findings.
   let cleanArtifacts = null
@@ -866,6 +897,7 @@ if (allFindings.length === 0) {
     acknowledged: acknowledgedAll.length,
     budget_exhausted: budgetExhausted,
     scan_failure: hadScanFailure,
+    skipped_domains: skippedDomains,
     summary: { domains: scannedDomains.length, findings: 0, groups: 0, dropped_groups: 0, filed: 0, skipped: 0, errored: 0 },
   })
 }
@@ -896,12 +928,15 @@ if (!aggregate) {
   return finalResult({
     platform: map.platform,
     scanned_domains: scannedDomains,
-    report_markdown: `Aggregate failed. ${allFindings.length} confirmed finding(s) across ${scannedDomains.length} domain(s); re-run to group + file.`,
+    report_markdown:
+      `Aggregate failed. ${allFindings.length} confirmed finding(s) across ${scannedDomains.length} domain(s); re-run to group + file.\n` +
+      coverageSection(scannedDomains, skippedDomains),
     // Don't conflate an aggregate-agent failure with budget exhaustion (same
     // bug class as the scan path): report the real budget state, and mark the
     // audit a scan-pipeline failure so the caller knows it is partial.
     budget_exhausted: budgetExhausted,
     scan_failure: true,
+    skipped_domains: skippedDomains,
     summary: { domains: scannedDomains.length, findings: allFindings.length, groups: 0, dropped_groups: 0, filed: 0, skipped: 0, errored: 0 },
   })
 }
@@ -926,14 +961,20 @@ for (const g of droppedGroups) {
 }
 const groups = mappedGroups.filter((g) => g.findings.length > 0)
 
+// Append the coverage caveat to the aggregate agent's report ONCE, so the
+// in-memory envelope (reportTail) and the file the artifact-writer persists agree
+// — both use this local rather than the raw aggregate.report_markdown (#262).
+const reportMarkdown = aggregate.report_markdown + coverageSection(scannedDomains, skippedDomains)
+
 const reportTail = {
   platform: map.platform,
   scanned_domains: scannedDomains,
   totals: aggregate.totals,
-  report_markdown: aggregate.report_markdown,
+  report_markdown: reportMarkdown,
   acknowledged: acknowledgedAll.length,
   budget_exhausted: budgetExhausted,
   scan_failure: hadScanFailure,
+  skipped_domains: skippedDomains,
 }
 
 // Base summary shared by every File-phase return; per-return fields override.
@@ -958,7 +999,7 @@ phase('File')
 const writeArtifacts = (dirForFindings) =>
   tailAgent(
     () =>
-      agent(artifactWriterPrompt(dirForFindings, reportPath, aggregate.report_markdown, allFindings, groups, aggregate.totals), {
+      agent(artifactWriterPrompt(dirForFindings, reportPath, reportMarkdown, allFindings, groups, aggregate.totals), {
         label: dirForFindings ? 'artifacts' : 'report',
         phase: 'File',
         agentType: 'review-audit:artifact-writer',
