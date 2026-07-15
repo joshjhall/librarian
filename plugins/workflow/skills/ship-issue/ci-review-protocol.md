@@ -186,6 +186,13 @@ comments + issue-style PR comments into a `prComments` array of
 gh pr view {pr_number} --json reviews,comments
 ```
 
+**Comment `id` contract.** `gh pr view` emits `id` fields as **numbers**; the
+harness compares comment ids as **strings** on both sides (`String(a) ===
+String(b)`), so you may pass ids through verbatim — no caller-side stringify or
+coercion is required. The harness will not silently drop a comment whose id type
+differs from its triaged disposition: an unresolved comment always keeps `clean`
+false regardless of numeric-vs-string origin (#261).
+
 c. **Invoke the `Workflow` tool** with
 `~/.claude/skills/ship-issue/workflow.js`, passing:
 
