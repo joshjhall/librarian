@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-07-15
+
+### Added
+
+- Route codebase-audit output by artifact type (#223) [**BREAKING**]
+- Add 3 check-ai-config detector categories (#255)
+
+### Changed
+
+- Hard-remove deprecated autonomy flags, --level is the sole dial (#226) [**BREAKING**]
+- Extract oversized SKILL.md sections into companions (#234)
+
+### Documentation
+
+- Fix stale skill cross-reference in check-docs-staleness (#231)
+- Document generate_changelog() contract in release.sh (#232)
+- Drop nonexistent check-patterns-coverage.sh reference (#239)
+
+### Fixed
+
+- Make ship-issue auto-merge worktree-aware (#235)
+- Hard-abort release when changelog generation fails (#236)
+- Fail loud on golem-launch plugin version skew (#237)
+- Resolve worktree-new.sh tools via PATH, not /usr/bin (#241)
+- Distinguish idle/errored golems from working ones in liveness (#245)
+- Reap pane pipeline on golem-watch exit + cover git-cliff/golem-notify/golem-watch (#249)
+- Only mark a PR rebased:true on a complete rebase (#274)
+- Disqualify budget-truncated review cycles from clean:true (#275)
+- Inject ANTHROPIC_AUTH_TOKEN into golem dispatch (#244) (#277)
+- Resolve seed-worktree-trust root via cwd-independent repo_root (#276)
+- Harden review harnesses against prompt injection (#287)
+- Retry ci-fixer on transient agent failure, preserve applied fixes (#286)
+- Stop routing the diff through the manifest StructuredOutput round-trip (#285)
+- Budget-gate terminal agent awaits so a ceiling cannot throw the run away (#288)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.19.12 (#213)
+
 ## [0.5.0] - 2026-07-03
 
 ### Added
@@ -207,6 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.6.0]: https://github.com/joshjhall/librarian/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/joshjhall/librarian/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/joshjhall/librarian/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/joshjhall/librarian/compare/v0.2.0...v0.3.0
