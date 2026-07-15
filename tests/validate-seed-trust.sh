@@ -33,9 +33,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SEED_SCRIPT="$REPO_ROOT/plugins/workflow/scripts/seed-worktree-trust.sh"
 
-# Resolve the real bash once so child invocations work even when PATH is
-# deliberately stripped to hide jq (test g).
+# Resolve the real bash and git once so child invocations work even when PATH is
+# deliberately stripped to hide jq (test g) — repo_root() (config.sh) resolves
+# git via PATH (issue #278), so the jq-stub PATH must still expose `git`.
 REAL_BASH="$(command -v bash)"
+REAL_GIT="$(command -v git)"
 
 # Git's hook-exported environment. When this suite runs from a `git push`
 # pre-push hook these are set; inherited into a child, they pin every `git` call
@@ -207,16 +209,19 @@ test_missing_arg_exits_2() {
 
 # (h) Best-effort skip when jq is absent: validation still passes, but the write
 # is skipped with exit 0. jq is removed by pointing PATH at a stub dir holding
-# ONLY a `bash` symlink (no `jq`), so `command -v jq` fails inside the script —
-# the portable, deterministic technique used by golem-gate-watch. BASH_ENV must
-# be unset too, or /etc/bash_env re-adds the real PATH on the devcontainer and
-# defeats the stub.
+# ONLY `bash` and `git` symlinks (no `jq`), so `command -v jq` fails inside the
+# script — the portable, deterministic technique used by golem-gate-watch. `git`
+# must stay on PATH because repo_root() (config.sh) now resolves it via PATH
+# (issue #278); without it the target-validation step would exit 3 before ever
+# reaching the jq check. BASH_ENV must be unset too, or /etc/bash_env re-adds the
+# real PATH on the devcontainer and defeats the stub.
 test_jq_absent_skips() {
     local sb stub_bin
     new_sandbox sb
     stub_bin="$sb/stub-bin"
     /usr/bin/mkdir -p "$stub_bin"
     /usr/bin/ln -s "$REAL_BASH" "$stub_bin/bash"
+    /usr/bin/ln -s "$REAL_GIT" "$stub_bin/git"
     SEED_RC=0
     SEED_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \

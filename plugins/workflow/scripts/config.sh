@@ -79,7 +79,17 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_BASE_REF \
 # when not inside a git repository.
 repo_root() {
     local common_dir
-    common_dir="$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    # Resolve git via PATH (`command git`), not a hardcoded /usr/bin/git — on a
+    # host where git lives elsewhere (minimal container, NixOS, Homebrew-first
+    # macOS) the absolute path exits 127, gets swallowed by `|| true`, and this
+    # would silently return empty, tripping every caller's "not a repo" branch
+    # inside a valid repo (issue #278, sibling of #228/#241).
+    # NOTE: git is PATH-resolved here, so repo_root() trusts the first `git` on
+    # PATH. seed-worktree-trust.sh anchors its under-root check to this value
+    # (#21), so a caller that prepends a malicious `git` to PATH could spoof the
+    # root — an accepted trade-off matching worktree-new.sh (#228/#241); these
+    # scripts assume an operator-controlled PATH.
+    common_dir="$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
     if [ -z "$common_dir" ]; then
         command echo "repo-root: not inside a git repository" >&2
         return 1
@@ -87,7 +97,12 @@ repo_root() {
     # --path-format=absolute should guarantee absolute, but stay defensive.
     case "$common_dir" in
         /*) ;;
-        *) common_dir="$(/usr/bin/pwd)/$common_dir" ;;
+        *) common_dir="$(command pwd)/$common_dir" ;;
     esac
-    /usr/bin/dirname "$common_dir"
+    # Pure-bash dirname (no /usr/bin/dirname). common_dir is absolute here (forced
+    # just above), so it always contains a slash: strip the trailing /<name>.
+    # Stripping a single-slash path (e.g. "/.git", a bare repo rooted at /) leaves
+    # the empty string; GNU dirname returns "/" there, so fall back to "/".
+    local parent="${common_dir%/*}"
+    command echo "${parent:-/}"
 }

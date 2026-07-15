@@ -39,6 +39,7 @@ WT_NEW="$SCRIPTS/worktree-new.sh"
 WT_RM="$SCRIPTS/worktree-rm.sh"
 ATTACH="$SCRIPTS/golem-attach.sh"
 STATUS="$SCRIPTS/golem-status.sh"
+CONFIG="$SCRIPTS/config.sh"
 
 # Resolve the real bash once so child invocations work even when PATH is
 # deliberately stripped (the no-jq cases).
@@ -620,6 +621,130 @@ test_worktree_new_copies_local_files() {
     assert_contains "$out" "copied .env" "reports the .env copy"
 }
 
+# --- config.sh repo_root() ----------------------------------------------------
+
+# Regression (#278): repo_root() must resolve its tools via PATH, not hardcoded
+# /usr/bin/*. Off the standard layout (git elsewhere) /usr/bin/git exits 127,
+# gets swallowed by `|| true`, and repo_root silently returns empty — tripping
+# every caller's "not a repo" branch inside a valid repo. Static guard mirroring
+# test_worktree_new_no_hardcoded_usr_bin (#228).
+test_config_repo_root_no_hardcoded_usr_bin() {
+    local body hits
+    # Scope to repo_root()'s body (the header comment legitimately shows a
+    # /usr/bin/dirname sourcing example) and drop comment lines, so only real
+    # tool invocations are checked.
+    body="$(/usr/bin/awk '/^repo_root\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$CONFIG")"
+    hits="$(command printf '%s\n' "$body" |
+        command grep -vE '^[[:space:]]*#' |
+        command grep -nE '/usr/bin/(git|pwd|dirname)' || true)"
+    assert_output_empty "$hits" \
+        "config.sh repo_root invokes git/pwd/dirname via \`command\`/bash, not hardcoded /usr/bin/*"
+}
+
+# Functional regression (#278): with git resolvable via PATH but ABSENT at
+# /usr/bin/git, repo_root() still resolves the repo root. A shim dir is prepended
+# to PATH holding a `git` wrapper; PATH is then stripped to ONLY that shim, so a
+# hardcoded /usr/bin/git would exit 127 and repo_root would return empty. Proves
+# the fix honors PATH. Skips cleanly if the real git can't be located to wrap.
+test_config_repo_root_honors_path() {
+    local sb real_git
+    new_sandbox sb
+    real_git="$(command -v git || true)"
+    if [ -z "$real_git" ]; then
+        skip_test "git not on PATH — cannot build the shim wrapper"
+        return 0
+    fi
+    # A `git` symlink to the real binary in a dir that is the ONLY entry on PATH
+    # (no /usr/bin). A symlink — not a `#!/usr/bin/env bash` wrapper — because
+    # PATH is stripped to just this dir, so a wrapper's interpreter (`bash`)
+    # would be unresolvable; the symlink needs no interpreter. repo_root's other
+    # tools (pwd/echo) are bash builtins, so git is the only PATH dependency.
+    local shim="$sb/shim"
+    /usr/bin/mkdir -p "$shim"
+    /usr/bin/ln -s "$real_git" "$shim/git"
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            PATH="$shim" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 with git resolved via PATH only"
+    # repo_root prints the sandbox root (the git common dir's parent). git
+    # canonicalizes symlinks in that path (e.g. a symlinked /tmp on the CI
+    # runner), so compare realpaths, not the raw mktemp path.
+    local sb_real out_real
+    sb_real="$(cd "$sb" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sb_real" "$out_real" \
+        "repo_root resolves the repo root via PATH, not /usr/bin/git"
+}
+
+# Edge case (#278): repo_root()'s pure-bash dirname must match GNU `dirname` for
+# a single-slash git-common-dir (a bare repo rooted at "/" resolves to "/.git").
+# Stripping "/.git" via ${common_dir%/*} yields "" — the fix falls back to "/",
+# as `dirname /.git` does; without the ${parent:-/} guard repo_root would print
+# an empty root at exit 0. A shim `git` (bin dir first on PATH) forces the
+# --git-common-dir output to /.git; bash stays on PATH so the script shim runs.
+test_config_repo_root_dirname_root_edge() {
+    local sb bin
+    new_sandbox sb
+    bin="$sb/bin"
+    /usr/bin/mkdir -p "$bin"
+    {
+        /usr/bin/printf '#!/usr/bin/env bash\n'
+        # Only intercept the common-dir probe; anything else is unexpected here.
+        /usr/bin/printf 'case "$*" in\n'
+        /usr/bin/printf '  *--git-common-dir*) command echo "/.git" ;;\n'
+        /usr/bin/printf '  *) exit 1 ;;\n'
+        /usr/bin/printf 'esac\n'
+    } >"$bin/git"
+    /usr/bin/chmod +x "$bin/git"
+
+    # Unset BASH_ENV too: /etc/bash_env re-adds the real PATH on the devcontainer
+    # for non-interactive bash, which would let the real git outrank the shim.
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            PATH="$bin:$PATH" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 for a filesystem-root repo"
+    assert_equals "/" "$out" \
+        "repo_root returns '/' for a /.git common dir, matching GNU dirname"
+}
+
+# Edge case (#278): when git reports a RELATIVE --git-common-dir, repo_root()
+# prepends `command pwd` to absolutize it before taking the dirname. A shim git
+# emits the relative ".git"; repo_root should return the sandbox dir (pwd + /.git
+# → parent = pwd). Exercises the `*) common_dir="$(command pwd)/$common_dir"` arm
+# that this diff changed from /usr/bin/pwd.
+test_config_repo_root_relative_common_dir() {
+    local sb bin
+    new_sandbox sb
+    bin="$sb/bin"
+    /usr/bin/mkdir -p "$bin"
+    {
+        /usr/bin/printf '#!/usr/bin/env bash\n'
+        /usr/bin/printf 'case "$*" in\n'
+        /usr/bin/printf '  *--git-common-dir*) command echo ".git" ;;\n'
+        /usr/bin/printf '  *) exit 1 ;;\n'
+        /usr/bin/printf 'esac\n'
+    } >"$bin/git"
+    /usr/bin/chmod +x "$bin/git"
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            PATH="$bin:$PATH" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 for a relative common dir"
+    # pwd/.git → dirname → pwd. Compare realpaths (symlinked /tmp on CI).
+    local sb_real out_real
+    sb_real="$(cd "$sb" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sb_real" "$out_real" \
+        "repo_root absolutizes a relative --git-common-dir via command pwd"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -755,6 +880,10 @@ run_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree e
 run_test test_worktree_new_existing_branch_exits_1 "worktree-new: lingering branch exits 1"
 run_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr/bin/* tool paths (#228)"
 run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTREE_LOCAL_FILES into the worktree (#228)"
+run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
+run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
+run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
+run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolutizes a relative common dir via command pwd (#278)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
