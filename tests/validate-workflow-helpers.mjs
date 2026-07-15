@@ -114,13 +114,14 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
 // codebase-audit — sanitize / sanitizeList / dataBlock / stampRefs / finalResult
 // =============================================================================
 {
-  const { sanitize, sanitizeList, dataBlock, stampRefs, finalResult } =
+  const { sanitize, sanitizeList, dataBlock, stampRefs, finalResult, coverageSection } =
     extractHelpers(CA, [
       "sanitize",
       "sanitizeList",
       "dataBlock",
       "stampRefs",
       "finalResult",
+      "coverageSection",
     ]);
 
   // sanitize: the prompt-injection control. CR/LF/TAB and other C0/C1 control
@@ -222,6 +223,7 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
     "summary",
     "budget_exhausted",
     "scan_failure",
+    "skipped_domains",
   ];
   for (const variant of [{}, { platform: "github" }, { totals: { critical: 1, high: 0, medium: 0, low: 0 } }]) {
     const r = finalResult(variant);
@@ -248,6 +250,49 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
   eq(finalResult({}).output, "files", "finalResult: output defaults to files");
   eq(finalResult({}).report_path, "", "finalResult: report_path defaults to empty");
   eq(finalResult({}).artifacts, null, "finalResult: artifacts defaults to null");
+
+  // skipped_domains (#262): the envelope carries dropped domains BY NAME, not
+  // just the budget_exhausted/scan_failure booleans. Defaults to [] (complete
+  // coverage) and round-trips a passed list.
+  ok(
+    Array.isArray(finalResult({}).skipped_domains) && finalResult({}).skipped_domains.length === 0,
+    "finalResult: skipped_domains defaults to []",
+  );
+  const withSkips = finalResult({ skipped_domains: [{ name: "security", reason: "scan failed" }] });
+  eq(withSkips.skipped_domains.length, 1, "finalResult: passed skipped_domains round-trips");
+  eq(withSkips.skipped_domains[0].name, "security", "finalResult: skipped_domains entry preserves name");
+
+  // coverageSection (#262): the durable report's coverage caveat. Empty skip
+  // list → '' so a fully-covered report is byte-identical to before; a non-empty
+  // list names every dropped domain WITH its reason and states the gap count, so
+  // a persisted "0 findings" report can never read as "audited clean" over
+  // partial coverage ("silence is not success").
+  eq(
+    coverageSection(["a", "b"], []),
+    "",
+    "coverageSection: full coverage adds nothing (empty string)",
+  );
+  eq(coverageSection(["a"], null), "", "coverageSection: non-array skip list is treated as empty");
+  const cov = coverageSection(
+    ["a"],
+    [
+      { name: "security", reason: "budget low — scan skipped" },
+      { name: "docs", reason: "scan failed" },
+    ],
+  );
+  ok(cov.includes("## Coverage"), "coverageSection: emits a Coverage heading");
+  ok(
+    cov.includes("Scanned 1 domain(s): a."),
+    "coverageSection: reports the scanned domains",
+  );
+  ok(
+    cov.includes("2 domain(s) NOT audited"),
+    "coverageSection: states the NOT-audited count",
+  );
+  ok(
+    cov.includes("security — budget low — scan skipped") && cov.includes("docs — scan failed"),
+    "coverageSection: names every dropped domain with its reason",
+  );
 }
 
 // =============================================================================
