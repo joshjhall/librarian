@@ -156,6 +156,12 @@ behavior is noted inline per check; environment variables referenced here
    }
    ```
 
+   `diff` is the **authoritative bytes the reviewers read** (byte-faithful
+   `git diff` from step a) — the manifest step no longer transcribes it, so pass
+   the full diff here (#267). Omitting `diff` is supported but makes each reviewer
+   derive it in-agent (`git diff origin/main...HEAD`), which costs extra tool
+   calls; prefer supplying it.
+
    The harness fans the dimensions as one parallel barrier under a single
    token budget, re-scores certainty with a fresh judge, and returns
    `{ blocking[], deferrable[], summary, budget_exhausted, dimensions_skipped[],
