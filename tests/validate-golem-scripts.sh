@@ -712,6 +712,39 @@ test_config_repo_root_dirname_root_edge() {
         "repo_root returns '/' for a /.git common dir, matching GNU dirname"
 }
 
+# Edge case (#278): when git reports a RELATIVE --git-common-dir, repo_root()
+# prepends `command pwd` to absolutize it before taking the dirname. A shim git
+# emits the relative ".git"; repo_root should return the sandbox dir (pwd + /.git
+# → parent = pwd). Exercises the `*) common_dir="$(command pwd)/$common_dir"` arm
+# that this diff changed from /usr/bin/pwd.
+test_config_repo_root_relative_common_dir() {
+    local sb bin
+    new_sandbox sb
+    bin="$sb/bin"
+    /usr/bin/mkdir -p "$bin"
+    {
+        /usr/bin/printf '#!/usr/bin/env bash\n'
+        /usr/bin/printf 'case "$*" in\n'
+        /usr/bin/printf '  *--git-common-dir*) command echo ".git" ;;\n'
+        /usr/bin/printf '  *) exit 1 ;;\n'
+        /usr/bin/printf 'esac\n'
+    } >"$bin/git"
+    /usr/bin/chmod +x "$bin/git"
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            PATH="$bin:$PATH" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 for a relative common dir"
+    # pwd/.git → dirname → pwd. Compare realpaths (symlinked /tmp on CI).
+    local sb_real out_real
+    sb_real="$(cd "$sb" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sb_real" "$out_real" \
+        "repo_root absolutizes a relative --git-common-dir via command pwd"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -850,6 +883,7 @@ run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTR
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
+run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolutizes a relative common dir via command pwd (#278)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"

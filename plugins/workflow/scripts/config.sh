@@ -84,6 +84,11 @@ repo_root() {
     # macOS) the absolute path exits 127, gets swallowed by `|| true`, and this
     # would silently return empty, tripping every caller's "not a repo" branch
     # inside a valid repo (issue #278, sibling of #228/#241).
+    # NOTE: git is PATH-resolved here, so repo_root() trusts the first `git` on
+    # PATH. seed-worktree-trust.sh anchors its under-root check to this value
+    # (#21), so a caller that prepends a malicious `git` to PATH could spoof the
+    # root — an accepted trade-off matching worktree-new.sh (#228/#241); these
+    # scripts assume an operator-controlled PATH.
     common_dir="$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
     if [ -z "$common_dir" ]; then
         command echo "repo-root: not inside a git repository" >&2
@@ -94,16 +99,10 @@ repo_root() {
         /*) ;;
         *) common_dir="$(command pwd)/$common_dir" ;;
     esac
-    # Pure-bash dirname (no /usr/bin/dirname): strip the trailing /<name>.
-    # Stripping a single-slash path (e.g. "/.git", a bare repo rooted at /)
-    # leaves the empty string; GNU dirname returns "/" there, so fall back to
-    # "/" to match. A path with no slash has no parent segment → ".".
-    local parent
-    case "$common_dir" in
-        */*)
-            parent="${common_dir%/*}"
-            command echo "${parent:-/}"
-            ;;
-        *) command echo "." ;;
-    esac
+    # Pure-bash dirname (no /usr/bin/dirname). common_dir is absolute here (forced
+    # just above), so it always contains a slash: strip the trailing /<name>.
+    # Stripping a single-slash path (e.g. "/.git", a bare repo rooted at /) leaves
+    # the empty string; GNU dirname returns "/" there, so fall back to "/".
+    local parent="${common_dir%/*}"
+    command echo "${parent:-/}"
 }
