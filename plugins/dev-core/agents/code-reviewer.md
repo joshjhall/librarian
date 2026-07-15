@@ -23,7 +23,7 @@ call — do **not** emit a `json` fence):
 | `manifest`         | Steps 1-2: build + classify the changed-file manifest; decide specialists |
 | `reviewer:<name>`  | Step 3: analyze the manifest as that one sub-reviewer; return findings |
 | `rescore`          | Fresh judge panel: re-score certainty only (see Rescore Mode)          |
-| `merge`            | Steps 5-7: acknowledge scan, dedup, correlate, emit finding-schema object |
+| `merge`            | Steps 5-7: acknowledge scan, dedup, correlate, return kept/merged/acknowledged refs |
 
 You never dispatch other agents and never run more than one mode per
 invocation — the harness sequences them.
@@ -176,7 +176,7 @@ Where `<slug>` matches a sub-reviewer category: `security`, `bug`,
    the finding is a candidate for suppression
 1. **Suppress or re-raise**:
    - All code-reviewer categories are **boolean** (no numeric thresholds):
-     suppress entirely and move to `acknowledged_findings`
+     suppress entirely — list its `ref` in `acknowledged_refs` (Step 7)
    - **Stale acknowledgments**: if `date` is present and older than 12 months,
      re-raise the finding with `acknowledged: true` and a note that the
      acknowledgment has expired
@@ -191,61 +191,77 @@ the merge step.
    simply merge whatever you receive
 1. **Within-reviewer dedup**: if two findings from the same reviewer reference
    the same file + same category + overlapping line range (within 3 lines),
-   merge into one finding — keep the broader line range, combine evidence
-   into `description`, keep the higher severity and highest certainty
+   merge into one `merged` entry — keep the broader line range, combine evidence
+   into `description`, keep the higher `severity` (the harness picks the highest
+   certainty among the merged refs, so you do not restate it)
 1. **Cross-reviewer correlation**: if findings from different reviewers
-   reference the same file + overlapping lines, add `related_findings`
+   reference the same file + overlapping lines, record `related_ids`
    cross-references (array of related finding IDs) but do NOT merge them
 1. **Re-sequence IDs**: assign `code-reviewer-<NNN>` IDs (zero-padded, e.g.,
    `code-reviewer-001`) in order sorted by file path then line number
-1. **Sort**: by severity (`critical` first), then effort (`trivial` first)
+
+The harness sorts, recomputes `summary`, and preserves each finding's rescored
+`certainty` byte-for-byte, so you do NOT sort, count, or restate certainty.
 
 ### Step 7: Output
 
-Return a single object as a typed `StructuredOutput` (the harness forces the
-tool call — do not emit a `json` fence) matching the `finding-schema.md`
-top-level structure, unchanged:
+Return **references** into the finding set the harness handed you — NOT the full
+finding objects. Each input finding carries a unique `ref`; the harness holds the
+authoritative copy of every finding (with its judge-panel certainty) and
+reassembles the `finding-schema.md` report from your refs, so you never
+re-serialize `certainty`, `file`, `category`, `reviewer`, or `summary` — echoing
+them back could only drop or corrupt them.
+
+Emit a single typed `StructuredOutput` (the harness forces the tool call — do not
+emit a `json` fence) with exactly three arrays:
 
 ```json
 {
-  "scanner": "code-reviewer",
-  "summary": {
-    "files_scanned": 0,
-    "total_findings": 0,
-    "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0}
-  },
-  "findings": [ ... ],
-  "acknowledged_findings": [ ... ]
+  "kept":   [ { "id": "code-reviewer-001", "ref": "<input ref>", "related_ids": [ ] } ],
+  "merged": [ {
+    "id": "code-reviewer-002",
+    "refs": [ "<ref A>", "<ref B>" ],
+    "related_ids": [ ],
+    "severity": "high", "line_start": 0, "line_end": 0,
+    "title": "…", "description": "…", "suggestion": "…",
+    "effort": "small", "tags": [ ]
+  } ],
+  "acknowledged_refs": [ "<input ref>" ]
 }
 ```
 
-**Integrity**: every finding handed to you must end up in exactly one of
-`findings` (kept, possibly merged via dedup) or `acknowledged_findings`
-(suppressed) — never silently dropped. Set `total_findings = findings.length`.
+- **kept**: one entry per finding carried through unchanged — its re-sequenced
+  `id`, the input `ref` (copied verbatim), and `related_ids` from cross-reviewer
+  correlation (empty array if none).
+- **merged**: one entry per within-reviewer dedup of **two-or-more** findings
+  (`refs` MUST list ≥2 input refs — a single-finding "merge" is invalid; keep it
+  in `kept` instead). List the `refs` you combined and author the merged content
+  (`severity`, `line_start`/`line_end` as the broadest range, combined
+  `description`, etc.). Do NOT include `file`, `category`, `certainty`, or
+  `reviewer` — the harness takes `file`/`category`/`reviewer` from the first ref
+  and the highest certainty among the merged refs. (A `merged` entry is the only
+  place you author `severity`; the harness rejects a 1-ref merge and re-emits the
+  finding unchanged, so you cannot rewrite a single finding's severity this way.)
+- **acknowledged_refs**: refs of findings **fully** suppressed by a **live**
+  acknowledgment.
 
-Each finding in the `findings` array includes all fields from the sub-reviewer
-schema plus:
+**Integrity**: every input `ref` must appear in exactly one of `kept`, `merged`,
+or `acknowledged_refs` — never silently dropped, never in two buckets. The
+harness counts and logs any ref you omit, invent, or double-place (a double-placed
+ref keeps only its first placement).
 
-- `id`: assigned in Step 6 (`code-reviewer-<NNN>`)
-- `reviewer`: name of the sub-reviewer that produced it (`security`, `bug`,
-  `performance`, `style`, `database`, `devops`)
-- `related_findings`: array of related finding IDs from cross-reviewer
-  correlation (empty array if none)
-
-Re-raised findings (stale acknowledgments) appear in `findings` with
-`acknowledged: true` and `acknowledged_date` set. Fully suppressed findings
-appear only in `acknowledged_findings`.
-
-Recompute `summary` counts from the final merged `findings` array (not from
-sub-reviewer counts). The harness returns this object to its caller; the
-`summary` block is the at-a-glance overview, so no separate human-readable line
-is needed.
+**Stale-acknowledgment re-raise**: when an `audit:acknowledge` comment has a
+`date` older than 12 months (Step 5), the finding stays **active** — put its `ref`
+in `kept` (or `merged`) and set `acknowledged: true` + `acknowledged_date` on that
+entry (both optional fields the schema allows there). Do NOT list it in
+`acknowledged_refs`. The harness copies those two fields onto the reassembled
+finding verbatim; it authors nothing else about the re-raise.
 
 Skip findings that are purely stylistic preferences with no impact on correctness.
 Focus on issues that could cause bugs, security vulnerabilities, or maintenance problems.
 
-If no findings across all reviewers, return the JSON structure with an empty
-`findings` array and state that the changes look clean.
+If no findings across all reviewers, return the three arrays empty and state that
+the changes look clean.
 
 ---
 
