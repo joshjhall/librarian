@@ -77,6 +77,32 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
   `budget_exhausted`/partial flag when you see one, so a half-complete cycle is
   never reported as a clean pass.
 
+## No Clock in the Sandbox — Bound Wall-Time at the Caller
+
+A harness **cannot bound itself in wall-time**, and it is a recurring
+mistake to try. The sandbox bans clocks and timers so per-step resume stays
+deterministic: `Date.now()`, `new Date()`, and `Math.random()` all **throw**;
+there is no `setTimeout`, no `Promise.race`-against-a-timer, and no `AbortSignal`
+exposed to the script. The `agent()` API has **no per-agent timeout** option
+either. And a *spinning* subagent emits no tokens, so it never advances
+`budget.spent()` — the budget bounds *cost*, not *latency*, and cannot detect a
+stuck agent.
+
+So there is no in-harness "per-invocation deadline" or `timed_out` flag the
+harness can set — a stuck `agent()` inside a `parallel()` barrier runs unbounded
+in wall-time even far below the token cap (#224). Do **not** add a clock, a
+timer, or a `timed_out` field a harness can never actually populate; that flag
+would be dead code that reads as a working safeguard.
+
+**The bound belongs to the caller.** Wall-time is only measurable in the Claude
+turn that invokes the `Workflow` tool — it can invoke the harness as a
+**background** task and poll `TaskOutput` against a threshold, then `TaskStop`
+and recover partials from `<transcriptDir>/journal.jsonl`. The ship-issue skill
+does exactly this via `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` +
+`plugins/workflow/scripts/recover-journal-partials.sh`, mirroring the
+`LIBRARIAN_CI_WAIT_TIMEOUT` CI-wait loop. When a harness needs a latency bound,
+document it as a caller responsibility, not a harness feature.
+
 ## Findings & Keying
 
 - When findings are keyed across steps (rescore, classify, dedup), stamp a

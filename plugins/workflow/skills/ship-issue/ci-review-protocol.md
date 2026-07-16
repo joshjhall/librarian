@@ -111,7 +111,14 @@ iteration counter by hand.
   `args: { checks: [{ name, logs, pr: {pr_number} }, …] }`. The harness runs
   a capped `parse → fix → verify` loop per check and returns
   `{ results: [{ check, fixed, summary, files_changed, remainingFailures, … }] }`.
-  Agents never push — applying the commits is your job:
+  **Bound this invocation in wall-time** exactly as the pre-PR review does
+  (`pre-ship-validation.md` Step 3.5 b, `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`): the
+  `ci-fixer` harness is budget-bounded but not wall-clock-bounded, and a stuck
+  fixer agent would otherwise hang the ship (#224). Invoke it as a background
+  task, poll against the threshold, and at the ceiling `TaskStop` it; treat a
+  stopped run as **no fix applied** for any check whose result never arrived
+  (those `check`s stay red → the dead-end path below), and record a `timed_out`
+  STOP note. Agents never push — applying the commits is your job:
 
   - For each result with `fixed: true`: stage its `files_changed`, then make
     one commit `fix(ci): {summary}` (combine multiple fixed checks into a
@@ -219,6 +226,14 @@ budget_exhausted, dimensions_skipped[], clean }`. `dimensions_skipped` names any
 review dimensions that did not run this cycle (skipped at the budget floor or
 failed mid-barrier); a non-empty list means `budget_exhausted` is true and the
 cycle is **partial**.
+
+**Bound this invocation in wall-time** exactly as the pre-PR review does
+(`pre-ship-validation.md` Step 3.5 b, `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`): invoke
+the harness as a background task, poll against the threshold, and at the ceiling
+`TaskStop` it and recover partials with
+`${CLAUDE_PLUGIN_ROOT}/scripts/recover-journal-partials.sh <transcriptDir>/journal.jsonl`.
+A wall-timed-out cycle is **partial → `clean` forced false**, identical to
+`budget_exhausted` — it never terminates the review loop as clean (#224).
 
 d. **Resolve or defer**:
 
