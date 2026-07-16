@@ -361,6 +361,31 @@ test_escalation_surfaces_labelled() {
     assert_not_contains "$SNAP_OUT" "golem-idle" "An idle in the same feed is still excluded"
 }
 
+# Orphan sentinel (#323): golem-notify.sh stamps a feed line `golem-?` when the
+# Notification fires from a session with no GOLEM_ID that is not in a worktree
+# root. No real golem carries that id, so no future `idle` ever supersedes it and
+# (being no-`ts`) it bypasses the TTL — a permanent phantom BLOCKED entry. It is
+# never actionable (`golem-?` has no golem-attach target), so feed_snapshot()
+# must drop it while a REAL gate in the same feed still surfaces. Both branches
+# asserted together so a refactor dropping the sentinel filter is caught.
+test_golem_question_sentinel_excluded() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed_snapshot no-ops without jq)"
+        return 0
+    fi
+
+    _run_once_snapshot 999999999999 \
+        '{"golem":"golem-?","event":"gate","message":"Claude needs your permission"}' \
+        '{"golem":"golem-1","event":"gate","message":"push gate","ts":"2026-06-27T10:00:00Z"}'
+
+    assert_equals "0" "$SNAP_RC" "Snapshot exits 0 with an orphan golem-? line"
+    assert_not_empty "$SNAP_OUT" "Snapshot is non-empty (the real gate must still surface)"
+    assert_contains "$SNAP_OUT" "golem-1" "A real gate still surfaces alongside the orphan sentinel"
+    # assert_not_contains is glob-based (no eval), so attacker-influenceable
+    # $SNAP_OUT never reaches an eval'd command.
+    assert_not_contains "$SNAP_OUT" "golem-?" "The orphan golem-? sentinel is filtered out"
+}
+
 # jq-absent contract (#28): feed_snapshot() guards on `command -v jq ... ||
 # return 0`, so with jq off $PATH the `--once` snapshot is a silent no-op —
 # exit 0, EMPTY output — EVEN with a fresh gated entry in the feed. This pins
@@ -829,6 +854,7 @@ run_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not 
 run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
 run_test test_escalation_surfaces_labelled "Escalation surfaces in BLOCKED, labelled distinctly; idle excluded"
+run_test test_golem_question_sentinel_excluded "Orphan golem-? sentinel is filtered while a real gate still surfaces (#323)"
 run_test test_jq_absent_is_silent_noop "jq absent from PATH: --once is a silent no-op despite a fresh gate"
 run_test test_liveness_fresh_is_alive "Liveness: fresh-activity golem reports alive (process up), not 'advancing'"
 run_test test_liveness_stale_is_possible_stall "Liveness: old-activity golem flagged a possible stall (exit 0)"
