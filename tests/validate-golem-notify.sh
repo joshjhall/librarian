@@ -173,7 +173,7 @@ assert_event() {
     new_sandbox sb
     run_notify "$sb" "$payload" "golem-1"
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 ($desc)"
-    assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
+    assert_valid_json "$NOTIFY_LINE" \
         "feed line is valid JSON ($desc)"
     got="$(printf '%s' "$NOTIFY_LINE" | jq -r '.event' 2>/dev/null || true)"
     assert_equals "$want" "$got" "classified as $want ($desc)"
@@ -277,7 +277,7 @@ test_no_jq_escaper_emits_valid_json() {
     # GOLEM_ID matches golem-* so it is interpolated verbatim by the encoder.
     run_notify "$sb" '{"message":"unused on the no-jq path"}' 'golem-x"a\b' nojq
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 on the no-jq path"
-    assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
+    assert_valid_json "$NOTIFY_LINE" \
         "the hand-rolled feed line is valid JSON despite a quote+backslash GOLEM_ID"
     golem="$(printf '%s' "$NOTIFY_LINE" | jq -r '.golem' 2>/dev/null || true)"
     # Backslash removed, embedded double-quote preserved as data.
@@ -297,7 +297,7 @@ test_no_jq_still_writes_gate_line() {
     new_sandbox sb
     run_notify "$sb" '{"message":"ignored without jq"}' "golem-9" nojq
     assert_exit 0 "$NOTIFY_RC" "no-jq hook exits 0"
-    assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
+    assert_valid_json "$NOTIFY_LINE" \
         "no-jq feed line is valid JSON"
     event="$(printf '%s' "$NOTIFY_LINE" | jq -r '.event' 2>/dev/null || true)"
     assert_equals "gate" "$event" "no-jq default message classifies as gate"
@@ -323,7 +323,7 @@ assert_golemid() {
     }
     run_notify_no_gid "$sb" '{"message":"awaiting a decision"}'
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 ($desc)"
-    assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
+    assert_valid_json "$NOTIFY_LINE" \
         "feed line is valid JSON ($desc)"
     got="$(printf '%s' "$NOTIFY_LINE" | jq -r '.golem' 2>/dev/null || true)"
     assert_equals "$want" "$got" "derived golem id is $want ($desc)"
@@ -378,7 +378,7 @@ test_golemid_issue_basename_from_subdir() {
     }
     run_notify_no_gid "$sb" '{"message":"awaiting a decision"}' "nested/work/dir"
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 (issue-77 from subdir)"
-    assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
+    assert_valid_json "$NOTIFY_LINE" \
         "feed line is valid JSON (issue-77 from subdir)"
     got="$(printf '%s' "$NOTIFY_LINE" | jq -r '.golem' 2>/dev/null || true)"
     assert_equals "golem-77" "$got" \
