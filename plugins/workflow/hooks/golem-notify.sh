@@ -80,6 +80,24 @@ fi
 # The `dead-end` and `escalation` branches precede the `gate` default so their
 # markers win; `dead-end` is matched before `escalation` because it is the more
 # specific kind (a dead-end IS an escalation that also blocks L4).
+#
+# Why only the `ESCALATION:`-prefixed path is classified as `escalation` here,
+# and an in-turn `AskUserQuestion` fork is NOT (issue #321, deferred out of
+# #257/PR #320): an in-turn `AskUserQuestion` fork does not reach this hook as an
+# escalation. Claude Code surfaces such a fork through the SDK `canUseTool`
+# callback, not the async `Notification` event — which is exactly why the
+# escalation protocol has to SYNTHESIZE an `ESCALATION:`-prefixed Notification
+# and pipe it here by hand (`next-issue/escalation-protocol.md`). When a plain
+# permission `Notification` does fire, its `message` is not a stable,
+# machine-parseable string and carries no multi-option / tool-name field, so
+# there is no fork-specific signature to key on. A heuristic would therefore risk
+# FALSE POSITIVES on the fail-loud `gate` default (mislabelling routine
+# permission gates as escalations) — the precise risk #257 named when deferring
+# this. So the feed channel classifies only the deterministic `ESCALATION:` path;
+# a live in-turn fork stays the `gate` default here BY DESIGN. The pane channel
+# (`golem-gate-watch.sh` `pane_is_fork`, PR #320) is the best-effort surface that
+# observes a live in-turn fork's modal overlay; the two channels agreeing is only
+# expected for the `ESCALATION:`-prefixed path, not for an in-turn fork.
 case "$(printf '%s' "$message" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
     *"waiting for your input"*) event="idle" ;;
     *"waiting for input"*) event="idle" ;;
