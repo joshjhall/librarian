@@ -10,6 +10,7 @@
 #   assert_true                               — eval a command, message heuristic
 #   assert_equals / assert_not_empty          — value assertions
 #   assert_contains                           — substring assertion
+#   assert_valid_json                         — no-eval JSON validation (untrusted-safe)
 #   assert_file_exists                        — filesystem assertion
 #   assert_file_contains / _not_contains      — grep-based file assertions
 #   skip_test                                 — record a skipped test
@@ -187,6 +188,31 @@ assert_not_contains() {
         return 0
     fi
     _fail "$message" "String:   '$haystack'" "Unexpected: '$needle'"
+    return 0
+}
+
+# assert_valid_json <value> [message]
+# Asserts <value> is well-formed JSON. Takes the value as a real argument (no
+# eval, no shell re-quoting) so it is safe for attacker-influenceable strings —
+# unlike building `printf '%s' '$value' | jq -e .` for assert_true, where an
+# embedded single quote would close the surrounding '...' early inside the
+# eval'd command and let following metacharacters run. Skips (passes) when jq is
+# absent; call sites already gate their suites on jq.
+#
+# `jq empty` is a syntax-only parse check (reads input, emits nothing, exits
+# non-zero only on malformed JSON) — unlike `jq -e .`, whose exit status keys off
+# the *truthiness* of the output, so the valid scalars `false`/`null` would be
+# misreported as invalid.
+assert_valid_json() {
+    local value="$1"
+    local message="${2:-Value should be valid JSON}"
+    if ! command -v jq >/dev/null 2>&1; then
+        return 0
+    fi
+    if printf '%s' "$value" | jq empty >/dev/null 2>&1; then
+        return 0
+    fi
+    _fail "$message" "Value:    '$(printf '%s' "$value" | command head -3)'"
     return 0
 }
 
