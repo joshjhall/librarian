@@ -93,7 +93,11 @@ fi
 # contract_categories <contract.md> — the category slugs declared in the file's
 # `## Categories` table. Scoped to that section (via the sed range) so slugs
 # mentioned elsewhere in the contract are not counted. Backtick-wrapped kebab
-# tokens, backticks stripped, sorted-unique.
+# tokens, backticks stripped, sorted-unique. The slug shape is kept **identical**
+# to emitted_categories() below (`[a-z][a-z0-9]+-[a-z][a-z0-9-]*`) so the two
+# extractors agree: an asymmetric (looser) pattern here would match an
+# edge-shaped slug like `x-finding` in the table that the emitted side can never
+# match, falsely reporting a declared-and-emitted category as "missing".
 contract_categories() {
     # The trailing `|| true` mirrors the guard in emitted_categories(): `grep`
     # exits 1 when the Categories table yields zero slugs (a WIP/malformed
@@ -102,7 +106,7 @@ contract_categories() {
     # `[ -n "$contract_list" ] || continue` guard that is meant to skip exactly
     # that domain. `|| true` keeps an empty result benign so the skip fires.
     command sed -n '/^## Categories/,/^## /p' "$1" |
-        command grep -oE '`[a-z][a-z0-9-]+`' |
+        command grep -oE '`[a-z][a-z0-9]+-[a-z][a-z0-9-]*`' |
         command tr -d '`' |
         command sort -u || true
 }
