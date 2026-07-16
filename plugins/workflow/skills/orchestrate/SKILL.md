@@ -173,16 +173,28 @@ dispatch is sequential and cheap — **not** workflow-driven.
      plan in-session — then the SAME session continues autonomously through
      implement → review → push/PR with the refined plan in-context.
 
-   **Plan approval requires a HUMAN keystroke — it is not agent-drivable (#29).**
-   At the `ExitPlanMode` prompt only **option 1 ("Yes, and use auto mode")** lets
-   the SAME session continue autonomously to a PR, but selecting it trips the
-   auto-mode classifier when an orchestrating agent relays it — so a human must
-   press it in a real TTY (attach via `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh
-   {N}`). When dispatching plan-gated golems (any run below L4, incl. a capped
-   `severity/critical`), surface this:
-   their plan approval is a human keystroke at the attached TTY, not something the
-   orchestrator can answer for them. See `mode-protocol.md` § *Plan gate by level*
-   for the full option-1-vs-option-2 classifier contract.
+   **Plan approval is broker → human decides → orchestrator sends the
+   keystroke.** The human's role at a plan-gated golem is the *decision*, not the
+   physical keypress. The orchestrator presents the plan in-session (e.g. via
+   `AskUserQuestion`); once the operator approves, **the orchestrator itself runs
+   `tmux send-keys -t golem-{N} 1 Enter`** to select option 1 ("Yes, and use auto
+   mode") — the only option that lets the SAME session continue autonomously to a
+   PR. Never hand that keystroke back to the operator to paste after they have
+   already approved.
+
+   The `#29` caveat is **narrower** than "a human must physically type the key":
+   what the auto-mode classifier blocks is an agent **relaying option 1 as an
+   *undirected* send** — the send is denied when nothing authorizes it, but is
+   accepted once the operator explicitly authorizes the gate (e.g. approves it
+   in-session, or "approve all plan gates"). So the orchestrator's directed
+   `tmux send-keys` after that approval is the default path. **Fallback:** if the
+   send is still classifier-blocked, attach the real TTY
+   (`${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`) and press option 1 there.
+   After sending, verify the golem left plan mode (`⏵⏵ auto mode on`, branch in
+   the status bar). Whether `send-keys` is unconditionally agent-drivable and the
+   classifier's non-determinism are tracked as open follow-ups (#281, #282). See
+   `mode-protocol.md` § *Plan gate by level* for the full option-1-vs-option-2
+   classifier contract.
 
    The launch command is identical either way (the policy lives in
    `/next-issue`); dispatch only needs to **expect** a golem dispatched below L4
