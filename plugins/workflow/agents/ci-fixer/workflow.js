@@ -191,42 +191,66 @@ const results = await parallel(
       }
       iteration++
 
-      // Each stage returns a typed object, never a bare null, so a transient
-      // agent failure surfaces as data (retryable) rather than nulling the whole
-      // pipeline item and reverting to the 'not attempted' default.
-      const [result] = await pipeline(
-        [check],
-        (c) =>
-          agent(parsePrompt(c, iteration), {
-            label: `parse:${check.name}#${iteration}`,
-            phase: 'Fix',
-            agentType: 'workflow:ci-fixer',
-            schema: CLASSIFY_SCHEMA,
-          }).then((cls) => ({ cls })),
-        ({ cls }) => {
+      // Sequential parse → fix → verify (not pipeline([check], ...)): N is 1 here
+      // — the real fan-out is the outer parallel(checks.map(...)). Each stage
+      // returns a typed object, never a bare null, so a transient AGENT failure
+      // surfaces as data (retryable) rather than reverting to 'not attempted'.
+      // The explicit try/catch (issue #265) keeps a thrown HARNESS bug visible:
+      // pipeline() used to swallow it to null, which applyResult() then treated as
+      // a transient and retried up to the cap — the exact conflation that enabled
+      // the #259 retry bug. A code fault won't self-heal on retry, so it STOPS the
+      // loop with an attributable summary instead.
+      let result
+      let fix = null
+      try {
+        const cls = await agent(parsePrompt(check, iteration), {
+          label: `parse:${check.name}#${iteration}`,
+          phase: 'Fix',
+          agentType: 'workflow:ci-fixer',
+          schema: CLASSIFY_SCHEMA,
+        })
+        if (cls) {
           // Guard the classify result before fixPrompt dereferences it — a null
-          // classify skips the fix agent instead of throwing mid-pipeline.
-          if (!cls) return { cls: null, fix: null }
-          return agent(fixPrompt(check, cls, iteration), {
+          // classify skips the fix agent.
+          fix = await agent(fixPrompt(check, cls, iteration), {
             label: `fix:${check.name}#${iteration}`,
             phase: 'Fix',
             agentType: 'workflow:ci-fixer',
             schema: FIX_SCHEMA,
-          }).then((fix) => ({ cls, fix }))
-        },
-        ({ cls, fix }) => {
+          })
+        }
+        if (!cls) {
           // Skip verify when nothing was classified/attempted.
-          if (!cls) return transientVerdict(check, cls, fix)
-          return agent(verifyPrompt(check, iteration), {
+          result = transientVerdict(check, cls, fix)
+        } else {
+          const v = await agent(verifyPrompt(check, iteration), {
             label: `verify:${check.name}#${iteration}`,
             phase: 'Fix',
             agentType: 'workflow:ci-fixer',
             schema: VERIFY_SCHEMA,
-            // A null verify preserves stage 2's applied files_changed so the
-            // edit is never silently unreported.
-          }).then((v) => wrapVerify(v, check, cls, fix))
-        },
-      )
+          })
+          // A null verify preserves stage 2's applied files_changed so the edit
+          // is never silently unreported.
+          result = wrapVerify(v, check, cls, fix)
+        }
+      } catch (e) {
+        // A harness bug threw (previously swallowed to null by pipeline()).
+        // Report it as a code fault and STOP retrying — unlike an agent null, a
+        // harness error is not transient. Preserve any edit this iteration's fix
+        // stage already applied so it is still committed/reported.
+        log(`ci-fixer harness error on "${check.name}#${iteration}" — ${e.message}`)
+        verdict = {
+          fixed: false,
+          remainingFailures: [check.name],
+          failure_type: 'other',
+          summary: `harness error — ${e.message}`,
+          files_changed:
+            fix && fix.applied && Array.isArray(fix.files_changed) && fix.files_changed.length
+              ? fix.files_changed
+              : verdict.files_changed,
+        }
+        break
+      }
 
       const step = applyResult(verdict, result)
       verdict = step.verdict
