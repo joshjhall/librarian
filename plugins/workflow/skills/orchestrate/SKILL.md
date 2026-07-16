@@ -458,6 +458,13 @@ Detect and rebase them — without merging anything into the orchestrator branch
    and blocks at every level; the `rebase-agent`'s `escalated[]` entry already
    carries the why/attempted/remaining content to fold in.
 
+   Also surface `rebase_skipped[]` — behind-base PRs the sweep never attempted
+   because it hit an early exit (`reason: 'max-rebases cap' | 'budget
+   exhausted'`). These are **neither resolved nor escalated**, just deferred:
+   re-queue them on the next `poll+rebase` sweep (raise `maxRebases` or let the
+   next sweep pick them up) rather than treating them as done. Not a dead-end —
+   no human keystroke required — but do not drop them silently.
+
 1. **Push rebased branches** (the harness never pushes): for each PR whose
    `rebases[]` entry has **`rebased: true`** (a complete mechanical resolution —
    empty `escalated[]`), the orchestrator pushes under human supervision:

@@ -908,6 +908,85 @@ for (const path of [ORCH, REBASE]) {
 }
 
 // =============================================================================
+// orchestrate — rebaseSkipRemainder (pure early-exit accounting; issue #263)
+// The Rebase loop in runPollSweep stops early on the budget floor or the
+// MAX_REBASES cap; this helper reports which behind-base PRs were never
+// attempted (queue remainder past `i`) and why. Extracted from the async body
+// so the off-by-one the accounting depends on — `i` is the first un-attempted
+// PR for BOTH exits — is unit-tested.
+// =============================================================================
+{
+  const { rebaseSkipRemainder } = extractHelpers(ORCH, ["rebaseSkipRemainder"]);
+  const q = [{ number: 1 }, { number: 2 }, { number: 3 }];
+
+  // (a) budget exit with PRs remaining → remainder tagged 'budget exhausted',
+  //     no cap log (the loop already logged the budget stop).
+  {
+    const r = rebaseSkipRemainder(q, 1, true, 2);
+    eq(
+      JSON.stringify(r.skipped),
+      JSON.stringify([{ pr: 2, reason: "budget exhausted" }, { pr: 3, reason: "budget exhausted" }]),
+      "rebaseSkipRemainder: budget exit tags the remainder 'budget exhausted'",
+    );
+    eq(r.capLog, null, "rebaseSkipRemainder: budget exit emits no cap log (loop already logged)");
+  }
+
+  // (b) max-rebases-cap exit with PRs remaining → remainder tagged
+  //     'max-rebases cap' and a cap log line is returned to emit.
+  {
+    const r = rebaseSkipRemainder(q, 2, false, 2);
+    eq(
+      JSON.stringify(r.skipped),
+      JSON.stringify([{ pr: 3, reason: "max-rebases cap" }]),
+      "rebaseSkipRemainder: cap exit tags the remainder 'max-rebases cap'",
+    );
+    eq(
+      r.capLog,
+      "rebase sweep hit max-rebases cap (2) — 1 behind-base PR(s) not attempted",
+      "rebaseSkipRemainder: cap exit returns a log line with the cap and count",
+    );
+  }
+
+  // (c) queue fully drained (i === queue.length) → empty remainder, no log,
+  //     for either exit flag.
+  {
+    const r = rebaseSkipRemainder(q, 3, false, 3);
+    eq(JSON.stringify(r.skipped), JSON.stringify([]), "rebaseSkipRemainder: drained queue → empty remainder");
+    eq(r.capLog, null, "rebaseSkipRemainder: drained queue → no cap log");
+    const rb = rebaseSkipRemainder(q, 3, true, 3);
+    eq(JSON.stringify(rb.skipped), JSON.stringify([]), "rebaseSkipRemainder: drained queue → empty remainder (budget flag)");
+  }
+
+  // (d) cap hit on the very last item (i past the end after the final i++) →
+  //     empty remainder, guarding the off-by-one the inline comment calls out.
+  {
+    const r = rebaseSkipRemainder(q, q.length, false, 3);
+    eq(JSON.stringify(r.skipped), JSON.stringify([]), "rebaseSkipRemainder: cap on last item → nothing left un-attempted");
+    eq(r.capLog, null, "rebaseSkipRemainder: cap on last item → no cap log (nothing skipped)");
+  }
+
+  // (e) cap of 0 over a non-empty queue → the loop body never runs (i === 0),
+  //     so the entire queue is the 'max-rebases cap' remainder.
+  {
+    const r = rebaseSkipRemainder(q, 0, false, 0);
+    eq(
+      JSON.stringify(r.skipped),
+      JSON.stringify([
+        { pr: 1, reason: "max-rebases cap" },
+        { pr: 2, reason: "max-rebases cap" },
+        { pr: 3, reason: "max-rebases cap" },
+      ]),
+      "rebaseSkipRemainder: maxRebases 0 → whole queue is the cap remainder",
+    );
+    eq(
+      r.capLog,
+      "rebase sweep hit max-rebases cap (0) — 3 behind-base PR(s) not attempted",
+      "rebaseSkipRemainder: maxRebases 0 → cap log reports the full queue length",
+    );
+  }
+}
+
+// =============================================================================
 // ci-fixer — defaultVerdict
 // =============================================================================
 {
