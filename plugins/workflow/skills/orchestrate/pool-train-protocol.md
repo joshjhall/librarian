@@ -257,6 +257,13 @@ authorization** layered over the existing pieces: the order is computed by
    }
    ```
 
+   **Bound this invocation in wall-time (#224)** — `train` spends a read-only
+   subagent per PR that arrived without a `files` list; invoke it as a background
+   task with the caller-side timeout. A timed-out train run is **partial** —
+   re-run it to recompute the order rather than landing a batch from an
+   incomplete graph. See `mode-protocol.md` § *Bounding a Workflow invocation in
+   wall-time*. (Passing each PR's `files` up front avoids the fetch agents.)
+
    The harness returns `train` = `{ independents, chains, waves, order, unresolved }`
    computed purely from pairwise file-overlap (no merge, no push, no rebase):
 

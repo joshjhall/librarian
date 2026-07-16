@@ -295,6 +295,11 @@ Authoritative status comes from **PR + issue-label state**. The
    `pr_status[]` (`ci`, `review`, `label_state`, `behind_base`, `review_cycle`,
    `blocking`, `summary`).
 
+   **Bound this invocation in wall-time (#224)** — it fans out subagents; invoke
+   it as a background task and apply the caller-side timeout. A timed-out poll is
+   **partial**, resumed on the next sweep. See `mode-protocol.md` § *Bounding a
+   Workflow invocation in wall-time*.
+
 1. **Render the live status table** from `pr_status`:
 
    ```text
@@ -464,6 +469,12 @@ Detect and rebase them — without merging anything into the orchestrator branch
      (lockfiles, generated files, imports, versions, whitespace — see
      `merge-protocol.md` § Conflict Classification),
    - escalates `has-logic` (same-function / add-add / delete-modify) conflicts.
+
+   **Bound this invocation in wall-time (#224)** — the poll + `rebase-agent`
+   dispatch fans out subagents; invoke it as a background task and apply the
+   caller-side timeout. A timed-out rebase sweep is **partial** — re-queue the
+   behind-base remainder on the next `poll+rebase` sweep. See `mode-protocol.md`
+   § *Bounding a Workflow invocation in wall-time*.
 
 1. **Report** `rebases[]` (auto-resolved, with strategy) and surface
    `escalations[]` **verbatim** to the human. A contradictory conflict the

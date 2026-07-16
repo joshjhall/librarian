@@ -130,6 +130,45 @@ budget_exhausted }`. Surface `report_markdown` to the user; for `output:
 issues` list the created issues from `issues[]`, and for `output: files` report
 `artifacts.files_written` and `report_path`.
 
+**Bound the invocation in wall-time (#224).** The harness is budget-bounded but
+has **no wall-clock bound of its own** — the `workflow.js` sandbox bans
+clocks/timers, and a *spinning* scanner/verify agent emits no tokens so it never
+advances the token budget. So a single stuck agent can run the audit unbounded.
+Bound it from here, exactly as ship-issue's `pre-ship-validation.md` Step 3.5 b
+bounds its review fan-out:
+
+- Invoke the `Workflow` tool as a **background** task and poll `TaskOutput` with
+  a finite per-poll timeout, accumulating elapsed wall-time. The tool result
+  carries the run's `transcriptDir`.
+- Once cumulative wait crosses `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` minutes
+  (default 20), do NOT keep waiting blindly. **Interactive**: prompt — **cut
+  short** (stop waiting; treat this run as partial) or **extend** (wait another
+  interval). **Non-interactive / headless**: auto-extend up to
+  `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` times (default 1 → 40 min ceiling),
+  then `TaskStop` the run. Never hang.
+- On a stop (cut-short or the headless ceiling), **recover the findings already
+  produced** with `recover-journal-partials.sh` — it prints a JSON array of the
+  finding-shaped results collected before the stop (empty `[]` if none; a
+  non-zero exit means the journal was missing/unreadable). The audit findings
+  match its fingerprint (`severity` + `file` + `line_start` + `category` +
+  `title`), so recovered findings can still be aggregated/filed. This script
+  ships in the **`workflow` plugin** (not `review-audit`), so it is **not**
+  under this skill's `${CLAUDE_PLUGIN_ROOT}`. Derive the sibling path from that
+  root by swapping the `review-audit` plugin-name path segment for `workflow`,
+  leaving the version segment that follows it untouched (`bin/release.sh` stamps
+  every plugin to the same version in lockstep, so it is shared):
+
+  ```bash
+  RECOVER="$(printf '%s' "${CLAUDE_PLUGIN_ROOT}" | sed 's#/review-audit/#/workflow/#')/scripts/recover-journal-partials.sh"
+  "$RECOVER" <transcriptDir>/journal.jsonl
+  ```
+
+  **Graceful degradation**: if `$RECOVER` is not a readable file (sibling plugin
+  absent, layout differs), fall back to "audit timed out; findings not
+  recoverable" rather than treating the run as clean.
+- A timed-out run is **partial**, identical to `budget_exhausted`: surface it as
+  such (never report the audit complete), and note it in the report summary.
+
 The remaining domain knowledge — the file-routing manifest, the deterministic
 prescan contract, and the dedup / grouping rules the harness and agents consume
 — lives in **`orchestration-protocol.md`** (Steps 1–5). It is **not** a separate
