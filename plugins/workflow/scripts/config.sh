@@ -19,6 +19,9 @@
 #                        Default: <GOLEM_WORKTREE_DIR>/.status
 #   GOLEM_BRANCH_PREFIX  Branch-name prefix; the branch for issue N is
 #                        "<prefix><N>".                  Default: feature/issue-
+#   GOLEM_LEVEL          Autonomy level (1-4) baked into a golem's launch line
+#                        by golem-launch.sh. Overridden per-call by
+#                        `launch/print <N> --level M`.   Default: 4
 #   GOLEM_BASE_REF       The ref new worktree branches fork from.
 #                        Default: origin/main
 #   GOLEM_WORKTREE_LOCAL_FILES
@@ -52,6 +55,12 @@
 # Branch naming: issue N -> "<GOLEM_BRANCH_PREFIX><N>".
 : "${GOLEM_BRANCH_PREFIX:=feature/issue-}"
 
+# Autonomy level (1-4) baked into a golem's launch line by golem-launch.sh. A
+# per-call `--level M` flag overrides this; absent both, the launcher defaults
+# to 4. This env fallback carries the operator's chosen level to callers that
+# set it in the environment rather than passing the flag.
+: "${GOLEM_LEVEL:=4}"
+
 # Ref that new worktree branches are created from.
 : "${GOLEM_BASE_REF:=origin/main}"
 
@@ -64,8 +73,9 @@
 : "${GOLEM_STALL_THRESHOLD:=1200}"
 : "${GOLEM_HEARTBEAT_INTERVAL:=60}"
 
-export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_BASE_REF \
-    GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD GOLEM_HEARTBEAT_INTERVAL
+export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
+    GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
+    GOLEM_HEARTBEAT_INTERVAL
 
 # repo_root — print the main checkout's root directory, bare-repo-safe.
 #

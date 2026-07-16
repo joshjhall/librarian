@@ -164,6 +164,84 @@ test_launch_print_non_numeric_exits_2() {
     assert_contains "$RUN_OUT" "issue number" "explains an issue number is required"
 }
 
+# --- golem-launch.sh autonomy-level threading (#301) ------------------------
+# golem-launch.sh must carry the operator's CHOSEN level into the launch line's
+# `/workflow:next-issue <N> --level M`, not a hardcoded 4. Exercised on the pure
+# `print` path (no real tmux). The default (no flag, no env) stays 4 so a bare
+# call is byte-identical to the pre-#301 behavior.
+
+# `print <N> --level 3` emits `--level 3` and NEVER the old hardcoded `--level 4`.
+test_launch_print_level_flag_substituted() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$LAUNCH" print 5 --level 3
+    assert_exit 0 "$RUN_RC" "print <N> --level 3 exits 0"
+    assert_contains "$RUN_OUT" "/workflow:next-issue 5 --level 3" \
+        "the launch line carries the chosen level 3"
+    assert_not_contains "$RUN_OUT" "--level 4" \
+        "the hardcoded --level 4 no longer appears when a level is passed"
+}
+
+# `print <N>` with no flag and no env → the documented default `--level 4`.
+test_launch_print_level_defaults_to_4() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$LAUNCH" print 5
+    assert_exit 0 "$RUN_RC" "print <N> with no level exits 0"
+    assert_contains "$RUN_OUT" "/workflow:next-issue 5 --level 4" \
+        "an omitted level defaults to 4 (unchanged pre-#301 shape)"
+}
+
+# `GOLEM_LEVEL=2 print <N>` (no flag) → the env fallback wins → `--level 2`.
+test_launch_print_level_env_fallback() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_LEVEL=2 \
+            "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "GOLEM_LEVEL=2 print <N> exits 0"
+    assert_contains "$RUN_OUT" "/workflow:next-issue 5 --level 2" \
+        "GOLEM_LEVEL is the env fallback when no --level flag is given"
+}
+
+# An explicit `--level` flag beats the `GOLEM_LEVEL` env fallback.
+test_launch_print_level_flag_beats_env() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_LEVEL=2 \
+            "$REAL_BASH" "$LAUNCH" print 5 --level 1 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "print <N> --level 1 with GOLEM_LEVEL=2 exits 0"
+    assert_contains "$RUN_OUT" "/workflow:next-issue 5 --level 1" \
+        "the --level flag overrides the GOLEM_LEVEL env"
+}
+
+# `print <N> --level 9` (out of range) → exit 2 with an actionable message.
+test_launch_print_level_out_of_range_exits_2() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$LAUNCH" print 5 --level 9
+    assert_exit 2 "$RUN_RC" "print <N> --level 9 exits 2"
+    assert_contains "$RUN_OUT" "--level must be" "explains the valid level range"
+}
+
+# `print <N> --level` with no value → exit 2 (fail loud, no silent default).
+test_launch_print_level_missing_value_exits_2() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$LAUNCH" print 5 --level
+    assert_exit 2 "$RUN_RC" "print <N> --level with no value exits 2"
+    assert_contains "$RUN_OUT" "--level needs a value" "explains a value is required"
+}
+
 # `launch <N>` when the worktree is absent → exit 2 with a remediation pointing
 # at worktree-new.sh. Stops BEFORE any real `tmux new-session` (no worktree, so
 # the dir guard fires first). Stub both settings scopes at in-sandbox paths so
@@ -898,6 +976,12 @@ run_test test_launch_no_arg_exits_2 "golem-launch: no subcommand exits 2"
 run_test test_launch_bad_subcommand_exits_2 "golem-launch: unknown subcommand exits 2"
 run_test test_launch_print_emits_new_session "golem-launch: print <N> emits a tmux new-session line"
 run_test test_launch_print_non_numeric_exits_2 "golem-launch: print with a non-numeric issue exits 2"
+run_test test_launch_print_level_flag_substituted "golem-launch: print <N> --level 3 substitutes the level, not hardcoded 4 (#301)"
+run_test test_launch_print_level_defaults_to_4 "golem-launch: print <N> with no level defaults to 4 (#301)"
+run_test test_launch_print_level_env_fallback "golem-launch: GOLEM_LEVEL is the env fallback for the level (#301)"
+run_test test_launch_print_level_flag_beats_env "golem-launch: --level flag overrides GOLEM_LEVEL env (#301)"
+run_test test_launch_print_level_out_of_range_exits_2 "golem-launch: --level out of range exits 2 (#301)"
+run_test test_launch_print_level_missing_value_exits_2 "golem-launch: bare --level with no value exits 2 (#301)"
 run_test test_launch_missing_worktree_exits_2 "golem-launch: launch with a missing worktree exits 2"
 run_test test_launch_preflight_rules_present_exits_0 "golem-launch: preflight with all rules present exits 0"
 run_test test_launch_preflight_rules_missing_exits_3 "golem-launch: preflight with a missing rule exits 3"

@@ -53,8 +53,18 @@
 # When either version is undeterminable (no install record / no jq — the common
 # host / bare-linux case) the check SKIPS silently, never breaking a valid run.
 #
+# Autonomy level: the launch line carries `/workflow:next-issue <N> --level M`,
+# which is what persists `autonomy_level` into the next-issue state file (and
+# from there drives /ship-issue's merge disposition). The level is resolved per
+# dispatch with precedence: a `--level M` flag > $GOLEM_LEVEL env > the built-in
+# default 4. A bare `launch <N>` / `print <N>` therefore behaves exactly as
+# before (L4). `--permission-mode auto` is the orthogonal HARNESS flag and is
+# unaffected (#301).
+#
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
+#   GOLEM_LEVEL (4)  — autonomy level baked into the launch line when no
+#                      per-call --level is given.
 # Preflight scope overrides (env-overridable):
 #   CLAUDE_PROJECT_SETTINGS  (.claude/settings.local.json, repo-root-relative)
 #   CLAUDE_GLOBAL_SETTINGS   ($HOME/.claude/settings.json)
@@ -71,9 +81,9 @@
 #                            mid-release / worktree dispatch).
 #
 # Usage:
-#   golem-launch.sh preflight                # check both scopes; print remediation
-#   golem-launch.sh launch <issue-number>    # one standalone tmux new-session
-#   golem-launch.sh print  <issue-number>    # print the launch line only (no run)
+#   golem-launch.sh preflight                       # check both scopes; print remediation
+#   golem-launch.sh launch <issue-number> [--level M]  # one standalone tmux new-session
+#   golem-launch.sh print  <issue-number> [--level M]  # print the launch line only (no run)
 #
 # Exit codes:
 #   0  success (preflight: rules present in at least one scope; launch: started)
@@ -322,18 +332,47 @@ EOF
     exit 3
 }
 
-# launch_line <N> — print the single bare `tmux new-session` command for golem
-# N. Kept as a function so `launch` and `print` share one definition (one source
-# of truth for the launch shape).
+# resolve_level [flag-level] — echo the effective autonomy level (1-4) with
+# precedence: an explicit --level value > $GOLEM_LEVEL env > the built-in
+# default 4. Validates the result as a single digit 1-4; on an out-of-range or
+# non-numeric value it prints an actionable message and exits 2 (mirroring the
+# issue-number guard). Kept as a function so `launch` and `print` resolve the
+# level identically (one source of truth).
+resolve_level() {
+    local level="${1:-${GOLEM_LEVEL:-4}}"
+    if ! [[ "$level" =~ ^[1-4]$ ]]; then
+        command echo "golem-launch: --level must be 1, 2, 3, or 4, got '$level'" >&2
+        exit 2
+    fi
+    command echo "$level"
+}
+
+# parse_level_flag <arg3> <arg4> — echo the raw level to hand resolve_level for
+# the optional trailing `--level M`. Prints nothing when no `--level` was given
+# (→ resolve_level falls to $GOLEM_LEVEL/4). A bare `--level` with no value is
+# malformed: exit 2 rather than silently defaulting (fail loud — the whole point
+# of #301 is that a wrong/absent level must not pass unnoticed).
+parse_level_flag() {
+    [ "${1:-}" = "--level" ] || return 0
+    if [ -z "${2:-}" ]; then
+        command echo "golem-launch: --level needs a value (1-4)" >&2
+        exit 2
+    fi
+    command echo "$2"
+}
+
+# launch_line <N> <level> — print the single bare `tmux new-session` command for
+# golem N at autonomy <level>. Kept as a function so `launch` and `print` share
+# one definition (one source of truth for the launch shape).
 launch_line() {
-    local n="$1" root wt
+    local n="$1" level="$2" root wt
     root="$(repo_root)" || root="$(/usr/bin/pwd)"
     wt="$root/$GOLEM_WORKTREE_DIR/issue-$n"
     # ONE standalone new-session, matching Bash(tmux new-session:*). The chained
     # `;` second prompt is the resume backstop (NOT `&&`); see orchestrate
     # SKILL.md Phase D / mode-protocol.md § Supervised launch.
     command printf '%s' \
-        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n \"claude --permission-mode auto '/workflow:next-issue $n --level 4' ; claude --permission-mode auto '/workflow:ship-issue'\""
+        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n \"claude --permission-mode auto '/workflow:next-issue $n --level $level' ; claude --permission-mode auto '/workflow:ship-issue'\""
 }
 
 cmd="${1:-}"
@@ -347,9 +386,12 @@ case "$cmd" in
             command echo "golem-launch: print needs an issue number, got '$N'" >&2
             exit 2
         fi
+        # Optional `--level M` after the issue number; else $GOLEM_LEVEL / 4.
+        LEVEL_FLAG="$(parse_level_flag "${3:-}" "${4:-}")" || exit $?
+        LEVEL="$(resolve_level "$LEVEL_FLAG")" || exit $?
         # Warn (never block) if the emitted line's namespace may be stale.
         check_version_skew print
-        launch_line "$N"
+        launch_line "$N" "$LEVEL"
         command echo ""
         ;;
     launch)
@@ -358,6 +400,11 @@ case "$cmd" in
             command echo "golem-launch: launch needs an issue number, got '$N'" >&2
             exit 2
         fi
+        # Optional `--level M` after the issue number; else $GOLEM_LEVEL / 4.
+        # Resolve (and validate) BEFORE the version-skew/preflight side effects
+        # so a bad level fails fast with exit 2.
+        LEVEL_FLAG="$(parse_level_flag "${3:-}" "${4:-}")" || exit $?
+        LEVEL="$(resolve_level "$LEVEL_FLAG")" || exit $?
         # Version-skew guard FIRST — refuse (exit 3) before any tmux side effect
         # if this stale helper would emit commands the active plugin can't resolve
         # (#230). Skips silently when versions match or are undeterminable.
@@ -395,11 +442,11 @@ case "$cmd" in
         # token lives only inside env_args (never echoed) so it can't leak to a
         # pane or log.
         tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
-            "claude --permission-mode auto '/workflow:next-issue $N --level 4' ; claude --permission-mode auto '/workflow:ship-issue'"
+            "claude --permission-mode auto '/workflow:next-issue $N --level $LEVEL' ; claude --permission-mode auto '/workflow:ship-issue'"
         command echo "golem-launch: started golem-$N in $wt"
         ;;
     *)
-        command echo "Usage: golem-launch.sh {preflight | launch <N> | print <N>}" >&2
+        command echo "Usage: golem-launch.sh {preflight | launch <N> [--level M] | print <N> [--level M]}" >&2
         exit 2
         ;;
 esac
