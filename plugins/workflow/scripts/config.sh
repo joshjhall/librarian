@@ -107,7 +107,30 @@ repo_root() {
     # (#21), so a caller that prepends a malicious `git` to PATH could spoof the
     # root — an accepted trade-off matching worktree-new.sh (#228/#241); these
     # scripts assume an operator-controlled PATH.
-    common_dir="$(command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    #
+    # Scrub git's hook-exported environment for THIS rev-parse. When repo_root()
+    # is invoked from inside a git hook (or a wrapper forwarding a tainted env),
+    # GIT_DIR / GIT_COMMON_DIR / … would otherwise pin `--git-common-dir` to an
+    # OUTER repo, so repo_root() would RETURN the wrong root — redirecting
+    # seed-worktree-trust.sh's #21 under-root trust guard, whose only git use is
+    # this return value (issue #279). The unset lives in the rev-parse's own
+    # command-substitution subshell so it scrubs exactly where it matters and
+    # never leaks back to the caller's environment, keeping config.sh
+    # side-effect-free at source time (see the file header). Mirrors the
+    # GIT_SCRUB set the test suites already scrub for hermeticity.
+    #
+    # SCOPE: this hardens repo_root()'s RETURN VALUE only. A caller that issues
+    # its OWN direct git commands after repo_root() (e.g. worktree-new.sh's
+    # `git worktree add`, worktree-rm.sh's `git branch -D`) still runs them in
+    # its own, unscrubbed process environment, where a tainted GIT_DIR redirects
+    # them independently of this fix. Scrubbing those callers' whole environment
+    # (and the narrow `readonly GIT_DIR` variant that a bare `unset` can't clear)
+    # is tracked separately in issue #328.
+    common_dir="$(
+        unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
+            GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+        command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true
+    )"
     if [ -z "$common_dir" ]; then
         command echo "repo-root: not inside a git repository" >&2
         return 1

@@ -413,6 +413,38 @@ test_bare_name_invocation_refuses() {
         "the cwd config.sh is never sourced (no injection)"
 }
 
+# (r) Security regression (#279): repo_root() (config.sh) must scrub git's
+# hook-exported environment before resolving `--git-common-dir`, so a
+# hook-/attacker-influenced GIT_DIR/GIT_COMMON_DIR cannot redirect the #21
+# under-root guard to an OUTER repo — for the seed script AND every other
+# repo_root() caller. A tainted GIT_DIR/GIT_COMMON_DIR is set to point at a
+# SECOND real repo while a valid `issue-<N>` target under the SANDBOX is seeded
+# from the sandbox cwd. With the scrub the target still seeds (exit 0); WITHOUT
+# it repo_root() resolves to the tainted outer repo and the valid target is
+# falsely refused (exit 3, "not under repo root"). This case deliberately does
+# NOT go through run_seed (which always scrubs the env), so the tainted vars
+# actually reach the script and its repo_root() call.
+test_scrubs_tainted_git_env() {
+    local sb outer
+    new_sandbox sb
+    # A second, unrelated real repo the tainted env would pin repo_root() to.
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null
+    SEED_RC=0
+    SEED_OUT="$(cd "$sb" &&
+        GIT_DIR="$outer/.git" GIT_COMMON_DIR="$outer/.git" \
+            "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-7" \
+            "$sb/claude.json" 2>&1)" || SEED_RC=$?
+    assert_exit 0 "$SEED_RC" \
+        "valid target seeds despite a tainted GIT_DIR/GIT_COMMON_DIR (scrubbed, exit 0)"
+    assert_contains "$SEED_OUT" "seeded workspace trust" "reports the trust seed"
+    assert_not_contains "$SEED_OUT" "not under repo root" \
+        "tainted git env does not redirect repo_root to the outer repo"
+    assert_file_contains "$sb/claude.json" '"hasTrustDialogAccepted": true' \
+        "config records the trust grant with the tainted env scrubbed"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init`, so the whole suite needs git. Gate it
@@ -452,5 +484,6 @@ run_test test_cwd_independent_root_from_sibling_worktree "valid target seeds tru
 run_test test_outside_repo_refused_from_sibling_worktree "out-of-repo target still refused from a sibling-worktree cwd (#242, exit 3)"
 run_test test_removed_worktree_cwd_refuses_cleanly "seed from a since-removed worktree cwd refuses cleanly (#242, exit 3)"
 run_test test_bare_name_invocation_refuses "bare-name invocation refuses instead of sourcing cwd config.sh (exit 4)"
+run_test test_scrubs_tainted_git_env "tainted GIT_DIR/GIT_COMMON_DIR is scrubbed before repo_root (#279, exit 0)"
 
 generate_report
