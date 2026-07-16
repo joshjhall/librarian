@@ -431,25 +431,41 @@ const publicFinding = (f) => {
   return rest
 }
 
+// Fold a merged group's objects to the single strongest projected value by rank
+// (lower rank index = stronger). `keyFn` projects each object to the value we
+// keep (a severity string, a certainty object); `rankFn` maps that value to its
+// rank; the optional `tieBreakFn(candidate, incumbent)` breaks equal-rank ties
+// (true = take the candidate). Returns null for an empty list. The shared "keep
+// the strongest signal, computed in code so the merge model can't down-rank a
+// legitimate dedup" policy behind both highestSeverity (#299) and
+// highestCertainty (#266) — factored here so a change to the rank/tie-break rule
+// lives in one place (#317).
+const highestBy = (objs, keyFn, rankFn, tieBreakFn) =>
+  objs.reduce((best, o) => {
+    const v = keyFn(o)
+    if (best === null) return v
+    if (rankFn(v) < rankFn(best)) return v
+    if (rankFn(v) === rankFn(best) && tieBreakFn && tieBreakFn(v, best)) return v
+    return best
+  }, null)
+
 // Pick the highest (most severe) severity among a merged group's objects
-// (critical>high>medium>low), computed in code so the merge model can never
-// DOWN-rank a legitimate ≥2 dedup below its strongest constituent (#299,
-// analogous to highestCertainty for #266). The model may still RAISE it.
-const highestSeverity = (objs) =>
-  objs.reduce((best, o) => (best === null || rank(SEVERITY_RANK, o.severity) < rank(SEVERITY_RANK, best) ? o.severity : best), null)
+// (critical>high>medium>low), so the merge model can never DOWN-rank a legitimate
+// ≥2 dedup below its strongest constituent (#299). The model may still RAISE it
+// (the call site folds in m.severity). No tie-break: equal ranks keep the
+// incumbent.
+const highestSeverity = (objs) => highestBy(objs, (o) => o.severity, (v) => rank(SEVERITY_RANK, v))
 
 // Pick the highest certainty among a merged group's objects (HIGH>MEDIUM>LOW,
 // tie-broken by confidence), so a dedup keeps the strongest signal — computed in
 // code from the harness-held objects, never re-graded by the merge model (#266).
 const highestCertainty = (objs) =>
-  objs.reduce((best, o) => {
-    if (!best) return o.certainty
-    const c = o.certainty
-    if (rank(CERTAINTY_RANK, c.level) < rank(CERTAINTY_RANK, best.level)) return c
-    if (rank(CERTAINTY_RANK, c.level) === rank(CERTAINTY_RANK, best.level) && (c.confidence || 0) > (best.confidence || 0))
-      return c
-    return best
-  }, null)
+  highestBy(
+    objs,
+    (o) => o.certainty,
+    (c) => rank(CERTAINTY_RANK, c.level),
+    (c, best) => (c.confidence || 0) > (best.confidence || 0),
+  )
 
 // Reassemble the finding-schema.md report from the merge model's REFS and the
 // harness's own rescored finding objects — the ref-mapping pattern from

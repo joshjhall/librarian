@@ -1321,9 +1321,10 @@ for (const path of [ORCH, REBASE]) {
 // dropped + invented refs.
 // =============================================================================
 {
-  const { MERGE_SCHEMA, reassembleReport } = extractHelpers(REVIEW, [
+  const { MERGE_SCHEMA, reassembleReport, highestBy } = extractHelpers(REVIEW, [
     "MERGE_SCHEMA",
     "reassembleReport",
+    "highestBy",
   ]);
 
   // The pre-#266 hole: `findings: { type: 'object' }` items with no required
@@ -1508,6 +1509,27 @@ for (const path of [ORCH, REBASE]) {
   const rSev = reassembleReport(mergeSev, rfSev, manifest).report;
   eq(rSev.findings.find((f) => f.id === "code-reviewer-001").severity, "high", "highestSeverity: model down-rank is floored at the refs' highest severity (high>medium)");
   eq(rSev.findings.find((f) => f.id === "code-reviewer-002").severity, "high", "highestSeverity: model may still raise severity above every constituent ref");
+
+  // #317: the generic reducer both highestSeverity/highestCertainty delegate to.
+  // Exercise it directly so a change to the rank/tie-break policy is caught at the
+  // shared helper, not only through the reassembleReport integration above.
+  const hbRank = (v) => (v in { critical: 0, high: 1, medium: 2, low: 3 } ? { critical: 0, high: 1, medium: 2, low: 3 }[v] : 4);
+  eq(highestBy([], (o) => o, hbRank), null, "highestBy: empty list folds to null");
+  eq(highestBy([{ s: "low" }], (o) => o.s, hbRank), "low", "highestBy: single element projects via keyFn");
+  eq(highestBy([{ s: "low" }, { s: "critical" }, { s: "medium" }], (o) => o.s, hbRank), "critical", "highestBy: picks the strongest (lowest rank) value");
+  // No tieBreakFn: equal ranks keep the incumbent (first wins), matching highestSeverity.
+  eq(highestBy([{ s: "high", tag: "a" }, { s: "high", tag: "b" }], (o) => o, (v) => hbRank(v.s)).tag, "a", "highestBy: equal ranks keep the incumbent when no tieBreakFn");
+  // With a tieBreakFn: equal ranks break toward the candidate when it returns true.
+  eq(
+    highestBy(
+      [{ level: "LOW", confidence: 0.3 }, { level: "LOW", confidence: 0.9 }],
+      (o) => o,
+      (c) => (c.level in { HIGH: 0, MEDIUM: 1, LOW: 2 } ? { HIGH: 0, MEDIUM: 1, LOW: 2 }[c.level] : 3),
+      (c, best) => (c.confidence || 0) > (best.confidence || 0),
+    ).confidence,
+    0.9,
+    "highestBy: equal ranks break toward the candidate via tieBreakFn",
+  );
 
   // related_ids -> related_findings rename survives with NON-empty values, on both
   // the kept and merged paths.
