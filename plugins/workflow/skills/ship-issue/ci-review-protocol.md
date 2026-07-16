@@ -115,7 +115,10 @@ iteration counter by hand.
   (`pre-ship-validation.md` Step 3.5 b, `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`): the
   `ci-fixer` harness is budget-bounded but not wall-clock-bounded, and a stuck
   fixer agent would otherwise hang the ship (#224). Invoke it as a background
-  task, poll against the threshold, and at the ceiling `TaskStop` it; treat a
+  task and, at each poll, **call**
+  `${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh check --elapsed-min
+  <acc> --level {N} --extensions-used <k>` for the stop `verdict` rather than
+  re-deriving the threshold in prose (#327) — on `stop`, `TaskStop` it. Treat a
   stopped run as **no fix applied** for any check whose result never arrived
   (those `check`s stay red → the dead-end path below), and record a `timed_out`
   STOP note. Agents never push — applying the commits is your job:
@@ -229,8 +232,10 @@ cycle is **partial**.
 
 **Bound this invocation in wall-time** exactly as the pre-PR review does
 (`pre-ship-validation.md` Step 3.5 b, `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`): invoke
-the harness as a background task, poll against the threshold, and at the ceiling
-`TaskStop` it and recover partials with
+the harness as a background task and, at each poll, **call**
+`${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh check --elapsed-min <acc>
+--level {N} --extensions-used <k>` for the stop `verdict` rather than re-deriving
+the threshold in prose (#327); on `stop`, `TaskStop` it and recover partials with
 `${CLAUDE_PLUGIN_ROOT}/scripts/recover-journal-partials.sh <transcriptDir>/journal.jsonl`.
 A wall-timed-out cycle is **partial → `clean` forced false**, identical to
 `budget_exhausted` — it never terminates the review loop as clean (#224).

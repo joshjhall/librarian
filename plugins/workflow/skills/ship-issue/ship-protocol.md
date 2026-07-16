@@ -64,15 +64,23 @@ These env vars toggle non-default behavior; all are opt-in:
   `AbortSignal`), and a *spinning* agent emits no tokens so it never advances the
   harness token budget — so a harness cannot self-deadline. The skill bounds the
   wait instead: invoke the harness as a background task and poll `TaskOutput`
-  against this threshold. At **L1–L2** (interactive): prompt **cut short** vs
-  **extend** (another interval). At **L3–L4**: extend up to
-  `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` times, then `TaskStop` the run and
-  proceed with recovered partials — see the review/ci-fixer sub-steps.
+  against this threshold. The threshold/extension **arithmetic is not re-derived
+  in prose** (that drift wedged three golems, #327) — the skill **calls**
+  `scripts/workflow-wall-timeout.sh check --elapsed-min N --level L
+  --extensions-used K` each poll, which reads this var and returns a
+  `continue|extend|stop|checkpoint` verdict. At **L1–L2** (interactive): a
+  checkpoint verdict prompts **cut short** vs **extend** (another interval). At
+  **L3–L4**: the helper auto-extends up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS`
+  times, then returns `stop` → the skill `TaskStop`s the run and proceeds with
+  recovered partials — see the review/ci-fixer sub-steps.
 - `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` — integer, default `1`. At **L3–L4**,
   how many extra `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` intervals a hung `Workflow`
   invocation is granted before it is `TaskStop`-ped (default `20` + 1×`20` = 40
   min ceiling), so a headless golem whose review agent spins cannot hang the ship.
-  Ignored at L1–L2 (the human chooses cut-short/extend at each checkpoint).
+  Ignored at L1–L2 (the human chooses cut-short/extend at each checkpoint). Read
+  by `scripts/workflow-wall-timeout.sh` alongside `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`
+  to compute the ceiling (`TIMEOUT × (MAX_EXTENSIONS + 1)`); `0` makes the first
+  checkpoint the ceiling (no auto-extend, even at L4).
 - `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra/setup step
   names that mark a CI failure as a **likely flake** rather than a code
   regression (CI-failure triage, Step 4 Option 1). Default:
