@@ -851,6 +851,59 @@ test_config_repo_root_scrubs_tainted_git_env() {
         "repo_root resolves the sandbox root, not the tainted GIT_DIR/GIT_COMMON_DIR target"
 }
 
+# Regression (#324): inside a git SUBMODULE working tree, --git-common-dir
+# resolves to <super>/.git/modules/<name>, so the common-dir logic alone would
+# return <super>/.git/modules — a git-internal path — and worktree-new.sh would
+# land worktrees under .git/modules/.worktrees/issue-N. repo_root() must instead
+# return the SUPERPROJECT working-tree root. Build a real super+submodule fixture
+# and assert repo_root, invoked from inside the submodule tree, returns <super>
+# (not <super>/.git/modules). Skips cleanly if `submodule add` is unavailable
+# (old git / file protocol disallowed).
+test_config_repo_root_submodule_superproject() {
+    local sub super name rc=0
+    sub="$(/usr/bin/mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
+    super="$(/usr/bin/mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
+    name="mod"
+    # Inner submodule repo with one commit so it can be added.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
+    # Superproject that embeds it as a submodule. `protocol.file.allow=always`
+    # is required for a local-path submodule add on modern git.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" config user.name "Test"
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
+        submodule add -q "$sub" "$name" 2>/dev/null; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
+
+    # Invoke repo_root from INSIDE the submodule working tree.
+    local out
+    out="$(cd "$super/$name" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 inside a submodule working tree"
+    # Compare realpaths (symlinked /tmp on CI runners).
+    local super_real out_real
+    super_real="$(cd "$super" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$super_real" "$out_real" \
+        "repo_root returns the superproject root, not <super>/.git/modules"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -1137,6 +1190,7 @@ run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PA
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
 run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolutizes a relative common dir via command pwd (#278)"
 run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR/GIT_COMMON_DIR (#279)"
+run_test test_config_repo_root_submodule_superproject "config.sh: repo_root returns the superproject root inside a submodule (#324)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
