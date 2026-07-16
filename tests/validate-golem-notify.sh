@@ -299,7 +299,10 @@ test_no_jq_still_writes_gate_line() {
 # exit 0, a valid-JSON feed line, and the derived `.golem`.
 assert_golemid() {
     local name="$1" want="$2" desc="$3" sb got
-    new_named_sandbox sb "$name"
+    new_named_sandbox sb "$name" || {
+        _fail "sandbox setup failed ($desc)"
+        return 0
+    }
     run_notify_no_gid "$sb" '{"message":"awaiting a decision"}'
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 ($desc)"
     assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
@@ -351,7 +354,10 @@ test_golemid_issue_basename_from_subdir() {
         return 0
     fi
     local sb got
-    new_named_sandbox sb "issue-77"
+    new_named_sandbox sb "issue-77" || {
+        _fail "sandbox setup failed (issue-77 from subdir)"
+        return 0
+    }
     run_notify_no_gid "$sb" '{"message":"awaiting a decision"}' "nested/work/dir"
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 (issue-77 from subdir)"
     assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
