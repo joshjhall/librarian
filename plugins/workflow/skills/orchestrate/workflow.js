@@ -624,13 +624,27 @@ function planRefill(input) {
   // deliberate hold), so an exhausted-lane slot flows through to global.
   let globalSlots = freeSlots
 
+  // Defensive clamp for a malformed laneSlots (issue #264): the caller may hand
+  // us more entries than freeSlots, or a duplicate LIVE-lane index. `globalSlots`
+  // (below) bounds the total slots this pass may consume — pick OR hold — to
+  // freeSlots; `seenLanes` caps a live lane to one pick per sweep so two freed
+  // slots for the same serial track can't dispatch two of its heads at once
+  // (the second slot flows to the global fallback instead). Exhausted/unknown
+  // lanes are never recorded in seenLanes, so repeated exhausted entries each
+  // legitimately fall through to global.
+  const seenLanes = new Set()
+
   // --- Pass 1: lane-aware, one freed slot at a time, in laneSlots order. -----
   for (const laneIdx of laneSlots) {
-    if (picks.length >= freeSlots) break
+    if (globalSlots <= 0) break
     const lane = laneByIndex.get(laneIdx)
     // Exhausted track (unknown lane, or empty queue) → leave the slot for the
     // global fallback pass; do not decrement globalSlots.
     if (!lane || lane.queue.length === 0) continue
+
+    // A live lane already served this sweep → its extra slot flows to global.
+    if (seenLanes.has(laneIdx)) continue
+    seenLanes.add(laneIdx)
 
     const head = lane.queue.shift()
     if (head.files.size && setsIntersect(head.files, claimed)) {
