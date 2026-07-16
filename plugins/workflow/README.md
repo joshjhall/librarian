@@ -94,6 +94,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `golem-watch.sh` | Stream proactive gate notifications until Ctrl-C |
 | `golem-gate-watch.sh` | Gate-detection engine shared by status + watch |
 | `seed-worktree-trust.sh` | Seed Claude Code workspace trust for a worktree |
+| `recover-journal-partials.sh <journal>` | Recover finding-shaped partials from a `TaskStop`-ped review harness's `journal.jsonl` (#224) |
 | `config.sh` | Shared env-overridable config + `repo_root` helper (sourced) |
 
 ### Configuration (env-overridable; defaults in `scripts/config.sh`)
@@ -126,3 +127,5 @@ authoritative and documents the same vars in the same order.
 | `REVIEW_STRICT` | _unset_ | `true` treats MEDIUM-certainty review findings as blocking |
 | `LIBRARIAN_CI_WAIT_TIMEOUT` | `15 min` | CI-wait threshold; at the checkpoint, prompt cut-short/extend (at L3–L4: auto-extend up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times then stop). A machine timer for _pending CI_, not a human gate — the never-time-out rule governs human gates, not this bounded wait |
 | `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | L3–L4 only: extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals before giving up on pending CI (no hang) |
+| `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` | `20 min` | Max wall-time for a single `Workflow` invocation (review fan-out, `ci-fixer`) before a checkpoint; at L3–L4 auto-extend up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` then `TaskStop` and proceed with recovered partials. Bounds a spinning agent the token budget can't (#224); a timed-out cycle is partial, never `clean` |
+| `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` | `1` | L3–L4 only: extra `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` intervals a hung `Workflow` invocation gets before it is stopped (no hang) |

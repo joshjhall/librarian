@@ -56,6 +56,23 @@ These env vars toggle non-default behavior; all are opt-in:
   giving up (default `15` + 2×`15` = 45 min total), so a headless golem polling a
   stuck CI run cannot hang. Ignored at L1–L2 (the human chooses cut-short/extend
   at each checkpoint).
+- `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` — integer **minutes**, default `20`. Max
+  wall-time the skill awaits a **single `Workflow` tool invocation** (the pre-PR /
+  post-PR review fan-out, `ci-fixer`) before hitting a checkpoint — the
+  wall-clock analogue of `LIBRARIAN_CI_WAIT_TIMEOUT`, for #224. The `workflow.js`
+  sandbox bans clocks/timers (`Date.now`/`new Date` throw; no `setTimeout`/
+  `AbortSignal`), and a *spinning* agent emits no tokens so it never advances the
+  harness token budget — so a harness cannot self-deadline. The skill bounds the
+  wait instead: invoke the harness as a background task and poll `TaskOutput`
+  against this threshold. At **L1–L2** (interactive): prompt **cut short** vs
+  **extend** (another interval). At **L3–L4**: extend up to
+  `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` times, then `TaskStop` the run and
+  proceed with recovered partials — see the review/ci-fixer sub-steps.
+- `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` — integer, default `1`. At **L3–L4**,
+  how many extra `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` intervals a hung `Workflow`
+  invocation is granted before it is `TaskStop`-ped (default `20` + 1×`20` = 40
+  min ceiling), so a headless golem whose review agent spins cannot hang the ship.
+  Ignored at L1–L2 (the human chooses cut-short/extend at each checkpoint).
 - `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra/setup step
   names that mark a CI failure as a **likely flake** rather than a code
   regression (CI-failure triage, Step 4 Option 1). Default:
@@ -72,11 +89,17 @@ These env vars toggle non-default behavior; all are opt-in:
   through to the normal ci-fixer handoff with an escalate-with-note, never a
   hard-fail.
 
-> **Review threshold:** the adversarial **review** loop is bounded by
-> `REVIEW_MAX_CYCLES` (above), not a wall-clock timer — that cap, plus the
-> harness's token budget, already gives the issue's cut-short/extend +
-> non-interactive-fallback semantics (L1–L2 prompt to fix/ship/defer at the cap;
-> L3–L4 defers). There is intentionally no separate review timeout var.
+> **Review thresholds — two independent bounds.** `REVIEW_MAX_CYCLES` (above)
+> caps the number of review **cycles** (cost/iterations); it gives the
+> cut-short/extend + non-interactive-fallback semantics *across* cycles (L1–L2
+> prompt to fix/ship/defer at the cap; L3–L4 defers). It does **not** bound the
+> **wall-time of one cycle** — a single harness invocation whose reviewer agent
+> spins runs unbounded even far below the token budget (#224). That latency is
+> bounded separately by `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` (above), applied by the
+> skill around each `Workflow` invocation. The two are orthogonal: the cycle cap
+> bounds *how many* reviews, the wall timeout bounds *how long any one* review may
+> hang. A wall-timed-out cycle is **partial** — it can never read as `clean`,
+> exactly like `budget_exhausted`.
 
 ## Step 5 — Context Reset & Continue
 

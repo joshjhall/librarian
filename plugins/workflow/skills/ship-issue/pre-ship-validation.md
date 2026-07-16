@@ -170,6 +170,34 @@ behavior is noted inline per check; environment variables referenced here
    **partial** and `clean` is forced false. The review agents are **read-only** —
    applying fixes and filing deferrals is this skill's job (below).
 
+   **Bound the invocation in wall-time** (#224). The harness is budget-bounded
+   but has **no wall-clock bound of its own** — the `workflow.js` sandbox bans
+   clocks/timers, and a *spinning* reviewer agent emits no tokens so it never
+   advances the token budget. So a single stuck agent can run the invocation
+   unbounded (observed: a >1h pre-PR review). Bound it from here, the way the
+   CI-wait loop bounds pending CI:
+
+   - Invoke the `Workflow` tool as a **background** task and poll `TaskOutput`
+     with a finite per-poll timeout, accumulating elapsed wall-time. The tool
+     result carries the run's `transcriptDir`.
+   - Once cumulative wait crosses `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` minutes
+     (default 20), do NOT keep waiting blindly:
+     - **L1–L2** (interactive): prompt — **cut short** (stop waiting; treat this
+       cycle as partial) or **extend** (wait another interval).
+     - **L3–L4**: auto-extend up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS`
+       times (default 1 → 40 min ceiling), then `TaskStop` the run. Never hang.
+   - On a stop (cut-short or the L3–L4 ceiling), **recover the findings already
+     produced** with
+     `${CLAUDE_PLUGIN_ROOT}/scripts/recover-journal-partials.sh <transcriptDir>/journal.jsonl`
+     — it prints a JSON array of the finding-shaped results collected before the
+     stop (empty `[]` if none; a non-zero exit means the journal was
+     missing/unreadable — fall back to "review timed out; findings not
+     recoverable" rather than treating it as clean). Treat the cycle as
+     **partial → `clean` forced false**, identical to `budget_exhausted`: it can
+     never terminate the review loop as clean, and its recovered findings feed
+     the resolve-or-defer step below. Carry a `timed_out` STOP note into the
+     completion summary.
+
    c. **Resolve the blocking findings**: for each finding in `blocking`, make
    the fix in the working tree, then amend or add a commit. Re-run step (b)
    (incrementing `cycle`) until `clean` is true or `cycle` exceeds
@@ -180,16 +208,18 @@ behavior is noted inline per check; environment variables referenced here
    **after** the PR exists (so the filed issues can link the PR) — see Option 1
    "File deferred review findings".
 
-   e. **Cap / budget exhaustion**: `REVIEW_MAX_CYCLES` (default 3) is the
-   review action's threshold — the cut-short/extend checkpoint for review, the
-   analogue of `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop. A
-   `budget_exhausted` cycle is **partial regardless of its findings**: the
-   harness returns `clean: false` for it even with zero blocking findings (some
-   dimension in `dimensions_skipped` never ran), so it never terminates the loop
-   as clean — it must be re-run (fresh budget) or, at the cap, hit the dead-end
-   below. Never merge on a budget-truncated cycle. If `cycle` exceeds
-   `REVIEW_MAX_CYCLES`, or `budget_exhausted` is true (whether or not blocking
-   findings remain):
+   e. **Cap / budget exhaustion / wall-timeout**: `REVIEW_MAX_CYCLES` (default 3)
+   caps the number of review **cycles**; `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`
+   (default 20 min, step b) caps the **wall-time of one cycle**. Both are the
+   review action's thresholds — the cut-short/extend checkpoints, the analogues of
+   `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop. A `budget_exhausted` cycle
+   **and** a wall-timed-out cycle are both **partial regardless of their
+   findings**: `clean` is false even with zero blocking findings (some dimension
+   in `dimensions_skipped` never ran, or the run was stopped mid-flight), so
+   neither terminates the loop as clean — it must be re-run (fresh budget) or, at
+   the cap, hit the dead-end below. Never merge on a partial cycle. If `cycle`
+   exceeds `REVIEW_MAX_CYCLES`, or `budget_exhausted` is true, or the cycle was
+   wall-timed-out (whether or not blocking findings remain):
 
    - **Interactive**: ask — **Fix remaining blocking findings now, ship anyway,
      or defer them?** (cut short the review vs. extend it by raising
