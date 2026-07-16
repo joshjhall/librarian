@@ -431,6 +431,13 @@ const publicFinding = (f) => {
   return rest
 }
 
+// Pick the highest (most severe) severity among a merged group's objects
+// (critical>high>medium>low), computed in code so the merge model can never
+// DOWN-rank a legitimate ≥2 dedup below its strongest constituent (#299,
+// analogous to highestCertainty for #266). The model may still RAISE it.
+const highestSeverity = (objs) =>
+  objs.reduce((best, o) => (best === null || rank(SEVERITY_RANK, o.severity) < rank(SEVERITY_RANK, best) ? o.severity : best), null)
+
 // Pick the highest certainty among a merged group's objects (HIGH>MEDIUM>LOW,
 // tie-broken by confidence), so a dedup keeps the strongest signal — computed in
 // code from the harness-held objects, never re-graded by the merge model (#266).
@@ -524,7 +531,10 @@ function reassembleReport(merge, rawFindings, manifest) {
     const primary = objs[0]
     findings.push({
       // Model-authored combined content (legitimate only for a real ≥2 dedup).
-      severity: m.severity,
+      // Severity is floored at the highest severity among the constituent refs so
+      // the model cannot down-rank a genuine merge below its strongest finding
+      // (#299) — it may still raise it (fold m.severity into the pool).
+      severity: highestSeverity([{ severity: m.severity }, ...objs]),
       line_start: m.line_start,
       line_end: m.line_end,
       title: m.title,

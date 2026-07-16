@@ -1337,6 +1337,30 @@ for (const path of [ORCH, REBASE]) {
   eq(r2.findings.find((f) => f.id === "code-reviewer-001").certainty.level, "HIGH", "highestCertainty: keeps the higher level (HIGH>MEDIUM) across ≥2 merged refs");
   eq(r2.findings.find((f) => f.id === "code-reviewer-002").certainty.confidence, 0.9, "highestCertainty: same level ties break toward higher confidence");
 
+  // #299: a legitimate ≥2-ref merge's severity is FLOORED at the highest
+  // severity among its constituent refs — the model cannot down-rank a genuine
+  // dedup below its strongest finding (analogous to highestCertainty for #266),
+  // but it may still RAISE it above every constituent.
+  const rfSev = [
+    mk("s.js:1:bug#0", { severity: "medium", line_start: 1, line_end: 1 }),
+    mk("s.js:1:bug#1", { severity: "high", line_start: 1, line_end: 1 }),
+    mk("s.js:2:bug#2", { severity: "low", line_start: 2, line_end: 2 }),
+    mk("s.js:2:bug#3", { severity: "low", line_start: 2, line_end: 2 }),
+  ];
+  const mergeSev = {
+    kept: [],
+    merged: [
+      // Model down-ranks to "low" — floored back up to the refs' highest ("high").
+      { id: "code-reviewer-001", refs: ["s.js:1:bug#0", "s.js:1:bug#1"], related_ids: [], severity: "low", line_start: 1, line_end: 1, title: "t", description: "d", suggestion: "s", effort: "small", tags: [] },
+      // Both refs "low" but the model raises to "high" — honored (floor never caps).
+      { id: "code-reviewer-002", refs: ["s.js:2:bug#2", "s.js:2:bug#3"], related_ids: [], severity: "high", line_start: 2, line_end: 2, title: "t", description: "d", suggestion: "s", effort: "small", tags: [] },
+    ],
+    acknowledged_refs: [],
+  };
+  const rSev = reassembleReport(mergeSev, rfSev, manifest).report;
+  eq(rSev.findings.find((f) => f.id === "code-reviewer-001").severity, "high", "highestSeverity: model down-rank is floored at the refs' highest severity (high>medium)");
+  eq(rSev.findings.find((f) => f.id === "code-reviewer-002").severity, "high", "highestSeverity: model may still raise severity above every constituent ref");
+
   // related_ids -> related_findings rename survives with NON-empty values, on both
   // the kept and merged paths.
   const merge3 = {
