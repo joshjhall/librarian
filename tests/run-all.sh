@@ -15,6 +15,7 @@
 #   9. shared scanner sync (tests/validate-shared-scanner-sync.sh)
 #   9b. scanner test-file classification (tests/validate-scanner-classification.sh)
 #   9c. check-ai-config detector fixtures (tests/validate-checker-detectors.sh)
+#   9d. check-docs-* detector fixtures (tests/validate-docs-detectors.sh)
 #  10. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
 #  11. Action pin format (tests/lint-action-pins.sh)
 #  11b. Shell portability / bash-3.2 clean (tests/lint-shell-portability.sh)
@@ -76,6 +77,7 @@ run_stage "audit project-source integrity gate" bash "$SCRIPT_DIR/validate-audit
 run_stage "shared scanner sync" bash "$SCRIPT_DIR/validate-shared-scanner-sync.sh"
 run_stage "scanner test-file classification" bash "$SCRIPT_DIR/validate-scanner-classification.sh"
 run_stage "check-ai-config detector fixtures" bash "$SCRIPT_DIR/validate-checker-detectors.sh"
+run_stage "check-docs-* detector fixtures" bash "$SCRIPT_DIR/validate-docs-detectors.sh"
 run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
 run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"

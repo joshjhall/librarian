@@ -58,7 +58,10 @@ def block_matches(lines: list[str], start_1: int, end_1: int, pattern: str) -> b
     inclusive 1-indexed range [start_1, end_1] match PATTERN? grep applies the
     regex per line, so `^`/`$` anchor to each line's own bounds."""
     if end_1 < start_1:
-        return False
+        # pragma: no cover — unreachable: the sole caller check_prev_lines always
+        # passes end_1 = target-1, start_1 = target-3 (a fixed +2 span), so
+        # end_1 < start_1 never holds. Kept as a defensive guard mirroring bash.
+        return False  # pragma: no cover
     start_1 = max(1, start_1)
     for ln in lines[start_1 - 1 : end_1]:
         if re.search(pattern, ln):
@@ -76,7 +79,9 @@ def scan_file(path: str) -> None:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             lines = fh.read().splitlines()
-    except OSError:
+    except OSError:  # pragma: no cover — main() already opened this path in its
+        # own try/except before calling scan_file, so a second open failure here
+        # is only reachable via a TOCTOU race; the covered arm is main's except.
         return
 
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
@@ -114,7 +119,9 @@ def scan_file(path: str) -> None:
             return
         for line_no, content in defs(r"^func [A-Z]"):
             m = re.search(r"func ([A-Z][A-Za-z0-9]*)", content)
-            if not m:
+            if not m:  # pragma: no cover — unreachable: the outer defs() filter
+                # `^func [A-Z]` guarantees a "func <Upper>" prefix, so this inner
+                # re.search always matches. Kept as a defensive guard.
                 continue
             func_name = m.group(1)
             prev_line = lines[line_no - 2] if line_no - 1 >= 1 else ""
