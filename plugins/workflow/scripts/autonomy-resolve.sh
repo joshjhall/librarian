@@ -13,6 +13,7 @@
 #   level [--from-args STR] [--chosen-level N] [--severity LABEL]
 #         -> autonomy_level, autonomous, plan_gated, capped, perm_mode
 #   gate  <routine|escalation> --level N [--dead-end]  -> disposition (auto|human)
+#   sweep-interval --level N  -> sweep_interval_seconds (Phase M cadence, #304)
 #   read  [--state-level N]  -> autonomy_level
 #
 # --level {1,2,3,4} is the sole autonomy input; the old alias flags
@@ -38,9 +39,10 @@ if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/autonomy-resolve.py" ]
     exec python3 "$_here/autonomy-resolve.py" "$@"
 fi
 
-USAGE="Usage: autonomy-resolve <level|gate|read> [options]
+USAGE="Usage: autonomy-resolve <level|gate|sweep-interval|read> [options]
   level [--from-args STR] [--chosen-level N] [--severity LABEL]
   gate <routine|escalation> --level N [--dead-end]
+  sweep-interval --level N
   read [--state-level N]"
 
 # die <message> — fail loud: actionable message + usage on stderr, exit 2.
@@ -200,6 +202,31 @@ cmd_gate() {
     command printf 'disposition=%s\n' "$disposition"
 }
 
+# Phase M status-sweep cadence, seconds, by autonomy level (issue #304). Higher
+# level -> less frequent sweep. A PURE level->seconds map: the GOLEM_SWEEP_INTERVAL
+# env override is applied by golem-status.sh at the script boundary, not here.
+cmd_sweep_interval() {
+    level=""
+    if opt --level 0 -- "$@" >/dev/null 2>&1; then
+        level="$(opt --level 0 -- "$@" || true)"
+    fi
+    if [ -z "$level" ]; then
+        die "autonomy-resolve: sweep-interval needs --level N"
+    fi
+    if ! valid_level "$level"; then
+        die "autonomy-resolve: level must be 1-4, got '$level'"
+    fi
+
+    case "$level" in
+        1) seconds=180 ;;
+        2) seconds=300 ;;
+        3) seconds=480 ;;
+        4) seconds=900 ;;
+    esac
+
+    command printf 'sweep_interval_seconds=%s\n' "$seconds"
+}
+
 cmd_read() {
     state_level="$(opt --state-level 0 -- "$@" || true)"
 
@@ -223,6 +250,7 @@ shift
 case "$sub" in
     level) cmd_level "$@" ;;
     gate) cmd_gate "$@" ;;
+    sweep-interval) cmd_sweep_interval "$@" ;;
     read) cmd_read "$@" ;;
     *) die "autonomy-resolve: unknown subcommand '$sub'" ;;
 esac
