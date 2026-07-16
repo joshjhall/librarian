@@ -230,6 +230,24 @@ test_classifier_gate_default() {
         "gate" "unrecognized permission message → gate default"
 }
 
+# An in-turn AskUserQuestion escalation fork carries NO stable, fork-specific
+# signature this hook can key on (issue #321, deferred out of #257/PR #320):
+# Claude Code surfaces such a fork via the SDK `canUseTool` callback, not a
+# `Notification`, and a plain permission Notification's message is not
+# machine-parseable and has no multi-option field. So an AskUserQuestion-style
+# permission message MUST stay the fail-loud `gate` default here (only the
+# deterministic `ESCALATION:` path is classified as escalation) — a future
+# well-meaning heuristic that regressed this would mislabel routine permission
+# gates as escalations. This pins that boundary (acceptance criterion 3).
+test_classifier_askuserquestion_stays_gate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (classifier + JSON validation need jq)"
+        return 0
+    fi
+    assert_event '{"message":"Claude needs your permission to use AskUserQuestion"}' \
+        "gate" "AskUserQuestion-style permission message → gate default (#321)"
+}
+
 # dead-end must win over escalation when BOTH markers are present (a dead-end IS
 # an escalation that also blocks L4), because its case arm precedes escalation's.
 test_classifier_dead_end_beats_escalation() {
@@ -393,6 +411,7 @@ run_test test_classifier_idle_no_your "classifier: waiting-for-input (no \"your\
 run_test test_classifier_escalation "classifier: ESCALATION: → escalation"
 run_test test_classifier_dead_end "classifier: DEAD-END: → dead-end"
 run_test test_classifier_gate_default "classifier: unrecognized message → gate default"
+run_test test_classifier_askuserquestion_stays_gate "classifier: AskUserQuestion permission message → gate default (#321)"
 run_test test_classifier_dead_end_beats_escalation "classifier: dead-end wins over escalation"
 run_test test_no_jq_escaper_emits_valid_json "no-jq escaper: quote+backslash GOLEM_ID stays valid JSON"
 run_test test_no_jq_still_writes_gate_line "no-jq: still writes a valid gate feed line, exits 0"
