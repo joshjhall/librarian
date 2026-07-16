@@ -96,7 +96,38 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
 # Prints the absolute root on stdout and returns 0; prints nothing and returns 1
 # when not inside a git repository.
 repo_root() {
-    local common_dir
+    local super_root common_dir
+    # Submodule case: when these scripts run from inside a git SUBMODULE working
+    # tree (the golem flow vendored into a consuming repo as a submodule),
+    # --git-common-dir below resolves to <superproject>/.git/modules/<name>, so
+    # the common-dir logic would return <superproject>/.git/modules — a
+    # git-internal path — and `git worktree add` would land worktrees under
+    # .git/modules/.worktrees/issue-N instead of <superproject>/.worktrees/issue-N
+    # (issue #324, migrated from containers#637). Prefer the superproject
+    # working-tree root, which `git rev-parse --show-superproject-working-tree`
+    # prints ONLY when inside a submodule (empty otherwise) — so it is both the
+    # detector and the correct value; an empty result falls through to the
+    # common-dir resolution below (normal repos + bare-repo worktree hosts,
+    # unchanged). Same env scrub as the common-dir probe (#279 hook-safety): a
+    # tainted GIT_DIR/GIT_COMMON_DIR must not pin the resolved root to an outer
+    # repo. Scrub lives in this probe's own subshell, keeping config.sh
+    # side-effect-free at source time (see the file header).
+    super_root="$(
+        unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
+            GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+        command git rev-parse --path-format=absolute --show-superproject-working-tree 2>/dev/null || true
+    )"
+    if [ -n "$super_root" ]; then
+        # --path-format=absolute should guarantee absolute, but stay defensive
+        # (mirrors the common-dir arm below).
+        case "$super_root" in
+            /*) ;;
+            *) super_root="$(command pwd)/$super_root" ;;
+        esac
+        command echo "$super_root"
+        return 0
+    fi
+
     # Resolve git via PATH (`command git`), not a hardcoded /usr/bin/git — on a
     # host where git lives elsewhere (minimal container, NixOS, Homebrew-first
     # macOS) the absolute path exits 127, gets swallowed by `|| true`, and this
