@@ -12,6 +12,14 @@
 # Refuses to remove a worktree with uncommitted changes (re-run after
 # committing, or force with `git worktree remove --force`).
 #
+# Belt-and-suspenders: after teardown it repairs a polluted main-repo
+# `core.worktree` (#258). An interrupted `git worktree remove --force` can leave
+# the MAIN checkout's .git/config with a stale `core.worktree` pointing at the
+# just-removed worktree, which silently breaks it — `git status` shows the whole
+# tree as deleted and `git rev-parse --is-inside-work-tree` returns false. No
+# script legitimately sets `core.worktree` on the main config, so one pointing at
+# a non-existent path is unambiguous corruption and is safe to unset.
+#
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
 #
@@ -65,6 +73,24 @@ if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$sess" 2>/dev/null; t
     tmux kill-session -t "$sess" 2>/dev/null || true
     command echo "  killed tmux session $sess"
     removed=1
+fi
+
+# Repair a polluted main-repo core.worktree (#258). An interrupted
+# `git worktree remove --force` can leave the MAIN config with a stale
+# core.worktree pointing at a now-deleted path, which makes the whole checkout
+# look deleted (git status = all D, rev-parse --is-inside-work-tree = false).
+# Only unset it when it points at a path that no longer exists — a legit,
+# existing core.worktree is left untouched. `cd "$root"` above put us in the main
+# checkout, so `git config` reads/writes the main config.
+stale_wt="$(/usr/bin/git config --get core.worktree 2>/dev/null || true)"
+if [ -n "$stale_wt" ] && [ ! -e "$stale_wt" ]; then
+    /usr/bin/git config --unset core.worktree || true
+    /usr/bin/git worktree prune || true
+    command echo "  repaired stale core.worktree ($stale_wt no longer exists)"
+    removed=1
+    if [ "$(/usr/bin/git rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]; then
+        command echo "worktree-rm: WARNING: main checkout still not a work tree after core.worktree repair" >&2
+    fi
 fi
 
 if [ "$removed" -eq 0 ]; then

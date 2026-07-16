@@ -781,6 +781,43 @@ test_worktree_rm_round_trip() {
     assert_equals "" "$branches" "the feature/issue-34 branch is gone after rm"
 }
 
+# A stale core.worktree in the MAIN config pointing at a non-existent path is
+# repaired: unset + rev-parse --is-inside-work-tree true again (#258).
+test_worktree_rm_repairs_stale_core_worktree() {
+    local sb
+    new_sandbox sb
+    # Simulate the corruption an interrupted `git worktree remove --force`
+    # leaves behind: core.worktree pointing at a now-deleted worktree path.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" config core.worktree "$sb/.worktrees/issue-99"
+    run_in "$sb" "$WT_RM" 99
+    assert_exit 0 "$RUN_RC" "worktree-rm exits 0 while repairing a stale core.worktree"
+    assert_contains "$RUN_OUT" "repaired stale core.worktree" "reports the repair"
+    local val inside
+    val="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" config --get core.worktree || true)"
+    assert_equals "" "$val" "the stale core.worktree is unset after repair"
+    inside="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" rev-parse --is-inside-work-tree 2>/dev/null || true)"
+    assert_equals "true" "$inside" "the main checkout is a work tree again after repair"
+}
+
+# A core.worktree pointing at an EXISTING path is left untouched — no
+# false-positive repair (#258).
+test_worktree_rm_preserves_valid_core_worktree() {
+    local sb
+    new_sandbox sb
+    # Point core.worktree at a path that exists on disk (the sandbox itself).
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" config core.worktree "$sb"
+    run_in "$sb" "$WT_RM" 99
+    assert_exit 0 "$RUN_RC" "worktree-rm exits 0 with a valid core.worktree"
+    local val
+    val="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" config --get core.worktree || true)"
+    assert_equals "$sb" "$val" "a valid, existing core.worktree is left untouched"
+}
+
 # --- golem-attach.sh --------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -887,6 +924,8 @@ run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolut
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
+run_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
+run_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
 run_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"
