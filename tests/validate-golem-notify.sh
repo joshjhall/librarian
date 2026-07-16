@@ -73,6 +73,22 @@ new_sandbox() {
     printf -v "$__out" '%s' "$dir"
 }
 
+# new_named_sandbox <varname> <name>
+# Like new_sandbox, but the sandbox dir gets a CHOSEN basename ($WORKDIR/<name>)
+# instead of a random `sandbox.XXXXXX`. The golem-id fallback (branch 2) keys off
+# the worktree-root basename (`git rev-parse --show-toplevel`), so a deterministic
+# name is what lets a test assert the derived `issue-N -> golem-N` / `golem-*`
+# pass-through / `golem-?` placeholder outcome. Assigns the path to the caller's
+# named variable.
+new_named_sandbox() {
+    local __out="$1" name="$2" dir="$WORKDIR/$2"
+    /usr/bin/mkdir -p "$dir" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
+    /usr/bin/mkdir -p "$dir/.worktrees/.status"
+    printf -v "$__out" '%s' "$dir"
+}
+
 # Results of the most recent invocation.
 NOTIFY_RC=0
 NOTIFY_LINE=""
@@ -111,6 +127,27 @@ run_notify() {
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
     fi
+    NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+}
+
+# run_notify_no_gid <sandbox> <payload>
+# Like run_notify's jq path but with GOLEM_ID UNSET (via `env --unset=GOLEM_ID`),
+# so branch 1 of the golem-id derivation cannot resolve and the hook falls back to
+# the worktree-basename branch (or the placeholder). Everything else mirrors
+# run_notify: GIT_* scrubbed, HOME pinned at the sandbox, results captured in
+# NOTIFY_RC / NOTIFY_LINE.
+run_notify_no_gid() {
+    local dir="$1" payload="$2"
+    local feed="$dir/.worktrees/.status/feed.jsonl"
+    /usr/bin/rm -f "$feed"
+    NOTIFY_RC=0
+    (
+        cd "$dir" &&
+            /usr/bin/printf '%s' "$payload" |
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID \
+                HOME="$dir" \
+                "$REAL_BASH" "$NOTIFY"
+    ) >/dev/null 2>&1 || NOTIFY_RC=$?
     NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
@@ -223,6 +260,56 @@ test_no_jq_still_writes_gate_line() {
     assert_equals "gate" "$event" "no-jq default message classifies as gate"
 }
 
+# --- Golem-id derivation fallback (branches 2 & 3) --------------------------
+
+# With GOLEM_ID unset, the hook derives the golem id from the worktree-root
+# basename: `issue-N` -> `golem-N`, an already-`golem-*` basename passes through,
+# and anything else yields the `golem-?` placeholder. These three cases are the
+# only coverage of that fallback — every other case pins GOLEM_ID and so only
+# exercises branch 1 (issue #250). jq is used to read `.golem` back out, so they
+# skip cleanly when it is absent.
+
+# assert_golemid <sandbox-name> <expected-golem> <desc>
+# Runs the hook with GOLEM_ID unset inside a sandbox named <sandbox-name>, asserts
+# exit 0, a valid-JSON feed line, and the derived `.golem`.
+assert_golemid() {
+    local name="$1" want="$2" desc="$3" sb got
+    new_named_sandbox sb "$name"
+    run_notify_no_gid "$sb" '{"message":"awaiting a decision"}'
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 ($desc)"
+    assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
+        "feed line is valid JSON ($desc)"
+    got="$(printf '%s' "$NOTIFY_LINE" | jq -r '.golem' 2>/dev/null || true)"
+    assert_equals "$want" "$got" "derived golem id is $want ($desc)"
+}
+
+# issue-N worktree basename maps to golem-N (the `${base#issue-}` stripping).
+test_golemid_issue_basename() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (reads .golem back with jq)"
+        return 0
+    fi
+    assert_golemid "issue-42" "golem-42" "issue-42 basename → golem-42"
+}
+
+# An already-golem-* worktree basename passes through unchanged.
+test_golemid_golem_passthrough() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (reads .golem back with jq)"
+        return 0
+    fi
+    assert_golemid "golem-7" "golem-7" "golem-7 basename passes through"
+}
+
+# A basename matching neither `issue-*` nor `golem-*` yields the placeholder.
+test_golemid_placeholder() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (reads .golem back with jq)"
+        return 0
+    fi
+    assert_golemid "plain-checkout" "golem-?" "non-worktree basename → golem-? placeholder"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox needs git. Gate it from inside a run_test-dispatched body so the
@@ -251,5 +338,8 @@ run_test test_classifier_gate_default "classifier: unrecognized message → gate
 run_test test_classifier_dead_end_beats_escalation "classifier: dead-end wins over escalation"
 run_test test_no_jq_escaper_emits_valid_json "no-jq escaper: quote+backslash GOLEM_ID stays valid JSON"
 run_test test_no_jq_still_writes_gate_line "no-jq: still writes a valid gate feed line, exits 0"
+run_test test_golemid_issue_basename "golem-id: issue-N basename → golem-N"
+run_test test_golemid_golem_passthrough "golem-id: golem-* basename passes through"
+run_test test_golemid_placeholder "golem-id: unmatched basename → golem-? placeholder"
 
 generate_report
