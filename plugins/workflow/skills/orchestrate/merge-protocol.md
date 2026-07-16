@@ -346,7 +346,10 @@ git diff --name-only "${MERGE_COMMIT}^1" "${MERGE_COMMIT}"
    `~/.claude/agents/code-reviewer/workflow.js`. It reviews the merge diff for
    bugs, security issues, performance problems, and style violations as a
    parallel barrier under a shared budget, with a judge-panel rescore of each
-   finding's certainty before merge.
+   finding's certainty before merge. **Bound this invocation in wall-time
+   (#224)** — it fans out reviewer subagents; invoke it as a background task with
+   the caller-side timeout (a timed-out review is **partial**, never clean). See
+   `mode-protocol.md` § *Bounding a Workflow invocation in wall-time*.
 1. **`test-writer` agent** — dispatched only if the code-review findings
    indicate missing test coverage or if new public APIs were introduced
    without tests.
@@ -527,7 +530,11 @@ loop). This phase applies only after a local merge.
 1. **Run the `code-review` harness** via the Workflow tool on
    `~/.claude/agents/code-reviewer/workflow.js`, passing
    `args: { diff: "<git diff \"${MERGE_COMMIT}^1\" \"${MERGE_COMMIT}\">", files: [<changed>] }`.
-   It returns the `finding-schema.md` object.
+   It returns the `finding-schema.md` object. **Bound this invocation in
+   wall-time (#224)** — it fans out reviewer subagents; invoke it as a
+   background task with the caller-side timeout (a timed-out review is
+   **partial**). See `mode-protocol.md` § *Bounding a Workflow invocation in
+   wall-time*.
 1. **Apply corrections** in a single commit trailered `Reviewed-by: orchestrate`.
 1. **Run tests**; report a summary table.
 

@@ -502,6 +502,43 @@ completion summary. The triage never blocks shipping.
 
 ---
 
+## Bounding a Workflow invocation in wall-time (#224)
+
+Every orchestrate phase that drives `workflow.js` and **fans out subagents** can
+hang the same way ship-issue's review fan-out can: the sandbox bans clocks and
+timers so the harness cannot self-deadline, and a *spinning* subagent emits no
+tokens, so the shared token budget bounds *cost* but never *latency*. A single
+stuck `agent()` runs the whole sweep unbounded even far below the token cap. The
+bound is the **caller's** job (`dev-core:workflow-authoring` § *No Clock in the
+Sandbox*) — apply it here exactly as ship-issue's `pre-ship-validation.md`
+Step 3.5 b bounds its pre-PR review:
+
+- Invoke the `Workflow` tool as a **background** task and poll `TaskOutput` with
+  a finite per-poll timeout, accumulating elapsed wall-time. The tool result
+  carries the run's `transcriptDir`.
+- Once cumulative wait crosses `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` minutes
+  (default 20), do NOT keep waiting blindly. **L1–L2**: prompt — **cut short**
+  (treat this sweep as partial) or **extend** (another interval). **L3–L4**:
+  auto-extend up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` times (default 1 →
+  40 min ceiling), then `TaskStop` the run. Never hang.
+- A `TaskStop`-ped sweep is **partial**: never treat a timed-out `poll`,
+  `poll+rebase`, or `train` invocation as complete. Recovery here is **not**
+  `recover-journal-partials.sh` — unlike ship-issue's review fan-out, these
+  modes emit no finding-shaped journal partials (they produce `pr_status[]` and
+  train-graph state, not `severity`/`file`/`line_start`/`category`/`title`
+  findings, so the recover script would only ever return `[]`). Recover via
+  **checkpoint-resume / re-run** instead: a `poll` / `poll+rebase` resumes from
+  its per-PR checkpoint, and `train` is re-run to recompute the order. Carry a
+  `timed_out` note into the status surface.
+
+**Applies only to the subagent-fanning modes** — `poll` and `poll+rebase`
+(Phase M / Phase R, the PR-status reads and `rebase-agent` dispatch) and `train`
+(Phase T, the per-PR file-list fetch). The `pool` and `tracks` modes are **pure
+computation** (they never call `agent()`), so they cannot hang on a spinning
+agent and need no wall bound.
+
+---
+
 ## Decision Tree
 
 Inputs for mode selection:
