@@ -1531,6 +1531,31 @@ for (const path of [ORCH, REBASE]) {
     "highestBy: equal ranks break toward the candidate via tieBreakFn",
   );
 
+  // #345: malformed-input edge case. The #317 refactor seeds the accumulator with
+  // a strict `best === null` check. A keyFn that projects a malformed element to a
+  // missing value (a finding lacking .certainty/.severity — a merge-schema contract
+  // violation) behaves ASYMMETRICALLY for undefined vs null, because null collides
+  // with the seed sentinel. A certainty-shaped rankFn (dereferences .level) makes
+  // each consequence explicit. See the highestBy doc comment in workflow.js.
+  const certRank = (c) => (c.level in { HIGH: 0, MEDIUM: 1, LOW: 2 } ? { HIGH: 0, MEDIUM: 1, LOW: 2 }[c.level] : 3);
+  // --- keyFn -> undefined (a finding missing .certainty entirely) ---
+  // Single element short-circuits: `best === null` returns the projected value
+  // (undefined); rankFn is never called, so no throw — returns undefined.
+  eq(highestBy([{ nope: 1 }], (o) => o.certainty, certRank), undefined, "highestBy: single element projecting to undefined short-circuits to undefined (never dereferences)");
+  // Beside a valid element it THROWS in both orderings — undefined lands in `best`
+  // (it is not the sentinel), and the next rankFn(best) dereferences undefined.level.
+  throws(() => highestBy([{ nope: 1 }, { certainty: { level: "HIGH" } }], (o) => o.certainty, certRank), "highestBy: undefined-projecting element first, then valid -> throws on undefined.level (loud contract-violation, uncovered before #345)");
+  throws(() => highestBy([{ certainty: { level: "HIGH" } }, { nope: 1 }], (o) => o.certainty, certRank), "highestBy: valid element first, then undefined-projecting -> throws on undefined.level (loud contract-violation, uncovered before #345)");
+  // --- keyFn -> explicit null (e.g. `certainty: null`) — asymmetric vs undefined ---
+  // As the LEADING element, null collides with the seed sentinel: `best === null`
+  // stays true, so the reducer SILENTLY re-seeds past it (no throw) and, alone,
+  // returns null — the one gap in the loud-failure guarantee (#345 review follow-up).
+  eq(highestBy([{ certainty: null }], (o) => o.certainty, certRank), null, "highestBy: single null-projecting element collides with the seed sentinel -> returns null (silent, no throw)");
+  eq(highestBy([{ certainty: null }, { certainty: { level: "HIGH" } }], (o) => o.certainty, certRank).level, "HIGH", "highestBy: leading null silently re-seeds past (sentinel collision) -> the following valid element wins");
+  // As a LATER element it throws like undefined — compared against a real `best`,
+  // rankFn dereferences null.level.
+  throws(() => highestBy([{ certainty: { level: "HIGH" } }, { certainty: null }], (o) => o.certainty, certRank), "highestBy: valid element first, then null-projecting -> throws on null.level (no sentinel collision once best is set)");
+
   // related_ids -> related_findings rename survives with NON-empty values, on both
   // the kept and merged paths.
   const merge3 = {

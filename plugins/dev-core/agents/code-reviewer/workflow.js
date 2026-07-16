@@ -440,6 +440,24 @@ const publicFinding = (f) => {
 // legitimate dedup" policy behind both highestSeverity (#299) and
 // highestCertainty (#266) — factored here so a change to the rank/tie-break rule
 // lives in one place (#317).
+//
+// The seed sentinel is literally `null`, checked with strict `best === null`.
+// Consequences for a keyFn that projects a malformed element to a missing value
+// (the merge schema requires certainty/severity, so this is a contract
+// violation, not expected input):
+//   - `undefined` (e.g. a finding lacking `.certainty`): once it lands in `best`
+//     it is NOT the sentinel, so the next rankFn(best) dereferences undefined and
+//     throws — the violation surfaces loudly, unlike the pre-#317 highestCertainty
+//     falsy check that re-seeded past it.
+//   - `null` (e.g. `certainty: null`) is ASYMMETRIC because it collides with the
+//     sentinel: as the FIRST/incumbent element `best === null` stays true, so the
+//     reducer silently re-seeds past it (no throw); as a LATER element compared
+//     against a real `best` it throws like undefined.
+// So the loud-failure guarantee holds for undefined always and for null except
+// when null is the leading element. Pinned by the malformed-input tests in
+// tests/validate-workflow-helpers.mjs (#345). A non-null sentinel (or a separate
+// `seeded` flag) would make null and undefined behave identically — deliberately
+// not done here, as the schema makes either a should-never-happen.
 const highestBy = (objs, keyFn, rankFn, tieBreakFn) =>
   objs.reduce((best, o) => {
     const v = keyFn(o)
