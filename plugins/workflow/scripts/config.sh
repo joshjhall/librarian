@@ -85,6 +85,31 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL
 
+# _repo_root_git — run `git "$@"` with git's hook-exported environment scrubbed,
+# safe even when a GIT_* var is READONLY (`declare -rx GIT_DIR=…`), which a bare
+# `unset` cannot clear (issue #328 — the readonly gap #279's plain unset left
+# open). MUST be called inside a command-substitution subshell so the scrub stays
+# contained and never leaks back to the caller (the whole point of #279).
+#
+# Try plain `unset` first: it needs no PATH lookup, so the common path stays
+# dependency-free and the PATH-stripped test harness (repo_root resolved with
+# only `git` on PATH, #278) keeps working. On a readonly GIT_* var `unset` FAILS,
+# so fall back to `env -u`, which UNEXPORTS the vars for the git child regardless
+# of the readonly attribute — `repo_root()` then still resolves the real root
+# rather than the tainted one. `env` (and git) are PATH-resolved (`command env` /
+# the child `git`), matching #278's no-hardcoded-/usr/bin rule; env is reached
+# ONLY on the readonly path, never in the common case.
+_repo_root_git() {
+    if unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
+        GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null; then
+        command git "$@"
+    else
+        command env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+            -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+            git "$@"
+    fi
+}
+
 # repo_root — print the main checkout's root directory, bare-repo-safe.
 #
 # `git rev-parse --show-toplevel` ABORTS in a bare repository (the worktree-host
@@ -113,9 +138,7 @@ repo_root() {
     # repo. Scrub lives in this probe's own subshell, keeping config.sh
     # side-effect-free at source time (see the file header).
     super_root="$(
-        unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
-            GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-        command git rev-parse --path-format=absolute --show-superproject-working-tree 2>/dev/null || true
+        _repo_root_git rev-parse --path-format=absolute --show-superproject-working-tree 2>/dev/null || true
     )"
     if [ -n "$super_root" ]; then
         # --path-format=absolute should guarantee absolute, but stay defensive
@@ -139,28 +162,26 @@ repo_root() {
     # root — an accepted trade-off matching worktree-new.sh (#228/#241); these
     # scripts assume an operator-controlled PATH.
     #
-    # Scrub git's hook-exported environment for THIS rev-parse. When repo_root()
-    # is invoked from inside a git hook (or a wrapper forwarding a tainted env),
-    # GIT_DIR / GIT_COMMON_DIR / … would otherwise pin `--git-common-dir` to an
-    # OUTER repo, so repo_root() would RETURN the wrong root — redirecting
-    # seed-worktree-trust.sh's #21 under-root trust guard, whose only git use is
-    # this return value (issue #279). The unset lives in the rev-parse's own
-    # command-substitution subshell so it scrubs exactly where it matters and
-    # never leaks back to the caller's environment, keeping config.sh
-    # side-effect-free at source time (see the file header). Mirrors the
-    # GIT_SCRUB set the test suites already scrub for hermeticity.
+    # Scrub git's hook-exported environment for THIS rev-parse (via
+    # _repo_root_git). When repo_root() is invoked from inside a git hook (or a
+    # wrapper forwarding a tainted env), GIT_DIR / GIT_COMMON_DIR / … would
+    # otherwise pin `--git-common-dir` to an OUTER repo, so repo_root() would
+    # RETURN the wrong root — redirecting seed-worktree-trust.sh's #21 under-root
+    # trust guard, whose only git use is this return value (issue #279). The scrub
+    # lives in the rev-parse's own command-substitution subshell so it scrubs
+    # exactly where it matters and never leaks back to the caller's environment,
+    # keeping config.sh side-effect-free at source time (see the file header).
+    # _repo_root_git also closes the readonly-GIT_DIR gap #279's plain unset left
+    # open (a `declare -rx GIT_DIR` taint), falling back to `env -u` (issue #328).
     #
     # SCOPE: this hardens repo_root()'s RETURN VALUE only. A caller that issues
     # its OWN direct git commands after repo_root() (e.g. worktree-new.sh's
-    # `git worktree add`, worktree-rm.sh's `git branch -D`) still runs them in
-    # its own, unscrubbed process environment, where a tainted GIT_DIR redirects
-    # them independently of this fix. Scrubbing those callers' whole environment
-    # (and the narrow `readonly GIT_DIR` variant that a bare `unset` can't clear)
-    # is tracked separately in issue #328.
+    # `git worktree add`, worktree-rm.sh's `git branch -D`) runs them in its own
+    # process environment; those callers now scrub it process-wide right after
+    # sourcing config.sh (issue #328), so a tainted GIT_DIR can no longer redirect
+    # their mutations to an outer repo.
     common_dir="$(
-        unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
-            GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-        command git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true
+        _repo_root_git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true
     )"
     if [ -z "$common_dir" ]; then
         command echo "repo-root: not inside a git repository" >&2

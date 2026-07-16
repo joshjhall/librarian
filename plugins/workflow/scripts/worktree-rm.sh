@@ -36,6 +36,20 @@ SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
+# Scrub git's hook-exported environment process-wide (#328). repo_root()
+# (config.sh) already scrubs its OWN rev-parse subshell (#279), but this script
+# then runs its own git MUTATIONS below (worktree remove / branch -D /
+# config --unset core.worktree / worktree prune); a tainted GIT_DIR/GIT_COMMON_DIR
+# forwarded from a git hook would redirect those to an OUTER repo — deleting a
+# branch or unsetting core.worktree in the wrong checkout. `cd "$root"` does not
+# re-anchor git while GIT_DIR is set, so unset the whole set here, before
+# repo_root() and every other git call. Deliberately NO `|| true`: a readonly
+# GIT_DIR makes `unset` fail, which under `set -e` aborts LOUDLY before any
+# mutation — the fail-loud outcome, never a silent wrong-repo write. Mirrors the
+# GIT_SCRUB set config.sh and the test suites already use.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 N="${1:-}"
 if ! [[ "$N" =~ ^[0-9]+$ ]]; then
     command echo "worktree-rm: N must be an issue number, got '$N'" >&2
