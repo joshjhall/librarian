@@ -20,10 +20,14 @@
 #           labelled distinctly ("escalation — …" / "dead-end — …").
 #   panes — `tmux capture-pane` on live `golem-*` sessions, matched against the
 #           modal PROMPT OVERLAY ("Do you want to proceed?" / the ExitPlanMode
-#           plan prompt). The "capture-pane is blank until exit" caveat applies
+#           plan prompt / an AskUserQuestion escalation fork's `Enter to select`
+#           footer — #257). The "capture-pane is blank until exit" caveat applies
 #           to scrolling WORK OUTPUT, not the prompt overlay, which renders over
 #           the alt-screen and is reliably scrapeable — and is the better
-#           catcher of plan-gate prompts. Live worktree golems only.
+#           catcher of plan-gate prompts. A fork is the last-resort match (after
+#           plan-gate and generic-gate) and is emitted as a distinct
+#           "escalation — …" line so the operator knows it carries options. Live
+#           worktree golems only.
 #
 # Output (one line per fresh gate): "<golem-id>\t<message>"
 #
@@ -69,7 +73,8 @@
 #   GOLEM_WATCH_INTERVAL     poll interval for --stream*, seconds (default 5)
 #   GOLEM_STALL_THRESHOLD    liveness stall window, seconds (default 1200)
 #   GOLEM_HEARTBEAT_INTERVAL liveness poll interval, seconds (default 60)
-#   GOLEM_PANE_FOOTER_LINES  pane_liveness_class footer window, lines (default 8)
+#   GOLEM_PANE_FOOTER_LINES  pane footer window for pane_liveness_class +
+#                            pane_is_fork, lines (default 8)
 #
 # Never blocks a golem and never hangs on a missing feed/tmux: errors are
 # swallowed and a snapshot mode always exits 0. The `--stream*` loops carry NO
@@ -221,9 +226,10 @@ emit_transitions() {
 # ---------------------------------------------------------------------------
 # Pane channel
 # ---------------------------------------------------------------------------
-# Modal prompt-overlay patterns. A live golem at a permission/plan gate paints
-# one of these over its alt-screen; matching them is reliable (unlike scraping
-# scrolling work output). Extend these lists as new prompt shapes appear.
+# Modal prompt-overlay patterns. A live golem at a permission/plan gate — or an
+# AskUserQuestion escalation fork (#257) — paints one of these over its
+# alt-screen; matching them is reliable (unlike scraping scrolling work output).
+# Extend these lists as new prompt shapes appear.
 pane_is_plan_gate() {
     case "$1" in
         *"Ready to code"*) return 0 ;;
@@ -243,6 +249,43 @@ pane_is_gate() {
     return 1
 }
 
+# AskUserQuestion escalation-fork overlay (issue #257). A golem parked at a
+# numbered architectural/scoping decision — an ESCALATION gate per
+# `orchestrate/autonomy-levels.md`, human at L1–L3 — paints a selection modal
+# whose stable signature is the footer line `Enter to select` (rendered with
+# `↑/↓ to navigate` / `Tab/Arrow keys to navigate`). This overlay matches
+# neither pane_is_plan_gate nor pane_is_gate, so before this matcher a fork was
+# silently missed by the pane channel.
+#
+# `Enter to select` is the generic Claude Code selection-modal footer, not unique
+# to AskUserQuestion, so this is a BEST-EFFORT label of last resort: run only
+# AFTER the plan-gate and generic-gate matchers, it names an overlay they didn't
+# recognize an "escalation" on the assumption it is a fork. That is right for a
+# real AskUserQuestion fork and errs toward surfacing (an unrecognized overlay is
+# reported rather than dropped); the tradeoff is that a plan/permission overlay
+# whose exact wording drifts out of those matchers could surface here mislabelled
+# rather than silently missed. Two guards keep the footer phrase from
+# over-matching:
+#   1. panes_snapshot() checks pane_is_plan_gate AND pane_is_gate FIRST — the
+#      fork is the last-resort branch, so a plan overlay (which may share the
+#      `Yes, and use auto mode` line and an `Enter to select` footer) or a
+#      routine permission gate (whose own selection menu may paint the same
+#      footer) is classified as itself, never downgraded to an escalation.
+#   2. The match is ANCHORED to the pane's FOOTER region (last $pane_footer_lines
+#      lines, where the modal footer renders) — NOT the whole scrollback — the
+#      same protection pane_liveness_class uses for #246. `Enter to select` now
+#      appears in this script's own comments and in tests/golem-gate-watch.sh, so
+#      a golem cat-ing/grepping those files would otherwise self-trip the matcher
+#      into a false `escalation` notification.
+pane_is_fork() {
+    local footer
+    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    case "$footer" in
+        *"Enter to select"*) return 0 ;;
+    esac
+    return 1
+}
+
 # Print the current set of live golem-* sessions sitting at a prompt overlay,
 # one "<golem>\t<message>" line each. No-op (success) when tmux is absent.
 panes_snapshot() {
@@ -257,6 +300,8 @@ panes_snapshot() {
             /usr/bin/printf '%s\t%s\n' "$sess" "plan gate — ExitPlanMode awaiting approval"
         elif pane_is_gate "$pane"; then
             /usr/bin/printf '%s\t%s\n' "$sess" "permission gate — awaiting decision"
+        elif pane_is_fork "$pane"; then
+            /usr/bin/printf '%s\t%s\n' "$sess" "escalation — awaiting decision (carries options)"
         fi
     done
 }

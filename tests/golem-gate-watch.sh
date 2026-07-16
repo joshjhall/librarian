@@ -665,6 +665,123 @@ test_pane_is_gate() {
         "Unrelated text is NOT a permission gate"
 }
 
+# pane_is_fork (#257): the AskUserQuestion escalation-fork overlay matches on its
+# `Enter to select` footer (rc 0); a plan overlay, the generic-gate phrase, and
+# unrelated work output do NOT (rc 1). This is the whole gate category the pane
+# channel silently dropped before #257.
+test_pane_is_fork() {
+    assert_equals "0" "$(_pane_rc pane_is_fork "Enter to select · ↑/↓ to navigate · Esc to cancel")" \
+        "The 'Enter to select' fork footer is an escalation fork"
+    assert_equals "1" "$(_pane_rc pane_is_fork "Do you want to proceed?")" \
+        "A generic permission gate footer alone is NOT a fork"
+    assert_equals "1" "$(_pane_rc pane_is_fork "Here is Claude's plan:")" \
+        "A plan overlay is NOT a fork"
+    assert_equals "1" "$(_pane_rc pane_is_fork "just some scrolling build output")" \
+        "Unrelated work output is NOT a fork"
+}
+
+# Footer anchoring (#257, mirroring the #246 pane_liveness_class fix): pane_is_fork
+# scans only the last GOLEM_PANE_FOOTER_LINES lines, NOT the whole scrollback. A
+# golem cat-ing/grepping a file whose text carries `Enter to select` — this very
+# test file and golem-gate-watch.sh's own comments do — must not self-trip the
+# matcher into a false escalation. `filler` pushes the scrolled phrase out of the
+# footer window (default 8 lines).
+test_pane_is_fork_footer_anchored() {
+    local filler
+    filler=$'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10'
+    assert_equals "1" \
+        "$(_pane_rc pane_is_fork "grep 'Enter to select' golem-gate-watch.sh"$'\n'"$filler"$'\n'"  ⏵⏵ esc to interrupt")" \
+        "A scrolled 'Enter to select' above a non-fork footer does not fake a fork"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_fork "$filler"$'\n'"Enter to select · ↑/↓ to navigate")" \
+        "An 'Enter to select' footer inside the window still matches"
+}
+
+# Precedence (#257): a pane carrying BOTH a plan signature (`Yes, and use auto
+# mode`) AND the fork footer (`Enter to select`) must still be a plan gate —
+# panes_snapshot checks pane_is_plan_gate FIRST, so a real plan overlay is never
+# downgraded to a fork. Pins that branch order at the matcher level. (The
+# end-to-end dispatch order is pinned by test_panes_snapshot_dispatch below.)
+test_pane_fork_plan_precedence() {
+    local both="1. Yes, and use auto mode"$'\n'"Enter to select · ↑/↓ to navigate"
+    assert_equals "0" "$(_pane_rc pane_is_plan_gate "$both")" \
+        "A plan+fork pane is matched by pane_is_plan_gate (plan gate wins)"
+    assert_equals "0" "$(_pane_rc pane_is_fork "$both")" \
+        "pane_is_fork also matches it, but panes_snapshot checks plan-gate first"
+}
+
+# End-to-end pane dispatch (#257): drive the REAL panes_snapshot() through a
+# `--once-panes` invocation with a stubbed tmux on PATH, so the actual if/elif
+# ORDER (plan-gate -> generic gate -> fork) and the exact emitted label strings
+# are pinned — not just the isolated matcher functions (the tests above). Mirrors
+# _run_liveness_snapshot_tmux. The fake tmux reports one live golem-9 session and
+# returns $FAKE_PANE_TEXT for capture-pane. Sets PANES_OUT / PANES_RC.
+_run_panes_snapshot_tmux() {
+    local pane_text="$1"
+    local tmp stub_bin real_bash
+    tmp="$(/usr/bin/mktemp -d)" || return 1
+    # shellcheck disable=SC2064
+    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    stub_bin="$tmp/stub-bin"
+    /usr/bin/mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    # Fake tmux: `ls` -> one live golem session; `capture-pane` -> the canned
+    # pane text; anything else -> success no-op. Kept bash-3.2 clean.
+    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    ls) /usr/bin/printf '%s\n' "golem-9: 1 windows" ;;
+    capture-pane) /usr/bin/printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    /usr/bin/chmod +x "$stub_bin/tmux"
+    # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # non-interactive bash, which would undo the hermetic PATH.
+    PANES_RC=0
+    (
+        cd "$tmp" &&
+            /usr/bin/env --unset=BASH_ENV PATH="$stub_bin" \
+                FAKE_PANE_TEXT="$pane_text" \
+                "$real_bash" "$GATE_WATCH" --once-panes
+    ) >"$tmp/out" 2>/dev/null && PANES_RC=0 || PANES_RC=$?
+    PANES_OUT="$(/usr/bin/cat "$tmp/out")"
+}
+
+PANES_OUT=""
+PANES_RC=""
+
+# panes_snapshot dispatch (#257): a fork-only pane emits the escalation label; a
+# plan+fork pane still emits the plan label (plan-gate wins); a gate+fork pane
+# emits the permission-gate label (generic gate wins over fork). Pins the whole
+# if/elif chain and the exact output strings end-to-end.
+test_panes_snapshot_dispatch() {
+    _run_panes_snapshot_tmux "What scope? "$'\n'"Enter to select · ↑/↓ to navigate · Esc to cancel"
+    assert_equals "0" "$PANES_RC" "panes_snapshot exits 0 for a fork pane"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation — awaiting decision (carries options)" \
+        "A fork-only pane emits the escalation label end-to-end"
+
+    _run_panes_snapshot_tmux "1. Yes, and use auto mode"$'\n'"Enter to select · ↑/↓ to navigate"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"plan gate — ExitPlanMode awaiting approval" \
+        "A plan+fork pane emits the plan-gate label (plan wins over fork)"
+    assert_not_contains "$PANES_OUT" "escalation —" \
+        "A plan+fork pane is NOT labelled an escalation"
+
+    _run_panes_snapshot_tmux "Do you want to proceed?"$'\n'"Enter to select · ↑/↓ to navigate"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"permission gate — awaiting decision" \
+        "A gate+fork pane emits the permission-gate label (generic gate wins over fork)"
+    assert_not_contains "$PANES_OUT" "escalation —" \
+        "A routine permission gate is NOT downgraded to an escalation"
+
+    # No-match pane: ordinary work output matches none of the three matchers ->
+    # panes_snapshot emits NOTHING (no golem line). Pins the silent fall-through
+    # end-to-end so an errant unconditional emit branch would be caught.
+    _run_panes_snapshot_tmux "just some scrolling build output"$'\n'"nothing modal here"
+    assert_not_contains "$PANES_OUT" "golem-9" \
+        "A pane matching no overlay emits no line (silent fall-through)"
+}
+
 # emit_transitions: the transition-dedup contract that backs --stream/--stream-
 # panes. All cases run inside ONE subshell because LAST_EMIT is module state the
 # function mutates across calls; the subshell isolates that from the harness.
@@ -726,6 +843,10 @@ run_test test_no_arg_defaults_to_once "No argument defaults to --once (not the e
 run_test test_fmt_age_formats "_fmt_age: seconds vs whole-minute formatting"
 run_test test_pane_is_plan_gate "pane_is_plan_gate matches plan overlays, not work output"
 run_test test_pane_is_gate "pane_is_gate matches the generic permission overlay only"
+run_test test_pane_is_fork "pane_is_fork matches the AskUserQuestion escalation fork overlay"
+run_test test_pane_is_fork_footer_anchored "pane_is_fork is footer-anchored (no self-trip on scrolled text)"
+run_test test_pane_fork_plan_precedence "pane_is_plan_gate wins over pane_is_fork on a plan+fork pane"
+run_test test_panes_snapshot_dispatch "panes_snapshot dispatch order + labels (plan/gate/fork) end-to-end"
 run_test test_pane_liveness_class "pane_liveness_class: spinner=working, error/idle footer=idle, spinner wins"
 run_test test_emit_transitions_dedup "emit_transitions: prime/standing/new/changed/re-gate dedup"
 
