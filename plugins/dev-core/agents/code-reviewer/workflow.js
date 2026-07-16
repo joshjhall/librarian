@@ -451,12 +451,17 @@ const highestCertainty = (objs) =>
 // authors); every field it must not touch — certainty, file, category, summary —
 // is supplied here from `rawFindings`, so it can never drift.
 //
-// Returns { report, dropped, unknownRefs, duplicates }:
-//   report      — the { scanner, summary, findings, acknowledged_findings } object
-//   dropped     — input refs that appeared in NO output bucket (silently lost by
-//                 the model — the code-review analog of audit's dropped_groups)
-//   unknownRefs — refs the model emitted that map to no input finding (invented)
-//   duplicates  — input refs claimed by more than one bucket (integrity breach)
+// Returns { report, dropped, unknownRefs, duplicates, invalidMerges,
+//           malformedIds, duplicateIds, danglingRefs }:
+//   report       — the { scanner, summary, findings, acknowledged_findings } object
+//   dropped      — input refs that appeared in NO output bucket (silently lost by
+//                  the model — the code-review analog of audit's dropped_groups)
+//   unknownRefs  — refs the model emitted that map to no input finding (invented)
+//   duplicates   — input refs claimed by more than one bucket (integrity breach)
+//   invalidMerges — ids of <2-ref "merges" defensively demoted to kept
+//   malformedIds — output ids not matching code-reviewer-<NNN> (model-authored)
+//   duplicateIds — output ids carried by more than one active finding
+//   danglingRefs — related_findings ids resolving to no final finding (dropped)
 function reassembleReport(merge, rawFindings, manifest) {
   const byRef = new Map(rawFindings.map((f) => [f.ref, f]))
   const seen = new Set() // refs already MATERIALIZED into a bucket (first wins)
@@ -549,6 +554,47 @@ function reassembleReport(merge, rawFindings, manifest) {
     (a, b) => rank(SEVERITY_RANK, a.severity) - rank(SEVERITY_RANK, b.severity) || rank(EFFORT_RANK, a.effort) - rank(EFFORT_RANK, b.effort)
   )
 
+  // The merge model authors the re-sequenced `id` and the `related_ids`
+  // cross-reference list — the two fields the harness cannot reconstruct from
+  // its own objects. Neither affects the merge invariant or certainty fidelity
+  // (both harness-supplied above), but their QUALITY is unvalidated, so account
+  // for it loudly the same way the ref buckets do (#298, follow-up to #266):
+  //   malformedIds — id not matching the canonical code-reviewer-<NNN> shape the
+  //                  merge prompt asks for (a missing/empty id counts). LOG-ONLY:
+  //                  the finding is never dropped over a cosmetic id defect.
+  //   duplicateIds — an id carried by more than one active finding, breaching the
+  //                  "ids unique within the scanner's output" contract
+  //                  (finding-schema.md). LOG-ONLY: the harness does not author
+  //                  ids, so it surfaces the collision rather than renumbering.
+  //   danglingRefs — a related_findings entry resolving to no finding in the final
+  //                  active set (or self-referential). REPAIRED IN PLACE: dropped
+  //                  from the finding's related_findings and surfaced.
+  // acknowledged_findings carry no id (publicFinding strips nothing but the model
+  // never assigns them one), so only the active `findings` are in scope.
+  const WELL_FORMED_ID = /^code-reviewer-\d+$/
+  // A missing/empty id would log as a blank token, defeating the loud accounting;
+  // normalize it to a readable label for BOTH the malformed and duplicate lists.
+  const labelId = (id) => (id === undefined || id === '' ? '(empty)' : id)
+  const validIds = new Set(findings.map((f) => f.id))
+  const malformedIds = []
+  const duplicateIds = []
+  const danglingRefs = []
+  const seenIds = new Set()
+  for (const f of findings) {
+    if (!WELL_FORMED_ID.test(f.id || '')) malformedIds.push(labelId(f.id))
+    if (seenIds.has(f.id)) duplicateIds.push(labelId(f.id))
+    else seenIds.add(f.id)
+    // Repair related_findings in place: keep only ids resolving to a distinct
+    // active finding. A self-reference is meaningless correlation — treat it as
+    // dangling too. Order and duplicates within a valid list are preserved.
+    const kept = []
+    for (const rid of f.related_findings || []) {
+      if (rid !== f.id && validIds.has(rid)) kept.push(rid)
+      else danglingRefs.push(rid)
+    }
+    f.related_findings = kept
+  }
+
   const by_severity = { critical: 0, high: 0, medium: 0, low: 0 }
   for (const f of findings) if (f.severity in by_severity) by_severity[f.severity] += 1
 
@@ -575,6 +621,9 @@ function reassembleReport(merge, rawFindings, manifest) {
     unknownRefs,
     duplicates,
     invalidMerges,
+    malformedIds,
+    duplicateIds,
+    danglingRefs,
   }
 }
 
@@ -715,7 +764,11 @@ if (merge) {
   // finding fidelity survive verbatim (#266). Any input ref the model failed to
   // place (dropped), invented (unknown), or double-claimed (duplicate) is logged
   // loudly and never swallowed — the code-review analog of audit's dropped_groups.
-  const { report: assembled, dropped, unknownRefs, duplicates, invalidMerges } = reassembleReport(merge, rawFindings, manifest)
+  const { report: assembled, dropped, unknownRefs, duplicates, invalidMerges, malformedIds, duplicateIds, danglingRefs } = reassembleReport(
+    merge,
+    rawFindings,
+    manifest
+  )
   report = assembled
   // A dropped OR duplicate ref is a merge-integrity breach: the returned report
   // is not a faithful, complete rendering of the reviewed findings. Mark the
@@ -731,6 +784,12 @@ if (merge) {
   }
   if (unknownRefs.length) log(`merge emitted ${unknownRefs.length} unknown finding ref(s) (not in the input set) — ignored: ${unknownRefs.join(', ')}`)
   if (invalidMerges.length) log(`merge emitted ${invalidMerges.length} single-ref "merged" entr(ies) — demoted to kept (model content discarded, harness severity/certainty preserved): ${invalidMerges.join(', ')}`)
+  // id/related_findings are the two fields the model authors that the harness
+  // cannot reconstruct (#298). These are metadata-quality only — NOT a merge
+  // integrity breach — so they are surfaced but do NOT mark the review partial.
+  if (malformedIds.length) log(`merge emitted ${malformedIds.length} malformed finding id(s) (expected code-reviewer-<NNN>): ${malformedIds.join(', ')}`)
+  if (duplicateIds.length) log(`merge emitted ${duplicateIds.length} duplicate finding id(s) (id uniqueness breached): ${duplicateIds.join(', ')}`)
+  if (danglingRefs.length) log(`merge referenced ${danglingRefs.length} dangling related_findings id(s) (not in the final set — dropped): ${danglingRefs.join(', ')}`)
 } else {
   budgetExhausted = true
 }

@@ -1410,6 +1410,106 @@ for (const path of [ORCH, REBASE]) {
   );
   eq(allInvalid.report.findings.length, 0, "reassembleReport: a merge with all-invalid refs emits no finding (no undefined-field corruption)");
   ok(allInvalid.unknownRefs.includes("z.js:9:none#99"), "reassembleReport: the all-invalid merge's ref is surfaced as unknown");
+
+  // #298: the merge model authors the re-sequenced `id` and the `related_ids`
+  // cross-reference list — the two fields the harness cannot reconstruct. Validate
+  // the OUTPUT: malformed ids and duplicate ids are surfaced (log-only, finding
+  // NOT dropped), and dangling related_findings refs are REPAIRED IN PLACE.
+  // The top-of-block clean `merge` result must carry all three arrays EMPTY.
+  {
+    const clean = reassembleReport(merge, rawFindings, manifest);
+    eq(clean.malformedIds.length, 0, "reassembleReport: clean fixture — no malformed ids (no false positive)");
+    eq(clean.duplicateIds.length, 0, "reassembleReport: clean fixture — no duplicate ids (no false positive)");
+    eq(clean.danglingRefs.length, 0, "reassembleReport: clean fixture — no dangling related refs (no false positive)");
+  }
+
+  // Malformed id: a kept entry whose id does not match code-reviewer-<NNN>. It is
+  // surfaced in malformedIds, but the finding STILL materializes (never dropped
+  // over a cosmetic id defect).
+  const badIdMerge = {
+    kept: [
+      { id: "CR-1", ref: "a.js:1:bug#0", related_ids: [] }, // malformed
+      { id: "", ref: "a.js:2:perf#1", related_ids: [] }, // empty → malformed
+      { ref: "a.js:3:style#2", related_ids: [] }, // omitted id → malformed (undefined branch)
+      { id: "code-reviewer-004", ref: "a.js:5:perf#4", related_ids: [] }, // well-formed
+    ],
+    merged: [],
+    acknowledged_refs: [],
+  };
+  const badId = reassembleReport(badIdMerge, rawFindings, manifest);
+  ok(badId.malformedIds.includes("CR-1"), "reassembleReport: a non-canonical id is surfaced as malformed");
+  // Both halves of the `undefined || ''` normalization: an empty string AND an
+  // omitted `id` key both surface as the readable '(empty)' token.
+  eq(badId.malformedIds.filter((x) => x === "(empty)").length, 2, "reassembleReport: empty-string AND omitted id both surface as '(empty)'");
+  eq(badId.malformedIds.length, 3, "reassembleReport: only the malformed ids are collected (well-formed id not flagged)");
+  eq(badId.report.findings.length, 4, "reassembleReport: a malformed id does NOT drop the finding");
+
+  // duplicate empty-string ids: the log token must be readable ('(empty)'), not a
+  // blank join — the duplicate list normalizes the same way malformed does.
+  const dupEmpty = reassembleReport(
+    { kept: [{ id: "", ref: "a.js:1:bug#0", related_ids: [] }, { id: "", ref: "a.js:2:perf#1", related_ids: [] }], merged: [], acknowledged_refs: [] },
+    rawFindings,
+    manifest,
+  );
+  ok(dupEmpty.duplicateIds.includes("(empty)"), "reassembleReport: a duplicate empty-string id logs as '(empty)', never a blank token");
+
+  // Duplicate id: two active findings carrying the same id breach uniqueness. Both
+  // materialize (harness does not renumber); the collision is surfaced.
+  const dupIdMerge = {
+    kept: [
+      { id: "code-reviewer-001", ref: "a.js:1:bug#0", related_ids: [] },
+      { id: "code-reviewer-001", ref: "a.js:2:perf#1", related_ids: [] }, // SAME id
+    ],
+    merged: [],
+    acknowledged_refs: [],
+  };
+  const dupId = reassembleReport(dupIdMerge, rawFindings, manifest);
+  ok(dupId.duplicateIds.includes("code-reviewer-001"), "reassembleReport: an id on two findings is surfaced as duplicate");
+  eq(dupId.report.findings.length, 2, "reassembleReport: a duplicate id does NOT drop either finding");
+
+  // Dangling related_findings: refs to a non-existent id and to the finding's OWN
+  // id are dropped from the emitted related_findings and surfaced; a VALID
+  // cross-ref is preserved (guards against over-filtering).
+  const danglingMerge = {
+    kept: [
+      { id: "code-reviewer-001", ref: "a.js:1:bug#0", related_ids: ["code-reviewer-002", "code-reviewer-999", "code-reviewer-001"] },
+      { id: "code-reviewer-002", ref: "a.js:2:perf#1", related_ids: [] },
+    ],
+    merged: [],
+    acknowledged_refs: [],
+  };
+  const dangling = reassembleReport(danglingMerge, rawFindings, manifest);
+  const f001 = dangling.report.findings.find((f) => f.id === "code-reviewer-001");
+  eq(JSON.stringify(f001.related_findings), JSON.stringify(["code-reviewer-002"]), "reassembleReport: dangling and self related refs are dropped, valid cross-ref preserved");
+  ok(dangling.danglingRefs.includes("code-reviewer-999"), "reassembleReport: a non-existent related ref is surfaced as dangling");
+  ok(dangling.danglingRefs.includes("code-reviewer-001"), "reassembleReport: a self-referential related ref is surfaced as dangling");
+  eq(dangling.danglingRefs.length, 2, "reassembleReport: only the dangling refs are collected");
+
+  // Dangling check keys on EXISTENCE of the target finding, not on its id being
+  // well-formed: a related_ref to another finding that itself carries a malformed
+  // id (e.g. "CR-2") still resolves — the finding exists, so the correlation is
+  // real; only the target's id LABEL is cosmetically off (already in malformedIds).
+  // Pins this interaction so a future validIds/danglingRefs refactor can't silently
+  // start dropping correlations to malformed-id findings.
+  const malformedTarget = reassembleReport(
+    {
+      kept: [
+        { id: "code-reviewer-001", ref: "a.js:1:bug#0", related_ids: ["CR-2"] },
+        { id: "CR-2", ref: "a.js:2:perf#1", related_ids: [] }, // malformed id, but the finding EXISTS
+      ],
+      merged: [],
+      acknowledged_refs: [],
+    },
+    rawFindings,
+    manifest,
+  );
+  eq(
+    JSON.stringify(malformedTarget.report.findings.find((f) => f.id === "code-reviewer-001").related_findings),
+    JSON.stringify(["CR-2"]),
+    "reassembleReport: a related_ref to an existing (malformed-id) finding is preserved, not dangling",
+  );
+  ok(!malformedTarget.danglingRefs.includes("CR-2"), "reassembleReport: the malformed-id target is NOT surfaced as dangling (it resolves)");
+  ok(malformedTarget.malformedIds.includes("CR-2"), "reassembleReport: the malformed target id is still surfaced in malformedIds");
 }
 
 // #267: diffSection feeds reviewers the caller's byte-faithful diff (never a
