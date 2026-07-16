@@ -85,11 +85,19 @@ opt() {
     return "$_opt_found"
 }
 
-# is_nonneg_int <value> — 0 if value is a non-negative integer, else 1. Empty and
-# any non-digit (including a leading `-` or stray whitespace) fail.
+# is_nonneg_int <value> — 0 if value is a non-negative integer in canonical
+# base-10 form, else 1. Empty, any non-digit (a leading `-` or stray whitespace),
+# AND a leading-zero numeral all fail. Rejecting leading zeros is deliberate: the
+# accepted values feed bash arithmetic (`$(( ))`, `[ -lt ]`), where `030` is read
+# as OCTAL — that silently applies a wrong threshold (ceiling 48, not 60) and `08`
+# crashes with "value too great for base", both bypassing this script's fail-loud
+# exit-2 contract (the silent-wrong-verdict class #327 exists to kill). `0` itself
+# is the sole valid zero.
 is_nonneg_int() {
     case "$1" in
         '' | *[!0-9]*) return 1 ;;
+        0) return 0 ;;
+        0*) return 1 ;;
         *) return 0 ;;
     esac
 }
@@ -137,6 +145,14 @@ cmd_check() {
     fi
     if ! is_nonneg_int "$max_ext"; then
         die "workflow-wall-timeout: LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS must be a non-negative integer, got '$max_ext'"
+    fi
+    # --extensions-used can never exceed the ceiling's extension count: a K past
+    # max_ext is a caller bookkeeping bug (or MAX_EXTENSIONS lowered mid-run), and
+    # left unchecked it inflates next_deadline (timeout*(K+1)) past the ceiling and
+    # keeps returning `continue` — a silently-extended budget, the very drift this
+    # helper removes. Fail loud instead of computing a verdict from invalid state.
+    if [ "$ext_used" -gt "$max_ext" ]; then
+        die "workflow-wall-timeout: --extensions-used ($ext_used) exceeds LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS ($max_ext)"
     fi
 
     # next_deadline: the checkpoint the current (K-extension) budget polls to.
