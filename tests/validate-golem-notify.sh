@@ -130,19 +130,31 @@ run_notify() {
     NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
-# run_notify_no_gid <sandbox> <payload>
+# run_notify_no_gid <sandbox> <payload> [subdir]
 # Like run_notify's jq path but with GOLEM_ID UNSET (via `env --unset=GOLEM_ID`),
 # so branch 1 of the golem-id derivation cannot resolve and the hook falls back to
 # the worktree-basename branch (or the placeholder). Everything else mirrors
 # run_notify: GIT_* scrubbed, HOME pinned at the sandbox, results captured in
 # NOTIFY_RC / NOTIFY_LINE.
+#
+# When [subdir] is given, the hook is run from <sandbox>/<subdir> (created here)
+# instead of the worktree root — the ONLY setup that distinguishes branch 2's
+# `git rev-parse --show-toplevel` derivation from a `pwd` regression (issue #312):
+# from a nested subdir, pwd's basename is the leaf dir while the worktree-root
+# basename stays `issue-N`. The feed is still resolved (and read back) at the
+# worktree root via git-common-dir regardless of the invocation cwd.
 run_notify_no_gid() {
-    local dir="$1" payload="$2"
+    local dir="$1" payload="$2" sub="${3:-}"
     local feed="$dir/.worktrees/.status/feed.jsonl"
+    local rundir="$dir"
     /usr/bin/rm -f "$feed"
+    if [ -n "$sub" ]; then
+        /usr/bin/mkdir -p "$dir/$sub"
+        rundir="$dir/$sub"
+    fi
     NOTIFY_RC=0
     (
-        cd "$dir" &&
+        cd "$rundir" &&
             /usr/bin/printf '%s' "$payload" |
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID \
                 HOME="$dir" \
@@ -323,6 +335,32 @@ test_golemid_placeholder() {
     assert_golemid "plain-checkout" "golem-?" "non-worktree basename → golem-? placeholder"
 }
 
+# cwd-independence (issue #312). Branch 2 derives the golem id from the WORKTREE
+# ROOT via `git rev-parse --show-toplevel`, NOT `pwd`, so a Notification firing
+# from a subdirectory (or a review-harness subagent with its own nested cwd)
+# still resolves `issue-N -> golem-N`. The three tests above run from the sandbox
+# root, where pwd and show-toplevel are indistinguishable — a regression swapping
+# show-toplevel for pwd would pass all of them. This case runs the hook from a
+# NESTED subdir (`nested/work/dir`) whose leaf basename would derive `golem-?`
+# under a pwd read, and asserts the derivation is still `golem-77` — directly
+# pinning the cwd-independence property branch 2 provides. Its own sandbox name
+# (issue-77, not the issue-42 the root case uses) keeps the two tests isolated.
+test_golemid_issue_basename_from_subdir() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (reads .golem back with jq)"
+        return 0
+    fi
+    local sb got
+    new_named_sandbox sb "issue-77"
+    run_notify_no_gid "$sb" '{"message":"awaiting a decision"}' "nested/work/dir"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (issue-77 from subdir)"
+    assert_true "printf '%s' '$NOTIFY_LINE' | jq -e . >/dev/null 2>&1" \
+        "feed line is valid JSON (issue-77 from subdir)"
+    got="$(printf '%s' "$NOTIFY_LINE" | jq -r '.golem' 2>/dev/null || true)"
+    assert_equals "golem-77" "$got" \
+        "cwd-independent: issue-77 root derives golem-77 even from a nested subdir"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox needs git. Gate it from inside a run_test-dispatched body so the
@@ -355,5 +393,6 @@ run_test test_no_jq_still_writes_gate_line "no-jq: still writes a valid gate fee
 run_test test_golemid_issue_basename "golem-id: issue-N basename → golem-N"
 run_test test_golemid_golem_passthrough "golem-id: golem-* basename passes through"
 run_test test_golemid_placeholder "golem-id: unmatched basename → golem-? placeholder"
+run_test test_golemid_issue_basename_from_subdir "golem-id: issue-N from a subdir → golem-N (cwd-independent)"
 
 generate_report
