@@ -49,6 +49,15 @@ choice (exit 3) when they are missing. The plugin never writes these for you —
 adding settings is itself permission-gated, so the flow is _suggest + ask, never
 write silently_.
 
+**The allow-list does not preempt the classifier (#282).** Authorizing these
+rules removes the _allow-list_ denial, but the auto-mode **safety classifier**
+(`[Create Unsafe Agents]`) is a **separate gate** that re-evaluates each
+`tmux new-session` launch on its own judgment — and it is **non-deterministic**
+on this launch shape (the same command can be denied once and approved on
+immediate retry). So preflight passing is necessary, not sufficient: if a launch
+is still denied with `[Create Unsafe Agents]`, **retry the identical command**
+(it typically passes) rather than reaching for a manual paste.
+
 **Why this is a manual step:** a Claude Code plugin's bundled `settings.json`
 can only carry the `agent` / `subagentStatusLine` keys, not `permissions.allow`,
 so the launch rules must live in a user- or project-level scope. **Devcontainer

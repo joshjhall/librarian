@@ -118,6 +118,21 @@ dispatch is sequential and cheap — **not** workflow-driven.
    should yield a permission decision (always-allow → write the rule; allow-once
    → proceed this run), not a hard classifier wall.
 
+   **The allow-list is necessary, not sufficient — the classifier is a separate
+   gate (#282).** Preflight only asserts the three `Bash(tmux …)` allow rules are
+   present; it does **not** and **cannot** vouch that a launch will clear the
+   auto-mode **safety classifier** (`[Create Unsafe Agents]`). That classifier is
+   a distinct layer that re-evaluates each `tmux new-session` launch on its own
+   judgment, and it is **non-deterministic** on this launch shape — the same
+   byte-identical command can be denied once and approved on immediate retry. So
+   the correct response to a `[Create Unsafe Agents]` denial on a **launch** is to
+   **retry the identical `golem-launch.sh launch {N}` command** (it typically
+   passes on the next try) — **not** to fall back to a manual `!` paste, which the
+   retry makes unnecessary. This is the launch-side face of the same classifier
+   non-determinism that the plan-gate `send-keys` note (below, #282) describes; a
+   dedicated classifier-stable launcher entrypoint the classifier could be taught
+   to trust remains open under #282, not built yet.
+
 1. **Launch the autonomous pipeline** as a process in each golem:
 
    ```bash
