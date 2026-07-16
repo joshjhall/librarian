@@ -81,9 +81,11 @@ existing cadence is the clock):
      them to drain — never kill a golem.**
 
 1. **Dispatch each pick** exactly as Phase D: `${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N}` then
-   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N}` (one standalone
-   `tmux new-session` per pick — never a `for`-loop wrapper; see Phase D step 4)
-   in a fresh worktree golem. Update `pool.json` `slots` / `backlog_depth`.
+   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N} --level {L}` (one
+   standalone `tmux new-session` per pick — never a `for`-loop wrapper; see
+   Phase D step 4), passing the pool run's chosen level `{L}` (omitted →
+   defaults to 4), in a fresh worktree golem. Update `pool.json` `slots` /
+   `backlog_depth`.
 
 1. **Repeat** until the backlog is empty and every slot is idle.
 

@@ -211,14 +211,17 @@ Launch a worktree golem (after `${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N
 **one standalone `tmux new-session` per golem**, via the bundled helper:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N}
+${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N} --level {L}
 ```
 
-which runs exactly the bare new-session below (one issue per call):
+where `{L}` is the run's chosen autonomy level (L1–L4). Omit `--level` and the
+launcher defaults to `4` (`GOLEM_LEVEL` is the env fallback). It runs exactly
+the bare new-session below (one issue per call), with `{L}` substituted for the
+level:
 
 ```bash
 tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
-  "claude --permission-mode auto '/workflow:next-issue {N} --level 4' ; claude --permission-mode auto '/workflow:ship-issue'"
+  "claude --permission-mode auto '/workflow:next-issue {N} --level {L}' ; claude --permission-mode auto '/workflow:ship-issue'"
 ```
 
 **Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is
@@ -233,9 +236,9 @@ always-allow writing the rule or allow-once proceeding this run). Critically,
 the allow rule matches only a *bare* `tmux new-session …`: wrapping N launches
 in a `for` loop turns the whole Bash invocation into a for-loop **string** that
 does NOT match `Bash(tmux new-session:*)` and is re-denied. So
-`golem-launch.sh launch {N}` is called **once per issue** (one Bash tool call
-each) — never one looping call. (Use `golem-launch.sh print {N}` to emit only
-the launch line.)
+`golem-launch.sh launch {N} --level {L}` is called **once per issue** (one Bash
+tool call each) — never one looping call. (Use `golem-launch.sh print {N}
+--level {L}` to emit only the launch line.)
 
 `-e GOLEM_ID=golem-{N}` stamps the golem id into the session environment. The
 `Notification` hook reads `$GOLEM_ID` first — the only cwd- and tmux-independent

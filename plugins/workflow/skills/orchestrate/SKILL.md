@@ -143,17 +143,24 @@ dispatch is sequential and cheap — **not** workflow-driven.
 
    ```bash
    # One bare new-session per golem (matches Bash(tmux new-session:*)).
-   ${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N}
+   # Pass the run's chosen autonomy level so the golem runs at it (not L4).
+   ${CLAUDE_PLUGIN_ROOT}/scripts/golem-launch.sh launch {N} --level {L}
    ```
+
+   **Pass `--level {L}`** — the level the operator chose at setup (L1–L4). Omit
+   it and the launcher defaults to `4` (the pre-#301 behavior); `GOLEM_LEVEL` in
+   the environment is the fallback when the flag is absent. Threading the chosen
+   level is what lets a plan-gated (L1–L3) golem actually stop at `ExitPlanMode`
+   — see the plan-gate note below.
 
    **Never wrap N launches in a shell `for` loop.** The allow rule matches a
    *bare* `tmux new-session …` command, but a `for golem in …; do tmux
    new-session …; done` makes the whole Bash invocation a for-loop **string**
    that does NOT match `Bash(tmux new-session:*)` → re-denied by the classifier.
-   To dispatch a batch, call `golem-launch.sh launch {N}` once per issue (one
-   Bash tool call each), never a single looping call. (`golem-launch.sh print
-   {N}` emits just the launch line if you want to run the bare `tmux
-   new-session` yourself.)
+   To dispatch a batch, call `golem-launch.sh launch {N} --level {L}` once per
+   issue (one Bash tool call each), never a single looping call.
+   (`golem-launch.sh print {N} --level {L}` emits just the launch line if you
+   want to run the bare `tmux new-session` yourself.)
 
    **Plan gate (from the golem's autonomy level).** `--level 4` is **not** a blanket
    plan-skip beyond its own level — whether a golem stops for plan approval is set
