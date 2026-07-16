@@ -195,6 +195,85 @@ _run_liveness_snapshot() {
     LIVE_OUT="$(/usr/bin/cat "$tmp/out")"
 }
 
+# Liveness pane wiring (#229/#247): as _run_liveness_snapshot, but stubs `tmux`
+# ON $PATH with a fake that answers `has-session` (success) and `capture-pane`
+# (canned pane text) so the real `--once-liveness` drives the tmux-pane branch of
+# liveness_snapshot() end-to-end — the `case "$pclass" in working) … idle) …`
+# dispatch, its emitted strings, and the pane-read-vs-mtime precedence. The
+# sibling helpers only reach the mtime heartbeat (no tmux session under test);
+# test_pane_liveness_class exercises the classifier in isolation but never the
+# wiring. Args: $1 = stall threshold (sec), $2 = status-file age (sec ago),
+# $3 = the pane text the fake `tmux capture-pane` prints. Sets LIVE_RC/LIVE_OUT.
+#
+# PATH-stub precedent is _run_once_snapshot_no_jq above (it stubs jq OFF PATH).
+# Here the stub PATH must carry the tools the liveness path resolves via PATH:
+# `bash` (the script's interpreter, re-invoked as `bash "$GATE_WATCH"`), `git`
+# (repo_root() in config.sh calls `command git rev-parse` — an unreachable git
+# makes repo_root empty and liveness_snapshot returns early with no output), and
+# our fake `tmux`. Everything else is reached via absolute /usr/bin/* in the
+# script, so this hermetic trio is sufficient. The fake `tmux ls` prints nothing,
+# so only the planted golem-7 status file seeds the sweep — a real host golem
+# session cannot leak in (guards the host-leak failure mode of the mtime path).
+_run_liveness_snapshot_tmux() {
+    local stall="$1" age_secs="$2" pane_text="$3"
+    local tmp
+    tmp="$(/usr/bin/mktemp -d)" || return 1
+    # shellcheck disable=SC2064
+    trap "/usr/bin/rm -rf '$tmp'" RETURN
+
+    local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
+        GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
+
+    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
+    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+    # golem-7 status cache is the activity proxy that discovers golem-7 into the
+    # sweep; backdate its mtime so age = $age_secs deterministically.
+    /usr/bin/printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
+        >"$tmp/.worktrees/.status/golem-7.json"
+    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - age_secs))" \
+        "$tmp/.worktrees/.status/golem-7.json"
+
+    # Hermetic PATH: real bash + real git symlinks, plus a fake tmux script.
+    local stub_bin real_bash real_git
+    stub_bin="$tmp/stub-bin"
+    /usr/bin/mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    real_git="$(command -v git)"
+    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+
+    # Fake tmux: `ls` -> nothing (only the status file seeds the sweep);
+    # `has-session` -> success; `capture-pane` -> the canned pane text from
+    # $FAKE_PANE_TEXT; anything else -> success no-op. Kept bash-3.2 clean.
+    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    ls) exit 0 ;;
+    has-session) exit 0 ;;
+    capture-pane) /usr/bin/printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    /usr/bin/chmod +x "$stub_bin/tmux"
+
+    # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # non-interactive bash, which would undo the hermetic PATH (same guard as the
+    # jq stub). FAKE_PANE_TEXT is read by the fake tmux above.
+    LIVE_RC=0
+    (
+        cd "$tmp" &&
+            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub_bin" \
+                FAKE_PANE_TEXT="$pane_text" \
+                GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
+                GOLEM_WORKTREE_DIR=.worktrees \
+                GOLEM_STATUS_DIR=.worktrees/.status \
+                "$real_bash" "$GATE_WATCH" --once-liveness
+    ) >"$tmp/out" 2>/dev/null && LIVE_RC=0 || LIVE_RC=$?
+    LIVE_OUT="$(/usr/bin/cat "$tmp/out")"
+}
+
 # Regression: a legacy line with no `.ts` field must NOT abort the pipeline and
 # drop every blocked golem. Both the legacy line and a valid dated gate survive.
 # A high TTL keeps the dated gate inside the freshness window regardless of when
@@ -372,6 +451,83 @@ test_liveness_threshold_env_overridable() {
     assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 with a low env threshold"
     assert_contains "$LIVE_OUT" "possible stall" \
         "GOLEM_STALL_THRESHOLD is env-overridable (low threshold flips alive->stall)"
+}
+
+# --- Liveness pane wiring (#229/#247) ---------------------------------------
+# The three tests below drive the tmux-pane branch of liveness_snapshot() END TO
+# END via the real `--once-liveness`, with `tmux` stubbed on PATH answering
+# has-session + capture-pane. They cover the `case "$pclass"` dispatch added in
+# PR #245, its exact emitted strings, and the pane-read-vs-mtime precedence —
+# the wiring test_pane_liveness_class (classifier-only, sourced in isolation)
+# never reaches. `last activity` is the precedence discriminator: it appears
+# ONLY in the mtime-fallback string `alive (process up, last activity … ago)`,
+# so its presence/absence proves whether the pane branch or the mtime heartbeat
+# produced the line (both share the weaker substring `process up`).
+
+# A scrapeable pane showing the run-spinner classifies `working`: the wiring must
+# emit `alive, working` (not the mtime heartbeat). Its absence of `last activity`
+# proves the pane read won over the mtime fallback — even though the golem-7
+# status file is fresh and would ALSO produce an "alive" mtime line.
+test_liveness_pane_working_wiring() {
+    _run_liveness_snapshot_tmux 1200 0 "... some output ... ⏵⏵ esc to interrupt"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for a working pane"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "alive, working" \
+        "A run-spinner pane emits the 'alive, working' wiring string, not the mtime heartbeat"
+    assert_not_contains "$LIVE_OUT" "last activity" \
+        "The pane read wins over the mtime fallback (no 'last activity' heartbeat wording)"
+}
+
+# A scrapeable pane showing the #229 error signature classifies `idle`: the
+# wiring must emit the `idle at prompt` warning. Again `last activity` must be
+# absent — the pane branch short-circuits before the mtime heartbeat.
+test_liveness_pane_idle_wiring() {
+    _run_liveness_snapshot_tmux 1200 0 "⏺ Unknown command: /next-issue"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for an idle pane"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "idle at prompt" \
+        "An idle-at-prompt pane (#229 signature) emits the 'idle at prompt' warning"
+    assert_not_contains "$LIVE_OUT" "last activity" \
+        "The pane read wins over the mtime fallback (no 'last activity' heartbeat wording)"
+}
+
+# Precedence: when the pane is scrapeable but classifies indeterminate (empty
+# class), the wiring must FALL THROUGH to the mtime heartbeat. With a fresh
+# status file that yields `alive (process up, last activity … ago)` — the
+# `last activity` wording proves the fallback ran (the pane case emitted nothing
+# and did not short-circuit).
+test_liveness_pane_indeterminate_falls_through() {
+    _run_liveness_snapshot_tmux 1200 0 "just some scrolling build output"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for an indeterminate pane"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "last activity" \
+        "An indeterminate pane falls through to the mtime heartbeat (pane-read -> mtime precedence)"
+    assert_not_contains "$LIVE_OUT" "alive, working" \
+        "An indeterminate pane does not fabricate a 'working' verdict"
+}
+
+# Distinct precedence path from the indeterminate case above: a session that
+# EXISTS (has-session succeeds) but whose capture-pane comes back EMPTY. The
+# script's own header flags this ("capture-pane is blank until the pane paints")
+# — the `[ -n "$pane" ]` guard is false, so pane_liveness_class() is never called
+# at all and the sweep falls straight through to the mtime heartbeat. The
+# indeterminate test DOES reach the classifier (non-empty pane, empty class); this
+# one exercises the guard itself. An empty $pane_text makes the fake tmux
+# capture-pane print a lone newline, which command substitution strips to "".
+test_liveness_pane_blank_capture_falls_through() {
+    _run_liveness_snapshot_tmux 1200 0 ""
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for a blank capture-pane"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "last activity" \
+        "A blank capture-pane (guard false) falls through to the mtime heartbeat"
+    assert_not_contains "$LIVE_OUT" "alive, working" \
+        "A blank capture-pane does not fabricate a 'working' verdict"
+    assert_not_contains "$LIVE_OUT" "idle at prompt" \
+        "A blank capture-pane does not fabricate an 'idle' verdict"
 }
 
 # --- Helper / mode coverage (#82) -------------------------------------------
@@ -561,6 +717,10 @@ run_test test_liveness_fresh_is_alive "Liveness: fresh-activity golem reports al
 run_test test_liveness_stale_is_possible_stall "Liveness: old-activity golem flagged a possible stall (exit 0)"
 run_test test_liveness_gated_not_stalled "Liveness: gated golem reported gated, not stalled"
 run_test test_liveness_threshold_env_overridable "Liveness: GOLEM_STALL_THRESHOLD is env-overridable"
+run_test test_liveness_pane_working_wiring "Liveness wiring: working pane -> 'alive, working' (pane wins over mtime)"
+run_test test_liveness_pane_idle_wiring "Liveness wiring: idle pane (#229) -> 'idle at prompt' (pane wins over mtime)"
+run_test test_liveness_pane_indeterminate_falls_through "Liveness wiring: indeterminate pane falls through to mtime heartbeat"
+run_test test_liveness_pane_blank_capture_falls_through "Liveness wiring: blank capture-pane (guard false) falls through to mtime heartbeat"
 run_test test_unknown_mode_exits_2 "Unknown mode exits 2 with a usage message"
 run_test test_no_arg_defaults_to_once "No argument defaults to --once (not the error path)"
 run_test test_fmt_age_formats "_fmt_age: seconds vs whole-minute formatting"
