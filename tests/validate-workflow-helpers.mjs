@@ -755,15 +755,72 @@ for (const path of [ORCH, REBASE]) {
     eq(JSON.stringify(r.picks), JSON.stringify([1]), "planRefill: freed lane-0 slot pulls lane 0's head (#1), not global #9");
   }
 
-  // Two freed slots for the same lane pull its first TWO issues in order.
+  // Duplicate LIVE-lane index (issue #264): a lane serves at most ONE head per
+  // sweep — two golems on one serial track at once would break the invariant the
+  // lane pass exists to preserve. The deduped second slot flows to the global
+  // fallback rather than pulling lane 0's #2 or being silently lost.
+  {
+    const r = planRefill({
+      freeSlots: 2, accepting: "accepting", inflightFiles: new Set(),
+      candidates: [cand(9, ["g.js"])],
+      lanes: [lane(0, [[1, ["a.js"]], [2, ["b.js"]], [3, ["c.js"]]])],
+      laneSlots: [0, 0],
+    });
+    eq(JSON.stringify(r.picks), JSON.stringify([1, 9]), "planRefill: duplicate lane-0 slots pick #1 once; second slot flows to global #9 (serial invariant)");
+    ok(!r.picks.includes(2), "planRefill: does NOT dispatch lane 0's 2nd head in the same sweep");
+    eq(r.held_slots, 0, "planRefill: the deduped slot is not lost — global fills it");
+  }
+
+  // Same duplicate, but no global candidate to absorb the freed slot: the second
+  // slot is simply left idle (reported as held_slots), never a second lane head.
   {
     const r = planRefill({
       freeSlots: 2, accepting: "accepting", inflightFiles: new Set(),
       candidates: [],
-      lanes: [lane(0, [[1, ["a.js"]], [2, ["b.js"]], [3, ["c.js"]]])],
+      lanes: [lane(0, [[1, ["a.js"]], [2, ["b.js"]]])],
       laneSlots: [0, 0],
     });
-    eq(JSON.stringify(r.picks), JSON.stringify([1, 2]), "planRefill: two lane-0 slots pull #1 then #2 (serial order survives)");
+    eq(JSON.stringify(r.picks), JSON.stringify([1]), "planRefill: duplicate lane-0 with no global backfill picks #1 only");
+    eq(r.held_slots, 1, "planRefill: the unfilled deduped slot is surfaced as idle");
+  }
+
+  // Over-long laneSlots (issue #264): more entries than freeSlots must not
+  // produce more picks+holds than freeSlots. One free slot, three colliding
+  // lanes — only the first slot is consumed (held), the rest are clamped out.
+  {
+    const r = planRefill({
+      freeSlots: 1,
+      accepting: "accepting",
+      inflightFiles: new Set(["a.js", "b.js", "c.js"]),
+      candidates: [],
+      lanes: [
+        lane(0, [[1, ["a.js"]]]),
+        lane(1, [[2, ["b.js"]]]),
+        lane(2, [[3, ["c.js"]]]),
+      ],
+      laneSlots: [0, 1, 2],
+    });
+    eq(r.held.length, 1, "planRefill: over-long laneSlots holds at most freeSlots lanes (not 3)");
+    ok(r.picks.length + r.held.length <= 1, "planRefill: picks+holds never exceed freeSlots");
+    eq(r.held[0].issue, 1, "planRefill: only the first freed slot's lane head is processed");
+  }
+
+  // Duplicate lane where the FIRST occurrence HOLDS (issue #264): the head is
+  // dequeued and held, the lane is marked seen, so the duplicate's slot must
+  // flow to global — never pull the lane's now-exposed 2nd issue in this sweep.
+  {
+    const r = planRefill({
+      freeSlots: 2,
+      accepting: "accepting",
+      inflightFiles: new Set(["a.js"]), // collides with lane 0's head #1
+      candidates: [cand(9, ["g.js"])], // disjoint global work available
+      lanes: [lane(0, [[1, ["a.js"]], [2, ["b.js"]]])],
+      laneSlots: [0, 0],
+    });
+    eq(r.held.length, 1, "planRefill: duplicate-hold — exactly one lane-0 head is held");
+    eq(r.held[0].issue, 1, "planRefill: duplicate-hold — the held head is lane 0's #1");
+    eq(JSON.stringify(r.picks), JSON.stringify([9]), "planRefill: duplicate-hold — the deduped slot flows to global #9");
+    ok(!r.picks.includes(2), "planRefill: duplicate-hold — does NOT pull lane 0's exposed 2nd issue");
   }
 
   // --- Exhausted lane falls back to the global pick for that slot. ------------
@@ -783,6 +840,18 @@ for (const path of [ORCH, REBASE]) {
       candidates: [cand(7, ["g.js"])], lanes: [lane(0, [[1, ["a"]]])], laneSlots: [5],
     });
     eq(JSON.stringify(r.picks), JSON.stringify([7]), "planRefill: an unknown freed-lane index falls back to global");
+  }
+  // Repeated exhausted/unknown index (issue #264): seenLanes only guards LIVE
+  // lanes, so [9, 9] with lane 9 absent lets BOTH freed slots reach global —
+  // the dedup must not swallow a slot that never made a lane pick.
+  {
+    const r = planRefill({
+      freeSlots: 2, accepting: "accepting", inflightFiles: new Set(),
+      candidates: [cand(7, ["g7.js"]), cand(8, ["g8.js"])],
+      lanes: [lane(0, [[1, ["a"]]])], // lane 9 does not exist
+      laneSlots: [9, 9],
+    });
+    eq(JSON.stringify(r.picks), JSON.stringify([7, 8]), "planRefill: repeated unknown lane index — both freed slots flow to global");
   }
 
   // --- Serial hold: a colliding lane head HOLDS its slot (no skip / no steal).
