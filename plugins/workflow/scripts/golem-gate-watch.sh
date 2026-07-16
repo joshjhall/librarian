@@ -120,6 +120,15 @@ resolve_status_dir() {
 # "escalation — <message>" and a `dead-end` line "dead-end — <message>" so the
 # reader can tell a judgement call (and the L4-blocking dead-end) apart from a
 # routine permission gate.
+#
+# The orphan sentinel `golem-?` is dropped BEFORE the event/TTL predicate (issue
+# #323): golem-notify.sh stamps a feed line `golem-?` when the Notification fires
+# from a session with no GOLEM_ID that is not in a worktree root (the
+# orchestrator's own session, a plain `claude` in the main checkout). No real
+# golem ever carries that id, so no future `idle` supersedes it, and a no-`ts`
+# line bypasses the TTL by design (#24) — so an orphan `golem-?` gate would stay
+# BLOCKED forever. It is never actionable anyway (`golem-?` has no golem-attach
+# target), so it is never surfaced as a block.
 # Requires jq; a no-op (no output, success) when jq or the feed is absent.
 feed_snapshot() {
     local feed="$1"
@@ -139,6 +148,7 @@ feed_snapshot() {
             (now) as $now
             | group_by(.golem)
             | map(.[-1])
+            | map(select(.golem != "golem-?"))
             | map(select((.event == "gate" or .event == "blocked" or .event == "escalation" or .event == "dead-end")
                          and (if (.ts | type) == "string" and .ts != ""
                               then (($now - (.ts | fromdateiso8601)) < $ttl)
