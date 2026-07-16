@@ -177,10 +177,13 @@ plan mode (`⏵⏵ auto mode on`, branch name in the status bar).
 **Fallback:** if the directed send is still classifier-blocked, attach the real
 TTY (`${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`) and press option 1
 there. To skip the gate entirely on a medium issue, dispatch it at `--level 4`
-(full autonomy, no plan checkpoint). Whether `send-keys` is unconditionally
-agent-drivable (is the `#29` "not agent-drivable" claim now stale?) and the
-classifier's non-determinism on these sends are tracked as open follow-ups
-(#281, #282).
+(full autonomy, no plan checkpoint). The `#29` "not agent-drivable" claim is
+**settled** (#281): it was only ever about an agent relaying option 1 *through
+the auto-mode classifier* (the undirected send), never the directed
+`tmux send-keys` — which a live batch verified drives option-1 approval reliably
+(4/4). What remains open is the narrower **classifier non-determinism** on these
+sends, tracked in #282 — the reason the attach-and-press fallback above still
+earns its place.
 
 | Realization        | Built on | Payload (process)                         | Exit                            |
 | ------------------ | -------- | ----------------------------------------- | ------------------------------- |

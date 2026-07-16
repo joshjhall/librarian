@@ -198,8 +198,13 @@ dispatch is sequential and cheap — **not** workflow-driven.
    send is still classifier-blocked, attach the real TTY
    (`${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`) and press option 1 there.
    After sending, verify the golem left plan mode (`⏵⏵ auto mode on`, branch in
-   the status bar). Whether `send-keys` is unconditionally agent-drivable and the
-   classifier's non-determinism are tracked as open follow-ups (#281, #282). See
+   the status bar). A **directed** `tmux send-keys` after operator approval **is**
+   agent-drivable — verified in a live batch (4/4 plan gates approved this way)
+   and settled in #281: the `#29` "not agent-drivable" caveat was only ever about
+   an agent relaying option 1 *through the auto-mode classifier* (the undirected
+   send above), a distinct path, never `send-keys` itself. The residual concern is
+   narrower — the classifier's **non-determinism** on these sends, tracked in #282
+   (which is what keeps the attach-and-press fallback meaningful). See
    `mode-protocol.md` § *Plan gate by level* for the full option-1-vs-option-2
    classifier contract.
 
