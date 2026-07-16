@@ -36,6 +36,15 @@ Subcommands (each emits `key=value` lines to stdout, one per line):
      escalation gates auto-pass at L4 only (human at L1-L3); a --dead-end defers
      to a human at every level, L4 included.
 
+  sweep-interval --level N
+         -> sweep_interval_seconds
+     The orchestrator's Phase M status-sweep cadence, scaled by level: higher
+     levels assume golems run longer without oversight, so they sweep less
+     often (L1=180, L2=300, L3=480, L4=900 seconds — the issue #304 ~3/5/8/15-min
+     table). This is a PURE level->seconds map: the env override
+     (GOLEM_SWEEP_INTERVAL) is applied by golem-status.sh at the script boundary,
+     not here, so the resolver stays deterministic and parity-testable.
+
   read [--state-level N]
          -> autonomy_level
      Resolve the level a persisted state file records: a present state-level
@@ -51,11 +60,16 @@ from __future__ import annotations
 import sys
 
 USAGE = (
-    "Usage: autonomy-resolve <level|gate|read> [options]\n"
+    "Usage: autonomy-resolve <level|gate|sweep-interval|read> [options]\n"
     "  level [--from-args STR] [--chosen-level N] [--severity LABEL]\n"
     "  gate <routine|escalation> --level N [--dead-end]\n"
+    "  sweep-interval --level N\n"
     "  read [--state-level N]"
 )
+
+# Phase M status-sweep cadence, seconds, by autonomy level (issue #304). Higher
+# level -> less frequent sweep (golems run longer without oversight).
+SWEEP_INTERVAL_SECONDS = {1: 180, 2: 300, 3: 480, 4: 900}
 
 
 def die(message: str) -> int:
@@ -174,6 +188,20 @@ def cmd_gate(args: list[str]) -> int:
     return 0
 
 
+def cmd_sweep_interval(args: list[str]) -> int:
+    try:
+        level = parse_level(opt(args, "--level"))
+    except ValueError as exc:
+        return die("autonomy-resolve: level must be 1-4, got '" + str(exc) + "'")
+    if level is None:
+        return die("autonomy-resolve: sweep-interval needs --level N")
+
+    sys.stdout.write(
+        "sweep_interval_seconds=" + str(SWEEP_INTERVAL_SECONDS[level]) + "\n"
+    )
+    return 0
+
+
 def cmd_read(args: list[str]) -> int:
     state_level = opt(args, "--state-level")
 
@@ -200,6 +228,8 @@ def main(argv: list[str]) -> int:
         return cmd_level(rest)
     if sub == "gate":
         return cmd_gate(rest)
+    if sub == "sweep-interval":
+        return cmd_sweep_interval(rest)
     if sub == "read":
         return cmd_read(rest)
     return die("autonomy-resolve: unknown subcommand '" + sub + "'")

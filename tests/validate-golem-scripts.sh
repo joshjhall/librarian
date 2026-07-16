@@ -950,6 +950,109 @@ EOF
     assert_contains "$RUN_OUT" "GOLEM" "prints the table header"
 }
 
+# --- golem-status.sh --watch (level-scaled status sweep, #304) ---------------
+
+# run_in_watch <sandbox> <timeout-secs> [env KEY=VAL ...] -- <args...>
+# Like run_in but for the never-terminating --watch loop: runs golem-status.sh
+# under `timeout` (SIGTERM after N s) so the poll loop is bounded, with optional
+# extra env (e.g. GOLEM_SWEEP_INTERVAL) prepended. `timeout` exit 124 (killed)
+# is normalized to 0 — a bounded watch that had to be killed is the SUCCESS case
+# here. Captures combined output in RUN_OUT, the (normalized) code in RUN_RC.
+run_in_watch() {
+    local dir="$1" secs="$2"
+    shift 2
+    local extra_env=()
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+        extra_env+=("$1")
+        shift
+    done
+    shift # drop the `--`
+    RUN_RC=0
+    RUN_OUT="$(cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$dir" \
+            TMUX= TMUX_TMPDIR="$dir/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "${extra_env[@]}" \
+            /usr/bin/timeout "$secs" "$REAL_BASH" "$STATUS" "$@" 2>&1)" || RUN_RC=$?
+    [ "$RUN_RC" = "124" ] && RUN_RC=0
+}
+
+# An unknown argument is a fail-loud usage error (exit 2), not a silent no-op.
+test_status_unknown_arg_exits_2() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$STATUS" --bogus
+    assert_exit 2 "$RUN_RC" "golem-status --bogus exits 2"
+    assert_contains "$RUN_OUT" "unknown argument" "names the bad argument"
+}
+
+# --level out of 1-4 range is rejected before any loop starts.
+test_status_watch_bad_level_exits_2() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$STATUS" --watch --level 9
+    assert_exit 2 "$RUN_RC" "golem-status --watch --level 9 exits 2"
+    assert_contains "$RUN_OUT" "level must be 1-4" "reports the out-of-range level"
+}
+
+# A non-integer --interval is rejected up front.
+test_status_watch_bad_interval_exits_2() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$STATUS" --watch --interval abc
+    assert_exit 2 "$RUN_RC" "golem-status --watch --interval abc exits 2"
+    assert_contains "$RUN_OUT" "positive integer" "reports the bad interval"
+}
+
+# --watch re-renders on the interval: a planted row appears more than once within
+# the bounded window. GOLEM_SWEEP_INTERVAL=1 keeps the test fast and proves the
+# env override beats the level default (L3 would otherwise wait 480s).
+test_status_watch_loops_with_env_override() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    if ! command -v timeout >/dev/null 2>&1; then
+        skip_test "timeout not available (cannot bound the --watch loop)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    run_in_watch "$sb" 3 GOLEM_SWEEP_INTERVAL=1 -- --watch --level 3
+    assert_exit 0 "$RUN_RC" "bounded --watch loop exits cleanly (killed by timeout)"
+    assert_contains "$RUN_OUT" "Status sweep every 1s (level 3)" \
+        "header shows the env-override interval, not the L3 default"
+    # The planted header line should render at least twice across ~3 one-second
+    # sweeps — proof the loop re-polls rather than rendering once.
+    local count
+    count="$(/usr/bin/printf '%s\n' "$RUN_OUT" | /usr/bin/grep -c '^GOLEM ')"
+    assert_true "[ '$count' -ge 2 ]" "renders repeatedly (>=2 sweeps in 3s, got $count)"
+}
+
+# With no --interval and no env override, the cadence comes from the resolver's
+# level-scaled default (L4 -> 900s). We can't wait 900s, so assert only that the
+# header reports the resolved default and the first render happened.
+test_status_watch_uses_resolver_default() {
+    if ! command -v timeout >/dev/null 2>&1; then
+        skip_test "timeout not available (cannot bound the --watch loop)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_in_watch "$sb" 2 -- --watch --level 4
+    assert_exit 0 "$RUN_RC" "bounded --watch loop exits cleanly"
+    assert_contains "$RUN_OUT" "Status sweep every 900s (level 4)" \
+        "header shows the L4 resolver default (900s)"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init` + a commit, so the whole suite needs
@@ -1014,5 +1117,10 @@ run_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"
 run_test test_status_renders_planted_row "golem-status: planted cache row renders in the table"
+run_test test_status_unknown_arg_exits_2 "golem-status: unknown argument exits 2 (#304)"
+run_test test_status_watch_bad_level_exits_2 "golem-status: --watch --level out of range exits 2 (#304)"
+run_test test_status_watch_bad_interval_exits_2 "golem-status: --watch --interval non-integer exits 2 (#304)"
+run_test test_status_watch_loops_with_env_override "golem-status: --watch re-renders; GOLEM_SWEEP_INTERVAL overrides the level default (#304)"
+run_test test_status_watch_uses_resolver_default "golem-status: --watch uses the resolver's level-scaled default cadence (#304)"
 
 generate_report

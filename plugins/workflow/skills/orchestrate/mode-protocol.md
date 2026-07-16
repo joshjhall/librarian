@@ -357,6 +357,29 @@ the operator/harness kills it — there is deliberately **no** "sustained absenc
 countdown, because an unconditionally surviving loop is simpler and strictly
 safer than any empty-poll timer.
 
+### Status-sweep cadence
+
+The gate-watch above is a **push** surface, event-driven — it fires on the
+*transition into* a fresh gate. Its **pull** complement is the periodic **status
+sweep**: `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --watch`, a rolling
+at-a-glance re-render of every golem's row on a fixed interval. It is **on by
+default at every level (L1–L4)** — the orchestrator arms it on entering
+`monitor`/`watch` without asking (the old "would you like a sweep?" opt-in prompt
+is removed, #304); the operator may silence or re-cadence it.
+
+The interval **scales by autonomy level** (higher level → less frequent sweep,
+since golems run longer without oversight). The mapping is owned by
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh sweep-interval --level N`
+(single source of truth for per-level dispositions, #190) — **L1 180s / L2 300s /
+L3 480s / L4 900s**. Precedence when `golem-status.sh --watch` resolves its
+cadence: an explicit `--interval S` → the `GOLEM_SWEEP_INTERVAL` env override →
+the resolver's level-scaled default. In a **mixed-level batch** (tracks at
+different levels), key off the **lowest level present** — tightest oversight wins
+— by passing `--level <min active level>`. The sweep loop carries no empty-poll
+exit (mirrors `golem-gate-watch.sh --stream*`): a transient zero-golem handoff
+window renders "No active golems" and keeps sweeping, stopping only when the
+operator/harness kills it.
+
 ### Dispatch Decision Sub-Tree
 
 ```text

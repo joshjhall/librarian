@@ -100,6 +100,17 @@ test_gate_dead_end_overrides() {
     assert_resolves "disposition=human" gate routine --level 3 --dead-end
 }
 
+# --- sweep-interval: level-scaled Phase M status-sweep cadence (#304) ---------
+
+test_sweep_interval_by_level() {
+    # Higher level -> less frequent sweep. Pure level->seconds map (the
+    # GOLEM_SWEEP_INTERVAL env override is applied by golem-status.sh, not here).
+    assert_resolves "sweep_interval_seconds=180" sweep-interval --level 1
+    assert_resolves "sweep_interval_seconds=300" sweep-interval --level 2
+    assert_resolves "sweep_interval_seconds=480" sweep-interval --level 3
+    assert_resolves "sweep_interval_seconds=900" sweep-interval --level 4
+}
+
 # --- level selection, critical cap, and derived mirrors ----------------------
 
 # Expected `level` block builder to keep rows readable.
@@ -181,6 +192,8 @@ test_usage_errors() {
     assert_usage_error gate routine                  # missing --level
     assert_usage_error level --from-args "--level 9" # embedded bad level
     assert_usage_error read --state-level 7          # out-of-range state level
+    assert_usage_error sweep-interval                # missing --level
+    assert_usage_error sweep-interval --level 9      # out-of-range sweep level
 }
 
 # --- guard: the suite is not a silent no-op ----------------------------------
@@ -205,6 +218,7 @@ test_parity_runtime() {
 run_test test_gate_routine "routine gate: auto at L3-L4, human at L1-L2"
 run_test test_gate_escalation "escalation gate: auto at L4 only, human at L1-L3"
 run_test test_gate_dead_end_overrides "dead-end: human at every level incl. L4"
+run_test test_sweep_interval_by_level "sweep-interval: level-scaled cadence L1..L4 (#304)"
 run_test test_level_no_signal_is_l1 "level: no signal -> L1 default"
 run_test test_level_deprecated_aliases_removed "level: removed aliases/env -> L1 (only --level 4 reaches L4)"
 run_test test_level_explicit_flag_wins "level: explicit --level wins"

@@ -304,8 +304,42 @@ Authoritative status comes from **PR + issue-label state**. The
    (`LIBRARIAN_CI_INFRA_RETRIES`, default 1) and degrades to escalate-with-note,
    never blocking shipping.
 
-1. **Loop** (for `monitor`/`watch`): re-poll on an interval, surfacing changes.
-   Between sweeps, accept mid-flight commands (see Surface below).
+1. **Loop** (for `monitor`/`watch`): the periodic status sweep is **on by
+   default at every level — arm it automatically, do NOT ask** ("would you like a
+   sweep?" is gone; #304). On entering `monitor`/`watch`, start the rolling
+   at-a-glance sweep and re-poll on its interval, surfacing changes. Between
+   sweeps, accept mid-flight commands (see Surface below). The operator can
+   silence or re-cadence it, but the default is armed.
+
+   Run the sweep TTY-free via the bundled script so it works host / bare-linux /
+   container identically (no `just`):
+
+   ```text
+   Monitor({                                       # rolling status sweep
+     command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --watch --level N",
+     description: "periodic golem status sweep (level-scaled)",
+     persistent: true,
+   })
+   ```
+
+   **Cadence scales by autonomy level** — higher levels assume golems run longer
+   without oversight, so they sweep less often (the exact seconds live in
+   `autonomy-resolve.sh sweep-interval --level N`, the single source of truth,
+   #190/#304 — the skill does not re-derive them):
+
+   | Level | Default sweep interval |
+   |-------|------------------------|
+   | L1    | ~3 min (180s)          |
+   | L2    | ~5 min (300s)          |
+   | L3    | ~8 min (480s)          |
+   | L4    | ~15 min (900s)         |
+
+   The interval is **env-overridable** via `GOLEM_SWEEP_INTERVAL` (seconds; beats
+   the level default). In a **mixed-level batch** (tracks at different levels),
+   key the sweep off the **lowest level present** — tightest oversight wins — i.e.
+   pass `--level <min active level>`. This is a *pull* rolling sweep; it
+   complements, and does not replace, the *push* gate-watch below (which fires on
+   gate transitions, not on a rolling cadence).
 
 **Supervised live golems (pre-PR).** The PR poll above covers golems that have
 opened a PR. While a golem is still working it has no PR yet, so watch it

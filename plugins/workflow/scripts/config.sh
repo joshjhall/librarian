@@ -38,6 +38,14 @@
 #   GOLEM_HEARTBEAT_INTERVAL
 #                        Poll interval for the liveness stream (--stream-liveness),
 #                        seconds.                         Default: 60
+#   GOLEM_SWEEP_INTERVAL Cadence, seconds, of the orchestrator's Phase M status
+#                        sweep (golem-status.sh --watch, #304). Env OVERRIDE for
+#                        the level-scaled default: unset -> the per-level cadence
+#                        from autonomy-resolve.sh (L1 180 / L2 300 / L3 480 / L4
+#                        900). Deliberately has NO `:=` default line below — its
+#                        absence must fall through to the resolver, so
+#                        golem-status.sh reads it directly rather than defaulting
+#                        it here.                          Default: (unset)
 #
 # This file only DEFINES variables (no side effects beyond `export`), so it is
 # safe to source from any script.
