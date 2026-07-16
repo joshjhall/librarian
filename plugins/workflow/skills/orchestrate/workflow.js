@@ -1059,38 +1059,36 @@ async function runPollSweep() {
         continue
       }
 
-      const [result] = await pipeline(
-        [pr],
-        (p) =>
-          agent(overlapPrompt(p), {
-            label: `overlap:#${p.number}`,
-            phase: 'Rebase',
-            schema: OVERLAP,
-          }),
-        (ov) => {
-          // Logic overlap (or a failed classify) → never auto-rebase; escalate.
-          if (!ov || ov.overlap === 'has-logic' || !ov.rebase_needed) {
-            // On a FAILED classify we have no file list, so a per-file escalation
-            // map would be empty and the PR would surface nothing to the human —
-            // it'd look quietly handled. Emit one synthetic whole-PR escalation in
-            // that case so a classify failure is always visible.
-            let escalated
-            if (!ov) {
-              escalated = [{ file: '(whole PR)', reason: 'overlap classify failed — manual rebase review' }]
-            } else {
-              escalated = ov.conflict_files.map((f) => ({
-                file: f,
-                reason: ov.overlap === 'has-logic' ? 'logic overlap — human review' : 'rebase not attempted',
-              }))
-            }
-            return Promise.resolve({
-              pr: pr.number,
-              branch: pr.branch,
-              rebased: false,
-              resolved: [],
-              escalated,
-            })
+      // Sequential overlap → rebase (not pipeline([pr], ...)): N is 1 here — the
+      // real fan-out is the outer `while (i < queue.length)` loop. The explicit
+      // try/catch (issue #265) keeps a thrown HARNESS bug visible and attributable
+      // (its message escalates the whole PR) instead of pipeline()'s silent
+      // swallow-to-null; a rebase-agent that merely RETURNS null still falls
+      // through to the `if (result)` guard below exactly as before.
+      let result
+      try {
+        const ov = await agent(overlapPrompt(pr), {
+          label: `overlap:#${pr.number}`,
+          phase: 'Rebase',
+          schema: OVERLAP,
+        })
+        // Logic overlap (or a failed classify) → never auto-rebase; escalate.
+        if (!ov || ov.overlap === 'has-logic' || !ov.rebase_needed) {
+          // On a FAILED classify we have no file list, so a per-file escalation
+          // map would be empty and the PR would surface nothing to the human — it'd
+          // look quietly handled. Emit one synthetic whole-PR escalation in that
+          // case so a classify failure is always visible.
+          let escalated
+          if (!ov) {
+            escalated = [{ file: '(whole PR)', reason: 'overlap classify failed — manual rebase review' }]
+          } else {
+            escalated = ov.conflict_files.map((f) => ({
+              file: f,
+              reason: ov.overlap === 'has-logic' ? 'logic overlap — human review' : 'rebase not attempted',
+            }))
           }
+          result = { pr: pr.number, branch: pr.branch, rebased: false, resolved: [], escalated }
+        } else {
           // Trivial-only (or no-conflict) → dispatch the existing rebase-agent.
           // The agent returns only { resolved, escalated }; stamp pr/branch and
           // derive rebased = (escalated.length === 0) so this path's result matches
@@ -1105,25 +1103,40 @@ async function runPollSweep() {
             prompt = rebasePrompt(pr, ov)
           } catch (e) {
             // A conflict_files entry (LLM-derived) failed the path allowlist —
-            // escalate the whole PR for manual review rather than feed a
-            // poisoned prompt to the Edit+Bash rebase-agent.
+            // escalate the whole PR for manual review rather than feed a poisoned
+            // prompt to the Edit+Bash rebase-agent.
             log(`rebase SKIPPED for PR #${pr.number} — ${e.message}`)
-            return Promise.resolve({
+            result = {
               pr: pr.number,
               branch: pr.branch,
               rebased: false,
               resolved: [],
               escalated: [{ file: '(whole PR)', reason: `untrusted conflict path — manual rebase review (${e.message})` }],
-            })
+            }
           }
-          return agent(prompt, {
-            label: `rebase:#${pr.number}`,
-            phase: 'Rebase',
-            agentType: 'workflow:rebase-agent',
-            schema: REBASE_RESULT,
-          }).then((r) => r && { pr: pr.number, branch: pr.branch, rebased: r.escalated.length === 0, ...r })
-        },
-      )
+          if (prompt) {
+            const r = await agent(prompt, {
+              label: `rebase:#${pr.number}`,
+              phase: 'Rebase',
+              agentType: 'workflow:rebase-agent',
+              schema: REBASE_RESULT,
+            })
+            result = r && { pr: pr.number, branch: pr.branch, rebased: r.escalated.length === 0, ...r }
+          }
+        }
+      } catch (e) {
+        // A harness bug threw mid-classify/rebase (previously swallowed to null by
+        // pipeline()). Surface the message so it reads as a code fault, not an
+        // agent failure, and escalate the whole PR for manual review.
+        log(`rebase FAILED for PR #${pr.number} — harness error: ${e.message}`)
+        result = {
+          pr: pr.number,
+          branch: pr.branch,
+          rebased: false,
+          resolved: [],
+          escalated: [{ file: '(whole PR)', reason: `harness error — ${e.message}` }],
+        }
+      }
 
       if (result) {
         rebases.push(result)

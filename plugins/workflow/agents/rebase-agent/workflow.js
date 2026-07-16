@@ -232,89 +232,79 @@ const outcomes = await parallel(
     }
 
     // classify → resolve → verify(regen + re-test), short-circuiting on escalate.
-    const [outcome] = await pipeline(
-      [file],
-      (f) =>
-        agent(classifyPrompt(f), {
-          label: `classify:${f}`,
-          phase: 'Resolve',
-          agentType: 'workflow:rebase-agent',
-          schema: CLASSIFY_SCHEMA,
-        }),
-      (cls) => {
-        if (!cls || cls.escalate || cls.strategy === 'logic') {
-          return Promise.resolve({
-            file,
-            kind: 'escalated',
-            reason: cls ? cls.reason : 'classification failed',
-          })
-        }
-        // Revalidate the (LLM-derived) strategy against the allowlist before it
-        // flows into the resolve prompt — defense-in-depth for direct/test mode
-        // where CLASSIFY_SCHEMA's enum may not be enforced. A bad value
-        // escalates this file rather than throwing through the pipeline.
-        let prompt
-        try {
-          prompt = resolvePrompt(file, cls)
-        } catch (e) {
-          return Promise.resolve({
-            file,
-            kind: 'escalated',
-            reason: `unusable classification — manual review (${e.message})`,
-          })
-        }
-        return agent(prompt, {
-          label: `resolve:${file}`,
-          phase: 'Resolve',
-          agentType: 'workflow:rebase-agent',
-          schema: RESOLVE_SCHEMA,
-        }).then((res) => ({ file, cls, res }))
-      },
-      async (step) => {
-        // Already terminal (escalated) — pass through.
-        if (step.kind === 'escalated') return step
-        const { cls, res } = step
-        if (!res || !res.resolved) {
-          return {
-            file,
-            kind: 'escalated',
-            reason: res ? res.summary : 'resolve failed',
-            ours_summary: res ? res.ours_summary : undefined,
-            theirs_summary: res ? res.theirs_summary : undefined,
-          }
-        }
+    // Sequential awaits (not pipeline([file], ...)): N is 1 here — the real
+    // fan-out is the outer parallel(files.map(...)). The explicit try/catch keeps
+    // a thrown HARNESS bug visible and attributable (its message escalates this
+    // file) instead of pipeline()'s silent swallow-to-null, which conflated a code
+    // fault with an agent failure (issue #265). An agent that merely RETURNS null
+    // still flows through the same guards below and escalates as before.
+    try {
+      const cls = await agent(classifyPrompt(file), {
+        label: `classify:${file}`,
+        phase: 'Resolve',
+        agentType: 'workflow:rebase-agent',
+        schema: CLASSIFY_SCHEMA,
+      })
+      if (!cls || cls.escalate || cls.strategy === 'logic') {
+        return { file, kind: 'escalated', reason: cls ? cls.reason : 'classification failed' }
+      }
 
-        // Per-file checkpoint: regen + re-test, with a bounded loop-until-dry
-        // over flaky re-tests. A regen/verify failure escalates THIS file only.
-        let attempt = 0
-        let verdict = null
-        let budgetGated = false
-        while (attempt < MAX_FLAKES) {
-          if (budget.total && budget.remaining() < BUDGET_FLOOR) {
-            log(`budget low — stopping verify for "${file}" after ${attempt} attempt(s)`)
-            budgetGated = true
-            break
-          }
-          attempt++
-          verdict = await agent(verifyPrompt(file, cls, attempt), {
-            label: `verify:${file}#${attempt}`,
-            phase: 'Resolve',
-            agentType: 'workflow:rebase-agent',
-            schema: VERIFY_SCHEMA,
-          })
-          if (!verdict) break
-          if (verdict.ok) return { file, kind: 'resolved', strategy: cls.strategy }
-          if (!verdict.flaky) break // hard failure — no point retrying
-        }
+      // Revalidate the (LLM-derived) strategy against the allowlist before it
+      // flows into the resolve prompt — defense-in-depth for direct/test mode
+      // where CLASSIFY_SCHEMA's enum may not be enforced. A bad value escalates
+      // this file rather than throwing.
+      let prompt
+      try {
+        prompt = resolvePrompt(file, cls)
+      } catch (e) {
+        return { file, kind: 'escalated', reason: `unusable classification — manual review (${e.message})` }
+      }
+      const res = await agent(prompt, {
+        label: `resolve:${file}`,
+        phase: 'Resolve',
+        agentType: 'workflow:rebase-agent',
+        schema: RESOLVE_SCHEMA,
+      })
+      if (!res || !res.resolved) {
         return {
           file,
           kind: 'escalated',
-          reason: verifyExitReason(verdict, budgetGated),
+          reason: res ? res.summary : 'resolve failed',
+          ours_summary: res ? res.ours_summary : undefined,
+          theirs_summary: res ? res.theirs_summary : undefined,
         }
-      },
-    )
+      }
 
-    return outcome
+      // Per-file checkpoint: regen + re-test, with a bounded loop-until-dry
+      // over flaky re-tests. A regen/verify failure escalates THIS file only.
+      let attempt = 0
+      let verdict = null
+      let budgetGated = false
+      while (attempt < MAX_FLAKES) {
+        if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+          log(`budget low — stopping verify for "${file}" after ${attempt} attempt(s)`)
+          budgetGated = true
+          break
+        }
+        attempt++
+        verdict = await agent(verifyPrompt(file, cls, attempt), {
+          label: `verify:${file}#${attempt}`,
+          phase: 'Resolve',
+          agentType: 'workflow:rebase-agent',
+          schema: VERIFY_SCHEMA,
+        })
+        if (!verdict) break
+        if (verdict.ok) return { file, kind: 'resolved', strategy: cls.strategy }
+        if (!verdict.flaky) break // hard failure — no point retrying
+      }
+      return { file, kind: 'escalated', reason: verifyExitReason(verdict, budgetGated) }
+    } catch (e) {
+      // A harness bug threw mid-resolve (previously swallowed to null by
+      // pipeline()). Surface the message so it reads as a code fault, not an
+      // agent failure, and escalate this file for manual review.
+      log(`escalating "${file}" — harness error: ${e.message}`)
+      return { file, kind: 'escalated', reason: `harness error — ${e.message}` }
+    }
   }),
 )
 
