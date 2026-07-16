@@ -176,6 +176,19 @@ test_classifier_idle() {
         "waiting-for-input"
 }
 
+# The second idle arm — "waiting for input" WITHOUT "your" — matches only
+# golem-notify.sh's line-85 case, never line 84. Pins it distinctly so a
+# dropped/reordered/typo'd arm 2 (which would fall through to the gate default
+# and falsely report a golem as BLOCKED) fails here. (#251)
+test_classifier_idle_no_your() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (classifier + JSON validation need jq)"
+        return 0
+    fi
+    assert_event '{"message":"Claude is waiting for input"}' "idle" \
+        "waiting-for-input (no \"your\") → arm 2"
+}
+
 test_classifier_escalation() {
     if ! command -v jq >/dev/null 2>&1; then
         skip_test "jq not available (classifier + JSON validation need jq)"
@@ -332,6 +345,7 @@ if git_unavailable; then
 fi
 
 run_test test_classifier_idle "classifier: waiting-for-input → idle"
+run_test test_classifier_idle_no_your "classifier: waiting-for-input (no \"your\") → idle arm 2"
 run_test test_classifier_escalation "classifier: ESCALATION: → escalation"
 run_test test_classifier_dead_end "classifier: DEAD-END: → dead-end"
 run_test test_classifier_gate_default "classifier: unrecognized message → gate default"
