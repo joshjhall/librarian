@@ -51,6 +51,29 @@ esac
 
 command git worktree add "$wt" -b "$br" "$GOLEM_BASE_REF"
 
+# Populate submodules the worktree's checkout references (e.g. a `containers`
+# submodule whose bin/fix-*.sh the root lefthook pre-commit hook calls). Plain
+# `git worktree add` never populates submodules, so in a consuming repo where a
+# submodule ships the pre-commit fixers, every commit in the worktree fails the
+# hook non-deterministically depending on the submodule's checkout state at
+# `worktree add` time (issue #325, migrated from containers#638). `--init
+# --recursive` respects each submodule's `.gitmodules` `update = none` pin (it
+# prints "Skipping submodule"), so librarian's own pinned `containers` submodule
+# is a no-op here while a live submodule in a consuming repo gets populated; a
+# repo with no submodules is a clean no-op. Best-effort with a LOUD warning: a
+# populate failure (offline/auth) must not abort an otherwise-good worktree, but
+# it must never be silent — the silent missing-hook-script mystery (a golem spent
+# ~20 min on it) is exactly the bug this fixes.
+# GIT_TERMINAL_PROMPT=0 so a submodule with an HTTPS remote and no cached
+# credentials fails fast instead of hanging on an interactive username/password
+# prompt — an indefinite hang would defeat the best-effort intent (this can be
+# run from a real terminal, not only a headless golem). Mirrors the fail-fast
+# posture of golem-launch.sh's bounded auth read.
+if ! GIT_TERMINAL_PROMPT=0 command git -C "$wt" submodule update --init --recursive; then
+    command echo "worktree-new: WARNING — submodule init failed in $wt;" \
+        "pre-commit hooks that call submodule scripts may fail there" >&2
+fi
+
 for f in $GOLEM_WORKTREE_LOCAL_FILES; do
     if [ -e "$f" ]; then
         command mkdir -p "$wt/$(command dirname "$f")"

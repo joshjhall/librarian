@@ -49,13 +49,33 @@ br="${GOLEM_BRANCH_PREFIX}${N}"
 removed=0
 
 if /usr/bin/git worktree list --porcelain | /usr/bin/grep -qx "worktree $root/$wt"; then
-    if ! /usr/bin/git worktree remove "$wt" 2>/dev/null; then
-        command echo "worktree-rm: $wt has uncommitted changes." >&2
-        command echo "  Re-run after committing, or force: git worktree remove --force $wt" >&2
-        exit 1
+    if /usr/bin/git worktree remove "$wt" 2>/dev/null; then
+        command echo "  removed worktree $wt"
+        removed=1
+    else
+        # Plain `git worktree remove` refuses a worktree that contains a
+        # POPULATED submodule ("working trees containing submodules cannot be
+        # moved or removed") even when the submodule is clean — and
+        # worktree-new.sh now populates submodules on creation (#325), so this
+        # now fires on ORDINARY teardown, not just on genuine uncommitted work.
+        # Distinguish the two before forcing: `status --ignore-submodules=all`
+        # reports only NON-submodule changes, so an EMPTY result means the
+        # submodule presence is the sole blocker → safe to force-remove; a
+        # NON-EMPTY result is real uncommitted regular-file work → refuse as
+        # before. This gate is load-bearing: when a worktree has BOTH a dirty
+        # regular file AND a populated submodule, git prints the submodule
+        # message, so a bare `--force` would SILENTLY discard the user's changes
+        # (verified) — the ignore-submodules status is what tells them apart.
+        dirty="$(/usr/bin/git -C "$wt" status --porcelain --ignore-submodules=all 2>/dev/null || true)"
+        if [ -z "$dirty" ] && /usr/bin/git worktree remove --force "$wt" 2>/dev/null; then
+            command echo "  removed worktree $wt (forced past clean submodules)"
+            removed=1
+        else
+            command echo "worktree-rm: $wt has uncommitted changes." >&2
+            command echo "  Re-run after committing, or force: git worktree remove --force $wt" >&2
+            exit 1
+        fi
     fi
-    command echo "  removed worktree $wt"
-    removed=1
 fi
 
 if [ -n "$(/usr/bin/git branch --list "$br")" ]; then

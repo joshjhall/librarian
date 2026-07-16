@@ -699,6 +699,29 @@ test_worktree_new_copies_local_files() {
     assert_contains "$out" "copied .env" "reports the .env copy"
 }
 
+# Regression (#325): `git worktree add` does NOT populate submodules, so in a
+# consuming repo where a submodule ships the pre-commit fixer scripts the root
+# lefthook hook calls, the fresh worktree can't commit with the hook enabled.
+# worktree-new.sh must run `git submodule update --init --recursive` after the
+# add so those scripts resolve inside the worktree. Build a super+submodule
+# fixture (shared _make_super_with_submodule) whose submodule carries a marker
+# bin/fix.sh, run worktree-new from the superproject, and assert the marker is
+# present in the worktree's submodule checkout. Skips cleanly if `git submodule
+# add` is unavailable (old git / file protocol disallowed).
+test_worktree_new_inits_submodules() {
+    local super st=0
+    _make_super_with_submodule super || st=$?
+    if [ "$st" -eq 2 ]; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    [ "$st" -eq 0 ] || return 1
+    run_in "$super" "$WT_NEW" 36
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a submodule present"
+    assert_file_exists "$super/.worktrees/issue-36/mod/bin/fix.sh" \
+        "the submodule's hook script is populated in the fresh worktree"
+}
+
 # --- config.sh repo_root() ----------------------------------------------------
 
 # Regression (#278): repo_root() must resolve its tools via PATH, not hardcoded
@@ -938,6 +961,113 @@ test_worktree_rm_round_trip() {
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
         /usr/bin/git -C "$sb" branch --list "feature/issue-34")"
     assert_equals "" "$branches" "the feature/issue-34 branch is gone after rm"
+}
+
+# _make_super_with_submodule <out-super-var>
+# Builds a superproject sandbox (git repo + one commit + .worktrees/.status +
+# .tmux + {} .claude.json + a $super/.gitconfig enabling file:// submodules) that
+# embeds an inner submodule "mod" carrying a marker bin/fix.sh, and assigns the
+# superproject path to the caller's named variable. Returns 1 on any git failure
+# and, distinctly, prints a SKIP sentinel + returns 2 when `git submodule add` is
+# unavailable (old git / file protocol disallowed) so the caller can skip_test.
+# Shared by the worktree-new populate test and the worktree-rm teardown tests.
+_make_super_with_submodule() {
+    # Internal locals are `inner`/`sup`, deliberately NOT the caller's out-var
+    # name (`super`): `printf -v "$__out"` at the end resolves against the current
+    # scope, so an internal `super` would shadow and overwrite the caller's local
+    # instead of exporting the path back (the pitfall new_sandbox sidesteps with
+    # its `dir`).
+    local __out="$1" inner sup
+    inner="$(/usr/bin/mktemp -d "$WORKDIR/smsub.XXXXXX")" || return 1
+    sup="$(/usr/bin/mktemp -d "$WORKDIR/smsuper.XXXXXX")" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$inner" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$inner" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$inner" config user.name "Test"
+    /usr/bin/mkdir -p "$inner/bin"
+    /usr/bin/printf '#!/bin/sh\n' >"$inner/bin/fix.sh"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$inner" add bin/fix.sh 2>/dev/null
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$inner" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sup" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sup" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sup" config user.name "Test"
+    /usr/bin/printf 'main\n' >"$sup/app.txt"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sup" add app.txt 2>/dev/null
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sup" -c protocol.file.allow=always -c commit.gpgsign=false \
+        submodule add -q "$inner" mod 2>/dev/null; then
+        return 2
+    fi
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sup" -c commit.gpgsign=false commit -qm "add mod" 2>/dev/null || return 1
+    /usr/bin/mkdir -p "$sup/.worktrees/.status" "$sup/.tmux"
+    /usr/bin/printf '{}\n' >"$sup/.claude.json"
+    # A submodule clone reads the invoking user's GLOBAL config (not the
+    # superproject's repo-local config), and run_in pins HOME=$dir, so put
+    # protocol.file.allow here to let the file:// submodule clone succeed.
+    /usr/bin/printf '[protocol "file"]\n\tallow = always\n' >"$sup/.gitconfig"
+    printf -v "$__out" '%s' "$sup"
+    return 0
+}
+
+# Regression (#325): worktree-new.sh now populates submodules, and
+# `git worktree remove` (without --force) REFUSES any worktree containing a
+# populated submodule ("working trees containing submodules cannot be moved or
+# removed", exit 128) even when the submodule is clean. worktree-rm.sh must
+# detect that the worktree is otherwise-clean and force past it, so ordinary
+# teardown still succeeds. Round-trip a submodule-bearing worktree and assert rm
+# removes it (exit 0) and reports forcing past clean submodules.
+test_worktree_rm_forces_past_clean_submodule() {
+    local super st=0
+    _make_super_with_submodule super || st=$?
+    if [ "$st" -eq 2 ]; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    [ "$st" -eq 0 ] || return 1
+    run_in "$super" "$WT_NEW" 40
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds with a submodule present"
+    assert_file_exists "$super/.worktrees/issue-40/mod/bin/fix.sh" \
+        "the submodule is populated in the fresh worktree"
+    run_in "$super" "$WT_RM" 40
+    assert_exit 0 "$RUN_RC" "worktree-rm removes a clean submodule-bearing worktree"
+    assert_contains "$RUN_OUT" "removed worktree" "reports the worktree removal"
+    assert_true "[ ! -e '$super/.worktrees/issue-40' ]" \
+        "the worktree directory is gone after rm"
+}
+
+# Regression (#325): the force-past-submodule path must NOT clobber real
+# uncommitted work. When a worktree has BOTH a populated submodule AND a dirty
+# REGULAR file, git still prints the submodule message, so a naive `--force`
+# would silently discard the user's changes. worktree-rm.sh gates the force on
+# `status --ignore-submodules=all` being empty, so a dirty regular file makes it
+# REFUSE (exit 1) instead of forcing. Dirty a tracked file in the worktree and
+# assert rm refuses and preserves the file.
+test_worktree_rm_refuses_dirty_regular_file_with_submodule() {
+    local super st=0
+    _make_super_with_submodule super || st=$?
+    if [ "$st" -eq 2 ]; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    [ "$st" -eq 0 ] || return 1
+    run_in "$super" "$WT_NEW" 41
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds with a submodule present"
+    # Dirty a tracked, non-submodule file in the worktree.
+    /usr/bin/printf 'UNCOMMITTED USER WORK\n' >>"$super/.worktrees/issue-41/app.txt"
+    run_in "$super" "$WT_RM" 41
+    assert_exit 1 "$RUN_RC" "worktree-rm refuses a worktree with dirty regular files"
+    assert_contains "$RUN_OUT" "uncommitted changes" "explains there are uncommitted changes"
+    assert_file_contains "$super/.worktrees/issue-41/app.txt" "UNCOMMITTED USER WORK" \
+        "the uncommitted work is preserved, not force-discarded"
 }
 
 # A stale core.worktree in the MAIN config pointing at a non-existent path is
@@ -1185,6 +1315,7 @@ run_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree e
 run_test test_worktree_new_existing_branch_exits_1 "worktree-new: lingering branch exits 1"
 run_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr/bin/* tool paths (#228)"
 run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTREE_LOCAL_FILES into the worktree (#228)"
+run_test test_worktree_new_inits_submodules "worktree-new: populates submodules in the fresh worktree (#325)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
@@ -1194,6 +1325,8 @@ run_test test_config_repo_root_submodule_superproject "config.sh: repo_root retu
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
+run_test test_worktree_rm_forces_past_clean_submodule "worktree-rm: forces past a clean populated submodule (#325)"
+run_test test_worktree_rm_refuses_dirty_regular_file_with_submodule "worktree-rm: refuses dirty regular file even with a submodule (#325)"
 run_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
 run_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
