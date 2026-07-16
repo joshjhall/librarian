@@ -321,16 +321,25 @@ mode, so the pull and push surfaces can never disagree. Two **co-equal** channel
   review. The plan-gate signatures it matches are `Here is Claude's plan`,
   `Would you like to proceed`, `Ready to code`, and the `Yes, and use auto mode`
   option line — any one is enough, since a given overlay may show only one of
-  them. Relies on the alt-screen overlay exception documented in the
-  *Monitor (TTY-free)* bullet above.
+  them. It also catches an **`AskUserQuestion` escalation fork** (issue #257) by
+  its `Enter to select` selection-modal footer — a gate category the pane channel
+  previously dropped entirely — labelling it *"escalation — …"* like the feed's
+  escalation lines. The fork is the **last-resort** match — plan-gate and generic
+  permission-gate are checked first, so a plan overlay or a routine permission
+  menu that also paints an `Enter to select` footer is classified as itself, not
+  downgraded to an escalation — and the footer match is anchored to the pane's
+  bottom lines (like the liveness classifier's #246 fix) so scrolled text
+  mentioning the phrase does not self-trip it. Relies on the alt-screen overlay
+  exception documented in the *Monitor (TTY-free)* bullet above.
 
 **Notifies:** a real permission `gate` (feed: latest line per golem is a fresh
 `gate`/legacy `blocked` within `GOLEM_BLOCK_TTL`; pane: a prompt overlay is
 present), a mid-flight `escalation` (feed: latest line is a fresh `escalation`,
-labelled *"escalation — …"* — issue #176), a `dead-end` (feed: latest line is a
-fresh `dead-end`, labelled *"dead-end — …"* — issue #180; the one block that
-holds even at L4), and a plan-gate `ExitPlanMode` (a `gate` in the feed,
-distinctly labeled on the pane channel).
+labelled *"escalation — …"* — issue #176; also caught on the pane channel via
+the `Enter to select` fork footer and labelled the same — issue #257), a
+`dead-end` (feed: latest line is a fresh `dead-end`, labelled *"dead-end — …"* —
+issue #180; the one block that holds even at L4), and a plan-gate `ExitPlanMode`
+(a `gate` in the feed, distinctly labeled on the pane channel).
 
 **Suppressed:** a transient `idle` (feed noise); a `gate` superseded by a later
 `idle`/`gate` line; a `gate` aged past `GOLEM_BLOCK_TTL`; and — crucially for a

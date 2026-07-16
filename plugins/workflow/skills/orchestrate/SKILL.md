@@ -362,7 +362,10 @@ clears and later re-occurs re-fires), so this is signal, not noise.
   modal **prompt overlay** (`Do you want to proceed?` and the `ExitPlanMode`
   plan-approval prompt) on live `golem-*` sessions. It is the better catcher of
   **plan-gate** prompts (which the feed under-classifies): the prompt overlay
-  renders over the alt-screen and is reliably scrapeable. A transient
+  renders over the alt-screen and is reliably scrapeable. It also catches an
+  **`AskUserQuestion` escalation fork** by its `Enter to select` footer (as a
+  last-resort match, after plan-gate and generic-gate), labelled
+  *"escalation — …"* like the feed's escalation lines (#257). A transient
   **zero-golem handoff window** (one session killed, the next not yet created) is
   a no-op poll, not a reason to terminate — the watch runs until the operator
   stops it (#621). See `mode-protocol.md` § *Gate-watch contract* for the prompt
