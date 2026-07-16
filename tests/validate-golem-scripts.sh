@@ -823,6 +823,34 @@ test_config_repo_root_relative_common_dir() {
         "repo_root absolutizes a relative --git-common-dir via command pwd"
 }
 
+# Security regression (#279): repo_root() scrubs git's hook-exported environment
+# for its own rev-parse, so a tainted GIT_DIR/GIT_COMMON_DIR (as leaks in from a
+# git hook or a wrapper forwarding the environment) cannot pin the resolved root
+# to an OUTER repo. Direct unit test of repo_root() itself — decoupled from any
+# caller — mirroring the #278 cases above: source config.sh in the sandbox with
+# GIT_DIR/GIT_COMMON_DIR pointed at a SECOND real repo and assert repo_root()
+# still prints the sandbox root, not the tainted one. Deliberately does NOT put
+# GIT_DIR in GIT_SCRUB's unset list for this invocation — the taint must reach
+# repo_root() for the test to mean anything.
+test_config_repo_root_scrubs_tainted_git_env() {
+    local sb outer
+    new_sandbox sb
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        GIT_DIR="$outer/.git" GIT_COMMON_DIR="$outer/.git" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 despite a tainted git environment"
+    local sb_real out_real
+    sb_real="$(cd "$sb" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sb_real" "$out_real" \
+        "repo_root resolves the sandbox root, not the tainted GIT_DIR/GIT_COMMON_DIR target"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -1108,6 +1136,7 @@ run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
 run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolutizes a relative common dir via command pwd (#278)"
+run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR/GIT_COMMON_DIR (#279)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"

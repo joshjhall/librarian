@@ -44,6 +44,16 @@
 #      path component) — refused rather than sourcing config.sh from cwd.
 set -euo pipefail
 
+# NOTE: the issue-#21 under-root trust guard below anchors to config.sh's
+# repo_root(). A caller invoked from inside a git hook (or a wrapper forwarding a
+# tainted env) must not be able to pin that root to an OUTER repo via git's
+# hook-exported GIT_DIR / GIT_COMMON_DIR / … and redirect the guard (issue #279).
+# That scrub now lives INSIDE repo_root() itself (config.sh), which hardens its
+# RETURN VALUE — the only git input this trust boundary consumes (it does no
+# further git call, just a jq write). It is deliberately not duplicated here.
+# (Sibling callers that run their OWN git mutations after repo_root() are a
+# separate, broader exposure tracked in issue #328.)
+
 # Resolve SCRIPT_DIR from this script's own path with pure-bash parameter
 # expansion (no external `dirname`), so it works even when a caller strips PATH
 # (as the jq-absent test does) without a PATH-dependent `command dirname`. cd/pwd
