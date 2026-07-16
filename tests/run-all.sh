@@ -27,6 +27,7 @@
 #  13. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #  14a2. journal partial-recovery helper (tests/validate-recover-journal-partials.sh)
+#  14a3. workflow wall-time stop decision (tests/validate-workflow-wall-timeout.sh)
 #  14b. autonomy-resolver decision table + parity (tests/validate-autonomy-resolve.sh)
 #  14c. golem-notify Notification hook (tests/validate-golem-notify.sh)
 #  14d. golem-watch streaming dispatcher (tests/validate-golem-watch.sh)
@@ -86,6 +87,7 @@ run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
 run_stage "journal partial-recovery helper" bash "$SCRIPT_DIR/validate-recover-journal-partials.sh"
+run_stage "workflow wall-time stop decision" bash "$SCRIPT_DIR/validate-workflow-wall-timeout.sh"
 run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate-autonomy-resolve.sh"
 run_stage "golem-notify Notification hook" bash "$SCRIPT_DIR/validate-golem-notify.sh"
 run_stage "golem-watch streaming dispatcher" bash "$SCRIPT_DIR/validate-golem-watch.sh"

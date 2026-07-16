@@ -170,23 +170,38 @@ behavior is noted inline per check; environment variables referenced here
    **partial** and `clean` is forced false. The review agents are **read-only** —
    applying fixes and filing deferrals is this skill's job (below).
 
-   **Bound the invocation in wall-time** (#224). The harness is budget-bounded
-   but has **no wall-clock bound of its own** — the `workflow.js` sandbox bans
-   clocks/timers, and a *spinning* reviewer agent emits no tokens so it never
-   advances the token budget. So a single stuck agent can run the invocation
-   unbounded (observed: a >1h pre-PR review). Bound it from here, the way the
-   CI-wait loop bounds pending CI:
+   **Bound the invocation in wall-time** (#224, #327). The harness is
+   budget-bounded but has **no wall-clock bound of its own** — the `workflow.js`
+   sandbox bans clocks/timers, and a *spinning* reviewer agent emits no tokens so
+   it never advances the token budget. So a single stuck agent can run the
+   invocation unbounded (observed: a >1h pre-PR review). Bound it from here, the
+   way the CI-wait loop bounds pending CI — but do **not** re-derive the
+   threshold/extension arithmetic in your head. That prose-only bound is exactly
+   what let three golems wedge (#327); the stop **decision** now lives in a
+   bundled helper you **call** each poll, so it cannot drift:
 
    - Invoke the `Workflow` tool as a **background** task and poll `TaskOutput`
-     with a finite per-poll timeout, accumulating elapsed wall-time. The tool
-     result carries the run's `transcriptDir`.
-   - Once cumulative wait crosses `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` minutes
-     (default 20), do NOT keep waiting blindly:
-     - **L1–L2** (interactive): prompt — **cut short** (stop waiting; treat this
-       cycle as partial) or **extend** (wait another interval).
-     - **L3–L4**: auto-extend up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS`
-       times (default 1 → 40 min ceiling), then `TaskStop` the run. Never hang.
-   - On a stop (cut-short or the L3–L4 ceiling), **recover the findings already
+     with a finite per-poll timeout, accumulating elapsed wall-time (whole
+     minutes). The tool result carries the run's `transcriptDir`.
+   - At each poll, ask the helper what to do — pass the accumulated minutes, the
+     run's autonomy level, and how many extensions it has already granted:
+
+     ```bash
+     "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh" check \
+       --elapsed-min "$elapsed" --level "$level" --extensions-used "$ext"
+     # -> verdict=continue|extend|stop|checkpoint
+     #    ceiling_min=<hard cap>  next_deadline_min=<poll to here>  extensions_used=<K'>
+     ```
+
+     It reads `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` (default 20) and
+     `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` (default 1 → 40 min ceiling) itself.
+     Act on `verdict`: **continue** — keep polling; **extend** (L3–L4 past a
+     checkpoint with headroom) — carry the returned `extensions_used` forward and
+     poll to the new `next_deadline_min`; **checkpoint** (L1–L2 past a checkpoint)
+     — prompt the human **cut short** (treat this cycle as partial) vs **extend**
+     (wait another interval); **stop** (the ceiling, at any level incl. L4) —
+     `TaskStop` the run and recover partials below.
+   - On a stop (cut-short or the `stop` verdict), **recover the findings already
      produced** with
      `${CLAUDE_PLUGIN_ROOT}/scripts/recover-journal-partials.sh <transcriptDir>/journal.jsonl`
      — it prints a JSON array of the finding-shaped results collected before the
@@ -231,4 +246,9 @@ behavior is noted inline per check; environment variables referenced here
    **Graceful degradation**: if the `Workflow` tool or
    `~/.claude/skills/ship-issue/workflow.js` is unavailable, skip this
    step with a note: "Adversarial pre-PR review skipped (harness not
-   available)." Never block shipping due to harness errors.
+   available)." Never block shipping due to harness errors. If only
+   `workflow-wall-timeout.sh` is missing or errors (non-zero exit), do **not**
+   skip the review — fall back to the inline bound (checkpoint at
+   `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`, auto-extend up to
+   `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` at L3–L4, then `TaskStop`) with a
+   one-line note, so a stuck agent is still bounded.
