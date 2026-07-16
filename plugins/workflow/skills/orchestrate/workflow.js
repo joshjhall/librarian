@@ -74,6 +74,9 @@ export const meta = {
 //     pr_status:   [PR_STATUS],     // poll / poll+rebase only; omitted in train/pool (pure compute)
 //     rebases:     [REBASE_RESULT], // present only in poll+rebase mode
 //     escalations: [{ pr, file, reason, ours_summary?, theirs_summary? }],  // poll+rebase only
+//     rebase_skipped: [{ pr, reason }], // poll+rebase only; behind-base queue remainder left
+//                                       //   unattempted on an early exit (reason:
+//                                       //   'max-rebases cap' | 'budget exhausted')
 //     train:       TRAIN,           // present only in train mode (merge-order plan)
 //     pool:        POOL,            // present only in pool mode (refill plan)
 //     tracks:      TRACKS,          // present only in tracks mode (composition plan)
@@ -972,6 +975,7 @@ async function runPollSweep() {
   // ---------------------------------------------------------------------------
   const rebases = []
   const escalations = []
+  const rebaseSkipped = []
 
   if (MODE === 'poll+rebase') {
     phase('Rebase')
@@ -984,9 +988,11 @@ async function runPollSweep() {
       .filter(Boolean)
 
     let i = 0
+    let stoppedForBudget = false
     while (i < queue.length && rebases.length < MAX_REBASES) {
       if (budget.total && budget.remaining() < BUDGET_FLOOR) {
         budgetExhausted = true
+        stoppedForBudget = true
         log(`budget low — stopping rebase sweep after ${rebases.length} PR(s)`)
         break
       }
@@ -1090,6 +1096,25 @@ async function runPollSweep() {
         for (const e of result.escalated) escalations.push({ pr: pr.number, ...e })
       }
     }
+
+    // Early-exit accounting: any PRs still in the queue past `i` were never
+    // attempted. `i` points at the first un-attempted PR for BOTH exits — the
+    // budget break short-circuits BEFORE `queue[i++]`, and the cap exit leaves
+    // `i` past the last attempted PR — so `queue.slice(i)` is the untouched
+    // remainder either way. Surface it explicitly with the reason (the harness's
+    // partial-sweep convention) instead of leaving the human to re-derive
+    // attempted-vs-not by set-subtracting rebases[] from pr_status[].behind_base.
+    // The budget exit already logged; the cap exit was silent, so log it here.
+    if (i < queue.length) {
+      const reason = stoppedForBudget ? 'budget exhausted' : 'max-rebases cap'
+      for (const pr of queue.slice(i)) rebaseSkipped.push({ pr: pr.number, reason })
+      if (!stoppedForBudget) {
+        log(
+          `rebase sweep hit max-rebases cap (${MAX_REBASES}) — ` +
+            `${queue.length - i} behind-base PR(s) not attempted`,
+        )
+      }
+    }
   }
 
   return {
@@ -1097,6 +1122,7 @@ async function runPollSweep() {
     pr_status: statuses,
     rebases,
     escalations,
+    rebase_skipped: rebaseSkipped,
     budget_exhausted: budgetExhausted,
     polled: statuses.length,
     rebased: rebases.length,
