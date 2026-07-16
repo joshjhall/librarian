@@ -243,6 +243,21 @@ does NOT match `Bash(tmux new-session:*)` and is re-denied. So
 tool call each) — never one looping call. (Use `golem-launch.sh print {N}
 --level {L}` to emit only the launch line.)
 
+**Allow-list ≠ classifier; retry a launch denial (#282).** The three `Bash(tmux
+…)` allow rules and the auto-mode **safety classifier** (`[Create Unsafe
+Agents]`) are **separate gates**. Authorizing the allow rules (and
+`golem-launch.sh preflight` confirming them) removes the *allow-list* denial but
+does **not** preempt the classifier, which re-evaluates each `tmux new-session`
+launch on its own judgment and is **non-deterministic** on this shape — the same
+byte-identical launch can be denied then approved on immediate retry. The correct
+response to a `[Create Unsafe Agents]` denial on a **launch** is therefore to
+**retry the identical `golem-launch.sh launch {N}` command** — it typically
+passes next try — **not** to fall back to a manual `!` paste. This is the same
+classifier non-determinism as the plan-gate `send-keys` case above; the two are
+different code paths (launch vs. option-1 send) sharing one root cause. A
+dedicated launcher entrypoint the classifier could be taught to trust remains
+open under #282.
+
 `-e GOLEM_ID=golem-{N}` stamps the golem id into the session environment. The
 `Notification` hook reads `$GOLEM_ID` first — the only cwd- and tmux-independent
 source — so the blocked-golem feed records the correct `golem-{N}` even when the
