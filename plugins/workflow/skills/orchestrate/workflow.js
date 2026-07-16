@@ -84,9 +84,9 @@ export const meta = {
 //     polled: number, rebased: number,
 //   }
 //   The train, pool, and tracks branches return BEFORE the Poll phase, so they
-//   omit pr_status / rebases / escalations entirely (not empty arrays). A caller
-//   that reads those fields off a train/pool/tracks result must treat them as
-//   optional (e.g. `result.pr_status ?? []`).
+//   omit pr_status / rebases / escalations / rebase_skipped entirely (not empty
+//   arrays). A caller that reads those fields off a train/pool/tracks result
+//   must treat them as optional (e.g. `result.pr_status ?? []`).
 //
 // The orchestrator session is LIVE/INTERACTIVE and is NOT this workflow — it
 // INVOKES this harness for one bounded sweep, reads the result, refreshes its
@@ -863,6 +863,26 @@ function buildTrainOrder(resolved) {
 }
 
 // ---------------------------------------------------------------------------
+// Rebase-sweep early-exit accounting (pure). The Rebase loop in runPollSweep
+// stops early on two conditions: the budget floor (`stoppedForBudget`) or the
+// MAX_REBASES cap. In BOTH cases `i` indexes the first un-attempted PR — the
+// budget break short-circuits BEFORE `queue[i++]`, and the cap exit leaves `i`
+// past the last attempted PR — so `queue.slice(i)` is the untouched remainder
+// either way. This returns that remainder tagged with the exit reason, plus the
+// cap-exit log line (null for the budget exit, which already logged inside the
+// loop). Extracted from the async body — like buildTrainOrder / composeTracks —
+// so the off-by-one the inline reasoning depends on is unit-tested.
+function rebaseSkipRemainder(queue, i, stoppedForBudget, maxRebases) {
+  if (i >= queue.length) return { skipped: [], capLog: null }
+  const reason = stoppedForBudget ? 'budget exhausted' : 'max-rebases cap'
+  const skipped = queue.slice(i).map((pr) => ({ pr: pr.number, reason }))
+  const capLog = stoppedForBudget
+    ? null
+    : `rebase sweep hit max-rebases cap (${maxRebases}) — ${queue.length - i} behind-base PR(s) not attempted`
+  return { skipped, capLog }
+}
+
+// ---------------------------------------------------------------------------
 // Train mode — compute a merge order from pairwise changed-file overlap.
 //   No poll, no rebase, no merge, no push: this branch returns BEFORE the Poll
 //   phase. The live session (SKILL.md Phase T) consumes `train` to drive the
@@ -1097,24 +1117,15 @@ async function runPollSweep() {
       }
     }
 
-    // Early-exit accounting: any PRs still in the queue past `i` were never
-    // attempted. `i` points at the first un-attempted PR for BOTH exits — the
-    // budget break short-circuits BEFORE `queue[i++]`, and the cap exit leaves
-    // `i` past the last attempted PR — so `queue.slice(i)` is the untouched
-    // remainder either way. Surface it explicitly with the reason (the harness's
-    // partial-sweep convention) instead of leaving the human to re-derive
-    // attempted-vs-not by set-subtracting rebases[] from pr_status[].behind_base.
-    // The budget exit already logged; the cap exit was silent, so log it here.
-    if (i < queue.length) {
-      const reason = stoppedForBudget ? 'budget exhausted' : 'max-rebases cap'
-      for (const pr of queue.slice(i)) rebaseSkipped.push({ pr: pr.number, reason })
-      if (!stoppedForBudget) {
-        log(
-          `rebase sweep hit max-rebases cap (${MAX_REBASES}) — ` +
-            `${queue.length - i} behind-base PR(s) not attempted`,
-        )
-      }
-    }
+    // Early-exit accounting: surface the behind-base PRs the loop never
+    // attempted (queue remainder past `i`) with the exit reason, so the live
+    // orchestrator is handed "attempted vs not" directly instead of re-deriving
+    // it by set-subtracting rebases[] from pr_status[].behind_base. The budget
+    // exit already logged inside the loop; the cap exit was silent, so the
+    // helper hands back a cap-exit log line to emit here (null for budget).
+    const remainder = rebaseSkipRemainder(queue, i, stoppedForBudget, MAX_REBASES)
+    for (const s of remainder.skipped) rebaseSkipped.push(s)
+    if (remainder.capLog) log(remainder.capLog)
   }
 
   return {
