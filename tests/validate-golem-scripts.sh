@@ -895,6 +895,44 @@ test_config_repo_root_relative_common_dir() {
         "repo_root absolutizes a relative --git-common-dir via command pwd"
 }
 
+# Edge case (#336): when git reports a RELATIVE
+# --show-superproject-working-tree, repo_root() prepends `command pwd` to
+# absolutize it before returning (the submodule super_root arm added in #324).
+# --path-format=absolute makes real git always print an absolute path, so the
+# #324 happy-path test never executes this fallback; a shim git emitting a
+# relative "sup" forces it. repo_root should return pwd/sup (super_root is
+# non-empty, so it returns early and never reaches the common-dir probe — one
+# shim branch suffices). Mirrors test_config_repo_root_relative_common_dir.
+test_config_repo_root_relative_super_root() {
+    local sb bin
+    new_sandbox sb
+    bin="$sb/bin"
+    /usr/bin/mkdir -p "$bin"
+    # A real relative target so the realpath compare proves pwd was prepended.
+    /usr/bin/mkdir -p "$sb/sup"
+    {
+        /usr/bin/printf '#!/usr/bin/env bash\n'
+        /usr/bin/printf 'case "$*" in\n'
+        /usr/bin/printf '  *--show-superproject-working-tree*) command echo "sup" ;;\n'
+        /usr/bin/printf '  *) exit 1 ;;\n'
+        /usr/bin/printf 'esac\n'
+    } >"$bin/git"
+    /usr/bin/chmod +x "$bin/git"
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            PATH="$bin:$PATH" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 for a relative super_root"
+    # pwd/sup absolutized. Compare realpaths (symlinked /tmp on CI).
+    local sup_real out_real
+    sup_real="$(cd "$sb/sup" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sup_real" "$out_real" \
+        "repo_root absolutizes a relative --show-superproject-working-tree via command pwd"
+}
+
 # Security regression (#279): repo_root() scrubs git's hook-exported environment
 # for its own rev-parse, so a tainted GIT_DIR/GIT_COMMON_DIR (as leaks in from a
 # git hook or a wrapper forwarding the environment) cannot pin the resolved root
@@ -1462,6 +1500,7 @@ run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolut
 run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR/GIT_COMMON_DIR (#279)"
 run_test test_config_repo_root_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR via env -u fallback (#328)"
 run_test test_config_repo_root_submodule_superproject "config.sh: repo_root returns the superproject root inside a submodule (#324)"
+run_test test_config_repo_root_relative_super_root "config.sh: repo_root absolutizes a relative --show-superproject-working-tree via command pwd (#336)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
