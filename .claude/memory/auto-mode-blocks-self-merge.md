@@ -20,6 +20,23 @@ satisfied; only the merge *keystroke* is gated.
 **How to apply:** treat the refusal like the skill's platform-refused-merge
 **dead-end** — do NOT loop-retry or try to work around it. Park the PR: label the
 issue `status/pr-pending` (remove `status/in-progress`), comment that the fix is
-ready + why auto-merge was declined, delete the per-issue `next-issue-{N}.json`
-state file, and STOP for a human to merge. The user can allow it in future via a
-Bash permission rule for `gh pr merge`. Related: [[verify-squash-merge-landed]].
+ready + why auto-merge was declined, and STOP for a human to merge. The user can
+allow it in future via a Bash permission rule for `gh pr merge`.
+Related: [[verify-squash-merge-landed]].
+
+Re-confirmed on PR #316 (issue #299), L3, CI 5/5 green + pre-PR review clean
+(0 blocking). Re-confirmed again on PR #330 (issue #312), L3, CI 5/5 green +
+pre-PR review clean (2 low findings resolved on-PR, 0 deferred). Re-confirmed a
+third time on PR #332 (issue #311), L3, CI 5/5 green (test-only diagnostics
+hardening). Note: in a **linked worktree** the state file is deliberately left in
+place (worktree-aware ship keeps it; do not delete on a parked merge) — on BOTH
+#312 and #311 the state file was deleted first out of habit, then restored with
+`phase: ship` once the merge was parked. **Leave it from the start** — when the
+run is L3–L4 in a linked worktree, expect the merge to be parked and skip the
+state-file `rm` entirely. Two
+extra gotchas seen here: (1) the classifier **over-matches** — a follow-up bash
+call bundling read-only `gh pr view`/`gh issue view` right after a denied `gh pr
+merge` also gets denied; re-run each read command **standalone** and it passes.
+(2) the pre-push lefthook can print `error: failed to push some refs` yet the ref
+**does** land — verify with `git rev-parse HEAD` vs `origin/<branch>` before
+treating a push as failed ([[ship-worktree-merge-cleanup]] pattern).
