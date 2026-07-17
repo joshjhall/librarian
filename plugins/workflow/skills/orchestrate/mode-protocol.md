@@ -407,6 +407,78 @@ exit (mirrors `golem-gate-watch.sh --stream*`): a transient zero-golem handoff
 window renders "No active golems" and keeps sweeping, stopping only when the
 operator/harness kills it.
 
+### Slow-review takeover contract
+
+A golem's `/ship-issue` pre-PR `next-issue-review` sometimes runs long. The
+question the monitor must answer is **not** "is this review slow?" but "is this
+golem **unrecoverably wedged**, warranting an orchestrator takeover kill?" — and
+the answer is **almost always no**. The default is **surface-and-wait**, not
+decide-and-kill (see `SKILL.md` Phase M § *Slow pre-PR reviews*).
+
+**Why the old signal was wrong.** The retired heuristic flagged a wedge on a
+frozen `N/6 agents` sub-workflow counter + ~15 min wall-time. That conflates a
+genuine wedge with **three benign states**, each of which resolves on its own:
+
+- **Classifier-outage self-retry** — the external review-classifier API is down;
+  the golem is correctly retrying, sub-workflow tokens grow slowly (batch-7
+  golem-243 → later shipped PR #349).
+- **A genuinely slow multi-dimension review** that is about to complete — a 6th
+  review agent can legitimately run 30+ min (golem-254, held at 5/6 for ~30 min,
+  then opened its PR unaided; golem-328 had already PR'd in the exact
+  decision→kill window).
+- **Top-level post-review work** — the golem is doing real finalization
+  (portability probes, commit hooks) at the top level while the sub-workflow
+  review line sits stale; **top-level** token growth means it is never wedged.
+
+Across batch-7 (2026-07-16, golems #243/#254/#328/#265) this produced a ~75%+
+false-positive rate on borderline calls and **zero** confirmed-unrecoverable
+wedges — even the one case flagged genuine (#265) was killed before it could be
+observed to self-resolve, and golem-254 proves a frozen 6th agent can still
+finish given time. A false-positive takeover is **costly** (interrupts legit
+work, the amend-classifier friction, the reap-cwd hazard); a truly wedged review
+is **cheap** (bounded by the golem's own budget, corrupts no state). So the cost
+asymmetry favors waiting.
+
+**When a takeover may even be *offered*.** Never automatically; only as an
+operator **offer**. A **crashed/exited golem process is definitive on its own** —
+there is no ambiguity to rule out for a dead process, so offer the takeover after
+the mandatory pre-kill PR check alone (no wall-time floor, no corroboration
+needed). **Otherwise** — the process is still alive and the review is merely
+slow/frozen — offer a takeover only after **every** applicable one of these
+holds (any one missing ⇒ keep waiting and keep surfacing):
+
+- **Frozen top-level token counter for 45–60 min.** No growth in the
+  **top-level** counter for at least a **45–60 min** window of elapsed wall time,
+  sampled on each status sweep (so **≥2** frozen readings, however many sweeps the
+  level's cadence fits into that window — see § Status-sweep cadence; the window,
+  not a fixed sweep count, is the bar). This window is the load-bearing wait — it
+  necessarily starts well past the ~25–30 min at which a slow review first becomes
+  worth *surfacing*, so there is no separate short-time floor to check. A frozen
+  *sub-workflow* counter with top-level growth is real work, not a wedge — the
+  distinction is the whole point. (The crashed-process case above short-circuits
+  this — a dead process needs no token-freeze window.)
+- **Cross-golem corroboration — only when sibling golems are active.** In a
+  multi-golem batch, a sibling golem's review advancing in the same window proves
+  the classifier is up, ruling out a shared external outage; require it before
+  declaring a per-golem stall. This is **necessary but not sufficient** — a
+  per-golem stall is not the same as an *unrecoverable* one. In a **solo-golem
+  run** (batch of one — no sibling exists) this condition is **inapplicable** and
+  does not block the offer; lean harder on the top-level-freeze window instead.
+- **Mandatory pre-kill PR check (always).** Run `gh pr list --state open --head
+  feature/issue-{N}` immediately before any kill — including the crashed-process
+  case. A slow review can push + open its PR in the decision→kill window
+  (golem-328); if a PR exists, **skip the takeover entirely and just merge it**.
+
+**Takeover recipe (only once the above all hold and the operator accepts).**
+`tmux kill-session -t golem-{N}`; commit any uncommitted golem refinements as a
+**fresh** commit (not `git commit --amend` — the auto-mode classifier denies
+amending a golem-authored commit as `[Git Destructive]`); `git rebase
+origin/main` (disjoint work → clean); `bash tests/run-all.sh`; then
+`git push --force-with-lease` + `gh pr create`. This mirrors #327's golem-side
+mechanical wall-time bound (`workflow-wall-timeout.sh`) — that is the golem's own
+internal budget; this contract is the **orchestrator-side judgment** used when
+monitoring from outside.
+
 ### Dispatch Decision Sub-Tree
 
 ```text
