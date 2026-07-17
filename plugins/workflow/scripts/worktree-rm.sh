@@ -45,10 +45,11 @@ SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
 # re-anchor git while GIT_DIR is set, so unset the whole set here, before
 # repo_root() and every other git call. Deliberately NO `|| true`: a readonly
 # GIT_DIR makes `unset` fail, which under `set -e` aborts LOUDLY before any
-# mutation — the fail-loud outcome, never a silent wrong-repo write. Mirrors the
-# GIT_SCRUB set config.sh and the test suites already use.
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
-    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+# mutation — the fail-loud outcome, never a silent wrong-repo write. Uses
+# config.sh's shared GIT_ENV_SCRUB_VARS list (#356) so the scrub set stays in
+# lockstep with repo_root()'s and worktree-new.sh's — one source of truth.
+# shellcheck disable=SC2086  # intentional word-split: unset each scrub var by name
+unset $GIT_ENV_SCRUB_VARS
 
 N="${1:-}"
 if ! [[ "$N" =~ ^[0-9]+$ ]]; then

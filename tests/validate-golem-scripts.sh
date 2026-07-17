@@ -1260,6 +1260,67 @@ test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env() {
         "repo_root returns the superproject root despite a readonly super_root taint"
 }
 
+# --- config.sh GIT_ENV_SCRUB_VARS single source (#356) -----------------------
+
+# Regression (#356): the git hook-exported scrub var list must live in exactly
+# ONE place — config.sh's GIT_ENV_SCRUB_VARS — with _repo_root_git and both
+# worktree callers referencing it. Before #356 the 7-name list was copy-pasted
+# into three files; a future addition (e.g. #355's GIT_CONFIG_*) applied to some
+# but not all silently reopens the tainted-env vulnerability class (#279/#328),
+# and nothing cross-checked the copies. This static guard pins the single source:
+#   1. sourcing config.sh yields the exact 7-name list, in order;
+#   2. the literal set (fingerprinted by its trailing, most-likely-forgotten
+#      member GIT_ALTERNATE_OBJECT_DIRECTORIES) appears under plugins/ ONLY in
+#      config.sh and exactly once — no site re-lists it;
+#   3. both callers reference $GIT_ENV_SCRUB_VARS.
+test_config_git_env_scrub_vars_single_source() {
+    local out rc=0
+    # (1) Sourcing config.sh defines GIT_ENV_SCRUB_VARS as the expected list.
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" -c '. "$1"; command printf "%s" "$GIT_ENV_SCRUB_VARS"' \
+        _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "sourcing config.sh succeeds and exposes GIT_ENV_SCRUB_VARS"
+    assert_equals \
+        "GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES" \
+        "$out" \
+        "GIT_ENV_SCRUB_VARS is the exact 7-name scrub list, in order"
+
+    # (1b) The list is a SECURITY INVARIANT: a plain assignment, NOT an
+    # env-overridable `: "${GIT_ENV_SCRUB_VARS:=…}"` default. Pre-set a truncated
+    # value in the child's environment before sourcing config.sh and confirm the
+    # source CLOBBERS it back to the full 7-name list — a compromised git hook (or
+    # a harness bug) pre-exporting an empty/short list must NOT be able to shrink
+    # the scrub set and defeat the taint defense (#356).
+    local override rc2=0
+    override="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" GIT_ENV_SCRUB_VARS="GIT_DIR" \
+        "$REAL_BASH" -c '. "$1"; command printf "%s" "$GIT_ENV_SCRUB_VARS"' \
+        _ "$CONFIG" 2>&1)" || rc2=$?
+    assert_exit 0 "$rc2" "sourcing config.sh with a pre-set GIT_ENV_SCRUB_VARS succeeds"
+    assert_equals \
+        "GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES" \
+        "$override" \
+        "config.sh clobbers an inherited GIT_ENV_SCRUB_VARS — the scrub set can't be shrunk from the env (#356)"
+
+    # (2) The literal list appears under plugins/ only in config.sh, exactly once.
+    # Fingerprint on the trailing member: a re-listed copy elsewhere would name it
+    # too. `grep -rc` prints <file>:<count>; expect one line, config.sh, count 1.
+    local hits
+    hits="$(command grep -rlF 'GIT_ALTERNATE_OBJECT_DIRECTORIES' \
+        "$REPO_ROOT/plugins" 2>/dev/null | command sort)"
+    assert_equals "$CONFIG" "$hits" \
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES appears under plugins/ only in config.sh (#356)"
+    local count
+    count="$(command grep -cF 'GIT_ALTERNATE_OBJECT_DIRECTORIES' "$CONFIG" 2>/dev/null || command echo 0)"
+    assert_equals "1" "$count" \
+        "config.sh names the literal scrub set exactly once (the single source)"
+
+    # (3) Both worktree callers reference the shared variable, not a literal list.
+    assert_file_contains "$WT_NEW" 'unset $GIT_ENV_SCRUB_VARS' \
+        "worktree-new.sh scrubs via the shared \$GIT_ENV_SCRUB_VARS"
+    assert_file_contains "$WT_RM" 'unset $GIT_ENV_SCRUB_VARS' \
+        "worktree-rm.sh scrubs via the shared \$GIT_ENV_SCRUB_VARS"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -1719,6 +1780,7 @@ run_test test_config_repo_root_submodule_superproject "config.sh: repo_root retu
 run_test test_config_repo_root_submodule_superproject_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR in the super_root probe inside a submodule (#337, #279)"
 run_test test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR in the super_root probe inside a submodule (#363, #337, #328)"
 run_test test_config_repo_root_relative_super_root "config.sh: repo_root absolutizes a relative --show-superproject-working-tree via command pwd (#336)"
+run_test test_config_git_env_scrub_vars_single_source "config.sh: GIT_ENV_SCRUB_VARS is the single source for the git-env scrub list (#356)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
