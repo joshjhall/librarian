@@ -722,6 +722,59 @@ test_worktree_new_inits_submodules() {
         "the submodule's hook script is populated in the fresh worktree"
 }
 
+# Regression (#338, closing the loop on #324/PR #335): the end-to-end worktree
+# PLACEMENT when worktree-new.sh is invoked from INSIDE a submodule working tree.
+# The #324 bug: inside a submodule, `git rev-parse --git-common-dir` resolves to
+# <super>/.git/modules/<name>, so a repo_root() that trusted the common dir
+# returned that git-internal path, and worktree-new.sh — which cd's into
+# repo_root() before `git worktree add` — landed the worktree at
+# <super>/.git/modules/<name>/.worktrees/issue-N instead of
+# <super>/.worktrees/issue-N. #324's --show-superproject-working-tree probe fixed
+# repo_root(), and test_config_repo_root_submodule_superproject covers that at
+# the repo_root() UNIT level — but no test drove the WHOLE script from inside a
+# submodule to demonstrate the reported placement symptom is actually gone. This
+# is that test: distinct from test_worktree_new_inits_submodules (#325), which
+# runs from the SUPERPROJECT root and asserts submodule POPULATION, not placement.
+# Run worktree-new from <super>/mod and assert the worktree lands at the
+# superproject's .worktrees/ (carrying the superproject's tracked app.txt, so it
+# forked <super> and not the submodule) and that NOTHING landed under
+# .git/modules (the exact #324 bug path). Not via run_in — that cd's to the
+# superproject root; this must invoke from the submodule subdir, so it mirrors
+# run_in's scrub/pins directly (like test_worktree_new_copies_local_files) with
+# `cd "$super/mod"`. Skips cleanly if `git submodule add` is unavailable.
+test_worktree_new_from_submodule_placement() {
+    local super st=0
+    _make_super_with_submodule super || st=$?
+    if [ "$st" -eq 2 ]; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    [ "$st" -eq 0 ] || return 1
+
+    # Invoke worktree-new from INSIDE the submodule working tree (<super>/mod),
+    # not the superproject root — the #324 reproduction path. Mirror run_in's
+    # scrub/pins; HOME="$super" so $super/.gitconfig's protocol.file.allow is
+    # honored and the seed-trust write stays sandboxed. Use a fully-local
+    # out/rc pair (not the shared RUN_OUT/RUN_RC globals) since the invocation
+    # bypasses run_in — matching the other hand-rolled tests in this file
+    # (test_worktree_new_copies_local_files, ..._scrubs_tainted_git_env_for_mutations).
+    local out rc=0
+    out="$(cd "$super/mod" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$super" \
+            TMUX= TMUX_TMPDIR="$super/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_NEW" 44 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "worktree-new exits 0 when run from inside a submodule"
+    assert_file_exists "$super/.worktrees/issue-44/app.txt" \
+        "the worktree lands at <super>/.worktrees/issue-44 with the superproject's files"
+    assert_true '[ ! -e "'"$super"'/.git/modules/mod/.worktrees" ]' \
+        "nothing landed under <super>/.git/modules (the #324 bug path)"
+}
+
 # Regression (#328): worktree-new.sh runs its OWN git mutations (worktree add
 # -b …) after repo_root(). #279 scrubbed only repo_root()'s rev-parse subshell,
 # so a tainted GIT_DIR/GIT_COMMON_DIR forwarded from a git hook still redirected
@@ -1569,6 +1622,7 @@ run_test test_worktree_new_existing_branch_exits_1 "worktree-new: lingering bran
 run_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr/bin/* tool paths (#228)"
 run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTREE_LOCAL_FILES into the worktree (#228)"
 run_test test_worktree_new_inits_submodules "worktree-new: populates submodules in the fresh worktree (#325)"
+run_test test_worktree_new_from_submodule_placement "worktree-new: from inside a submodule lands the worktree at <super>/.worktrees (#338, #324)"
 run_test test_worktree_new_scrubs_tainted_git_env_for_mutations "worktree-new: scrubs a tainted GIT_DIR so the branch ref lands in the right repo (#328)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
