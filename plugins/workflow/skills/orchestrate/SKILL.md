@@ -386,6 +386,22 @@ BLOCKED in `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` shortly after launch 
 checkpoint, not a stall. Attach with `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refine and approve
 the plan, and detach; the golem then proceeds autonomously to a PR.
 
+**Slow pre-PR reviews — surface, don't kill (default never-kill).** A golem's
+`/ship-issue` pre-PR review can legitimately run **25–30+ min**; the default
+posture is **surface-and-wait**, not decide-and-kill. **Do NOT auto-kill** on
+the old signal (a frozen `N/6 agents` sub-workflow counter + ~15 min): it
+conflated three benign states with a real wedge (~75%+ false positives; batch-7,
+2026-07-16 = **zero** confirmed wedges). A takeover is an **operator offer,
+never automatic**: a **crashed/exited process** qualifies on its own (after the
+pre-kill PR check); **otherwise** offer only once the **top-level** token counter
+has been frozen for a **45–60 min** window (sub-workflow growth doesn't count)
+**and**, in a multi-golem batch, a sibling review is advancing (cross-golem
+corroboration — inapplicable in a solo run). Always run the pre-kill check
+`gh pr list --state open --head feature/issue-{N}` before **any** kill — if a PR
+exists, **skip** the takeover and merge (golem-328 PR'd in the decision→kill
+window). See `mode-protocol.md` § *Slow-review takeover contract* for the
+rationale, benign-state evidence, and the takeover recipe.
+
 **Proactive gate-watch (PUSH, not just PULL).** `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` is a **pull**
 check — the operator must run it to discover a golem parked at a permission gate
 (`git push` / `gh pr create` / `gh pr merge` `ask` rules) or a plan-gate
