@@ -1175,6 +1175,91 @@ test_config_repo_root_submodule_superproject_scrubs_tainted_git_env() {
         "repo_root returns the superproject root, not the tainted outer repo"
 }
 
+# Regression (#363, closing the last cell of the readonly-taint × probe-arm 2×2
+# matrix). Two independent hardening dimensions cross here: the taint KIND —
+# plain exported (a bare `unset` clears it) vs READONLY exported
+# (`declare -rx GIT_DIR=…`, which a bare `unset` SILENTLY no-ops, #328) — and the
+# probe ARM — the common-dir arm (plain sandbox) vs the super_root arm
+# (`--show-superproject-working-tree`, only taken inside a submodule, #324/#337).
+# Three cells are already covered:
+#   test_config_repo_root_scrubs_tainted_git_env                 (plain × common-dir, #279)
+#   test_config_repo_root_scrubs_readonly_tainted_git_env        (readonly × common-dir, #328)
+#   test_config_repo_root_submodule_superproject_scrubs_tainted_git_env
+#                                                                 (plain × super_root, #337)
+# This closes the fourth: readonly × super_root. Both probes route through the
+# same _repo_root_git (config.sh), whose `env -u` fallback unexports a readonly
+# GIT_* regardless of the attribute, so this is NOT a functional blind spot
+# today — but there is no direct regression proving that fallback also protects
+# the super_root probe. If a future change ever forked _repo_root_git per-probe
+# or added probe-specific scrub logic, a readonly taint against the submodule
+# fixture would go unverified; this test is the guard.
+#
+# Builds the same real super+submodule+outer fixture as the #337 test, then
+# invokes repo_root from INSIDE the submodule working tree under a taint passed as
+# `declare -rx` (readonly+exported) inside the child bash — so the bare `unset` in
+# _repo_root_git FAILS and the `env -u` fallback is what must clear the taint for
+# the super_root probe. GIT_WORK_TREE is load-bearing (same rationale as the #337
+# test): from a submodule working tree git still detects the superproject from cwd
+# under a GIT_DIR/GIT_COMMON_DIR-only taint, so GIT_WORK_TREE is what makes an
+# unscrubbed super_root probe miss the submodule and fall through to the tainted
+# common-dir arm (which the same taint pins to <super>/.git/modules, the #324
+# bug). The invocation is deliberately NOT wrapped in `env --unset` — the taint
+# must reach repo_root() for the assertion to mean anything. Skips cleanly if
+# `git submodule add` is unavailable (old git / file protocol disallowed).
+test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env() {
+    local sub super outer name rc=0
+    sub="$(/usr/bin/mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
+    super="$(/usr/bin/mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    name="mod"
+    # Inner submodule repo with one commit so it can be added.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
+    # Superproject that embeds it as a submodule.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" config user.name "Test"
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
+        submodule add -q "$sub" "$name" 2>/dev/null; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
+    # Third, unrelated outer repo whose .git the taint points at.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+
+    # Invoke repo_root from INSIDE the submodule working tree UNDER a READONLY
+    # taint: GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR are `declare -rx` (readonly +
+    # exported) inside the child bash before sourcing config.sh, so repo_root's
+    # bare `unset` cannot clear them — the `env -u` fallback in _repo_root_git
+    # must, on the super_root probe. The invocation is NOT scrubbed (no
+    # `env --unset`), so the taint reaches repo_root(). GIT_WORK_TREE is what
+    # diverges the scrubbed and unscrubbed super_root probes.
+    local out
+    out="$(cd "$super/$name" &&
+        "$REAL_BASH" -c 'declare -rx GIT_DIR="$2/.git"; declare -rx GIT_WORK_TREE="$2"; declare -rx GIT_COMMON_DIR="$2/.git"; . "$1"; repo_root' \
+            _ "$CONFIG" "$outer" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 inside a readonly-tainted submodule working tree"
+    # Compare realpaths (symlinked /tmp on CI runners).
+    local super_real out_real
+    super_real="$(cd "$super" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$super_real" "$out_real" \
+        "repo_root returns the superproject root despite a readonly super_root taint"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -1632,6 +1717,7 @@ run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scru
 run_test test_config_repo_root_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR via env -u fallback (#328)"
 run_test test_config_repo_root_submodule_superproject "config.sh: repo_root returns the superproject root inside a submodule (#324)"
 run_test test_config_repo_root_submodule_superproject_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR in the super_root probe inside a submodule (#337, #279)"
+run_test test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR in the super_root probe inside a submodule (#363, #337, #328)"
 run_test test_config_repo_root_relative_super_root "config.sh: repo_root absolutizes a relative --show-superproject-working-tree via command pwd (#336)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
