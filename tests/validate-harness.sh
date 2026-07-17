@@ -149,6 +149,60 @@ test_assert_not_contains_fail_reports() {
     assert_contains "$out" "Unexpected: 'lo wo'" "the unexpected substring is reported"
 }
 
+# --- assert_valid_json (newly added) ----------------------------------------
+
+# Well-formed JSON passes silently — the whole point of the helper is that a
+# valid value produces no _fail block.
+test_assert_valid_json_pass_is_silent() {
+    local out
+    out="$(capture_assert assert_valid_json '{"a":1}')"
+    assert_equals "" "$out" "well-formed JSON produces no output"
+}
+
+# A *valid* value carrying an embedded single quote still passes silently. This
+# is the footgun assert_valid_json exists to avoid: because the value arrives as
+# a real argument (no eval, no re-quoting), the `'` is inert. The eval-based
+# assert_true idiom — `printf '%s' '<value>' | jq ...` — would instead have this
+# `'` close the surrounding single-quoted string early and let the following
+# characters run as shell.
+test_assert_valid_json_single_quote_value_is_safe() {
+    local out
+    out="$(capture_assert assert_valid_json "{\"msg\":\"it's here\"}")"
+    assert_equals "" "$out" "a single quote inside valid JSON is inert (no eval)"
+}
+
+# The valid JSON scalars `false` and `null` pass silently. This pins the exact
+# reason the helper uses `jq empty` (a parse-only check) over `jq -e .` (whose
+# exit status keys off output *truthiness*, so `false`/`null` would be
+# misreported as invalid — see the helper's doc comment in lib/harness.sh). If a
+# future refactor swaps `jq empty` back for `jq -e .`, this probe fails where the
+# {"a":1} case would not.
+test_assert_valid_json_scalar_false_and_null_pass() {
+    local out_false out_null
+    out_false="$(capture_assert assert_valid_json 'false')"
+    assert_equals "" "$out_false" "the valid scalar 'false' passes (jq empty, not jq -e .)"
+    out_null="$(capture_assert assert_valid_json 'null')"
+    assert_equals "" "$out_null" "the valid scalar 'null' passes (jq empty, not jq -e .)"
+}
+
+# Malformed JSON reports: the custom message plus the offending (truncated) value.
+test_assert_valid_json_fail_reports() {
+    local out
+    out="$(capture_assert assert_valid_json '{bad' "not valid JSON")"
+    assert_contains "$out" "not valid JSON" "malformed JSON triggers the message"
+    assert_contains "$out" "Value:" "the offending value is reported"
+}
+
+# When jq is absent the helper skips (passes) — call sites already gate their
+# suites on jq. Stripping PATH inside the capture subshell makes `command -v jq`
+# fail, so even malformed JSON produces no output. The PATH override is confined
+# to the command substitution and never touches the live suite.
+test_assert_valid_json_jq_absent_skips() {
+    local out
+    out="$(PATH='' capture_assert assert_valid_json '{bad')"
+    assert_equals "" "$out" "jq-absent path returns silently even on bad JSON"
+}
+
 # --- skip_test --------------------------------------------------------------
 
 # skip_test mutates TESTS_SKIPPED and TEST_STATUS; run it in a subshell with
@@ -185,6 +239,12 @@ run_test test_assert_contains_fail_reports "assert_contains: absent substring re
 
 run_test test_assert_not_contains_pass_is_silent "assert_not_contains: absent substring is silent"
 run_test test_assert_not_contains_fail_reports "assert_not_contains: present substring reports the message"
+
+run_test test_assert_valid_json_pass_is_silent "assert_valid_json: well-formed JSON is silent"
+run_test test_assert_valid_json_single_quote_value_is_safe "assert_valid_json: single-quote value is inert (no eval)"
+run_test test_assert_valid_json_scalar_false_and_null_pass "assert_valid_json: valid scalars false/null pass (jq empty)"
+run_test test_assert_valid_json_fail_reports "assert_valid_json: malformed JSON reports message + value"
+run_test test_assert_valid_json_jq_absent_skips "assert_valid_json: jq-absent path is silent"
 
 run_test test_skip_test_increments_counter "skip_test: increments TESTS_SKIPPED and sets TEST_STATUS"
 
