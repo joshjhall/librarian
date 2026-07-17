@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-07-17
+
+### Added
+
+- Auto-run a level-scaled orchestrator status sweep (#315)
+- Add check-patterns-coverage.sh deterministic-coverage tool (#340)
+
+### Changed
+
+- Factor shared highestBy reducer (#344)
+- Replace degenerate single-item pipeline() with plain awaits (#347)
+- Validate feed JSON without eval-embedding untrusted line (#351)
+- Single source of truth for the git-env scrub var list (#367)
+
+### Documentation
+
+- Add session team memories from backlog-burndown + 0.6.x releases
+- Clarify orchestrate plan-gate broker-then-send flow (#302)
+
+### Fixed
+
+- Repair polluted main-repo core.worktree in worktree-rm.sh (#303)
+- Bound Workflow invocations in wall-time at the caller (#307)
+- Thread autonomy level through golem-launch.sh (#309)
+- Validate id/related_ids in code-reviewer merge output (#313)
+- Floor merged-finding severity at highest constituent ref (#316)
+- Settle the stale #29 'not agent-drivable' plan-gate hedge (#318)
+- Catch AskUserQuestion escalation forks in gate-watch pane channel (#320)
+- Surface MAX_REBASES-capped rebase remainder in orchestrate (#326)
+- Document classifier as a separate gate from the allow-list (#282) (#322)
+- Scrub git-hook env vars in repo_root() to protect the trust guard (#329)
+- Clamp planRefill lane pass to freeSlots (#331)
+- Filter orphan golem-? sentinel from feed_snapshot BLOCKED set (#333)
+- Bound codebase-audit + orchestrate Workflow callers in wall-time (#334)
+- Resolve superproject root in repo_root() inside a submodule (#335)
+- Mechanize ship-issue review wall-time stop decision (#339)
+- Document golem-notify feed can't classify in-turn forks (#342)
+- Init submodules in worktree-new so consuming-repo hooks pass (#346)
+- Scrub git-hook env process-wide in worktree-new/-rm (#354)
+- Recalibrate orchestrator review-wedge takeover heuristic (#369)
+- Extend git-env scrub to GIT_CONFIG_* / GIT_CEILING_DIRECTORIES (#375)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.19.14
+
+### Testing
+
+- Drive liveness_snapshot() tmux-pane wiring end-to-end (#305)
+- Cover stamp-versions.mjs error paths (#308)
+- Cover golem-notify golem-id derivation fallback (#310)
+- Pin golem-notify second idle classifier arm (#314)
+- Cover ensure_git_cliff install orchestration (#319)
+- Cover golem-notify cwd-independence from a subdirectory (#330)
+- Assert new_named_sandbox setup succeeds in validate-golem-notify.sh (#332)
+- Drive check-docs-* patterns.py ports to 100% line-rate (#349)
+- Cover highestBy malformed-input edge case (#350)
+- Harden check-patterns-coverage.sh coverage (#353)
+- Cover repo_root() super_root relative-path absolutize (#357)
+- Cover super_root probe GIT_DIR scrub inside a submodule (#362)
+- Assert golem-watch trap arms INT/TERM, not just EXIT (#358)
+- Cover worktree-new-from-submodule placement end-to-end (#338) (#364)
+- Close the 2×2 taint matrix — readonly GIT_DIR × super_root arm (#366)
+- Cover worktree-new submodule placement under a tainted git env (#365) (#373)
+- Add assert_valid_json self-test to validate-harness.sh (#374)
+- Add setsid-free behavioural INT signal-path test for golem-watch (#377)
+
 ## [0.6.1] - 2026-07-15
 
 ### Fixed
@@ -262,6 +329,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.6.2]: https://github.com/joshjhall/librarian/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/joshjhall/librarian/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/joshjhall/librarian/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/joshjhall/librarian/compare/v0.4.0...v0.5.0
