@@ -824,6 +824,86 @@ test_worktree_new_scrubs_tainted_git_env_for_mutations() {
         "no branch ref leaked into the outer/tainted repo (no split-brain)"
 }
 
+# Regression (#365, closing the last open cell of the worktree-new.sh × submodule
+# × tainted-git-env coverage matrix — deferred from PR #364's pre-PR review). The
+# two hardening dimensions are already tested only SEPARATELY: #338
+# (test_worktree_new_from_submodule_placement) drives the whole script from
+# inside a submodule but with a CLEAN env (placement only), and #328
+# (test_worktree_new_scrubs_tainted_git_env_for_mutations) drives the whole
+# script UNDER taint but from a PLAIN non-submodule sandbox (repo_root's
+# common-dir arm). The exact fusion — the full worktree-new.sh from INSIDE a
+# submodule AND under a tainted GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR — was
+# untested end-to-end; #337 covers submodule+taint only at the repo_root() UNIT
+# level, not the script's OWN post-repo_root() `git worktree add` mutation. This
+# is that cell: worktree-new.sh's process-wide scrub (before repo_root and every
+# mutation) must both keep the #324 super_root placement (worktree lands at
+# <super>/.worktrees, nothing under .git/modules) AND keep the #328 branch ref in
+# the superproject, not the tainted outer repo. Not via run_in (it cd's to the
+# sandbox root); this must invoke from the submodule subdir, so it hand-rolls the
+# env invocation mirroring run_in's pins with `cd "$super/mod"` (like
+# test_worktree_new_from_submodule_placement) but WITHOUT the GIT_SCRUB unset —
+# the taint is the whole point; the script's own scrub must clear it.
+# GIT_WORK_TREE is included in the taint (load-bearing per #337/#363: it forces
+# an unscrubbed super_root probe to miss the submodule). Skips cleanly if
+# `git submodule add` is unavailable (old git / file protocol disallowed).
+test_worktree_new_from_submodule_placement_under_taint() {
+    local super st=0
+    _make_super_with_submodule super || st=$?
+    if [ "$st" -eq 2 ]; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    [ "$st" -eq 0 ] || return 1
+
+    # Third, unrelated outer repo whose .git the taint points at (the split-brain
+    # target). Scrubbed setup so its own creation is not itself tainted.
+    local outer
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+
+    # Invoke worktree-new from INSIDE the submodule working tree (<super>/mod) with
+    # the git env TAINTED toward outer. No GIT_SCRUB on this invocation — the
+    # script's own #328 scrub must clear it; GIT_WORK_TREE is included so an
+    # unscrubbed super_root probe would miss the submodule (#337/#363). Fully-local
+    # out/rc pair (not the shared RUN_OUT/RUN_RC), since this bypasses run_in.
+    local out rc=0
+    out="$(cd "$super/mod" &&
+        GIT_DIR="$outer/.git" GIT_WORK_TREE="$outer" GIT_COMMON_DIR="$outer/.git" \
+            HOME="$super" \
+            TMUX='' TMUX_TMPDIR="$super/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_NEW" 45 2>&1)" || rc=$?
+    assert_exit 0 "$rc" \
+        "worktree-new exits 0 from inside a submodule despite a tainted git environment"
+    assert_file_exists "$super/.worktrees/issue-45/app.txt" \
+        "the worktree lands at <super>/.worktrees/issue-45 with the superproject's files"
+    assert_true '[ ! -e "'"$super"'/.git/modules/mod/.worktrees" ]' \
+        "nothing landed under <super>/.git/modules (the #324 bug path)"
+
+    # The branch ref must land in the superproject, not the tainted outer repo
+    # (#328 no-split-brain). Query through a scrubbed env so the check is not
+    # itself tainted.
+    local super_branch outer_branch
+    super_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" branch --list "feature/issue-45")"
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" branch --list "feature/issue-45")"
+    assert_not_empty "$super_branch" \
+        "the branch ref lands in the superproject, not the tainted GIT_DIR target"
+    assert_output_empty "$outer_branch" \
+        "no branch ref leaked into the outer/tainted repo (no split-brain)"
+}
+
 # --- config.sh repo_root() ----------------------------------------------------
 
 # Regression (#278): repo_root() must resolve its tools via PATH, not hardcoded
@@ -1770,6 +1850,7 @@ run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTR
 run_test test_worktree_new_inits_submodules "worktree-new: populates submodules in the fresh worktree (#325)"
 run_test test_worktree_new_from_submodule_placement "worktree-new: from inside a submodule lands the worktree at <super>/.worktrees (#338, #324)"
 run_test test_worktree_new_scrubs_tainted_git_env_for_mutations "worktree-new: scrubs a tainted GIT_DIR so the branch ref lands in the right repo (#328)"
+run_test test_worktree_new_from_submodule_placement_under_taint "worktree-new: from inside a submodule UNDER a tainted git env lands worktree + branch at <super>, not .git/modules or the outer repo (#365, #338, #328)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
