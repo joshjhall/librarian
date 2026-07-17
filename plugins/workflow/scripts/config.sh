@@ -85,6 +85,23 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL
 
+# GIT_ENV_SCRUB_VARS — git's hook-exported environment variables that
+# _repo_root_git (below) and the worktree-new/-rm callers scrub before running
+# git, so a tainted GIT_DIR / GIT_COMMON_DIR / … forwarded from a git hook cannot
+# pin git at an OUTER repo (#279 / #328). SINGLE SOURCE OF TRUTH: all three scrub
+# sites reference this one list, so a future addition (e.g. the GIT_CONFIG_*
+# extension in #355) lands in ONE place instead of needing a lockstep edit across
+# three files where a missed copy silently reopens the vulnerability class (#356).
+#
+# A space-separated string, NOT `declare -A` (bash-3.2 clean per
+# tests/lint-shell-portability.sh). Deliberately a PLAIN assignment, not an
+# env-overridable `: "${GIT_ENV_SCRUB_VARS:=…}"` default — the scrub set is a
+# security invariant, and letting the environment shrink or empty it would defeat
+# the very taint it defends against. The two consumption forms differ (`unset
+# $list` word-split vs `env -u <v> …`), so only the NAME LIST is shared, expanded
+# differently at each site.
+GIT_ENV_SCRUB_VARS="GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES"
+
 # _repo_root_git — run `git "$@"` with git's hook-exported environment scrubbed,
 # safe even when a GIT_* var is READONLY (`declare -rx GIT_DIR=…`), which a bare
 # `unset` cannot clear (issue #328 — the readonly gap #279's plain unset left
@@ -99,14 +116,22 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
 # rather than the tainted one. `env` (and git) are PATH-resolved (`command env` /
 # the child `git`), matching #278's no-hardcoded-/usr/bin rule; env is reached
 # ONLY on the readonly path, never in the common case.
+#
+# Both arms consume the shared GIT_ENV_SCRUB_VARS name list (#356): the `unset`
+# arm word-splits it directly; the `env -u` arm builds one `-u <name>` pair per
+# member (the readonly-attribute-independent form), so the effective scrub set is
+# identical and defined in exactly one place.
 _repo_root_git() {
-    if unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX \
-        GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null; then
+    # shellcheck disable=SC2086  # intentional word-split: unset each scrub var by name
+    if unset $GIT_ENV_SCRUB_VARS 2>/dev/null; then
         command git "$@"
     else
-        command env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-            -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
-            git "$@"
+        local _u="" _v
+        for _v in $GIT_ENV_SCRUB_VARS; do
+            _u="$_u -u $_v"
+        done
+        # shellcheck disable=SC2086  # intentional word-split of the built -u <name> pairs
+        command env $_u git "$@"
     fi
 }
 
