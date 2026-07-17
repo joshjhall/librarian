@@ -722,6 +722,55 @@ test_worktree_new_inits_submodules() {
         "the submodule's hook script is populated in the fresh worktree"
 }
 
+# Regression (#328): worktree-new.sh runs its OWN git mutations (worktree add
+# -b …) after repo_root(). #279 scrubbed only repo_root()'s rev-parse subshell,
+# so a tainted GIT_DIR/GIT_COMMON_DIR forwarded from a git hook still redirected
+# the caller's `git worktree add`: the worktree dir landed in the right repo but
+# the new BRANCH REF landed in the OUTER/tainted repo — a split-brain (verified
+# dynamically). The process-wide scrub added after `. config.sh` re-anchors all
+# subsequent git calls to cwd. Invoke worktree-new UNDER taint (not via run_in,
+# which the harness already scrubs) with GIT_DIR/GIT_COMMON_DIR pointed at a
+# separate outer repo, and assert the branch lands in the SANDBOX and is ABSENT
+# from outer. Mirrors test_config_repo_root_scrubs_tainted_git_env's taint setup.
+test_worktree_new_scrubs_tainted_git_env_for_mutations() {
+    local sb outer
+    new_sandbox sb
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+
+    # Run worktree-new from the sandbox with the git env TAINTED toward outer.
+    # No GIT_SCRUB on this invocation — the taint is the whole point; the script's
+    # own #328 scrub must clear it. Pin GOLEM_* / HOME like run_in does otherwise.
+    local out rc=0
+    out="$(cd "$sb" &&
+        GIT_DIR="$outer/.git" GIT_COMMON_DIR="$outer/.git" \
+            HOME="$sb" \
+            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_NEW" 78 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "worktree-new exits 0 despite a tainted git environment"
+
+    local sb_branch outer_branch
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" branch --list "feature/issue-78")"
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" branch --list "feature/issue-78")"
+    assert_not_empty "$sb_branch" \
+        "the branch ref lands in the SANDBOX repo, not the tainted GIT_DIR target"
+    assert_output_empty "$outer_branch" \
+        "no branch ref leaked into the outer/tainted repo (no split-brain)"
+}
+
 # --- config.sh repo_root() ----------------------------------------------------
 
 # Regression (#278): repo_root() must resolve its tools via PATH, not hardcoded
@@ -874,6 +923,37 @@ test_config_repo_root_scrubs_tainted_git_env() {
         "repo_root resolves the sandbox root, not the tainted GIT_DIR/GIT_COMMON_DIR target"
 }
 
+# Regression (#328): the #279 scrub used a bare `unset`, which SILENTLY NO-OPS on
+# a READONLY GIT_* var (`declare -rx GIT_DIR=…`) — the unset fails to stderr but
+# the command-substitution subshell continues (no inherit_errexit), so
+# `git rev-parse` still reads the tainted value and repo_root() returns the OUTER
+# repo. _repo_root_git (config.sh) closes this: plain unset first (dependency-
+# free common path), falling back to `env -u` (unexports regardless of the
+# readonly attribute) when unset fails. Direct repo_root() unit test with a
+# readonly-exported taint, asserting the sandbox root still resolves. Mirrors
+# test_config_repo_root_scrubs_tainted_git_env but with `declare -rx`.
+test_config_repo_root_scrubs_readonly_tainted_git_env() {
+    local sb outer
+    new_sandbox sb
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+
+    # declare -rx makes GIT_DIR/GIT_COMMON_DIR readonly AND exported inside the
+    # child bash before sourcing config.sh, so a bare `unset` in repo_root's
+    # subshell cannot clear them — the env -u fallback must.
+    local out rc=0
+    out="$(cd "$sb" &&
+        "$REAL_BASH" -c 'declare -rx GIT_DIR="$2/.git"; declare -rx GIT_COMMON_DIR="$2/.git"; . "$1"; repo_root' \
+            _ "$CONFIG" "$outer" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 despite a readonly tainted git environment"
+    local sb_real out_real
+    sb_real="$(cd "$sb" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sb_real" "$out_real" \
+        "repo_root resolves the sandbox root despite a readonly GIT_DIR/GIT_COMMON_DIR taint"
+}
+
 # Regression (#324): inside a git SUBMODULE working tree, --git-common-dir
 # resolves to <super>/.git/modules/<name>, so the common-dir logic alone would
 # return <super>/.git/modules — a git-internal path — and worktree-new.sh would
@@ -961,6 +1041,64 @@ test_worktree_rm_round_trip() {
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
         /usr/bin/git -C "$sb" branch --list "feature/issue-34")"
     assert_equals "" "$branches" "the feature/issue-34 branch is gone after rm"
+}
+
+# Regression (#328): worktree-rm.sh runs its OWN destructive git mutations
+# (worktree remove / branch -D / config --unset core.worktree / worktree prune)
+# after repo_root(). Like worktree-new, a tainted GIT_DIR/GIT_COMMON_DIR
+# forwarded from a git hook would redirect those to an OUTER repo — force-
+# deleting the wrong repo's branch or corrupting its core.worktree. The
+# process-wide scrub added after `. config.sh` re-anchors them to cwd. Seed the
+# sandbox with a worktree+branch via WT_NEW under run_in (safe — scrubbed), then
+# invoke WT_RM directly UNDER taint (bypassing run_in's scrub) with
+# GIT_DIR/GIT_COMMON_DIR pointed at a separate outer repo that carries an
+# identically-named branch, and assert the SANDBOX's worktree+branch are removed
+# while the outer repo's same-named branch is untouched (no cross-repo deletion).
+test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
+    local sb outer
+    new_sandbox sb
+    # Create the sandbox worktree+branch to remove (scrubbed path — safe).
+    run_in "$sb" "$WT_NEW" 79
+    assert_exit 0 "$RUN_RC" "worktree-new seeds the sandbox worktree+branch"
+
+    # A separate outer repo carrying an identically-named branch. If worktree-rm
+    # ran its `git branch -D` in the tainted env, it would delete THIS branch.
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
+
+    # Run worktree-rm from the sandbox with the git env TAINTED toward outer.
+    # No GIT_SCRUB on this invocation — the taint is the point; the script's own
+    # #328 scrub must clear it. Pin GOLEM_* / HOME like run_in does otherwise.
+    local out rc=0
+    out="$(cd "$sb" &&
+        GIT_DIR="$outer/.git" GIT_COMMON_DIR="$outer/.git" \
+            HOME="$sb" \
+            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 79 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "worktree-rm exits 0 despite a tainted git environment"
+
+    local sb_branch outer_branch
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" branch --list "feature/issue-79")"
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" branch --list "feature/issue-79")"
+    assert_output_empty "$sb_branch" \
+        "the SANDBOX branch was deleted (the mutation targeted the right repo)"
+    assert_not_empty "$outer_branch" \
+        "the outer/tainted repo's same-named branch is untouched (no cross-repo delete)"
 }
 
 # _make_super_with_submodule <out-super-var>
@@ -1316,15 +1454,18 @@ run_test test_worktree_new_existing_branch_exits_1 "worktree-new: lingering bran
 run_test test_worktree_new_no_hardcoded_usr_bin "worktree-new: no hardcoded /usr/bin/* tool paths (#228)"
 run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTREE_LOCAL_FILES into the worktree (#228)"
 run_test test_worktree_new_inits_submodules "worktree-new: populates submodules in the fresh worktree (#325)"
+run_test test_worktree_new_scrubs_tainted_git_env_for_mutations "worktree-new: scrubs a tainted GIT_DIR so the branch ref lands in the right repo (#328)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
 run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolutizes a relative common dir via command pwd (#278)"
 run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR/GIT_COMMON_DIR (#279)"
+run_test test_config_repo_root_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR via env -u fallback (#328)"
 run_test test_config_repo_root_submodule_superproject "config.sh: repo_root returns the superproject root inside a submodule (#324)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
+run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"
 run_test test_worktree_rm_forces_past_clean_submodule "worktree-rm: forces past a clean populated submodule (#325)"
 run_test test_worktree_rm_refuses_dirty_regular_file_with_submodule "worktree-rm: refuses dirty regular file even with a submodule (#325)"
 run_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
