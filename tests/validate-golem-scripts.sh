@@ -1094,6 +1094,97 @@ test_config_repo_root_scrubs_tainted_git_env() {
         "repo_root resolves the sandbox root, not the tainted GIT_DIR/GIT_COMMON_DIR target"
 }
 
+# Security regression (#355): git honors GIT_CONFIG_COUNT + GIT_CONFIG_KEY_<n> /
+# GIT_CONFIG_VALUE_<n> (and the single-var GIT_CONFIG_PARAMETERS form) to inject
+# arbitrary config, changing what a later git call reads WITHOUT touching GIT_DIR
+# (e.g. url.<base>.insteadOf redirecting a fetch). config.sh's _git_env_scrub_names
+# scrubs the whole family — the static names plus the dynamic KEY_<n>/VALUE_<n>
+# pairs — inside _repo_root_git, which is the shared arm every caller's git runs
+# through.
+#
+# The test must DISCRIMINATE scrubbed from unscrubbed. `repo_root()` alone does
+# NOT: its only git subcommand is `rev-parse --git-common-dir`, which is inert to
+# core.worktree/config injection (the pre-PR review verified an injected
+# core.worktree leaves --git-common-dir unchanged, so a repo_root()-level
+# assertion passes even with ZERO scrubbing — a false-positive security test).
+# Instead drive `_repo_root_git config --get <key>`: `git config` DOES honor the
+# injected value, so the assertion actually fails when the scrub is dropped. The
+# test proves both directions: (a) a BARE `git config --get` under the taint reads
+# the INJECTED value (the vector is real and reaches this repo), and (b)
+# `_repo_root_git config --get` reads the repo's REAL value (the scrub neutralizes
+# it). Taint deliberately not in GIT_SCRUB — it must reach the child.
+#
+# Helper: run one injection encoding and assert the scrub wins while a bare git
+# loses. $1 = label, remaining args = the env assignment(s) carrying the taint.
+_assert_config_injection_scrubbed() {
+    local label="$1"
+    shift
+    local sb
+    new_sandbox sb
+    # Seed a known real value the injection tries to override.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" config user.name "REALNAME"
+
+    # (a) Bare git under the taint reads the INJECTED value — proves the vector is
+    # live and reaches this repo (guards against a test that passes vacuously). The
+    # bare git's own exit code is irrelevant here; only the value it reads matters.
+    local bare
+    bare="$(cd "$sb" &&
+        /usr/bin/env "$@" "$REAL_BASH" -c 'command git config --get user.name' 2>&1)" || true
+    assert_equals "INJECTED" "$bare" \
+        "$label: bare git honors the injected user.name (the taint is real)"
+
+    # (b) _repo_root_git config --get reads the REAL value — the scrub neutralized
+    # the injection. This FAILS (reads INJECTED) if the scrub is dropped.
+    local scrubbed rc_b=0
+    scrubbed="$(cd "$sb" &&
+        /usr/bin/env "$@" "$REAL_BASH" -c '. "$1"; _repo_root_git config --get user.name' \
+            _ "$CONFIG" 2>&1)" || rc_b=$?
+    assert_exit 0 "$rc_b" "$label: _repo_root_git config exits 0 despite the taint"
+    assert_equals "REALNAME" "$scrubbed" \
+        "$label: _repo_root_git reads the REAL user.name, not the injected one (scrub works)"
+}
+
+# Indexed GIT_CONFIG_COUNT/KEY_<n>/VALUE_<n> encoding — the dynamic pairs
+# _git_env_scrub_names enumerates.
+test_config_repo_root_scrubs_git_config_injection() {
+    _assert_config_injection_scrubbed "GIT_CONFIG_COUNT" \
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=INJECTED
+}
+
+# Single-var GIT_CONFIG_PARAMETERS encoding — a shell-quoted `'key=value'` list
+# git honors identically. A FIXED name (unlike the dynamic pairs), so it lives in
+# the static GIT_ENV_SCRUB_VARS. Its omission left the injection class
+# half-closed (surfaced by the pre-PR review); this guards the fix.
+test_config_repo_root_scrubs_git_config_parameters() {
+    _assert_config_injection_scrubbed "GIT_CONFIG_PARAMETERS" \
+        GIT_CONFIG_PARAMETERS="'user.name=INJECTED'"
+}
+
+# Availability regression (#355): GIT_CEILING_DIRECTORIES makes git STOP repo
+# discovery at the named ceiling — set to the sandbox root, discovery from a
+# subdir fails `fatal: not a git repository` (verified rc=128 unscrubbed). A golem
+# host whose hook exports it would break every repo_root() caller inside a valid
+# repo. config.sh scrubs it (now on GIT_ENV_SCRUB_VARS), so repo_root() resolves
+# regardless. Run from a SUBDIR so the ceiling actually bites (from the root
+# itself git is already at the boundary). Taint deliberately not in GIT_SCRUB.
+test_config_repo_root_scrubs_git_ceiling_directories() {
+    local sb
+    new_sandbox sb
+    /usr/bin/mkdir -p "$sb/sub"
+
+    local out rc=0
+    out="$(cd "$sb/sub" &&
+        GIT_CEILING_DIRECTORIES="$sb" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 despite a GIT_CEILING_DIRECTORIES discovery block"
+    local sb_real out_real
+    sb_real="$(cd "$sb" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$sb_real" "$out_real" \
+        "repo_root resolves the sandbox root despite a GIT_CEILING_DIRECTORIES taint"
+}
+
 # Regression (#328): the #279 scrub used a bare `unset`, which SILENTLY NO-OPS on
 # a READONLY GIT_* var (`declare -rx GIT_DIR=…`) — the unset fails to stderr but
 # the command-substitution subshell continues (no inherit_errexit), so
@@ -1342,17 +1433,20 @@ test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env() {
 
 # --- config.sh GIT_ENV_SCRUB_VARS single source (#356) -----------------------
 
-# Regression (#356): the git hook-exported scrub var list must live in exactly
-# ONE place — config.sh's GIT_ENV_SCRUB_VARS — with _repo_root_git and both
-# worktree callers referencing it. Before #356 the 7-name list was copy-pasted
-# into three files; a future addition (e.g. #355's GIT_CONFIG_*) applied to some
-# but not all silently reopens the tainted-env vulnerability class (#279/#328),
-# and nothing cross-checked the copies. This static guard pins the single source:
-#   1. sourcing config.sh yields the exact 7-name list, in order;
-#   2. the literal set (fingerprinted by its trailing, most-likely-forgotten
-#      member GIT_ALTERNATE_OBJECT_DIRECTORIES) appears under plugins/ ONLY in
+# Regression (#356 / #355): the git hook-exported scrub var list must live in
+# exactly ONE place — config.sh's GIT_ENV_SCRUB_VARS, surfaced through
+# _git_env_scrub_names — with _repo_root_git and both worktree callers referencing
+# it. Before #356 the list was copy-pasted into three files; a future addition
+# (e.g. #355's GIT_CONFIG_*) applied to some but not all silently reopens the
+# tainted-env vulnerability class (#279/#328), and nothing cross-checked the
+# copies. #355 grew the static list to 14 names and added the dynamic
+# GIT_CONFIG_KEY_<n>/VALUE_<n> pairs enumerated by _git_env_scrub_names. This
+# static guard pins the single source:
+#   1. sourcing config.sh yields the exact 14-name list, in order;
+#   2. the literal set (fingerprinted by its most-likely-forgotten member
+#      GIT_ALTERNATE_OBJECT_DIRECTORIES) appears under plugins/ ONLY in
 #      config.sh and exactly once — no site re-lists it;
-#   3. both callers reference $GIT_ENV_SCRUB_VARS.
+#   3. both callers scrub via $(_git_env_scrub_names), not a re-listed literal.
 test_config_git_env_scrub_vars_single_source() {
     local out rc=0
     # (1) Sourcing config.sh defines GIT_ENV_SCRUB_VARS as the expected list.
@@ -1361,14 +1455,14 @@ test_config_git_env_scrub_vars_single_source() {
         _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "sourcing config.sh succeeds and exposes GIT_ENV_SCRUB_VARS"
     assert_equals \
-        "GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES" \
+        "GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM" \
         "$out" \
-        "GIT_ENV_SCRUB_VARS is the exact 7-name scrub list, in order"
+        "GIT_ENV_SCRUB_VARS is the exact 14-name scrub list, in order (#355)"
 
     # (1b) The list is a SECURITY INVARIANT: a plain assignment, NOT an
     # env-overridable `: "${GIT_ENV_SCRUB_VARS:=…}"` default. Pre-set a truncated
     # value in the child's environment before sourcing config.sh and confirm the
-    # source CLOBBERS it back to the full 7-name list — a compromised git hook (or
+    # source CLOBBERS it back to the full 14-name list — a compromised git hook (or
     # a harness bug) pre-exporting an empty/short list must NOT be able to shrink
     # the scrub set and defeat the taint defense (#356).
     local override rc2=0
@@ -1377,7 +1471,7 @@ test_config_git_env_scrub_vars_single_source() {
         _ "$CONFIG" 2>&1)" || rc2=$?
     assert_exit 0 "$rc2" "sourcing config.sh with a pre-set GIT_ENV_SCRUB_VARS succeeds"
     assert_equals \
-        "GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES" \
+        "GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM" \
         "$override" \
         "config.sh clobbers an inherited GIT_ENV_SCRUB_VARS — the scrub set can't be shrunk from the env (#356)"
 
@@ -1394,11 +1488,29 @@ test_config_git_env_scrub_vars_single_source() {
     assert_equals "1" "$count" \
         "config.sh names the literal scrub set exactly once (the single source)"
 
-    # (3) Both worktree callers reference the shared variable, not a literal list.
-    assert_file_contains "$WT_NEW" 'unset $GIT_ENV_SCRUB_VARS' \
-        "worktree-new.sh scrubs via the shared \$GIT_ENV_SCRUB_VARS"
-    assert_file_contains "$WT_RM" 'unset $GIT_ENV_SCRUB_VARS' \
-        "worktree-rm.sh scrubs via the shared \$GIT_ENV_SCRUB_VARS"
+    # (3) Both worktree callers scrub via the shared helper, not a literal list.
+    assert_file_contains "$WT_NEW" 'unset $(_git_env_scrub_names)' \
+        "worktree-new.sh scrubs via the shared _git_env_scrub_names"
+    assert_file_contains "$WT_RM" 'unset $(_git_env_scrub_names)' \
+        "worktree-rm.sh scrubs via the shared _git_env_scrub_names"
+
+    # (4) _git_env_scrub_names appends the dynamically-indexed GIT_CONFIG_KEY_<n> /
+    # GIT_CONFIG_VALUE_<n> pairs present in the environment to the static list —
+    # these can't be fixed names (the count is dynamic), so the helper is what
+    # keeps them in the scrub set (#355). Pre-set two pairs and assert both indices
+    # appear after the 14 static names.
+    local pairs rc4=0
+    pairs="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        GIT_CONFIG_COUNT=2 \
+        GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=/x \
+        GIT_CONFIG_KEY_1=url.z.insteadOf GIT_CONFIG_VALUE_1=/y \
+        "$REAL_BASH" -c '. "$1"; command printf "%s" "$(_git_env_scrub_names)"' \
+        _ "$CONFIG" 2>&1)" || rc4=$?
+    assert_exit 0 "$rc4" "_git_env_scrub_names runs with GIT_CONFIG_* pairs present"
+    assert_contains "$pairs" "GIT_CONFIG_KEY_0" \
+        "_git_env_scrub_names enumerates the dynamic GIT_CONFIG_KEY_<n> pairs (#355)"
+    assert_contains "$pairs" "GIT_CONFIG_VALUE_1" \
+        "_git_env_scrub_names enumerates the dynamic GIT_CONFIG_VALUE_<n> pairs (#355)"
 }
 
 # --- worktree-rm.sh ---------------------------------------------------------
@@ -1857,6 +1969,9 @@ run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '
 run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolutizes a relative common dir via command pwd (#278)"
 run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR/GIT_COMMON_DIR (#279)"
 run_test test_config_repo_root_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR via env -u fallback (#328)"
+run_test test_config_repo_root_scrubs_git_config_injection "config.sh: repo_root scrubs an injected GIT_CONFIG_* config value (#355)"
+run_test test_config_repo_root_scrubs_git_config_parameters "config.sh: repo_root scrubs a GIT_CONFIG_PARAMETERS-injected config value (#355)"
+run_test test_config_repo_root_scrubs_git_ceiling_directories "config.sh: repo_root scrubs a GIT_CEILING_DIRECTORIES discovery block (#355)"
 run_test test_config_repo_root_submodule_superproject "config.sh: repo_root returns the superproject root inside a submodule (#324)"
 run_test test_config_repo_root_submodule_superproject_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR in the super_root probe inside a submodule (#337, #279)"
 run_test test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR in the super_root probe inside a submodule (#363, #337, #328)"

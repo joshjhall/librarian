@@ -87,11 +87,27 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
 
 # GIT_ENV_SCRUB_VARS — git's hook-exported environment variables that
 # _repo_root_git (below) and the worktree-new/-rm callers scrub before running
-# git, so a tainted GIT_DIR / GIT_COMMON_DIR / … forwarded from a git hook cannot
-# pin git at an OUTER repo (#279 / #328). SINGLE SOURCE OF TRUTH: all three scrub
-# sites reference this one list, so a future addition (e.g. the GIT_CONFIG_*
-# extension in #355) lands in ONE place instead of needing a lockstep edit across
-# three files where a missed copy silently reopens the vulnerability class (#356).
+# git, so a tainted env forwarded from a git hook cannot pin git at an OUTER repo
+# (#279 / #328 / #355). SINGLE SOURCE OF TRUTH: all three scrub sites reference
+# this one list (via _git_env_scrub_names below), so a future addition lands in
+# ONE place instead of needing a lockstep edit across three files where a missed
+# copy silently reopens the vulnerability class (#356).
+#
+# The set spans three redirect classes:
+#   1. PATH redirect (#279/#328) — GIT_DIR / GIT_COMMON_DIR / GIT_WORK_TREE and
+#      the object/index/prefix vars pin git at an outer repo directly (the
+#      original 7-name set; see the assignment below for the exact members).
+#   2. CONFIG injection (#355) — GIT_CONFIG_COUNT (with its indexed
+#      GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> pairs, scrubbed dynamically by
+#      _git_env_scrub_names — they are not fixed names), GIT_CONFIG_PARAMETERS
+#      (the shell-quoted single-var encoding of the SAME key=value injection —
+#      a fixed name, so it lives in the static list), and
+#      GIT_CONFIG_GLOBAL/SYSTEM/NOSYSTEM inject or swap config (e.g.
+#      core.worktree, url.<base>.insteadOf) that redirects where a mutation lands
+#      WITHOUT touching GIT_DIR.
+#   3. DISCOVERY availability (#355) — GIT_CEILING_DIRECTORIES /
+#      GIT_DISCOVERY_ACROSS_FILESYSTEM can make discovery FAIL, an availability
+#      regression on a golem host whose hook sets them.
 #
 # A space-separated string, NOT `declare -A` (bash-3.2 clean per
 # tests/lint-shell-portability.sh). Deliberately a PLAIN assignment, not an
@@ -100,7 +116,26 @@ export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
 # the very taint it defends against. The two consumption forms differ (`unset
 # $list` word-split vs `env -u <v> …`), so only the NAME LIST is shared, expanded
 # differently at each site.
-GIT_ENV_SCRUB_VARS="GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES"
+GIT_ENV_SCRUB_VARS="GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM"
+
+# _git_env_scrub_names — the EFFECTIVE scrub name list: the static
+# GIT_ENV_SCRUB_VARS plus any dynamically-indexed GIT_CONFIG_KEY_<n> /
+# GIT_CONFIG_VALUE_<n> pairs currently present in the environment. git reads
+# those pairs when GIT_CONFIG_COUNT is set (#355), but the count — hence the
+# index range — is dynamic, so they can't be fixed entries in GIT_ENV_SCRUB_VARS;
+# they must be enumerated at scrub time. `${!prefix@}` prefix expansion is
+# bash-3.2 available (NOT a bash-4 construct — see tests/lint-shell-portability.sh)
+# and expands to nothing under `set -u` when no var matches, so the `for` is safe
+# even with no pairs present. All three scrub sites word-split this helper's
+# output, so the static list AND the dynamic pairs are scrubbed identically and
+# defined in exactly one place.
+_git_env_scrub_names() {
+    command printf '%s' "$GIT_ENV_SCRUB_VARS"
+    local _n
+    for _n in ${!GIT_CONFIG_KEY_@} ${!GIT_CONFIG_VALUE_@}; do
+        command printf ' %s' "$_n"
+    done
+}
 
 # _repo_root_git — run `git "$@"` with git's hook-exported environment scrubbed,
 # safe even when a GIT_* var is READONLY (`declare -rx GIT_DIR=…`), which a bare
@@ -117,17 +152,20 @@ GIT_ENV_SCRUB_VARS="GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREF
 # the child `git`), matching #278's no-hardcoded-/usr/bin rule; env is reached
 # ONLY on the readonly path, never in the common case.
 #
-# Both arms consume the shared GIT_ENV_SCRUB_VARS name list (#356): the `unset`
-# arm word-splits it directly; the `env -u` arm builds one `-u <name>` pair per
-# member (the readonly-attribute-independent form), so the effective scrub set is
-# identical and defined in exactly one place.
+# Both arms consume the shared scrub name list via _git_env_scrub_names (#356 /
+# #355): the `unset` arm word-splits it directly; the `env -u` arm builds one
+# `-u <name>` pair per member (the readonly-attribute-independent form), so the
+# effective scrub set is identical and defined in exactly one place — including
+# the dynamic GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> pairs the helper enumerates.
 _repo_root_git() {
+    local _names _u _v
+    _names="$(_git_env_scrub_names)"
     # shellcheck disable=SC2086  # intentional word-split: unset each scrub var by name
-    if unset $GIT_ENV_SCRUB_VARS 2>/dev/null; then
+    if unset $_names 2>/dev/null; then
         command git "$@"
     else
-        local _u="" _v
-        for _v in $GIT_ENV_SCRUB_VARS; do
+        _u=""
+        for _v in $_names; do
             _u="$_u -u $_v"
         done
         # shellcheck disable=SC2086  # intentional word-split of the built -u <name> pairs

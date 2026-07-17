@@ -29,10 +29,11 @@ SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # whole set here, before repo_root() and every other git call. Deliberately NO
 # `|| true`: a readonly GIT_DIR makes `unset` fail, which under `set -e` aborts
 # LOUDLY before any mutation — the fail-loud outcome, never a silent wrong-repo
-# write. Uses config.sh's shared GIT_ENV_SCRUB_VARS list (#356) so the scrub set
-# stays in lockstep with repo_root()'s and worktree-rm.sh's — one source of truth.
-# shellcheck disable=SC2086  # intentional word-split: unset each scrub var by name
-unset $GIT_ENV_SCRUB_VARS
+# write. Uses config.sh's shared _git_env_scrub_names (#356 / #355) so the scrub
+# set — static vars PLUS the dynamic GIT_CONFIG_KEY_<n>/VALUE_<n> pairs — stays in
+# lockstep with repo_root()'s and worktree-rm.sh's, one source of truth.
+# shellcheck disable=SC2046  # intentional word-split: unset each scrub var by name
+unset $(_git_env_scrub_names)
 
 N="${1:-}"
 if ! [[ "$N" =~ ^[0-9]+$ ]]; then
