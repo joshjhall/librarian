@@ -10,14 +10,38 @@
 # foreground stream returns, so a `Ctrl-C` (or a natural feed-stream exit) does
 # not leave the pane watcher running.
 #
-# This gate pins two behaviours without a real streamer, tmux, or panes: it runs
-# the REAL golem-watch.sh beside a FAKE golem-gate-watch.sh (resolved via the
+# This gate pins several behaviours without a real streamer, tmux, or panes: it
+# runs the REAL golem-watch.sh beside a FAKE golem-gate-watch.sh (resolved via the
 # script's own `BASH_SOURCE` sibling lookup) inside a `mktemp -d`, and asserts:
 #   1. both the `[feed]` and `[pane]` prefixes appear (both channels dispatched
 #      and were prefixed distinctly);
 #   2. after the foreground `--stream` exits, the REAL pane WORKER process
 #      (`golem-gate-watch.sh --stream-panes`) is gone — the cleanup trap reaped
 #      the whole pane pipeline, not just its subshell wrapper.
+#   3. the trap is armed on INT/TERM (not only EXIT) — a structural assertion on
+#      the trap spec. See "Signal-delivery coverage" below.
+#
+# Signal-delivery coverage (issue #254). Case (2) above drives the foreground fake
+# to exit NATURALLY, which fires bash's EXIT arm of `trap cleanup_pane EXIT INT
+# TERM` (golem-watch.sh) — it does NOT prove the INT/TERM arms are wired, even
+# though Ctrl-C is the script's primary motivating scenario. A regression that
+# dropped `INT TERM` (leaving bare `EXIT`) would sail past case (2). Case (3)
+# closes that gap STRUCTURALLY — a grep asserting the real trap spec still lists
+# both INT and TERM. That is deterministic and portable (runs on macOS bash 3.2),
+# and it is in fact the STRONGEST guard available for the named regression:
+# a *behavioural* signal test cannot catch "dropped INT TERM" at all, because —
+# verified empirically on bash 5.2 — the EXIT arm ALSO runs when the shell dies
+# from a real Ctrl-C (a process-GROUP signal), so a group signal reaps the worker
+# even against the EXIT-only regression. (A behavioural TERM case is likewise
+# impossible: the cleanup trap itself reaps via SIGTERM, so a worker rigged to
+# survive a group TERM survives the trap too.)
+#
+# An end-to-end behavioural signal test (setsid + `kill -INT -<pgid>`) that proves
+# a delivered SIGINT actually *reaches* cleanup_pane was prototyped and passes
+# locally, but proved environment-fragile on the CI runner (the group signal did
+# not land; the process tree leaked as orphans). It is deferred to issue #359
+# (setsid-free `set -m` fallback) / #360 (readiness-polling instead of fixed
+# sleeps) so it can be made CI-stable there rather than shipped flaky here.
 #
 # On (2): the subtlety this test exists to pin is that `pane_pid` (`$!` in
 # golem-watch.sh) is the PID of the backgrounded `( "$watch" --stream-panes |
@@ -169,6 +193,20 @@ test_trap_kills_background_pane() {
         "the pane worker (golem-gate-watch.sh --stream-panes) is gone after the foreground exits (trap reaped the pipeline)"
 }
 
+# --- Signal-delivery coverage (issue #254) ----------------------------------
+
+# Structural trap-spec assertion. The real golem-watch.sh cleanup trap must stay
+# armed on BOTH INT and TERM, not only EXIT — Ctrl-C (SIGINT) is the script's
+# primary motivating scenario, and a regression that dropped `INT TERM` would
+# leave case (2) above (which fires only the EXIT arm) still green. Assert the
+# actual trap line arms both signals. Portable and timing-free — runs everywhere,
+# including macOS bash 3.2.
+test_trap_spec_arms_int_and_term() {
+    assert_true \
+        "/usr/bin/grep -Eq '^[[:space:]]*trap[[:space:]]+cleanup_pane([[:space:]]+[A-Z]+)*[[:space:]]+INT([[:space:]]+[A-Z]+)*([[:space:]]+[A-Z]+)*\$' '$WATCH' && /usr/bin/grep -Eq '^[[:space:]]*trap[[:space:]]+cleanup_pane([[:space:]]+[A-Z]+)*[[:space:]]+TERM([[:space:]]+[A-Z]+)*\$' '$WATCH'" \
+        "golem-watch.sh arms its cleanup trap on INT and TERM (not just EXIT)"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # The suite needs `timeout` to bound the foreground stream. Gate it from inside a
@@ -192,5 +230,11 @@ fi
 
 run_test test_both_channels_prefixed "golem-watch: both feed + pane channels are streamed and prefixed"
 run_test test_trap_kills_background_pane "golem-watch: the cleanup trap kills the background pane on foreground exit"
+
+# Signal-delivery coverage (issue #254). Structural assertion that the cleanup
+# trap stays armed on INT and TERM (not just EXIT) — deterministic and portable.
+# A behavioural end-to-end signal test is deferred to #359/#360 (CI-fragile; see
+# the header note).
+run_test test_trap_spec_arms_int_and_term "golem-watch: cleanup trap is armed on INT and TERM, not just EXIT (structural)"
 
 generate_report
