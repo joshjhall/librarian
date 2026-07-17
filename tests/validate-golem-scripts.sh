@@ -1045,6 +1045,83 @@ test_config_repo_root_submodule_superproject() {
         "repo_root returns the superproject root, not <super>/.git/modules"
 }
 
+# Security regression (#337, closing a coverage gap flagged in the #335 pre-PR
+# review): the super_root probe (#324) runs its
+# `rev-parse --show-superproject-working-tree` through _repo_root_git, so a
+# tainted GIT_DIR/GIT_COMMON_DIR (from a git hook or an env-forwarding wrapper)
+# cannot pin the resolved root to an OUTER repo — the same #279 hook-safety
+# guarantee already proven for the common-dir probe. But
+# test_config_repo_root_scrubs_tainted_git_env exercises only a PLAIN
+# (non-submodule) sandbox, where --show-superproject-working-tree is always
+# empty, so the super_root arm's scrub path is never taken under taint. This test
+# closes that hole: build the same real super+submodule fixture as the #324 test,
+# then invoke repo_root from INSIDE the submodule working tree under taint. On an
+# unscrubbed probe the tainted GIT_WORK_TREE makes git treat the OUTER repo as
+# the work tree, so --show-superproject-working-tree returns EMPTY and repo_root
+# falls through to the common-dir arm — which the same taint pins to
+# <super>/.git/modules, the exact #324 bug value. With the scrub intact repo_root
+# returns the true superproject root instead. The taint must include
+# GIT_WORK_TREE, not just GIT_DIR/GIT_COMMON_DIR: from a submodule working tree
+# git still detects the superproject from cwd under a GIT_DIR/GIT_COMMON_DIR-only
+# taint, so GIT_WORK_TREE is what actually diverges the scrubbed and unscrubbed
+# probes (both are on the #279 scrub list, as a real git hook exports them
+# together). Deliberately does NOT wrap the invocation in
+# `env "${GIT_SCRUB[@]/#/--unset=}"` (unlike the #324 test) — the taint must
+# reach repo_root() for the assertion to mean anything (same rationale as
+# test_config_repo_root_scrubs_tainted_git_env). Skips cleanly if
+# `git submodule add` is unavailable (old git / file protocol disallowed).
+test_config_repo_root_submodule_superproject_scrubs_tainted_git_env() {
+    local sub super outer name rc=0
+    sub="$(/usr/bin/mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
+    super="$(/usr/bin/mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    name="mod"
+    # Inner submodule repo with one commit so it can be added.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
+    # Superproject that embeds it as a submodule.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" config user.name "Test"
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
+        submodule add -q "$sub" "$name" 2>/dev/null; then
+        skip_test "git submodule add unavailable — cannot build the fixture"
+        return 0
+    fi
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
+    # Third, unrelated outer repo whose .git the taint points at.
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+
+    # Invoke repo_root from INSIDE the submodule working tree UNDER TAINT: the
+    # invocation is NOT scrubbed (no `env --unset`), and GIT_DIR/GIT_WORK_TREE/
+    # GIT_COMMON_DIR point at the outer repo, so the taint reaches repo_root().
+    # GIT_WORK_TREE is essential — it is what makes an unscrubbed super_root probe
+    # miss the submodule and fall through to the tainted common-dir arm.
+    local out
+    out="$(cd "$super/$name" &&
+        GIT_DIR="$outer/.git" GIT_WORK_TREE="$outer" GIT_COMMON_DIR="$outer/.git" \
+            "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "repo_root exits 0 inside a tainted submodule working tree"
+    # Compare realpaths (symlinked /tmp on CI runners).
+    local super_real out_real
+    super_real="$(cd "$super" && command pwd -P)"
+    out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
+    assert_equals "$super_real" "$out_real" \
+        "repo_root returns the superproject root, not the tainted outer repo"
+}
+
 # --- worktree-rm.sh ---------------------------------------------------------
 
 # Non-integer argument → exit 2.
@@ -1500,6 +1577,7 @@ run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolut
 run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR/GIT_COMMON_DIR (#279)"
 run_test test_config_repo_root_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR via env -u fallback (#328)"
 run_test test_config_repo_root_submodule_superproject "config.sh: repo_root returns the superproject root inside a submodule (#324)"
+run_test test_config_repo_root_submodule_superproject_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR in the super_root probe inside a submodule (#337, #279)"
 run_test test_config_repo_root_relative_super_root "config.sh: repo_root absolutizes a relative --show-superproject-working-tree via command pwd (#336)"
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
