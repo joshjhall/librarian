@@ -58,8 +58,11 @@ noted). Run on every PR by `.github/workflows/ci.yml`.
   argument-parsing heuristic (last arg is the message when it has whitespace or
   starts uppercase, else part of the command), the value assertions
   (`assert_equals` / `assert_not_empty` / `assert_contains` /
-  `assert_not_contains`) on both passing and failing inputs, and `skip_test`'s
-  counter bookkeeping. Each deliberately-failing probe runs in an isolated
+  `assert_not_contains`) on both passing and failing inputs,
+  `assert_valid_json` on valid, malformed, and jq-absent inputs (including a
+  single-quote value that proves the no-eval footgun is closed and the `false`/
+  `null` scalars that pin the `jq empty` vs `jq -e .` contract), and
+  `skip_test`'s counter bookkeeping. Each deliberately-failing probe runs in an isolated
   subshell so it cannot corrupt the live suite's counters.
 
 ## Behavioral gates

@@ -62,7 +62,7 @@ identically on a host Mac, a bare Linux box, and inside the devcontainer.
 
 | Gate | Validates |
 | --- | --- |
-| `validate-harness.sh` | Self-test for `lib/harness.sh` — `assert_true`'s message-vs-command heuristic, the value assertions (`assert_equals`/`assert_not_empty`/`assert_contains`/`assert_not_contains`) on passing+failing inputs, and `skip_test`'s counter bookkeeping. Failing probes run in isolated subshells. Pure bash. |
+| `validate-harness.sh` | Self-test for `lib/harness.sh` — `assert_true`'s message-vs-command heuristic, the value assertions (`assert_equals`/`assert_not_empty`/`assert_contains`/`assert_not_contains`) on passing+failing inputs, `assert_valid_json` on valid/malformed/jq-absent inputs, and `skip_test`'s counter bookkeeping. Failing probes run in isolated subshells. Pure bash. |
 | `validate-manifests.mjs` | `marketplace.json` + every `plugin.json` agree on name + semver; each `source` points at a real plugin dir. Zero deps (node only). |
 | `lint-skills-agents.sh` | Every agent is a flat `<name>.md` whose `name` matches its filename, with valid `name`/`description`/`tools`/`model` frontmatter; every skill has a `SKILL.md`; `check-*`/`loop-*`/`context-*` skills carry their required companion files; `patterns.sh` are executable; every `workflow.js` `export const meta` is a pure literal and passes `node --check`. |
 | `validate-contracts.sh` | `check-*`/`loop-*` `contract.md` JSON examples are valid, carry every required finding-schema/loop-report field, hold in-range enums (severity, effort, certainty) and a `version:`, and the `patterns.sh` output categories are declared in the contract. Schema-shape checks use `jq`, skip when absent. |
