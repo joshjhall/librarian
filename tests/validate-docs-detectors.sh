@@ -37,6 +37,14 @@
 # organization — the `count >= min_files` boundary narrowed to `>`. All five went
 # red under mutation and green on revert.
 #
+# #348 boundary added: the missing-api private skip is anchored on the def/class
+# NAME, not a whole-line substring, so a public def/function whose trailing
+# comment merely mentions `def _x` / `function _x` is still flagged (the old
+# `"def _" in content` / `*"function _"*` test silently swallowed it). Fault-
+# injection: reverting the py skip to `if "def _" in content` (and the sh case to
+# `*"def _"*`) turns the new comment-mention assertions red; the name-anchored
+# form is green.
+#
 # check-docs-organization and check-docs-examples resolve a project root via
 # `git rev-parse --show-toplevel`, so their fixtures run inside a fresh `git init`
 # sandbox with git's hook-exported environment scrubbed (the GIT_SCRUB pattern
@@ -401,6 +409,24 @@ test_missing_api() {
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api py: a private (_-prefixed) def is skipped"
 
+    # #348 boundary: the private skip is anchored on the def NAME, not a
+    # whole-line substring. A genuinely-public def whose trailing comment merely
+    # MENTIONS `def _x` must still fire (the old `"def _" in content` test
+    # silently swallowed it). Assert both the def and the class arm.
+    d="$(fresh_dir)"
+    /usr/bin/printf '%s\n' "def public_alias():  # def _legacy_name kept" "    return 0" >"$d/mention.py"
+    list="$(make_list "$d/l" "$d/mention.py")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Python: def public_alias" \
+        "missing-api py: a public def whose comment mentions 'def _' still fires (#348)"
+
+    d="$(fresh_dir)"
+    /usr/bin/printf '%s\n' "class Public:  # class _Old alias" "    pass" >"$d/mention_cls.py"
+    list="$(make_list "$d/l" "$d/mention_cls.py")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Python: class Public" \
+        "missing-api py: a public class whose comment mentions 'class _' still fires (#348)"
+
     # --- JS/TS: undocumented export fires; /** */ block silent. ---
     d="$(fresh_dir)"
     /usr/bin/printf '%s\n' "const A = 1;" "export function doThing() {}" >"$d/u.ts"
@@ -468,6 +494,22 @@ test_missing_api() {
     list="$(make_list "$d/l" "$d/priv.sh")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api sh: a private (_-prefixed) function is skipped"
+
+    d="$(fresh_dir)"
+    /usr/bin/printf '%s\n' "function _priv() {" "  true" "}" >"$d/privfn.sh"
+    list="$(make_list "$d/l" "$d/privfn.sh")"
+    assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "missing-api sh: a private 'function _'-prefixed function is skipped"
+
+    # #348 boundary: a public function whose trailing comment MENTIONS
+    # `function _x` must still fire (the old `*"function _"*` whole-line glob
+    # swallowed it). Name-anchored skip fixes it.
+    d="$(fresh_dir)"
+    /usr/bin/printf '%s\n' "deploy() {  # function _old_deploy renamed" "  true" "}" >"$d/mention.sh"
+    list="$(make_list "$d/l" "$d/mention.sh")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Shell: deploy()" \
+        "missing-api sh: a public function whose comment mentions 'function _' still fires (#348)"
 
     # --- Ruby: undocumented def fires; # comment silent. ---
     d="$(fresh_dir)"

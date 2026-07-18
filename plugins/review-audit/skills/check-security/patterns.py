@@ -70,7 +70,11 @@ def scan_file(path: str) -> None:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             lines = fh.read().splitlines()
-    except OSError:
+    except OSError:  # pragma: no cover — unreachable: main() already probed the
+        # file for readability and `continue`d on OSError before calling
+        # scan_file, so this re-open only fails on a TOCTOU race (file becomes
+        # unreadable between the two opens). Kept as a defensive guard, matching
+        # the bash fallback's own per-file read that returns empty on failure.
         return
 
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
