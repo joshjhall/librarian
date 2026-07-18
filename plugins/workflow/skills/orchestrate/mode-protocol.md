@@ -464,20 +464,39 @@ holds (any one missing ⇒ keep waiting and keep surfacing):
   per-golem stall is not the same as an *unrecoverable* one. In a **solo-golem
   run** (batch of one — no sibling exists) this condition is **inapplicable** and
   does not block the offer; lean harder on the top-level-freeze window instead.
-- **Mandatory pre-kill PR check (always).** Run `gh pr list --state open --head
-  feature/issue-{N}` immediately before any kill — including the crashed-process
-  case. A slow review can push + open its PR in the decision→kill window
-  (golem-328); if a PR exists, **skip the takeover entirely and just merge it**.
+- **Mandatory pre-kill PR check (always).** Immediately before any kill —
+  including the crashed-process case — list the golem's open PR by its branch,
+  which is realization-specific: `gh pr list --state open --head
+  feature/issue-{N}` for a **worktree golem (Mode 2)**, `gh pr list --state open
+  --head agent{N}` (branch `agent{N}`, the container golem's `$AGENT_ID`) for a
+  **container golem (Mode 3)**. A slow review can push + open its PR in the
+  decision→kill window (golem-328); if a PR exists, **skip the takeover entirely
+  and just merge it**.
 
 **Takeover recipe (only once the above all hold and the operator accepts).**
-`tmux kill-session -t golem-{N}`; commit any uncommitted golem refinements as a
-**fresh** commit (not `git commit --amend` — the auto-mode classifier denies
-amending a golem-authored commit as `[Git Destructive]`); `git rebase
-origin/main` (disjoint work → clean); `bash tests/run-all.sh`; then
-`git push --force-with-lease` + `gh pr create`. This mirrors #327's golem-side
-mechanical wall-time bound (`workflow-wall-timeout.sh`) — that is the golem's own
-internal budget; this contract is the **orchestrator-side judgment** used when
-monitoring from outside.
+First **stop the golem** — this step is realization-specific (mirroring
+`container-protocol.md` § Teardown):
+
+- **Worktree golem (Mode 2)** — `tmux kill-session -t golem-{N}`. (This is the
+  mid-flight takeover, before merge/prune, so kill the `golem-{N}` session
+  directly rather than via `worktree-rm.sh`.)
+- **Container golem (Mode 3)** — there is **no** host `golem-{N}` session to
+  kill (its Claude session is `claude` inside the container, reached via
+  `docker exec`). Stop the container instead:
+  `docker compose -f .worktrees/docker-compose.agents.yml stop <agent>` then
+  `docker compose -f .worktrees/docker-compose.agents.yml rm -f <agent>` (the
+  container's worktree is `.worktrees/agent{N}`). See `container-protocol.md`
+  § Teardown.
+
+Then the tail is identical for both modes (it runs from the host worktree
+either way): commit any uncommitted golem refinements as a **fresh** commit (not
+`git commit --amend` — the auto-mode classifier denies amending a golem-authored
+commit as `[Git Destructive]`); `git rebase origin/main` (disjoint work →
+clean); `bash tests/run-all.sh`; then `git push --force-with-lease` +
+`gh pr create`. This mirrors #327's golem-side mechanical wall-time bound
+(`workflow-wall-timeout.sh`) — that is the golem's own internal budget; this
+contract is the **orchestrator-side judgment** used when monitoring from
+outside.
 
 ### Dispatch Decision Sub-Tree
 
