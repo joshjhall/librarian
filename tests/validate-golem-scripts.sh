@@ -39,6 +39,7 @@ WT_NEW="$SCRIPTS/worktree-new.sh"
 WT_RM="$SCRIPTS/worktree-rm.sh"
 ATTACH="$SCRIPTS/golem-attach.sh"
 STATUS="$SCRIPTS/golem-status.sh"
+SCRAPE="$SCRIPTS/golem-token-scrape.sh"
 CONFIG="$SCRIPTS/config.sh"
 
 # Resolve the real bash once so child invocations work even when PATH is
@@ -2267,6 +2268,299 @@ test_status_watch_uses_resolver_default() {
         "header shows the L4 resolver default (900s)"
 }
 
+# --- golem-token-scrape.sh + golem-status token signal (#371) ---------------
+
+# slug_for <abs-worktree-path> — the Claude Code project-dir slug for a worktree:
+# its absolute path with every `/` and `.` replaced by `-`. Mirrors the
+# derivation in golem-token-scrape.sh so fixtures land where the script looks.
+slug_for() {
+    local p="$1"
+    command echo "${p//[\/.]/-}"
+}
+
+# plant_transcript <sandbox> <issue-N> <jsonl-body> — write a Claude Code session
+# transcript for the sandbox's issue-N worktree under a fake projects base
+# ($sb/projects), so golem-token-scrape.sh (CLAUDE_PROJECTS_DIR pointed there)
+# resolves it. The body is raw JSONL (one record per line).
+plant_transcript() {
+    local sb="$1" n="$2" body="$3"
+    local wt="$sb/.worktrees/issue-$n"
+    local slug dir
+    slug="$(slug_for "$wt")"
+    dir="$sb/projects/$slug"
+    /usr/bin/mkdir -p "$dir"
+    /usr/bin/printf '%s\n' "$body" >"$dir/session.jsonl"
+}
+
+# run_scrape <sandbox> <worktree-arg> — invoke golem-token-scrape.sh with the
+# projects base pointed at the sandbox's fake $sb/projects. Captures RUN_RC/RUN_OUT.
+run_scrape() {
+    local sb="$1" arg="$2"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$SCRAPE" "$arg" 2>&1)" || RUN_RC=$?
+}
+
+# run_status_scrape <sandbox> [args...] — like run_in for golem-status.sh but with
+# CLAUDE_PROJECTS_DIR pointed at the sandbox's fake projects base so the token
+# scrape resolves planted transcripts. Captures RUN_RC/RUN_OUT.
+run_status_scrape() {
+    local sb="$1"
+    shift
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$STATUS" "$@" 2>&1)" || RUN_RC=$?
+}
+
+# A transcript body with mixed sidechain records mirroring the REAL on-disk shape:
+# Claude Code writes one line per assistant CONTENT BLOCK, all sharing the turn's
+# message.id and repeating the same output_tokens. Here turn "m1" spans THREE
+# blocks (output_tokens 100 x3 — must be counted ONCE) and turn "m2" is one block
+# (50), for a correct top-level total of 150. One SUB-WORKFLOW record
+# (output_tokens 999) MUST be excluded; a summary record carries no usage. A
+# naive per-line sum would wrongly count 100x3 + 50 = 350 — so this fixture pins the
+# message.id dedup (bug caught in #371 pre-PR review).
+TRANSCRIPT_MIXED='{"isSidechain":false,"message":{"id":"m1","usage":{"output_tokens":100}}}
+{"isSidechain":false,"message":{"id":"m1","usage":{"output_tokens":100}}}
+{"isSidechain":false,"message":{"id":"m1","usage":{"output_tokens":100}}}
+{"isSidechain":true,"message":{"id":"s1","usage":{"output_tokens":999}}}
+{"isSidechain":false,"message":{"id":"m2","usage":{"output_tokens":50}}}
+{"type":"summary"}'
+
+# scrape sums TOP-LEVEL output_tokens only, deduped by message.id (150),
+# excluding the sidechain 999 and never multi-counting the 3-block turn m1.
+test_scrape_sums_top_level_only() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (scrape needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_scrape "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "scrape of a planted transcript exits 0"
+    # Exact match (not a substring) so the naive per-line sum 350 can't slip past
+    # a loose "contains 150" — the whole point of the #371 dedup fix.
+    assert_true "[ '$RUN_OUT' = '150' ]" "sums top-level output_tokens deduped by message.id (150, got '$RUN_OUT')"
+    assert_not_contains "$RUN_OUT" "350" "the 3-block turn m1 is counted once, not per-line (naive sum 350 is the regression)"
+    assert_not_contains "$RUN_OUT" "999" "the sub-workflow token count is excluded"
+}
+
+# No transcript directory → fail-loud (exit 2 + message), never a silent 0.
+test_scrape_missing_transcript_fails_loud() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (scrape needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_scrape "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "scrape with no transcript dir exits 2 (fail-loud)"
+    assert_contains "$RUN_OUT" "no transcript dir" "names the missing transcript"
+}
+
+# TRULY no worktree arg (argc 0) → usage error, exit 1. `run_scrape` passes an
+# empty-STRING positional (argc 1), which reaches the transcript-missing path
+# (exit 2), so invoke the script directly with no positional at all here.
+test_scrape_no_arg_exits_1() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$SCRAPE" 2>&1)" || RUN_RC=$?
+    assert_exit 1 "$RUN_RC" "scrape with no argument exits 1 (usage)"
+    assert_contains "$RUN_OUT" "usage:" "prints the usage message on the no-arg path"
+}
+
+# Newest-mtime *.jsonl wins when multiple sessions exist (post-/clear fresh file).
+test_scrape_newest_session_wins() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (scrape needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    local slug dir
+    slug="$(slug_for "$sb/.worktrees/issue-42")"
+    dir="$sb/projects/$slug"
+    /usr/bin/mkdir -p "$dir"
+    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"usage":{"output_tokens":10}}}' >"$dir/old.jsonl"
+    # Ensure a distinct, newer mtime on the second file.
+    /usr/bin/sleep 1
+    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"usage":{"output_tokens":77}}}' >"$dir/new.jsonl"
+    run_scrape "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "scrape with two sessions exits 0"
+    assert_contains "$RUN_OUT" "77" "the newest-mtime session (77) is the one summed"
+}
+
+# A truncated/malformed trailing line (expected when a session is captured
+# mid-write) is skipped, and the valid records before it still sum correctly.
+test_scrape_tolerates_truncated_trailing_line() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (scrape needs jq)"
+        return 0
+    fi
+    local sb slug dir
+    new_sandbox sb
+    slug="$(slug_for "$sb/.worktrees/issue-42")"
+    dir="$sb/projects/$slug"
+    /usr/bin/mkdir -p "$dir"
+    # Two valid top-level records (60) then a truncated final line (no newline,
+    # unterminated JSON) — the fromjson? guard must drop it without aborting.
+    {
+        /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"a","usage":{"output_tokens":40}}}'
+        /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"b","usage":{"output_tokens":20}}}'
+        /usr/bin/printf '%s' '{"isSidechain":false,"message":{"usage":{'
+    } >"$dir/session.jsonl"
+    run_scrape "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "scrape tolerates a truncated trailing line (exit 0)"
+    assert_true "[ '$RUN_OUT' = '60' ]" "sums the valid records (60), dropping the truncated line (got '$RUN_OUT')"
+}
+
+# jq missing on PATH → fail-loud exit 3, independent of whether the host has jq.
+# A stub bin dir with a shadowing non-jq PATH exercises the version-gate arm.
+test_scrape_no_jq_exits_3() {
+    local sb
+    new_sandbox sb
+    /usr/bin/mkdir -p "$sb/nojq-bin"
+    # A PATH holding only coreutils the script needs (via /usr/bin) but NO jq. We
+    # point PATH at an empty stub dir plus /usr/bin sans jq is hard to guarantee,
+    # so instead prepend a stub dir and drop /usr/bin's jq by pointing PATH at a
+    # curated dir. Simplest portable approach: PATH= the stub dir only, and the
+    # script's `command -v jq` fails. bash builtins still work; /usr/bin/* calls in
+    # the script use absolute paths so they survive the stripped PATH.
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
+            PATH="$sb/nojq-bin" \
+            "$REAL_BASH" "$SCRAPE" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
+    assert_exit 3 "$RUN_RC" "scrape with no jq on PATH exits 3 (fail-loud)"
+    assert_contains "$RUN_OUT" "jq not found" "names jq as the missing dependency"
+}
+
+# golem-status renders the TOP-LEVEL TOKENS section: first read shows the count,
+# a second read with an UNCHANGED transcript shows 'frozen', and the cache JSON
+# gains top_level_tokens + top_level_tokens_at.
+test_status_token_first_then_frozen() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with a token transcript exits 0"
+    assert_contains "$RUN_OUT" "TOP-LEVEL TOKENS" "renders the token section"
+    assert_contains "$RUN_OUT" "150 tokens (first reading)" "first read shows the count as a first reading"
+    # The cache JSON now carries both persisted fields.
+    local persisted
+    persisted="$(jq -r '.top_level_tokens' "$sb/.worktrees/.status/golem-42.json" 2>/dev/null)"
+    assert_true "[ '$persisted' = '150' ]" "top_level_tokens persisted to the cache (got $persisted)"
+    local anchor1
+    anchor1="$(jq -r '.top_level_tokens_at' "$sb/.worktrees/.status/golem-42.json" 2>/dev/null)"
+    assert_true "[ -n '$anchor1' ] && [ '$anchor1' != 'null' ]" \
+        "top_level_tokens_at anchor persisted to the cache (got $anchor1)"
+    # Second render, transcript unchanged → frozen. The anchor MUST be carried
+    # forward byte-identically, not reset to now() each sweep — a reset-every-sweep
+    # regression would still render "150 tokens, frozen 0s" and pass a substring
+    # check, but it defeats the whole freeze-duration signal, so assert the
+    # persisted anchor is unchanged across the two sweeps.
+    /usr/bin/sleep 1
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "150 tokens, frozen" "second read with an unchanged count shows frozen"
+    local anchor2
+    anchor2="$(jq -r '.top_level_tokens_at' "$sb/.worktrees/.status/golem-42.json" 2>/dev/null)"
+    assert_true "[ '$anchor2' = '$anchor1' ]" \
+        "the frozen-since anchor is carried forward unchanged, not reset each sweep ($anchor1 -> $anchor2)"
+}
+
+# A changed transcript between sweeps shows 'advancing', not 'frozen'.
+test_status_token_advancing_on_change() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false }
+EOF
+    plant_transcript "$sb" 42 '{"isSidechain":false,"message":{"usage":{"output_tokens":100}}}'
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "100 tokens (first reading)" "first read shows 100"
+    # Grow the transcript's top-level tokens, then re-render.
+    local slug dir
+    slug="$(slug_for "$sb/.worktrees/issue-42")"
+    dir="$sb/projects/$slug"
+    /usr/bin/printf '%s\n' \
+        '{"isSidechain":false,"message":{"usage":{"output_tokens":100}}}' \
+        '{"isSidechain":false,"message":{"usage":{"output_tokens":25}}}' >"$dir/session.jsonl"
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "125 tokens (advancing)" "a grown count reads as advancing, not frozen"
+}
+
+# A Mode-3 container golem (cache row with a `container` field) shows the pending
+# note and is NEVER scraped (no bogus frozen reading).
+test_status_token_container_pending() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false }
+EOF
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with a container row exits 0"
+    assert_contains "$RUN_OUT" "container golem — token push pending, see #390" \
+        "a Mode-3 container golem shows the pending note (#390)"
+    assert_not_contains "$RUN_OUT" "agent01 — 0 tokens" "a container golem is never scraped to a bogus 0"
+}
+
+# A Mode-2 golem with no transcript shows 'tokens unknown', never a bogus frozen.
+test_status_token_unknown_no_transcript() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-77.json" <<'EOF'
+{ "golem": "golem-77", "issue": 77, "branch": "feature/issue-77",
+  "state": "working", "blocking": false }
+EOF
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with a transcript-less golem exits 0"
+    assert_contains "$RUN_OUT" "tokens unknown (no transcript)" \
+        "a Mode-2 golem with no transcript shows tokens unknown"
+    # "frozen" alone would match the section header ("frozen-counter signal"); pin
+    # the render form instead — an unknown-token golem must never show "frozen Xm".
+    assert_not_contains "$RUN_OUT" "tokens, frozen" "an unknown-token golem never reports a frozen duration"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init` + a commit, so the whole suite needs
@@ -2361,5 +2655,15 @@ run_test test_status_watch_bad_level_exits_2 "golem-status: --watch --level out 
 run_test test_status_watch_bad_interval_exits_2 "golem-status: --watch --interval non-integer exits 2 (#304)"
 run_test test_status_watch_loops_with_env_override "golem-status: --watch re-renders; GOLEM_SWEEP_INTERVAL overrides the level default (#304)"
 run_test test_status_watch_uses_resolver_default "golem-status: --watch uses the resolver's level-scaled default cadence (#304)"
+run_test test_scrape_sums_top_level_only "golem-token-scrape: sums top-level output_tokens only, excludes sidechain (#371)"
+run_test test_scrape_missing_transcript_fails_loud "golem-token-scrape: missing transcript fails loud (exit 2), never a silent 0 (#371)"
+run_test test_scrape_no_arg_exits_1 "golem-token-scrape: empty worktree arg fails loud (#371)"
+run_test test_scrape_newest_session_wins "golem-token-scrape: newest-mtime session transcript wins (#371)"
+run_test test_scrape_tolerates_truncated_trailing_line "golem-token-scrape: tolerates a truncated trailing JSONL line (#371)"
+run_test test_scrape_no_jq_exits_3 "golem-token-scrape: missing jq on PATH exits 3 fail-loud (#371)"
+run_test test_status_token_first_then_frozen "golem-status: token section shows first-reading then frozen; persists fields (#371)"
+run_test test_status_token_advancing_on_change "golem-status: a grown top-level count reads as advancing, not frozen (#371)"
+run_test test_status_token_container_pending "golem-status: a Mode-3 container golem shows the pending note, never scraped (#371/#390)"
+run_test test_status_token_unknown_no_transcript "golem-status: a Mode-2 golem with no transcript shows tokens unknown (#371)"
 
 generate_report
