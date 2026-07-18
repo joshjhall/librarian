@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 73dfa9da-6deb-4da9-b76b-6d1f4bb5dea5
+  modified: 2026-07-18T19:31:32.199Z
 ---
 
 Testing `golem-watch.sh`'s `trap cleanup_pane EXIT INT TERM` for the INT/TERM
@@ -48,7 +49,14 @@ fragility and the tautology:
   `( sleep 8; kill -KILL -<pgid> )` watchdog so a swallowed signal can't wedge the
   suite. Verified 20/20 deterministic locally, zero orphan leak, mutation-checked
   (no-op trap → FAIL). Setsid-free via `set -m` + `kill -INT -<pgid>`, bash-3.2
-  clean. #360 (readiness-polling of the remaining fixed sleeps) still open.
+  clean. #360 SHIPPED (PR #380): replaced the natural-exit path's flat `sleep 1`
+  in make_stage's `--stream` fake with a bounded readiness poll on
+  `$PANE_WORKER_FILE` (feed never exits before the worker records its pid) +
+  widened test_trap_kills_background_pane's reap poll to a documented 10s margin.
+  The signal path (case 4) was ALREADY event-based from #359, so #360's live
+  remainder was only the natural-exit window (the issue body's fn names predate
+  the #359 rewrite). Deferred coverage (stdout-ordering assertion +
+  starvation-path test) → follow-up #381.
 
 Note: a PID-targeted (non-group) trapped INT is DEFERRED by bash until the ~30s
 foreground pipeline returns → hangs (reproduced as a real 2-min timeout). Do not
