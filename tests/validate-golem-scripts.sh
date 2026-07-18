@@ -1376,12 +1376,19 @@ _assert_config_file_injection_scrubbed() {
 # crossing a filesystem boundary. A value-injection discriminator doesn't fit
 # (suppression is indistinguishable from absence; a cross-FS fixture isn't
 # portable), but git VALIDATES both as booleans on every invocation, so an INVALID
-# bool (`notabool`) makes any git call fatal ("bad boolean environment value",
-# rc 128) — a clean, portable discriminator that still proves the var reaches the
-# child and the scrub removes it. Helper: seed a REAL inject.marker=REALNAME, then
-# assert (a) a bare `git config --get` under the invalid-bool taint fatals (rc 128,
-# the var is live), and (b) `_repo_root_git config --get` exits 0 reading REALNAME
-# (the scrub removed the bad var so git runs clean). $1 = the env var name.
+# bool (`notabool`) makes any git call fatal (rc 128) — a clean, portable
+# discriminator that still proves the var reaches the child and the scrub removes
+# it. We assert on the rc DELTA across three runs of the same fixture, not on
+# git's internal fatal-error wording (which carries no version floor and could be
+# reworded upstream): seed a REAL inject.marker=REALNAME, then triangulate
+# (a0) a bare `git config --get` with NO taint exits 0 (the fixture is sound, so
+# the fatal in (a) is caused by the taint — not a broken sandbox),
+# (a) the same bare call under the invalid-bool taint fatals (rc 128, the var is
+# live and git honors it), and
+# (b) `_repo_root_git config --get` under the same taint exits 0 reading REALNAME
+# (the scrub removed the bad var so git runs clean). The 0 → 128 → 0 sequence
+# proves the taint specifically causes the fatal and the scrub specifically
+# removes it. $1 = the env var name.
 _assert_bool_var_scrubbed() {
     local var="$1"
     local sb
@@ -1389,16 +1396,25 @@ _assert_bool_var_scrubbed() {
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
         /usr/bin/git -C "$sb" config inject.marker "REALNAME"
 
+    # (a0) Baseline: the SAME bare call with NO taint exits 0. Proves the fixture
+    # is sound, so the fatal in (a) is attributable to the taint — not a broken
+    # sandbox. This is the version-independent replacement for asserting on git's
+    # fatal-error wording.
+    local rc_a0=0
+    (cd "$sb" &&
+        /usr/bin/env HOME="$sb" \
+            "$REAL_BASH" -c 'command git config --get inject.marker' >/dev/null 2>&1) || rc_a0=$?
+    assert_exit 0 "$rc_a0" \
+        "$var: baseline bare git succeeds without the taint (fixture is sound)"
+
     # (a) Bare git under an invalid-bool taint fatals (rc 128) — the var reaches the
     # child and git honors it. Guards against a vacuous pass.
-    local bare rc_a=0
-    bare="$(cd "$sb" &&
+    local rc_a=0
+    (cd "$sb" &&
         /usr/bin/env "$var=notabool" HOME="$sb" \
-            "$REAL_BASH" -c 'command git config --get inject.marker' 2>&1)" || rc_a=$?
+            "$REAL_BASH" -c 'command git config --get inject.marker' >/dev/null 2>&1) || rc_a=$?
     assert_exit 128 "$rc_a" \
         "$var: bare git fatals on the invalid-bool taint (the taint is real)"
-    assert_contains "$bare" "bad boolean" \
-        "$var: the fatal is git's boolean-validation error"
 
     # (b) _repo_root_git scrubs the name, so git runs clean and reads the REAL
     # value. FAILS (fatals, rc 128) if the scrub drops this name.
