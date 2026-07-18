@@ -67,17 +67,6 @@ def emit(path: str, line_no: int, category: str, evidence: str) -> None:
     sys.stdout.write("\t".join((path, str(line_no), category, evidence, "HIGH")) + "\n")
 
 
-def _next_nonblank(lines: list[str], start_idx0: int) -> str:
-    """Emulate awk `getline; while (/^[[:space:]]*$/) getline` starting AFTER the
-    matched line: return the first non-blank line at or after start_idx0 (0-based),
-    or '' at EOF (awk getline past EOF leaves the record unchanged/empty here)."""
-    i = start_idx0
-    # awk does one unconditional getline first, then skips blanks.
-    while i < len(lines) and BLANK_RE.match(lines[i]):
-        i += 1
-    return lines[i] if i < len(lines) else ""
-
-
 def scan_python(path: str, lines: list[str]) -> None:
     # awk reads line by line; on a def/class it getlines forward to the first
     # non-blank and checks for a docstring opener. NOTE: like the awk, the forward

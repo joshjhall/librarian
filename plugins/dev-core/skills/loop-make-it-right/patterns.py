@@ -161,10 +161,10 @@ def scan_single_char_names(path: str, lines: list[str], ext: str) -> None:
         if PY_SINGLE_SKIP_RE.search(content):
             continue
         m = PY_VARNAME_RE.search(content)
-        if not m:
-            # bash sed leaves content unchanged if no match; varname would be the
-            # whole line and never equal a skip token — but the assign regex above
-            # guarantees a leading single-letter, so this is defensive only.
+        if not m:  # pragma: no cover - unreachable: PY_SINGLE_ASSIGN_RE above
+            # (`^\s+[a-zA-Z]\s*=`) guarantees PY_VARNAME_RE (`^\s*([a-zA-Z])\s*=`)
+            # matches, so `not m` never occurs; defensive only (bash sed would
+            # leave content unchanged, yielding a varname that matches no skip).
             continue
         varname = m.group(1)
         if varname in SKIP_VARNAMES:
