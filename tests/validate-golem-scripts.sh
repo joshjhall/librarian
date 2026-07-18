@@ -824,6 +824,68 @@ test_worktree_new_scrubs_tainted_git_env_for_mutations() {
         "no branch ref leaked into the outer/tainted repo (no split-brain)"
 }
 
+# _seed_failing_ref_hook <sandbox> <out-hooksdir-var>
+# Writes a hooks dir containing a `reference-transaction` hook that ALWAYS fails,
+# and returns its path via the named out-var. Injected as core.hooksPath, this
+# hook aborts ANY git ref mutation (worktree add -b, branch -D) with
+# "update aborted by the reference-transaction hook" (verified rc≠0) — so it is a
+# DISCRIMINATING taint for the mutation-level scrub tests below: unscrubbed, the
+# script's own `git worktree add`/`branch -D` fires the hook and fails; scrubbed,
+# the injection is gone and the mutation runs clean. A nonexistent hooksPath would
+# NOT discriminate (git silently finds no hook and proceeds), so the hook must
+# exist and actively fail.
+# Internal local is `hdir`, deliberately NOT the caller's out-var name (`hooks`):
+# `printf -v "$__out"` resolves against the current scope, so an internal `hooks`
+# would shadow and overwrite the caller's local instead of exporting the path back
+# (the same pitfall _make_super_with_submodule sidesteps with its `sup`).
+_seed_failing_ref_hook() {
+    local __out="$2" hdir="$1/evil-hooks"
+    /usr/bin/mkdir -p "$hdir"
+    /usr/bin/printf '#!/bin/sh\nexit 1\n' >"$hdir/reference-transaction"
+    /usr/bin/chmod +x "$hdir/reference-transaction"
+    printf -v "$__out" '%s' "$hdir"
+}
+
+# Security regression (#376, deferred from the #355/PR #375 pre-PR review): the
+# mutation-level companion to test_worktree_new_scrubs_tainted_git_env_for_mutations
+# (#328), swapping the GIT_DIR taint for a GIT_CONFIG_COUNT/KEY_0/VALUE_0 config
+# injection. #328 proved worktree-new.sh's process-wide scrub re-anchors its `git
+# worktree add -b` after a GIT_DIR redirect; this proves the SAME scrub clears the
+# dynamic GIT_CONFIG_* injection family end-to-end through the script's own
+# mutation — not just at the repo_root() unit level. The injected core.hooksPath
+# points at a hooks dir whose reference-transaction hook ALWAYS fails: if the scrub
+# is dropped, `git worktree add -b` fires the hook and aborts the ref creation
+# (script exits non-zero, no branch); with the scrub the injection is gone, the
+# mutation runs clean, and the branch lands in the SANDBOX. No GIT_SCRUB on the
+# invocation — the taint is the whole point; the script's own #328 scrub must
+# clear it. Pin GOLEM_* / HOME like run_in does otherwise.
+test_worktree_new_scrubs_git_config_injection_for_mutations() {
+    local sb hooks
+    new_sandbox sb
+    _seed_failing_ref_hook "$sb" hooks
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$hooks" \
+            HOME="$sb" \
+            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_NEW" 76 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "worktree-new exits 0 despite a GIT_CONFIG_* injection taint"
+
+    assert_file_exists "$sb/.worktrees/issue-76/seed.txt" \
+        "the worktree is created in the sandbox despite the config injection"
+    local sb_branch
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" branch --list "feature/issue-76")"
+    assert_not_empty "$sb_branch" \
+        "the branch ref lands in the sandbox despite the GIT_CONFIG_* injection (scrub clears the dynamic pairs)"
+}
+
 # Regression (#365, closing the last open cell of the worktree-new.sh × submodule
 # × tainted-git-env coverage matrix — deferred from PR #364's pre-PR review). The
 # two hardening dimensions are already tested only SEPARATELY: #338
@@ -1248,6 +1310,129 @@ test_config_repo_root_scrubs_git_ceiling_directories() {
         "repo_root resolves the sandbox root despite a GIT_CEILING_DIRECTORIES taint"
 }
 
+# Security regression (#376, deferred from the #355/PR #375 pre-PR review): four
+# static scrub names — GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM / GIT_CONFIG_NOSYSTEM
+# / GIT_DISCOVERY_ACROSS_FILESYSTEM — were on GIT_ENV_SCRUB_VARS but covered ONLY
+# by the static list-equality assertion in
+# test_config_git_env_scrub_vars_single_source, never by a live-taint behavioral
+# test proving the scrub actually neutralizes them. A partial-scrub refactor
+# per-name could drop one silently. These tests close that gap, each
+# DISCRIMINATING (fails when the scrub is dropped, per the #355 vector tests'
+# rationale above): a BARE git under the taint honors it, while the same call
+# through _repo_root_git is unaffected.
+#
+# Two distinct vector shapes need two helpers:
+#
+# GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM point git at an arbitrary config FILE
+# (unlike the indexed GIT_CONFIG_COUNT pairs), injecting values without touching
+# GIT_DIR — e.g. a url.<base>.insteadOf redirect or a hostile core.hooksPath.
+# NOTE these inject at GLOBAL/SYSTEM precedence, which repo-LOCAL config OUTRANKS,
+# so (unlike the command-scope GIT_CONFIG_COUNT pairs) the sandbox must NOT seed a
+# competing repo-local inject.marker — the injected key must be one the repo does
+# not set, so the bare read actually surfaces the injected value. Helper: seed a
+# config file setting inject.marker=INJECTED, then assert (a) a bare
+# `git config --get inject.marker` under the taint reads INJECTED (the vector is
+# live and reaches this repo — guards against a vacuous pass), and (b)
+# `_repo_root_git config --get inject.marker` reads NOTHING and exits non-zero (the
+# scrub removed the file redirect, so the key is simply absent). $1 = the env var
+# name carrying the file path.
+_assert_config_file_injection_scrubbed() {
+    local var="$1"
+    local sb
+    new_sandbox sb
+    # The injected config file (points $var at it below). A FILE, not indexed pairs.
+    # inject.marker is deliberately NOT set in the sandbox's repo-local config:
+    # GLOBAL/SYSTEM scope loses to repo-local, so a local seed would shadow the
+    # injection and the bare read would never surface INJECTED (a vacuous test).
+    local injfile="$sb/inject.cfg"
+    /usr/bin/printf '[inject]\n\tmarker = INJECTED\n' >"$injfile"
+
+    # (a) Bare git under the taint reads the INJECTED value — the file redirect is
+    # live. HOME is pinned at the sandbox so a stray real ~/.gitconfig can't shadow
+    # GIT_CONFIG_GLOBAL. The bare git's own exit code is irrelevant; only the value.
+    local bare
+    bare="$(cd "$sb" &&
+        /usr/bin/env "$var=$injfile" HOME="$sb" \
+            "$REAL_BASH" -c 'command git config --get inject.marker' 2>&1)" || true
+    assert_equals "INJECTED" "$bare" \
+        "$var: bare git honors the injected config file (the taint is real)"
+
+    # (b) _repo_root_git config --get finds NOTHING — the scrub removed the file
+    # redirect, so inject.marker is unset (config --get exits 1 with empty output).
+    # READS INJECTED (exit 0) if the scrub drops this name.
+    local scrubbed rc_b=0
+    scrubbed="$(cd "$sb" &&
+        /usr/bin/env "$var=$injfile" HOME="$sb" \
+            "$REAL_BASH" -c '. "$1"; _repo_root_git config --get inject.marker' \
+            _ "$CONFIG" 2>&1)" || rc_b=$?
+    assert_output_empty "$scrubbed" \
+        "$var: _repo_root_git reads no inject.marker — the injected file was scrubbed away (scrub works)"
+    assert_true "[ '$rc_b' -ne 0 ]" \
+        "$var: _repo_root_git config exits non-zero (the injected key is gone, not read)"
+}
+
+# GIT_CONFIG_NOSYSTEM / GIT_DISCOVERY_ACROSS_FILESYSTEM are BOOLEAN control vars,
+# not value injectors: NOSYSTEM suppresses system config, DISCOVERY controls
+# crossing a filesystem boundary. A value-injection discriminator doesn't fit
+# (suppression is indistinguishable from absence; a cross-FS fixture isn't
+# portable), but git VALIDATES both as booleans on every invocation, so an INVALID
+# bool (`notabool`) makes any git call fatal ("bad boolean environment value",
+# rc 128) — a clean, portable discriminator that still proves the var reaches the
+# child and the scrub removes it. Helper: seed a REAL inject.marker=REALNAME, then
+# assert (a) a bare `git config --get` under the invalid-bool taint fatals (rc 128,
+# the var is live), and (b) `_repo_root_git config --get` exits 0 reading REALNAME
+# (the scrub removed the bad var so git runs clean). $1 = the env var name.
+_assert_bool_var_scrubbed() {
+    local var="$1"
+    local sb
+    new_sandbox sb
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" config inject.marker "REALNAME"
+
+    # (a) Bare git under an invalid-bool taint fatals (rc 128) — the var reaches the
+    # child and git honors it. Guards against a vacuous pass.
+    local bare rc_a=0
+    bare="$(cd "$sb" &&
+        /usr/bin/env "$var=notabool" HOME="$sb" \
+            "$REAL_BASH" -c 'command git config --get inject.marker' 2>&1)" || rc_a=$?
+    assert_exit 128 "$rc_a" \
+        "$var: bare git fatals on the invalid-bool taint (the taint is real)"
+    assert_contains "$bare" "bad boolean" \
+        "$var: the fatal is git's boolean-validation error"
+
+    # (b) _repo_root_git scrubs the name, so git runs clean and reads the REAL
+    # value. FAILS (fatals, rc 128) if the scrub drops this name.
+    local scrubbed rc_b=0
+    scrubbed="$(cd "$sb" &&
+        /usr/bin/env "$var=notabool" HOME="$sb" \
+            "$REAL_BASH" -c '. "$1"; _repo_root_git config --get inject.marker' \
+            _ "$CONFIG" 2>&1)" || rc_b=$?
+    assert_exit 0 "$rc_b" \
+        "$var: _repo_root_git config exits 0 despite the invalid-bool taint"
+    assert_equals "REALNAME" "$scrubbed" \
+        "$var: _repo_root_git reads the REAL inject.marker (scrub works)"
+}
+
+# GIT_CONFIG_GLOBAL file-injection — the ~/.gitconfig-slot redirect.
+test_config_repo_root_scrubs_git_config_global() {
+    _assert_config_file_injection_scrubbed GIT_CONFIG_GLOBAL
+}
+
+# GIT_CONFIG_SYSTEM file-injection — the /etc/gitconfig-slot redirect.
+test_config_repo_root_scrubs_git_config_system() {
+    _assert_config_file_injection_scrubbed GIT_CONFIG_SYSTEM
+}
+
+# GIT_CONFIG_NOSYSTEM — the system-config suppression bool.
+test_config_repo_root_scrubs_git_config_nosystem() {
+    _assert_bool_var_scrubbed GIT_CONFIG_NOSYSTEM
+}
+
+# GIT_DISCOVERY_ACROSS_FILESYSTEM — the cross-filesystem-boundary discovery bool.
+test_config_repo_root_scrubs_git_discovery_across_filesystem() {
+    _assert_bool_var_scrubbed GIT_DISCOVERY_ACROSS_FILESYSTEM
+}
+
 # Regression (#328): the #279 scrub used a bare `unset`, which SILENTLY NO-OPS on
 # a READONLY GIT_* var (`declare -rx GIT_DIR=…`) — the unset fails to stderr but
 # the command-substitution subshell continues (no inherit_errexit), so
@@ -1668,6 +1853,48 @@ test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
         "the SANDBOX branch was deleted (the mutation targeted the right repo)"
     assert_not_empty "$outer_branch" \
         "the outer/tainted repo's same-named branch is untouched (no cross-repo delete)"
+}
+
+# Security regression (#376, deferred from the #355/PR #375 pre-PR review): the
+# mutation-level companion to test_worktree_rm_scrubs_tainted_git_env_for_mutations
+# (#328), swapping the GIT_DIR taint for a GIT_CONFIG_COUNT/KEY_0/VALUE_0 config
+# injection so the DESTRUCTIVE teardown (worktree remove / branch -D) is exercised
+# under the dynamic GIT_CONFIG_* family end-to-end, not just at the repo_root()
+# unit level. The injected core.hooksPath points at a hooks dir whose
+# reference-transaction hook ALWAYS fails: if the scrub is dropped, worktree-rm's
+# own `git branch -D` fires the hook and aborts the ref deletion (script exits
+# non-zero, branch survives); with the scrub the injection is gone and the teardown
+# runs clean, removing the sandbox worktree+branch. No GIT_SCRUB on the invocation
+# — the taint is the point; the script's own #328 scrub must clear it. Pin GOLEM_*
+# / HOME like run_in does otherwise.
+test_worktree_rm_scrubs_git_config_injection_for_mutations() {
+    local sb hooks
+    new_sandbox sb
+    # Seed the sandbox worktree+branch to remove (scrubbed path — safe).
+    run_in "$sb" "$WT_NEW" 77
+    assert_exit 0 "$RUN_RC" "worktree-new seeds the sandbox worktree+branch"
+    _seed_failing_ref_hook "$sb" hooks
+
+    local out rc=0
+    out="$(cd "$sb" &&
+        GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$hooks" \
+            HOME="$sb" \
+            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 77 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "worktree-rm exits 0 despite a GIT_CONFIG_* injection taint"
+
+    assert_true "[ ! -e '$sb/.worktrees/issue-77' ]" \
+        "the worktree directory is gone after rm despite the config injection"
+    local sb_branch
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" branch --list "feature/issue-77")"
+    assert_output_empty "$sb_branch" \
+        "the sandbox branch was deleted despite the GIT_CONFIG_* injection (scrub clears the dynamic pairs)"
 }
 
 # Regression (#368, deferred from PR #367's pre-PR review): worktree-rm.sh's
@@ -2094,6 +2321,7 @@ run_test test_worktree_new_copies_local_files "worktree-new: copies GOLEM_WORKTR
 run_test test_worktree_new_inits_submodules "worktree-new: populates submodules in the fresh worktree (#325)"
 run_test test_worktree_new_from_submodule_placement "worktree-new: from inside a submodule lands the worktree at <super>/.worktrees (#338, #324)"
 run_test test_worktree_new_scrubs_tainted_git_env_for_mutations "worktree-new: scrubs a tainted GIT_DIR so the branch ref lands in the right repo (#328)"
+run_test test_worktree_new_scrubs_git_config_injection_for_mutations "worktree-new: scrubs a GIT_CONFIG_* injection so the branch+worktree mutation lands in the right repo (#376, #328)"
 run_test test_worktree_new_from_submodule_placement_under_taint "worktree-new: from inside a submodule UNDER a tainted git env lands worktree + branch at <super>, not .git/modules or the outer repo (#365, #338, #328)"
 run_test test_worktree_new_readonly_tainted_git_env_fails_loud "worktree-new: aborts fail-loud (non-zero, no mutation) under a readonly-tainted GIT_DIR (#368)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
@@ -2105,6 +2333,10 @@ run_test test_config_repo_root_scrubs_readonly_tainted_git_env "config.sh: repo_
 run_test test_config_repo_root_scrubs_git_config_injection "config.sh: repo_root scrubs an injected GIT_CONFIG_* config value (#355)"
 run_test test_config_repo_root_scrubs_git_config_parameters "config.sh: repo_root scrubs a GIT_CONFIG_PARAMETERS-injected config value (#355)"
 run_test test_config_repo_root_scrubs_git_ceiling_directories "config.sh: repo_root scrubs a GIT_CEILING_DIRECTORIES discovery block (#355)"
+run_test test_config_repo_root_scrubs_git_config_global "config.sh: repo_root scrubs a GIT_CONFIG_GLOBAL file-injected config value (#376, #355)"
+run_test test_config_repo_root_scrubs_git_config_system "config.sh: repo_root scrubs a GIT_CONFIG_SYSTEM file-injected config value (#376, #355)"
+run_test test_config_repo_root_scrubs_git_config_nosystem "config.sh: repo_root scrubs a GIT_CONFIG_NOSYSTEM invalid-bool taint (#376, #355)"
+run_test test_config_repo_root_scrubs_git_discovery_across_filesystem "config.sh: repo_root scrubs a GIT_DISCOVERY_ACROSS_FILESYSTEM invalid-bool taint (#376, #355)"
 run_test test_config_repo_root_submodule_superproject "config.sh: repo_root returns the superproject root inside a submodule (#324)"
 run_test test_config_repo_root_submodule_superproject_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR in the super_root probe inside a submodule (#337, #279)"
 run_test test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env "config.sh: repo_root scrubs a READONLY tainted GIT_DIR in the super_root probe inside a submodule (#363, #337, #328)"
@@ -2114,6 +2346,7 @@ run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exit
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
 run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"
+run_test test_worktree_rm_scrubs_git_config_injection_for_mutations "worktree-rm: scrubs a GIT_CONFIG_* injection so the teardown mutation targets the right repo (#376, #328)"
 run_test test_worktree_rm_readonly_tainted_git_env_fails_loud "worktree-rm: aborts fail-loud (non-zero, no mutation) under a readonly-tainted GIT_DIR (#368)"
 run_test test_worktree_rm_forces_past_clean_submodule "worktree-rm: forces past a clean populated submodule (#325)"
 run_test test_worktree_rm_refuses_dirty_regular_file_with_submodule "worktree-rm: refuses dirty regular file even with a submodule (#325)"
