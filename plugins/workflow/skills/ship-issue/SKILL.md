@@ -58,6 +58,13 @@ mechanically resolved, it is a **dead-end** (see `orchestrate/autonomy-levels.md
 human — **even at L4**. The level decides whether merging needs a human keystroke,
 never whether an un-green or un-reviewed PR may merge.
 
+A ship-issue dead-end is a **kept human gate**, so under an orchestrator it is
+**brokerable** exactly like a mid-flight escalation (#227): mint a gate-id,
+embed it in the `DEAD-END:` feed message, and wait on the inbox `consume` loop
+rather than a per-golem attach — the operator answers park/redirect/abandon
+centrally. See `next-issue/escalation-protocol.md` § *The dead-end exception* for
+the shared mint-embed-consume mechanism; `golem-attach` stays the fallback.
+
 **Standing rule — never time out a human gate.** Every gate this skill keeps for
 a human — the shipping-mode prompt (Step 3), the L1–L2 stop-for-human-merge gate,
 and a dead-end at any level — **waits indefinitely; never lapse-and-default

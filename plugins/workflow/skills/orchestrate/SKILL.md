@@ -270,7 +270,12 @@ refill.
 full monitor protocol — the authoritative PR + issue-label status sweep and live
 table, the CI-failure triage mirroring, the level-scaled sweep cadence,
 supervised pre-PR live golems, the plan-gated early-block, the never-kill
-slow-review posture, and the proactive push gate-watch (feed + pane channels).
+slow-review posture, the proactive push gate-watch (feed + pane channels), and
+**brokered gate resolution** (§ *Resolve a brokered gate centrally*): relaying an
+escalation/dead-end decision back into a golem via `golem-inbox.sh` from this
+session — present the payload once with `AskUserQuestion`, `answer` it into the
+golem's inbox, no `golem-attach` per golem (#227). A plan-gate is **not** brokered
+this way — it stays on the directed `tmux send-keys` broker (§ Phase D, #281/#29).
 Authoritative status comes from **PR + issue-label state**; the
 `.worktrees/.status/*.json` cache only fills display gaps.
 
