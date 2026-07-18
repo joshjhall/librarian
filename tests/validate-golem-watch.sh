@@ -200,6 +200,64 @@ EOF
     printf -v "$__out" '%s' "$dir"
 }
 
+# make_stage_starve <varname>
+# Stages a fake that STARVES the readiness signal, to pin the feed fake's
+# readiness poll as BOUNDED (issue #381, finding 2). Scope note: the readiness
+# poll is a TEST-HARNESS mechanism introduced in PR #380 (#360) — it makes the
+# feed fake wait for the pane worker to record its pid before exiting, so
+# test_trap_kills_background_pane reliably has a worker to reap. Production
+# golem-watch.sh has NO such poll. This case therefore guards the HARNESS pattern,
+# not production: were a future edit to make the poll unbounded
+# (`while [ ! -s "$f" ]` with no ceiling), a starved readiness signal would wedge
+# the feed forever and hang the suite. Two differences from make_stage:
+#   --stream-panes → NEVER writes $PANE_WORKER_FILE, so the readiness condition is
+#                    never satisfied — the pane worker "comes up" but its pid
+#                    record never appears.
+#   --stream       → a bounded readiness poll like make_stage's, but with a
+#                    DELIBERATELY SMALL ceiling (50 x 0.02s = 1s). Because
+#                    $PANE_WORKER_FILE never fills, every iteration misses and the
+#                    loop ALWAYS runs to the ceiling before falling through to emit
+#                    the feed lines. The small ceiling is the point: it proves
+#                    boundedness while leaving generous slack under run_watch's
+#                    `timeout 10`. make_stage's happy-path fake usually breaks out
+#                    of its poll almost immediately (the pane worker records its
+#                    pid fast), but this starve path is always fully exhausted, so
+#                    a 5s ceiling here would erode the timeout margin under CI load
+#                    — 1s does not.
+make_stage_starve() {
+    local __out="$1" dir
+    dir="$(/usr/bin/mktemp -d "$WORKDIR/gate.XXXXXX")" || return 1
+    /usr/bin/cp "$WATCH" "$dir/golem-watch.sh"
+    /usr/bin/cat >"$dir/golem-gate-watch.sh" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --stream-panes)
+        # Deliberately do NOT record a pid: starve the readiness signal so the
+        # feed's poll runs to its bounded ceiling and falls through.
+        printf 'pane-line-1\n'
+        sleep 5
+        ;;
+    --stream)
+        # Bounded readiness poll like make_stage's fake, with a small ceiling
+        # (50 x 0.02s = 1s). $PANE_WORKER_FILE never fills, so this always exhausts
+        # the ceiling and falls through to emit the feed lines — the bounded
+        # timeout/starvation path finding 2 pins, with ample margin under the
+        # `timeout 10` outer bound.
+        tries=0
+        while [ "$tries" -lt 50 ]; do
+            [ -s "$PANE_WORKER_FILE" ] && break
+            sleep 0.02
+            tries=$((tries + 1))
+        done
+        printf 'feed-line-1\n'
+        printf 'feed-line-2\n'
+        ;;
+esac
+EOF
+    /usr/bin/chmod +x "$dir/golem-gate-watch.sh"
+    printf -v "$__out" '%s' "$dir"
+}
+
 # make_stage_int <varname>
 # Like make_stage, but stages a fake tailored for the DELIVERED-SIGINT behavioural
 # case (4), not the natural-exit case (2). Two deliberate differences from the fake
@@ -279,6 +337,21 @@ test_both_channels_prefixed() {
     assert_contains "$WATCH_OUT" "[pane] pane-line-1" "the pane channel is streamed with a [pane] prefix"
 }
 
+# Why there is no stdout channel-ORDERING assertion (issue #381, finding 1).
+# One might expect `[pane] pane-line-1` to precede `[feed] feed-line-1` in
+# WATCH_OUT, since the readiness poll makes the feed wait for the pane worker's
+# recorded pid before exiting. It does not, and asserting it would be flaky:
+# golem-watch.sh runs the pane channel backgrounded through its OWN `sed -u` and
+# the feed channel foreground through a SEPARATE `sed -u` (golem-watch.sh:22,34),
+# both writing the same redirected file. The readiness poll gates on the pane
+# worker recording its PID (make_stage's --stream-panes writes $PANE_WORKER_FILE
+# *before* printing `pane-line-1`), NOT on that line reaching stdout — the two
+# `sed` pipelines then race to the shared file with no ordering guarantee. So the
+# only real invariant here is pid-file readiness, which test_trap_kills_background_pane
+# below already asserts (assert_not_empty "$WATCH_WORKER_PID"); a `grep -n`
+# line-order check would pin a non-invariant and flake under load. Left
+# deliberately unasserted.
+
 # After the foreground --stream exits, the real pane WORKER
 # (`golem-gate-watch.sh --stream-panes`) must be gone — reaped by the
 # EXIT/INT/TERM trap tearing down the whole pane pipeline, not just its subshell
@@ -304,6 +377,33 @@ test_trap_kills_background_pane() {
     done
     assert_equals "0" "$alive" \
         "the pane worker (golem-gate-watch.sh --stream-panes) is gone after the foreground exits (trap reaped the pipeline)"
+}
+
+# Readiness-poll starvation/fallthrough (issue #381, finding 2). When the pane
+# worker never records its pid, the feed fake's readiness poll must run to its
+# ceiling and STILL emit — proving that poll is BOUNDED. Scope: the poll is a
+# TEST-HARNESS readiness mechanism (make_stage / make_stage_starve fakes, PR #380),
+# NOT production golem-watch.sh; this case guards the harness pattern so a future
+# edit that made the poll unbounded (`while [ ! -s "$f" ]` with no ceiling) would
+# hang the suite here rather than silently reintroduce the #360 startup race that
+# the poll was added to close. make_stage_starve stages the starvation: its
+# --stream-panes arm writes no $PANE_WORKER_FILE, so the readiness signal never
+# fires; an unbounded poll would then wedge the feed forever, run_watch's
+# `timeout 10` would fire, `[feed]` would never appear, and the first assertion
+# below would fail loudly.
+test_starvation_poll_falls_through_bounded() {
+    local sb
+    make_stage_starve sb
+    run_watch "$sb"
+    # The feed still emits after the poll exhausts its ceiling — the fallthrough
+    # ran and the foreground did not wedge (the run returned before `timeout 10`).
+    assert_contains "$WATCH_OUT" "[feed] feed-line-1" \
+        "the feed channel still streams after the readiness poll exhausts its bounded ceiling (starvation fallthrough)"
+    # And it fell through BECAUSE readiness was starved: the worker recorded no
+    # pid, so run_watch read an empty worker file. This pins the test to the
+    # starvation path rather than a coincidental fast pane-worker startup.
+    assert_equals "" "$WATCH_WORKER_PID" \
+        "the starved pane worker recorded no pid (readiness signal never fired)"
 }
 
 # --- Signal-delivery coverage (issue #254) ----------------------------------
@@ -494,6 +594,11 @@ fi
 
 run_test test_both_channels_prefixed "golem-watch: both feed + pane channels are streamed and prefixed"
 run_test test_trap_kills_background_pane "golem-watch: the cleanup trap kills the background pane on foreground exit"
+
+# Readiness-poll starvation coverage (issue #381). The feed's bounded poll must
+# fall through and still emit when the pane worker never records its pid — pinning
+# the poll's ceiling so a regression to an unbounded wait fails loudly.
+run_test test_starvation_poll_falls_through_bounded "golem-watch: the readiness poll falls through (bounded) when the pane worker never signals readiness"
 
 # Signal-delivery coverage (issue #254). Structural assertion that the cleanup
 # trap stays armed on INT and TERM (not just EXIT) — deterministic and portable.
