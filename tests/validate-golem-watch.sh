@@ -76,8 +76,18 @@
 # verification. A BOUNDED poll on the watcher's own death (not a blocking `wait`)
 # guarantees the case can never wedge the suite even if a signal is swallowed — on
 # timeout it force-reaps the group and reports the worker STILL ALIVE (a FAIL),
-# never a false pass. The readiness-polling refinement (replacing the remaining
-# fixed sleeps) is #360.
+# never a false pass.
+#
+# Readiness polling (issue #360). The natural-exit path's fixed settle window is
+# gone: make_stage's `--stream` fake now readiness-polls $PANE_WORKER_FILE (waits
+# for the background pane worker to record its pid) before exiting, instead of a
+# flat `sleep`, so CI resource contention cannot reorder the feed exit ahead of
+# the pane worker coming up. The signal path (case 4) was already readiness-polled
+# — run_watch_int_signal polls the worker file before delivering the SIGINT (#359),
+# and make_stage_int's `--stream` fake deliberately BLOCKS (does not self-exit) so
+# the group signal is what ends it. The remaining `sleep`s in the fakes are
+# self-terminating stay-alive backstops (keep the worker present long enough to be
+# observed / force-reaped), NOT settle windows.
 #
 # On (2): the subtlety this test exists to pin is that `pane_pid` (`$!` in
 # golem-watch.sh) is the PID of the backgrounded `( "$watch" --stream-panes |
@@ -141,9 +151,16 @@ trap cleanup EXIT
 #                    wrapper) is the whole point: the wrapper always dies promptly
 #                    when the foreground exits, so asserting on it would pass even
 #                    when the worker leaks.
-#   --stream       → sleeps briefly (so the background pane line reliably lands
-#                    first), emits two lines, then exits — driving the foreground
-#                    to return, which fires the cleanup trap in golem-watch.sh.
+#   --stream       → readiness-polls $PANE_WORKER_FILE (waits for the background
+#                    pane worker to record its pid) BEFORE emitting two lines and
+#                    exiting — the exit drives the foreground to return, which
+#                    fires the cleanup trap in golem-watch.sh. Gating on the pid
+#                    record (the readiness signal test_trap_kills_background_pane
+#                    actually asserts on) means the feed never exits before the
+#                    worker exists to be reaped. The poll replaces a flat settle
+#                    sleep (#360) with that real readiness condition, so CI
+#                    resource contention cannot race the feed exit ahead of the
+#                    pane worker coming up.
 # Assigns the staging dir to the caller's named variable.
 make_stage() {
     local __out="$1" dir
@@ -161,7 +178,19 @@ case "${1:-}" in
         sleep 5
         ;;
     --stream)
-        sleep 1
+        # Readiness-poll for the pane worker's recorded pid instead of a flat
+        # settle sleep (#360): only exit (firing the cleanup trap) once the pane
+        # worker has written its pid to $PANE_WORKER_FILE, so the trap always has
+        # a worker to reap regardless of pane-worker startup timing. The poll
+        # ceiling (250 x 0.02s = 5s) sits well under run_watch's `timeout 10`
+        # outer bound, leaving ample headroom for spawn + pipe + trap teardown;
+        # the two bounds are intentionally compatible, not coincidentally close.
+        tries=0
+        while [ "$tries" -lt 250 ]; do
+            [ -s "$PANE_WORKER_FILE" ] && break
+            sleep 0.02
+            tries=$((tries + 1))
+        done
         printf 'feed-line-1\n'
         printf 'feed-line-2\n'
         ;;
@@ -259,8 +288,12 @@ test_trap_kills_background_pane() {
     make_stage sb
     run_watch "$sb"
     assert_not_empty "$WATCH_WORKER_PID" "the fake pane recorded its worker pid (\$\$)"
+    # Event-based poll: it breaks the instant the worker dies, so the happy path
+    # pays no fixed wall time — only a genuine trap regression spends the window.
+    # Bound it generously (50 x 0.2s = 10s) so CI contention that merely delays
+    # the trap's SIGTERM never false-fails; a real leak still fails once elapsed.
     local tries=0 alive=1
-    while [ "$tries" -lt 10 ]; do
+    while [ "$tries" -lt 50 ]; do
         if /usr/bin/kill -0 "$WATCH_WORKER_PID" 2>/dev/null; then
             /usr/bin/sleep 0.2
         else
@@ -468,8 +501,8 @@ run_test test_trap_spec_arms_int_and_term "golem-watch: cleanup trap is armed on
 
 # Signal-delivery coverage (issue #359). Setsid-free BEHAVIOURAL assertion that a
 # delivered SIGINT reaches cleanup_pane and reaps the pane worker. Self-gates
-# (SKIP) where group-signal delivery is unavailable; the readiness-polling refinement
-# of the remaining fixed sleeps is #360.
+# (SKIP) where group-signal delivery is unavailable. The fixed settle windows it
+# and the natural-exit case relied on are now bounded readiness polls (#360).
 run_test test_delivered_int_reaps_pane_worker "golem-watch: a delivered SIGINT reaches cleanup_pane and reaps the pane worker (behavioural, setsid-free)"
 
 generate_report
