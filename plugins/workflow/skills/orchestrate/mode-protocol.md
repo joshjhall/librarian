@@ -323,7 +323,7 @@ of the freshness window (`GOLEM_BLOCK_TTL` seconds, default `3600`).
 `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` is a **pull** surface (the operator runs it). The proactive
 **push** complement is `${CLAUDE_PLUGIN_ROOT}/scripts/golem-gate-watch.sh`, which the live session arms via
 the `Monitor` tool at dispatch and a human can run as `${CLAUDE_PLUGIN_ROOT}/scripts/golem-watch.sh` (see
-`SKILL.md` Phase M § *Proactive gate-watch*). It is the single source of truth
+`monitor-protocol.md` § *Proactive gate-watch*). It is the single source of truth
 for "which golem is at a gate" — the `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` BLOCKED list calls its `--once`
 mode, so the pull and push surfaces can never disagree. Two **co-equal** channels
 (neither is "secondary"):
@@ -413,7 +413,7 @@ A golem's `/ship-issue` pre-PR `next-issue-review` sometimes runs long. The
 question the monitor must answer is **not** "is this review slow?" but "is this
 golem **unrecoverably wedged**, warranting an orchestrator takeover kill?" — and
 the answer is **almost always no**. The default is **surface-and-wait**, not
-decide-and-kill (see `SKILL.md` Phase M § *Slow pre-PR reviews*).
+decide-and-kill (see `monitor-protocol.md` § *Slow pre-PR reviews*).
 
 **Why the old signal was wrong.** The retired heuristic flagged a wedge on a
 frozen `N/6 agents` sub-workflow counter + ~15 min wall-time. That conflates a
