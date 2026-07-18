@@ -384,6 +384,55 @@ the operator/harness kills it — there is deliberately **no** "sustained absenc
 countdown, because an unconditionally surviving loop is simpler and strictly
 safer than any empty-poll timer.
 
+### Reverse channel (the inbox) — brokered gate resolution
+
+The feed and the pane overlay are **up** channels: they surface a golem's parked
+human gate to the orchestrator. `${CLAUDE_PLUGIN_ROOT}/scripts/golem-inbox.sh`
+(#227) is the mirror **down** channel — the way the orchestrator relays the
+operator's decision back into the golem, so an operator supervising N golems
+resolves each escalation/dead-end from **one** interface instead of
+`golem-attach.sh {N}`'ing into every golem's TTY.
+
+It is a per-golem `inbox-<golem>.jsonl`, a sibling of `feed.jsonl` under the
+status dir. The flow (see `orchestrate/SKILL.md` § *Resolve a brokered gate* for
+the operator-facing steps):
+
+1. A golem hits a kept escalation/dead-end gate, **mints a gate-id**
+   (`golem-inbox.sh gateid`), and embeds it as `[gate-<epoch>-<rand>]` in its
+   `ESCALATION:`/`DEAD-END:` feed message (and its issue comment). See
+   `next-issue/escalation-protocol.md`.
+2. The gate-watch surfaces that BLOCKED line; the orchestrator **parses the
+   `[gate-…]` token** out of the message it already reads, presents the payload
+   (from the issue comment) via **one** `AskUserQuestion` at the top-most
+   session, and writes the operator's choice with
+   `golem-inbox.sh answer <golem> <gate-id> <option>`.
+3. The golem's `consume <golem> <gate-id>` loop reads the matching answer and
+   proceeds. Attribution is **two-layer** — the inbox filename is keyed by
+   golem-id *and* `consume` filters on the in-record `gate` field — so a decision
+   for golem-N can never be consumed by golem-M or applied to the wrong gate
+   (acceptance criterion 2).
+
+The never-time-out rule is preserved: `consume` is a bounded read that returns
+`NO-DECISION` and is re-invoked, so brokering changes *where* the human answers,
+not *whether* one must. `golem-attach.sh` stays the manual fallback for every
+gate class — brokering is additive.
+
+**Data-only invariant — plan-approval is deliberately NOT brokered here (#227
+spike conclusion, #29).** The inbox carries a golem's escalation/dead-end
+decision **as data**; it must **never itself resolve an auto-mode gate**.
+Plan-approval *is* the resolution of an auto-mode gate, and it is already
+brokered compliantly by the directed `tmux send-keys` path settled in #281 (see
+§ *Plan gate by level* below): the orchestrator presents the plan centrally and,
+on operator approval, commits it with a **human-authorized directed keystroke**.
+Routing a plan-approval *selection* through the inbox would convert "a human
+pre-authorized golem launches" into "an agent resolves auto-mode gates for other
+agents" — exactly the `[Create Unsafe Agents]` boundary #29 guards. So the
+spike's honest outcome is that the compliant design *already exists* for
+plan-approval, and the inbox correctly stays out of it: **inbox = escalation/
+dead-end data; plan-approval = human-authorized directed keystroke.** The
+residual classifier non-determinism on those sends is #282's scope, unchanged by
+this work.
+
 ### Status-sweep cadence
 
 The gate-watch above is a **push** surface, event-driven — it fires on the

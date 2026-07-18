@@ -38,6 +38,15 @@
 #   GOLEM_HEARTBEAT_INTERVAL
 #                        Poll interval for the liveness stream (--stream-liveness),
 #                        seconds.                         Default: 60
+#   GOLEM_INBOX_WAIT     Per-call ceiling, seconds, of golem-inbox.sh `consume`'s
+#                        bounded-blocking read (the orchestrator-brokered gate
+#                        reverse channel, #227). Kept below the Bash tool's 600s
+#                        call ceiling; a golem re-invokes `consume` in a loop on
+#                        the NO-DECISION sentinel so "wait indefinitely" holds
+#                        without any single call hitting the ceiling.
+#                                                          Default: 300 (5 min)
+#   GOLEM_INBOX_POLL     Poll interval, seconds, of `consume`'s inner loop while
+#                        it waits for a matching decision.  Default: 3
 #   GOLEM_SWEEP_INTERVAL Cadence, seconds, of the orchestrator's Phase M status
 #                        sweep (golem-status.sh --watch, #304). Env OVERRIDE for
 #                        the level-scaled default: unset -> the per-level cadence
@@ -81,9 +90,17 @@
 : "${GOLEM_STALL_THRESHOLD:=1200}"
 : "${GOLEM_HEARTBEAT_INTERVAL:=60}"
 
+# Orchestrator-brokered gate reverse channel (golem-inbox.sh, #227): the
+# per-call ceiling and poll interval of `consume`'s bounded-blocking read. The
+# ceiling stays under the Bash tool's 600s per-call limit; the golem re-invokes
+# `consume` in a loop on NO-DECISION so the never-time-out rule holds without any
+# single call approaching the ceiling.
+: "${GOLEM_INBOX_WAIT:=300}"
+: "${GOLEM_INBOX_POLL:=3}"
+
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
-    GOLEM_HEARTBEAT_INTERVAL
+    GOLEM_HEARTBEAT_INTERVAL GOLEM_INBOX_WAIT GOLEM_INBOX_POLL
 
 # GIT_ENV_SCRUB_VARS — git's hook-exported environment variables that
 # _repo_root_git (below) and the worktree-new/-rm callers scrub before running

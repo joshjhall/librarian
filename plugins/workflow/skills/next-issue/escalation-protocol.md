@@ -69,31 +69,78 @@ Read the run's level from `autonomy_level` in the state file (see
 `autonomy.md` § *Level selection*; legacy `autonomous:true` → L4).
 
 - **L1–L3 — BLOCK and wait for a human.**
-  1. Emit the payload to the orchestrate feed classified as an `escalation` (so
+  1. **Mint a gate-id** to correlate this escalation with the operator's
+     eventual answer:
+
+     ```bash
+     GATE_ID="$("${CLAUDE_PLUGIN_ROOT}/scripts/golem-inbox.sh" gateid)"
+     ```
+
+     Carry the **same** `$GATE_ID` in all three of the next steps (the feed
+     message, the issue comment, and your own later `consume` call) — one id,
+     three carriers, so the orchestrator's answer can never be mis-delivered to
+     another golem or another gate (#227).
+  2. Emit the payload to the orchestrate feed classified as an `escalation` (so
      the orchestrator, `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`, and
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-gate-watch.sh` surface it distinctly
      from a routine permission `gate`). The message **must begin `ESCALATION:`**
-     so `golem-notify.sh` classifies it — pipe a synthesized Notification
-     payload to the hook:
+     so `golem-notify.sh` classifies it, and **embed the `$GATE_ID` in
+     brackets** so the orchestrator can parse it off the feed line it already
+     reads — pipe a synthesized Notification payload to the hook:
 
      ```bash
-     printf '%s' '{"message":"ESCALATION: <one-line decision> — see issue comment"}' \
+     printf '%s' "{\"message\":\"ESCALATION: [$GATE_ID] <one-line decision> — see issue comment\"}" \
        | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
      ```
 
-  2. Post the full payload (decision + options + recommendation) as an **issue
-     comment** for traceability (`gh issue comment {N} --body …` / `glab issue
-     note {N} --message …`).
-  3. For a **lone `/next-issue`** with no orchestrator, also surface the payload
-     **inline** and block the interactive session.
-  4. **Wait indefinitely** for the human's choice. The human attaches with
-     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, picks an option in the
-     same session, and the run continues at its level. **Never lapse-and-default
-     because the operator stepped away** (see § *Never time out* below).
+  3. Post the full payload (decision + options + recommendation) as an **issue
+     comment** for traceability, prefixing it with the `$GATE_ID` so a human
+     reading the issue can match it to the feed line (`gh issue comment {N}
+     --body …` / `glab issue note {N} --message …`).
+  4. For a **lone `/next-issue`** with no orchestrator, also surface the payload
+     **inline** and block the interactive session (there is no orchestrator to
+     write the inbox, so this path stays the interactive in-session block —
+     brokering augments the orchestrated case, it does not replace the lone
+     one).
+  5. **Under an orchestrator only — wait indefinitely by polling the inbox.**
+     (In the lone `/next-issue` case of step 4 you have already blocked inline;
+     do **not** also enter this loop — there is no orchestrator to write the
+     inbox, so it would poll `NO-DECISION` forever.) With an orchestrator, it has
+     surfaced this escalation at the top-most session, collected the operator's
+     answer once, and writes it to this golem's inbox; consume it to unblock —
+     **no `golem-attach` required**:
+
+     ```bash
+     # Re-invoke on the NO-DECISION sentinel, forever — never default.
+     # $GOLEM_ID is stamped into this golem's env at launch (golem-{N}); use it
+     # rather than hand-substituting an id.
+     ans="NO-DECISION"
+     while [ "$ans" = "NO-DECISION" ]; do
+       ans="$("${CLAUDE_PLUGIN_ROOT}/scripts/golem-inbox.sh" consume "$GOLEM_ID" "$GATE_ID")"
+     done
+     # $ans is now "DECISION: <option>" (+ optional "NOTE: <text>") — proceed on it.
+     ```
+
+     Each `consume` is a **bounded** read (≤`GOLEM_INBOX_WAIT`, default 300s,
+     under the Bash-tool ceiling); on no answer it prints `NO-DECISION` and you
+     **re-invoke** — so "wait indefinitely" holds as a loop that never gives up
+     and **never lapse-and-defaults** (see § *Never time out* below). The
+     decision line is `DECISION: <option>` (plus an optional `NOTE: <text>`);
+     continue the run on that option at the run's level.
+
+     **`golem-attach` remains the manual fallback** for this gate class: a human
+     can still `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}` and pick an
+     option in-session at any time — the consume loop simply makes central,
+     per-golem-attach-free resolution the common path. Brokering changes *where*
+     the human answers, not *whether* one must.
 
 - **L4 — auto-select the recommendation and continue.** Record the payload (an
   issue comment / run summary for traceability), select the **recommended**
-  option, and proceed — **unless it is a dead-end.**
+  option, and proceed — **unless it is a dead-end.** An L4 escalation resolves
+  `disposition=auto`, so it **never mints a gate-id and never calls `consume`**:
+  there is no human to broker for, and the golem stays fully hands-off exactly as
+  before. The inbox is reached only on the human-gated paths (L1–L3 escalation,
+  and any dead-end).
 
 ### The dead-end exception (blocks at every level, L4 included)
 
@@ -101,9 +148,14 @@ A **dead-end** is an escalation whose only auto-resolution would violate the
 **merge invariant** (never merge unless CI is green *and* review is clean) — no
 option is safe, or every path forward would ship an un-green or un-reviewed
 change. Per `orchestrate/autonomy-levels.md` and #181, a dead-end **defers to a
-human at every level, L4 included**: emit the structured payload (why it is a
-dead-end, what was attempted, what options remain) and wait. This is the one
-place a fully hands-off L4 run stops.
+human at every level, L4 included**: mint a gate-id, emit the structured payload
+(why it is a dead-end, what was attempted, what options remain) with the message
+beginning **`DEAD-END:`** and the `[$GATE_ID]` embedded, and then **poll the
+inbox with the same consume loop as an L1–L3 escalation** (a dead-end at L4 is a
+kept human gate, so it brokers identically). This is the one place a fully
+hands-off L4 run stops — and, with brokering, it stops waiting on a *central*
+answer rather than a per-golem attach. `golem-attach` remains the fallback here
+too.
 
 ## Never time out
 
@@ -115,4 +167,9 @@ place a fully hands-off L4 run stops.
 
 An escalation at L1–L3, and any dead-end, is exactly such a gate. Do not fabricate
 a human answer, do not fall back to a default option, and do not treat an absent
-operator as approval — hold until a real choice arrives.
+operator as approval — hold until a real choice arrives. The inbox `consume`
+loop above enforces this mechanically: the bounded read returns `NO-DECISION` on
+no answer (never a synthesized option), and you re-invoke it — the wait is an
+agent-level loop that never terminates on a default. A single `consume` call
+hitting its `GOLEM_INBOX_WAIT` ceiling is **not** a timeout of the gate; it is
+one poll window ending, after which you loop again.
