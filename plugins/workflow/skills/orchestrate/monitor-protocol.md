@@ -142,10 +142,12 @@ pre-kill PR check); **otherwise** offer only once the **top-level** token counte
 has been frozen for a **45–60 min** window (sub-workflow growth doesn't count)
 **and**, in a multi-golem batch, a sibling review is advancing (cross-golem
 corroboration — inapplicable in a solo run). Always run the pre-kill check
-`gh pr list --state open --head feature/issue-{N}` before **any** kill — if a PR
-exists, **skip** the takeover and merge (golem-328 PR'd in the decision→kill
-window). See `mode-protocol.md` § *Slow-review takeover contract* for the
-rationale, benign-state evidence, and the takeover recipe.
+(`gh pr list --state open --head <the golem's branch>` — realization-specific:
+`feature/issue-{N}` for a worktree golem, `agent{N}` for a container golem) before
+**any** kill — if a PR exists, **skip** the takeover and merge (golem-328 PR'd in
+the decision→kill window). See `mode-protocol.md` § *Slow-review takeover
+contract* for the exact per-mode command, rationale, benign-state evidence, and
+the takeover recipe.
 
 **Proactive gate-watch (PUSH, not just PULL).** `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` is a **pull**
 check — the operator must run it to discover a golem parked at a permission gate
