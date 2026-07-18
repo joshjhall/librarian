@@ -904,6 +904,69 @@ test_worktree_new_from_submodule_placement_under_taint() {
         "no branch ref leaked into the outer/tainted repo (no split-brain)"
 }
 
+# Regression (#368, deferred from PR #367's pre-PR review): worktree-new.sh's
+# top-level `unset $(_git_env_scrub_names)` documents a deliberate FAIL-LOUD
+# contract — "NO `|| true`: a readonly GIT_DIR makes `unset` fail, which under
+# `set -e` aborts LOUDLY before any mutation." config.sh's repo_root has the
+# analogous guarantee covered (test_config_repo_root_scrubs_readonly_tainted_git_env,
+# #328), but the script itself had no test invoking it under a `declare -rx`
+# taint, so a future edit adding `|| true` or restructuring the unset would
+# silently regress the guarantee. This pins it: a readonly-exported
+# GIT_DIR/GIT_COMMON_DIR must make worktree-new EXIT NON-ZERO and mutate NOTHING.
+#
+# The taint MUST be applied by SOURCING the script (not the plain `bash script`
+# form run_in uses): the `declare -rx` READONLY attribute is dropped across
+# `exec`, so a child bash launched to run the script would inherit only the
+# exported VALUE, not the readonly-ness — its `unset` would succeed and the
+# fail-loud path would never be exercised. Sourcing inside a bash that first
+# declared the readonly vars keeps them readonly when the script's `unset` runs.
+# Mirrors test_config_repo_root_scrubs_readonly_tainted_git_env's `declare -rx`
+# setup, applied to the whole script. No GIT_SCRUB on the invocation — the taint
+# is the whole point; the script's own guard must abort on it.
+test_worktree_new_readonly_tainted_git_env_fails_loud() {
+    local sb outer
+    new_sandbox sb
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+
+    # Source worktree-new inside a child bash that makes GIT_DIR/GIT_COMMON_DIR
+    # `declare -rx` (readonly + exported) BEFORE the script's `unset` runs, so the
+    # unset fails and `set -e` aborts. Pin GOLEM_* / HOME like run_in does.
+    local out rc=0
+    out="$(cd "$sb" &&
+        HOME="$sb" \
+            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" -c \
+            'declare -rx GIT_DIR="$2/.git"; declare -rx GIT_COMMON_DIR="$2/.git"; . "$1" 78' \
+            _ "$WT_NEW" "$outer" 2>&1)" || rc=$?
+    assert_true "[ \"$rc\" -ne 0 ]" \
+        "worktree-new aborts NON-ZERO under a readonly-tainted git environment (fail-loud)"
+
+    # No mutation: no branch in the sandbox OR the outer repo, and no worktree dir.
+    local sb_branch outer_branch
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" branch --list "feature/issue-78")"
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" branch --list "feature/issue-78")"
+    assert_output_empty "$sb_branch" \
+        "no branch ref created in the sandbox (aborted before the mutation)"
+    assert_output_empty "$outer_branch" \
+        "no branch ref leaked into the outer/tainted repo"
+    assert_true "[ ! -e \"$sb/.worktrees/issue-78\" ]" \
+        "no worktree dir created (aborted before git worktree add)"
+}
+
 # --- config.sh repo_root() ----------------------------------------------------
 
 # Regression (#278): repo_root() must resolve its tools via PATH, not hardcoded
@@ -1607,6 +1670,75 @@ test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
         "the outer/tainted repo's same-named branch is untouched (no cross-repo delete)"
 }
 
+# Regression (#368, deferred from PR #367's pre-PR review): worktree-rm.sh's
+# top-level `unset $(_git_env_scrub_names)` carries the same FAIL-LOUD contract as
+# worktree-new's — "NO `|| true`: a readonly GIT_DIR makes `unset` fail, which
+# under `set -e` aborts LOUDLY before any mutation." Without this test a future
+# edit adding `|| true` would silently let worktree-rm's DESTRUCTIVE mutations
+# (worktree remove / branch -D / config --unset core.worktree) run in a tainted
+# env. Pins it: a readonly-exported GIT_DIR/GIT_COMMON_DIR must make worktree-rm
+# EXIT NON-ZERO and delete NOTHING — the pre-seeded sandbox worktree+branch stay
+# intact and the outer repo is untouched.
+#
+# Same SOURCING requirement as the worktree-new case above: `declare -rx`'s
+# readonly attribute is dropped across `exec`, so the taint must be applied by
+# sourcing the script inside a bash that first declared the readonly vars (the
+# plain `bash script` form run_in uses would inherit only the value, not the
+# readonly-ness, and the unset would succeed). No GIT_SCRUB on the invocation —
+# the taint is the point; the script's own guard must abort on it.
+test_worktree_rm_readonly_tainted_git_env_fails_loud() {
+    local sb outer
+    new_sandbox sb
+    # Seed the sandbox worktree+branch to (attempt to) remove — scrubbed, safe.
+    run_in "$sb" "$WT_NEW" 79
+    assert_exit 0 "$RUN_RC" "worktree-new seeds the sandbox worktree+branch"
+
+    # A separate outer repo carrying an identically-named branch: if worktree-rm
+    # ran its `git branch -D` in the tainted env it would delete THIS branch.
+    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.email "test@example.com"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" config user.name "Test"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
+
+    # Source worktree-rm inside a child bash that makes GIT_DIR/GIT_COMMON_DIR
+    # `declare -rx` BEFORE the script's `unset` runs, so the unset fails and
+    # `set -e` aborts before any destructive mutation.
+    local out rc=0
+    out="$(cd "$sb" &&
+        HOME="$sb" \
+            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" -c \
+            'declare -rx GIT_DIR="$2/.git"; declare -rx GIT_COMMON_DIR="$2/.git"; . "$1" 79' \
+            _ "$WT_RM" "$outer" 2>&1)" || rc=$?
+    assert_true "[ \"$rc\" -ne 0 ]" \
+        "worktree-rm aborts NON-ZERO under a readonly-tainted git environment (fail-loud)"
+
+    # No mutation: the sandbox's worktree+branch survive, and the outer repo's
+    # same-named branch is untouched (no cross-repo delete).
+    local sb_branch outer_branch
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$sb" branch --list "feature/issue-79")"
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/git -C "$outer" branch --list "feature/issue-79")"
+    assert_not_empty "$sb_branch" \
+        "the sandbox branch survives (aborted before the destructive branch -D)"
+    assert_true "[ -e \"$sb/.worktrees/issue-79\" ]" \
+        "the sandbox worktree dir survives (aborted before git worktree remove)"
+    assert_not_empty "$outer_branch" \
+        "the outer/tainted repo's same-named branch is untouched (no cross-repo delete)"
+}
+
 # _make_super_with_submodule <out-super-var>
 # Builds a superproject sandbox (git repo + one commit + .worktrees/.status +
 # .tmux + {} .claude.json + a $super/.gitconfig enabling file:// submodules) that
@@ -1963,6 +2095,7 @@ run_test test_worktree_new_inits_submodules "worktree-new: populates submodules 
 run_test test_worktree_new_from_submodule_placement "worktree-new: from inside a submodule lands the worktree at <super>/.worktrees (#338, #324)"
 run_test test_worktree_new_scrubs_tainted_git_env_for_mutations "worktree-new: scrubs a tainted GIT_DIR so the branch ref lands in the right repo (#328)"
 run_test test_worktree_new_from_submodule_placement_under_taint "worktree-new: from inside a submodule UNDER a tainted git env lands worktree + branch at <super>, not .git/modules or the outer repo (#365, #338, #328)"
+run_test test_worktree_new_readonly_tainted_git_env_fails_loud "worktree-new: aborts fail-loud (non-zero, no mutation) under a readonly-tainted GIT_DIR (#368)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
@@ -1981,6 +2114,7 @@ run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exit
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
 run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"
+run_test test_worktree_rm_readonly_tainted_git_env_fails_loud "worktree-rm: aborts fail-loud (non-zero, no mutation) under a readonly-tainted GIT_DIR (#368)"
 run_test test_worktree_rm_forces_past_clean_submodule "worktree-rm: forces past a clean populated submodule (#325)"
 run_test test_worktree_rm_refuses_dirty_regular_file_with_submodule "worktree-rm: refuses dirty regular file even with a submodule (#325)"
 run_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
