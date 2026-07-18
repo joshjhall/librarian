@@ -36,7 +36,38 @@ root="$(repo_root)"
 status_dir="$root/$GOLEM_STATUS_DIR"
 feed="$status_dir/feed.jsonl"
 pool="$status_dir/pool.json"
+scrape="$SCRIPT_DIR/golem-token-scrape.sh"
 shopt -s nullglob
+
+# _now_iso — current UTC time as an ISO-8601 Z timestamp (mirrors the
+# golem-notify.sh feed-line idiom). The "frozen since" anchor for token freezes.
+_now_iso() {
+    command date -u +%FT%TZ
+}
+
+# _iso_to_epoch <iso> — parse an ISO-8601 Z timestamp to epoch seconds, trying
+# GNU `date -d` then BSD `date -j -f` (mirrors _mtime_epoch's dual-toolchain
+# approach in golem-gate-watch.sh so the frozen-duration math works on Linux and
+# base macOS alike). Prints nothing on failure, so the caller falls back to
+# showing the raw "frozen since <iso>" rather than a bogus minute count.
+_iso_to_epoch() {
+    _ie_iso="$1"
+    [ -n "$_ie_iso" ] || return 0
+    command date -u -d "$_ie_iso" +%s 2>/dev/null && return 0
+    command date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_ie_iso" +%s 2>/dev/null && return 0
+    return 0
+}
+
+# _fmt_dur <seconds> — human-friendly "Nm" for >=60s else "Ns" (a non-negative
+# second count). Matches golem-gate-watch.sh's _fmt_age wording.
+_fmt_dur() {
+    _fd_s="$1"
+    if [ "$_fd_s" -ge 60 ]; then
+        command echo "$((_fd_s / 60))m"
+    else
+        command echo "${_fd_s}s"
+    fi
+}
 
 # render_status — emit one complete status snapshot (pool header, golem table,
 # BLOCKED list, liveness, recent feed). Re-globs the cache and re-scans tmux on
@@ -145,6 +176,83 @@ render_status() {
         else
             command echo "  (no liveness proxy available)"
         fi
+    fi
+
+    # TOP-LEVEL TOKENS (issue #371) — the mechanical frozen-counter signal feeding
+    # #369's slow-review takeover contract. For each cached golem we scrape the
+    # cumulative TOP-LEVEL token count from its Claude Code transcript
+    # (golem-token-scrape.sh), persist it + a "frozen since" anchor back into the
+    # golem's status JSON, and render how long the count has been frozen. The
+    # operator reads "frozen Xm" here instead of attaching to each pane by eye.
+    # This is a WORKTREE (Mode 2) signal only: a container (Mode 3) golem's
+    # transcript is not host-readable, so those rows show a pending note (#390).
+    # jq-gated (needs jq to read/merge the cache and sum the transcript).
+    if command -v jq >/dev/null 2>&1 && [ "${#cache[@]}" -gt 0 ]; then
+        command echo ""
+        command echo "TOP-LEVEL TOKENS (frozen-counter signal — #369 takeover contract):"
+        for f in "${cache[@]}"; do
+            g="$(jq -r '.golem // "?"' "$f" 2>/dev/null)"
+            ctr="$(jq -r '.container // empty' "$f" 2>/dev/null)"
+            issue_n="$(jq -r '.issue // empty' "$f" 2>/dev/null)"
+            # Mode 3 container golem — no host-readable transcript yet (#390).
+            if [ -n "$ctr" ]; then
+                command echo "  $g — n/a (container golem — token push pending, see #390)"
+                continue
+            fi
+            # Resolve the golem's worktree and scrape its transcript. Fail-loud:
+            # a missing transcript / unparsable count → "tokens unknown", never a
+            # bogus frozen=0 that could trip a false takeover.
+            wt="$root/$GOLEM_WORKTREE_DIR/issue-$issue_n"
+            cur=""
+            if [ -n "$issue_n" ] && [ -x "$scrape" ]; then
+                cur="$("$scrape" "$wt" 2>/dev/null || true)"
+            fi
+            case "$cur" in
+                '' | *[!0-9]*)
+                    command echo "  $g — tokens unknown (no transcript)"
+                    continue
+                    ;;
+            esac
+            prev="$(jq -r '.top_level_tokens // empty' "$f" 2>/dev/null)"
+            prev_at="$(jq -r '.top_level_tokens_at // empty' "$f" 2>/dev/null)"
+            # Frozen-since bookkeeping: keep the anchor while the count is
+            # unchanged; reset it to now when the count moves (or on first read).
+            if [ -n "$prev" ] && [ "$cur" = "$prev" ] && [ -n "$prev_at" ]; then
+                at="$prev_at"
+            else
+                at="$(_now_iso)"
+            fi
+            # Merge the two fields back into the cache JSON (atomic tempfile+mv —
+            # jq cannot edit in place). Cache semantics, last-writer-wins; benign
+            # against the orchestrator model's occasional writes to the same file.
+            # mktemp (not a predictable "$f.tmp.$$") so a pre-planted symlink at the
+            # temp path can't redirect jq's write — the tempfile lands beside $f in
+            # $status_dir, keeping the mv atomic (same filesystem).
+            tmp="$(command mktemp "$status_dir/.tok.XXXXXX" 2>/dev/null)"
+            if [ -n "$tmp" ] && jq --argjson t "$cur" --arg at "$at" \
+                '. + {top_level_tokens: $t, top_level_tokens_at: $at}' \
+                "$f" >"$tmp" 2>/dev/null; then
+                command mv "$tmp" "$f" 2>/dev/null || command rm -f "$tmp"
+            else
+                [ -n "$tmp" ] && command rm -f "$tmp"
+            fi
+            # Render: frozen duration if unchanged, else advancing / first reading.
+            if [ -z "$prev" ]; then
+                command echo "  $g — $cur tokens (first reading)"
+            elif [ "$cur" != "$prev" ]; then
+                command echo "  $g — $cur tokens (advancing)"
+            else
+                epoch="$(_iso_to_epoch "$at")"
+                if [ -n "$epoch" ]; then
+                    now_e="$(command date -u +%s)"
+                    d=$((now_e - epoch))
+                    [ "$d" -lt 0 ] && d=0
+                    command echo "  $g — $cur tokens, frozen $(_fmt_dur "$d")"
+                else
+                    command echo "  $g — $cur tokens, frozen since $at"
+                fi
+            fi
+        done
     fi
 
     if [ -f "$feed" ]; then

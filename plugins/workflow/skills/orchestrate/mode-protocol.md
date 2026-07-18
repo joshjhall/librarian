@@ -455,8 +455,18 @@ holds (any one missing ⇒ keep waiting and keep surfacing):
   necessarily starts well past the ~25–30 min at which a slow review first becomes
   worth *surfacing*, so there is no separate short-time floor to check. A frozen
   *sub-workflow* counter with top-level growth is real work, not a wedge — the
-  distinction is the whole point. (The crashed-process case above short-circuits
-  this — a dead process needs no token-freeze window.)
+  distinction is the whole point. **For a worktree golem (Mode 2) this reading is
+  now mechanical (#371):** `golem-status.sh` scrapes the golem's transcript
+  each sweep (top-level `output_tokens` only, `isSidechain==false` — the exact
+  top-level-vs-sub-workflow split above) and renders a `TOP-LEVEL TOKENS` section
+  showing `frozen Xm` per golem, so the operator reads the frozen duration
+  straight off the sweep rather than attaching to each pane and reading Claude
+  Code's usage indicator by eye. **A container golem (Mode 3) has no
+  host-readable transcript**, so its row shows `n/a (container golem — token push
+  pending, see #390)`; there the frozen-counter check falls back to a manual
+  `golem-attach.sh {N}` by-eye read until container-side usage propagation lands
+  (#390). (The crashed-process case above short-circuits this — a dead process
+  needs no token-freeze window.)
 - **Cross-golem corroboration — only when sibling golems are active.** In a
   multi-golem batch, a sibling golem's review advancing in the same window proves
   the classifier is up, ruling out a shared external outage; require it before

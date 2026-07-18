@@ -141,7 +141,11 @@ never automatic**: a **crashed/exited process** qualifies on its own (after the
 pre-kill PR check); **otherwise** offer only once the **top-level** token counter
 has been frozen for a **45–60 min** window (sub-workflow growth doesn't count)
 **and**, in a multi-golem batch, a sibling review is advancing (cross-golem
-corroboration — inapplicable in a solo run). Always run the pre-kill check
+corroboration — inapplicable in a solo run). For a **worktree golem (Mode 2)**
+the freeze reading is mechanical — `golem-status.sh`'s `TOP-LEVEL TOKENS` section
+renders `frozen Xm` per golem each sweep (#371); a **container golem (Mode 3)**
+shows `n/a (… see #390)` and needs a manual `golem-attach.sh {N}` read until
+container usage propagation lands. Always run the pre-kill check
 (`gh pr list --state open --head <the golem's branch>` — realization-specific:
 `feature/issue-{N}` for a worktree golem, `agent{N}` for a container golem) before
 **any** kill — if a PR exists, **skip** the takeover and merge (golem-328 PR'd in
