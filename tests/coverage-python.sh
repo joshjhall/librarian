@@ -144,8 +144,14 @@ name: demo
 ---
 Prose with no structural section heading.
 EOF
+# Multi-line so the insecure-http arm (non-localhost) fires on its own line and
+# the localhost-allowlist skip fires on a SEPARATE line — a single-line form lets
+# the localhost match swallow the whole line and neither branch emits (#348).
 cat >"$FIXDIR/ai/mcp.json" <<'EOF'
-{ "a": "http://evil.example.com", "b": "http://localhost:1" }
+{
+  "a": "http://evil.example.com",
+  "b": "http://localhost:1"
+}
 EOF
 cat >"$FIXDIR/ai/hook.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -204,13 +210,51 @@ printf '%s\n' "---" "unrelated: v" "---" "body" >"$BAREDIR/bare.md"
 mkdir -p "$FIXDIR/ai/docs"
 printf '%s\n' "d1" "d2" "d3" "d4" >"$FIXDIR/ai/docs/guide.md"
 
+# A skill SKILL.md whose first line is NOT `---` -> skill-frontmatter's
+# missing-opening-fence arm (#348 coverage: the behavioral assertion exists in
+# validate-checker-detectors.sh; this drives the same branch under measurement).
+NOFMSKILL="$FIXDIR/ai/skills/nofm"
+mkdir -p "$NOFMSKILL"
+printf '%s\n' "# no frontmatter here" "just prose" >"$NOFMSKILL/SKILL.md"
+
+# A SKILL.md over its WARNING threshold but UNDER high -> the ai-file-bloat
+# `elif n > warn` (MEDIUM) arm, distinct from the CLAUDE.md high arm above.
+WARNSKILL="$FIXDIR/ai/skills/warn"
+mkdir -p "$WARNSKILL"
+printf '%s\n' "line" "line" "line" "line" "line" >"$WARNSKILL/SKILL.md"
+
+# An unreadable config file -> main()'s per-file open() OSError skip arm.
+AI_UNREAD="$FIXDIR/ai/unreadable.json"
+printf '%s\n' '{ "x": "http://evil.example.com" }' >"$AI_UNREAD"
+chmod 000 "$AI_UNREAD" 2>/dev/null || true
+
+# config-inconsistency's _plugins_dir_for has a RELATIVE `plugins/`-prefixed arm
+# (path.startswith("plugins/")) distinct from the absolute `/plugins/` arm the
+# host/SKILL.md above drives. Build a relative-path skill under $FIXDIR and drive
+# it with a relative list while cd'd into $FIXDIR so the path literally begins
+# with `plugins/` (#348). It cites a ghost `demo:missing` -> the arm resolves the
+# real plugins/demo dir but finds no agent/skill -> config-inconsistency fires.
+mkdir -p "$FIXDIR/plugins/demo/skills/rel"
+cat >"$FIXDIR/plugins/demo/skills/rel/SKILL.md" <<'EOF'
+---
+description: A relative-path host skill.
+---
+## Workflow
+Uses `demo:missing` (ghost) via a relative path.
+EOF
+AICFG_REL_LIST="$WORKDIR/ai-rel-list.txt"
+printf '%s\n' "plugins/demo/skills/rel/SKILL.md" >"$AICFG_REL_LIST"
+
 AICFG_LIST="$WORKDIR/ai-list.txt"
 printf '%s\n' \
     "$AICFG/rev.md" "$AICFG/other.md" "$NOFMDIR/nofm.md" "$BAREDIR/bare.md" \
     "$SKILLDIR/SKILL.md" "$FIXDIR/ai/mcp.json" "$FIXDIR/ai/hook.sh" \
     "$FIXDIR/ai/demo.workflow.js" "$FIXDIR/ai/CLAUDE.md" "$FIXDIR/ai/docs/guide.md" \
     "$FIXDIR/plugins/demo/skills/host/SKILL.md" \
+    "$NOFMSKILL/SKILL.md" "$WARNSKILL/SKILL.md" "$AI_UNREAD" \
     >"$AICFG_LIST"
+# A blank line drives main()'s empty-path `if not path: continue` arm.
+printf '\n' >>"$AICFG_LIST"
 
 # Single-arg corpus: a file list of every fixture above.
 FILE_LIST="$WORKDIR/list.txt"
@@ -226,6 +270,152 @@ DRIFT_ACTUAL="$WORKDIR/drift-actual.txt"
 DRIFT_PLANNED="$WORKDIR/drift-planned.txt"
 printf '%s\n' "src/foo.py" "src/unplanned.py" "package-lock.json" >"$DRIFT_ACTUAL"
 printf '%s\n' "src/foo.py" "src/never_touched.py" >"$DRIFT_PLANNED"
+
+# --- check-security + check-code-health corpus (#348) ------------------------
+# check-security (84%) and check-code-health (68%) were the lowest-coverage
+# non-docs ports because the generic corpus above never exercised their
+# per-language / per-framework / boundary arms. These fixtures drive those
+# branches under measurement, in lockstep with the behavioral assertions in
+# tests/validate-source-detectors.sh (the #204 two-surface convention). Both
+# ports are content-only (no git-rooting), so they run over SRC_LIST from
+# WORKDIR. Boundary/negative arms (the credential denylist, the crypto
+# comment-skip, the debug-in-test-file suppression, the is_test_file segment
+# anchoring, the SKIP_GLOBS whole-file skip, the per-file OSError arm) are all
+# represented so their lines execute; correctness is pinned by the gate.
+SRCDIR="$FIXDIR/src"
+mkdir -p "$SRCDIR/tests"
+
+# Fake secret tokens, fragment-assembled so this SCRIPT holds no contiguous
+# secret; the fixture on disk carries the full token.
+SEC_AKIA="AKIA""0123456789ABCDEF"
+SEC_GHP="ghp_""ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+SEC_STRIPE="sk_""live_""ABCDEFGHIJKLMNOPQRSTUV"
+SEC_REACT="dangerously""SetInnerHTML"
+SEC_VUE="v-""html"
+SEC_BLADE="{""!!"
+
+# Python source: secrets (all 4 header arms + generic credential), denylist
+# negatives, f-string SQL + concatenation, md5 real vs commented, print() vs
+# logger negative, breakpoint, empty except (pass) vs handled.
+{
+    printf 'aws = "%s"\n' "$SEC_AKIA"
+    printf 'gh = "%s"\n' "$SEC_GHP"
+    printf 'stripe = "%s"\n' "$SEC_STRIPE"
+    printf '%s\n' '-----BEGIN RSA PRIVATE KEY-----'
+    printf '%s\n' 'password = "hunter2hunter2"'
+    printf '%s\n' 'placeholder = "changeme_placeholder"'
+    printf '%s\n' 'from_env = os.environ["API_KEY"]'
+    printf '%s\n' 'q = f"SELECT * FROM t WHERE id={i}"'
+    printf '%s\n' 'c = "SELECT a FROM t" + tail'
+    printf '%s\n' 'digest = md5(payload)'
+    printf '%s\n' '# md5(commented) is skipped by the comment guard'
+    printf '%s\n' 'print("debug marker")'
+    printf '%s\n' 'logger.print("structured")'
+    printf '%s\n' 'breakpoint()'
+    printf '%s\n' 'x = 1  # TODO: refactor'
+    printf '%s\n' 'try:'
+    printf '%s\n' '    risky()'
+    printf '%s\n' 'except Exception:'
+    printf '%s\n' '    pass'
+} >"$SRCDIR/app.py"
+
+# TS source: template-literal SQL, console/debugger, empty catch.
+{
+    printf '%s\n' 'const q = `SELECT * FROM t WHERE x=${v}`;'
+    printf '%s\n' 'console.log("debug");'
+    printf '%s\n' 'debugger;'
+    printf '%s\n' 'try { risky(); } catch (e) {}'
+} >"$SRCDIR/app.ts"
+
+# Ruby source: interpolation SQL, ECB, binding.pry, empty rescue.
+{
+    printf '%s\n' 'sql = "SELECT * FROM t WHERE id=#{id}"'
+    printf '%s\n' "cipher = OpenSSL::Cipher.new('AES-128-ECB')"
+    printf '%s\n' 'binding.pry'
+    printf '%s\n' 'begin'
+    printf '%s\n' '  risky'
+    printf '%s\n' 'rescue'
+    printf '%s\n' 'end'
+} >"$SRCDIR/app.rb"
+
+# Go source: fmt.Println debug (own line so the ^\s* anchor matches), swallowed
+# error.
+{
+    printf '%s\n' 'package main'
+    printf '%s\n' 'func F() {'
+    printf '%s\n' '    fmt.Println("x")'
+    printf '%s\n' '}'
+    printf '%s\n' 'func G() { if err != nil {} }'
+} >"$SRCDIR/app.go"
+
+# Java source: System.out.println debug (own line), empty catch.
+{
+    printf '%s\n' 'class C {'
+    printf '%s\n' '  void f() {'
+    printf '%s\n' '    System.out.println("x");'
+    printf '%s\n' '  }'
+    printf '%s\n' '  void g() { try { risky(); } catch (E e) {} }'
+    printf '%s\n' '}'
+} >"$SRCDIR/App.java"
+
+# HTML: Vue v-html + Django safe filter + Blade unescaped (xss arms).
+{
+    printf '%s\n' "<div $SEC_VUE=\"userInput\"></div>"
+    printf '%s\n' "{{ value|safe }}"
+    printf '%s\n' "$SEC_BLADE \$raw !!}"
+} >"$SRCDIR/view.html"
+
+# JSX: React dangerouslySetInnerHTML (xss arm).
+printf '%s\n' "el.$SEC_REACT = {__html: raw};" >"$SRCDIR/comp.jsx"
+
+# A test file: check-code-health must SUPPRESS debug statements here (is_test_file
+# boundary) — the print() below must NOT be flagged as a debug statement, driving
+# the `if not test_file:` false arm and the is_test_file segment/basename arms.
+printf '%s\n' 'print("in a test file")' >"$SRCDIR/tests/test_helper.py"
+
+# contest.py: NOT a test file (segment anchoring negative) — print() DOES fire,
+# driving the is_test_file segment arms' non-matching path.
+printf '%s\n' 'print("not a test")' >"$SRCDIR/contest.py"
+
+# Top-level basename test-file arms (no tests/ segment): test_*.py drives the
+# `fnmatch(base, "test_*.*")` arm; widget_test.py drives the `*_test.*` arm.
+printf '%s\n' 'print("dbg")' >"$SRCDIR/test_widget.py"
+printf '%s\n' 'print("dbg")' >"$SRCDIR/widget_test.py"
+
+# An except block with NO following non-blank line drives the
+# _first_nonblank_after empty-string return (the except is the last content).
+{
+    printf '%s\n' 'try:'
+    printf '%s\n' '    risky()'
+    printf '%s\n' 'except Exception:'
+} >"$SRCDIR/trailing_except.py"
+
+# SKIP_GLOBS: a *.env.example carrying a secret (check-security skip) and a *.md
+# carrying a TODO (check-code-health skip) drive the whole-file skip arms.
+printf 'stripe = "%s"\n' "$SEC_STRIPE" >"$SRCDIR/secrets.env.example"
+printf '%s\n' '# TODO: doc marker' >"$SRCDIR/notes.md"
+
+# An unreadable source file drives the per-file open() OSError arm in both ports.
+SRC_UNREAD="$SRCDIR/unreadable.py"
+printf 'gh = "%s"\n' "$SEC_GHP" >"$SRC_UNREAD"
+chmod 000 "$SRC_UNREAD" 2>/dev/null || true
+
+SRC_LIST="$WORKDIR/src-list.txt"
+: >"$SRC_LIST"
+for f in "$SRCDIR"/app.py "$SRCDIR"/app.ts "$SRCDIR"/app.rb "$SRCDIR"/app.go \
+    "$SRCDIR"/App.java "$SRCDIR"/view.html "$SRCDIR"/comp.jsx \
+    "$SRCDIR"/tests/test_helper.py "$SRCDIR"/contest.py \
+    "$SRCDIR"/test_widget.py "$SRCDIR"/widget_test.py \
+    "$SRCDIR"/trailing_except.py \
+    "$SRCDIR"/secrets.env.example "$SRCDIR"/notes.md "$SRC_UNREAD"; do
+    printf '%s\n' "$f" >>"$SRC_LIST"
+done
+# A blank line drives the main() empty-path `if not path: continue` arm.
+printf '\n' >>"$SRC_LIST"
+
+# A file-list PATH that itself does not exist drives the main()
+# file-list-not-found (OSError) arm — the list file is absent, not its contents.
+SRC_NOFILE_LIST="$WORKDIR/src-nonexistent-list-XYZ.txt"
 
 # --- check-docs-* corpus (#243) ---------------------------------------------
 # The five check-docs-* ports were the lowest-coverage in the tree because the
@@ -272,15 +462,13 @@ Current docs: https://example.com/stable-api here.
 EOF
 
 # missing-api: one documented + one undocumented public symbol per language, a
-# private symbol, a _test.go skip, a body-docstring def (the next-two-lines
-# docstring arm), and a def whose line CONTAINS the "def _" substring in a
-# trailing comment. That last line drives the `if "def _" in content: continue`
-# skip arm — but note this exposes a KNOWN LIMITATION, not a clean skip: the
-# check is a whole-line substring test (shared with the bash `*"def _"*` glob),
-# so a genuinely-public function whose trailing comment mentions `def _foo` is
-# miscategorized as private and silently NOT flagged. It is kept here to execute
-# that branch under measurement; the false-negative itself is tracked as a
-# follow-up (fixing it means anchoring on the def NAME, not the whole line).
+# private symbol (own-line `def _`), a _test.go skip, a body-docstring def (the
+# next-two-lines docstring arm), and a public def whose trailing comment MENTIONS
+# `def _foo`. That last line is the #348 boundary: the private skip is anchored on
+# the def NAME (not a whole-line substring), so `public_alias` must be flagged
+# (comment mention ≠ private) while own-line `def _private_helper` is skipped. The
+# private def now enters the `defs()` loop (regex admits a leading `_`) and drives
+# the name-anchored skip arm under measurement.
 printf '%s\n' 'CONST = 1' 'def compute_total():' '    return 0' \
     '"""d."""' 'def documented_fn():' '    return 0' \
     'def public_alias():  # def _legacy_name kept for back-compat' '    return 0' \
@@ -443,16 +631,46 @@ while IFS= read -r py; do
             python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" >/dev/null 2>&1 || true
             ;;
+        */check-security/patterns.py | */check-code-health/patterns.py)
+            # Drive the per-language / per-framework / boundary arms over the
+            # source-shaped corpus (#348); the generic FILE_LIST keeps the
+            # no-match early paths covered. The negative-path arms (usage error,
+            # file-list-not-found) run below.
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$SRC_LIST" >/dev/null 2>&1 || true
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$FILE_LIST" >/dev/null 2>&1 || true
+            # Usage-error arm (no argument -> exit 1).
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" >/dev/null 2>&1 || true
+            # File-list-not-found arm (a list PATH that does not exist -> OSError).
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$SRC_NOFILE_LIST" >/dev/null 2>&1 || true
+            ;;
         */check-ai-config/patterns.py)
             # Drive this port over the config-shaped corpus (agent/skill/MCP/hook/
             # workflow.js) instead of the generic one, with bloat thresholds tuned
-            # down so the tiny CLAUDE.md trips the warn/high arms. Also run the
-            # generic list so the no-match early-return globs stay covered.
+            # down so the tiny CLAUDE.md trips the HIGH arm and the SKILL.md trips
+            # the WARNING-only arm (SKILL_WARN<lines<SKILL_HIGH), driving both
+            # bloat branches under measurement (#348). Also run the generic list
+            # so the no-match early-return globs stay covered.
             CLAUDE_MD_WARN=1 CLAUDE_MD_HIGH=2 DOC_WARN=1 DOC_HIGH=3 \
+                SKILL_WARN=3 SKILL_HIGH=99 \
                 python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$AICFG_LIST" >/dev/null 2>&1 || true
             python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$FILE_LIST" >/dev/null 2>&1 || true
+            # Negative-path arms (#348): usage error (no arg) and file-list-not-
+            # found (OSError). The empty-path + unreadable-file skip arms are
+            # driven by the shared negative-path loop below.
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" >/dev/null 2>&1 || true
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$WORKDIR/ai-nonexistent-list-XYZ.txt" >/dev/null 2>&1 || true
+            # Relative `plugins/`-prefixed path -> _plugins_dir_for's relative arm
+            # (run cd'd into $FIXDIR so the path stays relative). (#348)
+            (cd "$FIXDIR" && python3 -m coverage run --parallel-mode \
+                --source="$PLUGINS_DIR" "$py" "$AICFG_REL_LIST" >/dev/null 2>&1) || true
             ;;
         */check-docs-staleness/patterns.py)
             # STALENESS_MONTHS=-1 makes the current-month date in staleness.md
@@ -564,6 +782,8 @@ done
 # Restore perms so the trap `rm -rf` can clean WORKDIR without warnings.
 chmod 644 "$DOCS_UNREADABLE" "$DOCS_UNREADABLE_PY" 2>/dev/null || true
 chmod 755 "$DOCS_SB/locked" 2>/dev/null || true
+chmod 644 "$SRC_UNREAD" 2>/dev/null || true
+chmod 644 "$AI_UNREAD" 2>/dev/null || true
 
 # --- Combine + emit Cobertura XML at the repo root ---------------------------
 python3 -m coverage combine >/dev/null 2>&1 || true

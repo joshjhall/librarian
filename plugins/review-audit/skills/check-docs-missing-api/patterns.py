@@ -94,9 +94,14 @@ def scan_file(path: str) -> None:
                 yield idx, line
 
     if ext == "py":
-        for line_no, content in defs(r"^(def |class )[A-Za-z]"):
-            # Skip private definitions (leading underscore).
-            if "def _" in content or "class _" in content:
+        for line_no, content in defs(r"^(def |class )[A-Za-z_]"):
+            # Skip private definitions — anchor on the NAME (the token after
+            # def/class), NOT a whole-line substring: a genuinely-public def
+            # whose trailing comment merely mentions `def _x` must still be
+            # flagged (#348). The `defs` pattern now admits a leading underscore
+            # so the private def reaches this name-anchored skip.
+            m = re.match(r"^(?:def|class)\s+(\w+)", content)
+            if m and m.group(1).startswith("_"):
                 continue
             # Documented if a docstring precedes it OR the body opens with one.
             if check_prev_lines(lines, line_no, '"""'):
@@ -137,8 +142,12 @@ def scan_file(path: str) -> None:
         for line_no, content in defs(
             r"^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]"
         ):
-            # Skip private functions (leading underscore, either form).
-            if content.startswith("_") or "function _" in content:
+            # Skip private functions — anchor on the NAME, not a whole-line
+            # substring (#348): the `_helper()` and `function _helper` forms are
+            # private, but a public function whose comment mentions `function _x`
+            # must still be flagged.
+            m = re.match(r"^(?:function\s+)?(\w+)", content)
+            if m and m.group(1).startswith("_"):
                 continue
             if not check_prev_lines(lines, line_no, r"^\s*#"):
                 emit(path, line_no, "Shell", content)

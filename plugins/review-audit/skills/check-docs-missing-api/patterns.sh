@@ -71,11 +71,15 @@ while IFS= read -r file; do
         # --- Python ---
         *.py)
             # Find module-level function/class definitions
-            /usr/bin/grep -nE '^(def |class )[A-Za-z]' "$file" 2>/dev/null |
+            /usr/bin/grep -nE '^(def |class )[A-Za-z_]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    # Skip private functions (leading underscore)
+                    # Skip private definitions — anchor on the NAME (token after
+                    # def/class), NOT a whole-line substring, so a public def
+                    # whose trailing comment mentions `def _x` is still flagged
+                    # (#348). The grep admits a leading underscore so the private
+                    # def reaches this name-anchored skip.
                     case "$content" in
-                        *"def _"* | *"class _"*) continue ;;
+                        "def _"* | "class _"*) continue ;;
                     esac
                     # Check for docstring (triple quotes) in preceding lines
                     if ! check_prev_lines "$file" "$line_num" '"""'; then
@@ -146,9 +150,12 @@ while IFS= read -r file; do
             # Find function definitions
             /usr/bin/grep -nE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    # Skip private functions (leading underscore)
+                    # Skip private functions — anchor on the NAME, not a
+                    # whole-line substring (#348): `_helper()` and
+                    # `function _helper` are private, but a public function whose
+                    # comment mentions `function _x` must still be flagged.
                     case "$content" in
-                        _* | *"function _"*) continue ;;
+                        _* | "function _"*) continue ;;
                     esac
                     # Check for # comment on preceding line
                     if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
