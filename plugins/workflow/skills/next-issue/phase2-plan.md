@@ -175,10 +175,25 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
      {effort/medium,effort/large,no effort label} — preserving the `/clear`
      boundary" — then fall through to the default suggestion below.
 
-   - **Default (no `--ship`/`--now`)** — tell the user:
+   - **Default (no `--ship`/`--now`)** — the reset suggestion is
+     **worktree-aware**. Detect a linked worktree with the repo-standard idiom
+     (`git rev-parse --git-dir` != `git rev-parse --git-common-dir`; the same
+     check the golem nesting guard and `ship-issue/execute-protocol.md` use):
 
-     > Planning phase complete. Context can be safely cleared — state saved to
-     > `.claude/memory/tmp/next-issue-{N}.json`. Run `/clear` then `/next-issue`
-     > to resume from implementation.
+     - **Primary checkout** (`--git-dir` == `--git-common-dir`) — tell the user:
+
+       > Planning phase complete. Context can be safely cleared — state saved to
+       > `.claude/memory/tmp/next-issue-{N}.json`. Run `/clear` then `/next-issue`
+       > to resume from implementation.
+
+     - **Linked worktree** (`--git-dir` != `--git-common-dir` — e.g. a `/golem`
+       run) — a bare `/clear` may return the session to the **main checkout** and
+       drop the worktree cwd, so the resume note carries the re-entry step:
+
+       > Planning phase complete. Context can be safely cleared — state saved to
+       > `.claude/memory/tmp/next-issue-{N}.json`. `/clear` may return you to the
+       > main checkout, so after it re-enter this worktree with
+       > `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/next-issue`
+       > to resume from implementation.
 
      This is advisory — continue normally if the user declines.
