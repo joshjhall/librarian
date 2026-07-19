@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-19
+
+### Added
+
+- Instrument top-level token counter for the frozen-counter wedge signal (#393)
+- Orchestrator-brokered gate resolution inbox (#227 slice 1) (#394)
+- Surface brokered-inbox state in golem-status.sh (#395) (#396)
+- /golem solo local golem skill + all-mode pre-PR review parity (#410)
+- Per-track status+burn checkpoint table in golem-status.sh (#414)
+
+### Changed
+
+- Extract Phase M into monitor-protocol.md companion (#379)
+- Keep workflow.js harness prompt prefixes cache-stable (#256) (#404)
+
+### Documentation
+
+- Add Mode 3 container-golem branch to slow-review takeover recipe (#385)
+- ADR for agnix + check-ai-config boundary (#403)
+- ADR 0001 for golem event bus decision (#343 slice 1) (#408)
+- Add session team memories from recent orchestrate work
+- Record #283 checkpoint-table session learnings
+
+### Testing
+
+- Readiness-poll golem-watch signal test settle windows (#380)
+- Cover fail-loud abort on readonly-tainted GIT_DIR in worktree-new/-rm (#382)
+- Drive 3 review-audit ports to 100% + fix missing-api bug (#383)
+- Drive 6 dev-core loop-*/drift patterns.py ports to 100% (#389)
+- Behavioral + mutation coverage for remaining #355 git-env scrub vars (#386)
+- Cover golem-watch readiness-poll starvation path (#388)
+- Decouple invalid-bool scrub tests from git's fatal wording (#391)
+- Cover golem-status token-signal render paths (#371 follow-up) (#413)
+
 ## [0.6.2] - 2026-07-17
 
 ### Added
@@ -329,6 +363,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.7.0]: https://github.com/joshjhall/librarian/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/joshjhall/librarian/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/joshjhall/librarian/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/joshjhall/librarian/compare/v0.5.0...v0.6.0
