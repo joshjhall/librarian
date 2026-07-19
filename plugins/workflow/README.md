@@ -88,6 +88,10 @@ so this manual step is only for host / bare-Linux installs.
 - `hooks/golem-notify.sh` — Notification hook that records each golem's
   permission-gate / idle transitions to the central status feed.
 
+Why the feed is the golem→orchestrator baseline (and how an optional HTTP sink
+extends it to container golems) is recorded in
+[`docs/adr/0001-golem-event-bus-multi-sink-emission.md`](docs/adr/0001-golem-event-bus-multi-sink-emission.md).
+
 ## Bundled scripts (`scripts/`)
 
 The golem/worktree flow runs **without `just`** — these standalone scripts
