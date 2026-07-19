@@ -11,5 +11,13 @@ required_tools:
   - name: sed
     purpose: "Frontmatter extraction"
     install_hint: "Included in base container image"
+  - name: agnix
+    optional: true
+    purpose: "Optional enrichment: agnix-normalize maps agnix --format json findings into the TSV contract (ADR 0001). Absent -> the normalizer no-ops; the floor pre-scan stands alone."
+    install_hint: "npm install -g agnix (pinned; best-effort in the container image). Not required — check-ai-config runs fully without it."
+  - name: jq
+    optional: true
+    purpose: "Required only by the agnix-normalize.sh BASH fallback to parse agnix JSON; the Python primary needs no jq."
+    install_hint: "Included in base container image. Only reached when the bash fallback runs AND agnix is present."
 required_permissions: []
 required_mcps: []

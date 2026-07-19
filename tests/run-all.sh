@@ -16,6 +16,7 @@
 #   9. shared scanner sync (tests/validate-shared-scanner-sync.sh)
 #   9b. scanner test-file classification (tests/validate-scanner-classification.sh)
 #   9c. check-ai-config detector fixtures (tests/validate-checker-detectors.sh)
+#   9c2. agnix→TSV normalizer (tests/validate-agnix-normalize.sh)
 #   9d. check-docs-* detector fixtures (tests/validate-docs-detectors.sh)
 #   9e. check-security + check-code-health detector fixtures (tests/validate-source-detectors.sh)
 #   9f. dev-core loop-* + drift-detect detector fixtures (tests/validate-loop-detectors.sh)
@@ -101,6 +102,7 @@ run_stage "audit project-source integrity gate" bash "$SCRIPT_DIR/validate-audit
 run_stage "shared scanner sync" bash "$SCRIPT_DIR/validate-shared-scanner-sync.sh"
 run_stage "scanner test-file classification" bash "$SCRIPT_DIR/validate-scanner-classification.sh"
 run_stage "check-ai-config detector fixtures" bash "$SCRIPT_DIR/validate-checker-detectors.sh"
+run_stage "agnix→TSV normalizer" bash "$SCRIPT_DIR/validate-agnix-normalize.sh"
 run_stage "check-docs-* detector fixtures" bash "$SCRIPT_DIR/validate-docs-detectors.sh"
 run_stage "check-security + check-code-health detector fixtures" bash "$SCRIPT_DIR/validate-source-detectors.sh"
 run_stage "dev-core loop-* + drift-detect detector fixtures" bash "$SCRIPT_DIR/validate-loop-detectors.sh"

@@ -13,7 +13,10 @@ bloat, misconfigurations, and quality issues. The deterministic pre-scan
 layer, not a replacement — see
 [`docs/adr/0001-agnix-check-ai-config-boundary.md`](../../docs/adr/0001-agnix-check-ai-config-boundary.md)
 for the ownership boundary (this skill is the always-present floor; agnix
-supersedes on overlap only when its binary is present).
+supersedes on overlap only when its binary is present). When agnix *is* present,
+`agnix-normalize.{py,sh}` maps its `--format json` findings into this skill's TSV
+contract (the `CC-*` rule → category map lives in [`contract.md`](contract.md)
+§ agnix normalization); it no-ops silently when the binary is absent.
 
 ## Categories
 

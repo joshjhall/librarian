@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Python coverage for the patterns.py pre-scan ports (#186).
 #
-# Emits a Cobertura coverage.xml for the 14 plugins/**/patterns.py ports so CI
-# can upload it to Codecov. Coverage is scoped to Python (and, separately, the
+# Emits a Cobertura coverage.xml for the plugins/**/patterns.py pre-scan ports
+# (plus the non-port Python tools behind the same runtime policy — currently
+# check-ai-config/agnix-normalize.py, #397) so CI can upload it to Codecov.
+# Coverage is scoped to Python (and, separately, the
 # .mjs validators via tests/coverage-mjs.sh) on purpose: the bash patterns.sh
 # fallback is grep-pipeline code whose matching lives in `grep` subprocess regex
 # alternations a line tracer cannot see, so a bash line-coverage number is
@@ -1021,6 +1023,124 @@ done
     python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
     "$PLUGINS_DIR/review-audit/skills/check-docs-organization/patterns.py" \
     "$DOCS_ORG_EDGE_LIST" >/dev/null 2>&1) || true
+
+# --- agnix-normalize.py driver (#397) ----------------------------------------
+# agnix-normalize.py is NOT a patterns.py port (it bridges agnix JSON -> the TSV
+# contract), so the patterns.py glob above never reaches it. Drive it here with a
+# stub AGNIX_BIN so its mapping / no-op / fail-loud arms execute under
+# measurement, in lockstep with the behavioral gate tests/validate-agnix-normalize.sh
+# (the #204 two-surface convention). The stub emits a fixture covering every
+# mapped prefix plus a dropped VER-*/empty-file row and an unmapped AS-* row.
+AGNIX_NORM_PY="$PLUGINS_DIR/review-audit/skills/check-ai-config/agnix-normalize.py"
+if [ -f "$AGNIX_NORM_PY" ]; then
+    AGX_STUB="$WORKDIR/agnix-stub.sh"
+    cat >"$AGX_STUB" <<'AGXEOF'
+#!/usr/bin/env bash
+cat <<'JSON'
+{"version":"0.40.0","files_checked":1,"diagnostics":[
+ {"rule":"CC-AG-001","file":"agents/a.md","line":1,"message":"missing name","rule_severity":"HIGH"},
+ {"rule":"CC-SK-001","file":"skills/s/SKILL.md","line":3,"message":"invalid model","rule_severity":"HIGH"},
+ {"rule":"CC-HK-009","file":"hooks/h.sh","line":7,"message":"dangerous command","rule_severity":"HIGH"},
+ {"rule":"MCP-008","file":"mcp.json","line":2,"message":"proto mismatch","rule_severity":"MEDIUM"},
+ {"rule":"CC-MCP-001","file":"cc-mcp.json","line":4,"message":"cc mcp","rule_severity":"HIGH"},
+ {"rule":"CC-PL-001","file":".claude-plugin/x.json","line":1,"message":"bad manifest","rule_severity":"HIGH"},
+ {"rule":"CC-MEM-001","file":"CLAUDE.md","line":5,"message":"bad import","rule_severity":"HIGH"},
+ {"rule":"CC-AG-002","file":"","line":1,"message":"mapped rule with empty file","rule_severity":"HIGH"},
+ {"rule":"VER-001","file":"","line":1,"message":"unpinned","rule_severity":"LOW"},
+ {"rule":"AS-042","file":"agents/a.md","line":9,"message":"generic","rule_severity":"MEDIUM"}
+],"summary":{}}
+JSON
+AGXEOF
+    chmod +x "$AGX_STUB"
+    AGX_BAD="$WORKDIR/agnix-bad.sh"
+    printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "not json {{{"' >"$AGX_BAD"
+    chmod +x "$AGX_BAD"
+    # Empty-output stub -> RuntimeError "no JSON output" -> die(2).
+    AGX_EMPTYOUT="$WORKDIR/agnix-emptyout.sh"
+    printf '%s\n%s\n' '#!/usr/bin/env bash' 'printf ""' >"$AGX_EMPTYOUT"
+    chmod +x "$AGX_EMPTYOUT"
+    # Stub whose JSON has a non-list `diagnostics` -> the no-diagnostics-array arm.
+    AGX_NOARRAY="$WORKDIR/agnix-noarray.sh"
+    printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "{\"diagnostics\": \"notalist\"}"' >"$AGX_NOARRAY"
+    chmod +x "$AGX_NOARRAY"
+    # Stub whose `diagnostics` is JSON null -> the null-coalesce-to-[] arm.
+    AGX_DIAGNULL="$WORKDIR/agnix-diagnull.sh"
+    printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "{\"diagnostics\": null}"' >"$AGX_DIAGNULL"
+    chmod +x "$AGX_DIAGNULL"
+    # Top-level JSON array (not an object) -> the non-object fail-loud arm.
+    AGX_TOPARR="$WORKDIR/agnix-toparr.sh"
+    printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "[1,2,3]"' >"$AGX_TOPARR"
+    chmod +x "$AGX_TOPARR"
+    # diagnostics array holding a non-dict element -> the non-object-diagnostic arm.
+    AGX_NONDICT="$WORKDIR/agnix-nondict.sh"
+    printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "{\"diagnostics\":[{\"rule\":\"CC-AG-001\",\"file\":\"a.md\",\"line\":1,\"message\":\"m\",\"rule_severity\":\"HIGH\"},42]}"' >"$AGX_NONDICT"
+    chmod +x "$AGX_NONDICT"
+    # JSON null fields -> the _field() null-coalescing arm (file=null dropped;
+    # line/message/rule_severity=null -> "").
+    AGX_NULL="$WORKDIR/agnix-null.sh"
+    printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "{\"diagnostics\":[{\"rule\":\"CC-AG-001\",\"file\":null,\"line\":1,\"message\":\"m\",\"rule_severity\":\"HIGH\"},{\"rule\":\"CC-SK-001\",\"file\":\"s.md\",\"line\":null,\"message\":null,\"rule_severity\":null}]}"' >"$AGX_NULL"
+    chmod +x "$AGX_NULL"
+    # A present-but-non-executable AGNIX_BIN passes the isfile() no-op guard, then
+    # subprocess raises PermissionError (OSError) -> the run_agnix OSError arm.
+    AGX_NOEXEC="$WORKDIR/agnix-noexec"
+    printf 'not runnable\n' >"$AGX_NOEXEC"
+    chmod 644 "$AGX_NOEXEC"
+    AGX_LIST="$WORKDIR/agnix-list.txt"
+    printf '%s\n' "agents/a.md" >"$AGX_LIST"
+    AGX_EMPTY="$WORKDIR/agnix-empty.txt"
+    : >"$AGX_EMPTY"
+    # Full mapping (with AGNIX_CONFIG set to exercise the --config arm).
+    AGNIX_BIN="$AGX_STUB" AGNIX_CONFIG="/dev/null" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Absent-binary no-op arm.
+    AGNIX_BIN="/nonexistent/agnix" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Malformed-JSON fail-loud arm.
+    AGNIX_BIN="$AGX_BAD" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Empty-output fail-loud arm (RuntimeError "no JSON output").
+    AGNIX_BIN="$AGX_EMPTYOUT" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Non-list diagnostics fail-loud arm.
+    AGNIX_BIN="$AGX_NOARRAY" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # diagnostics:null -> null-coalesce-to-[] arm (clean empty result).
+    AGNIX_BIN="$AGX_DIAGNULL" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Top-level non-object fail-loud arm.
+    AGNIX_BIN="$AGX_TOPARR" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Non-object diagnostic element fail-loud arm.
+    AGNIX_BIN="$AGX_NONDICT" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # JSON null-field coalescing arm (_field null branch + null-file drop).
+    AGNIX_BIN="$AGX_NULL" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Present-but-non-executable binary -> subprocess OSError arm.
+    AGNIX_BIN="$AGX_NOEXEC" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_LIST" >/dev/null 2>&1 || true
+    # Empty file-list arm (exit 0, no agnix invocation).
+    AGNIX_BIN="$AGX_STUB" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$AGX_EMPTY" >/dev/null 2>&1 || true
+    # Usage-error arm (no argument) + file-list-not-found arm.
+    python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" >/dev/null 2>&1 || true
+    AGNIX_BIN="$AGX_STUB" \
+        python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$AGNIX_NORM_PY" "$WORKDIR/agnix-nonexistent-XYZ.txt" >/dev/null 2>&1 || true
+    run_count=$((run_count + 1))
+fi
 
 # Restore perms so the trap `rm -rf` can clean WORKDIR without warnings.
 chmod 644 "$DOCS_UNREADABLE" "$DOCS_UNREADABLE_PY" 2>/dev/null || true
