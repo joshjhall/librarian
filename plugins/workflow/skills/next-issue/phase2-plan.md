@@ -35,7 +35,12 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    > (Option 3). The orchestrator handles PR creation and delivery.
 
 1. **Update state file** — write the full JSON with `phase: "plan"`, a
-   one-line `plan` summary, and the `checkpoint` object:
+   one-line `plan` summary, and the `checkpoint` object. This physical write MUST
+   complete **before** the `EnterPlanMode` call in the autonomous-planning path
+   below: an L1–L3 run enters plan mode next, and plan mode permits only edits to
+   the plan file, so a state write attempted after `EnterPlanMode` is silently
+   blocked and the `/ship-issue` hand-off record never lands (issue #409). Do the
+   write here, then enter plan mode.
 
    ```json
    {
