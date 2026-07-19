@@ -157,6 +157,14 @@ const CONFLICT_CLASSES = [
   'delete-modify',
 ]
 
+// The six auto-resolvable (mechanical) classes, joined once at module load. The
+// rebase prompt is built once per PR in the rebase fan-out; hoisting this constant
+// string out of the per-call builder guarantees identical bytes on every call
+// (rather than re-templating the same `.slice(0,6).join(...)` each time) and keeps
+// the cacheable prompt prefix stable across the sweep (#256, smell #3). The `6`
+// stays coupled to CONFLICT_CLASSES' first-six-are-mechanical ordering.
+const MECHANICAL_STRATEGIES = CONFLICT_CLASSES.slice(0, 6).join(' / ')
+
 // ---------------------------------------------------------------------------
 // StructuredOutput schemas (typed gates — all additionalProperties:false).
 // ---------------------------------------------------------------------------
@@ -424,7 +432,7 @@ const rebasePrompt = (pr, ov) =>
       : '(detect during rebase)'
   }. ` +
   `Classify each conflict and apply the appropriate trivial strategy ` +
-  `(${CONFLICT_CLASSES.slice(0, 6).join(' / ')}); for a same-region conflict, ` +
+  `(${MECHANICAL_STRATEGIES}); for a same-region conflict, ` +
   `union complementary non-contradictory edits (keep the superset) before ` +
   `escalating; escalate only genuinely contradictory conflicts. ` +
   `Return resolved[] and escalated[].`
