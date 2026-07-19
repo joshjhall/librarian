@@ -38,6 +38,8 @@ services:
         INCLUDE_DEV_TOOLS: "true"
         # Additional dev tools
         INCLUDE_OP: "true"
+        # Report Claude agent state to the host monitor (Bartender Top Shelf)
+        INCLUDE_HOST_EVENTS: "true"
         # Node provides MCP servers + bash-language-server for the bundled
         # workflow scripts. No Rust/Postgres/Redis/docker-in-docker: this is a
         # docs + shell + node + python repo.
@@ -74,9 +76,9 @@ services:
       - path: ../.env
         required: false
     environment:
-      - CLAUDE_MCPS=filesystem,codegraph
-      - MEMORY_FILE_PATH=/workspace/librarian/.claude/memory
-      - SKIP_CASE_CHECK=true
+      CLAUDE_MCPS: "filesystem,codegraph"
+      MEMORY_FILE_PATH: "/workspace/librarian/.claude/memory"
+      SKIP_CASE_CHECK: "true"
     # tini as PID 1 for zombie reaping (belt-and-suspenders with the Dockerfile).
     init: true
     # CAP_SYS_ADMIN + /dev/fuse are the documented MINIMUM for the bindfs FUSE
@@ -94,11 +96,11 @@ services:
     networks:
       - librarian-network
 
+networks:
+  librarian-network:
+    driver: bridge
+
 volumes:
   # codegraph knowledge-graph index, mounted at /cache/codegraph. Named volume so
   # it survives container rebuilds and can be dropped to force a clean re-index.
   librarian-codegraph:
-
-networks:
-  librarian-network:
-    driver: bridge
