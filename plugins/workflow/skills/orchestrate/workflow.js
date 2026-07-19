@@ -53,7 +53,7 @@ export const meta = {
 //     maxRebases?: number,    // default = prs.length — the harness owns this cap
 //
 //     // --- pool mode only (see the Pool branch below) ---
-//     pool?:     { size: number, accepting: 'accepting'|'draining'|'paused' },
+//     pool?:     { size: number, queue: 'accepting'|'draining'|'paused' },
 //     inflight?: [{ issue, golem?, branch?, files?: string[] }], // current golems
 //     backlog?:  [{ issue, files?: string[] }],   // candidates in priority order
 //     // lane-aware serial refill (issue #199) — both optional; omit for a plain,
@@ -257,7 +257,7 @@ const PR_FILES = {
 // POOL is the harness's own return shape for pool mode (not an agent gate):
 //   {
 //     size: number,            // echoed target pool size
-//     accepting: string,       // echoed 'accepting' | 'draining' | 'paused'
+//     queue: string,           // echoed 'accepting' | 'draining' | 'paused'
 //     inflight_count: number,  // live golems at sweep time
 //     free_slots: number,      // max(0, size - inflight_count)
 //     picks: number[],         // issues to dispatch into free slots (collision-free).
@@ -707,10 +707,10 @@ function runPool() {
 
   const pool = (args && args.pool) || {}
   const size = Number.isInteger(pool.size) && pool.size >= 0 ? pool.size : 0
-  const accepting =
-    pool.accepting === 'draining' || pool.accepting === 'paused'
-      ? pool.accepting
-      : 'accepting'
+  // Compat read: `queue` is the current key; fall back to the pre-#417 `accepting`
+  // key so a pool.json written by older code still resolves (it's a session cache).
+  const queue = pool.queue ?? pool.accepting
+  const accepting = queue === 'draining' || queue === 'paused' ? queue : 'accepting'
 
   const inflight = (args && Array.isArray(args.inflight) ? args.inflight : []).filter(Boolean)
   const backlog = (args && Array.isArray(args.backlog) ? args.backlog : []).filter(Boolean)
@@ -766,7 +766,7 @@ function runPool() {
     base,
     pool: {
       size,
-      accepting,
+      queue: accepting,
       inflight_count: inflight.length,
       free_slots: freeSlots,
       picks,

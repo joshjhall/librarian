@@ -21,14 +21,14 @@ The pool pairs with Phase T: the **pool feeds work in**, the **train lands it**.
 
 **Pool state** lives in `.worktrees/.status/pool.json` (schema:
 `schemas/pool-status.schema.json`). It is **authoritative for operator policy**
-— the pool `size` and the `accepting` state — and a display cache for everything
+— the pool `size` and the `queue` state — and a display cache for everything
 else (PR + issue-label state stay authoritative for golem liveness):
 
 ```json
-{ "size": 3, "accepting": "accepting", "slots": [ … ], "backlog_depth": 7 }
+{ "size": 3, "queue": "accepting", "slots": [ … ], "backlog_depth": 7 }
 ```
 
-`accepting` is a three-state policy: `accepting` (refill a free slot from the
+`queue` is a three-state policy: `accepting` (refill a free slot from the
 backlog), `draining` (stop refills, let in-flight golems finish to idle — a
 one-way wind-down), `paused` (freeze refills without draining; resumable).
 
@@ -41,7 +41,7 @@ existing cadence is the clock):
    golem, prune its worktree (`${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh {N}`, which also deletes the
    branch). That frees a slot.
 
-1. **Refill decision.** If `pool.accepting == "accepting"` **and** a slot is
+1. **Refill decision.** If `pool.queue == "accepting"` **and** a slot is
    free **and** the backlog is non-empty, compute the refill plan. Gather:
 
    - **in-flight** golems with their changed files (`gh pr view <N> --json files`
@@ -55,7 +55,7 @@ existing cadence is the clock):
    ```text
    args: {
      mode: "pool",
-     pool:     { size: <N>, accepting: "<state>" },
+     pool:     { size: <N>, queue: "<state>" },
      inflight: [{ issue, golem, branch, files: [<paths>] }, …],
      backlog:  [{ issue, files: [<predicted paths>] }, …],
 
@@ -97,16 +97,16 @@ exposed as `/orchestrate` invocations (see the table in SKILL.md):
 - **`pool <N>`** — set the pool size live. **Grow** → free slots appear and the
   next sweep fills them. **Shrink** → the now-`excess` golems are left to
   **drain** (finish their PRs), never killed; the footprint settles at the new N.
-- **`drain`** — set `accepting = "draining"`. Refills stop; in-flight golems run
+- **`drain`** — set `queue = "draining"`. Refills stop; in-flight golems run
   to completion and the pool idles. Use before a context reset / service restart
   / end of day. One-way intent (re-enable with `resume`).
-- **`pause`** — set `accepting = "paused"`. Freeze refills without draining
+- **`pause`** — set `queue = "paused"`. Freeze refills without draining
   (slots are held open, not wound down).
-- **`resume`** — set `accepting = "accepting"`. Re-enable refills; the next sweep
+- **`resume`** — set `queue = "accepting"`. Re-enable refills; the next sweep
   fills any free slot.
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh` surfaces the pool line — size, slots in use, backlog depth, and
-the `accepting` state — above the golem table.
+the `queue` state — above the golem table.
 
 ### Track composition (`mode: "tracks"`)
 
@@ -326,7 +326,7 @@ authorization** layered over the existing pieces: the order is computed by
    override the per-PR merge invariant.
 
 1. **Honor stop/drain.** Between iterations, check the pool stop/drain signal —
-   `pool.json` `accepting` (Phase P). If it is `draining` (or `paused`), finish
+   `pool.json` `queue` (Phase P). If it is `draining` (or `paused`), finish
    the in-flight merge/rebase, then halt the train cleanly (leaving remaining PRs
    open and labeled) rather than starting the next wave. When `pool.json` is
    absent (the pool was never engaged), there is no drain signal and the train

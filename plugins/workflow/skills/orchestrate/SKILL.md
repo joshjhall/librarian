@@ -263,7 +263,7 @@ golems once; Phase P turns it into a fixed-size self-refilling **pool**: up to
 into a **fresh** worktree — bounded footprint (≤ N) plus a clean **drain**
 off-switch. The pool feeds work in; the train (Phase T) lands it. Pool policy
 lives in `.worktrees/.status/pool.json` (schema `schemas/pool-status.schema.json`)
-— `size` and the three-state `accepting` (`accepting`/`draining`/`paused`). The
+— `size` and the three-state `queue` (`accepting`/`draining`/`paused`). The
 refill loop advances on each Phase M sweep (no daemon) via `workflow.js`
 (`mode: "pool"`); live controls (`pool <N>`/`drain`/`pause`/`resume`) flip
 `pool.json` for the next sweep. When **tracks** are active (composed via

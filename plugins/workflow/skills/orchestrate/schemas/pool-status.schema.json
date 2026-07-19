@@ -2,16 +2,16 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "pool-status.schema.json",
   "title": "Pool Status (fixed-size golem worker pool)",
-  "description": "Operator policy + display cache for the orchestrate worker pool, written to .worktrees/.status/pool.json. AUTHORITATIVE for operator policy (pool `size` and `accepting` state — the one place that information lives); the `slots`/`backlog_depth`/`updated` fields are a DISPLAY CACHE only. PR/MR state and issue status labels remain authoritative for golem liveness. NOT a golem-status file — scripts/golem-status.sh excludes pool.json from its golem-row glob and reads it separately for the pool header. Sibling to golem-status.schema.json and agent-status.schema.json.",
+  "description": "Operator policy + display cache for the orchestrate worker pool, written to .worktrees/.status/pool.json. AUTHORITATIVE for operator policy (pool `size` and `queue` state — the one place that information lives); the `slots`/`backlog_depth`/`updated` fields are a DISPLAY CACHE only. PR/MR state and issue status labels remain authoritative for golem liveness. NOT a golem-status file — scripts/golem-status.sh excludes pool.json from its golem-row glob and reads it separately for the pool header. Sibling to golem-status.schema.json and agent-status.schema.json.",
   "type": "object",
-  "required": ["size", "accepting"],
+  "required": ["size", "queue"],
   "properties": {
     "size": {
       "type": "integer",
       "minimum": 0,
       "description": "Target number of concurrent golems the pool maintains. Changed live via `pool <N>`: grow fills free slots now; shrink lets the excess golems drain (never killed)."
     },
-    "accepting": {
+    "queue": {
       "type": "string",
       "enum": ["accepting", "draining", "paused"],
       "description": "Refill policy. 'accepting' = refill a free slot from the backlog. 'draining' = stop refills and let in-flight golems finish to idle (one-way wind-down intent — for context reset / service restart / end of day). 'paused' = freeze refills without draining (slots held, resumable via `resume`)."
