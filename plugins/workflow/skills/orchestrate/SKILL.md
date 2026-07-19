@@ -27,7 +27,10 @@ merge anything a golem leaves for them.
   (`workflow.js`) ONLY for bounded fan-out: the monitor poll and the cross-PR
   rebase dispatch.
 - **PR + issue-label state are authoritative**; `.worktrees/.status/*.json` is a
-  fast cache consulted only to fill display gaps.
+  fast cache consulted only to fill display gaps. Why the `feed.jsonl` + `Monitor`
+  gate-watch is the golem→orchestrator baseline (and how an optional HTTP sink
+  would extend it to container golems without replacing it) is recorded in
+  [`docs/adr/0001-golem-event-bus-multi-sink-emission.md`](../../docs/adr/0001-golem-event-bus-multi-sink-emission.md).
 - **Never time out a human gate.** Every gate kept for a human — the track-setup
   approval flow (propose → approve → choose L1–L4), a golem's plan-approval
   checkpoint, a mid-flight command or escalation, and a dead-end at any level —
