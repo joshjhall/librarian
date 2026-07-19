@@ -48,6 +48,15 @@ REAL_BASH="$(command -v bash)"
 GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
     GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
+# The hook now resolves its feed under GOLEM_STATUS_DIR / GOLEM_WORKTREE_DIR
+# (#405). Every default-path helper below expects the unset default
+# (.worktrees/.status), so scrub both from the child env — otherwise an operator
+# (or this worktree, which exports GOLEM_STATUS_DIR) running the suite with an
+# override set would redirect the feed out from under the fixed read-back path
+# and fail the whole suite. The override test sets GOLEM_STATUS_DIR explicitly
+# after this scrub, so it is unaffected.
+GOLEM_SCRUB=(GOLEM_STATUS_DIR GOLEM_WORKTREE_DIR)
+
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
@@ -114,7 +123,8 @@ run_notify() {
         (
             cd "$dir" &&
                 /usr/bin/printf '%s' "$payload" |
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                    "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
                     PATH="$stub" HOME="$dir" GOLEM_ID="$gid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -123,6 +133,7 @@ run_notify() {
             cd "$dir" &&
                 /usr/bin/printf '%s' "$payload" |
                 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                    "${GOLEM_SCRUB[@]/#/--unset=}" \
                     HOME="$dir" GOLEM_ID="$gid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -156,8 +167,31 @@ run_notify_no_gid() {
     (
         cd "$rundir" &&
             /usr/bin/printf '%s' "$payload" |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID \
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID \
                 HOME="$dir" \
+                "$REAL_BASH" "$NOTIFY"
+    ) >/dev/null 2>&1 || NOTIFY_RC=$?
+    NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+}
+
+# run_notify_status_dir <sandbox> <payload> <golem_id> <status_dir_override>
+# Like run_notify's jq path, but exports GOLEM_STATUS_DIR=<override> into the
+# child so the hook resolves its feed under <sandbox>/<override>/feed.jsonl
+# instead of the hardcoded .worktrees/.status. Reads the feed back at the
+# OVERRIDE path (not the fixed one) and captures the last line in NOTIFY_LINE.
+# GIT_* scrubbed, HOME + GOLEM_ID pinned, mirroring run_notify (#405).
+run_notify_status_dir() {
+    local dir="$1" payload="$2" gid="$3" override="$4"
+    local feed="$dir/$override/feed.jsonl"
+    /usr/bin/rm -f "$feed"
+    NOTIFY_RC=0
+    (
+        cd "$dir" &&
+            /usr/bin/printf '%s' "$payload" |
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                "${GOLEM_SCRUB[@]/#/--unset=}" \
+                HOME="$dir" GOLEM_ID="$gid" GOLEM_STATUS_DIR="$override" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
     NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
@@ -303,6 +337,55 @@ test_no_jq_still_writes_gate_line() {
     assert_equals "gate" "$event" "no-jq default message classifies as gate"
 }
 
+# --- Status-dir resolution (GOLEM_STATUS_DIR override, #405) -----------------
+
+# The emitter must resolve its feed path the same env-overridable way the reader
+# scripts (golem-status.sh / golem-gate-watch.sh / golem-inbox.sh) do, so a
+# GOLEM_STATUS_DIR override moves BOTH together. Before #405 the hook hardcoded
+# .worktrees/.status, so an override silently split the feed path — gates written
+# by the emitter would never surface to readers watching the override path.
+
+# An override moves the emitter: the feed lands under the override dir, is valid
+# JSON, and the legacy .worktrees/.status path is NOT written (proving the
+# override MOVED the sink, not merely added a second one).
+test_status_dir_override_honored() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_notify_status_dir "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "custom-status"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (GOLEM_STATUS_DIR override)"
+    assert_valid_json "$NOTIFY_LINE" \
+        "feed line under override dir is valid JSON"
+    assert_true "[ -f '$sb/custom-status/feed.jsonl' ]" \
+        "feed written under GOLEM_STATUS_DIR override (custom-status/feed.jsonl)"
+    assert_true "[ ! -e '$sb/.worktrees/.status/feed.jsonl' ]" \
+        "legacy .worktrees/.status/feed.jsonl NOT written — override moved the sink"
+}
+
+# With GOLEM_STATUS_DIR unset, the resolution is byte-for-byte unchanged: the
+# feed still lands at .worktrees/.status. new_sandbox + run_notify (which do NOT
+# set GOLEM_STATUS_DIR) already exercise the default path; this pins the
+# acceptance criterion explicitly, guarding against a future default drift.
+test_status_dir_default_unchanged() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_notify "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' "golem-1"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (GOLEM_STATUS_DIR unset)"
+    assert_valid_json "$NOTIFY_LINE" "default-path feed line is valid JSON"
+    assert_true "[ -f '$sb/.worktrees/.status/feed.jsonl' ]" \
+        "GOLEM_STATUS_DIR unset still lands at .worktrees/.status (unchanged)"
+}
+
 # --- Golem-id derivation fallback (branches 2 & 3) --------------------------
 
 # With GOLEM_ID unset, the hook derives the golem id from the worktree-root
@@ -415,6 +498,8 @@ run_test test_classifier_askuserquestion_stays_gate "classifier: AskUserQuestion
 run_test test_classifier_dead_end_beats_escalation "classifier: dead-end wins over escalation"
 run_test test_no_jq_escaper_emits_valid_json "no-jq escaper: quote+backslash GOLEM_ID stays valid JSON"
 run_test test_no_jq_still_writes_gate_line "no-jq: still writes a valid gate feed line, exits 0"
+run_test test_status_dir_override_honored "status-dir: GOLEM_STATUS_DIR override moves the feed path (#405)"
+run_test test_status_dir_default_unchanged "status-dir: GOLEM_STATUS_DIR unset still lands at .worktrees/.status (#405)"
 run_test test_golemid_issue_basename "golem-id: issue-N basename → golem-N"
 run_test test_golemid_golem_passthrough "golem-id: golem-* basename passes through"
 run_test test_golemid_placeholder "golem-id: unmatched basename → golem-? placeholder"

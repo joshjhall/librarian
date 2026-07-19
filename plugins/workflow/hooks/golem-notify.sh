@@ -8,8 +8,10 @@
 # surface. The golem's TUI paints an alternate screen buffer, so it cannot be
 # scraped live; this hook is the TTY-free channel instead.
 #
-# It appends one JSON line to a central feed under the MAIN checkout's
-# .worktrees/.status/feed.jsonl (resolved via the shared git common dir so it
+# It appends one JSON line to a central feed under the MAIN checkout's status
+# dir (GOLEM_STATUS_DIR, default .worktrees/.status — resolved the same
+# env-overridable way the reader scripts do, so an override moves emitter and
+# readers together; the MAIN root is found via the shared git common dir so it
 # works from inside a worktree), which the bundled scripts/golem-status.sh
 # reads. It must NEVER block the golem: any error is swallowed and it always
 # exits 0.
@@ -46,7 +48,20 @@ case "$common_dir" in
     *) common_dir="$(/usr/bin/pwd)/$common_dir" ;;
 esac
 root="$(/usr/bin/dirname "$common_dir")"
-status_dir="$root/.worktrees/.status"
+
+# Resolve the status dir the same single way the reader scripts do
+# (golem-status.sh / golem-gate-watch.sh / golem-inbox.sh all use config.sh's
+# GOLEM_WORKTREE_DIR / GOLEM_STATUS_DIR), so an override moves the emitter and
+# its readers together instead of silently splitting the feed path (#405). The
+# two defaults are inlined verbatim from config.sh (lines 66,70) rather than
+# sourced: this hook is deliberately minimal and always-exit-0, and sourcing
+# config.sh would also pull in its repo_root()/superproject probe, changing the
+# git-common-dir root resolution above that must stay preserved. With both unset
+# this yields .worktrees/.status — byte-for-byte the old hardcoded path. The
+# `:=` assign-default form is safe under the `set -u` active here.
+: "${GOLEM_WORKTREE_DIR:=.worktrees}"
+: "${GOLEM_STATUS_DIR:=${GOLEM_WORKTREE_DIR}/.status}"
+status_dir="$root/$GOLEM_STATUS_DIR"
 feed="$status_dir/feed.jsonl"
 
 # Read the Notification payload; tolerate missing jq or a non-JSON body.
