@@ -22,3 +22,7 @@ deprecat = "deprecat"
 integrat = "integrat"
 # `styl` is the Stylus stylesheet extension (.styl) in test-skip-patterns.
 styl = "styl"
+# `mis` is the stem of hyphenated compounds (mis-delivered, mis-parsed) in the
+# golem-inbox / next-issue prose; typos splits on the hyphen and would misread
+# it as `miss`/`mist`. Not a typo.
+mis = "mis"
