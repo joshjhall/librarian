@@ -143,13 +143,58 @@ render_status() {
     # golem resumes supersedes and clears it. It emits "<golem>\t<message>", already
     # labelling an escalation "escalation — …" and a dead-end "dead-end — …";
     # reformat to the "  golem — message" display here.
+    #
+    # For an escalation/dead-end line, the message embeds the brokered-gate id as
+    # "[gate-<epoch>-<rand>]" (#227). When present, annotate the line with the
+    # inbox state (`golem-inbox.sh state`) so the operator can see, before
+    # answering centrally, whether the gate is still `awaiting` a decision, has an
+    # `answered` (unconsumed) decision waiting, or is already `consumed` — avoiding
+    # a double-answer (#395). A routine permission `gate`/legacy `blocked` line
+    # carries no gate-id, so it stays un-annotated (it is not inbox-brokered — the
+    # #29 data-only invariant). Use a bash while-loop, not awk: awk cannot shell
+    # out to `state` per line (same reason the TOP-LEVEL TOKENS loop below is bash).
     if [ -f "$feed" ] && [ -x "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
-        feed_blocked="$(
-            "$SCRIPT_DIR/golem-gate-watch.sh" --once 2>/dev/null |
-                /usr/bin/awk -F'\t' 'NF { printf "  %s — %s\n", $1, $2 }'
-        )"
-        if [ -n "$feed_blocked" ]; then
-            /usr/bin/printf '%s\n' "$feed_blocked"
+        feed_out="$("$SCRIPT_DIR/golem-gate-watch.sh" --once 2>/dev/null)"
+        if [ -n "$feed_out" ]; then
+            /usr/bin/printf '%s\n' "$feed_out" |
+                while IFS=$'\t' read -r g msg; do
+                    [ -n "$g$msg" ] || continue # awk NF guard: skip blank lines
+                    # Extract the correlation id from the BRACKETED "[gate-…]"
+                    # token the escalation/dead-end protocol embeds — NOT an
+                    # unanchored scan of the free-text message. A routine gate's
+                    # command text can contain a gate-shaped substring (a branch
+                    # or path like `fix/gate-123-x`) that an unanchored match would
+                    # wrongly treat as a brokered gate-id and falsely annotate;
+                    # and a message that mentions an older gate-id before its own
+                    # bracketed one would match the wrong gate. The bracket anchor
+                    # keys on exactly what golem-inbox mints, so a well-formed
+                    # message yields its one real id and a token-less line yields
+                    # empty (→ no annotation, correct for a non-brokered gate).
+                    gate_id="$(command printf '%s' "$msg" |
+                        /usr/bin/grep -oE '\[gate-[0-9]+-[0-9a-z]+\]' | /usr/bin/head -n1)"
+                    # Strip the surrounding brackets before querying.
+                    gate_id="${gate_id#[}"
+                    gate_id="${gate_id%]}"
+                    if [ -n "$gate_id" ] && [ -x "$SCRIPT_DIR/golem-inbox.sh" ]; then
+                        st="$("$SCRIPT_DIR/golem-inbox.sh" state "$g" "$gate_id" 2>/dev/null || true)"
+                        case "$st" in
+                            # Fail-safe: only annotate on a recognized state; any
+                            # unexpected output falls through to the plain line, so
+                            # a broken sibling never blanks the BLOCKED list.
+                            awaiting | answered | consumed)
+                                /usr/bin/printf '  %s — %s  [inbox: %s]\n' "$g" "$msg" "$st"
+                                ;;
+                            *)
+                                /usr/bin/printf '  %s — %s\n' "$g" "$msg"
+                                ;;
+                        esac
+                    else
+                        /usr/bin/printf '  %s — %s\n' "$g" "$msg"
+                    fi
+                done
+            # Set OUTSIDE the pipe subshell (the loop above runs in a subshell, so
+            # a `blocked=1` inside it would not survive) — key the flag off the
+            # non-empty snapshot directly so the "(none)" fallthrough stays correct.
             blocked=1
         fi
     fi

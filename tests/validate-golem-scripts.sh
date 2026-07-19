@@ -40,6 +40,7 @@ WT_RM="$SCRIPTS/worktree-rm.sh"
 ATTACH="$SCRIPTS/golem-attach.sh"
 STATUS="$SCRIPTS/golem-status.sh"
 SCRAPE="$SCRIPTS/golem-token-scrape.sh"
+INBOX="$SCRIPTS/golem-inbox.sh"
 CONFIG="$SCRIPTS/config.sh"
 
 # Resolve the real bash once so child invocations work even when PATH is
@@ -116,6 +117,23 @@ run_in() {
             GOLEM_BASE_REF=HEAD \
             GOLEM_WORKTREE_LOCAL_FILES="" \
             "$REAL_BASH" "$script" "$@" 2>&1)" || RUN_RC=$?
+}
+
+# inbox_in <sandbox> <inbox-args...>
+# Run golem-inbox.sh from INSIDE the sandbox with the same GIT_SCRUB + status-dir
+# env as run_in, so its inbox write/read resolves the sandbox repo (not the outer
+# checkout). Used to seed inbox state for the golem-status annotation tests.
+# GOLEM_INBOX_WAIT=0 so a `consume` with an answer present returns immediately.
+inbox_in() {
+    local dir="$1"
+    shift
+    (cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$dir" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_INBOX_WAIT=0 GOLEM_INBOX_POLL=1 \
+            "$REAL_BASH" "$INBOX" "$@" >/dev/null 2>&1) || true
 }
 
 # --- golem-launch.sh --------------------------------------------------------
@@ -2181,6 +2199,112 @@ EOF
     assert_contains "$RUN_OUT" "GOLEM" "prints the table header"
 }
 
+# The BLOCKED feed pass annotates an escalation/dead-end line that carries a
+# brokered-gate id with the inbox state (#395): `[inbox: awaiting|answered|
+# consumed]`. A routine permission gate (no gate-id token) stays un-annotated.
+# Plant a feed with BOTH a token-carrying escalation and a token-less gate, plus
+# a cache row (so render_status proceeds past the "no active golems" guard), and
+# an inbox `answer` for the escalation's gate → the escalation line shows
+# `[inbox: answered]` while the routine line is untouched. jq-guarded like the
+# row test (golem-gate-watch's feed snapshot + golem-inbox's state both need jq).
+test_status_annotates_blocked_inbox_state() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed snapshot + inbox state need jq)"
+        return 0
+    fi
+    local sb sd gid
+    new_sandbox sb
+    sd="$sb/.worktrees/.status"
+    gid="gate-1784398516-abcd"
+    # A cache row so render_status renders the BLOCKED section at all.
+    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+{ "golem": "golem-7", "issue": 7, "branch": "feature/issue-7",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    # Feed: a token-carrying escalation (golem-7) + a token-less ROUTINE gate
+    # (golem-4) whose command text embeds a gate-SHAPED substring (`fix/gate-…`)
+    # that is NOT a bracketed correlation token. Omit `ts` — golem-gate-watch's
+    # TTL treats a missing ts as fresh, so the lines surface without clock
+    # coupling. The routine line pins the anchored-regex fix: an unanchored scan
+    # would falsely annotate it from that substring (the #395 review's Bug 2).
+    /usr/bin/cat >"$sd/feed.jsonl" <<EOF
+{"golem":"golem-7","event":"escalation","message":"ESCALATION: [$gid] pick sidecar"}
+{"golem":"golem-4","event":"gate","message":"Claude needs permission to run: git branch -D fix/gate-1111111111-aaaa"}
+EOF
+    # An unconsumed answer for the escalation's gate → state should be `answered`.
+    inbox_in "$sb" answer golem-7 "$gid" B
+
+    run_in "$sb" "$STATUS"
+    assert_exit 0 "$RUN_RC" "golem-status exits 0 with a planted feed + inbox"
+    assert_contains "$RUN_OUT" "[inbox: answered]" \
+        "annotates the escalation BLOCKED line with the inbox state"
+    # The routine gate carries a gate-SHAPED substring but no bracketed token, so
+    # it must stay un-annotated — the anchored `[gate-…]` match ignores it.
+    assert_not_contains "$RUN_OUT" "fix/gate-1111111111-aaaa  [inbox:" \
+        "a routine gate with a gate-shaped substring stays un-annotated (anchored to [gate-…])"
+}
+
+# The gate-id is extracted from the BRACKETED [gate-…] token, not the first
+# gate-shaped substring: an escalation message that mentions an older bare
+# gate-id before its own bracketed correlation id must query the BRACKETED one
+# (the #395 review's Bug 2, wrong-gate variant). Answer the real bracketed gate;
+# the annotation must read `answered`, proving it didn't query the stray mention.
+test_status_inbox_annotation_uses_bracketed_gate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed snapshot + inbox state need jq)"
+        return 0
+    fi
+    local sb sd real
+    new_sandbox sb
+    sd="$sb/.worktrees/.status"
+    real="gate-2222222222-real"
+    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+{ "golem": "golem-7", "issue": 7, "branch": "b", "state": "impl", "phase": "p", "blocking": false }
+EOF
+    /usr/bin/printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: after gate-1000000000-old, now [%s] pick sidecar"}\n' \
+        "$real" >"$sd/feed.jsonl"
+    inbox_in "$sb" answer golem-7 "$real" B
+    run_in "$sb" "$STATUS"
+    assert_contains "$RUN_OUT" "[inbox: answered]" \
+        "queries the bracketed gate-id, not the stray earlier gate-shaped mention"
+}
+
+# `awaiting` (no inbox file) and `consumed` (answer + consume) render too — the
+# two annotation states the answered case above doesn't cover.
+test_status_inbox_state_awaiting_and_consumed() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed snapshot + inbox state need jq)"
+        return 0
+    fi
+    local sb sd gid
+    # awaiting: token in the feed, no inbox file written.
+    new_sandbox sb
+    sd="$sb/.worktrees/.status"
+    gid="gate-1784398600-aaaa"
+    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+{ "golem": "golem-7", "issue": 7, "branch": "b", "state": "impl", "phase": "p", "blocking": false }
+EOF
+    /usr/bin/printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: [%s] x"}\n' \
+        "$gid" >"$sd/feed.jsonl"
+    run_in "$sb" "$STATUS"
+    assert_contains "$RUN_OUT" "[inbox: awaiting]" "no inbox answer yet → awaiting"
+
+    # consumed: answer then consume the gate.
+    local sb2 sd2 gid2
+    new_sandbox sb2
+    sd2="$sb2/.worktrees/.status"
+    gid2="gate-1784398700-bbbb"
+    /usr/bin/cat >"$sd2/golem-7.json" <<'EOF'
+{ "golem": "golem-7", "issue": 7, "branch": "b", "state": "impl", "phase": "p", "blocking": false }
+EOF
+    /usr/bin/printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: [%s] x"}\n' \
+        "$gid2" >"$sd2/feed.jsonl"
+    inbox_in "$sb2" answer golem-7 "$gid2" B
+    inbox_in "$sb2" consume golem-7 "$gid2"
+    run_in "$sb2" "$STATUS"
+    assert_contains "$RUN_OUT" "[inbox: consumed]" "answer + consume → consumed"
+}
+
 # --- golem-status.sh --watch (level-scaled status sweep, #304) ---------------
 
 # run_in_watch <sandbox> <timeout-secs> [env KEY=VAL ...] -- <args...>
@@ -2666,6 +2790,9 @@ run_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"
 run_test test_status_renders_planted_row "golem-status: planted cache row renders in the table"
+run_test test_status_annotates_blocked_inbox_state "golem-status: annotates a BLOCKED escalation line with the inbox state (#395)"
+run_test test_status_inbox_state_awaiting_and_consumed "golem-status: inbox annotation renders awaiting + consumed (#395)"
+run_test test_status_inbox_annotation_uses_bracketed_gate "golem-status: annotation keys on the bracketed [gate-…] token, not a stray mention (#395)"
 run_test test_status_unknown_arg_exits_2 "golem-status: unknown argument exits 2 (#304)"
 run_test test_status_watch_bad_level_exits_2 "golem-status: --watch --level out of range exits 2 (#304)"
 run_test test_status_watch_bad_interval_exits_2 "golem-status: --watch --interval non-integer exits 2 (#304)"
