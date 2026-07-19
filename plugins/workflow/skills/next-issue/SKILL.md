@@ -59,16 +59,24 @@ plans the named issue directly, ignoring its open blockers, with the plan gate
 as the only backstop. It governs dependency handling only — orthogonal to the
 `--level` autonomy dial.
 
-**IMPORTANT — Plan mode**: At an **L1 disposition** (no level chosen — the
-interactive default), use the `EnterPlanMode` tool immediately at the start of
-every `/next-issue` invocation (before any other work). Phases 0-2 are planning
-phases that only need read-only tools and Bash. After Phase 2 plan approval, use
-`ExitPlanMode` to begin implementation. When a **level** is set the plan-mode
-call is **deferred to Phase 2** (the `severity/critical` label that can cap L4→L3
-is not known until Phase 1): an **L4** run (non-critical) never calls
-`EnterPlanMode`/`ExitPlanMode` at all — the plan gate is auto-passed — while an
-**L1–L3** run (including any capped critical) calls both in Phase 2 and pauses at
-plan approval. See `## Autonomy Levels` below.
+**IMPORTANT — Plan mode is entered in Phase 2, never Phase 0**: at **every**
+disposition, including an **L1** interactive default, `EnterPlanMode` is called
+in **Phase 2** — *after* Phase 0's resume check and *after* Phase 1 has
+selected, assigned, labeled, and **written the hand-off state file**. It is
+**not** called at the start of the invocation. This ordering is load-bearing:
+plan mode permits only edits to the plan file, so the Phase 1 mutations (`gh`
+assign/label and the `Write` of `.claude/memory/tmp/next-issue-{N}.json`) and
+the Phase 2 `phase: "plan"` state write **must complete before `EnterPlanMode`**
+— otherwise plan mode silently blocks them, the run implements without ever
+looping back, and the hand-off record `/ship-issue` reads never lands
+(issue #409). After Phase 2 plan approval, use `ExitPlanMode` to begin
+implementation.
+An **L4** run (non-critical) never calls `EnterPlanMode`/`ExitPlanMode` at all —
+the plan gate is auto-passed — while an **L1–L3** run (including any capped
+critical, and the L1 default) calls both in Phase 2 and pauses at plan approval.
+The `severity/critical` label that can cap an L4 request down to L3 is not known
+until Phase 1, a further reason the plan-mode call waits for Phase 2. See
+`## Autonomy Levels` below.
 
 ## Autonomy Levels
 
@@ -140,16 +148,26 @@ Proceed with Phase 0 as normal regardless of mode.
 
 ## Phase 0 — Resume Check
 
-1. **Enter plan mode** (call `EnterPlanMode` tool). At an **L1 disposition** (no
-   level chosen — the interactive default), call it here immediately. When a
-   **level** is set, do NOT call it here — **defer** the decision: the
-   `severity/critical` label that can cap an L4 request down to L3 (keeping the
-   plan gate) is not fetched until Phase 1, and entering plan mode now would trap
-   an L4 run in plan mode (it never calls `ExitPlanMode`, so its write/edit tools
-   would stay blocked). The plan-mode call is made in Phase 2 once the effective
-   level is known: an **L1–L3** run (including a capped critical) calls
-   `EnterPlanMode` there (then `ExitPlanMode` for approval); an **L4**
-   (non-critical) run never enters plan mode at all. See `## Autonomy Levels`.
+1. **Do NOT enter plan mode at the start of Phase 0 — at any level.** Phase 0
+   (resume check) and Phase 1 (select, assign, label, and the state-file write)
+   run with read-only tools, Bash, and the permitted `gh`/`Write` mutations; none
+   of them needs plan mode, and entering it here would **trap those mutations**.
+   (The one exception is the **plan-gated resume sub-case** below, where the state
+   file already exists and no Phase 1 mutation is pending — that path *does* call
+   `EnterPlanMode`/`ExitPlanMode` to re-present the stored plan.) Plan mode permits
+   only edits to the plan file, so an `EnterPlanMode` at Phase 0 silently blocks
+   the Phase 1 assign/label and the `Write` of
+   `.claude/memory/tmp/next-issue-{N}.json` — the run then implements without
+   looping back and the hand-off record `/ship-issue` reads is never created
+   (issue #409). An **L4** run is doubly trapped: it never calls `ExitPlanMode`,
+   so its write/edit tools would stay blocked for the whole run. The plan-mode
+   call is therefore **deferred to Phase 2** for every disposition, once the
+   effective level is known (the `severity/critical` label that can cap an L4
+   request down to L3 is not fetched until Phase 1): an **L1–L3** run (including
+   a capped critical and the L1 default) calls `EnterPlanMode` there — after the
+   Phase 1/2 state writes have landed — then `ExitPlanMode` for approval; an
+   **L4** (non-critical) run never enters plan mode at all. See
+   `## Autonomy Levels`.
 
 1. **Discover state files** (the singleton `next-issue-queue.json` is NOT a
    per-issue state file — exclude it from this glob):
@@ -315,7 +333,12 @@ or has no `files_planned` (nothing to re-present).
    - GitHub: `gh issue edit {N} --add-label "status/in-progress"`
    - GitLab: `glab issue update {N} --label "status/in-progress"`
 
-1. **Write state file** to `.claude/memory/tmp/next-issue-{N}.json`:
+1. **Write state file** to `.claude/memory/tmp/next-issue-{N}.json`. This write —
+   and the assign/label mutations above it — happen **now, in Phase 1, before
+   Phase 2 enters plan mode**. It is the hand-off record `/ship-issue` reads
+   (`phase` + `checkpoint`); if it were deferred into plan mode it would be
+   silently blocked and never land (issue #409), so it MUST be on disk before
+   `EnterPlanMode` is ever called.
 
    ```json
    {
