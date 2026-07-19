@@ -1,0 +1,179 @@
+---
+description: Run a single issue end-to-end as a solo "golem" in the current session — create an isolated git worktree, work the issue there through the next-issue → ship-issue pipeline at a chosen autonomy level (L1–L4), then tear the worktree down. Use when you want one issue worked with full golem rigor (including the adversarial pre-PR review) and worktree isolation, without an orchestrator, tmux, or containers. For 2+ parallel issues, use /orchestrate instead.
+---
+
+# Golem (solo, in-session)
+
+`/golem` runs **one** issue the way an orchestrated golem does — its own
+worktree, its own branch, the full `next-issue → ship-issue` pipeline, the same
+adversarial pre-PR review — but **in the primary session**, with no orchestrator,
+no `tmux`, and no container. You are the golem; you monitor it by watching your
+own session. Every gate (plan approval, escalation, dead-end, permission) surfaces
+in-session as a normal prompt, so none of the detached-golem apparatus (feed,
+`golem-status.sh`, gate-watch, inbox, `golem-launch.sh`) is involved.
+
+It is a **thin wrapper**: `/golem` owns only the worktree lifecycle and teardown
+timing. **All issue work is delegated** — selection, planning, implementation,
+testing, review, PR, and merge all run through `/next-issue` (which chains
+`/ship-issue` in-turn at L3–L4). The worktree keeps the **main checkout free for
+the human** and lets multiple terminals work different issues in parallel without
+collision.
+
+For 2+ issues in parallel, or detached/headless work, use **`/orchestrate`**
+(dispatches golems as processes) — not this skill.
+
+## Command
+
+```text
+/golem [N] [--level M] [--teardown N]
+```
+
+- **`N`** (optional) — the issue number to work. Omitted → priority-select (below).
+- **`--level M`** (optional, 1–4) — the run's autonomy level, passed straight to
+  `/next-issue`. Omitted → `/next-issue` prompts L1–L4 (the "ask each run"
+  default). `severity/critical` still caps at L3 (enforced by `/next-issue`).
+- **`--teardown N`** — post-merge cleanup re-entry for an L1–L2 run whose PR was
+  merged out-of-band (see Phase D). Mutually exclusive with a normal run.
+
+## Workflow
+
+### Phase A — Preflight & guards
+
+1. **Nesting guard.** Refuse if this session is **already in a linked worktree** —
+   don't nest golem worktrees:
+
+   ```bash
+   [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] \
+     && echo "Already in a linked worktree — run /golem from the main checkout." && exit
+   ```
+
+   (`git rev-parse --git-dir` != `--git-common-dir` means a linked worktree; equal
+   means the primary checkout — the same idiom `ship-issue/execute-protocol.md`
+   uses.)
+
+1. **Detect platform** from `git remote -v` (same table `/next-issue` uses):
+   `github.com`/`ghe.` → GitHub (`gh`); `gitlab.com`/`gitlab.` → GitLab (`glab`).
+
+1. **Resolve the issue number `N` up front** — the worktree needs a concrete
+   target before it is created:
+
+   - **`N` given** → use it.
+   - **Bare `/golem` (no `N`)** → **priority-select**. Run `/next-issue`'s priority
+     query read-only (see `next-issue/state-format.md` § Priority Ordering for the
+     exact `gh`/`glab` commands — the nested severity × effort walk, excluding
+     `status/in-progress` etc. and applying the blocked-by exclusion). Take the
+     first open, unassigned, unblocked issue, **show it** (number, title, labels),
+     and **confirm with the operator** before creating the worktree. Do not
+     re-implement the full selection loop — reuse those commands only to resolve
+     `N`.
+
+1. **Worktree collision guard.** If `.worktrees/issue-N` already exists, offer to
+   **resume into it** (`EnterWorktree`, skip Phase B's create) rather than
+   recreate — a prior `/golem` run for this issue may have paused.
+
+### Phase B — Create + enter the worktree
+
+1. Create the golem-standard worktree (branch `feature/issue-N` from
+   `origin/main`, with machine-local files copied in, workspace trust seeded, and
+   submodules initialized — all handled by the script):
+
+   ```bash
+   ${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh N
+   ```
+
+1. Move **this session** into it:
+
+   ```text
+   EnterWorktree({ path: ".worktrees/issue-N" })
+   ```
+
+   The branch prefix is `feature/` on purpose — it does **not** match
+   `ship-issue`'s `^agent` commit-only detection, so a solo run pushes and opens a
+   PR normally (unlike a container golem's `agent{N}` branch).
+
+### Phase C — Run the pipeline
+
+Invoke `/next-issue` via the **Skill tool**, passing `N` and any `--level`:
+
+```text
+Skill(next-issue)  with args:  N [--level M]
+```
+
+`/next-issue` then owns everything: it prompts L1–L4 if no level was given, builds
+the plan (human gate at L1–L3, auto at L4), implements, tests, and:
+
+- **L3–L4** — chains `/ship-issue` **in the same turn** → Branch + PR → wait for
+  CI + adversarial review → **auto-merge** on green + clean. Control returns here
+  for Phase D.
+- **L1–L2** — stops at the routine ship gates. The human runs `/ship-issue` (now
+  or later); it stops again for the human to merge. `/golem` does not force it.
+
+The adversarial pre-PR review runs identically to an orchestrated golem's — that
+parity now holds across **all** shipping modes (see `ship-issue/pre-ship-validation.md`
+check #6), so a solo run cannot skip it by choosing commit-only.
+
+### Phase D — Teardown (auto after merge, prompt otherwise)
+
+- **L3–L4 (the PR auto-merged this turn):** prune and leave the worktree
+  automatically —
+
+  ```bash
+  ${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh N
+  ```
+
+  ```text
+  ExitWorktree({ action: "remove" })
+  ```
+
+  Report the merged PR URL.
+
+- **L1–L2 (human merges later):** the PR is **not** merged, so do **not** remove
+  the worktree. Return the session to the main checkout so it's free for other
+  work, and tell the human how to finish:
+
+  ```text
+  ExitWorktree({ action: "keep" })
+  ```
+
+  > PR open, awaiting your merge. When it lands, run `/golem --teardown N` to
+  > prune the worktree and branch.
+
+- **`--teardown N` re-entry:** verify the PR/branch actually **merged** before
+  removing anything — key off the **merged PR / branch**, never the state file
+  (`/ship-issue` deletes `next-issue-N.json` on completion, so it is already gone):
+
+  ```bash
+  gh pr view --json state,url --head feature/issue-N   # state == MERGED  (GitHub)
+  glab mr view --source-branch feature/issue-N          # merged           (GitLab)
+  ```
+
+  If merged, `worktree-rm.sh N` then `ExitWorktree({ action: "remove" })`. If not
+  yet merged, say so and stop (do not remove an unmerged worktree —
+  `worktree-rm.sh` also refuses on uncommitted changes as a backstop).
+
+## When to Use
+
+- One issue you want worked with **full golem rigor** — the adversarial pre-PR
+  review, the plan gate, the drift/pre-review checks — and **worktree isolation**,
+  but without standing up an orchestrator or containers.
+- You want to **watch the work directly** in your own session instead of attaching
+  to a detached `tmux`/container golem.
+- Keeping the **main checkout free** for your own edits (or another terminal's
+  `/golem`) while this issue runs in its own worktree.
+- **Smoothest at L3–L4** (chains straight through to merge + auto-teardown) or on
+  `effort/trivial`/`small` issues. At **L1–L2 on a medium/large** issue,
+  `/next-issue` reaches a "Required" context reset that suggests `/clear`
+  (`next-issue/state-format.md`); inside an `EnterWorktree` session a `/clear` may
+  drop the worktree cwd, so prefer L3–L4 for a hands-off run, or re-enter the
+  worktree (or `/golem --teardown N` once merged) to resume.
+
+## When NOT to Use
+
+- **2+ issues in parallel**, a fixed worker pool, or an integration train — use
+  **`/orchestrate`** (dispatches golems as processes and monitors them centrally).
+- **Detached / headless** work you won't watch live — again `/orchestrate`
+  (tmux/container golems).
+- **From inside an existing worktree** — the nesting guard refuses; run from the
+  main checkout.
+- A quick, isolation-free fix on the current branch — plain `/next-issue` (Mode 1)
+  is lighter.

@@ -1,0 +1,29 @@
+name: golem
+version: "1.0"
+
+# No labels declared here — /golem delegates all issue selection and labeling to
+# /next-issue and /ship-issue, which own the status/*, severity/*, and effort/*
+# label vocabulary (next-issue/metadata.yml, file-issue/metadata.yml).
+
+required_tools:
+  - name: git
+    purpose: Worktree create/enter/remove and branch/PR-state inspection
+    install_hint: "Git — https://git-scm.com (preinstalled on most systems; brew install git / apt install git)"
+  - name: gh
+    purpose: GitHub issue priority query (bare invocation) and merged-PR check for teardown
+    install_hint: "GitHub CLI — https://cli.github.com (brew install gh / apt install gh)"
+  - name: glab
+    purpose: GitLab issue priority query and merged-MR check for teardown
+    install_hint: "GitLab CLI — https://gitlab.com/gitlab-org/cli (brew install glab)"
+
+required_permissions:
+  - provider: github
+    scopes:
+      - repo
+    notes: "gh auth login with 'repo' scope minimum"
+  - provider: gitlab
+    scopes:
+      - api
+    notes: "glab auth login or GITLAB_TOKEN"
+
+required_mcps: []
