@@ -5,10 +5,24 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
+  modified: 2026-07-19T15:00:47.613Z
 ---
 
 Librarian has a repo-level semver release flow (added in PR #35, issue #31;
-first release v0.1.0 published 2026-06-28).
+first release v0.1.0 published 2026-06-28). Latest: **v0.7.0** (2026-07-19, minor
+— 5 feats since v0.6.2 incl. #414 checkpoint table).
+
+**Confirmed PR-then-tag recipe (v0.7.0):** `just release-minor` (bumps
+VERSION/manifests/CHANGELOG, NO commit) → commit on a `release/vX.Y.Z` branch as
+`chore(release): release version X.Y.Z` (`release` IS a valid conform scope) →
+PR to main → after green CI, squash-merge → `git checkout main && git pull` →
+`git tag -a vX.Y.Z -m "Release version X.Y.Z" <merge-sha> && git push origin
+vX.Y.Z`. The annotated tag is **auto SSH-signed** (git `user.signingkey` config),
+separate from release.yml's cosign artifact signing. `release.yml` fires on the
+`v*` tag → validates, asserts VERSION==tag, cosign-keyless-signs, publishes.
+Verify after: `gh release view vX.Y.Z` shows `librarian-X.Y.Z.tar.gz` +
+`.tar.gz.sigstore.json`, and `gh api repos/joshjhall/librarian/releases/latest -q
+.tag_name` returns the new tag (what containers' LIBRARIAN_REF discovers).
 
 **Two version concepts — keep distinct:**
 
