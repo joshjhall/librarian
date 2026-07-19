@@ -2478,6 +2478,27 @@ TRANSCRIPT_MIXED='{"isSidechain":false,"message":{"id":"m1","usage":{"output_tok
 {"isSidechain":false,"message":{"id":"m2","usage":{"output_tokens":50}}}
 {"type":"summary"}'
 
+# A transcript whose every usage-bearing record is a SUB-WORKFLOW (isSidechain
+# true) — no top-level output yet. The scrape's `add // 0` must yield the
+# documented `0`, and golem-status must render "0 tokens (first reading)", NOT
+# "tokens unknown" (a real 0 is a digit, distinct from an empty/failed scrape).
+TRANSCRIPT_ALL_SIDECHAIN='{"isSidechain":true,"message":{"id":"s1","usage":{"output_tokens":100}}}
+{"isSidechain":true,"message":{"id":"s2","usage":{"output_tokens":50}}}
+{"type":"summary"}'
+
+# iso_ago <seconds> — an ISO-8601 Z timestamp <seconds> in the past, in the same
+# %FT%TZ shape golem-status.sh's _now_iso writes. Uses the same GNU-then-BSD
+# `date` toolchain the script's _iso_to_epoch parses, so a seeded anchor maps
+# back to a frozen-duration in the expected band. Prints nothing on failure.
+iso_ago() {
+    local n="$1" now past
+    now="$(command date -u +%s)"
+    past=$((now - n))
+    command date -u -d "@$past" +%FT%TZ 2>/dev/null && return 0
+    command date -u -r "$past" +%FT%TZ 2>/dev/null && return 0
+    return 1
+}
+
 # scrape sums TOP-LEVEL output_tokens only, deduped by message.id (150),
 # excluding the sidechain 999 and never multi-counting the 3-block turn m1.
 test_scrape_sums_top_level_only() {
@@ -2701,6 +2722,211 @@ EOF
     assert_not_contains "$RUN_OUT" "tokens, frozen" "an unknown-token golem never reports a frozen duration"
 }
 
+# An UNPARSEABLE stored anchor (top_level_tokens_at that `date` cannot read) →
+# _iso_to_epoch returns empty → the render falls back to the raw "frozen since
+# <iso>" branch, never a bogus "frozen 0s". Deterministic (no timing).
+test_status_frozen_iso_parse_failure_raw_render() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # Seed a matching prior count (150 = what TRANSCRIPT_MIXED scrapes to) so the
+    # sweep reads UNCHANGED → frozen, plus a garbage anchor `date` cannot parse.
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false,
+  "top_level_tokens": 150, "top_level_tokens_at": "not-a-date" }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with an unparseable anchor exits 0"
+    assert_contains "$RUN_OUT" "frozen since not-a-date" \
+        "an unparseable anchor renders the raw 'frozen since <iso>' fallback"
+    # A parse failure must NOT masquerade as a computed duration.
+    assert_not_contains "$RUN_OUT" "150 tokens, frozen 0" \
+        "the parse-failure branch never emits a bogus computed 'frozen 0s'"
+}
+
+# _fmt_dur's SECONDS arm (<60): an anchor ~20s in the past renders "frozen Ns".
+test_status_fmt_dur_seconds_arm() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb anchor
+    new_sandbox sb
+    anchor="$(iso_ago 20)"
+    if [ -z "$anchor" ]; then
+        skip_test "date could not compute a past anchor"
+        return 0
+    fi
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false,
+  "top_level_tokens": 150, "top_level_tokens_at": "$anchor" }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with a ~20s anchor exits 0"
+    # ~20s is well below the 60s boundary, so a few seconds of test latency can't
+    # flip the arm. Match the render form, not an exact second count.
+    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq 'frozen [0-9]+s'" \
+        "an anchor under 60s renders _fmt_dur's seconds arm ('frozen Ns')"
+    assert_not_contains "$RUN_OUT" "frozen 0m" "a sub-minute freeze never rounds to minutes"
+}
+
+# _fmt_dur's MINUTES arm (>=60): an anchor ~130s in the past renders "frozen Nm".
+test_status_fmt_dur_minute_arm() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb anchor
+    new_sandbox sb
+    anchor="$(iso_ago 130)"
+    if [ -z "$anchor" ]; then
+        skip_test "date could not compute a past anchor"
+        return 0
+    fi
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false,
+  "top_level_tokens": 150, "top_level_tokens_at": "$anchor" }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with a ~130s anchor exits 0"
+    # ~130s is well above the 60s boundary (renders "2m"), clear of test latency.
+    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq 'frozen [0-9]+m'" \
+        "an anchor at/above 60s renders _fmt_dur's minutes arm ('frozen Nm')"
+    # And NO token line renders the seconds form — a bogus dual-render (minute +
+    # second line for the same golem) must fail. `grep -q` matches any line, so
+    # `!` is true only when zero lines carry a 'tokens, frozen Ns' form. (An
+    # earlier `grep -Evq` was tautological: header/other lines always fail the
+    # match, so per-line inversion was unconditionally true — #392 pre-PR review.)
+    assert_true "! printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq 'tokens, frozen [0-9]+s'" \
+        "the minutes arm never also emits a seconds-form freeze line"
+}
+
+# The scrape resolves a RELATIVE worktree arg against the cwd (the
+# `*) abs="$(command pwd)/$worktree"` branch) to the same slug/count an absolute
+# path yields. Every other scrape test passes an absolute path.
+test_scrape_relative_worktree_path() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (scrape needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    # Invoke with cwd = $sb and a RELATIVE worktree arg, so the script prepends
+    # $(command pwd) and must land on the same $sb/.worktrees/issue-42 slug.
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$SCRAPE" ".worktrees/issue-42" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "scrape of a relative worktree path exits 0"
+    assert_true "[ '$RUN_OUT' = '150' ]" \
+        "a relative worktree arg resolves to the same slug/count as absolute (150, got '$RUN_OUT')"
+}
+
+# Zero-token end-to-end: an all-sidechain transcript scrapes to `0` (exit 0), and
+# golem-status renders "0 tokens (first reading)", NOT "tokens unknown".
+test_scrape_and_status_zero_tokens() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (scrape + status token block need jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_ALL_SIDECHAIN"
+    # (a) the scrape itself prints a literal 0, exit 0 — never fails loud on an
+    #     all-sidechain transcript (no top-level output *yet* is a valid 0).
+    run_scrape "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "scrape of an all-sidechain transcript exits 0"
+    assert_true "[ '$RUN_OUT' = '0' ]" "an all-sidechain transcript scrapes to 0 (got '$RUN_OUT')"
+    # (b) golem-status renders the 0 as a first reading, distinct from unknown.
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "blocking": false }
+EOF
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with a zero-token transcript exits 0"
+    assert_contains "$RUN_OUT" "0 tokens (first reading)" \
+        "a scraped 0 renders as a first reading, not tokens unknown"
+    assert_not_contains "$RUN_OUT" "tokens unknown" \
+        "a genuine 0 is never conflated with an empty/failed scrape"
+}
+
+# golem-status's OWN jq gate for the TOP-LEVEL TOKENS block: with jq absent from
+# PATH the script still exits 0 and renders the main table, but emits NO token
+# section. PATH is a curated shim of every tool the script tree needs EXCEPT jq
+# (golem-status sources config.sh → needs git/dirname; plus date/mktemp/mv/rm/
+# tmux), symlinked so no interpreter is required (mirrors the repo_root shim).
+test_status_no_jq_skips_token_block() {
+    local sb shim tp
+    new_sandbox sb
+    shim="$sb/shim"
+    /usr/bin/mkdir -p "$shim"
+    for t in git dirname env date mktemp mv rm tmux bash sh; do
+        tp="$(command -v "$t" 2>/dev/null)" && /usr/bin/ln -s "$tp" "$shim/$t"
+    done
+    # A cache row makes the cache array non-empty, so the ONLY reason the token
+    # block is skipped is the jq gate itself (not the empty-cache short-circuit).
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "blocking": false }
+EOF
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            PATH="$shim" \
+            "$REAL_BASH" "$STATUS" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "golem-status without jq still exits 0 (degrades, not aborts)"
+    assert_not_contains "$RUN_OUT" "TOP-LEVEL TOKENS" \
+        "the token block is skipped when jq is absent"
+}
+
+# A cache row MISSING the `issue` field → issue_n empty → the scrape is skipped →
+# cur empty → the shared "tokens unknown (no transcript)" arm (there is no
+# issue-specific message; missing-issue funnels into the same empty-cur branch).
+test_status_cache_row_missing_issue_tokens_unknown() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # No `issue` key at all — a valid golem row (renders in the table) but the
+    # token loop cannot resolve a worktree to scrape.
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-88.json" <<'EOF'
+{ "golem": "golem-88", "branch": "feature/issue-88",
+  "state": "working", "blocking": false }
+EOF
+    # A transcript is planted for 88, yet the row still reads 'tokens unknown':
+    # the missing `issue` collapses the scrape to an empty count regardless of a
+    # present transcript (the observable contract this test pins).
+    plant_transcript "$sb" 88 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with an issue-less cache row exits 0"
+    assert_contains "$RUN_OUT" "tokens unknown (no transcript)" \
+        "a cache row missing 'issue' funnels into the shared tokens-unknown arm"
+    assert_not_contains "$RUN_OUT" "150 tokens" \
+        "a missing 'issue' is never scraped to a real count"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init` + a commit, so the whole suite needs
@@ -2808,5 +3034,12 @@ run_test test_status_token_first_then_frozen "golem-status: token section shows 
 run_test test_status_token_advancing_on_change "golem-status: a grown top-level count reads as advancing, not frozen (#371)"
 run_test test_status_token_container_pending "golem-status: a Mode-3 container golem shows the pending note, never scraped (#371/#390)"
 run_test test_status_token_unknown_no_transcript "golem-status: a Mode-2 golem with no transcript shows tokens unknown (#371)"
+run_test test_status_frozen_iso_parse_failure_raw_render "golem-status: an unparseable anchor renders the raw 'frozen since <iso>' fallback (#392)"
+run_test test_status_fmt_dur_seconds_arm "golem-status: _fmt_dur seconds arm — a sub-60s freeze renders 'frozen Ns' (#392)"
+run_test test_status_fmt_dur_minute_arm "golem-status: _fmt_dur minutes arm — a >=60s freeze renders 'frozen Nm' (#392)"
+run_test test_scrape_relative_worktree_path "golem-token-scrape: a relative worktree arg resolves like an absolute one (#392)"
+run_test test_scrape_and_status_zero_tokens "golem-token-scrape/status: an all-sidechain transcript is a real 0, not tokens unknown (#392)"
+run_test test_status_no_jq_skips_token_block "golem-status: no jq on PATH skips the TOP-LEVEL TOKENS block, still exits 0 (#392)"
+run_test test_status_cache_row_missing_issue_tokens_unknown "golem-status: a cache row missing 'issue' shows tokens unknown (#392)"
 
 generate_report

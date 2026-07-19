@@ -102,6 +102,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `golem-attach.sh <N>` | Attach to issue N's golem (worktree tmux or container) |
 | `golem-watch.sh` | Stream proactive gate notifications until Ctrl-C |
 | `golem-gate-watch.sh` | Gate-detection engine shared by status + watch |
+| `golem-token-scrape.sh <worktree>` | Scrape a Mode-2 golem's top-level token count from its newest transcript (deduped by `message.id`), feeding `golem-status.sh`'s frozen-counter signal (#371) |
 | `seed-worktree-trust.sh` | Seed Claude Code workspace trust for a worktree |
 | `recover-journal-partials.sh <journal>` | Recover finding-shaped partials from a `TaskStop`-ped review harness's `journal.jsonl` (#224) |
 | `config.sh` | Shared env-overridable config + `repo_root` helper (sourced) |
@@ -117,6 +118,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `GOLEM_WORKTREE_LOCAL_FILES` | `.env .claude/settings.local.json` | Gitignored files copied into a fresh worktree |
 | `GOLEM_BLOCK_TTL` | `3600` | Feed gate-freshness window (seconds) |
 | `GOLEM_WATCH_INTERVAL` | `5` | `--stream*` poll interval (seconds) |
+| `CLAUDE_PROJECTS_DIR` | `$HOME/.claude/projects` | Base dir of per-project session transcripts; `golem-token-scrape.sh` resolves a golem's transcript under it |
 
 The `GOLEM_*` vars above are sourced by the bundled shell scripts. The vars
 below are **skill-level tunables** — read from the environment by the
