@@ -171,3 +171,17 @@ reads its status/sink config through one consistent source.
    mount/forward `.worktrees/.status` across the container boundary
    (containers#735) and build-wire the container HTTP sink; tracked in the
    `containers` repo, not a librarian change.
+
+**Landed increment — the `resolved` event kind** (#422): the feed's event
+vocabulary gained a fifth kind, `resolved`, an explicit gate-clearing signal.
+The BLOCKED list drops a golem only when its most-recent feed line leaves the
+blocked set, which an `idle` normally supplies once the golem moves on — but the
+compliant plan-approval broker's `tmux send-keys 1 Enter` fires no Notification,
+so no superseding line was ever written and the stale `gate` rendered BLOCKED
+for the full TTL. `scripts/golem-resolve.sh` synthesizes a `RESOLVED:`-prefixed
+Notification after the send-keys; `golem-notify.sh` classifies it `resolved`,
+which (like `idle`) is not in the blocked set and thus supersedes the stale gate
+on the next sweep. This is the concrete "a `resolved`/clearing event kind is a
+natural fit for the multi-sink emitter" the epic anticipated — it fans out
+through the same emitter as every other kind, so item 2's generalization carries
+it for free.

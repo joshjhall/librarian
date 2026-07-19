@@ -17,7 +17,7 @@
 # exits 0.
 #
 # Input  (stdin):  Notification hook JSON, e.g. {"message":"...", ...}
-# Output (feed):   {"ts","golem","event":"gate|idle|escalation|dead-end","message"}
+# Output (feed):   {"ts","golem","event":"gate|idle|escalation|dead-end|resolved","message"}
 #
 # The `event` kind separates a real permission gate (a human decision the
 # orchestrator must surface) from a transient between-turn idle: Claude Code
@@ -26,6 +26,16 @@
 # golem as BLOCKED only when its most-recent feed line is a fresh `gate`, so an `idle`
 # emitted once the golem moves on implicitly clears that golem's stale block —
 # no separate resolution hook needed.
+#
+# That implicit-clear assumption has ONE hole: a plan gate resolved by the
+# orchestrator's `tmux send-keys 1 Enter` (the compliant broker path) fires NO
+# Notification, so no superseding `idle`/`gate` is ever written and the stale
+# `gate` stays fresh for the whole GOLEM_BLOCK_TTL window (issue #422). The
+# `resolved` kind closes it: `scripts/golem-resolve.sh` synthesizes a
+# `RESOLVED:`-prefixed Notification after the send-keys so an EXPLICIT clearing
+# line supersedes the stale gate on the next sweep. Like `idle`, `resolved` is
+# not in the BLOCKED set, so being a golem's most-recent line is what clears it
+# (no reader change needed).
 #
 # A third kind, `escalation`, marks a genuine judgement call carrying options —
 # a mid-flight architectural/directional fork, or a wall with more than one
@@ -90,11 +100,33 @@ fi
 #                be mechanically fixed — issue #180). It blocks at EVERY level,
 #                L4 included, and carries a structured why/attempted/remaining
 #                summary. Emitted with a message beginning `DEAD-END:`.
+#   resolved   — an EXPLICIT clearing signal that a prior gate for this golem is
+#                now resolved (issue #422). Synthesized by scripts/golem-resolve.sh
+#                after the orchestrator's `tmux send-keys 1 Enter` plan-approval,
+#                which otherwise fires no Notification. Emitted with a message
+#                beginning `RESOLVED:`. Like `idle` it is not in the BLOCKED set,
+#                so as a golem's most-recent line it supersedes the stale gate.
 # Match case-insensitively on the message; default to `gate` so an unrecognized
 # notification surfaces (fail loud) rather than being silently dropped as idle.
-# The `dead-end` and `escalation` branches precede the `gate` default so their
-# markers win; `dead-end` is matched before `escalation` because it is the more
-# specific kind (a dead-end IS an escalation that also blocks L4).
+# The `dead-end`/`escalation`/`resolved` branches precede the `gate` default so
+# their markers win; `dead-end` is matched before `escalation` because it is the
+# more specific kind (a dead-end IS an escalation that also blocks L4).
+#
+# `resolved:` is anchored to the START of the (lower-cased) message — a PREFIX
+# match — while `dead-end:`/`escalation:` stay unanchored substrings. The
+# asymmetry is deliberate and load-bearing (#422 pre-PR review): a misclassified
+# `resolved` REMOVES a golem from the BLOCKED set (it mirrors `idle`, the only
+# other non-blocked kind), so misclassifying a REAL gate as `resolved` silently
+# hides a pending human decision — the exact failure #422 exists to prevent,
+# inverted. And `resolved:` is ordinary English that legitimately appears mid-
+# message in a real permission ask (e.g. a `git commit -m '… mark resolved: …'`
+# or `merge conflicts unresolved: …` prompt), so an unanchored match would drop
+# that genuine gate. The producer (`scripts/golem-resolve.sh`) always emits
+# `RESOLVED:` as a true LEADING marker, so a prefix match loses nothing and
+# closes the masking gap. A misclassified `dead-end`/`escalation`, by contrast,
+# only makes a gate MORE visible (both ARE surfaced in BLOCKED) — the safe
+# direction — so those keep their existing unanchored match. Do NOT "normalize"
+# `resolved:` back to an unanchored substring.
 #
 # Why only the `ESCALATION:`-prefixed path is classified as `escalation` here,
 # and an in-turn `AskUserQuestion` fork is NOT (issue #321, deferred out of
@@ -118,6 +150,7 @@ case "$(printf '%s' "$message" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
     *"waiting for input"*) event="idle" ;;
     *"dead-end:"*) event="dead-end" ;;
     *"escalation:"*) event="escalation" ;;
+    "resolved:"*) event="resolved" ;;
     *) event="gate" ;;
 esac
 

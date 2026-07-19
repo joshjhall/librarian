@@ -2204,6 +2204,36 @@ EOF
     assert_contains "$RUN_OUT" "GOLEM" "prints the table header"
 }
 
+# Gate age (#422): a fresh dated `gate` renders the "(gated Nm ago)" suffix so a
+# stale-vs-fresh gate is visually distinguishable even if a clearing line was
+# missed. Plant a cache row (so the BLOCKED section renders) plus a feed gate
+# whose `ts` is a recent-but-non-zero age; the render must carry a "(gated …
+# ago)" suffix. jq-gated like the sibling BLOCKED tests.
+test_status_blocked_shows_gate_age() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed snapshot + age derivation need jq)"
+        return 0
+    fi
+    local sb sd ts
+    new_sandbox sb
+    sd="$sb/.worktrees/.status"
+    /usr/bin/cat >"$sd/golem-3.json" <<'EOF'
+{ "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    # A gate dated ~2 minutes ago: recent enough to stay inside the TTL, old
+    # enough that _fmt_dur renders "2m" (a non-zero, human-visible age).
+    ts="$(/usr/bin/date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
+        /usr/bin/date -u -v-130S +%FT%TZ 2>/dev/null)"
+    /usr/bin/cat >"$sd/feed.jsonl" <<EOF
+{"golem":"golem-3","event":"gate","message":"push gate","ts":"$ts"}
+EOF
+    run_in "$sb" "$STATUS"
+    assert_exit 0 "$RUN_RC" "golem-status exits 0 with a dated gate"
+    assert_contains "$RUN_OUT" "(gated " \
+        "the BLOCKED render carries a (gated Nm ago) age suffix (#422)"
+}
+
 # The BLOCKED feed pass annotates an escalation/dead-end line that carries a
 # brokered-gate id with the inbox state (#395): `[inbox: awaiting|answered|
 # consumed]`. A routine permission gate (no gate-id token) stays un-annotated.
@@ -3374,6 +3404,7 @@ run_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"
 run_test test_attach_no_session_exits_1 "golem-attach: no session/container exits 1"
 run_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"
 run_test test_status_renders_planted_row "golem-status: planted cache row renders in the table"
+run_test test_status_blocked_shows_gate_age "golem-status: BLOCKED render shows a (gated Nm ago) gate-age suffix (#422)"
 run_test test_status_annotates_blocked_inbox_state "golem-status: annotates a BLOCKED escalation line with the inbox state (#395)"
 run_test test_status_inbox_state_awaiting_and_consumed "golem-status: inbox annotation renders awaiting + consumed (#395)"
 run_test test_status_inbox_annotation_uses_bracketed_gate "golem-status: annotation keys on the bracketed [gate-…] token, not a stray mention (#395)"

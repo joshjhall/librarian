@@ -80,6 +80,34 @@ _fmt_dur() {
     fi
 }
 
+# _gate_age_suffix <golem> <feed> — a "  (gated Nm ago)" annotation for a golem's
+# most-recent feed line, or empty when it can't be computed. Defense-in-depth for
+# #422: the `resolved` clearing line (golem-resolve.sh) fixes the stale-BLOCKED
+# false positive at the source, but showing the gate's age makes any RESIDUAL
+# staleness self-evident — a reader can tell a 30-second-old real gate from a
+# 38-minute-old missed-clear one at a glance. Reads the golem's LAST feed line
+# (matching golem-gate-watch.sh's `group_by | map(.[-1])` most-recent-wins rule)
+# and derives its `.ts`. A missing/empty/unparseable ts prints nothing (the
+# render falls back to the bare line — never an error, never a bogus "0s").
+# jq-gated like the rest of the feed read; a no-op without jq.
+_gate_age_suffix() {
+    _gas_golem="$1"
+    _gas_feed="$2"
+    [ -f "$_gas_feed" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    _gas_ts="$(/usr/bin/tail -n 200 "$_gas_feed" 2>/dev/null |
+        jq -rs --arg g "$_gas_golem" '
+            [ .[] | select(.golem == $g) ] | last | (.ts // "")
+          ' 2>/dev/null)"
+    [ -n "$_gas_ts" ] || return 0
+    _gas_epoch="$(_iso_to_epoch "$_gas_ts")"
+    [ -n "$_gas_epoch" ] || return 0
+    _gas_now="$(command date -u +%s 2>/dev/null)" || return 0
+    _gas_d=$((_gas_now - _gas_epoch))
+    [ "$_gas_d" -lt 0 ] && _gas_d=0
+    command printf '  (gated %s ago)' "$(_fmt_dur "$_gas_d")"
+}
+
 # collect_cache — populate the module-level `cache` array with the per-golem
 # status JSON files in $status_dir, EXCLUDING the operator-policy singletons
 # (pool.json) and the track-composition file (tracks.json) — neither is a
@@ -291,6 +319,10 @@ render_status() {
                     # Strip the surrounding brackets before querying.
                     gate_id="${gate_id#[}"
                     gate_id="${gate_id%]}"
+                    # Gate age (#422): "  (gated Nm ago)" so a stale-vs-fresh gate
+                    # is visually obvious even if a clearing line was missed. Empty
+                    # when the ts can't be derived (no jq / no ts) — never errors.
+                    age="$(_gate_age_suffix "$g" "$feed")"
                     if [ -n "$gate_id" ] && [ -x "$SCRIPT_DIR/golem-inbox.sh" ]; then
                         st="$("$SCRIPT_DIR/golem-inbox.sh" state "$g" "$gate_id" 2>/dev/null || true)"
                         case "$st" in
@@ -298,14 +330,14 @@ render_status() {
                             # unexpected output falls through to the plain line, so
                             # a broken sibling never blanks the BLOCKED list.
                             awaiting | answered | consumed)
-                                /usr/bin/printf '  %s — %s  [inbox: %s]\n' "$g" "$msg" "$st"
+                                /usr/bin/printf '  %s — %s  [inbox: %s]%s\n' "$g" "$msg" "$st" "$age"
                                 ;;
                             *)
-                                /usr/bin/printf '  %s — %s\n' "$g" "$msg"
+                                /usr/bin/printf '  %s — %s%s\n' "$g" "$msg" "$age"
                                 ;;
                         esac
                     else
-                        /usr/bin/printf '  %s — %s\n' "$g" "$msg"
+                        /usr/bin/printf '  %s — %s%s\n' "$g" "$msg" "$age"
                     fi
                 done
             # Set OUTSIDE the pipe subshell (the loop above runs in a subshell, so
