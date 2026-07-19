@@ -1418,19 +1418,24 @@ _assert_bool_var_scrubbed() {
     # (a0) Baseline: the SAME bare call with NO taint exits 0. Proves the fixture
     # is sound, so the fatal in (a) is attributable to the taint — not a broken
     # sandbox. This is the version-independent replacement for asserting on git's
-    # fatal-error wording.
+    # fatal-error wording. GIT_SCRUB is applied so an INHERITED GIT_DIR (which the
+    # git pre-push hook exports into this harness's environment) cannot pin git at
+    # the outer repo and make the sandbox's inject.marker unreadable — the leak
+    # that made these two tests fail under `git push` but pass on a bare run.
     local rc_a0=0
     (cd "$sb" &&
-        /usr/bin/env HOME="$sb" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" HOME="$sb" \
             "$REAL_BASH" -c 'command git config --get inject.marker' >/dev/null 2>&1) || rc_a0=$?
     assert_exit 0 "$rc_a0" \
         "$var: baseline bare git succeeds without the taint (fixture is sound)"
 
     # (a) Bare git under an invalid-bool taint fatals (rc 128) — the var reaches the
-    # child and git honors it. Guards against a vacuous pass.
+    # child and git honors it. Guards against a vacuous pass. Same GIT_SCRUB as (a0)
+    # so ONLY the deliberate `$var=notabool` taint (not a leaked GIT_DIR) drives the
+    # fatal.
     local rc_a=0
     (cd "$sb" &&
-        /usr/bin/env "$var=notabool" HOME="$sb" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$var=notabool" HOME="$sb" \
             "$REAL_BASH" -c 'command git config --get inject.marker' >/dev/null 2>&1) || rc_a=$?
     assert_exit 128 "$rc_a" \
         "$var: bare git fatals on the invalid-bool taint (the taint is real)"
@@ -2722,7 +2727,7 @@ EOF
     assert_not_contains "$RUN_OUT" "tokens, frozen" "an unknown-token golem never reports a frozen duration"
 }
 
-# An UNPARSEABLE stored anchor (top_level_tokens_at that `date` cannot read) →
+# An UNPARSABLE stored anchor (top_level_tokens_at that `date` cannot read) →
 # _iso_to_epoch returns empty → the render falls back to the raw "frozen since
 # <iso>" branch, never a bogus "frozen 0s". Deterministic (no timing).
 test_status_frozen_iso_parse_failure_raw_render() {
@@ -2741,9 +2746,9 @@ test_status_frozen_iso_parse_failure_raw_render() {
 EOF
     plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
     run_status_scrape "$sb"
-    assert_exit 0 "$RUN_RC" "golem-status with an unparseable anchor exits 0"
+    assert_exit 0 "$RUN_RC" "golem-status with an unparsable anchor exits 0"
     assert_contains "$RUN_OUT" "frozen since not-a-date" \
-        "an unparseable anchor renders the raw 'frozen since <iso>' fallback"
+        "an unparsable anchor renders the raw 'frozen since <iso>' fallback"
     # A parse failure must NOT masquerade as a computed duration.
     assert_not_contains "$RUN_OUT" "150 tokens, frozen 0" \
         "the parse-failure branch never emits a bogus computed 'frozen 0s'"
@@ -2927,6 +2932,359 @@ EOF
         "a missing 'issue' is never scraped to a real count"
 }
 
+# --- --checkpoint compact per-track status+burn table (#283) -----------------
+
+# write_two_golem_tracks_sandbox <sandbox-var> — shared fixture for the checkpoint
+# tests: two Mode-2 golem cache rows (42 in review-cycle with a PR + started;
+# 89 ci-failing + blocking), a tracks.json placing 42 in lane 0 and 89 in lane 1,
+# and a planted 150-token transcript for issue 42. new_sandbox does NOT write a
+# tracks.json, so the grouping tests author it by hand.
+# Internal sandbox var is uniquely named (`_wtgs_sb`) so it collides with neither
+# the caller's out-var nor new_sandbox's own internal `dir` local — otherwise
+# new_sandbox's `printf -v` would write a shadowed local and the path would never
+# propagate (the dynamic-scope pitfall new_sandbox itself sidesteps).
+write_two_golem_tracks_sandbox() {
+    local __out="$1" _wtgs_sb
+    new_sandbox _wtgs_sb
+    /usr/bin/cat >"$_wtgs_sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "pr": 310, "blocking": false,
+  "started": "2026-07-19T00:00:00Z" }
+EOF
+    /usr/bin/cat >"$_wtgs_sb/.worktrees/.status/golem-89.json" <<'EOF'
+{ "golem": "golem-89", "issue": 89, "branch": "feature/issue-89",
+  "state": "ci-failing", "phase": "implement", "blocking": true }
+EOF
+    /usr/bin/cat >"$_wtgs_sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "issues": [42], "autonomy_level": 2 },
+              { "lane": 1, "issues": [89], "autonomy_level": 3 } ] }
+EOF
+    plant_transcript "$_wtgs_sb" 42 "$TRANSCRIPT_MIXED"
+    printf -v "$__out" '%s' "$_wtgs_sb"
+}
+
+# --checkpoint renders the compact per-track table header, groups rows by lane,
+# and prints the batch-totals footer.
+test_status_checkpoint_renders_table_and_footer() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    write_two_golem_tracks_sandbox sb
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "golem-status --checkpoint exits 0"
+    assert_contains "$RUN_OUT" "STATUS CHECKPOINT" "renders the checkpoint section header"
+    assert_contains "$RUN_OUT" "TOKENS(Δ)" "renders the burn column header"
+    # tracks.json puts 42 in lane 0 and 89 in lane 1 → both lane labels appear.
+    assert_contains "$RUN_OUT" "L0" "golem-42 is grouped under its lane (L0)"
+    assert_contains "$RUN_OUT" "L1" "golem-89 is grouped under its lane (L1)"
+    assert_contains "$RUN_OUT" "150 (first)" "the 150-token transcript shows as a first reading"
+    assert_contains "$RUN_OUT" "BATCH:" "prints the batch-totals footer"
+    assert_contains "$RUN_OUT" "tokens=150" "footer sums the top-level tokens"
+    # One-shot (no --watch) has no prior sweep → rate must be — , never fabricated.
+    assert_contains "$RUN_OUT" "rate=—" "a one-shot checkpoint prints rate=— (no prior sweep to diff)"
+    # The verbose render is REPLACED, not stacked, so its section header is absent.
+    assert_not_contains "$RUN_OUT" "TOP-LEVEL TOKENS" "checkpoint replaces the verbose render, not stacks it"
+}
+
+# The burn Δ is computed across two sweeps: first reading has no delta, a grown
+# transcript on the second sweep reports the (+N) delta and folds it into Δ.
+test_status_checkpoint_delta_across_sweeps() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    plant_transcript "$sb" 42 '{"isSidechain":false,"message":{"id":"m1","usage":{"output_tokens":100}}}'
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "100 (first)" "first sweep shows the count as a first reading"
+    # Grow the top-level tokens by 25 → 125, then re-render: advancing (+25).
+    local slug dir
+    slug="$(slug_for "$sb/.worktrees/issue-42")"
+    dir="$sb/projects/$slug"
+    /usr/bin/printf '%s\n' \
+        '{"isSidechain":false,"message":{"id":"m1","usage":{"output_tokens":100}}}' \
+        '{"isSidechain":false,"message":{"id":"m2","usage":{"output_tokens":25}}}' >"$dir/session.jsonl"
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "125 (+25)" "the second sweep shows the +25 burn delta"
+    assert_contains "$RUN_OUT" "Δ=25" "the footer folds the per-golem delta into the batch Δ"
+}
+
+# With no tracks.json, every golem falls into the single untracked (—) group —
+# the standalone/pool behavior (nlanes=0 → lane loop skipped).
+test_status_checkpoint_no_tracks_untracked_group() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    # No tracks.json written → the golem must still render, in the — group.
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "checkpoint with no tracks.json exits 0"
+    assert_contains "$RUN_OUT" "golem-42" "the golem renders even with no tracks.json"
+    assert_contains "$RUN_OUT" "STATUS CHECKPOINT" "still renders the checkpoint table"
+}
+
+# A tracks.json (a status-dir sibling, not a golem-status file) must NOT be
+# rendered as a bogus golem row — the latent glob bug fixed alongside #283.
+test_status_checkpoint_excludes_tracks_json() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    write_two_golem_tracks_sandbox sb
+    # The VERBOSE render must also skip tracks.json (the glob is shared).
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "verbose render with a tracks.json exits 0"
+    assert_not_contains "$RUN_OUT" "tracks.json" "tracks.json is not rendered as a golem row"
+}
+
+# BLOCKED / CI-failing attention markers ride the STATE column as plain text (⚠),
+# distinct from a normal state — never ANSI colour.
+test_status_checkpoint_attention_markers() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    write_two_golem_tracks_sandbox sb
+    run_status_scrape "$sb" --checkpoint
+    # golem-89 is blocking → ⚠ BLOCKED; the blocked count is tallied in the footer.
+    assert_contains "$RUN_OUT" "⚠ BLOCKED" "a blocking golem shows the ⚠ BLOCKED marker"
+    assert_contains "$RUN_OUT" "blocked=1" "the footer tallies the blocked golem"
+    # No ANSI escape sequences leak into the table (stays legible in a log/pipe).
+    assert_not_contains "$RUN_OUT" "$(command printf '\033')" "the checkpoint table emits no ANSI colour"
+}
+
+# --checkpoint composes with --watch/--level: a bounded watch renders the compact
+# table and the level-scaled cadence banner, exiting cleanly when timed out.
+test_status_checkpoint_watch_composes() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    write_two_golem_tracks_sandbox sb
+    # run_in_watch bounds the loop; --level 2 resolves the ~5-min cadence banner.
+    run_in_watch "$sb" 2 \
+        GOLEM_STATUS_DIR=.worktrees/.status \
+        CLAUDE_PROJECTS_DIR="$sb/projects" \
+        -- --checkpoint --watch --level 2 --interval 1
+    assert_exit 0 "$RUN_RC" "--checkpoint --watch is a valid, bounded sweep (exit 0)"
+    assert_contains "$RUN_OUT" "STATUS CHECKPOINT" "the watch loop renders the compact table"
+    assert_contains "$RUN_OUT" "Status sweep every 1s" "the sweep banner reports the resolved cadence"
+}
+
+# A DROP in the cumulative top-level count across sweeps (a fresh session after
+# /clear, per golem-token-scrape.sh's documented shape) renders as `(reset)` — a
+# new baseline — and is EXCLUDED from the burn Δ, never a nonsensical negative
+# delta or a fabricated negative aggregate rate. Regression guard for the
+# signed-delta bug the pre-PR review reproduced.
+test_status_checkpoint_reset_on_count_drop() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb slug dir
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-5.json" <<'EOF'
+{ "golem": "golem-5", "issue": 5, "branch": "feature/issue-5",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    slug="$(slug_for "$sb/.worktrees/issue-5")"
+    dir="$sb/projects/$slug"
+    /usr/bin/mkdir -p "$dir"
+    # Sweep 1: a 500-token session establishes the baseline.
+    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"a","usage":{"output_tokens":500}}}' >"$dir/session.jsonl"
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "500 (first)" "first sweep establishes the 500-token baseline"
+    # Sweep 2: a fresh, SMALLER session (count drops 500 -> 50) — a new baseline.
+    /usr/bin/sleep 1
+    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"b","usage":{"output_tokens":50}}}' >"$dir/session2.jsonl"
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "50 (reset)" "a count drop renders as (reset), a new baseline"
+    assert_not_contains "$RUN_OUT" "(+-" "a drop never renders a negative signed delta"
+    assert_contains "$RUN_OUT" "Δ=0" "a reset is excluded from the batch burn Δ (no negative)"
+    assert_not_contains "$RUN_OUT" "Δ=-" "the batch Δ never goes negative on a reset"
+}
+
+# The ⚠ gone marker fires for a cache golem whose tmux session vanished while a
+# SIBLING golem session is still up (the wedged/dead-golem signal). Uses a tmux
+# stub reporting only golem-42's session, so golem-99 (no session) reads ⚠ gone
+# and golem-42 does not. Both golems are NON-blocking, so ⚠ gone is not masked by
+# the higher-priority ⚠ BLOCKED marker (the shared fixture's golem-89 IS blocking,
+# which is why this test builds its own non-blocking rows).
+test_status_checkpoint_session_gone_marker() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false }
+EOF
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-99.json" <<'EOF'
+{ "golem": "golem-99", "issue": 99, "branch": "feature/issue-99",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    # A tmux stub that lists ONLY golem-42 alive (golem-99's session is gone).
+    # golem-status.sh scans `tmux ls | grep -oE '^golem-[0-9]+'`, so the stub
+    # prints one matching line for `ls` and nothing for other subcommands.
+    /usr/bin/mkdir -p "$sb/bin"
+    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    ls) printf 'golem-42: 1 windows\n' ;;
+esac
+exit 0
+EOF
+    /usr/bin/chmod +x "$sb/bin/tmux"
+    # --unset=BASH_ENV: in the devcontainer BASH_ENV points at /etc/bash_env,
+    # which resets $PATH on non-interactive bash and would shadow the stub tmux
+    # with the real one (see the devcontainer-bash-env-path-reset note).
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "checkpoint with a partial tmux session set exits 0"
+    assert_contains "$RUN_OUT" "⚠ gone" "golem-99 (session vanished, sibling up) shows ⚠ gone"
+    # golem-42's session IS present → it must NOT be flagged gone; it keeps its
+    # real state (review-cycle), proving the marker is per-golem, not global.
+    assert_contains "$RUN_OUT" "review-cycle" "golem-42 (session present) keeps its real state, not ⚠ gone"
+}
+
+# A corrupted persisted top_level_tokens value (the cache is co-written by the
+# orchestrator model, so a non-canonical field is possible) must NOT throw a bash
+# arithmetic error and drop the golem's row — the persisted prior is numeric-
+# guarded the same way the freshly-scraped value is. Regression guard for the
+# monitoring-integrity finding: `"089"` (a quoted leading-zero string) is invalid
+# octal in `$(( ))` and previously vanished the row.
+test_status_checkpoint_corrupt_prev_tokens_no_drop() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # Seed a cache row whose persisted count is a corrupt string ("089").
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-8.json" <<'EOF'
+{ "golem": "golem-8", "issue": 8, "branch": "feature/issue-8",
+  "state": "working", "phase": "implement", "blocking": false,
+  "top_level_tokens": "089", "top_level_tokens_at": "2026-07-19T00:00:00Z" }
+EOF
+    plant_transcript "$sb" 8 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "a corrupt persisted token value does not crash --checkpoint"
+    assert_contains "$RUN_OUT" "golem-8" "the golem's row is still rendered (not dropped by an arithmetic error)"
+    # The corrupt prior is treated as no-prior → a fresh 'first' reading, never a
+    # bash 'value too great for base' error leaking into the table.
+    assert_contains "$RUN_OUT" "150 (first)" "a corrupt (leading-zero) prior reads as a fresh first reading"
+    assert_not_contains "$RUN_OUT" "value too great" "no bash octal error leaks into the output"
+
+    # An OVERFLOW-sized persisted value (>18 digits, past bash's signed 64-bit
+    # range) must also degrade to a safe 'first' reading — NOT throw "integer
+    # expression expected" and misclassify as frozen (a false #369 takeover signal).
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-8.json" <<'EOF'
+{ "golem": "golem-8", "issue": 8, "branch": "feature/issue-8",
+  "state": "working", "phase": "implement", "blocking": false,
+  "top_level_tokens": 99999999999999999999999999999, "top_level_tokens_at": "2026-07-19T00:00:00Z" }
+EOF
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "an overflow-sized persisted token value does not crash --checkpoint"
+    assert_contains "$RUN_OUT" "150 (first)" "an overflow prior reads as a fresh first reading, not frozen"
+    assert_not_contains "$RUN_OUT" "integer expression" "no bash overflow error leaks into the output"
+}
+
+# derive_stage prefers .phase_detail over .phase/.state — assert the highest-
+# priority Stage source actually wins (guards the jq `//` precedence).
+test_status_checkpoint_stage_prefers_phase_detail() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-7.json" <<'EOF'
+{ "golem": "golem-7", "issue": 7, "branch": "feature/issue-7",
+  "state": "working", "phase": "implement", "phase_detail": "loop:make-it-tested",
+  "blocking": false }
+EOF
+    plant_transcript "$sb" 7 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "loop:make-it-tested" "STAGE shows .phase_detail, its highest-priority source"
+}
+
+# The ⚠ CI marker fires independently of BLOCKED: a ci-failing golem that is NOT
+# blocking reaches the ci-failing branch (the shared fixture's golem-89 sets both,
+# so BLOCKED masks it there). Also exercises the 'merged' → shipped tally.
+test_status_checkpoint_ci_and_shipped_markers() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-11.json" <<'EOF'
+{ "golem": "golem-11", "issue": 11, "branch": "feature/issue-11",
+  "state": "ci-failing", "phase": "implement", "blocking": false }
+EOF
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-12.json" <<'EOF'
+{ "golem": "golem-12", "issue": 12, "branch": "feature/issue-12",
+  "state": "merged", "phase": "ship", "blocking": false }
+EOF
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "⚠ CI" "a ci-failing, non-blocking golem shows ⚠ CI (not masked by BLOCKED)"
+    assert_contains "$RUN_OUT" "shipped=1" "a merged golem is tallied as shipped in the footer"
+    assert_contains "$RUN_OUT" "blocked=1" "the ci-failing golem is tallied as blocked"
+}
+
+# The checkpoint Tokens(Δ) column renders container ('n/a', excluded from totals)
+# and transcript-less ('—') golems distinctly — checkpoint-specific formatting the
+# verbose token tests do not cover.
+test_status_checkpoint_container_and_unknown_tokens() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false }
+EOF
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-77.json" <<'EOF'
+{ "golem": "golem-77", "issue": 77, "branch": "feature/issue-77",
+  "state": "working", "blocking": false }
+EOF
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "n/a" "a container golem's Tokens(Δ) shows n/a (Mode-3, #390)"
+    assert_contains "$RUN_OUT" "tokens=0" "container + transcript-less golems contribute 0 tokens to the total"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init` + a commit, so the whole suite needs
@@ -3034,12 +3392,24 @@ run_test test_status_token_first_then_frozen "golem-status: token section shows 
 run_test test_status_token_advancing_on_change "golem-status: a grown top-level count reads as advancing, not frozen (#371)"
 run_test test_status_token_container_pending "golem-status: a Mode-3 container golem shows the pending note, never scraped (#371/#390)"
 run_test test_status_token_unknown_no_transcript "golem-status: a Mode-2 golem with no transcript shows tokens unknown (#371)"
-run_test test_status_frozen_iso_parse_failure_raw_render "golem-status: an unparseable anchor renders the raw 'frozen since <iso>' fallback (#392)"
+run_test test_status_frozen_iso_parse_failure_raw_render "golem-status: an unparsable anchor renders the raw 'frozen since <iso>' fallback (#392)"
 run_test test_status_fmt_dur_seconds_arm "golem-status: _fmt_dur seconds arm — a sub-60s freeze renders 'frozen Ns' (#392)"
 run_test test_status_fmt_dur_minute_arm "golem-status: _fmt_dur minutes arm — a >=60s freeze renders 'frozen Nm' (#392)"
 run_test test_scrape_relative_worktree_path "golem-token-scrape: a relative worktree arg resolves like an absolute one (#392)"
 run_test test_scrape_and_status_zero_tokens "golem-token-scrape/status: an all-sidechain transcript is a real 0, not tokens unknown (#392)"
 run_test test_status_no_jq_skips_token_block "golem-status: no jq on PATH skips the TOP-LEVEL TOKENS block, still exits 0 (#392)"
 run_test test_status_cache_row_missing_issue_tokens_unknown "golem-status: a cache row missing 'issue' shows tokens unknown (#392)"
+run_test test_status_checkpoint_renders_table_and_footer "golem-status: --checkpoint renders the per-track table + batch-totals footer (#283)"
+run_test test_status_checkpoint_delta_across_sweeps "golem-status: --checkpoint computes the burn Δ across two sweeps (#283)"
+run_test test_status_checkpoint_no_tracks_untracked_group "golem-status: --checkpoint with no tracks.json renders every golem in the untracked group (#283)"
+run_test test_status_checkpoint_excludes_tracks_json "golem-status: tracks.json is excluded from the golem-row glob, not a bogus row (#283)"
+run_test test_status_checkpoint_attention_markers "golem-status: --checkpoint STATE column carries ⚠ markers, no ANSI colour (#283)"
+run_test test_status_checkpoint_watch_composes "golem-status: --checkpoint composes with --watch/--level (#283)"
+run_test test_status_checkpoint_reset_on_count_drop "golem-status: --checkpoint renders a count drop as (reset), excluded from burn Δ — no negative delta (#283)"
+run_test test_status_checkpoint_corrupt_prev_tokens_no_drop "golem-status: --checkpoint numeric-guards a corrupt persisted token value, never drops the row (#283)"
+run_test test_status_checkpoint_session_gone_marker "golem-status: --checkpoint flags a vanished-session golem ⚠ gone when a sibling is up (#283)"
+run_test test_status_checkpoint_stage_prefers_phase_detail "golem-status: --checkpoint STAGE prefers .phase_detail over .phase/.state (#283)"
+run_test test_status_checkpoint_ci_and_shipped_markers "golem-status: --checkpoint ⚠ CI (non-blocking) + merged→shipped tally (#283)"
+run_test test_status_checkpoint_container_and_unknown_tokens "golem-status: --checkpoint renders container n/a + transcript-less — token cells (#283)"
 
 generate_report

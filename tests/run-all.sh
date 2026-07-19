@@ -45,6 +45,24 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Scrub git's hook-exported environment ONCE for the whole suite. A git hook
+# (lefthook pre-push runs this entry point) exports GIT_DIR / GIT_WORK_TREE /
+# GIT_INDEX_FILE / … into its child's environment; a test that shells out to
+# `git` for a sandbox it built with `cd $sb` then silently resolves against the
+# OUTER repo instead, because an inherited GIT_DIR overrides cwd-based discovery.
+# That is a whole CLASS of "passes on a bare `bash tests/run-all.sh`, fails under
+# `git push`" flakes (each individual test also scrubs where it must, but a
+# missed site reopens it — so we belt-and-suspenders scrub here at the single
+# entry point CI and the hook share, making the suite hook-environment-agnostic).
+# `git rev-parse` any value we need is re-derived cwd-locally by the tests
+# themselves. Unexport, don't just blank: a blank GIT_DIR="" still overrides
+# discovery. Names mirror config.sh's PATH-redirect scrub class (#279/#328).
+for _gv in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES; do
+    unset "$_gv" 2>/dev/null || true
+done
+unset _gv
+
 rc=0
 
 run_stage() {

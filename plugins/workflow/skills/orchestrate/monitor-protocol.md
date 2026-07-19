@@ -86,11 +86,24 @@ Authoritative status comes from **PR + issue-label state**. The
 
    ```text
    Monitor({                                       # rolling status sweep
-     command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --watch --level N",
-     description: "periodic golem status sweep (level-scaled)",
+     command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --checkpoint --watch --level N",
+     description: "periodic golem status+burn checkpoint (level-scaled)",
      persistent: true,
    })
    ```
+
+   The **`--checkpoint`** flag (#283) selects the compact **status-checkpoint
+   table** — one row per golem **grouped by track** (joined from `tracks.json`),
+   with the columns `TRACK · GOLEM · ISSUE · STAGE · ELAPSED · TOKENS(Δ) · PR ·
+   CI · REVIEW · STATE` and a **batch-totals footer** (`Σtokens`, per-sweep
+   burn `Δ`, aggregate `rate/hr`, and `live/blocked/shipped` counts). It gives the
+   operator a rolling burn/velocity read without polling. Drop `--checkpoint` to
+   fall back to the verbose multi-section render (pool header, flat golem table,
+   BLOCKED list, liveness, per-golem TOP-LEVEL TOKENS, recent feed). The two are
+   **mutually exclusive per sweep** — both re-drive the same token scrape, so
+   running both in one sweep would reset the burn-Δ baseline. (This
+   "status-checkpoint table" is distinct from the plan checkpoint at
+   `ExitPlanMode` and the poll harness's per-PR resumability checkpoint.)
 
    **Cadence scales by autonomy level** — higher levels assume golems run longer
    without oversight, so they sweep less often (the exact seconds live in
@@ -110,6 +123,22 @@ Authoritative status comes from **PR + issue-label state**. The
    pass `--level <min active level>`. This is a *pull* rolling sweep; it
    complements, and does not replace, the *push* gate-watch below (which fires on
    gate transitions, not on a rolling cadence).
+
+   The checkpoint's **`TOKENS(Δ)`** column and footer `rate/hr` are honest only
+   across sweeps: `Δ = tokens since the previous sweep`, and the aggregate rate is
+   `Σ Δ ÷ this sweep's interval` — so the **first** sweep after arming (and any
+   one-shot `--checkpoint` with no `--watch`) prints `rate=—` rather than a
+   fabricated number. Burn is a **worktree-golem (Mode 2)** signal — a container
+   golem (Mode 3) shows `n/a` in `TOKENS(Δ)` (its transcript isn't host-readable,
+   #390). **Attention markers ride the `STATE` column** as plain text (`⚠ BLOCKED`
+   at a gate, `⚠ CI` on a failing check, `⚠ gone` when the tmux session vanished)
+   — never ANSI colour, so the table stays legible in a log or pipe. **PR/CI/Review
+   are cache mirrors** (golem-status is `gh`-free); the authoritative CI/review
+   values are the live `pr_status[]` poll above, which the checkpoint defers to.
+   The **`ELAPSED`** column reads the golem cache's `started` — stamped by the
+   Phase D "Label + cache" step (worktree golems) or the container entrypoint
+   (Mode 3); a golem whose initial cache write omitted `started` renders ELAPSED
+   as `—` (no fabricated age).
 
 **Supervised live golems (pre-PR).** The PR poll above covers golems that have
 opened a PR. While a golem is still working it has no PR yet, so watch it
