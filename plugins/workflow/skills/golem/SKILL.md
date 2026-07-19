@@ -162,10 +162,14 @@ check #6), so a solo run cannot skip it by choosing commit-only.
   `/golem`) while this issue runs in its own worktree.
 - **Smoothest at L3–L4** (chains straight through to merge + auto-teardown) or on
   `effort/trivial`/`small` issues. At **L1–L2 on a medium/large** issue,
-  `/next-issue` reaches a "Required" context reset that suggests `/clear`
-  (`next-issue/state-format.md`); inside an `EnterWorktree` session a `/clear` may
-  drop the worktree cwd, so prefer L3–L4 for a hands-off run, or re-enter the
-  worktree (or `/golem --teardown N` once merged) to resume.
+  `/next-issue` reaches its "After plan approval" context reset that suggests
+  `/clear` (`next-issue/state-format.md`); inside an `EnterWorktree` session a
+  `/clear` may drop the worktree cwd. `/next-issue` now emits a **worktree-aware**
+  resume hint for that case — its `/clear` suggestion tells you to re-enter this
+  worktree (`EnterWorktree({ path: ".worktrees/issue-N" })`) before `/next-issue`,
+  so the run resumes from implementation without your having to reconstruct the
+  cwd by hand. L3–L4 remains the smoothest hands-off run (it bypasses the reset
+  entirely); `/golem --teardown N` still prunes the worktree once the PR merges.
 
 ## When NOT to Use
 

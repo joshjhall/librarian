@@ -181,6 +181,22 @@ the turn exits early. Such a run sets `autonomy_level`. Whether it removes the
 before continuing. (An **L1–L2** run stops at the routine ship gates too, so it
 does not reach this in-turn ship handoff.)
 
+\* **Linked-worktree adaptation**: the reset points above are **Suggest** mode
+(not skipped) inside a linked worktree — e.g. a `/golem` run — but the suggestion
+is **worktree-aware**. This matters for **any plan-gate-kept L1–L2 run** that
+reaches the "After plan approval" reset inside a worktree — most commonly
+`effort/medium`/`large` issues (never `--ship`-eligible), but also an
+`effort/trivial`/`small` issue run without `--ship`/`--now` (the `--ship`
+fast-path is the only thing that skips this reset, and it is opt-in). A bare
+`/clear` may return the session
+to the **main checkout** and drop the worktree cwd, so the resume instruction
+carries an `EnterWorktree` re-entry step before `/next-issue` (see the Reset
+Suggestion Template below). Detect the worktree with the repo-standard idiom
+(`git rev-parse --git-dir` != `git rev-parse --git-common-dir`; the same check the
+golem nesting guard and `ship-issue/execute-protocol.md` use). The L3–L4 exception
+above already bypasses these resets entirely, so the adaptation only applies to a
+plan-gate-kept L1–L2 run.
+
 | Orchestrator Action | Reset Mode | Why                                                        |
 | ------------------- | ---------- | ---------------------------------------------------------- |
 | After each merge    | Suggest    | Agent diff context is stale; next merge is different files |
@@ -196,11 +212,21 @@ does not reach this in-turn ship handoff.)
 
 ### Reset Suggestion Template
 
-When suggesting a reset, use this format:
+When suggesting a reset from the **primary checkout**, use this format:
 
 > Exploration/planning phase complete. Context can be safely cleared — state
 > saved to `.claude/memory/tmp/next-issue-{N}.json`. Run `/clear` then
 > `/next-issue` to resume from {next_phase}.
+
+When suggesting a reset from a **linked worktree** (`git rev-parse --git-dir` !=
+`git rev-parse --git-common-dir`), a bare `/clear` may drop the worktree cwd, so
+use the worktree-aware variant:
+
+> Exploration/planning phase complete. Context can be safely cleared — state
+> saved to `.claude/memory/tmp/next-issue-{N}.json`. `/clear` may return you to
+> the main checkout, so after it re-enter this worktree with
+> `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/next-issue` to
+> resume from {next_phase}.
 
 If the user declines, continue normally — the suggestion is advisory.
 
