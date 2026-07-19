@@ -43,6 +43,11 @@
 #       skill re-invokes `consume` on NO-DECISION, forever, so "wait
 #       indefinitely" holds as an agent-level loop with no single call near the
 #       ceiling and no lapse-and-default path.
+#   state <golem> <gate-id>
+#       Read-only tri-state snapshot for a gate: prints `awaiting` (no answer
+#       yet), `answered` (an unconsumed answer is waiting), or `consumed`. Used
+#       by golem-status.sh to annotate a BLOCKED escalation/dead-end line so the
+#       operator can see which gates still need an answer. Writes nothing.
 #   peek <golem> [gate-id]
 #       Non-blocking read (orchestrator / debugging). Print matching answer
 #       lines (all, or those for <gate-id>) and exit 0; print nothing if none.
@@ -115,6 +120,8 @@ usage: golem-inbox.sh <subcommand> [args]
       Write the operator's decision into the golem's inbox.
   consume <golem> <gate-id>
       Bounded-blocking read; print "DECISION: <option>" or "NO-DECISION".
+  state   <golem> <gate-id>
+      Read-only; print the gate's inbox state: awaiting | answered | consumed.
   peek    <golem> [gate-id]
       Non-blocking read of matching answer lines (debugging).
 EOF
@@ -236,10 +243,15 @@ inbox_latest_answer_jq() {
     # aborts the whole read on the first bad line, silently truncating every
     # record after it (with `2>/dev/null || true` swallowing the error) — which
     # would replay a stale decision past its `consumed` marker or hide a
-    # corrected answer. `fromjson?` degrades gracefully instead, matching the
-    # per-line resilience of the no-jq scanner below.
+    # corrected answer. The `select(type == "object")` is REQUIRED alongside
+    # `fromjson?`: `fromjson?` only swallows an *unparsable* line, but a line that
+    # parses to a valid NON-OBJECT scalar (a bare `42`, `true`, `[]`) would then
+    # abort the pipeline when `.golem`/`.gate` index it ("cannot index number"),
+    # which `fromjson?` does NOT catch — so filter to objects first. Together they
+    # match the per-line, any-garbage resilience of the no-jq scanner below.
     jq -rc -Rn --arg golem "$golem" --arg gate "$gate" '
-        [ inputs | (fromjson? // empty) | select(.golem == $golem and .gate == $gate) ]
+        [ inputs | (fromjson? // empty) | select(type == "object")
+          | select(.golem == $golem and .gate == $gate) ]
         | reduce .[] as $r (null;
             if   $r.event == "answer"   then $r
             elif $r.event == "consumed" then null
@@ -307,6 +319,93 @@ inbox_mark_consumed() {
         command printf '{"ts":"%s","golem":"%s","gate":"%s","event":"consumed"}\n' \
             "$ts" "$golem" "$gate" >>"$inbox" 2>/dev/null || true
     fi
+    return 0
+}
+
+# --- state (read-only tri-state) --------------------------------------------
+
+# Print the inbox state for a (golem, gate): awaiting | answered | consumed.
+# A last-wins FOLD over the gate's event stream seeded at `awaiting`: each
+# `answer` -> answered, each `consumed` -> consumed. This reproduces
+# inbox_latest_answer_*'s "answer superseded by a later consumed" semantics in
+# one pass (answer->consumed ends `consumed`; a re-answer after consume ends
+# `answered`) — and, unlike those helpers (which emit nothing for BOTH awaiting
+# and consumed), it distinguishes all three states. Read-only: no marker written.
+#
+# jq path — same -Rn + `inputs | (fromjson? // empty)` per-line resilience as
+# inbox_latest_answer_jq, so one torn append can't abort the read.
+inbox_gate_state_jq() {
+    local inbox="$1" golem="$2" gate="$3"
+    jq -rn -R --arg golem "$golem" --arg gate "$gate" '
+        reduce (inputs | (fromjson? // empty) | select(type == "object")
+                | select(.golem == $golem and .gate == $gate)) as $r
+          ("awaiting";
+             if   $r.event == "answer"   then "answered"
+             elif $r.event == "consumed" then "consumed"
+             else . end)
+    ' "$inbox" 2>/dev/null || true
+}
+
+# No-jq path — the same case-match line scan as inbox_latest_answer_nojq, folding
+# the state instead of extracting the option. bash-3.2 clean.
+inbox_gate_state_nojq() {
+    local inbox="$1" golem="$2" gate="$3"
+    local line st="awaiting"
+    while IFS= read -r line; do
+        case "$line" in
+            *"\"golem\":\"$golem\""*) ;;
+            *) continue ;;
+        esac
+        case "$line" in
+            *"\"gate\":\"$gate\""*) ;;
+            *) continue ;;
+        esac
+        case "$line" in
+            *'"event":"answer"'*) st="answered" ;;
+            *'"event":"consumed"'*) st="consumed" ;;
+        esac
+    done <"$inbox"
+    command printf '%s\n' "$st"
+}
+
+cmd_state() {
+    local golem="${1:-}" gate="${2:-}"
+    if [ -z "$golem" ] || [ -z "$gate" ]; then
+        command echo "golem-inbox state: need <golem> <gate-id>" >&2
+        return 2
+    fi
+    if ! inbox_valid_golem "$golem"; then
+        command echo "golem-inbox state: invalid golem id '$golem'" >&2
+        return 2
+    fi
+    if ! inbox_valid_gate "$gate"; then
+        command echo "golem-inbox state: invalid gate id '$gate'" >&2
+        return 2
+    fi
+
+    local inbox
+    inbox="$(inbox_path_for "$golem")" || {
+        command echo "golem-inbox state: not inside a git repository" >&2
+        return 1
+    }
+    # No inbox file yet = nothing has been written for this golem = awaiting.
+    if [ ! -f "$inbox" ]; then
+        command echo "awaiting"
+        return 0
+    fi
+
+    local st
+    if command -v jq >/dev/null 2>&1; then
+        st="$(inbox_gate_state_jq "$inbox" "$golem" "$gate")"
+    else
+        st="$(inbox_gate_state_nojq "$inbox" "$golem" "$gate")"
+    fi
+    # Defend the jq empty-output edge: a torn/unreadable file swallowed by the
+    # `|| true` above must degrade to `awaiting`, never print a blank line.
+    case "$st" in
+        answered | consumed) command echo "$st" ;;
+        *) command echo "awaiting" ;;
+    esac
     return 0
 }
 
@@ -433,15 +532,16 @@ cmd_peek() {
     [ -f "$inbox" ] || return 0
 
     if command -v jq >/dev/null 2>&1; then
-        # Per-line `fromjson?` (via -Rn+inputs) so one torn line doesn't abort the
-        # whole read — same resilience as inbox_latest_answer_jq above.
+        # Per-line `fromjson?` + `select(type == "object")` (via -Rn+inputs) so
+        # one torn line — unparsable OR a valid non-object scalar — doesn't abort
+        # the whole read; same resilience as inbox_latest_answer_jq above.
         if [ -n "$gate" ]; then
             jq -rc -Rn --arg golem "$golem" --arg gate "$gate" \
-                'inputs | (fromjson? // empty) | select(.event == "answer" and .golem == $golem and .gate == $gate)' \
+                'inputs | (fromjson? // empty) | select(type == "object") | select(.event == "answer" and .golem == $golem and .gate == $gate)' \
                 "$inbox" 2>/dev/null || true
         else
             jq -rc -Rn --arg golem "$golem" \
-                'inputs | (fromjson? // empty) | select(.event == "answer" and .golem == $golem)' \
+                'inputs | (fromjson? // empty) | select(type == "object") | select(.event == "answer" and .golem == $golem)' \
                 "$inbox" 2>/dev/null || true
         fi
     else
@@ -477,6 +577,7 @@ inbox_main() {
         gateid) cmd_gateid "$@" ;;
         answer) cmd_answer "$@" ;;
         consume) cmd_consume "$@" ;;
+        state) cmd_state "$@" ;;
         peek) cmd_peek "$@" ;;
         "" | -h | --help | help)
             usage

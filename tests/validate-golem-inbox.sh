@@ -362,6 +362,114 @@ test_corrupt_line_does_not_truncate_reader() {
         "a corrupt line does not resurrect a consumed decision (idempotency preserved)"
 }
 
+# A line that is VALID JSON but a non-object scalar (a bare `42`, `true`, `[]`)
+# is a distinct corruption class from unparsable garbage: `fromjson?` parses it
+# fine, but indexing it with `.golem` aborts the whole jq pipeline unless it is
+# filtered by `select(type == "object")`. Without that guard, `state`/`consume`
+# silently degrade (a live answer reads `awaiting`, a real decision becomes
+# unreachable) — and the jq path diverges from the always-resilient no-jq scanner.
+# This pins consume + state across all three scalar shapes.
+test_non_object_scalar_line_resilience() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (this pins the jq-path type guard specifically)"
+        return 0
+    fi
+    local sb inbox
+    new_sandbox sb
+    inbox="$sb/.worktrees/.status/inbox-golem-3.jsonl"
+    run_inbox "$sb" answer golem-3 "$GATE" YES
+    # Inject each non-object scalar shape as its own raw line.
+    printf '42\ntrue\n[]\n"a string"\n' >>"$inbox"
+    run_inbox "$sb" state golem-3 "$GATE"
+    assert_equals "answered" "$INBOX_OUT" \
+        "state folds correctly past non-object scalar lines (jq type guard)"
+    run_inbox "$sb" consume golem-3 "$GATE"
+    assert_contains "$INBOX_OUT" "DECISION: YES" \
+        "consume still reaches the live answer past non-object scalar lines"
+    # After consume, state reports consumed even with the scalars still present.
+    run_inbox "$sb" state golem-3 "$GATE"
+    assert_equals "consumed" "$INBOX_OUT" \
+        "state folds to consumed past non-object scalar lines"
+}
+
+# --- state (read-only tri-state, #395) --------------------------------------
+
+# `state` is the read-only snapshot golem-status.sh uses to annotate a BLOCKED
+# escalation/dead-end line. It folds the gate's event stream to one word:
+# awaiting (no answer) → answered (unconsumed answer) → consumed. Read-only: it
+# must never write a marker (a following consume still returns the decision).
+test_state_tristate_transitions() {
+    local sb inbox
+    new_sandbox sb
+    inbox="$sb/.worktrees/.status/inbox-golem-3.jsonl"
+    run_inbox "$sb" state golem-3 "$GATE"
+    assert_exit 0 "$INBOX_RC" "state (no inbox file) exits 0"
+    assert_equals "awaiting" "$INBOX_OUT" "no answer yet → awaiting"
+    run_inbox "$sb" answer golem-3 "$GATE" B
+    run_inbox "$sb" state golem-3 "$GATE"
+    assert_equals "answered" "$INBOX_OUT" "an unconsumed answer → answered"
+    # state must NOT consume: the answer is still live after a state read.
+    assert_file_not_contains "$inbox" '"event":"consumed"' "state wrote no consumed marker"
+    run_inbox "$sb" consume golem-3 "$GATE"
+    run_inbox "$sb" state golem-3 "$GATE"
+    assert_equals "consumed" "$INBOX_OUT" "after consume → consumed"
+}
+
+# A re-answer after consume must fold back to `answered` (the operator sent a new
+# decision the golem hasn't consumed yet), not stick at consumed.
+test_state_reanswer_after_consume() {
+    local sb
+    new_sandbox sb
+    run_inbox "$sb" answer golem-3 "$GATE" B
+    run_inbox "$sb" consume golem-3 "$GATE"
+    run_inbox "$sb" answer golem-3 "$GATE" C
+    run_inbox "$sb" state golem-3 "$GATE"
+    assert_equals "answered" "$INBOX_OUT" "re-answer after consume folds back to answered"
+}
+
+# state is gate-scoped: an answer for one gate does not make a DIFFERENT gate
+# report answered (the two-layer attribution the inbox enforces).
+test_state_gate_scoped() {
+    local sb
+    new_sandbox sb
+    run_inbox "$sb" answer golem-3 "$GATE" B
+    run_inbox "$sb" state golem-3 "$GATE2"
+    assert_equals "awaiting" "$INBOX_OUT" "a decision for one gate leaves another gate awaiting"
+}
+
+# The no-jq path folds the same tri-state via the pure-bash scanner (no skip
+# guard — it is jq-independent, matching the other no-jq cases).
+test_state_nojq_tristate() {
+    if [ -z "$REAL_GIT" ]; then
+        skip_test "git not available (no-jq path still needs git on the stub PATH)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_inbox_nojq "$sb" state golem-5 "$GATE"
+    assert_equals "awaiting" "$INBOX_OUT" "no-jq: no answer → awaiting"
+    run_inbox_nojq "$sb" answer golem-5 "$GATE" X
+    run_inbox_nojq "$sb" state golem-5 "$GATE"
+    assert_equals "answered" "$INBOX_OUT" "no-jq: unconsumed answer → answered"
+    run_inbox_nojq "$sb" consume golem-5 "$GATE"
+    run_inbox_nojq "$sb" state golem-5 "$GATE"
+    assert_equals "consumed" "$INBOX_OUT" "no-jq: after consume → consumed"
+}
+
+# Bad/missing args are rejected with exit 2 (mirrors consume/peek validation).
+test_state_rejects_bad_args() {
+    local sb
+    new_sandbox sb
+    run_inbox "$sb" state "golem-../evil" "$GATE"
+    assert_exit 2 "$INBOX_RC" "traversal-shaped golem id → exit 2"
+    assert_contains "$INBOX_OUT" "invalid golem id" "reports the invalid golem id"
+    run_inbox "$sb" state golem-3 "not-a-gate"
+    assert_exit 2 "$INBOX_RC" "non-gate id → exit 2"
+    run_inbox "$sb" state golem-3
+    assert_exit 2 "$INBOX_RC" "missing gate-id → exit 2"
+    assert_contains "$INBOX_OUT" "need <golem> <gate-id>" "reports the missing arg"
+}
+
 # --- peek -------------------------------------------------------------------
 
 # peek is a non-blocking read: it lists matching answer lines and never blocks
@@ -471,7 +579,13 @@ run_test test_no_default_guarantee "never-default: no answer → exactly NO-DECI
 run_test test_non_integer_tunables_fail_safe "robustness: garbage tunables fall back to numeric, no infinite spin"
 run_test test_leading_zero_tunables_base10 "robustness: leading-zero tunables read base-10, not octal (no hang)"
 run_test test_corrupt_line_does_not_truncate_reader "resilience: a torn inbox line does not truncate the jq reader"
+run_test test_non_object_scalar_line_resilience "resilience: a valid non-object scalar line does not break the jq fold"
 run_test test_late_answer_caught_on_reinvoke "wait-indefinitely: re-invoked consume catches a late answer"
+run_test test_state_tristate_transitions "state: awaiting → answered → consumed (read-only)"
+run_test test_state_reanswer_after_consume "state: re-answer after consume folds back to answered"
+run_test test_state_gate_scoped "state: gate-scoped (a decision for one gate leaves another awaiting)"
+run_test test_state_nojq_tristate "state: no-jq path folds the same tri-state"
+run_test test_state_rejects_bad_args "state: bad/missing args → exit 2"
 run_test test_peek_lists_answers "peek: lists answers without consuming"
 run_test test_unknown_subcommand "usage: unknown subcommand → stderr usage + exit 2"
 run_test test_rejects_bad_golem_id "validation: traversal-shaped golem id rejected"

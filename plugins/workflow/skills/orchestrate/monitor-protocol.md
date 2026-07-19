@@ -241,6 +241,18 @@ golems thus **batch-answers** each blocked golem from this session in turn,
 never hopping between N TTYs. `golem-attach.sh {N}` stays available as the manual
 fallback for any gate the operator would rather handle in-session.
 
+**See which gates are still unanswered (#395).** `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`
+annotates each escalation/dead-end line in its BLOCKED list with the inbox state
+— `[inbox: awaiting]` (no decision written yet), `[inbox: answered]` (a decision
+is waiting for the golem to consume), or `[inbox: consumed]` (the golem has taken
+it). Read this before answering: an `awaiting` line still needs a decision, while
+an `answered`/`consumed` one is already handled — so an operator sweeping a batch
+does not **double-answer** a gate the golem hasn't consumed yet. The annotation
+is a read-only snapshot (`golem-inbox.sh state <golem> <gate-id>`), point-in-time
+like the rest of the status view; a routine permission `gate` or plan-gate
+carries no gate-id and is left un-annotated (it is not inbox-brokered — the
+data-only invariant below).
+
 **Data-only invariant — do NOT broker a plan-gate this way.** A plan-gate
 `ExitPlanMode` (feed: a generic `gate`; pane: the plan-approval overlay) resolves
 an **auto-mode** transition, which the inbox must never carry. Plan approval

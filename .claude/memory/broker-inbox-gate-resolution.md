@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: bfe4d94a-dfa2-4553-bd60-78b7236bc16d
-  modified: 2026-07-18T19:27:05.374Z
+  modified: 2026-07-19T00:46:18.808Z
 ---
 
 Issue #227 (slice 1, branch `feature/issue-227/broker-inbox`) added
@@ -57,8 +57,28 @@ at launch), not a hand-substituted `golem-{N}`.
    empty) | … ]'` so one bad line is skipped, not fatal (applied to `consume`
    reader + `peek`). The no-jq bash scanner was already resilient.
 
-Tests: `tests/validate-golem-inbox.sh` (18 cases) wired into run-all.sh. Deferred
-follow-ups: surface inbox pending/answered state in `golem-status.sh`; #282
-(directed-send classifier non-determinism, existing). See [[two-runtime-model]]
-(bash script reaches host fs, unlike workflow.js) and [[usr-bin-hardcoding-golem-scripts]]
-(docs use `command grep`, not `/usr/bin/grep`).
+Tests: `tests/validate-golem-inbox.sh` wired into run-all.sh. See
+[[two-runtime-model]] (bash script reaches host fs, unlike workflow.js) and
+[[usr-bin-hardcoding-golem-scripts]] (docs use `command grep`, not `/usr/bin/grep`).
+
+**#395 (the read-side follow-up) — the `state` subcommand + two review-caught
+bugs, one LATENT in #227.** #395 added `golem-inbox.sh state <golem> <gate-id>`
+(prints `awaiting|answered|consumed` via a last-wins event fold) and had
+`golem-status.sh` annotate each BLOCKED escalation/dead-end line with
+`[inbox: <state>]`. Its code review surfaced:
+
+1. **jq scalar-line crash (LATENT in #227's `inbox_latest_answer_jq` + `peek`,
+   not just the new `state`).** `(fromjson? // empty)` only skips UNPARSABLE
+   lines; a valid NON-OBJECT scalar (`42`/`true`/`[]`) then aborts the whole
+   `reduce` when `.golem` indexes it ("cannot index number") — silently masking
+   the true state AND breaking `consume` (a live answer became unreachable). Fix
+   = add `select(type == "object")` after every `fromjson?` (all three jq call
+   sites). The no-jq substring scanner was always immune, so the two paths had
+   diverged on real input.
+2. **Unanchored gate-id regex in golem-status.** `grep -oE 'gate-[0-9]+-[0-9a-z]+'`
+   over the whole free-text message false-positived a routine gate whose command
+   text held a gate-shaped substring (`fix/gate-123-x`) and mis-picked a stray
+   earlier mention before the real bracketed id. Fix = anchor to the BRACKETED
+   `\[gate-…\]` token the escalation protocol actually emits, then strip
+   brackets. Both fixes regression-tested (scalar-resilience + bracketed-anchor +
+   routine-gate-substring cases).
