@@ -122,6 +122,12 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
        doc["issue"] = int(issue)
    doc["state"] = os.environ["STATE"]
    doc["last_activity"] = os.environ["LA"]
+   # Stamp the launch time ONCE (idempotent — later write_status calls preserve
+   # it), so a Mode-3 container golem's `--checkpoint` ELAPSED column has a
+   # source. Mirrors the Mode-2 "stamp `started` in the initial cache write"
+   # convention (orchestrate SKILL.md § Label+cache); without it ELAPSED renders
+   # `—` for every container golem despite the docs claiming parity (#415).
+   doc["started"] = doc.get("started") or os.environ["LA"]
    err = os.environ.get("ERR", "")
    doc["errors"] = [err] if err else doc.get("errors", [])
    with open(path, "w") as f:

@@ -42,6 +42,10 @@ STATUS="$SCRIPTS/golem-status.sh"
 SCRAPE="$SCRIPTS/golem-token-scrape.sh"
 INBOX="$SCRIPTS/golem-inbox.sh"
 CONFIG="$SCRIPTS/config.sh"
+# The Mode-3 container entrypoint lives as a bash code block inside this skill
+# doc (not a bundled script), so its write_status() is tested by extraction
+# (#415, mirrors validate-template-sync.sh's inline-template extraction).
+PROVISION_PROTOCOL="$REPO_ROOT/plugins/workflow/skills/provision-agent/provision-protocol.md"
 
 # Resolve the real bash once so child invocations work even when PATH is
 # deliberately stripped (the no-jq cases).
@@ -3285,6 +3289,419 @@ EOF
     assert_contains "$RUN_OUT" "tokens=0" "container + transcript-less golems contribute 0 tokens to the total"
 }
 
+# --- --checkpoint follow-up coverage (#415, deferred from #283/PR #414) -------
+
+# The ELAPSED column renders a REAL duration derived from .started (not just that
+# the row renders). A .started ~130s in the past must show _fmt_dur's minutes arm
+# ("2m"), never the "—" empty sentinel a missing .started would leave. Mirrors
+# test_status_fmt_dur_minute_arm's iso_ago anchoring, but asserts the checkpoint
+# ELAPSED cell specifically (the #283 tests only assert the row is present).
+test_status_checkpoint_elapsed_from_started() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb anchor
+    new_sandbox sb
+    anchor="$(iso_ago 130)"
+    if [ -z "$anchor" ]; then
+        skip_test "date could not compute a past anchor"
+        return 0
+    fi
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false,
+  "started": "$anchor" }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "golem-status --checkpoint with a .started anchor exits 0"
+    # ~130s → 2m (well past the 60s boundary, so a few seconds of test latency
+    # can't flip the arm). Match the render form, not an exact minute count.
+    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq '[0-9]+m'" \
+        "ELAPSED renders a real minutes duration derived from .started"
+    assert_not_contains "$RUN_OUT" "frozen 0m" "a >60s elapsed never rounds to 0m"
+}
+
+# render_checkpoint's TWO early returns: (a) empty status dir + no sessions + no
+# pool → "No active golems", exit 0 (the shared empty-state guard, before jq);
+# (b) jq absent from PATH → the "cannot render checkpoint table" guard on stderr,
+# exit 0 (degrade, not abort). The jq case plants a cache row so the empty-state
+# guard is NOT the reason the table is skipped — isolating the jq gate. PATH is a
+# curated shim of every tool the script tree needs EXCEPT jq (mirrors
+# test_status_no_jq_skips_token_block).
+test_status_checkpoint_empty_and_no_jq_guards() {
+    local sb shim tp
+    new_sandbox sb
+    # (a) Empty-state early return (jq-independent: the guard precedes the jq
+    # check, so run it unconditionally).
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "--checkpoint with no golems exits 0"
+    assert_contains "$RUN_OUT" "No active golems" "--checkpoint empty state reports no active golems"
+    assert_not_contains "$RUN_OUT" "STATUS CHECKPOINT" "the empty-state guard returns before the table header"
+
+    # (b) jq-missing early return: a curated PATH shim without jq + a planted
+    # cache row (so the empty-state guard is passed and the jq gate is the sole
+    # reason the table is skipped).
+    shim="$sb/shim"
+    /usr/bin/mkdir -p "$shim"
+    for t in git dirname env date mktemp mv rm tmux bash sh; do
+        tp="$(command -v "$t" 2>/dev/null)" && /usr/bin/ln -s "$tp" "$shim/$t"
+    done
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "blocking": false }
+EOF
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            PATH="$shim" \
+            "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "--checkpoint without jq still exits 0 (degrades, not aborts)"
+    assert_contains "$RUN_OUT" "cannot render checkpoint table" \
+        "--checkpoint without jq emits the fail-soft guard message"
+    assert_not_contains "$RUN_OUT" "STATUS CHECKPOINT" "no table header is printed without jq"
+}
+
+# The pool.json header (the `Pool:` line) renders ahead of the checkpoint table
+# when a pool.json sibling is present — the same header render_status prints. No
+# other checkpoint test writes a pool.json, so this is the first fixture for it;
+# fields (size/slots/backlog/queue) mirror the jq in render_checkpoint.
+test_status_checkpoint_pool_header() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    /usr/bin/cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
+{ "size": 3, "slots": [42, 89], "backlog_depth": 5, "queue": "open" }
+EOF
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "--checkpoint with a pool.json exits 0"
+    assert_contains "$RUN_OUT" "Pool: size=3" "renders the pool header size"
+    assert_contains "$RUN_OUT" "slots=2/3" "renders slots-in-use / size"
+    assert_contains "$RUN_OUT" "backlog=5" "renders the backlog depth"
+    assert_contains "$RUN_OUT" "queue=open" "renders the queue state"
+    assert_contains "$RUN_OUT" "STATUS CHECKPOINT" "the table still renders after the pool header"
+    # pool.json must NOT be rendered as a bogus golem row (the shared glob exclusion).
+    assert_not_contains "$RUN_OUT" "pool.json" "pool.json is not rendered as a golem row"
+}
+
+# A live golem-N tmux session with NO cache file yet renders a "(live)" tail row
+# (mirrors render_status's tail rows). A tmux stub reports golem-77 alive while
+# no .status/golem-77.json exists → the tail-row branch must emit it.
+test_status_checkpoint_live_tail_row() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # A cache row for a DIFFERENT golem so the table renders; golem-77 has none.
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    # A tmux stub listing golem-77 alive (no cache file for it → a (live) row).
+    /usr/bin/mkdir -p "$sb/bin"
+    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    ls) printf 'golem-77: 1 windows\n' ;;
+esac
+exit 0
+EOF
+    /usr/bin/chmod +x "$sb/bin/tmux"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "--checkpoint with a session-only golem exits 0"
+    assert_contains "$RUN_OUT" "golem-77" "the session-only golem renders a tail row"
+    assert_contains "$RUN_OUT" "(live)" "a cache-less session renders the (live) marker"
+}
+
+# Lane-boundary padding: a lane listing issue 42 must NOT capture the shorter
+# issue 4 (the `" $iss "` exact-pad glob at the lane-membership check). The
+# guarded bug is a PREFIX match — an unpadded " 4" is a substring of the lane
+# string " 42 ", so without the exact trailing-space pad, issue 4 would wrongly
+# land in issue 42's lane. Cache rows for 4 and 42, tracks.json lane 0 = [42]
+# only → 4 falls to the untracked (—) group, not lane 0. Regression fixture for
+# the in-code "so 4 does not match 42" comment.
+test_status_checkpoint_lane_boundary_padding() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-4.json" <<'EOF'
+{ "golem": "golem-4", "issue": 4, "branch": "feature/issue-4",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    /usr/bin/cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "issues": [42], "autonomy_level": 2 } ] }
+EOF
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "--checkpoint with a single-issue lane exits 0"
+    # golem-4's row must carry the untracked track label (—), not L0: issue 4 is
+    # NOT in lane [42], and only a prefix (unpadded) match would pull it in. The
+    # golem-4 row (its trailing space disambiguates it from golem-42) must render
+    # and its first (TRACK) cell must not be L0.
+    assert_true "/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep -q 'golem-4 '" "golem-4 renders a row"
+    assert_true "! /usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-4 ' | /usr/bin/grep -q '^L0'" \
+        "golem-4 is NOT pulled into lane 0 (issue 42's lane) by a prefix match"
+    # golem-42 IS in lane 0 → its row starts with L0 (proves the lane join works).
+    assert_true "/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-42' | /usr/bin/grep -q '^L0'" \
+        "golem-42 IS grouped under its lane (L0)"
+}
+
+# derive_stage's fallback chain below .phase_detail: .phase wins when no
+# .phase_detail; .state wins when neither .phase_detail nor .phase; "—" when none
+# present. The #283 suite only asserts the .phase_detail win — these pin each
+# lower rung of the jq `//` precedence individually.
+test_status_checkpoint_derive_stage_fallbacks() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # (a) .phase win — no .phase_detail.
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-1.json" <<'EOF'
+{ "golem": "golem-1", "issue": 1, "branch": "feature/issue-1",
+  "state": "working", "phase": "implement-phase", "blocking": false }
+EOF
+    # (b) .state win — neither .phase_detail nor .phase.
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-2.json" <<'EOF'
+{ "golem": "golem-2", "issue": 2, "branch": "feature/issue-2",
+  "state": "state-token", "blocking": false }
+EOF
+    # (c) "—" — none of the three Stage sources present.
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-3.json" <<'EOF'
+{ "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
+  "blocking": false }
+EOF
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "--checkpoint with the fallback-chain fixtures exits 0"
+    assert_contains "$RUN_OUT" "implement-phase" "STAGE falls back to .phase when .phase_detail is absent"
+    assert_contains "$RUN_OUT" "state-token" "STAGE falls back to .state when .phase_detail and .phase are absent"
+    # golem-3 has no Stage source at all → its STAGE cell is the "—" sentinel. Its
+    # STATE is also "—" (no .state), so assert the golem-3 row carries a "—" cell.
+    assert_true "/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-3 ' | /usr/bin/grep -q '—'" \
+        "STAGE degrades to — when no .phase_detail/.phase/.state is present"
+}
+
+# A container (Mode-3) golem is EXEMPT from the ⚠ gone marker even when a sibling
+# golem-* session is visible (a container has no host tmux session by design, so
+# session_gone would otherwise false-positive). The `_ecr_tstate != container`
+# guard must keep the container row on its plain state.
+test_status_checkpoint_container_never_gone() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # A container golem (no host tmux session ever) with a real state.
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false }
+EOF
+    # A tmux stub showing a SIBLING golem-42 alive (proving the server is
+    # reachable) — the condition under which session_gone would fire for a row
+    # with no matching session. The container must be exempt regardless.
+    /usr/bin/mkdir -p "$sb/bin"
+    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    ls) printf 'golem-42: 1 windows\n' ;;
+esac
+exit 0
+EOF
+    /usr/bin/chmod +x "$sb/bin/tmux"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "--checkpoint with a container golem + sibling session exits 0"
+    assert_contains "$RUN_OUT" "agent01" "the container golem renders its row"
+    # The container row keeps its plain state and is never flagged gone. Assert on
+    # the agent01 row(s) EXACTLY: zero of them may carry ⚠ gone (a `grep | grep -qv`
+    # would pass as soon as ONE line lacked the marker — vacuous with a footer line).
+    assert_true "[ \"\$(/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'agent01' | /usr/bin/grep -c '⚠ gone')\" -eq 0 ]" \
+        "no agent01 row is flagged ⚠ gone (container is exempt from session_gone)"
+}
+
+# An issue-less cache row (no .issue → the literal "?") must NOT be spuriously
+# flagged ⚠ gone: session_gone's `*" golem-? "*` glob would treat "?" as a
+# single-char wildcard and match any live golem-N. The `"$_ecr_issue" != "?"`
+# guard keeps the row on its plain state. Regression fixture for the #414 fix.
+test_status_checkpoint_issueless_row_not_gone() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # A cache row with NO issue field → .issue falls back to "?".
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-mystery.json" <<'EOF'
+{ "golem": "golem-mystery", "branch": "feature/mystery",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    # A tmux stub with a live sibling golem-42 — the exact condition under which
+    # the "?"-as-wildcard glob would false-match and flag the issue-less row gone.
+    /usr/bin/mkdir -p "$sb/bin"
+    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    ls) printf 'golem-42: 1 windows\n' ;;
+esac
+exit 0
+EOF
+    /usr/bin/chmod +x "$sb/bin/tmux"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "--checkpoint with an issue-less row + sibling session exits 0"
+    assert_contains "$RUN_OUT" "golem-mystery" "the issue-less golem still renders its row"
+    # Zero golem-mystery rows may carry ⚠ gone — an exact count, not a `grep -qv`
+    # that would pass on the first non-matching line (vacuous with a footer line).
+    assert_true "[ \"\$(/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-mystery' | /usr/bin/grep -c '⚠ gone')\" -eq 0 ]" \
+        "no issue-less (?) row is spuriously flagged ⚠ gone by the wildcard glob"
+}
+
+# A malformed tracks.json listing the SAME issue under two lanes must render the
+# golem row (and count its tokens) exactly ONCE — the `claimed` set dedups it
+# across the lane passes. Without the guard the row (and its token total) would
+# double. Regression fixture for the #414 double-lane-claim dedup.
+test_status_checkpoint_double_lane_claim_dedup() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb count
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "working", "phase": "implement", "blocking": false }
+EOF
+    # Issue 42 listed under BOTH lane 0 and lane 1 (malformed) — the dedup guard
+    # must emit the row once, under the FIRST lane that claims it (L0).
+    /usr/bin/cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "issues": [42], "autonomy_level": 2 },
+              { "lane": 1, "issues": [42], "autonomy_level": 3 } ] }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "--checkpoint with a double-claimed issue exits 0"
+    # The golem-42 row appears exactly once, not once per claiming lane.
+    count="$(/usr/bin/printf '%s\n' "$RUN_OUT" | /usr/bin/grep -c 'golem-42')"
+    assert_true "[ '$count' -eq 1 ]" "golem-42 renders exactly once despite two lane claims (got $count)"
+    # Its 150 tokens are counted once, not doubled to 300 in the batch total.
+    assert_contains "$RUN_OUT" "tokens=150" "the double-claimed golem's tokens are summed once, not doubled"
+    assert_not_contains "$RUN_OUT" "tokens=300" "no double-count of the twice-claimed golem's tokens"
+}
+
+# extract_write_status_py — pull the write_status() Python heredoc body out of
+# provision-protocol.md (the Mode-3 container entrypoint lives as a bash code
+# block in the doc, not a bundled script). Anchors on the exact write_status
+# `command python3 - "$STATUS_FILE" <<'PY'` line — NOT the sibling status_poller
+# block, which uses a different pre-heredoc line — and strips the 3-space
+# markdown-fence indent so the body runs as standalone Python. Mirrors
+# validate-template-sync.sh's inline-extraction approach.
+extract_write_status_py() {
+    /usr/bin/awk '
+        /LA="\$\(now\)" command python3 - "\$STATUS_FILE" <<'"'"'PY'"'"'/ { grab = 1; next }
+        grab && /^   PY$/ { exit }
+        grab { sub(/^   /, ""); print }
+    ' "$PROVISION_PROTOCOL"
+}
+
+# The WRITE side of the #415 fix: the extracted write_status() Python stamps
+# `started` on the FIRST call and PRESERVES it (idempotent) on later calls — the
+# `doc.get("started") or ...` behavior, distinct from a re-stamp-every-write bug
+# that would perpetually reset --checkpoint ELAPSED to ~0. The checkpoint render
+# tests above only exercise the READ side (a fixture with `started` already
+# present), so this closes the write-side coverage gap the pre-PR review flagged.
+test_provision_write_status_started_idempotent() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip_test "python3 not available (write_status is a python heredoc)"
+        return 0
+    fi
+    local sb body status_file first second
+    new_sandbox sb
+    body="$(extract_write_status_py)"
+    # Guard the extraction itself: an empty body (anchor drift) must fail loudly,
+    # never pass vacuously — the exact line the fix touches must be present.
+    assert_not_empty "$body" "the write_status() Python body was extracted"
+    assert_contains "$body" 'doc["started"] = doc.get("started") or os.environ["LA"]' \
+        "the extracted body carries the idempotent started-stamp line (#415)"
+
+    status_file="$sb/.worktrees/.status/agent01.json"
+    # First call: no prior cache file → started is stamped with LA=T1.
+    AGENT_ID=agent01 ISSUE=300 STATE=working ERR="" LA="2026-01-01T00:00:00Z" \
+        python3 -c "$body" "$status_file"
+    first="$(jq -r '.started' "$status_file" 2>/dev/null)"
+    assert_true "[ '$first' = '2026-01-01T00:00:00Z' ]" \
+        "the first write stamps started with the launch time (got '$first')"
+    # Second call with a DIFFERENT LA=T2 (a later poller write): started must be
+    # PRESERVED at T1, not overwritten — the idempotency the fix guarantees.
+    AGENT_ID=agent01 ISSUE=300 STATE=pr-open ERR="" LA="2026-06-15T12:00:00Z" \
+        python3 -c "$body" "$status_file"
+    second="$(jq -r '.started' "$status_file" 2>/dev/null)"
+    assert_true "[ '$second' = '2026-01-01T00:00:00Z' ]" \
+        "a later write preserves the original started (not re-stamped to T2, got '$second')"
+    # The state DID advance (proving the second write ran, not a no-op).
+    assert_true "[ \"\$(jq -r '.state' '$status_file' 2>/dev/null)\" = 'pr-open' ]" \
+        "the second write still updated the mutable state field"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 # Every sandbox is built with `git init` + a commit, so the whole suite needs
@@ -3411,5 +3828,15 @@ run_test test_status_checkpoint_session_gone_marker "golem-status: --checkpoint 
 run_test test_status_checkpoint_stage_prefers_phase_detail "golem-status: --checkpoint STAGE prefers .phase_detail over .phase/.state (#283)"
 run_test test_status_checkpoint_ci_and_shipped_markers "golem-status: --checkpoint ⚠ CI (non-blocking) + merged→shipped tally (#283)"
 run_test test_status_checkpoint_container_and_unknown_tokens "golem-status: --checkpoint renders container n/a + transcript-less — token cells (#283)"
+run_test test_status_checkpoint_elapsed_from_started "golem-status: --checkpoint ELAPSED renders a real duration from .started, not — (#415)"
+run_test test_status_checkpoint_empty_and_no_jq_guards "golem-status: --checkpoint empty-state + jq-missing early returns exit 0 (#415)"
+run_test test_status_checkpoint_pool_header "golem-status: --checkpoint renders the pool.json header ahead of the table (#415)"
+run_test test_status_checkpoint_live_tail_row "golem-status: --checkpoint renders a (live) tail row for a cache-less session (#415)"
+run_test test_status_checkpoint_lane_boundary_padding "golem-status: --checkpoint lane membership pads exactly (issue 4 does not capture 42) (#415)"
+run_test test_status_checkpoint_derive_stage_fallbacks "golem-status: --checkpoint STAGE falls back .phase → .state → — individually (#415)"
+run_test test_status_checkpoint_container_never_gone "golem-status: --checkpoint never flags a container golem ⚠ gone (#415)"
+run_test test_status_checkpoint_issueless_row_not_gone "golem-status: --checkpoint issue-less (?) row is not wildcard-matched ⚠ gone (#415)"
+run_test test_status_checkpoint_double_lane_claim_dedup "golem-status: --checkpoint dedups a double-lane-claimed golem — one row, tokens once (#415)"
+run_test test_provision_write_status_started_idempotent "provision-agent: write_status() stamps started once and preserves it (idempotent write side of #415)"
 
 generate_report
