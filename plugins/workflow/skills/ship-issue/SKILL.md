@@ -201,9 +201,11 @@ mode, run these safety checks in order:
    acceptance criteria; advisory (an L3–L4 run records notes and proceeds).
 1. **Pre-review gates** — run `pre-review-gates.sh` over the diff; advisory by
    default, HIGH-certainty findings block Option 1 under `PRE_REVIEW_STRICT=true`.
-1. **Adversarial pre-PR review** (Option 1) — run the `workflow.js` harness
-   (`phase: "pre-pr"`); fix `blocking` findings in a `REVIEW_MAX_CYCLES`-capped
-   loop, collect `deferrable` for filing after the PR exists.
+1. **Adversarial pre-PR review** (all modes) — run the `workflow.js` harness
+   (`phase: "pre-pr"`) on the committed diff regardless of shipping mode; fix
+   `blocking` findings in a `REVIEW_MAX_CYCLES`-capped loop, collect `deferrable`
+   for filing after delivery. Option 2 runs it **before the push to main** (the
+   three-dot diff empties post-push).
 
 Each check degrades gracefully (a missing scanner/harness is skipped with a note,
 never a hard-fail) and never prompts at L3–L4. See `pre-ship-validation.md`

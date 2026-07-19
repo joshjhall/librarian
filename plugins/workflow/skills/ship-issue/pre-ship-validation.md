@@ -124,11 +124,17 @@ behavior is noted inline per check; environment variables referenced here
    to execute, skip this check with a note: "Pre-review gates skipped
    (scanner not available)." Never block shipping due to scanner errors.
 
-1. **Adversarial pre-PR review** (Option 1 only) — run a multi-dimension
-   adversarial review of the changes **before** the PR is opened, so the PR's
-   first impression is review-clean. This complements the deterministic
-   pre-review gates above with LLM reviewers (security, correctness, tests,
-   CLAUDE.md conventions, scope-drift) plus a fresh judge and gatekeeper.
+1. **Adversarial pre-PR review** (all shipping modes) — run a multi-dimension
+   adversarial review of the changes **before** they are pushed/merged, so the
+   delivered code is review-clean regardless of how it ships. This complements the
+   deterministic pre-review gates above with LLM reviewers (security, correctness,
+   tests, CLAUDE.md conventions, scope-drift) plus a fresh judge and gatekeeper.
+
+   **Runs on Options 1, 2, and 3 alike** — the review is a property of the
+   *change*, not the delivery mechanism, so a commit-only (Option 3) or
+   commit-to-main (Option 2) ship must not be a way to skip it. All three modes
+   commit before delivering, so a committed `git diff origin/main...HEAD` exists
+   for the reviewers to read in every mode (see the ordering note in step a).
 
    a. Compute the review scope from the diff against `main`:
 
@@ -141,6 +147,19 @@ behavior is noted inline per check; environment variables referenced here
    If there are no committed changes yet (work is staged but not committed),
    stage and make the implementation commit first (Step 4 Option 1 steps 1-3),
    then compute the scope — the review needs a diff to read.
+
+   **Ordering by shipping mode** — commit first, review, *then* deliver:
+
+   - **Option 1 (Branch + PR)** and **Option 3 (commit only)** — the commit is
+     local and `origin/main` does not advance, so `origin/main...HEAD` stays
+     non-empty; run the review at this point in Step 3.5, before the push (Option 1)
+     or before finishing (Option 3).
+   - **Option 2 (commit to main + push)** — commit to main first, then run this
+     review **BEFORE `git push origin main`** (Step 4 Option 2's push step). Once
+     pushed, `origin/main` fast-forwards to your commit and the three-dot
+     `origin/main...HEAD` diff **empties**, leaving the reviewers nothing to read.
+     If a blocking finding requires a fix, amend/add the commit and re-review, all
+     before the push.
 
    b. **Invoke the `Workflow` tool** with the script bundled alongside this
    skill at `~/.claude/skills/ship-issue/workflow.js`, passing:
@@ -219,9 +238,12 @@ behavior is noted inline per check; environment variables referenced here
    `REVIEW_MAX_CYCLES`. When `REVIEW_STRICT=true`, also treat MEDIUM-certainty
    findings as blocking.
 
-   d. **Collect the deferrables**: keep the `deferrable` list for filing
-   **after** the PR exists (so the filed issues can link the PR) — see Option 1
-   "File deferred review findings".
+   d. **Collect the deferrables**: keep the `deferrable` list for filing after
+   delivery. **Option 1** files them **after the PR exists** so the filed issues
+   can link the PR (see Option 1 "File deferred review findings"). **Options 2/3**
+   have no PR to link — file the deferrables after the commit lands (Option 2:
+   after the push; Option 3: after the local commit), linking the commit SHA
+   instead of a PR number.
 
    e. **Cap / budget exhaustion / wall-timeout**: `REVIEW_MAX_CYCLES` (default 3)
    caps the number of review **cycles**; `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`
@@ -239,7 +261,8 @@ behavior is noted inline per check; environment variables referenced here
    - **Interactive**: ask — **Fix remaining blocking findings now, ship anyway,
      or defer them?** (cut short the review vs. extend it by raising
      `REVIEW_MAX_CYCLES`).
-   - **Autonomous**: do NOT prompt. Proceed to open the PR, but record the
+   - **Autonomous**: do NOT prompt. Proceed to deliver (open the PR for Option 1;
+     push for Option 2; finish the local commit for Option 3), but record the
      remaining blocking findings as a STOP note for the completion summary
      (Option 1 "Autonomous completion summary" → "Review status").
 
