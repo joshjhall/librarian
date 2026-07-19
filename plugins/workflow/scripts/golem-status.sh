@@ -205,10 +205,10 @@ render_status() {
         return 0
     fi
 
-    # Pool header: size, slots in use, backlog depth, and the accepting state.
+    # Pool header: size, slots in use, backlog depth, and the queue state.
     # Defensive `// "-"` fallbacks mirror the golem-row jq style for absent fields.
     if [ -f "$pool" ]; then
-        jq -r '"Pool: size=\(.size // "-")  slots=\((.slots // []) | length)/\(.size // "-")  backlog=\(.backlog_depth // "-")  accepting=\(.accepting // "-")"' \
+        jq -r '"Pool: size=\(.size // "-")  slots=\((.slots // []) | length)/\(.size // "-")  backlog=\(.backlog_depth // "-")  queue=\(.queue // .accepting // "-")"' \
             "$pool" 2>/dev/null || command echo "Pool: (unreadable $pool)"
         command echo ""
     fi
@@ -569,7 +569,7 @@ render_checkpoint() {
 
     # Pool header (same shape as render_status).
     if [ -f "$pool" ]; then
-        jq -r '"Pool: size=\(.size // "-")  slots=\((.slots // []) | length)/\(.size // "-")  backlog=\(.backlog_depth // "-")  accepting=\(.accepting // "-")"' \
+        jq -r '"Pool: size=\(.size // "-")  slots=\((.slots // []) | length)/\(.size // "-")  backlog=\(.backlog_depth // "-")  queue=\(.queue // .accepting // "-")"' \
             "$pool" 2>/dev/null || command echo "Pool: (unreadable $pool)"
         command echo ""
     fi

@@ -604,9 +604,9 @@ still a Mode 2 / Mode 3 process with the same autonomous payload and PR exit; th
 hard constraints above are unchanged.
 
 **Refill policy** lives in `.worktrees/.status/pool.json` (`size` +
-`accepting`), authoritative for operator policy:
+`queue`), authoritative for operator policy:
 
-| `accepting`  | Refill behavior                                                        | Set by    |
+| `queue`      | Refill behavior                                                        | Set by    |
 | ------------ | --------------------------------------------------------------------- | --------- |
 | `accepting`  | A free slot pulls the next non-colliding backlog issue into a fresh worktree. | `resume`  |
 | `draining`   | Stop refills; in-flight golems finish to idle. One-way wind-down (context reset / restart / EOD). | `drain`   |
