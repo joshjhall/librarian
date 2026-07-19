@@ -1,0 +1,28 @@
+# agnix configuration — AI-assistant config linter.
+#
+# Rationale and the full ownership boundary between agnix and this repo's own
+# `check-ai-config` skill are documented in
+# plugins/review-audit/docs/adr/0001-agnix-check-ai-config-boundary.md.
+#
+# This is a STARTER stub (issue #238). The disable list is finalized in the
+# follow-up that builds the agnix→TSV normalizer and the rule→category map.
+#
+# Boundary in one line: agnix owns the mechanical frontmatter/hook SCHEMA rules;
+# check-ai-config keeps the env-tunable bloat thresholds (thresholds.yml), the
+# repo-aware checks (claude-md-drift, config-inconsistency, harness-logic), and
+# the LLM heuristic pass. So the two overlapping numeric rules are disabled here.
+
+# Target Claude Code specifically (this repo is a Claude Code plugin marketplace).
+tools = ["ClaudeCode"]
+
+# Report warnings and above; --strict in CI escalates warnings to errors.
+severity = "Warning"
+
+[rules]
+# check-ai-config owns file-size limits via thresholds.yml (CLAUDE_MD_WARN/HIGH,
+# SKILL_*, AGENT_*, DOC_* — env-overridable and tuned to librarian's file
+# taxonomy). Disable agnix's fixed-threshold equivalents so a single file never
+# draws two contradictory line-limit / token-count findings.
+#   CC-MEM-014 — CLAUDE.md exceeds line limit
+#   CC-MEM-009 — token count exceeded
+disabled_rules = ["CC-MEM-014", "CC-MEM-009"]

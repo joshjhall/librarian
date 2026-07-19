@@ -20,7 +20,9 @@ The `check-*` suite is discovered by the `checker` agent; each skill pairs a
 deterministic `patterns.sh` pre-scan with LLM analysis:
 
 - `check-ai-config` — Claude Code config files (agents, skills, CLAUDE.md, MCP,
-  hooks): structural issues, bloat, misconfigurations
+  hooks): structural issues, bloat, misconfigurations. How it coexists with the
+  external [agnix](https://github.com/agent-sh/agnix) linter is documented in
+  [`docs/adr/0001-agnix-check-ai-config-boundary.md`](docs/adr/0001-agnix-check-ai-config-boundary.md)
 - `check-code-health` — tech-debt markers, debug statements, empty error
   handlers, unused imports
 - `check-security` — hardcoded secrets, injection, XSS, insecure crypto

@@ -8,6 +8,13 @@ Validates Claude Code AI configuration artifacts for structural correctness,
 bloat, misconfigurations, and quality issues. The deterministic pre-scan
 (`patterns.sh`) handles structural checks; this skill handles nuanced analysis.
 
+**How this relates to agnix**: the external
+[agnix](https://github.com/agent-sh/agnix) linter is a complementary enrichment
+layer, not a replacement — see
+[`docs/adr/0001-agnix-check-ai-config-boundary.md`](../../docs/adr/0001-agnix-check-ai-config-boundary.md)
+for the ownership boundary (this skill is the always-present floor; agnix
+supersedes on overlap only when its binary is present).
+
 ## Categories
 
 ### agent-frontmatter (deterministic + heuristic)
