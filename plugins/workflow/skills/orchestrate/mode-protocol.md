@@ -456,6 +456,21 @@ exit (mirrors `golem-gate-watch.sh --stream*`): a transient zero-golem handoff
 window renders "No active golems" and keeps sweeping, stopping only when the
 operator/harness kills it.
 
+Add **`--checkpoint`** (#283) to render each sweep as a compact **per-track
+status+burn table** instead of the verbose multi-section snapshot: one row per
+golem grouped by lane (joined from `tracks.json`), a `TOKENS(Δ)` burn column, and
+a batch-totals footer (`Σtokens`, per-sweep `Δ`, aggregate `rate/hr`,
+`live/blocked/shipped`). Its purpose is **velocity intuition** — the operator
+watches burn accumulate and rate settle across sweeps, and spots a stalled lane
+(`Δ` flat / `⚠` in `STATE`) at a glance — without asking "status?" each interval.
+The rate is a deliberately *crude* short-window read (`Σ Δ ÷ interval`), honest
+only once a prior sweep exists, so the first frame and any one-shot render show
+`rate=—` rather than inventing a number. It reuses the frozen-top-level-token
+sampling below (the same per-sweep scrape), so `--checkpoint` **replaces** the
+verbose render for that sweep rather than stacking on it — two scrapes in one
+sweep would reset the Δ baseline. Burn is Mode-2 (worktree) only; a Mode-3
+container golem shows `n/a` until host-side token propagation lands (#390).
+
 ### Slow-review takeover contract
 
 A golem's `/ship-issue` pre-PR `next-issue-review` sometimes runs long. The

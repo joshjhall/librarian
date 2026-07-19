@@ -244,7 +244,12 @@ dispatch is sequential and cheap — **not** workflow-driven.
 1. **Label + cache**: ensure each dispatched issue is `status/in-progress`
    (the autonomous `/next-issue` does this) and write the initial golem cache
    entry to `.worktrees/.status/{golem}.json` (schema:
-   `schemas/golem-status.schema.json`).
+   `schemas/golem-status.schema.json`). **Stamp `started`** (ISO-8601 Z, e.g.
+   `date -u +%FT%TZ`) in that initial write — it is the ELAPSED source for the
+   status-checkpoint table (`golem-status.sh --checkpoint`, #283); a worktree
+   (Mode 2) golem has no other writer for it, so an omitted `started` renders
+   ELAPSED as `—`. The Mode-3 container entrypoint already sets it in its
+   `write_status` (`provision-agent/provision-protocol.md`).
 
 1. **Report** the dispatch table: golem → issue → branch → mode → access
    command (for container golems, the `docker exec … tmux attach` line).
@@ -271,8 +276,10 @@ refill.
 
 **Companion file**: `monitor-protocol.md` (load before this phase) carries the
 full monitor protocol — the authoritative PR + issue-label status sweep and live
-table, the CI-failure triage mirroring, the level-scaled sweep cadence,
-supervised pre-PR live golems, the plan-gated early-block, the never-kill
+table, the CI-failure triage mirroring, the level-scaled sweep cadence and its
+compact **per-track status+burn checkpoint** (`golem-status.sh --checkpoint`,
+issue #283), supervised pre-PR live golems, the plan-gated early-block, the
+never-kill
 slow-review posture, the proactive push gate-watch (feed + pane channels), and
 **brokered gate resolution** (§ *Resolve a brokered gate centrally*): relaying an
 escalation/dead-end decision back into a golem via `golem-inbox.sh` from this
