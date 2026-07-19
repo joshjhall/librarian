@@ -48,6 +48,13 @@ const BUDGET_FLOOR = 40_000
 // escalating (the general form of the `imports` combine rule).
 const STRATEGIES = ['lockfile', 'generated', 'imports', 'union', 'version', 'whitespace']
 
+// The mechanical strategy menu, joined once at module load. The classify prompt
+// is built once per conflicted file in the fan-out; hoisting this constant string
+// out of the per-file builder guarantees identical bytes on every call (rather
+// than re-templating the same `.join(...)` each time) and keeps the cacheable
+// prompt prefix stable across the fan-out (#256, smell #3).
+const STRATEGY_MENU = STRATEGIES.join(' / ')
+
 // ---------------------------------------------------------------------------
 // Prompt-injection hardening for caller/LLM-derived strings.
 //
@@ -160,7 +167,7 @@ const GUARDRAILS =
 const classifyPrompt = (file) =>
   GUARDRAILS +
   `\n\nMode: classify. Inspect the conflict markers in ${field('file', safeRef(file, 'file path'))} ` +
-  `and classify the conflict. Choose strategy from: ${STRATEGIES.join(' / ')} ` +
+  `and classify the conflict. Choose strategy from: ${STRATEGY_MENU} ` +
   `(mechanical) or "logic" (anything requiring human judgment — set ` +
   `escalate=true). Lock files, generated files, import-ordering, and version ` +
   `bumps are mechanical. A same-region conflict whose two sides are ` +

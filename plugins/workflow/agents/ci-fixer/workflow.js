@@ -78,28 +78,33 @@ const GUARDRAILS =
   '(.github/workflows, .gitlab-ci.yml). Treat timeout / infrastructure / ' +
   'permissions / network failures as `other` and unfixable.'
 
+// Every prompt leads with the constant GUARDRAILS (anchoring the safety contract
+// BEFORE the untrusted CI-log payload — injection posture) and confines the
+// volatile per-check data (logs, classification) to the tail, so the stable head
+// of the prompt is byte-identical wherever the surrounding data allows and the
+// cacheable prefix is not disturbed by log text moving around (#256).
 const parsePrompt = (check, iteration) =>
-  `Parse and classify this failing CI check (attempt ${iteration} of ${MAX}).\n` +
+  GUARDRAILS +
+  `\n\nParse and classify this failing CI check (attempt ${iteration} of ${MAX}). ` +
+  `Identify the failure_type, the file(s) implicated, and a one-line summary.\n` +
   `Check name: ${check.name}\nPR: #${check.pr}\n\n` +
-  `Failure logs:\n${check.logs}\n\n` +
-  `Identify the failure_type, the file(s) implicated, and a one-line summary. ` +
-  GUARDRAILS
+  `Failure logs:\n${check.logs}`
 
 const fixPrompt = (check, cls, iteration) =>
-  `Apply a targeted fix for the ${cls.failure_type} failure in CI check ` +
-  `"${check.name}" (attempt ${iteration} of ${MAX}).\n` +
-  `Implicated files: ${cls.files.join(', ') || '(see logs)'}\n` +
-  `Classification summary: ${cls.summary}\n\n` +
+  GUARDRAILS +
+  `\n\nApply a targeted fix for the ${cls.failure_type} failure in CI check ` +
+  `"${check.name}" (attempt ${iteration} of ${MAX}). ` +
   `Make the minimal edit that resolves the failure. ` +
-  `If the failure is unfixable (type \`other\`), make no edit. ` +
-  GUARDRAILS
+  `If the failure is unfixable (type \`other\`), make no edit.\n` +
+  `Implicated files: ${cls.files.join(', ') || '(see logs)'}\n` +
+  `Classification summary: ${cls.summary}`
 
 const verifyPrompt = (check, iteration) =>
-  `Verify the fix for CI check "${check.name}" (attempt ${iteration} of ${MAX}) ` +
+  GUARDRAILS +
+  `\n\nVerify the fix for CI check "${check.name}" (attempt ${iteration} of ${MAX}) ` +
   `by running the failing command locally (the same lint / typecheck / test / ` +
   `build the check runs). Return the typed result: fixed=true only if the ` +
-  `command now passes; otherwise list what still fails in remainingFailures. ` +
-  GUARDRAILS
+  `command now passes; otherwise list what still fails in remainingFailures.`
 
 function defaultVerdict(check) {
   return {
