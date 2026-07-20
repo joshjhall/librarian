@@ -1,5 +1,5 @@
 {
-  "description": "Records each golem's permission-gate / idle transitions to the central status feed so the orchestrator can surface BLOCKED golems TTY-free.",
+  "description": "Records each golem's permission-gate / idle transitions to the central status feed (Notification), and blocks destructive shell in read-only review/analysis subagents via a PreToolUse Bash guard (#448).",
   "hooks": {
     "Notification": [
       {
@@ -7,6 +7,17 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/bash-guard.sh\""
           }
         ]
       }
