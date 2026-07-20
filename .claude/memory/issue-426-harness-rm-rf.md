@@ -1,11 +1,11 @@
 ---
 name: issue-426-harness-rm-rf
-description: "#426 CRITICAL/large — read-only reviewer subagents can run destructive shell (rm -rf) against the LIVE tree; SHIPPED belt+origin-lock (interactive, 2026-07-20): 4 READONLY constants strengthened + code-reviewer Bash scope-locked + lint-readonly-harness.sh gate; deferred rest to #448"
+description: "#426 CRITICAL/large — read-only reviewer subagents could run destructive shell (rm -rf) against the LIVE tree; FULLY CLOSED (2026-07-20): belt+origin-lock PR #449 + PreToolUse bash-guard hook PR #450 (closed #448). Both #426 and #448 CLOSED."
 metadata: 
   node_type: memory
   type: project
   originSessionId: de55e24b-986b-4be4-9eac-43fc9c6a1593
-  modified: 2026-07-20T20:51:12.990Z
+  modified: 2026-07-20T23:17:22.176Z
 ---
 
 **#426 (severity/critical, effort/large, review-audit+workflow+security, type/bug)** —
@@ -73,6 +73,45 @@ Interactive with operator, scope = "belt + scope-lock code-reviewer":**
   hook (the fail-loud pre-execution guard #426 item 4). NOT closing #426 until
 
   #448 or an explicit operator call — the class isn't fully closed.
+
+**#448 — PreToolUse bash-guard hook (MERGED PR #450 → main `09cd74e`, closed #448
+AND #426, 2026-07-20, interactive).** The deferred tool-level enforcement for the
+agents that resisted a simple allowlist (checker/audit-* run `bash patterns.sh`;
+default orchestrate poll agent runs gh/glab/git):
+
+- **Reusable CC hook fact (verified empirically, CC 2.1.215):** a PreToolUse hook
+  gets JSON on stdin carrying snake_case `agent_id` + `agent_type` ONLY for a
+  SUBAGENT Bash call; a main-session call has NO `agent_id`. Full schema:
+  `session_id, transcript_path, cwd, prompt_id, permission_mode, effort,
+  hook_event_name, tool_name, tool_input.command, tool_use_id` (+agent_* for
+  subagents). Deny = exit-0 + JSON
+  `{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",
+  permissionDecisionReason}}` (camelCase OUTPUT). To VERIFY the field: register a
+  probe hook in ~/.claude/settings.json PreToolUse that `cat >> capture.jsonl`,
+  trigger a subagent Bash call, inspect, then RESTORE settings. A plugin hook
+  fires SESSION-WIDE (can't scope to subagents at the matcher level) → the script
+  branches on agent_id itself.
+- **Design (operator-locked):** fail-OPEN + loud stderr on parse failure (never
+  false-block the main session's teardown rm; a permanent no-op is caught because
+  the test asserts the positive-block path). Pure-bash fallback enforces w/o jq.
+  Registered by adding a `PreToolUse`/`matcher:"Bash"` block to the EXISTING
+  `plugins/workflow/hooks/hooks.json` (no manifest edit; `Hooks (2)` after).
+  Template = golem-notify.sh but INVERTED exit contract (must be able to deny).
+- **Tokenizer reality:** a regex/glob shell tokenizer is a PRAGMATIC 2nd layer,
+  NOT a shell parser. FOUR adversarial rounds found 9 bypasses (5→2→2→1):
+  separators incl bare `&`+newline, quoted/escaped heads `"rm"`/`\rm`, `/tmp/..`
+  traversal + `*/tmp/*` substring, only-last-redirect, `-r` mis-skip, command-wide
+  mktemp var (must bind to the EXACT `d=$(mktemp -d)` varname, statement-level
+  split), compound keywords `if/then/case/while` (strip like env/sudo), git global
+  opts `git -C <dir> clean`. Fixes cross-regressed → operator called "fix common,
+  DOCUMENT exotic OOS" (indirection/xargs/eval/base64|sh/non-std-binaries). Don't
+  chase convergence on a glob tokenizer; document the tail.
+- **Gotchas hit:** typos gate blocks push on a regex-jargon abbreviation it reads
+  as a misspelling (reword the comment); conform
+  descriptionLength=72 (subject "PreToolUse Bash-guard blocks…" too long, shorten);
+  check-ai-config hook-safety flags a guard's OWN `rm`/`git reset --hard` tokens +
+  the `IFS=:` colon-parity differential tripwire ([[check-docs-staleness-ifs-colon-parity]])
+  fires on a scanned comment line ending in `:` — reword comments to dodge both.
 
 **Live-risk note:** while golems run pre-PR reviews against their worktrees, the
 
