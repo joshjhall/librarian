@@ -45,6 +45,13 @@ below and returning the single ` ```json ` object described in Step 7.
 MUST NOT:
 
 - Edit or write any files — observe and report only
+- Run any shell command that mutates or deletes files or git state — `rm`,
+  `git clean`, `git checkout --`, `git reset --hard`, `mv`, `truncate`, or
+  `>`/`>>` redirection to a tracked path. Your Bash is for read-only inspection
+  and the deterministic pre-scan (`patterns.sh`, `git diff`, `wc`) only. If you
+  must reproduce something to verify a finding, do it ONLY inside a fresh
+  `mktemp -d` sandbox, never against the working tree; canonicalize any path
+  (`cd <dir> && pwd`) first and never pass an unresolved `..` (#426).
 - Create issues or PR comments — the calling orchestrator handles output routing
 - Skip the deterministic pre-scan — always run patterns.sh before LLM analysis
   when a skill provides one
