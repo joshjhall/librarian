@@ -128,9 +128,12 @@ Authoritative status comes from **PR + issue-label state**. The
    across sweeps: `Δ = tokens since the previous sweep`, and the aggregate rate is
    `Σ Δ ÷ this sweep's interval` — so the **first** sweep after arming (and any
    one-shot `--checkpoint` with no `--watch`) prints `rate=—` rather than a
-   fabricated number. Burn is a **worktree-golem (Mode 2)** signal — a container
-   golem (Mode 3) shows `n/a` in `TOKENS(Δ)` (its transcript isn't host-readable,
-   #390). **Attention markers ride the `STATE` column** as plain text (`⚠ BLOCKED`
+   fabricated number. Per-sweep **Δ / rate** stay a **worktree-golem (Mode 2)**
+   signal (they need golem-status's own prior sample); a container golem (Mode 3)
+   POSTs its cumulative top-level count into the cache (#390), so its `TOKENS(Δ)`
+   shows the count with a `(frozen)` tag — folded into `Σtokens` but not the Δ —
+   or `n/a` until that POST lands. **Attention markers ride the `STATE` column**
+   as plain text (`⚠ BLOCKED`
    at a gate, `⚠ CI` on a failing check, `⚠ gone` when the tmux session vanished)
    — never ANSI colour, so the table stays legible in a log or pipe. **PR/CI/Review
    are cache mirrors** (golem-status is `gh`-free); the authoritative CI/review
@@ -170,11 +173,13 @@ never automatic**: a **crashed/exited process** qualifies on its own (after the
 pre-kill PR check); **otherwise** offer only once the **top-level** token counter
 has been frozen for a **45–60 min** window (sub-workflow growth doesn't count)
 **and**, in a multi-golem batch, a sibling review is advancing (cross-golem
-corroboration — inapplicable in a solo run). For a **worktree golem (Mode 2)**
-the freeze reading is mechanical — `golem-status.sh`'s `TOP-LEVEL TOKENS` section
-renders `frozen Xm` per golem each sweep (#371); a **container golem (Mode 3)**
-shows `n/a (… see #390)` and needs a manual `golem-attach.sh {N}` read until
-container usage propagation lands. Always run the pre-kill check
+corroboration — inapplicable in a solo run). The freeze reading is mechanical for
+**both modes** — `golem-status.sh`'s `TOP-LEVEL TOKENS` section renders
+`frozen Xm` per golem each sweep: a **worktree golem (Mode 2)** is scraped from
+its host transcript (#371), and a **container golem (Mode 3)** renders the same
+`frozen Xm` from the top-level usage it POSTs back into the host cache (#390)
+(only a container that has not POSTed yet shows `awaiting token push`). Always run
+the pre-kill check
 (`gh pr list --state open --head <the golem's branch>` — realization-specific:
 `feature/issue-{N}` for a worktree golem, `agent{N}` for a container golem) before
 **any** kill — if a PR exists, **skip** the takeover and merge (golem-328 PR'd in

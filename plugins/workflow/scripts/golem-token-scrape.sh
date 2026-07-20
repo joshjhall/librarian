@@ -29,8 +29,10 @@
 #
 # MODE 2 ONLY. A Mode 3 container golem runs Claude Code INSIDE its container, so
 # its transcript is not on the host — the caller (golem-status.sh) skips this
-# script for a golem with a `.container` cache field and shows a "pending" note.
-# Host-side propagation of container usage is tracked in issue #390.
+# script for a golem with a `.container` cache field. This scraper stays Mode 2
+# only: for Mode 3 the container POSTs its own top-level usage back into the host
+# cache (top_level_tokens/_at), and golem-status.sh READS those fields directly
+# to render the same frozen-counter signal — no host-side scrape (issue #390).
 #
 # Config (env-overridable; defaults match Claude Code's on-disk layout):
 #   CLAUDE_PROJECTS_DIR  Base dir holding per-project transcript dirs.
