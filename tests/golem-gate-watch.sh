@@ -183,14 +183,49 @@ _run_liveness_snapshot() {
         done >"$tmp/.worktrees/.status/feed.jsonl"
     fi
 
+    # Hermetic PATH with a fake tmux whose `ls` prints nothing, so ONLY the
+    # planted golem-7 status file seeds the sweep and a real host `golem-*` tmux
+    # session cannot leak in (#436). Without this, running the suite during
+    # active orchestration lets a live golem's pane be scraped as `working`,
+    # overriding the mtime "process up" heartbeat these tests assert on and
+    # failing the pre-push hook. Mirrors the stub in _run_liveness_snapshot_tmux;
+    # the mtime-path tests want NO session (so `has-session` fails, `capture-pane`
+    # is empty) — the sweep then falls through to the reworded mtime heartbeat.
+    local stub_bin real_bash real_git real_jq
+    stub_bin="$tmp/stub-bin"
+    /usr/bin/mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    real_git="$(command -v git)"
+    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+    # jq symlinked through when present: the gate-detection path (feed parsing)
+    # needs it, and these tests skip themselves when jq is absent. Unlike the
+    # _tmux sibling (whose tests never touch the feed), this helper's callers do.
+    real_jq="$(command -v jq || true)"
+    [ -n "$real_jq" ] && /usr/bin/ln -s "$real_jq" "$stub_bin/jq"
+    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    ls) exit 0 ;;
+    has-session) exit 1 ;;
+    capture-pane) exit 0 ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    /usr/bin/chmod +x "$stub_bin/tmux"
+
+    # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # non-interactive bash, which would undo the hermetic PATH (same guard as the
+    # jq / tmux-pane stubs).
     LIVE_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub_bin" \
                 GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
                 GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
-                bash "$GATE_WATCH" --once-liveness
+                "$real_bash" "$GATE_WATCH" --once-liveness
     ) >"$tmp/out" 2>/dev/null && LIVE_RC=0 || LIVE_RC=$?
     LIVE_OUT="$(/usr/bin/cat "$tmp/out")"
 }
