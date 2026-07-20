@@ -67,16 +67,37 @@ unset _gv
 
 rc=0
 
+# Diagnostic markers. A stage that hangs otherwise takes the whole job to the CI
+# job-level timeout (15m) with no indication of WHICH stage stalled — and GitHub
+# purges timed-out-job logs, so the culprit is unrecoverable afterward. The
+# `[>>] <stage> :: entering at HH:MM:SS` line makes the LAST such line in the live
+# log name the hung stage; `[ok] <stage> (Ns)` gives per-stage elapsed for
+# spotting a slow (not yet hung) stage before it crosses the limit.
+#
+# NB: deliberately NO per-stage `timeout` wrapper. Some stages
+# (validate-golem-watch.sh) deliver a GROUP signal (`kill -INT -<pgid>`) to
+# exercise cleanup traps; wrapping the stage in `timeout`/`setsid` perturbs the
+# process-group topology that delivery depends on and can make an escaped SIGINT
+# kill run-all itself (exit 130). Markers alone name the culprit without touching
+# signal behaviour — the robust minimal win. (A safe per-stage kill-budget is a
+# follow-up once the golem-watch group-signal path is itself made CI-robust.)
 run_stage() {
     local label="$1"
     shift
     printf '\n========================================\n'
     printf '  %s\n' "$label"
     printf '========================================\n'
-    if "$@"; then
-        printf '[ok] %s\n' "$label"
+    printf '[>>] %s :: entering at %s\n' "$label" "$(date -u +%H:%M:%S 2>/dev/null || echo '?')"
+    local _start _end _elapsed
+    _start="$(date +%s 2>/dev/null || echo 0)"
+    local _ok=0
+    if "$@"; then _ok=1; fi
+    _end="$(date +%s 2>/dev/null || echo 0)"
+    _elapsed=$((_end - _start))
+    if [ "$_ok" = "1" ]; then
+        printf '[ok] %s (%ss)\n' "$label" "$_elapsed"
     else
-        printf '[FAIL] %s\n' "$label"
+        printf '[FAIL] %s (%ss)\n' "$label" "$_elapsed"
         rc=1
     fi
 }
