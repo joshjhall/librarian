@@ -209,6 +209,14 @@ dispatch is sequential and cheap — **not** workflow-driven.
    PR. Never hand that keystroke back to the operator to paste after they have
    already approved.
 
+   **Then clear the stale gate:** immediately after the send-keys, run
+   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-resolve.sh {N}`. The send-keys approval
+   fires **no** `Notification`, so nothing supersedes the golem's `gate` feed
+   line and it would keep rendering BLOCKED for the full `GOLEM_BLOCK_TTL`
+   (~1h) — training you to ignore the BLOCKED list and risk dismissing a real
+   fresh gate (#422). `golem-resolve.sh` emits a `resolved` line so the golem
+   drops out of `golem-status.sh` / `golem-gate-watch.sh` on the next sweep.
+
    The `#29` caveat is **narrower** than "a human must physically type the key":
    what the auto-mode classifier blocks is an agent **relaying option 1 as an
    *undirected* send** — the send is denied when nothing authorizes it, but is

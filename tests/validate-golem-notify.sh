@@ -253,6 +253,38 @@ test_classifier_dead_end() {
         "dead-end" "DEAD-END: prefix"
 }
 
+# A RESOLVED:-prefixed message (synthesized by golem-resolve.sh after the
+# orchestrator's send-keys plan-approval) classifies as `resolved` — the
+# explicit clearing kind that supersedes a stale gate on the next sweep (#422).
+test_classifier_resolved() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (classifier + JSON validation need jq)"
+        return 0
+    fi
+    assert_event '{"message":"RESOLVED: plan gate approved via send-keys"}' \
+        "resolved" "RESOLVED: prefix → resolved (#422)"
+}
+
+# CRITICAL (#422 pre-PR review): `resolved:` is anchored to the message START, so
+# a GENUINE permission gate whose message merely CONTAINS "resolved:" mid-string
+# — ordinary command/commit text like `git commit -m '… mark resolved: …'` — must
+# stay `gate`, NOT be misclassified as `resolved`. A `resolved` misclassification
+# would drop a real pending gate from the BLOCKED set (resolved, like idle, is
+# excluded), silently hiding a human decision — the exact failure #422 prevents,
+# inverted. `unresolved:` (which contains the substring `resolved:`) is the
+# adversarial case an unanchored match would also wrongly catch. This pins the
+# prefix anchor: an unanchored `*"resolved:"*` regresses both assertions.
+test_classifier_resolved_midmessage_stays_gate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (classifier + JSON validation need jq)"
+        return 0
+    fi
+    assert_event '{"message":"Claude needs your permission to run: git commit -m \"fix: mark issue as resolved: closes #99\""}' \
+        "gate" "a real gate with mid-message 'resolved:' stays gate, not masked (#422)"
+    assert_event '{"message":"Claude needs permission: merge conflicts unresolved: check file.py"}' \
+        "gate" "'unresolved:' substring does not mask a real gate (#422)"
+}
+
 test_classifier_gate_default() {
     if ! command -v jq >/dev/null 2>&1; then
         skip_test "jq not available (classifier + JSON validation need jq)"
@@ -493,6 +525,8 @@ run_test test_classifier_idle "classifier: waiting-for-input → idle"
 run_test test_classifier_idle_no_your "classifier: waiting-for-input (no \"your\") → idle arm 2"
 run_test test_classifier_escalation "classifier: ESCALATION: → escalation"
 run_test test_classifier_dead_end "classifier: DEAD-END: → dead-end"
+run_test test_classifier_resolved "classifier: RESOLVED: → resolved (#422)"
+run_test test_classifier_resolved_midmessage_stays_gate "classifier: mid-message 'resolved:'/'unresolved:' stays gate, not masked (#422)"
 run_test test_classifier_gate_default "classifier: unrecognized message → gate default"
 run_test test_classifier_askuserquestion_stays_gate "classifier: AskUserQuestion permission message → gate default (#321)"
 run_test test_classifier_dead_end_beats_escalation "classifier: dead-end wins over escalation"

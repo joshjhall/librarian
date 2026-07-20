@@ -106,6 +106,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `golem-attach.sh <N>` | Attach to issue N's golem (worktree tmux or container) |
 | `golem-watch.sh` | Stream proactive gate notifications until Ctrl-C |
 | `golem-gate-watch.sh` | Gate-detection engine shared by status + watch |
+| `golem-resolve.sh <N>` | Emit a `resolved` feed line to clear a golem's send-keys-resolved plan gate from the BLOCKED list on the next sweep (#422) |
 | `golem-token-scrape.sh <worktree>` | Scrape a Mode-2 golem's top-level token count from its newest transcript (deduped by `message.id`), feeding `golem-status.sh`'s frozen-counter signal (#371) |
 | `seed-worktree-trust.sh` | Seed Claude Code workspace trust for a worktree |
 | `recover-journal-partials.sh <journal>` | Recover finding-shaped partials from a `TaskStop`-ped review harness's `journal.jsonl` (#224) |

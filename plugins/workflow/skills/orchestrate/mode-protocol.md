@@ -171,8 +171,17 @@ authorized the gate. The human's role is the **decision**, not the physical
 keypress; do not hand the keystroke back to the operator to paste.
 
 Worked example: `AskUserQuestion "approve plan for #{N}?"` → operator approves →
-orchestrator runs `tmux send-keys -t golem-{N} 1 Enter` → verify the golem left
-plan mode (`⏵⏵ auto mode on`, branch name in the status bar).
+orchestrator runs `tmux send-keys -t golem-{N} 1 Enter` → run
+`${CLAUDE_PLUGIN_ROOT}/scripts/golem-resolve.sh {N}` to clear the now-stale gate
+from the BLOCKED list → verify the golem left plan mode (`⏵⏵ auto mode on`,
+branch name in the status bar).
+
+The `golem-resolve.sh` step is not optional bookkeeping: the send-keys approval
+fires no `Notification`, so without it the golem's `gate` feed line is never
+superseded and `golem-status.sh` renders it BLOCKED for the whole
+`GOLEM_BLOCK_TTL` window even though the golem is implementing autonomously
+(#422). It emits a `resolved` feed line that supersedes the stale gate on the
+next sweep.
 
 **Fallback:** if the directed send is still classifier-blocked, attach the real
 TTY (`${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`) and press option 1

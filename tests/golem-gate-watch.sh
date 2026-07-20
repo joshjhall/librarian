@@ -361,6 +361,33 @@ test_escalation_surfaces_labelled() {
     assert_not_contains "$SNAP_OUT" "golem-idle" "An idle in the same feed is still excluded"
 }
 
+# Resolve-then-sweep (#422): the compliant plan-approval broker resolves a plan
+# gate with `tmux send-keys 1 Enter`, which fires no Notification — so without an
+# explicit clearing line the golem's `gate` stays the most-recent feed line and
+# renders BLOCKED for the whole TTL. golem-resolve.sh closes this by emitting a
+# `resolved` line; like `idle`, `resolved` is NOT in the BLOCKED set, so once it
+# is the golem's most-recent line `group_by | map(.[-1])` drops the golem from
+# the snapshot. This pins acceptance criterion 3: gate followed by a later
+# `resolved` for the same golem ⇒ not BLOCKED, while a still-gated golem in the
+# same feed still surfaces (so the clearing is targeted, not a blanket drop).
+test_resolved_supersedes_gate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed_snapshot no-ops without jq)"
+        return 0
+    fi
+
+    _run_once_snapshot 999999999999 \
+        '{"golem":"golem-5","event":"gate","message":"plan gate","ts":"2026-06-27T10:00:00Z"}' \
+        '{"golem":"golem-5","event":"resolved","message":"RESOLVED: plan gate approved via send-keys","ts":"2026-06-27T10:01:00Z"}' \
+        '{"golem":"golem-6","event":"gate","message":"push gate","ts":"2026-06-27T10:00:00Z"}'
+
+    assert_equals "0" "$SNAP_RC" "Snapshot exits 0 with a resolved line"
+    assert_not_contains "$SNAP_OUT" "golem-5" \
+        "A gate superseded by a later resolved line drops out of BLOCKED (#422)"
+    assert_contains "$SNAP_OUT" "golem-6" \
+        "A still-gated golem in the same feed still surfaces (resolve is targeted)"
+}
+
 # Orphan sentinel (#323): golem-notify.sh stamps a feed line `golem-?` when the
 # Notification fires from a session with no GOLEM_ID that is not in a worktree
 # root. No real golem carries that id, so no future `idle` ever supersedes it and
@@ -854,6 +881,7 @@ run_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not 
 run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
 run_test test_escalation_surfaces_labelled "Escalation surfaces in BLOCKED, labelled distinctly; idle excluded"
+run_test test_resolved_supersedes_gate "Resolved line supersedes a stale gate; still-gated golem surfaces (#422)"
 run_test test_golem_question_sentinel_excluded "Orphan golem-? sentinel is filtered while a real gate still surfaces (#323)"
 run_test test_jq_absent_is_silent_noop "jq absent from PATH: --once is a silent no-op despite a fresh gate"
 run_test test_liveness_fresh_is_alive "Liveness: fresh-activity golem reports alive (process up), not 'advancing'"
