@@ -66,15 +66,27 @@ default `~/.claude/settings.json` (see
 [joshjhall/containers#682](https://github.com/joshjhall/containers/issues/682)),
 so this manual step is only for host / bare-Linux installs.
 
-## Skills (9)
+## Skills (10)
 
-- `file-issue` — structured GitHub/GitLab issue creation with auto-labeling
-- `next-issue` / `ship-issue` — issue-driven development + delivery
-- `orchestrate` — master orchestrator for PR-per-golem parallel work
+**User-directed — the entry points a human invokes:**
+
+- `file-issue` — structured GitHub/GitLab issue creation with auto-labeling; the
+  front door to the issue-driven pipeline
+- `golem` — run **one** issue end-to-end solo in the current session: an isolated
+  worktree, the full `next-issue` → `ship-issue` pipeline, and the adversarial
+  pre-PR review — no orchestrator, `tmux`, or containers (#410)
+- `orchestrate` — master orchestrator for **2+** issues in parallel: PR-per-golem
+  dispatch, status monitoring, cross-PR rebase, and a one-approval integration
+  train
+
+**Supporting / automatic — driven by the entry points or as sub-steps:**
+
+- `next-issue` / `ship-issue` — the issue-driven develop + deliver pipeline that
+  `golem` and `orchestrate` drive (usable standalone too)
 - `provision-agent` — provision headless agent containers (assumes a
   devcontainer-based setup; see its `SKILL.md`)
 - `rebase-generated` / `rebase-imports` / `rebase-lockfile` / `rebase-version`
-  — targeted merge-conflict resolvers
+  — targeted merge-conflict resolvers dispatched during integration
 
 ## Agents (3)
 
