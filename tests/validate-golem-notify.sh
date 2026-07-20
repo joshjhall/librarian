@@ -39,6 +39,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NOTIFY="$REPO_ROOT/plugins/workflow/hooks/golem-notify.sh"
 
+# config.sh is the SINGLE SOURCE the hook's inlined GOLEM_WORKTREE_DIR /
+# GOLEM_STATUS_DIR default chain is copied from (deliberately not sourced — see
+# the hook header). The drift guard below pins the two together (#424).
+CONFIG_SH="$REPO_ROOT/plugins/workflow/scripts/config.sh"
+
 # Resolve the real bash once so the no-jq case (which strips PATH) still finds an
 # interpreter.
 REAL_BASH="$(command -v bash)"
@@ -192,6 +197,29 @@ run_notify_status_dir() {
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                 "${GOLEM_SCRUB[@]/#/--unset=}" \
                 HOME="$dir" GOLEM_ID="$gid" GOLEM_STATUS_DIR="$override" \
+                "$REAL_BASH" "$NOTIFY"
+    ) >/dev/null 2>&1 || NOTIFY_RC=$?
+    NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+}
+
+# run_notify_worktree_dir <sandbox> <payload> <golem_id> <worktree_override>
+# Like run_notify_status_dir, but exports ONLY GOLEM_WORKTREE_DIR (leaving
+# GOLEM_STATUS_DIR unset after the GOLEM_SCRUB) so the hook's SECOND `:=` composes
+# the status dir from the worktree dir: `${GOLEM_WORKTREE_DIR}/.status`. Reads the
+# feed back at the COMPOSED path <sandbox>/<worktree_override>/.status/feed.jsonl,
+# exercising the branch neither the both-unset default nor the
+# GOLEM_STATUS_DIR-set-directly override reaches (#424).
+run_notify_worktree_dir() {
+    local dir="$1" payload="$2" gid="$3" wt="$4"
+    local feed="$dir/$wt/.status/feed.jsonl"
+    /usr/bin/rm -f "$feed"
+    NOTIFY_RC=0
+    (
+        cd "$dir" &&
+            /usr/bin/printf '%s' "$payload" |
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                "${GOLEM_SCRUB[@]/#/--unset=}" \
+                HOME="$dir" GOLEM_ID="$gid" GOLEM_WORKTREE_DIR="$wt" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
     NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
@@ -418,6 +446,72 @@ test_status_dir_default_unchanged() {
         "GOLEM_STATUS_DIR unset still lands at .worktrees/.status (unchanged)"
 }
 
+# The COMPOSED-default branch: GOLEM_WORKTREE_DIR overridden while GOLEM_STATUS_DIR
+# stays unset, so the hook's second `:=` expands `${GOLEM_WORKTREE_DIR}/.status`.
+# Neither the both-unset default (test_status_dir_default_unchanged) nor the
+# GOLEM_STATUS_DIR-set-directly override (test_status_dir_override_honored)
+# exercises this composition. A regression that hardcoded `.status` under the repo
+# root, or reordered the two `:=` lines, would pass the whole rest of the suite
+# but fail here — the feed would NOT land at <override>/.status (#424, finding 2).
+test_status_dir_composed_from_worktree_dir() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_notify_worktree_dir "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "custom-wt"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (GOLEM_WORKTREE_DIR-only override)"
+    assert_valid_json "$NOTIFY_LINE" "composed-default feed line is valid JSON"
+    assert_true "[ -f '$sb/custom-wt/.status/feed.jsonl' ]" \
+        "GOLEM_STATUS_DIR unset composes feed under <GOLEM_WORKTREE_DIR>/.status"
+    assert_true "[ ! -e '$sb/.worktrees/.status/feed.jsonl' ]" \
+        "legacy .worktrees/.status NOT written — composition moved the sink"
+}
+
+# --- Drift guard: hook inlined defaults vs config.sh (#424, finding 1) -------
+
+# The hook INLINES config.sh's GOLEM_WORKTREE_DIR / GOLEM_STATUS_DIR default chain
+# verbatim (deliberately not sourced — sourcing config.sh would pull in its
+# repo_root()/superproject probe and change the hook's own git-common-dir root
+# resolution). Nothing else pins the two together: if config.sh's defaults change
+# without a matching hook edit, emitter and readers silently split the feed path
+# again — exactly the class #405 fixed, CI green throughout. This gate converts the
+# hook's "lines 66,70" prose comment into an enforced invariant.
+#
+# It is an EQUIVALENCE assertion — the path the hook actually lands its feed at
+# (both vars unset) must equal config.sh's own resolved GOLEM_STATUS_DIR default —
+# so a drift introduced on EITHER side fails it, not just a config.sh change. The
+# config.sh defaults are read in a GOLEM_SCRUB'd subshell so this worktree's own
+# exported GOLEM_STATUS_DIR cannot leak in and mask a real divergence.
+test_defaults_match_config_sh() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local cfg_wt cfg_status
+    cfg_wt="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+        '. "$1"; printf "%s" "$GOLEM_WORKTREE_DIR"' _ "$CONFIG_SH" 2>/dev/null || true)"
+    cfg_status="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+        '. "$1"; printf "%s" "$GOLEM_STATUS_DIR"' _ "$CONFIG_SH" 2>/dev/null || true)"
+    assert_equals ".worktrees" "$cfg_wt" \
+        "config.sh resolves GOLEM_WORKTREE_DIR default to .worktrees"
+    assert_equals ".worktrees/.status" "$cfg_status" \
+        "config.sh resolves GOLEM_STATUS_DIR default to .worktrees/.status"
+
+    # The hook, both vars unset, must land its feed at exactly config.sh's
+    # resolved GOLEM_STATUS_DIR default (relative to the repo root).
+    local sb
+    new_sandbox sb
+    run_notify "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' "golem-1"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (drift-guard default path)"
+    assert_true "[ -f '$sb/$cfg_status/feed.jsonl' ]" \
+        "hook feed lands at config.sh's resolved GOLEM_STATUS_DIR default — no drift"
+}
+
 # --- Golem-id derivation fallback (branches 2 & 3) --------------------------
 
 # With GOLEM_ID unset, the hook derives the golem id from the worktree-root
@@ -534,6 +628,8 @@ run_test test_no_jq_escaper_emits_valid_json "no-jq escaper: quote+backslash GOL
 run_test test_no_jq_still_writes_gate_line "no-jq: still writes a valid gate feed line, exits 0"
 run_test test_status_dir_override_honored "status-dir: GOLEM_STATUS_DIR override moves the feed path (#405)"
 run_test test_status_dir_default_unchanged "status-dir: GOLEM_STATUS_DIR unset still lands at .worktrees/.status (#405)"
+run_test test_status_dir_composed_from_worktree_dir "status-dir: GOLEM_WORKTREE_DIR-only override composes <dir>/.status (#424)"
+run_test test_defaults_match_config_sh "drift-guard: hook inlined defaults match config.sh (#424)"
 run_test test_golemid_issue_basename "golem-id: issue-N basename → golem-N"
 run_test test_golemid_golem_passthrough "golem-id: golem-* basename passes through"
 run_test test_golemid_placeholder "golem-id: unmatched basename → golem-? placeholder"
