@@ -338,27 +338,51 @@ test_agent_model_values() {
     done < <(list_agent_files)
 }
 
+# Report the invalid tokens in a comma-separated agent `tools:` value, one per
+# line (empty output = all valid). A scoped grant like `Bash(git diff:*)` (a
+# per-command Bash allowlist — see code-reviewer.md, #426) validates by its base
+# tool name: a trailing `(...)` scope suffix is stripped before the membership
+# check, so `Bash(git diff:*)` is valid but `Frob(x:*)` is not.
+invalid_tools_in_line() {
+    local tools_val="$1"
+    local tool base
+    while IFS=',' read -ra TOOLS_ARRAY; do
+        for tool in "${TOOLS_ARRAY[@]}"; do
+            tool="$(printf '%s' "$tool" | command sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            [ -z "$tool" ] && continue
+            base="${tool%%(*}"
+            is_valid_value "$base" "$VALID_TOOLS" || printf '%s\n' "$tool"
+        done
+    done <<<"$tools_val"
+}
+
 # Agent tools values are from the valid set.
 test_agent_tool_values() {
     local agent_file
     while IFS= read -r agent_file; do
         [ -n "$agent_file" ] || continue
-        local agent_name tools_val
+        local agent_name tools_val invalid
         agent_name="$(/usr/bin/basename "$agent_file" .md)"
         tools_val="$(get_frontmatter_field "$agent_file" "tools")"
         [ -z "$tools_val" ] && continue
 
-        local tool
-        while IFS=',' read -ra TOOLS_ARRAY; do
-            for tool in "${TOOLS_ARRAY[@]}"; do
-                tool="$(printf '%s' "$tool" | command sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-                [ -z "$tool" ] && continue
-                if ! is_valid_value "$tool" "$VALID_TOOLS"; then
-                    assert_true false "Agent $agent_name: invalid tool '$tool' (expected: $VALID_TOOLS)"
-                fi
-            done
-        done <<<"$tools_val"
+        invalid="$(invalid_tools_in_line "$tools_val")"
+        assert_equals "" "$invalid" \
+            "Agent $agent_name: invalid tool(s) '$(printf '%s' "$invalid" | command tr '\n' ' ')' (expected base names from: $VALID_TOOLS)"
     done < <(list_agent_files)
+}
+
+# The tool-value guard FIRES on invalid base names and PASSES a valid scoped
+# Bash allowlist — proving the `(...)` scope strip (#426) narrows the base name,
+# not the whole check.
+test_agent_tool_values_guard() {
+    local scoped invalid
+    scoped="Read, Grep, Bash(git diff:*), Bash(wc:*)"
+    assert_equals "" "$(invalid_tools_in_line "$scoped")" \
+        "A read-only scoped-Bash allowlist must validate (base names are valid)"
+    invalid="$(invalid_tools_in_line "Read, Frob(x:*), Bash")"
+    assert_contains "$invalid" "Frob(x:*)" \
+        "An invalid base name (Frob) must still be flagged even when scoped"
 }
 
 # --- Skill Tests ------------------------------------------------------------
@@ -697,6 +721,7 @@ run_test test_agent_files_exist "Every agent has correctly named .md file"
 run_test test_agent_frontmatter_fields "Every agent has required frontmatter fields"
 run_test test_agent_model_values "Agent model values are valid (fable/opus/sonnet/haiku/inherit)"
 run_test test_agent_tool_values "Agent tool values are from valid set"
+run_test test_agent_tool_values_guard "Tool-value guard fires on invalid base, passes scoped Bash"
 run_test test_skill_files_exist "Every skill has SKILL.md"
 run_test test_skill_frontmatter "Every skill has description in frontmatter"
 run_test test_skill_metadata_name_match "Skill metadata.yml name matches directory"

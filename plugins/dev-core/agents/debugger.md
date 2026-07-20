@@ -61,6 +61,11 @@ MUST NOT:
 - Skip root cause analysis — don't apply band-aid fixes
 - Delete or disable tests to make them pass
 - Introduce new dependencies to work around bugs
+- Run a destructive command (`rm`, `git clean`, `git checkout --`,
+  `git reset --hard`, `> file`) with an un-canonicalized path — always
+  `cd <dir> && pwd` to resolve it first, and never pass an unresolved `..`. A
+  throwaway reproduction that needs to create/delete files belongs in a fresh
+  `mktemp -d` sandbox, not the working tree (#426).
 
 ## Tool Rationale
 

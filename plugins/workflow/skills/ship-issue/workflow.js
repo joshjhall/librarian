@@ -373,7 +373,13 @@ const CLASSIFY_SCHEMA = {
 }
 
 const READONLY =
-  'This is a read-only review: do NOT edit, write, commit, branch, or push. ' +
+  'This is a read-only review: do NOT edit, write, commit, branch, or push — ' +
+  'and do NOT run any shell command that mutates or deletes files or git state ' +
+  '(`rm`, `git clean`, `git checkout --`, `git reset --hard`, `mv`, `truncate`, ' +
+  '`>`/`>>` redirection to a tracked path). If you must reproduce something, do ' +
+  'it ONLY inside a fresh `mktemp -d` sandbox, never against the working tree. ' +
+  'Canonicalize any path (`cd <dir> && pwd`) before a destructive op; never pass ' +
+  'an unresolved `..`. ' +
   'Run at the code-reviewer agent model tier (sonnet).'
 
 // `sanitize` and `dataBlock` — the prompt-injection controls — are defined near

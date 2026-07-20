@@ -389,7 +389,13 @@ const ARTIFACT_WRITER_SCHEMA = {
 
 const READONLY =
   'This is a read-only checker pass: do NOT edit, write, commit, branch, push, ' +
-  'or create issues/comments. Emit your result via StructuredOutput per the ' +
+  'or create issues/comments — and do NOT run any shell command that mutates or ' +
+  'deletes files or git state (`rm`, `git clean`, `git checkout --`, ' +
+  '`git reset --hard`, `mv`, `truncate`, `>`/`>>` redirection to a tracked ' +
+  'path). If you must reproduce something, do it ONLY inside a fresh `mktemp -d` ' +
+  'sandbox, never against the working tree. Canonicalize any path ' +
+  '(`cd <dir> && pwd`) before a destructive op; never pass an unresolved `..`. ' +
+  'Emit your result via StructuredOutput per the ' +
   'provided schema (not a ```json fence).'
 
 // Neutralize prompt-injection vectors in any value interpolated into a prompt.

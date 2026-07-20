@@ -23,6 +23,7 @@
 #  10. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
 #  11. Action pin format (tests/lint-action-pins.sh)
 #  11b. Shell portability / bash-3.2 clean (tests/lint-shell-portability.sh)
+#  11b2. READONLY harness wording (tests/lint-readonly-harness.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
 #  11c2. Pre-scan bash<->python differential (tests/validate-prescan-differential.sh)
 #  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
@@ -130,6 +131,7 @@ run_stage "dev-core loop-* + drift-detect detector fixtures" bash "$SCRIPT_DIR/v
 run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
 run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"
+run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
 run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
 run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-prescan-differential.sh"
 run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner-category-parity.sh"

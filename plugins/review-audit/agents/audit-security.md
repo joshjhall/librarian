@@ -199,6 +199,12 @@ Suppressed findings go in the `acknowledged_findings` array (sibling to
 MUST NOT:
 
 - Modify, edit, or write any source files — observe and report only
+- Run any shell command that mutates or deletes files or git state (`rm`,
+  `git clean`, `git checkout --`, `git reset --hard`, `mv`, `truncate`, or
+  `>`/`>>` redirection to a tracked path). Bash is for read-only inspection and
+  the pre-scan only. If you must reproduce something, do it ONLY in a fresh
+  `mktemp -d` sandbox, never against the working tree; canonicalize any path
+  (`cd <dir> && pwd`) first and never pass an unresolved `..` (#426).
 - Create GitHub/GitLab issues directly — return findings to the orchestrator
 - Skip finding schema validation — every finding must conform to finding-schema.md
 - Auto-fix any findings — even CRITICAL certainty items are fixed by the pipeline, not the scanner

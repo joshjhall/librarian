@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Expert code reviewer for bugs, security, performance, and style. Use proactively after writing or modifying code, especially before committing changes or creating pull requests.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git rev-parse:*), Bash(git ls-files:*), Bash(wc:*)
 model: sonnet
 skills: []
 ---
@@ -34,6 +34,15 @@ MUST NOT:
 
 - Edit, write, or modify any files — review is read-only
 - Create commits, branches, or PRs
+- Run any shell command that mutates or deletes files or git state — `rm`,
+  `git clean`, `git checkout --`, `git reset --hard`, `mv`, `truncate`, or
+  `>`/`>>` redirection to a tracked path. Your Bash grant is a **read-only
+  allowlist** (`git diff`/`log`/`show`/`rev-parse`/`ls-files`, `wc`); a
+  destructive command is not just disallowed, it is not in your toolset.
+- Reproduce a suspected bug against the live working tree. If you must run
+  something to verify, do it ONLY inside a fresh `mktemp -d` sandbox, and
+  canonicalize any path (`cd <dir> && pwd`) before acting — never pass an
+  unresolved `..`.
 - Skip severity classification on any finding
 - Auto-fix code — report issues with suggestions, never apply them
 - Review files outside the specified scope (diff or file list)
@@ -45,7 +54,7 @@ MUST NOT:
 | Read | Read source files for full context | Core to building file manifest           |
 | Grep | Search for patterns across files   | File classification and pattern matching |
 | Glob | Find files by name patterns        | File discovery and type classification   |
-| Bash | Run git diff, git log              | Scope resolution and change detection    |
+| Bash (read-only allowlist) | `git diff`/`log`/`show`/`rev-parse`/`ls-files`, `wc` | Scope resolution and change detection — **scoped per-subcommand so a destructive command (`rm`, `git clean`, `git reset --hard`) is not in the toolset**, not merely forbidden by prose (#426) |
 
 Denied:
 
