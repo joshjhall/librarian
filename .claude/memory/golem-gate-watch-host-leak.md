@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 8d1bb1a6-3125-439b-8961-4e1080cb8270
+  modified: 2026-07-20T03:50:25.102Z
 ---
 
 `tests/golem-gate-watch.sh` → `test_liveness_fresh_is_alive` (assertion "The
@@ -18,12 +19,24 @@ whose real wording contains "advancing" and trips the `assert_not_contains`.
 it reproduces identically on a pristine `main`/HEAD tree (stash everything, still
 fails). CI runs in a clean environment with no ambient golems, so it passes there.
 
-**How to apply:** when `tests/run-all.sh` or the lefthook **pre-push**
-`quality-gates` hook fails ONLY on this liveness assertion, confirm it's the host
-leak (stash your diff, re-run the one test — still red = not yours), then
-`git push --no-verify`. CI is the authoritative gate. Distinct from the older
-[[flaky-golem-gate-watch-test]] (GIT_DIR leak, fixed in PR #62) — this one is
-ambient-session leakage into the liveness sweep, and there is no in-repo fix yet.
+**FIXED IN-REPO 2026-07-19 (#436 / PR #438).** The eventual retrofit (below) is
+done: `_run_liveness_snapshot` now carries the same hermetic tmux stub as its
+`_run_liveness_snapshot_tmux` sibling (fake `tmux ls` prints nothing +
+`--unset=BASH_ENV` + `bash`/`git`/`jq` symlinks on the stub PATH — jq is needed
+because these callers exercise the feed gate-detection path, unlike the `_tmux`
+sibling). VERIFIED: `tests/golem-gate-watch.sh` 26/26 AND full `run-all.sh` green
+WITH 4 live host golems, and the `fix/issue-436` push cleared the pre-push hook
+(quality-gates 80s) with golems live and NO `--no-verify`. Once PR #438 merges,
+`--no-verify` is NO LONGER the remedy — the guard runs honestly during active
+orchestration. **Do not reach for `--no-verify` on this assertion anymore; if it
+still fails post-#438, it's a REAL regression.** (Historic remedy below kept for
+context only.)
+
+**How to apply (HISTORIC, pre-#438):** when the pre-push `quality-gates` hook
+failed ONLY on this liveness assertion, you confirmed the host leak (stash diff,
+re-run the one test — still red = not yours) and `git push --no-verify`. Distinct
+from the older [[flaky-golem-gate-watch-test]] (GIT_DIR leak, fixed in PR #62) —
+this was ambient-session leakage into the liveness sweep.
 
 **Confirmed again 2026-07-16 (#240/PR #340):** same failure blocked the lefthook
 pre-push `quality-gates` hook; snapshot showed 5 ambient golems
