@@ -108,6 +108,28 @@ _gate_age_suffix() {
     command printf '  (gated %s ago)' "$(_fmt_dur "$_gas_d")"
 }
 
+# _frozen_phrase <cur> <at> — the shared "how long has the counter been frozen"
+# renderer for the verbose TOP-LEVEL TOKENS block. Given a cumulative count and
+# its "frozen since" anchor ISO, echoes either "<cur> tokens, frozen <Xm>" (when
+# the anchor parses to an epoch) or the raw "<cur> tokens, frozen since <iso>"
+# fallback (when `date` cannot read the anchor — never a bogus computed "frozen
+# 0s"; see #392). Used by BOTH the Mode-2 `frozen` arm and the Mode-3
+# externally-posted `container` arm so the two render byte-identically (#390) —
+# the #371/#392 frozen-render tests gate the shared form.
+_frozen_phrase() {
+    _fp_cur="$1"
+    _fp_at="$2"
+    _fp_epoch="$(_iso_to_epoch "$_fp_at")"
+    if [ -n "$_fp_epoch" ]; then
+        _fp_now="$(command date -u +%s)"
+        _fp_d=$((_fp_now - _fp_epoch))
+        [ "$_fp_d" -lt 0 ] && _fp_d=0
+        command echo "$_fp_cur tokens, frozen $(_fmt_dur "$_fp_d")"
+    else
+        command echo "$_fp_cur tokens, frozen since $_fp_at"
+    fi
+}
+
 # collect_cache — populate the module-level `cache` array with the per-golem
 # status JSON files in $status_dir, EXCLUDING the operator-policy singletons
 # (pool.json) and the track-composition file (tracks.json) — neither is a
@@ -136,10 +158,10 @@ collect_cache() {
 # same filesystem).
 #
 # Echoes ONE tab-separated line: "<state>\t<cur>\t<prev>\t<at>", where
-#   state ∈ container | unknown | first | advancing | reset | frozen
-#   cur   = the scraped count      (empty for container/unknown)
-#   prev  = the prior persisted count (empty when none / container/unknown)
-#   at    = the frozen-since anchor ISO (empty for container/unknown)
+#   state ∈ container | container-pending | unknown | first | advancing | reset | frozen
+#   cur   = the scraped/read count (empty for container-pending/unknown)
+#   prev  = the prior persisted count (empty when none / container*/unknown)
+#   at    = the frozen-since anchor ISO (empty for container-pending/unknown)
 # `reset` is cur < prev: the cumulative count DROPPED, which golem-token-scrape.sh
 # documents as the expected shape of a fresh session (post-/clear, a new
 # transcript file) — a new baseline, NOT negative work. Callers must render it as
@@ -147,16 +169,65 @@ collect_cache() {
 # BOTH callers — the verbose TOP-LEVEL TOKENS block and the --checkpoint
 # Tokens(Δ) column — drive their own DISPLAY off this one classification, so the
 # risky scrape+persist+classify lives in exactly ONE place and the #371 token
-# tests gate both. WORKTREE (Mode 2) only: a container golem short-circuits to
-# state=container (its transcript is not host-readable, #390). Fail-loud: a
-# missing/unparsable transcript → state=unknown, never a bogus frozen=0 that
-# could trip a false takeover.
+# tests gate both.
+#
+# MODE per state:
+#   * WORKTREE (Mode 2): scrape the host-readable transcript, persist the count +
+#     "frozen since" anchor, and classify first/advancing/reset/frozen. Fail-loud:
+#     a missing/unparsable transcript → state=unknown, never a bogus frozen=0 that
+#     could trip a false takeover.
+#   * CONTAINER (Mode 3, #390): a container golem's transcript runs INSIDE the
+#     container and is not host-readable, so we never scrape here. Instead the
+#     container POSTs its top-level usage back to the host (containers repo, the
+#     producer side), writing top_level_tokens(+_at) into this same cache row. We
+#     READ (never re-write — the producer owns the fields; a host rewrite would
+#     race the POST) those two fields: a valid numeric count + an anchor → state=
+#     container (a mechanical frozen render, exactly like Mode 2's `frozen`); a
+#     missing / non-numeric count or absent anchor (not POSTed yet, or a legacy
+#     row) → state=container-pending, a graceful note, never a bogus 0.
 scrape_and_persist_tokens() {
     _sapt_f="$1"
     _sapt_ctr="$(jq -r '.container // empty' "$_sapt_f" 2>/dev/null)"
     _sapt_issue="$(jq -r '.issue // empty' "$_sapt_f" 2>/dev/null)"
     if [ -n "$_sapt_ctr" ]; then
-        command printf 'container\t\t\t\n'
+        # Mode 3: READ the externally-POSTed usage; never scrape, never persist.
+        _sapt_cctok="$(jq -r '.top_level_tokens // empty' "$_sapt_f" 2>/dev/null)"
+        _sapt_ccat="$(jq -r '.top_level_tokens_at // empty' "$_sapt_f" 2>/dev/null)"
+        # Numeric-guard the POSTed count with the SAME octal/overflow rules the
+        # persisted prior uses below — the cache is co-written, so a corrupt /
+        # leading-zero / overflow value must degrade to container-pending, never
+        # reach a bogus frozen render.
+        case "$_sapt_cctok" in
+            0) ;; # canonical zero — a real posted count
+            '' | 0* | *[!0-9]*) _sapt_cctok="" ;;
+            *) [ "${#_sapt_cctok}" -gt 18 ] && _sapt_cctok="" ;;
+        esac
+        # Shape-guard the POSTed anchor the SAME way. `top_level_tokens_at` comes
+        # from the untrusted external POST too, so it gets an allowlist, not just a
+        # non-empty check: require EXACTLY the `%Y-%m-%dT%H:%M:%SZ` form _now_iso
+        # writes (fully anchored — no free wildcard). This blanks anything else
+        # (→ container-pending), closing two gaps at once: (1) a control/ANSI/tab
+        # sequence in a hostile or buggy POST can no longer reach `command echo`
+        # in _frozen_phrase (terminal-injection), and (2) a lenient-but-wrong
+        # string like "now" or a bare number can no longer parse through GNU
+        # `date -d` into a plausible-but-false frozen duration — a malformed anchor
+        # degrades to the graceful pending note instead of a bogus "frozen Xm".
+        case "$_sapt_ccat" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+            *) _sapt_ccat="" ;;
+        esac
+        if [ -n "$_sapt_cctok" ] && [ -n "$_sapt_ccat" ]; then
+            # Emit prev == cur (the Mode-2 `frozen` tuple shape). This is NOT
+            # cosmetic: `IFS=$'\t' read` collapses ADJACENT tabs (tab is IFS
+            # whitespace), so an EMPTY prev field between cur and at would be
+            # swallowed and `at` would read empty at the call sites. A non-empty
+            # prev keeps the 4 fields aligned; no reader divides by prev for a
+            # container row, so mirroring cur is harmless and semantically apt (a
+            # posted container reading is a single frozen-window sample).
+            command printf 'container\t%s\t%s\t%s\n' "$_sapt_cctok" "$_sapt_cctok" "$_sapt_ccat"
+        else
+            command printf 'container-pending\t\t\t\n'
+        fi
         return 0
     fi
     _sapt_wt="$root/$GOLEM_WORKTREE_DIR/issue-$_sapt_issue"
@@ -377,8 +448,10 @@ render_status() {
     # (golem-token-scrape.sh), persist it + a "frozen since" anchor back into the
     # golem's status JSON, and render how long the count has been frozen. The
     # operator reads "frozen Xm" here instead of attaching to each pane by eye.
-    # This is a WORKTREE (Mode 2) signal only: a container (Mode 3) golem's
-    # transcript is not host-readable, so those rows show a pending note (#390).
+    # A WORKTREE (Mode 2) golem is scraped here; a container (Mode 3) golem is not
+    # host-scrapable but POSTs its top-level usage into the same cache fields, which
+    # we READ and render with the identical "frozen Xm" form (#390) — falling back
+    # to an "awaiting token push" note only until that POST lands.
     # jq-gated (needs jq to read/merge the cache and sum the transcript).
     if command -v jq >/dev/null 2>&1 && [ "${#cache[@]}" -gt 0 ]; then
         command echo ""
@@ -392,8 +465,8 @@ render_status() {
             # Δ), so it is read into a throwaway.
             IFS=$'\t' read -r tstate cur _prev at < <(scrape_and_persist_tokens "$f")
             case "$tstate" in
-                container)
-                    command echo "  $g — n/a (container golem — token push pending, see #390)"
+                container-pending)
+                    command echo "  $g — awaiting token push (container golem, see #390)"
                     ;;
                 unknown)
                     command echo "  $g — tokens unknown (no transcript)"
@@ -408,16 +481,12 @@ render_status() {
                     # moved. The checkpoint column is where reset renders distinctly.
                     command echo "  $g — $cur tokens (advancing)"
                     ;;
-                frozen)
-                    epoch="$(_iso_to_epoch "$at")"
-                    if [ -n "$epoch" ]; then
-                        now_e="$(command date -u +%s)"
-                        d=$((now_e - epoch))
-                        [ "$d" -lt 0 ] && d=0
-                        command echo "  $g — $cur tokens, frozen $(_fmt_dur "$d")"
-                    else
-                        command echo "  $g — $cur tokens, frozen since $at"
-                    fi
+                frozen | container)
+                    # A Mode-2 scraped freeze and a Mode-3 externally-posted count
+                    # both render the identical frozen-duration phrase (#390): the
+                    # takeover contract's 45–60 min frozen-window read is now
+                    # mechanical for either mode.
+                    command echo "  $g — $(_frozen_phrase "$cur" "$at")"
                     ;;
             esac
         done
@@ -463,8 +532,8 @@ derive_stage() {
 # NO sessions at all we cannot tell "server elsewhere / detached" from "all gone",
 # so we return non-zero (not gone) — this is what keeps a hermetic/detached run
 # (and the test sandbox, which has no tmux server) from flagging every row ⚠ gone.
-# The caller skips this for container (Mode 3) golems, which never have a host
-# tmux session.
+# The caller skips this for container (Mode 3) golems — either token-state,
+# `container` or `container-pending` — which never have a host tmux session.
 session_gone() {
     _sg_n="$1"
     [ -n "$cp_sessions" ] || return 1
@@ -510,7 +579,16 @@ emit_checkpoint_row() {
     # token fields). Δ = cur - prev; only advancing/frozen have a prior reading.
     IFS=$'\t' read -r _ecr_tstate _ecr_cur _ecr_prev _ecr_at < <(scrape_and_persist_tokens "$_ecr_f")
     case "$_ecr_tstate" in
-        container) _ecr_tok="n/a" ;;
+        container-pending) _ecr_tok="n/a" ;;
+        container)
+            # A container's POSTed count folds into the cumulative Σtokens total
+            # (honest burn), but NEVER sets cp_have_delta: the per-sweep Δ / rate
+            # need golem-status's OWN prior sample, which the read-only container
+            # path deliberately doesn't keep. Render the count with a (frozen) tag
+            # — a container reading is a mechanical frozen-window sample (#390).
+            _ecr_tok="$_ecr_cur (frozen)"
+            cp_total_tokens=$((cp_total_tokens + _ecr_cur))
+            ;;
         unknown) _ecr_tok="—" ;;
         first)
             _ecr_tok="$_ecr_cur (first)"
@@ -546,7 +624,7 @@ emit_checkpoint_row() {
         _ecr_statecol="⚠ BLOCKED"
     elif [ "$_ecr_state" = "ci-failing" ]; then
         _ecr_statecol="⚠ CI"
-    elif [ "$_ecr_tstate" != "container" ] && [ "$_ecr_issue" != "?" ] && session_gone "$_ecr_issue"; then
+    elif [ "${_ecr_tstate#container}" = "$_ecr_tstate" ] && [ "$_ecr_issue" != "?" ] && session_gone "$_ecr_issue"; then
         # The "$_ecr_issue" != "?" guard matters: a cache row missing .issue falls
         # back to the literal "?" above, and session_gone's glob `*" golem-? "*`
         # would treat "?" as a single-char wildcard (matching any live golem-N),

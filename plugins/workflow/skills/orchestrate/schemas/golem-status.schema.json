@@ -99,12 +99,12 @@
     "top_level_tokens": {
       "type": "integer",
       "minimum": 0,
-      "description": "Cumulative TOP-LEVEL token count (top-level output_tokens from the golem's Claude Code session transcript, isSidechain==false only, deduplicated by message.id so a multi-content-block turn counts once), sampled on the last status sweep. Feeds #369's slow-review takeover contract's frozen-top-level-counter check, made mechanical for Mode 2 in #371. Written by golem-status.sh via golem-token-scrape.sh. WORKTREE (Mode 2) golems only — a container (Mode 3) golem's transcript is not host-readable, so this field is absent for a golem with a `container` field until host-side propagation lands (#390)."
+      "description": "Cumulative TOP-LEVEL token count (top-level output_tokens from the golem's Claude Code session transcript, isSidechain==false only, deduplicated by message.id so a multi-content-block turn counts once), sampled on the last status sweep. Feeds #369's slow-review takeover contract's frozen-top-level-counter check, made mechanical for Mode 2 in #371 and for Mode 3 in #390. WRITER depends on mode: a WORKTREE (Mode 2) golem's value is scraped and written by golem-status.sh via golem-token-scrape.sh; a CONTAINER (Mode 3) golem's transcript is not host-readable, so the container POSTs its own top-level usage into this field (containers repo), which golem-status.sh then READS (never re-writes) to render the same frozen-counter signal (#390). Absent until first written by whichever producer applies."
     },
     "top_level_tokens_at": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO datetime the top_level_tokens value last CHANGED (its 'frozen since' anchor). golem-status.sh carries it forward across sweeps while the count is unchanged and resets it to now when the count moves, so the frozen-duration (now - top_level_tokens_at) is computed mechanically for the 45–60 min takeover window. Paired with top_level_tokens; Mode 2 only."
+      "description": "ISO datetime the top_level_tokens value last CHANGED (its 'frozen since' anchor). For a WORKTREE (Mode 2) golem, golem-status.sh carries it forward across sweeps while the count is unchanged and resets it to now when the count moves; for a CONTAINER (Mode 3) golem the container POSTs the anchor alongside the count (#390) and golem-status.sh reads it as-is. Either way the frozen-duration (now - top_level_tokens_at) is computed mechanically for the 45–60 min takeover window. Paired with top_level_tokens."
     },
     "started": {
       "type": "string",

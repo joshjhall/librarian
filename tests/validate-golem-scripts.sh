@@ -2720,8 +2720,9 @@ EOF
     assert_contains "$RUN_OUT" "125 tokens (advancing)" "a grown count reads as advancing, not frozen"
 }
 
-# A Mode-3 container golem (cache row with a `container` field) shows the pending
-# note and is NEVER scraped (no bogus frozen reading).
+# A Mode-3 container golem whose host-POST has NOT landed yet (no token fields, or
+# a non-numeric one) shows the graceful "awaiting token push" note and is NEVER
+# scraped (no bogus frozen reading). (#390)
 test_status_token_container_pending() {
     if ! command -v jq >/dev/null 2>&1; then
         skip_test "jq not available (golem-status token block needs jq)"
@@ -2734,10 +2735,130 @@ test_status_token_container_pending() {
   "branch": "agent01", "state": "working", "blocking": false }
 EOF
     run_status_scrape "$sb"
-    assert_exit 0 "$RUN_RC" "golem-status with a container row exits 0"
-    assert_contains "$RUN_OUT" "container golem — token push pending, see #390" \
-        "a Mode-3 container golem shows the pending note (#390)"
+    assert_exit 0 "$RUN_RC" "golem-status with an unposted container row exits 0"
+    assert_contains "$RUN_OUT" "awaiting token push (container golem, see #390)" \
+        "a Mode-3 container golem with no posted usage shows the awaiting-push note (#390)"
     assert_not_contains "$RUN_OUT" "agent01 — 0 tokens" "a container golem is never scraped to a bogus 0"
+}
+
+# A Mode-3 container golem whose host-POST HAS landed (top_level_tokens + a stale
+# top_level_tokens_at written by the container producer) renders the SAME mechanical
+# "frozen Xm" phrase as a Mode-2 golem, and golem-status READS those fields WITHOUT
+# rewriting them (the producer owns the fields; a host rewrite would race the POST).
+# (#390)
+test_status_token_container_populated() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb anchor
+    new_sandbox sb
+    # A stale anchor ~130s in the past → _fmt_dur's minutes arm ("frozen Nm").
+    anchor="$(iso_ago 130)"
+    if [ -z "$anchor" ]; then
+        skip_test "date toolchain cannot seed an ISO anchor"
+        return 0
+    fi
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false,
+  "top_level_tokens": 4242, "top_level_tokens_at": "$anchor" }
+EOF
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "golem-status with a populated container row exits 0"
+    assert_contains "$RUN_OUT" "4242 tokens, frozen" \
+        "a posted container golem renders the mechanical frozen phrase, same as Mode 2 (#390)"
+    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq '4242 tokens, frozen [0-9]+m'" \
+        "the seeded ~130s anchor renders _fmt_dur's minutes arm ('frozen Nm')"
+    assert_not_contains "$RUN_OUT" "awaiting token push" "a posted container is not shown as pending"
+    # READ-ONLY: golem-status must not rewrite the producer-owned fields.
+    local tok_after at_after
+    tok_after="$(jq -r '.top_level_tokens' "$sb/.worktrees/.status/agent01.json" 2>/dev/null)"
+    at_after="$(jq -r '.top_level_tokens_at' "$sb/.worktrees/.status/agent01.json" 2>/dev/null)"
+    assert_true "[ '$tok_after' = '4242' ]" "top_level_tokens is not rewritten by golem-status (got $tok_after)"
+    assert_true "[ '$at_after' = '$anchor' ]" \
+        "top_level_tokens_at anchor is read as-is, never reset to now() (got $at_after)"
+}
+
+# A Mode-3 container row whose externally-POSTed fields are MALFORMED degrades to
+# the graceful container-pending note, never a bogus frozen render — the cache is
+# co-written / the POST is untrusted, so each field is guarded: a corrupt count
+# (leading-zero "089", overflow, non-numeric) and a non-ISO anchor ("now", which
+# GNU `date -d` would otherwise parse into a plausible-but-wrong duration) must
+# both blank out. Mirrors test_status_checkpoint_corrupt_prev_tokens_no_drop for
+# the Mode-2 persisted prior. (#390)
+test_status_token_container_malformed_degrades() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb good_anchor
+    new_sandbox sb
+    good_anchor="$(iso_ago 130)"
+    if [ -z "$good_anchor" ]; then
+        skip_test "date toolchain cannot seed an ISO anchor"
+        return 0
+    fi
+    # (a) A leading-zero count ("089" — the octal hazard) with a VALID anchor →
+    # the count blanks → container-pending, never a bash arithmetic error.
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false,
+  "top_level_tokens": "089", "top_level_tokens_at": "$good_anchor" }
+EOF
+    run_status_scrape "$sb"
+    assert_exit 0 "$RUN_RC" "a container row with a corrupt count still exits 0"
+    assert_contains "$RUN_OUT" "awaiting token push (container golem, see #390)" \
+        "a leading-zero posted count degrades to container-pending, not a bogus frozen (#390)"
+    assert_not_contains "$RUN_OUT" "089 tokens" "the octal-hazard count is never rendered as a frozen reading"
+    # (b) A VALID count with a NON-ISO anchor ("now") → the anchor blanks →
+    # container-pending, never a plausible-but-wrong `date -d "now"` duration.
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false,
+  "top_level_tokens": 4242, "top_level_tokens_at": "now" }
+EOF
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "awaiting token push (container golem, see #390)" \
+        "a non-ISO anchor degrades to container-pending, never a date -d-parsed bogus duration (#390)"
+    assert_not_contains "$RUN_OUT" "4242 tokens, frozen" "a malformed anchor never renders a frozen duration"
+}
+
+# A Mode-3 container row with only ONE of the two fields posted (an asymmetric /
+# racing partial POST) degrades to container-pending — the branch requires BOTH
+# count AND anchor. Guards against a `&&`→`||` regression that would render a
+# frozen phrase with a missing anchor or crash _frozen_phrase on an empty $2. (#390)
+test_status_token_container_partial_post() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status token block needs jq)"
+        return 0
+    fi
+    local sb anchor
+    new_sandbox sb
+    anchor="$(iso_ago 130)"
+    if [ -z "$anchor" ]; then
+        skip_test "date toolchain cannot seed an ISO anchor"
+        return 0
+    fi
+    # Count present, anchor absent.
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false,
+  "top_level_tokens": 4242 }
+EOF
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "awaiting token push (container golem, see #390)" \
+        "count present but anchor absent degrades to container-pending (#390)"
+    assert_not_contains "$RUN_OUT" "4242 tokens, frozen" "a count-only partial POST never renders a frozen phrase"
+    # Anchor present, count absent.
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false,
+  "top_level_tokens_at": "$anchor" }
+EOF
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "awaiting token push (container golem, see #390)" \
+        "anchor present but count absent degrades to container-pending (#390)"
 }
 
 # A Mode-2 golem with no transcript shows 'tokens unknown', never a bogus frozen.
@@ -3296,9 +3417,9 @@ EOF
     assert_contains "$RUN_OUT" "blocked=1" "the ci-failing golem is tallied as blocked"
 }
 
-# The checkpoint Tokens(Δ) column renders container ('n/a', excluded from totals)
-# and transcript-less ('—') golems distinctly — checkpoint-specific formatting the
-# verbose token tests do not cover.
+# The checkpoint Tokens(Δ) column renders an UNPOSTED container ('n/a', excluded
+# from totals) and a transcript-less ('—') golem distinctly — checkpoint-specific
+# formatting the verbose token tests do not cover.
 test_status_checkpoint_container_and_unknown_tokens() {
     if ! command -v jq >/dev/null 2>&1; then
         skip_test "jq not available (golem-status --checkpoint needs jq)"
@@ -3315,8 +3436,37 @@ EOF
   "state": "working", "blocking": false }
 EOF
     run_status_scrape "$sb" --checkpoint
-    assert_contains "$RUN_OUT" "n/a" "a container golem's Tokens(Δ) shows n/a (Mode-3, #390)"
-    assert_contains "$RUN_OUT" "tokens=0" "container + transcript-less golems contribute 0 tokens to the total"
+    assert_contains "$RUN_OUT" "n/a" "an unposted container golem's Tokens(Δ) shows n/a (Mode-3, #390)"
+    assert_contains "$RUN_OUT" "tokens=0" "unposted container + transcript-less golems contribute 0 tokens to the total"
+}
+
+# A container golem whose host-POST HAS landed folds its posted count into the
+# checkpoint Σtokens total (rendered with a (frozen) tag), but a one-shot
+# --checkpoint still shows rate=— (per-sweep Δ / rate need golem-status's own
+# prior sample, which the read-only container path deliberately doesn't keep). (#390)
+test_status_checkpoint_container_populated_tokens() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb anchor
+    new_sandbox sb
+    anchor="$(iso_ago 130)"
+    if [ -z "$anchor" ]; then
+        skip_test "date toolchain cannot seed an ISO anchor"
+        return 0
+    fi
+    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false,
+  "top_level_tokens": 4242, "top_level_tokens_at": "$anchor" }
+EOF
+    run_status_scrape "$sb" --checkpoint
+    assert_contains "$RUN_OUT" "4242 (frozen)" \
+        "a posted container's Tokens(Δ) shows the count with a (frozen) tag (#390)"
+    assert_contains "$RUN_OUT" "tokens=4242" "a posted container folds its count into Σtokens"
+    assert_contains "$RUN_OUT" "rate=—" \
+        "a one-shot --checkpoint shows rate=— — a container has no per-sweep Δ baseline"
 }
 
 # --- --checkpoint follow-up coverage (#415, deferred from #283/PR #414) -------
@@ -3550,20 +3700,23 @@ EOF
 
 # A container (Mode-3) golem is EXEMPT from the ⚠ gone marker even when a sibling
 # golem-* session is visible (a container has no host tmux session by design, so
-# session_gone would otherwise false-positive). The `_ecr_tstate != container`
-# guard must keep the container row on its plain state.
+# session_gone would otherwise false-positive). The widened prefix-strip guard
+# (`${_ecr_tstate#container}`) must keep BOTH container token-states exempt — the
+# unposted `container-pending` AND the populated `container` (a regression that
+# broke the strip for the 9-char populated string alone would slip past a
+# pending-only fixture), so this test drives both.
 test_status_checkpoint_container_never_gone() {
     if ! command -v jq >/dev/null 2>&1; then
         skip_test "jq not available (golem-status --checkpoint needs jq)"
         return 0
     fi
-    local sb
+    local sb anchor
     new_sandbox sb
-    # A container golem (no host tmux session ever) with a real state.
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
-{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
-  "branch": "agent01", "state": "working", "blocking": false }
-EOF
+    anchor="$(iso_ago 130)"
+    if [ -z "$anchor" ]; then
+        skip_test "date toolchain cannot seed an ISO anchor"
+        return 0
+    fi
     # A tmux stub showing a SIBLING golem-42 alive (proving the server is
     # reachable) — the condition under which session_gone would fire for a row
     # with no matching session. The container must be exempt regardless.
@@ -3576,26 +3729,45 @@ esac
 exit 0
 EOF
     /usr/bin/chmod +x "$sb/bin/tmux"
-    RUN_RC=0
-    RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
-            HOME="$sb" \
-            PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
-            GOLEM_WORKTREE_DIR=.worktrees \
-            GOLEM_STATUS_DIR=.worktrees/.status \
-            GOLEM_BASE_REF=HEAD \
-            GOLEM_WORKTREE_LOCAL_FILES="" \
-            CLAUDE_PROJECTS_DIR="$sb/projects" \
-            "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
-    assert_exit 0 "$RUN_RC" "--checkpoint with a container golem + sibling session exits 0"
-    assert_contains "$RUN_OUT" "agent01" "the container golem renders its row"
-    # The container row keeps its plain state and is never flagged gone. Assert on
-    # the agent01 row(s) EXACTLY: zero of them may carry ⚠ gone (a `grep | grep -qv`
-    # would pass as soon as ONE line lacked the marker — vacuous with a footer line).
-    assert_true "[ \"\$(/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'agent01' | /usr/bin/grep -c '⚠ gone')\" -eq 0 ]" \
-        "no agent01 row is flagged ⚠ gone (container is exempt from session_gone)"
+    # Two passes over the SAME scenario: (1) an unposted container (→
+    # container-pending token-state) and (2) a populated container (posted
+    # top_level_tokens + a valid anchor → the `container` token-state). Both must
+    # stay exempt from ⚠ gone.
+    local _label _cache
+    for _label in pending populated; do
+        if [ "$_label" = populated ]; then
+            /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false,
+  "top_level_tokens": 4242, "top_level_tokens_at": "$anchor" }
+EOF
+        else
+            /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+{ "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
+  "branch": "agent01", "state": "working", "blocking": false }
+EOF
+        fi
+        RUN_RC=0
+        RUN_OUT="$(cd "$sb" &&
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                --unset=BASH_ENV \
+                HOME="$sb" \
+                PATH="$sb/bin:$PATH" \
+                TMUX= TMUX_TMPDIR="$sb/.tmux" \
+                GOLEM_WORKTREE_DIR=.worktrees \
+                GOLEM_STATUS_DIR=.worktrees/.status \
+                GOLEM_BASE_REF=HEAD \
+                GOLEM_WORKTREE_LOCAL_FILES="" \
+                CLAUDE_PROJECTS_DIR="$sb/projects" \
+                "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
+        assert_exit 0 "$RUN_RC" "--checkpoint with a $_label container + sibling session exits 0"
+        assert_contains "$RUN_OUT" "agent01" "the $_label container golem renders its row"
+        # The container row keeps its plain state and is never flagged gone. Assert on
+        # the agent01 row(s) EXACTLY: zero of them may carry ⚠ gone (a `grep | grep -qv`
+        # would pass as soon as ONE line lacked the marker — vacuous with a footer line).
+        assert_true "[ \"\$(/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'agent01' | /usr/bin/grep -c '⚠ gone')\" -eq 0 ]" \
+            "no $_label-container agent01 row is flagged ⚠ gone (both token-states exempt from session_gone)"
+    done
 }
 
 # An issue-less cache row (no .issue → the literal "?") must NOT be spuriously
@@ -3838,7 +4010,10 @@ run_test test_scrape_tolerates_truncated_trailing_line "golem-token-scrape: tole
 run_test test_scrape_no_jq_exits_3 "golem-token-scrape: missing jq on PATH exits 3 fail-loud (#371)"
 run_test test_status_token_first_then_frozen "golem-status: token section shows first-reading then frozen; persists fields (#371)"
 run_test test_status_token_advancing_on_change "golem-status: a grown top-level count reads as advancing, not frozen (#371)"
-run_test test_status_token_container_pending "golem-status: a Mode-3 container golem shows the pending note, never scraped (#371/#390)"
+run_test test_status_token_container_pending "golem-status: an unposted Mode-3 container golem shows the awaiting-push note, never scraped (#390)"
+run_test test_status_token_container_populated "golem-status: a posted Mode-3 container golem renders the mechanical frozen phrase, read-only (#390)"
+run_test test_status_token_container_malformed_degrades "golem-status: a Mode-3 container row with a corrupt count / non-ISO anchor degrades to container-pending (#390)"
+run_test test_status_token_container_partial_post "golem-status: a Mode-3 container row with only one of count/anchor posted degrades to container-pending (#390)"
 run_test test_status_token_unknown_no_transcript "golem-status: a Mode-2 golem with no transcript shows tokens unknown (#371)"
 run_test test_status_frozen_iso_parse_failure_raw_render "golem-status: an unparsable anchor renders the raw 'frozen since <iso>' fallback (#392)"
 run_test test_status_fmt_dur_seconds_arm "golem-status: _fmt_dur seconds arm — a sub-60s freeze renders 'frozen Ns' (#392)"
@@ -3858,7 +4033,8 @@ run_test test_status_checkpoint_corrupt_prev_tokens_no_drop "golem-status: --che
 run_test test_status_checkpoint_session_gone_marker "golem-status: --checkpoint flags a vanished-session golem ⚠ gone when a sibling is up (#283)"
 run_test test_status_checkpoint_stage_prefers_phase_detail "golem-status: --checkpoint STAGE prefers .phase_detail over .phase/.state (#283)"
 run_test test_status_checkpoint_ci_and_shipped_markers "golem-status: --checkpoint ⚠ CI (non-blocking) + merged→shipped tally (#283)"
-run_test test_status_checkpoint_container_and_unknown_tokens "golem-status: --checkpoint renders container n/a + transcript-less — token cells (#283)"
+run_test test_status_checkpoint_container_and_unknown_tokens "golem-status: --checkpoint renders unposted-container n/a + transcript-less — token cells (#283)"
+run_test test_status_checkpoint_container_populated_tokens "golem-status: --checkpoint folds a posted container's count into Σtokens with a (frozen) tag (#390)"
 run_test test_status_checkpoint_elapsed_from_started "golem-status: --checkpoint ELAPSED renders a real duration from .started, not — (#415)"
 run_test test_status_checkpoint_empty_and_no_jq_guards "golem-status: --checkpoint empty-state + jq-missing early returns exit 0 (#415)"
 run_test test_status_checkpoint_pool_header "golem-status: --checkpoint renders the pool.json header ahead of the table (#415)"

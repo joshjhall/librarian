@@ -477,8 +477,10 @@ only once a prior sweep exists, so the first frame and any one-shot render show
 `rate=—` rather than inventing a number. It reuses the frozen-top-level-token
 sampling below (the same per-sweep scrape), so `--checkpoint` **replaces** the
 verbose render for that sweep rather than stacking on it — two scrapes in one
-sweep would reset the Δ baseline. Burn is Mode-2 (worktree) only; a Mode-3
-container golem shows `n/a` until host-side token propagation lands (#390).
+sweep would reset the Δ baseline. Per-sweep burn **Δ** is Mode-2 (worktree) only;
+a Mode-3 container golem POSTs its cumulative top-level count into the cache
+(#390), so it contributes to `Σtokens` (rendered with a `(frozen)` tag) but not
+the per-sweep Δ, and shows `n/a` only until that POST lands.
 
 ### Slow-review takeover contract
 
@@ -528,18 +530,21 @@ holds (any one missing ⇒ keep waiting and keep surfacing):
   necessarily starts well past the ~25–30 min at which a slow review first becomes
   worth *surfacing*, so there is no separate short-time floor to check. A frozen
   *sub-workflow* counter with top-level growth is real work, not a wedge — the
-  distinction is the whole point. **For a worktree golem (Mode 2) this reading is
-  now mechanical (#371):** `golem-status.sh` scrapes the golem's transcript
-  each sweep (top-level `output_tokens` only, `isSidechain==false` — the exact
-  top-level-vs-sub-workflow split above) and renders a `TOP-LEVEL TOKENS` section
-  showing `frozen Xm` per golem, so the operator reads the frozen duration
-  straight off the sweep rather than attaching to each pane and reading Claude
-  Code's usage indicator by eye. **A container golem (Mode 3) has no
-  host-readable transcript**, so its row shows `n/a (container golem — token push
-  pending, see #390)`; there the frozen-counter check falls back to a manual
-  `golem-attach.sh {N}` by-eye read until container-side usage propagation lands
-  (#390). (The crashed-process case above short-circuits this — a dead process
-  needs no token-freeze window.)
+  distinction is the whole point. **This reading is now mechanical for both
+  modes:** `golem-status.sh` renders a `TOP-LEVEL TOKENS` section showing
+  `frozen Xm` per golem, so the operator reads the frozen duration straight off
+  the sweep rather than attaching to each pane and reading Claude Code's usage
+  indicator by eye. **For a worktree golem (Mode 2, #371)** the count is scraped
+  from the golem's host transcript each sweep (top-level `output_tokens` only,
+  `isSidechain==false` — the exact top-level-vs-sub-workflow split above). **A
+  container golem (Mode 3, #390)** has no host-readable transcript, so it POSTs
+  its own top-level usage back into the host cache (`top_level_tokens` +
+  `top_level_tokens_at`), which `golem-status.sh` reads to render the identical
+  `frozen Xm`; only a container that has not POSTed yet shows `awaiting token
+  push (container golem, see #390)`, and there the check falls back to a manual
+  `golem-attach.sh {N}` by-eye read until the first POST lands. (The
+  crashed-process case above short-circuits this — a dead process needs no
+  token-freeze window.)
 - **Cross-golem corroboration — only when sibling golems are active.** In a
   multi-golem batch, a sibling golem's review advancing in the same window proves
   the classifier is up, ruling out a shared external outage; require it before
