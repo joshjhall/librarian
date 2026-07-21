@@ -330,7 +330,10 @@ When `check-ai-config` survived the Step 2 integrity gate, after its
    (`CC-MEM-*`), but ADR § 1/§ 3 make those **check-ai-config-exclusive** (they
    need repo/ecosystem context agnix has no model of), so a `config-inconsistency`
    or `claude-md-drift` agnix row must **not** supersede check-ai-config at Step 6
-   (see the dedup scope there) — collect it, but it never wins the dedup.
+   (the dedup there matches **per underlying issue** on same-`file` +
+   same owned-category, not `file:line`, so a whole-file-anchored floor finding is
+   superseded without collapsing its siblings — but only for the four owned
+   categories) — collect it, but it never wins the dedup.
 
 **Graceful degrade — absent agnix ⇒ skip its contribution.** The normalizer
 **no-ops** when the agnix binary is absent (emits nothing, logs one `[skip]`
@@ -397,28 +400,55 @@ If no ambiguous cases exist, skip this pass.
 1. Concatenate findings from all passes and all skills
 1. **agnix precedence dedup (check-ai-config only)**: when an **agnix-sourced**
    pre-scan finding **in an agnix-owned category** and a check-ai-config finding
-   fire at the **same `file:line`**, **drop the check-ai-config finding and keep
-   the agnix one** — its message, rule ID, and autofix hint are richer (ADR 0001
-   § 2). **Agnix-owned categories are exactly** `agent-frontmatter`,
-   `skill-frontmatter`, `hook-safety`, and `mcp-misconfiguration` (the ADR § 3
-   ownership table). A `config-inconsistency` or `claude-md-drift` agnix row is
-   **never** an agnix-owned category — ADR § 1/§ 3 keep those
-   check-ai-config-exclusive because they need repo/ecosystem context agnix has no
-   model of — so such a row must **not** supersede the check-ai-config finding at
-   the same `file:line`; keep **both** (add a `related_findings` cross-reference,
-   as with the cross-skill correlation below), never drop the check-ai-config one.
-   Apply the drop **before** the within-skill dedup below so the surviving agnix
-   row is what carries forward. Key strictly on **actual agnix output present in
-   this run**: if agnix did not run (binary absent, or the Step 3a normalizer
-   no-opped/failed), there are no agnix-sourced rows, so this rule is a
-   **strict no-op** and the output is identical to today's `patterns.sh`-only result.
-   Non-overlapping check-ai-config findings — any `file:line` an agnix row does
-   not also occupy — are **always retained**; this rule only supersedes on the
-   overlap set of agnix-owned categories, never deletes coverage agnix lacks.
-   (Unlike the cross-skill correlation below, which only cross-references, this
-   precedence rule *drops* the superseded finding — but only for agnix-owned
-   categories, where agnix enriches the **same** ai-config concern rather than a
-   different skill's domain.)
+   in the **same category** on the **same `file`** describe the **same underlying
+   issue**, **drop the check-ai-config finding and keep the agnix one** — its
+   message, rule ID, and autofix hint are richer (ADR 0001 § 2).
+   **Match per underlying issue on same-`file` + same-category —
+   NOT on `file:line`, and NOT on the whole category at once.** The floor anchors
+   its whole-file schema findings at the sentinel line `1` — every `agent-frontmatter`
+   / `skill-frontmatter` row `patterns.{py,sh}` emits carries line `1` regardless
+   of which field is at fault — whereas agnix reports `CC-AG-*` / `CC-SK-*` at the
+   **actual field line** (e.g. an invalid `model` at line 3). Keying the dedup on
+   `file:line` would therefore **silently miss** exactly the frontmatter overlap
+   agnix most enriches, leaving the duplicate noise on the happy path this rule
+   exists to remove — so match on the **issue the two findings are about**, not
+   their line numbers: an agnix `CC-AG-*`/`CC-SK-*` finding about a specific field
+   (e.g. missing `name`, invalid `model`) supersedes the check-ai-config
+   frontmatter finding **about that same field**, identified by the field/message
+   correspondence rather than the line.
+   **Do NOT collapse the whole file+category at once.**
+   The floor emits **multiple distinct findings per file+category** —
+   `check_agent_frontmatter` can emit separate rows for a missing `name` **and** a
+   missing `description` (both at line `1`); `check_hook_safety` can emit a
+   destructive-command row **and** a secret-leak row at different lines;
+   `check_mcp_config` can emit several insecure-URL rows. Drop **only** the
+   specific check-ai-config finding whose issue an agnix row actually covers; a
+   sibling finding in the same file+category whose issue **no** agnix row reports
+   is **retained** (that is coverage agnix lacks — never delete it). For
+   `hook-safety` / `mcp-misconfiguration` the floor already emits the real line,
+   so "same issue" there is naturally the same line/command an agnix row reports —
+   a per-issue match, not a category-wide sweep.
+   **Agnix-owned categories are exactly** `agent-frontmatter`,
+   `skill-frontmatter`, `hook-safety`, and
+   `mcp-misconfiguration` (the ADR § 3 ownership table). A `config-inconsistency`
+   or `claude-md-drift` agnix row is **never** an agnix-owned category — ADR
+   § 1/§ 3 keep those check-ai-config-exclusive because they need repo/ecosystem
+   context agnix has no model of — so such a row must **not** supersede the
+   check-ai-config finding; keep **both** (add a `related_findings`
+   cross-reference, as with the cross-skill correlation below), never drop the
+   check-ai-config one. Apply the drop **before** the within-skill dedup below so
+   the surviving agnix row is what carries forward. Key strictly on **actual
+   agnix output present in this run**: if agnix did not run (binary absent, or the
+   Step 3a normalizer no-opped/failed), there are no agnix-sourced rows, so this
+   rule is a **strict no-op** and the output is identical to today's
+   `patterns.sh`-only result. Non-overlapping check-ai-config findings — any issue
+   an agnix owned-category row does not itself report — are **always retained**;
+   this rule only supersedes on the overlap set of agnix-owned categories,
+   per matched issue, and **never deletes coverage agnix lacks**. (Unlike the
+   cross-skill correlation below, which only cross-references, this precedence
+   rule *drops* the superseded finding — but only for agnix-owned categories,
+   where agnix enriches the **same** ai-config concern rather than a different
+   skill's domain.)
 1. **Within-skill dedup**: same file + category + overlapping line range →
    merge into one finding (keep broader range, combine evidence, keep highest
    certainty)

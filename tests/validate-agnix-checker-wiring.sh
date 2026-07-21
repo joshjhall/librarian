@@ -11,11 +11,15 @@
 #   Step 3a  invoke agnix-normalize as a SECOND pre-scan source (check-ai-config
 #            only), absent-agnix => skip its contribution (same graceful-degrade
 #            shape as the patterns.sh non-zero/malformed => continue path)
-#   Step 6   precedence dedup — an agnix CC-* finding at the same file:line drops
-#            the check-ai-config finding, but ONLY for the agnix-OWNED categories
-#            (ADR §3); claude-md-drift / config-inconsistency stay check-ai-config-
-#            exclusive and are kept-both. Keyed on ACTUAL agnix output present
-#            this run (strict no-op when agnix did not run).
+#   Step 6   precedence dedup (#402 down-scope) — an agnix CC-* finding supersedes
+#            the check-ai-config finding for the SAME underlying issue, keyed on
+#            same-`file` + same owned-category (NOT file:line — the floor anchors
+#            frontmatter at whole-file line 1), matched PER ISSUE so a sibling
+#            finding agnix did not report survives (never deletes coverage agnix
+#            lacks). ONLY for the agnix-OWNED categories (ADR §3); claude-md-drift /
+#            config-inconsistency stay check-ai-config-exclusive and are kept-both.
+#            Keyed on ACTUAL agnix output present this run (strict no-op when agnix
+#            did not run).
 #   Trust    the audited repo's .agnix.toml is untrusted => an ENFORCED skip-gate:
 #            when AGNIX_CONFIG is unset AND CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS!=1
 #            the checker does NOT invoke agnix (else agnix discovers the repo's
@@ -159,15 +163,41 @@ test_observe_only_restriction() {
         "observe-only restriction: names the bare --fix autofix flag"
 }
 
-# AC2 — precedence dedup at the merge step: same file:line agnix CC-* drops the
-# check-ai-config finding, but ONLY for agnix-owned categories; strict no-op when
-# agnix did not run; ordering before within-skill dedup.
+# AC2 — precedence dedup at the merge step (#402 down-scope): an agnix-owned-category
+# CC-* finding supersedes the check-ai-config finding for the SAME underlying issue,
+# keyed on same-`file` + same-category (NOT file:line — the floor anchors frontmatter
+# at whole-file line 1), matched PER ISSUE so a sibling finding agnix did not report
+# survives (never deletes coverage agnix lacks — the crux of #402's "NOT deletion").
+# ONLY for agnix-owned categories; strict no-op when agnix did not run; ordering
+# before within-skill dedup.
 test_step6_precedence_dedup() {
     local region
     region="$(extract_between "$CHECKER" '### Step 6: Merge' '### Step 7:')"
     assert_wired "Step 6 precedence dedup" "$region" 'agnix precedence dedup'
-    assert_contains "$region" 'same `file:line`' \
-        "Step 6 precedence dedup: keyed on the same file:line overlap"
+    # #402: the dedup KEY is same-file + same-category matched PER ISSUE, NOT
+    # file:line and NOT whole-category — a file:line key silently misses the floor's
+    # line-1-anchored frontmatter overlap, while a whole-category sweep would delete
+    # sibling findings agnix never reported.
+    assert_contains "$region" 'Match per underlying issue on same-`file` + same-category' \
+        "Step 6 precedence dedup: keyed per-issue on same-file + same-category"
+    assert_contains "$region" 'NOT on `file:line`' \
+        "Step 6 precedence dedup: explicitly NOT keyed on file:line"
+    assert_contains "$region" 'NOT on the whole category at once' \
+        "Step 6 precedence dedup: explicitly NOT a whole-category sweep"
+    assert_contains "$region" 'sentinel line `1`' \
+        "Step 6 precedence dedup: rationale — floor anchors whole-file findings at line 1"
+    assert_contains "$region" 'actual field line' \
+        "Step 6 precedence dedup: rationale — agnix reports the real field line"
+    assert_contains "$region" 'silently miss' \
+        "Step 6 precedence dedup: a file:line key would silently miss the frontmatter overlap"
+    # The load-bearing NOT-deletion guarantee: multiple findings per file+category,
+    # drop ONLY the matched issue, retain siblings agnix did not cover.
+    assert_contains "$region" 'multiple distinct findings per file+category' \
+        "Step 6 precedence dedup: acknowledges the floor emits multiple findings per file+category"
+    assert_contains "$region" 'Do NOT collapse the whole file+category at once' \
+        "Step 6 precedence dedup: forbids the whole-category collapse"
+    assert_contains "$region" 'never deletes coverage agnix lacks' \
+        "Step 6 precedence dedup: preserves the NOT-deletion guarantee (#402 core mandate)"
     assert_contains "$region" 'drop the' \
         "Step 6 precedence dedup: drops the superseded check-ai-config finding"
     assert_contains "$region" 'strict no-op' \
@@ -183,6 +213,13 @@ test_step6_precedence_dedup() {
         "Step 6 precedence dedup: enumerates the agnix-owned categories"
     assert_contains "$region" 'keep **both**' \
         "Step 6 precedence dedup: keeps both for check-ai-config-exclusive categories"
+    # Regression guard: the pre-#402 file:line-keyed phrasing must not reappear as
+    # the dedup KEY. The only licensed occurrence of the "same `file:line`" phrase in
+    # the region is the explicit "NOT on `file:line`" negation; assert the affirmative
+    # "at the same `file:line`" / "fire at the same `file:line`" key phrasing is gone,
+    # so a partial revert of the down-scope is caught.
+    assert_not_contains "$region" 'fire at the **same `file:line`**' \
+        "Step 6 precedence dedup: old file:line-keyed phrasing does not reappear"
 }
 
 run_test test_step3a_invocation "Step 3a invokes agnix-normalize as a second pre-scan source"
