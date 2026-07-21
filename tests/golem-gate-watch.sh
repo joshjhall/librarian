@@ -33,7 +33,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 GATE_WATCH="$REPO_ROOT/plugins/workflow/scripts/golem-gate-watch.sh"
 
-test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229, #447)"
+test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229, #446, #447)"
 
 # _pane_rc <function-name> <text> — source the script (the main-guard makes it
 # sourceable without running the drive block) in a subshell and call one of its
@@ -49,13 +49,39 @@ _pane_rc() {
     command echo "$rc"
 }
 
+# _stamp_feed_traces <status-dir> <feed-line>... — for every distinct `golem`
+# value appearing in the given feed lines, drop a `<golem>.json` status-cache file
+# in <status-dir>. This gives each fixture golem a live TRACE so the #446 ghost
+# filter (feed_snapshot_live -> golem_has_live_trace) keeps it: these feed-
+# semantics tests assert TTL / event-kind / orphan-drop behavior, NOT the ghost
+# filter, so their golems must look live (as a real gated golem does — its cache
+# file exists) or the ghost filter would drop every one of them and mask the
+# semantics under test. The `golem-?` orphan sentinel is intentionally NOT stamped
+# (it is dropped by feed_snapshot before the trace check, and #323's orphan test
+# asserts exactly that). Parses the id with grep/sed (jq may be stubbed off in the
+# no-jq helper), tolerant of absent/misshaped lines.
+_stamp_feed_traces() {
+    local status_dir="$1" line g
+    shift
+    for line in "$@"; do
+        g="$(/usr/bin/printf '%s\n' "$line" |
+            /usr/bin/grep -oE '"golem"[[:space:]]*:[[:space:]]*"[^"]*"' |
+            /usr/bin/sed -E 's/.*"([^"]*)"$/\1/' | /usr/bin/head -n1)"
+        case "$g" in
+            '' | 'golem-?') continue ;;
+        esac
+        /usr/bin/printf '{"golem":"%s"}\n' "$g" >"$status_dir/$g.json"
+    done
+}
+
 # Run the real script `--once` against a throwaway git repo whose
 # .worktrees/.status/feed.jsonl holds the given lines. Args: $1 = TTL seconds,
 # remaining args = feed.jsonl lines. Sets two globals — SNAP_RC (exit code) and
 # SNAP_OUT (stdout) — rather than echoing them, so the exit code and output are
 # never multiplexed on one stream and the caller need not subshell the helper.
 # GOLEM_WORKTREE_DIR/GOLEM_STATUS_DIR are pinned so an inherited value cannot
-# redirect the feed path away from the temp repo.
+# redirect the feed path away from the temp repo. Each fixture golem is given a
+# status-cache trace (see _stamp_feed_traces) so the #446 ghost filter keeps it.
 SNAP_RC=0
 SNAP_OUT=""
 _run_once_snapshot() {
@@ -82,6 +108,7 @@ _run_once_snapshot() {
     for line in "$@"; do
         /usr/bin/printf '%s\n' "$line"
     done >"$tmp/.worktrees/.status/feed.jsonl"
+    _stamp_feed_traces "$tmp/.worktrees/.status" "$@"
 
     # Run with cwd inside the temp repo (the script resolves its status dir from
     # the repo root). `&& SNAP_RC=0 || SNAP_RC=$?` records the real exit code
@@ -122,6 +149,7 @@ _run_once_snapshot_no_jq() {
     for line in "$@"; do
         /usr/bin/printf '%s\n' "$line"
     done >"$tmp/.worktrees/.status/feed.jsonl"
+    _stamp_feed_traces "$tmp/.worktrees/.status" "$@"
 
     # A PATH dir holding only `bash` (the script's interpreter, also re-invoked
     # via `bash "$GATE_WATCH"`), deliberately WITHOUT a `jq` symlink, so
@@ -580,6 +608,25 @@ test_liveness_pane_idle_wiring() {
         "The pane read wins over the mtime fallback (no 'last activity' heartbeat wording)"
 }
 
+# A scrapeable pane showing the #446 API-error death signature classifies `died`:
+# the liveness wiring must emit the DIED label (with its retriable/terminal class),
+# NOT the plain `idle at prompt` — and `last activity` must be absent (the pane
+# branch short-circuits before the mtime heartbeat). Pins the `died)` dispatch arm
+# in liveness_snapshot() end-to-end (the pull `--once-liveness` surface, distinct
+# from the push panes_snapshot path).
+test_liveness_pane_died_wiring() {
+    _run_liveness_snapshot_tmux 1200 0 "API Error: Request rejected (429)"$'\n'"  ⏵⏵ auto mode on"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for a died pane"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "died — API error: retriable (429)" \
+        "A died-on-429 pane emits the DIED label with its class through --once-liveness (#446)"
+    assert_not_contains "$LIVE_OUT" "idle at prompt" \
+        "A died pane is NOT downgraded to the plain idle-at-prompt liveness wording"
+    assert_not_contains "$LIVE_OUT" "last activity" \
+        "The pane read wins over the mtime fallback (no 'last activity' heartbeat wording)"
+}
+
 # Precedence: when the pane is scrapeable but classifies indeterminate (empty
 # class), the wiring must FALL THROUGH to the mtime heartbeat. With a fresh
 # status file that yields `alive (process up, last activity … ago)` — the
@@ -731,6 +778,13 @@ test_pane_liveness_class() {
         "The spinner wins over the auto-mode footer -> working"
     assert_equals "" "$(_pane_class "just some scrolling build output")" \
         "Unrelated pane text is indeterminate (empty class)"
+    # #446 death read: an API-error scrollback with a bare footer classifies as
+    # `died` (checked before the plain idle arms so it is not masked as idle); the
+    # same error under an active spinner is `working` (spinner wins).
+    assert_equals "died" "$(_pane_class "API Error: Request rejected (429)"$'\n'"  ⏵⏵ auto mode on")" \
+        "An API-error scrollback with no spinner classifies as died, not idle (#446)"
+    assert_equals "working" "$(_pane_class "API Error: 429"$'\n'"  ⏵⏵ esc to interrupt")" \
+        "The same API-error under an active spinner is working (spinner wins over death)"
 
     # Footer anchoring (#246): the match is scoped to the last GOLEM_PANE_FOOTER_
     # LINES lines (default 8), NOT the whole scrollback. A golem cat-ing/grepping
@@ -1100,6 +1154,162 @@ test_emit_transitions_dedup() {
         "A cleared-then-re-gated golem is a fresh transition"
 }
 
+# Ghost filter (#446, Bug #2 Layer B): a golem torn down WITHOUT worktree-rm.sh
+# leaves its `gate` line as its most-recent feed entry with no `reaped` line to
+# supersede it — so feed_snapshot_live cross-checks golem_has_live_trace and drops
+# a gated golem with NO on-disk/tmux trace left (no session, no worktree dir, no
+# cache file). A golem WITH a cache-file trace (a live headless/container golem)
+# is kept — its gate is real. The shared _run_once_snapshot helper stamps a cache
+# trace per feed golem, so here we craft the ghost by hand: run `--once` directly
+# against a repo where golem-1 has a feed gate but NO trace, and golem-2 has both.
+test_ghost_gate_dropped_when_no_trace() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed_snapshot no-ops without jq)"
+        return 0
+    fi
+    local tmp
+    tmp="$(/usr/bin/mktemp -d)" || return 1
+    # shellcheck disable=SC2064
+    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
+        GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
+    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
+    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+    local ts
+    ts="$(/usr/bin/date -u +%FT%TZ)"
+    {
+        /usr/bin/printf '{"ts":"%s","golem":"golem-1","event":"gate","message":"needs permission"}\n' "$ts"
+        /usr/bin/printf '{"ts":"%s","golem":"golem-2","event":"gate","message":"needs permission"}\n' "$ts"
+    } >"$tmp/.worktrees/.status/feed.jsonl"
+    # Only golem-2 gets a cache-file trace; golem-1 is a ghost (torn down, no trace).
+    /usr/bin/printf '{"golem":"golem-2","issue":2}\n' >"$tmp/.worktrees/.status/golem-2.json"
+
+    # A fake tmux whose `ls`/`has-session` report NO sessions, so a real host golem
+    # cannot leak a trace in (mirrors the #436 hermetic-tmux guard elsewhere).
+    local stub_bin real_bash real_jq real_git
+    stub_bin="$tmp/stub-bin"
+    /usr/bin/mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    real_git="$(command -v git)"
+    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+    real_jq="$(command -v jq || true)"
+    [ -n "$real_jq" ] && /usr/bin/ln -s "$real_jq" "$stub_bin/jq"
+    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    ls) exit 0 ;;
+    has-session) exit 1 ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    /usr/bin/chmod +x "$stub_bin/tmux"
+
+    # Two more gated golems exercise the OTHER two KEEP probes of
+    # golem_has_live_trace: golem-3 kept via an `issue-N.json` cache alias,
+    # golem-4 kept via an on-disk worktree dir (no cache file of its own).
+    {
+        /usr/bin/printf '{"ts":"%s","golem":"golem-3","event":"gate","message":"needs permission"}\n' "$ts"
+        /usr/bin/printf '{"ts":"%s","golem":"golem-4","event":"gate","message":"needs permission"}\n' "$ts"
+    } >>"$tmp/.worktrees/.status/feed.jsonl"
+    /usr/bin/printf '{"golem":"golem-3","issue":3}\n' >"$tmp/.worktrees/.status/issue-3.json"
+    /usr/bin/mkdir -p "$tmp/.worktrees/issue-4"
+
+    local out rc=0
+    out="$(
+        cd "$tmp" &&
+            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub_bin" \
+                GOLEM_BLOCK_TTL=999999999999 GOLEM_WORKTREE_DIR=.worktrees \
+                GOLEM_STATUS_DIR=.worktrees/.status \
+                "$real_bash" "$GATE_WATCH" --once 2>/dev/null
+    )" || rc=$?
+    assert_equals "0" "$rc" "Ghost-filtered --once still exits 0"
+    assert_not_contains "$out" "golem-1" \
+        "A gated golem with no live trace (ghost) is dropped from BLOCKED (#446)"
+    assert_contains "$out" "golem-2" \
+        "A gated golem with a golem-N.json cache-file trace is kept (its gate is real)"
+    assert_contains "$out" "golem-3" \
+        "A gated golem kept via an issue-N.json cache alias trace is not dropped"
+    assert_contains "$out" "golem-4" \
+        "A gated golem kept via an on-disk worktree dir trace is not dropped"
+}
+
+# API-error death matcher (#446, Bug #4): pane_is_api_error matches the Claude Code
+# `API Error <4xx/5xx>` signature in the wider scrollback window, while an ACTIVE
+# run-spinner in the footer vetoes it (a working golem reading an old error is not
+# dead), and prose mentioning "api error" without a code does not match. The
+# classifier splits retriable (429/5xx) from terminal (auth/quota 4xx).
+test_pane_is_api_error() {
+    local died term_pane working prose
+    died=$'work output\nAPI Error: Request rejected (429)\n\n  Try again\n⏵⏵ auto mode on'
+    term_pane=$'API Error: 403 Forbidden\n\n⏵⏵ auto mode on'
+    working=$'API Error: Request rejected (429)\n· Doing work (esc to interrupt)'
+    prose=$'we discussed an api error earlier\n\n⏵⏵ auto mode on'
+
+    assert_equals "0" "$(_pane_rc pane_is_api_error "$died")" \
+        "A 429 API-error scrollback with a bare footer matches (died)"
+    assert_equals "0" "$(_pane_rc pane_is_api_error "$term_pane")" \
+        "A 403 API-error scrollback matches (terminal death)"
+    assert_equals "1" "$(_pane_rc pane_is_api_error "$working")" \
+        "The same error WITH an active run-spinner is NOT a death (spinner vetoes)"
+    assert_equals "1" "$(_pane_rc pane_is_api_error "$prose")" \
+        "Prose mentioning 'api error' without a status code is NOT a death"
+
+    # A 5xx (overloaded/server) is transient too — the `5??` glob arm, distinct
+    # from the literal 429. Pins that a 529/500 is retriable, not terminal.
+    local overloaded
+    overloaded=$'API Error: 529 Overloaded\n\n⏵⏵ auto mode on'
+    assert_equals "0" "$(_pane_rc pane_is_api_error "$overloaded")" \
+        "A 529 API-error scrollback matches (transient overload death)"
+
+    # Classification: retriable (429 + 5xx) vs terminal (other 4xx).
+    local rc_class fivexx_class term_class
+    rc_class="$(
+        source "$GATE_WATCH"
+        pane_api_error_class "$died"
+    )"
+    fivexx_class="$(
+        source "$GATE_WATCH"
+        pane_api_error_class "$overloaded"
+    )"
+    term_class="$(
+        source "$GATE_WATCH"
+        pane_api_error_class "$term_pane"
+    )"
+    assert_equals "retriable (429)" "$rc_class" "429 classifies as retriable"
+    assert_equals "retriable (529)" "$fivexx_class" "a 5xx code classifies as retriable (the 5?? arm, not just 429)"
+    assert_equals "terminal (403)" "$term_class" "403 classifies as terminal"
+}
+
+# End-to-end death dispatch (#446, Bug #4): drive the REAL panes_snapshot() via
+# `--once-panes` to pin that a died-on-API-error pane emits the DIED label with its
+# retriable/terminal class, AND that the death read is dispatched BEFORE
+# pane_is_turn_end — a died pane also paints the bare `auto mode on` footer, so the
+# more-specific death must win, never downgraded to turn-end.
+test_panes_snapshot_died_dispatch() {
+    _run_panes_snapshot_tmux "API Error: Request rejected (429)"$'\n'"⏺ stopped"$'\n'"  ⏵⏵ auto mode on"
+    assert_equals "0" "$PANES_RC" "panes_snapshot exits 0 for a died pane"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"⚠ died — API error: retriable (429) (check pane)" \
+        "A died-on-429 pane emits the DIED label with a retriable class end-to-end"
+    assert_not_contains "$PANES_OUT" "idle at prompt" \
+        "A died pane is NOT downgraded to turn-end/idle (death wins)"
+
+    # A terminal (auth) death classifies distinctly.
+    _run_panes_snapshot_tmux "API Error: 401 Unauthorized"$'\n'"  ⏵⏵ auto mode on"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"⚠ died — API error: terminal (401) (check pane)" \
+        "A died-on-401 pane emits the DIED label with a terminal class"
+
+    # A plan-gate + a stale error in scrollback: the modal gate still wins (death
+    # is dispatched after the three modal matchers, before turn-end only).
+    _run_panes_snapshot_tmux "API Error: 429"$'\n'"1. Yes, and use auto mode"$'\n'"  ⏵⏵ auto mode on"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"plan gate — ExitPlanMode awaiting approval" \
+        "A plan overlay wins over a scrollback error (modal gates precede the death read)"
+    assert_not_contains "$PANES_OUT" "died — API error" \
+        "A plan+error pane is NOT labelled a death (modal wins)"
+}
+
 run_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not drop all BLOCKED golems"
 run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
@@ -1113,6 +1323,7 @@ run_test test_liveness_gated_not_stalled "Liveness: gated golem reported gated, 
 run_test test_liveness_threshold_env_overridable "Liveness: GOLEM_STALL_THRESHOLD is env-overridable"
 run_test test_liveness_pane_working_wiring "Liveness wiring: working pane -> 'alive, working' (pane wins over mtime)"
 run_test test_liveness_pane_idle_wiring "Liveness wiring: idle pane (#229) -> 'idle at prompt' (pane wins over mtime)"
+run_test test_liveness_pane_died_wiring "Liveness wiring: died pane (#446) -> DIED label with class (pane wins over mtime)"
 run_test test_liveness_pane_indeterminate_falls_through "Liveness wiring: indeterminate pane falls through to mtime heartbeat"
 run_test test_liveness_pane_blank_capture_falls_through "Liveness wiring: blank capture-pane (guard false) falls through to mtime heartbeat"
 run_test test_unknown_mode_exits_2 "Unknown mode exits 2 with a usage message"
@@ -1130,5 +1341,8 @@ run_test test_panes_snapshot_turn_end_dispatch "panes_snapshot emits idle-at-pro
 run_test test_confirm_turn_end_debounce "confirm_turn_end: two-consecutive-poll debounce on the idle line; gates immediate (#447)"
 run_test test_pane_liveness_class "pane_liveness_class: spinner=working, error/idle footer=idle, spinner wins"
 run_test test_emit_transitions_dedup "emit_transitions: prime/standing/new/changed/re-gate dedup"
+run_test test_ghost_gate_dropped_when_no_trace "Ghost filter: gated golem with no live trace dropped from BLOCKED (#446)"
+run_test test_pane_is_api_error "pane_is_api_error: matches API-error death, spinner vetoes, classifies retriable/terminal (#446)"
+run_test test_panes_snapshot_died_dispatch "panes_snapshot: died-on-API-error emits DIED before turn-end; modal gates still win (#446)"
 
 generate_report

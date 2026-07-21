@@ -46,7 +46,10 @@
 # session errored on line 1 and went idle at its prompt (issue #229). So when a
 # live golem-* tmux pane is scrapeable, `pane_liveness_class` overrides the mtime
 # proxy with a stronger read: "alive, working" when the `esc to interrupt` run-
-# spinner is in the footer, or "⚠ idle at prompt" on an error/idle signature. The
+# spinner is in the footer, "⚠ died — API error" on the #446 death signature (an
+# `API Error` 4xx/5xx in the scrollback with no spinner — a golem whose process
+# died on a transient/terminal API error and parked at its prompt looking exactly
+# like a finished turn), or "⚠ idle at prompt" on an error/idle signature. The
 # match is anchored to the pane's FOOTER region (the last GOLEM_PANE_FOOTER_LINES
 # lines, where the spinner/input-box/footer chrome renders) rather than the whole
 # scrollback, so a golem cat-ing/grepping a file whose text happens to contain
@@ -63,7 +66,8 @@
 #   --stream                 feed poll loop: emit on TRANSITION into a fresh
 #                            gate (dedupe standing gates), until killed
 #   --once-panes             pane snapshot: live golem-* sessions at a prompt
-#                            gate OR turn-ended/idle at their prompt (#447)
+#                            gate, died on an API error (#446), OR turn-ended/idle
+#                            at their prompt (#447)
 #   --stream-panes           pane poll loop: emit on transition, until killed
 #   --once-liveness          liveness snapshot: per-golem heartbeat/stall, exit 0
 #   --stream-liveness        liveness poll loop: re-emit each golem's heartbeat
@@ -76,6 +80,8 @@
 #   GOLEM_HEARTBEAT_INTERVAL liveness poll interval, seconds (default 60)
 #   GOLEM_PANE_FOOTER_LINES  pane footer window for pane_liveness_class +
 #                            pane_is_fork, lines (default 8)
+#   GOLEM_PANE_ERROR_LINES   pane scrollback window for pane_is_api_error's #446
+#                            death read, lines (default 40)
 #
 # Never blocks a golem and never hangs on a missing feed/tmux: errors are
 # swallowed and a snapshot mode always exits 0. The `--stream*` loops carry NO
@@ -100,12 +106,28 @@ interval="${GOLEM_WATCH_INTERVAL:-5}"
 stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
 heartbeat_interval="${GOLEM_HEARTBEAT_INTERVAL:-60}"
 pane_footer_lines="${GOLEM_PANE_FOOTER_LINES:-8}"
+# Window for the #446 API-error death read. The `API Error` line sits a few lines
+# ABOVE the prompt (the issue used `capture-pane -S -40`), outside the 8-line
+# footer the gate/turn-end matchers anchor to — so pane_is_api_error scans a wider
+# tail. Separate tunable so widening it does not loosen the footer matchers.
+pane_error_lines="${GOLEM_PANE_ERROR_LINES:-40}"
 
 # The turn-end/idle-at-prompt push message (#447). Defined once here because two
 # functions couple on it: panes_snapshot() emits it, and confirm_turn_end()
 # recognizes it to apply the two-consecutive-poll debounce (below). A top-level
 # assignment so a SOURCED unit test sees it before calling either function.
 TURN_END_MSG="⚠ idle at prompt — turn ended, awaiting input (check pane)"
+
+# The API-error death push message (#446). A golem whose `claude` process died on
+# a transient API error (429/5xx) or a terminal one (auth/quota) goes idle at the
+# `⏵⏵ auto mode on` prompt — byte-identical to a finished turn — with no feed
+# event, gate, or signal, so it reads as idle-complete and an orchestrator either
+# tears it down (losing durable work) or parks it forever. panes_snapshot() reads
+# the pane scrollback (the ONLY ground-truth signal — a dead process can't emit
+# its own feed line) and emits this instead. The `%s` is filled with a
+# retriable/terminal classification so an orchestrator can auto-resume a transient
+# death vs escalate a terminal one.
+DIED_MSG_PREFIX="⚠ died — API error"
 
 # Resolve the MAIN checkout's status dir (the feed lives there even when invoked
 # from a worktree). repo_root (from config.sh) is bare-repo-safe.
@@ -167,6 +189,73 @@ feed_snapshot() {
               else "\(.golem)\t\($m)" end
           ' 2>/dev/null |
         /usr/bin/sort -u
+}
+
+# golem_has_live_trace <golem-id> — true when ANY on-disk/tmux trace of the golem
+# still exists: a live `golem-N` tmux session, an `issue-N` worktree dir, or a
+# `golem-N.json` / `issue-N.json` status-cache file. Defense-in-depth for #446's
+# ghost bug: a golem torn down WITHOUT worktree-rm.sh (killed by hand, or a stale
+# pre-existing feed line) emits no terminal `reaped` line, so its last `gate`
+# stays its most-recent feed entry and renders BLOCKED for the whole
+# GOLEM_BLOCK_TTL window even though nothing of it remains. The primary fix is the
+# `reaped` line worktree-rm.sh emits (superseding the gate); this reader-side
+# check covers the teardown paths that emit no line.
+#
+# The probes mirror liveness_snapshot's own union-of-sources (tmux ls + status
+# cache glob + worktree dir), so the two liveness reads stay consistent. The
+# predicate is a conservative OR: a golem with a cache file but no host-visible
+# tmux session (a headless/container golem) still has a trace and is KEPT — its
+# gate may be real. Only a golem with ZERO traces is dropped. bash-3.2 clean.
+# Requires the golem id already normalized to `golem-N`; extracts N internally.
+golem_has_live_trace() {
+    local golem="$1" n status_dir root
+    # 1. Live tmux session — the session name IS the golem id, so this works for
+    #    any id shape (numeric or otherwise).
+    if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$golem" 2>/dev/null; then
+        return 0
+    fi
+    status_dir="$(resolve_status_dir 2>/dev/null || true)"
+    # 2. Status-cache file keyed by the full golem id (`golem-N.json`) — the real
+    #    cache naming, and the trace a headless/container golem carries with no
+    #    host-visible tmux session. Keyed by the whole id so it is id-shape-agnostic.
+    if [ -n "$status_dir" ]; then
+        [ -e "$status_dir/$golem.json" ] && return 0
+    fi
+    # 3. Numeric-derived probes: the `issue-N.json` cache alias and the on-disk
+    #    worktree dir. Only a well-formed `golem-N` has these; a non-numeric id
+    #    (e.g. the `golem-?` sentinel, already dropped upstream in feed_snapshot)
+    #    has no further trace to probe and falls through to no-trace.
+    n="${golem#golem-}"
+    case "$n" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    if [ -n "$status_dir" ]; then
+        [ -e "$status_dir/issue-$n.json" ] && return 0
+    fi
+    root="$(repo_root 2>/dev/null || true)"
+    if [ -n "$root" ] && [ -d "$root/$GOLEM_WORKTREE_DIR/issue-$n" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# feed_snapshot_live <feed> — feed_snapshot filtered through golem_has_live_trace,
+# so a gated golem with no on-disk/tmux trace left (a ghost, #446) is dropped from
+# the BLOCKED set. This is the form the `--once` / `--stream` drive paths use
+# (and, through the `--once` delegation, golem-status.sh's BLOCKED list) so the
+# ghost filter applies wherever a golem is surfaced as blocked. feed_snapshot
+# itself stays PURE (unfiltered) so the unit tests can assert the raw feed
+# semantics (TTL, event-kind, orphan-drop) in isolation without standing up a
+# worktree/session for every fixture golem.
+feed_snapshot_live() {
+    local feed="$1" g msg
+    feed_snapshot "$feed" |
+        while IFS=$'\t' read -r g msg; do
+            [ -n "$g" ] || continue
+            if golem_has_live_trace "$g"; then
+                /usr/bin/printf '%s\t%s\n' "$g" "$msg"
+            fi
+        done
 }
 
 # --- portable string→string map (bash 3.2 has no `declare -A`) --------------
@@ -356,6 +445,62 @@ pane_is_turn_end() {
     return 1
 }
 
+# API-error death read (issue #446). A golem whose `claude` process died on a
+# transient API error (429/5xx) or a terminal one (auth/quota) stops and sits at
+# the ordinary `⏵⏵ auto mode on` prompt — indistinguishable from a finished turn
+# by the footer alone — while the error line (`API Error: ...`) sits a few lines
+# ABOVE, in the scrollback. So unlike the gate/turn-end matchers this scans the
+# wider `$pane_error_lines` tail, not just the 8-line footer, to catch the error
+# line. Best-effort, like pane_is_turn_end / the #229 idle read.
+#
+# Two guards keep it from over-matching (same discipline as pane_liveness_class,
+# #246): (1) a live golem still WORKING (spinner up) is never a death — if the
+# FOOTER carries `esc to interrupt`, return no-match regardless of scrollback, so
+# a golem reading an old error in its own transcript while actively working does
+# not self-trip. (2) The signature is the specific Claude Code `API Error` string
+# followed by a status code, not a bare word, so a golem discussing "api error"
+# in prose stays unmatched. panes_snapshot() also runs this BEFORE pane_is_turn_end
+# so a died pane (which also paints the bare turn-end footer) is classified as the
+# more-specific death, never downgraded to turn-end.
+pane_is_api_error() {
+    local pane="$1" footer window
+    # Guard 1: an active run-spinner in the footer means the process is alive and
+    # working — never a death, whatever the scrollback holds.
+    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$pane")"
+    case "$footer" in
+        *"esc to interrupt"*) return 1 ;;
+    esac
+    # Guard 2: the specific `API Error` signature with a status code, scanned over
+    # the wider death window. grep -E over the tail (not a bash glob) so the digit
+    # class is exact; anchored to `API Error` immediately preceding the code.
+    window="$(/usr/bin/tail -n "$pane_error_lines" <<<"$pane")"
+    if /usr/bin/printf '%s\n' "$window" |
+        /usr/bin/grep -qE 'API Error[^0-9]*(4[0-9][0-9]|5[0-9][0-9])'; then
+        return 0
+    fi
+    return 1
+}
+
+# Classify a died pane's API error as retriable (transient — auto-resume
+# candidate) or terminal (auth/quota — needs a human), for the emitted message.
+# 429 and 5xx are transient; 401/403 (auth) and 402 (quota/billing) are terminal;
+# any other 4xx defaults to terminal (conservative — surface for a human rather
+# than auto-resume into a wall). Prints "retriable (NNN)" or "terminal (NNN)";
+# "unknown" when no code is found (shouldn't happen — pane_is_api_error matched a
+# code — but never emit a bare classification).
+pane_api_error_class() {
+    local pane="$1" window code
+    window="$(/usr/bin/tail -n "$pane_error_lines" <<<"$pane")"
+    code="$(/usr/bin/printf '%s\n' "$window" |
+        /usr/bin/grep -oE 'API Error[^0-9]*(4[0-9][0-9]|5[0-9][0-9])' |
+        /usr/bin/grep -oE '(4[0-9][0-9]|5[0-9][0-9])' | /usr/bin/head -n1)"
+    case "$code" in
+        429 | 5??) command echo "retriable ($code)" ;;
+        '') command echo "unknown" ;;
+        *) command echo "terminal ($code)" ;;
+    esac
+}
+
 # Print the current set of live golem-* sessions sitting at a prompt overlay,
 # one "<golem>\t<message>" line each. No-op (success) when tmux is absent.
 #
@@ -378,6 +523,11 @@ panes_snapshot() {
             /usr/bin/printf '%s\t%s\n' "$sess" "permission gate — awaiting decision"
         elif pane_is_fork "$pane"; then
             /usr/bin/printf '%s\t%s\n' "$sess" "escalation — awaiting decision (carries options)"
+        elif pane_is_api_error "$pane"; then
+            # BEFORE pane_is_turn_end: a died-on-API-error pane also paints the bare
+            # turn-end footer, so the more-specific death read must win (#446).
+            /usr/bin/printf '%s\t%s: %s (check pane)\n' \
+                "$sess" "$DIED_MSG_PREFIX" "$(pane_api_error_class "$pane")"
         elif pane_is_turn_end "$pane"; then
             /usr/bin/printf '%s\t%s\n' "$sess" "$TURN_END_MSG"
         fi
@@ -439,6 +589,11 @@ confirm_turn_end() {
 # the prompt" — the distinction the mtime heartbeat cannot make.
 #   "working" — the `esc to interrupt` run-spinner hint is in the footer; the
 #               reliable positive "a command is executing right now" marker.
+#   "died"    — the #446 API-error death signature (`API Error` + a 4xx/5xx code)
+#               in the scrollback with no run-spinner: the `claude` process died
+#               on a transient (429/5xx) or terminal (auth/quota) API error and is
+#               parked at its prompt looking exactly like a finished turn. Checked
+#               before the plain idle arms so it is not downgraded to `idle`.
 #   "idle"    — an error/idle signature: the exact #229 `Unknown command`
 #               failure, or the bare `auto mode on` footer (the `⏵⏵ auto mode on`
 #               chrome) with no spinner above it (orchestrate golems always run
@@ -467,6 +622,15 @@ pane_liveness_class() {
             return 0
             ;;
     esac
+    # #446 death read BEFORE the plain idle arms: a died-on-API-error pane also
+    # paints the bare `auto mode on` footer, so without this it would classify as a
+    # plain `idle` and mask the death. pane_is_api_error carries its own
+    # spinner-in-footer guard (redundant with the `working` return above, kept for
+    # standalone correctness).
+    if pane_is_api_error "$1"; then
+        command echo "died"
+        return 0
+    fi
     case "$footer" in
         *"Unknown command"*)
             command echo "idle"
@@ -605,6 +769,11 @@ liveness_snapshot() {
                         /usr/bin/printf '%s\t%s\n' "golem-$n" "alive, working (esc-to-interrupt active)"
                         continue
                         ;;
+                    died)
+                        /usr/bin/printf '%s\t%s: %s (check pane)\n' \
+                            "golem-$n" "$DIED_MSG_PREFIX" "$(pane_api_error_class "$pane")"
+                        continue
+                        ;;
                     idle)
                         /usr/bin/printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (check pane)"
                         continue
@@ -648,7 +817,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 
     case "$mode" in
         --once)
-            [ -n "$feed" ] && feed_snapshot "$feed"
+            [ -n "$feed" ] && feed_snapshot_live "$feed"
             exit 0
             ;;
         --once-panes)
@@ -657,11 +826,13 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             ;;
         --stream)
             # Prime from the current state so pre-existing gates are not replayed as
-            # new, then emit only genuine transitions thereafter.
-            [ -n "$feed" ] && emit_transitions "$(feed_snapshot "$feed")" 1
+            # new, then emit only genuine transitions thereafter. feed_snapshot_live
+            # applies the #446 ghost filter so a torn-down golem never streams as a
+            # fresh transition.
+            [ -n "$feed" ] && emit_transitions "$(feed_snapshot_live "$feed")" 1
             while :; do
                 /usr/bin/sleep "$interval"
-                [ -n "$feed" ] && emit_transitions "$(feed_snapshot "$feed")" 0
+                [ -n "$feed" ] && emit_transitions "$(feed_snapshot_live "$feed")" 0
             done
             ;;
         --stream-panes)

@@ -1841,6 +1841,39 @@ test_worktree_rm_round_trip() {
     assert_equals "" "$branches" "the feature/issue-34 branch is gone after rm"
 }
 
+# Teardown emits a terminal `reaped` feed line (#446, Bug #2). worktree-rm.sh pipes
+# a REAPED:-prefixed Notification to golem-notify.sh after a successful teardown so
+# the torn-down golem's stale `gate` line is superseded and it does not ghost on
+# golem-status.sh's BLOCKED list. Two things are pinned: the line lands in the feed
+# with event=reaped, AND it carries the correct `golem-N` id (not `golem-?`) — the
+# script runs in the MAIN checkout, so worktree-rm.sh must force GOLEM_ID or the
+# hook's basename fallback would stamp `golem-?` and never correlate.
+test_worktree_rm_emits_reaped_feed_line() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed-line assertion needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 51
+    assert_exit 0 "$RUN_RC" "worktree-new seeds the worktree to reap"
+    run_in "$sb" "$WT_RM" 51
+    assert_exit 0 "$RUN_RC" "worktree-rm succeeds"
+
+    local feed
+    feed="$sb/.worktrees/.status/feed.jsonl"
+    assert_file_exists "$feed" "worktree-rm wrote a feed line on teardown"
+    # The most-recent line for golem-51 must be a reaped event with the right id.
+    local reaped
+    reaped="$(/usr/bin/grep '"golem":"golem-51"' "$feed" 2>/dev/null | /usr/bin/tail -n1)"
+    assert_not_empty "$reaped" "a feed line for golem-51 was written"
+    local ev
+    ev="$(/usr/bin/printf '%s' "$reaped" | jq -r '.event' 2>/dev/null)"
+    assert_equals "reaped" "$ev" "the teardown line classifies as event=reaped (#446)"
+    # No golem-? ghost id: the forced GOLEM_ID must have resolved to golem-51.
+    assert_not_contains "$reaped" "golem-?" "the reaped line carries golem-51, not the golem-? sentinel"
+}
+
 # Regression (#328): worktree-rm.sh runs its OWN destructive git mutations
 # (worktree remove / branch -D / config --unset core.worktree / worktree prune)
 # after repo_root(). Like worktree-new, a tainted GIT_DIR/GIT_COMMON_DIR
@@ -3982,6 +4015,7 @@ run_test test_config_git_env_scrub_vars_single_source "config.sh: GIT_ENV_SCRUB_
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
+run_test test_worktree_rm_emits_reaped_feed_line "worktree-rm: teardown emits a reaped feed line with the right id (#446)"
 run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"
 run_test test_worktree_rm_scrubs_git_config_injection_for_mutations "worktree-rm: scrubs a GIT_CONFIG_* injection so the teardown mutation targets the right repo (#376, #328)"
 run_test test_worktree_rm_readonly_tainted_git_env_fails_loud "worktree-rm: aborts fail-loud (non-zero, no mutation) under a readonly-tainted GIT_DIR (#368)"

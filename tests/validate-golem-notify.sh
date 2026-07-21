@@ -313,6 +313,33 @@ test_classifier_resolved_midmessage_stays_gate() {
         "gate" "'unresolved:' substring does not mask a real gate (#422)"
 }
 
+# A REAPED:-prefixed message (emitted by worktree-rm.sh after teardown) classifies
+# as `reaped` — the terminal kind that supersedes a torn-down golem's stale gate on
+# the next sweep so it does not ghost on the BLOCKED list (#446).
+test_classifier_reaped() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (classifier + JSON validation need jq)"
+        return 0
+    fi
+    assert_event '{"message":"REAPED: worktree/session for golem-7 torn down"}' \
+        "reaped" "REAPED: prefix → reaped (#446)"
+}
+
+# CRITICAL (#446, mirrors the #422 resolved-anchoring test): `reaped:` is anchored
+# to the message START, so a GENUINE permission gate whose message merely CONTAINS
+# "reaped:" mid-string must stay `gate`, NOT be misclassified as `reaped`. A
+# `reaped` misclassification would drop a real pending gate from the BLOCKED set
+# (reaped, like idle/resolved, is excluded), silently hiding a human decision. This
+# pins the prefix anchor: an unanchored `*"reaped:"*` regresses the assertion.
+test_classifier_reaped_midmessage_stays_gate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (classifier + JSON validation need jq)"
+        return 0
+    fi
+    assert_event '{"message":"Claude needs your permission to run: echo \"files reaped: 3\""}' \
+        "gate" "a real gate with mid-message 'reaped:' stays gate, not masked (#446)"
+}
+
 test_classifier_gate_default() {
     if ! command -v jq >/dev/null 2>&1; then
         skip_test "jq not available (classifier + JSON validation need jq)"
@@ -621,6 +648,8 @@ run_test test_classifier_escalation "classifier: ESCALATION: → escalation"
 run_test test_classifier_dead_end "classifier: DEAD-END: → dead-end"
 run_test test_classifier_resolved "classifier: RESOLVED: → resolved (#422)"
 run_test test_classifier_resolved_midmessage_stays_gate "classifier: mid-message 'resolved:'/'unresolved:' stays gate, not masked (#422)"
+run_test test_classifier_reaped "classifier: REAPED: → reaped (#446)"
+run_test test_classifier_reaped_midmessage_stays_gate "classifier: mid-message 'reaped:' stays gate, not masked (#446)"
 run_test test_classifier_gate_default "classifier: unrecognized message → gate default"
 run_test test_classifier_askuserquestion_stays_gate "classifier: AskUserQuestion permission message → gate default (#321)"
 run_test test_classifier_dead_end_beats_escalation "classifier: dead-end wins over escalation"
