@@ -1,0 +1,112 @@
+name: Code scanning
+
+# agnix → GitHub code scanning (issue #399; ADR
+# plugins/review-audit/docs/adr/0001-agnix-check-ai-config-boundary.md §4).
+# This is the author/CI SARIF surface of the agnix integration spine — separate
+# from the `checker` batch path (which consumes agnix via the JSON→TSV
+# normalizer, #397). It runs agnix over the repo's OWN AI-config artifacts and
+# uploads the SARIF so findings appear as native PR code-scanning annotations
+# with cross-run dedup.
+#
+# Deliberately its OWN workflow, not a job in ci.yml:
+#   - SARIF upload needs `security-events: write`; ci.yml declares least-privilege
+#     `contents: read` at the workflow level and that contract must not widen.
+#   - It is INFORMATIONAL, like ci.yml's coverage job — NOT part of the merge-gate
+#     aggregation, so an agnix finding annotates a PR without redding it. Per the
+#     ADR, SARIF is for annotations/dedup, not a hard merge block.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# security-events:write is required to upload SARIF to code scanning; contents
+# stays read-only (the scan reads the tree as data). Declared at the workflow
+# level so the single job inherits exactly this scope.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  agnix-sarif:
+    name: agnix → code scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Fork PRs cannot write `security-events` (GitHub withholds that token scope
+    # from forks), so the upload would fail — skip the whole job on fork PRs,
+    # matching the trust boundary ci.yml applies to quality-gates/coverage. The
+    # first clause keeps push + workflow_dispatch running (their pull_request
+    # context is null, so the head.repo check alone would wrongly skip them).
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      # Pin agnix (ADR §5: no @latest — a floating bump can add rules that red a
+      # previously-green tree with no code change). Offline-tolerant: if the
+      # install fails (registry hiccup, npm-less/network-restricted runner), log
+      # a clear skip and set an output so the scan + upload steps no-op rather
+      # than hard-failing the job — agnix is a best-effort enrichment, not a
+      # required gate (acceptance: "agnix-absent → clear skip, not a hard
+      # failure").
+      - name: Install agnix (pinned)
+        id: agnix
+        run: |
+          if npm install -g agnix@0.40.0; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            agnix --version
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::agnix install failed — skipping code-scanning upload (agnix is a best-effort enrichment; the check-ai-config floor still runs in the checker path)."
+          fi
+
+      # Run agnix over the repo's OWN AI-config artifacts only:
+      #   - `--config .agnix.toml` uses the repo's operator-controlled config
+      #     (ADR §5 trust posture: never a config from an audited/foreign tree).
+      #   - scope `CLAUDE.md AGENTS.md plugins` excludes the pinned containers/
+      #     submodule (foreign tree) and .claude/memory scratch a bare `.` pulls in.
+      #   - NO `--fix*` (ADR §4: autofix is fenced off the CI/checker path).
+      #
+      # Exit-code handling distinguishes the two non-zero cases, rather than a
+      # blanket `|| true` that would treat a crash as a clean scan:
+      #   - agnix exits non-zero when it FINDS issues — expected; the SARIF is
+      #     still valid and must be uploaded (the annotations ARE the point).
+      #   - agnix crashing (bad flag, panic, unparsable .agnix.toml, an
+      #     incompatible version after a pin bump) leaves EMPTY or invalid SARIF.
+      #     A blanket `|| true` there would silently read as "0 findings" forever
+      #     with no signal (the failure mode the sibling agnix-normalize.py guards
+      #     with its empty-output RuntimeError). So we validate the output: a
+      #     non-empty, well-formed SARIF sets sarif=true (upload); anything else
+      #     emits a ::warning:: and leaves sarif unset so the upload step skips —
+      #     a clear skip, still not a hard job failure (informational gate).
+      - name: Run agnix (SARIF)
+        id: scan
+        if: steps.agnix.outputs.present == 'true'
+        run: |
+          agnix --format sarif --target claude-code --config .agnix.toml \
+            validate CLAUDE.md AGENTS.md plugins > agnix.sarif || true
+          if [ -s agnix.sarif ] && jq -e '.runs' agnix.sarif >/dev/null 2>&1; then
+            echo "sarif=true" >> "$GITHUB_OUTPUT"
+            echo "agnix SARIF: $(jq '.runs[0].results | length' agnix.sarif) result(s)."
+          else
+            echo "::warning::agnix produced no valid SARIF (crash or empty output) — skipping code-scanning upload. This is a signal, not a clean scan; check the agnix step above."
+          fi
+
+      # Upload to GitHub code scanning. `category` is stable so GitHub dedups
+      # findings across runs. Gated on a validated SARIF from the scan step, so
+      # neither the install-failed skip nor an agnix crash reaches the upload.
+      - name: Upload SARIF to code scanning
+        if: steps.scan.outputs.sarif == 'true'
+        uses: github/codeql-action/upload-sarif@b7351df727350dca84cb9d725d57dcf5bc82ba26 # v3.37.1
+        with:
+          sarif_file: agnix.sarif
+          category: agnix
