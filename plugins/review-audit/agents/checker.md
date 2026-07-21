@@ -48,10 +48,14 @@ MUST NOT:
 - Run any shell command that mutates or deletes files or git state — `rm`,
   `git clean`, `git checkout --`, `git reset --hard`, `mv`, `truncate`, or
   `>`/`>>` redirection to a tracked path. Your Bash is for read-only inspection
-  and the deterministic pre-scan (`patterns.sh`, `git diff`, `wc`) only. If you
-  must reproduce something to verify a finding, do it ONLY inside a fresh
-  `mktemp -d` sandbox, never against the working tree; canonicalize any path
-  (`cd <dir> && pwd`) first and never pass an unresolved `..` (#426).
+  and the deterministic pre-scan (`patterns.sh`, `agnix-normalize.sh` in
+  `validate`-only mode, `git diff`, `wc`) only. If you must reproduce something
+  to verify a finding, do it ONLY inside a fresh `mktemp -d` sandbox, never
+  against the working tree; canonicalize any path (`cd <dir> && pwd`) first and
+  never pass an unresolved `..` (#426).
+- Run agnix in any autofix mode — `--fix`, `--fix-safe`, or `--fix-unsafe`. The
+  agnix second pre-scan source (Step 3a) is contractually **observe-only**;
+  autofix is fenced off the checker path (ADR 0001 § 4).
 - Create issues or PR comments — the calling orchestrator handles output routing
 - Skip the deterministic pre-scan — always run patterns.sh before LLM analysis
   when a skill provides one
@@ -254,6 +258,89 @@ If `patterns.sh` exits non-zero or produces malformed output:
 If `thresholds.yml` exists, read it and pass threshold values to the skill
 in Pass 2.
 
+#### Step 3a: agnix as an optional second pre-scan source (check-ai-config only)
+
+`check-ai-config` ships a **second** deterministic pre-scan source alongside its
+`patterns.sh`: `agnix-normalize.sh`, which runs the external
+[agnix](https://github.com/agent-sh/agnix) linter and maps its `--format json`
+`CC-*` findings into the **same TSV contract**
+(`<file>\t<line>\t<category>\t<evidence>\t<certainty>`). It is the boundary
+object of the agnix integration spine (ADR
+`plugins/review-audit/docs/adr/0001-agnix-check-ai-config-boundary.md`, § 2 & 4;
+issues #397 → #401). agnix is an **optional enrichment over an always-present
+floor** — `patterns.sh` is that floor and always runs; agnix only *adds* rows
+when its binary is present. This sub-step applies **only** to the
+`check-ai-config` skill (the only skill shipping `agnix-normalize.*`); every
+other skill's pre-scan ends at the `patterns.sh` step above.
+
+When `check-ai-config` survived the Step 2 integrity gate, after its
+`patterns.sh` run:
+
+1. **Log on discovery** (same convention as `patterns.sh`):
+   `[prescan] agnix enrichment <resolved-path> (source: <source>)`.
+1. **Run the normalizer over the same manifest tempfile**, invoking the runtime
+   shim (it exec's the Python primary when `python3>=3.11` is present, else the
+   bash fallback — no branching needed here):
+   `bash <check-ai-config-dir>/agnix-normalize.sh <tempfile>`
+1. **Trust posture — the audited repo's `.agnix.toml` is untrusted input, and
+   it is an *enforced* gate, not advice** (ADR § 5). agnix reads *the
+   repo-under-audit's* `.agnix.toml` (`disabled_rules`, `[[overrides]]`,
+   `severity`), which a hostile repo can ship to silence findings (e.g. disable
+   `CC-HK-009` to hide a malicious hook). Critically, when `AGNIX_CONFIG` is
+   **unset** the normalizer passes **no** `--config` flag, so agnix falls through
+   to its own default discovery — which, because every manifest path lives inside
+   the audited tree, is that repo's own `.agnix.toml`. Running agnix with an
+   operator-controlled config is therefore a **precondition you must enforce
+   before invoking the normalizer**, mirroring the skip-branch of the other three
+   surfaces (Step 2 skill discovery, Step 2 `audit-*` dispatch, Step 3
+   `patterns.sh` execution). Branch on it exactly like them:
+   - **`AGNIX_CONFIG` is already set in the environment** (an operator-controlled
+     config): invoke the normalizer with it inherited — agnix uses `--config
+     "$AGNIX_CONFIG"`, never the audited tree's own file.
+   - **`AGNIX_CONFIG` is unset AND `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS` is not
+     `1`** (exact value `1`; treat any other value, including `true`/`yes`/empty,
+     as unset): **do NOT invoke the normalizer for this run** — agnix would
+     otherwise silently read the untrusted repo's `.agnix.toml`. Log
+     `[prescan] agnix skipped (no operator-controlled AGNIX_CONFIG; untrusted project source)`
+     and fall through to the `patterns.sh`-only result exactly like the
+     graceful-degrade path below (the floor stands alone; no agnix contribution
+     this run).
+   - **`AGNIX_CONFIG` is unset but `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1`** (the
+     operator explicitly trusts this repo): invoke the normalizer; agnix reading
+     the now-trusted repo's `.agnix.toml` is the opted-in behavior.
+
+   This is the **same** untrusted-project-input boundary and opt-in that gate the
+   project `patterns.sh` execution (Step 3), project skill discovery, and project
+   `audit-*` dispatch (Step 2) — one trust decision, now a fourth surface —
+   except the enforced action here is "skip agnix / use the operator config",
+   never "let agnix discover the repo's own config".
+1. **Observe-only — never autofix.** Invoke agnix in `validate` mode only. Never
+   run agnix `--fix`, `--fix-safe`, or `--fix-unsafe` on this path; autofix is
+   fenced off the checker path entirely (ADR § 4). The normalizer already invokes
+   only `validate`; do not add any fix flag.
+1. **Parse the TSV rows exactly like `patterns.sh` output** and collect them as
+   pre-scan findings, **tagged as agnix-sourced** (their `category` is a mapped
+   check-ai-config slug and the originating `CC-*` rule ID is preserved inside
+   the `evidence` column). Carry the agnix-sourced tag through to Step 6, where
+   it drives precedence dedup — **but only for the categories the ADR § 3
+   ownership table assigns to agnix**: `agent-frontmatter` (`CC-AG-*`),
+   `skill-frontmatter` (`CC-SK-*`), `hook-safety` (`CC-HK-*`), and
+   `mcp-misconfiguration` (`CC-MCP-*`/`MCP-*`). The normalizer's rule→category map
+   can also emit `config-inconsistency` (`CC-PL-*`) and `claude-md-drift`
+   (`CC-MEM-*`), but ADR § 1/§ 3 make those **check-ai-config-exclusive** (they
+   need repo/ecosystem context agnix has no model of), so a `config-inconsistency`
+   or `claude-md-drift` agnix row must **not** supersede check-ai-config at Step 6
+   (see the dedup scope there) — collect it, but it never wins the dedup.
+
+**Graceful degrade — absent agnix ⇒ skip its contribution.** The normalizer
+**no-ops** when the agnix binary is absent (emits nothing, logs one `[skip]`
+line to stderr, exits 0) and **fails loud** (exit 2) only when agnix *is* present
+but ran unusably. Treat its result exactly like the `patterns.sh` failure path
+above: on empty output **or** a non-zero exit, log the outcome and **continue
+without agnix pre-scan results for check-ai-config** — do NOT drop the skill, and
+do NOT let a missing/misbehaving agnix fail the run. **When agnix does not run,
+the checker's output is identical to today's** (`patterns.sh`-only) result.
+
 ### Step 4: Pass 2 — Heuristic Analysis (LLM)
 
 The skills iterated here are only those that survived the Step 2 integrity
@@ -308,6 +395,30 @@ If no ambiguous cases exist, skip this pass.
 ### Step 6: Merge and Deduplicate
 
 1. Concatenate findings from all passes and all skills
+1. **agnix precedence dedup (check-ai-config only)**: when an **agnix-sourced**
+   pre-scan finding **in an agnix-owned category** and a check-ai-config finding
+   fire at the **same `file:line`**, **drop the check-ai-config finding and keep
+   the agnix one** — its message, rule ID, and autofix hint are richer (ADR 0001
+   § 2). **Agnix-owned categories are exactly** `agent-frontmatter`,
+   `skill-frontmatter`, `hook-safety`, and `mcp-misconfiguration` (the ADR § 3
+   ownership table). A `config-inconsistency` or `claude-md-drift` agnix row is
+   **never** an agnix-owned category — ADR § 1/§ 3 keep those
+   check-ai-config-exclusive because they need repo/ecosystem context agnix has no
+   model of — so such a row must **not** supersede the check-ai-config finding at
+   the same `file:line`; keep **both** (add a `related_findings` cross-reference,
+   as with the cross-skill correlation below), never drop the check-ai-config one.
+   Apply the drop **before** the within-skill dedup below so the surviving agnix
+   row is what carries forward. Key strictly on **actual agnix output present in
+   this run**: if agnix did not run (binary absent, or the Step 3a normalizer
+   no-opped/failed), there are no agnix-sourced rows, so this rule is a
+   **strict no-op** and the output is identical to today's `patterns.sh`-only result.
+   Non-overlapping check-ai-config findings — any `file:line` an agnix row does
+   not also occupy — are **always retained**; this rule only supersedes on the
+   overlap set of agnix-owned categories, never deletes coverage agnix lacks.
+   (Unlike the cross-skill correlation below, which only cross-references, this
+   precedence rule *drops* the superseded finding — but only for agnix-owned
+   categories, where agnix enriches the **same** ai-config concern rather than a
+   different skill's domain.)
 1. **Within-skill dedup**: same file + category + overlapping line range →
    merge into one finding (keep broader range, combine evidence, keep highest
    certainty)
