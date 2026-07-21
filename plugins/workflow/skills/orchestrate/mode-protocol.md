@@ -236,6 +236,11 @@ tmux new-session -d -s golem-{N} -c .worktrees/issue-{N} -e GOLEM_ID=golem-{N} \
   "claude --permission-mode auto '/workflow:next-issue {N} --level {L}' ; claude --permission-mode auto '/workflow:ship-issue'"
 ```
 
+Setting `GOLEM_MODEL` in the environment (e.g. `GOLEM_MODEL=sonnet`) splices
+`--model "…"` after each `claude` above, running the golem's whole pipeline on
+that model; unset (the default) emits no `--model` and the golem inherits the
+operator default.
+
 **Permission preflight + one-per-golem (#29).** This bare `tmux new-session` is
 denied by the auto-mode classifier (`[Create Unsafe Agents]`) unless the host
 has authorized the launch rules `Bash(tmux new-session:*)`, `Bash(tmux ls:*)`,

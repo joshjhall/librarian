@@ -173,6 +173,13 @@ dispatch is sequential and cheap — **not** workflow-driven.
    level is what lets a plan-gated (L1–L3) golem actually stop at `ExitPlanMode`
    — see the plan-gate note below.
 
+   **Optional `GOLEM_MODEL` env knob** — set `GOLEM_MODEL` in the environment
+   (e.g. `GOLEM_MODEL=sonnet`) to pass `--model` to every golem's `claude`
+   invocation (both the next-issue and ship-issue calls), running the whole
+   multi-hour pipeline on a cheaper model. Unset (the default) emits no `--model`
+   and the golem inherits the operator/session default (typically Opus) — the
+   launch line is byte-identical to the pre-knob behavior.
+
    **Never wrap N launches in a shell `for` loop.** The allow rule matches a
    *bare* `tmux new-session …` command, but a `for golem in …; do tmux
    new-session …; done` makes the whole Bash invocation a for-loop **string**

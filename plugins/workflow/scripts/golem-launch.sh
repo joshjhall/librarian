@@ -73,6 +73,9 @@
 #   GOLEM_WORKTREE_DIR (.worktrees)   GOLEM_BRANCH_PREFIX (feature/issue-)
 #   GOLEM_LEVEL (4)  — autonomy level baked into the launch line when no
 #                      per-call --level is given.
+#   GOLEM_MODEL (unset) — model passed via --model to every `claude` call in the
+#                      launch line; unset emits no --model (inherits the operator
+#                      default). Shell-escaped by config.sh's golem_model_flag.
 # Preflight scope overrides (env-overridable):
 #   CLAUDE_PROJECT_SETTINGS  (.claude/settings.local.json, repo-root-relative)
 #   CLAUDE_GLOBAL_SETTINGS   ($HOME/.claude/settings.json)
@@ -379,8 +382,10 @@ launch_line() {
     # ONE standalone new-session, matching Bash(tmux new-session:*). The chained
     # `;` second prompt is the resume backstop (NOT `&&`); see orchestrate
     # SKILL.md Phase D / mode-protocol.md § Supervised launch.
+    local model_flag
+    model_flag="$(golem_model_flag)"
     command printf '%s' \
-        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n \"claude --permission-mode auto '/workflow:next-issue $n --level $level' ; claude --permission-mode auto '/workflow:ship-issue'\""
+        "tmux new-session -d -s golem-$n -c \"$wt\" -e GOLEM_ID=golem-$n \"claude$model_flag --permission-mode auto '/workflow:next-issue $n --level $level' ; claude$model_flag --permission-mode auto '/workflow:ship-issue'\""
 }
 
 cmd="${1:-}"
@@ -448,9 +453,12 @@ case "$cmd" in
         fi
         # Bare, standalone new-session — matches Bash(tmux new-session:*). The
         # token lives only inside env_args (never echoed) so it can't leak to a
-        # pane or log.
+        # pane or log. $(golem_model_flag) splices ` --model "…"` after each
+        # `claude` when GOLEM_MODEL is set, and expands to nothing (byte-identical
+        # launch line) when unset.
+        MODEL_FLAG="$(golem_model_flag)"
         tmux new-session -d -s "golem-$N" -c "$wt" "${env_args[@]}" \
-            "claude --permission-mode auto '/workflow:next-issue $N --level $LEVEL' ; claude --permission-mode auto '/workflow:ship-issue'"
+            "claude$MODEL_FLAG --permission-mode auto '/workflow:next-issue $N --level $LEVEL' ; claude$MODEL_FLAG --permission-mode auto '/workflow:ship-issue'"
         command echo "golem-launch: started golem-$N in $wt"
         ;;
     *)
