@@ -22,6 +22,9 @@ labels:
   - name: audit/ai-config
     color: "C5DEF5"
     description: AI configuration finding from codebase audit
+  - name: audit/lifecycle
+    color: "5319E7"
+    description: Resource-lifecycle finding from codebase audit
   - name: severity/critical
     color: "B60205"
     description: Critical severity

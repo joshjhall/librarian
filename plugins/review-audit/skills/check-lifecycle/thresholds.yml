@@ -1,0 +1,25 @@
+# check-lifecycle — Configurable Thresholds
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/check-lifecycle/thresholds.yml.
+
+severity:
+  unreaped-subprocess:
+    detached_or_error_path: high
+    plain_spawn: medium
+  terminate-without-kill:
+    no_escalation: medium
+  unclosed-handle:
+    assignment_no_scope: medium
+  unpaired-listener:
+    no_matching_remove: medium
+  unjoined-worker:
+    no_owner: medium
+  unbounded-growth:
+    resident_loop: medium
+    bounded_context: low
+
+min_confidence:
+  deterministic: 0.7
+  heuristic: 0.7
+  llm: 0.5

@@ -237,7 +237,13 @@ For each skill that has `patterns.sh`:
    `bash <skill-dir>/patterns.sh <tempfile>`
 1. Parse the TSV output. Expected format per line:
    `<file>\t<line>\t<category>\t<evidence>\t<certainty>`
-1. Collect pre-scan findings with certainty `HIGH` and method `deterministic`
+1. Collect pre-scan findings by **method `deterministic`** (any certainty
+   level). Most scanners emit these at certainty `HIGH` (a definite defect safe
+   to auto-include); some — e.g. `check-lifecycle` — deliberately emit
+   `MEDIUM`-certainty **candidates** that need LLM confirmation. Collect both;
+   the certainty level decides only whether a finding takes the auto-include
+   fast path (Step 4, `HIGH`) or is handed to Pass 2 as a candidate to confirm
+   (`MEDIUM`/`LOW`) — it never decides whether the row is collected at all.
 
 If `patterns.sh` exits non-zero or produces malformed output:
 

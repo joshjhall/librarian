@@ -99,16 +99,16 @@ at the cost of one extra prefix to grep for in map-mode logs.
 Batch files by line count targeting ~2000 lines per batch. Route files to
 scanners based on classification:
 
-| File Type               | Routed To                           |
-| ----------------------- | ----------------------------------- |
-| Source files            | code-health, security, architecture |
-| Test files              | test-gaps only                      |
-| Config files            | security only                       |
-| Doc files               | docs, ai-config                     |
-| AI Config files         | ai-config only                      |
-| Source + paired test    | test-gaps (paired)                  |
-| High-churn files (deep) | all scanners                        |
-| All files (per scope)   | project agents (self-filtering)     |
+| File Type               | Routed To                                      |
+| ----------------------- | ---------------------------------------------- |
+| Source files            | code-health, security, architecture, lifecycle |
+| Test files              | test-gaps only                                 |
+| Config files            | security only                                  |
+| Doc files               | docs, ai-config                                |
+| AI Config files         | ai-config only                                 |
+| Source + paired test    | test-gaps (paired)                             |
+| High-churn files (deep) | all scanners                                   |
+| All files (per scope)   | project agents (self-filtering)                |
 
 Build a manifest object for each scanner:
 
@@ -181,8 +181,12 @@ regex-matchable findings at zero LLM cost.
    ```
 
 1. **Parse TSV output**: Each line is
-   `file\tline\tcategory\tevidence\tcertainty`. Collect findings with certainty
-   `HIGH` and method `deterministic`.
+   `file\tline\tcategory\tevidence\tcertainty`. Collect findings by **method
+   `deterministic`** (any certainty level). Most scanners emit `HIGH`; some —
+   e.g. `check-lifecycle` — deliberately emit `MEDIUM`-certainty **candidates**
+   that need LLM confirmation. The certainty level decides only the finding's
+   downstream disposition (HIGH → auto-include below; MEDIUM/LOW → Pass 2
+   candidate), never whether it is collected.
 
 1. **Map findings to scanner domains**: Match check-\* skill names to audit
    agent domains (e.g., `check-security` → `audit-security`,
@@ -197,7 +201,10 @@ regex-matchable findings at zero LLM cost.
 
 1. **Add pre-scan findings to final output**: Deterministic findings with HIGH
    certainty go directly into the aggregated findings (Step 4) without needing
-   LLM confirmation.
+   LLM confirmation. Deterministic findings with **MEDIUM/LOW** certainty (e.g.
+   `check-lifecycle` candidates) do NOT take this fast path — they flow into the
+   `## Pre-Scan Findings` section of Pass 2 as candidates for the LLM to confirm
+   or dismiss, and only the confirmed ones reach the aggregated output.
 
 If no check-\* skills with patterns.sh are found, skip this step silently.
 If a patterns.sh exits non-zero, log the error and continue with remaining
@@ -217,8 +224,8 @@ emitting the `finding-schema.md` object via StructuredOutput.
 The active scanner set is whatever `map` discovered, with the domain-override
 precedence (a `check-*` skill overrides the `audit-*` agent for its domain; a
 project agent overrides a built-in of the same name). Built-in domains:
-code-health, security, test-gaps, architecture, docs, ai-config; plus any
-project agents discovered under `.claude/agents/audit-*`. The `categories`
+code-health, security, test-gaps, architecture, docs, ai-config, lifecycle; plus
+any project agents discovered under `.claude/agents/audit-*`. The `categories`
 parameter restricts the set.
 
 The **verify** pass is adversarial: a fresh `checker` that did not produce the
