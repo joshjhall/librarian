@@ -50,6 +50,16 @@ tracks="$status_dir/tracks.json"
 scrape="$SCRIPT_DIR/golem-token-scrape.sh"
 shopt -s nullglob
 
+# Checkpoint change-suppression state (#488). In a long-lived `--watch` loop the
+# same process re-invokes render_checkpoint every sweep; these carry the prior
+# sweep's actionable-state signature (and the wall-clock of the last full emit)
+# across sweeps so a byte-identical no-op sweep collapses to a single heartbeat
+# line instead of re-printing the whole table. Module-scope (not render-local) so
+# they persist across calls — a one-shot `--checkpoint` calls the fn once with an
+# empty prior and therefore always renders in full.
+cp_prev_sig=""
+cp_last_emit_at=""
+
 # _now_iso — current UTC time as an ISO-8601 Z timestamp (mirrors the
 # golem-notify.sh feed-line idiom). The "frozen since" anchor for token freezes.
 _now_iso() {
@@ -494,10 +504,14 @@ render_status() {
         done
     fi
 
+    # A one-line recency cue only — the classified BLOCKED + LIVENESS blocks above
+    # already carry the actionable feed content; tailing the raw JSON here (#488)
+    # was pure token-dense duplication that buried the one changed line.
     if [ -f "$feed" ]; then
+        _rs_feed_lines="$(/usr/bin/wc -l <"$feed" 2>/dev/null | /usr/bin/tr -d ' ')"
+        [ -n "$_rs_feed_lines" ] || _rs_feed_lines=0
         command echo ""
-        command echo "Recent feed ($feed):"
-        /usr/bin/tail -n 10 "$feed"
+        command echo "Recent feed: $_rs_feed_lines line(s) ($feed)"
     fi
 }
 
@@ -550,7 +564,12 @@ session_gone() {
 # render_checkpoint (never a pipe / subshell) so the cp_* accumulators it mutates
 # survive for the footer. Pulls every column from the cache JSON (gh-free);
 # Tokens(Δ) reuses the shared scrape/persist helper so the frozen baseline is
-# written exactly once per sweep.
+# written exactly once per sweep. The formatted row is APPENDED to the cp_body
+# buffer (not printed directly), and the row's actionable-state tuple
+# (golem|statecol) to cp_sig, so render_checkpoint can compare this sweep's
+# signature against the prior one and suppress a no-op repaint (#488). The token
+# scrape/persist above still fires every sweep, so suppression is display-only —
+# the burn baseline keeps advancing.
 emit_checkpoint_row() {
     _ecr_f="$1"
     _ecr_track="$2"
@@ -650,9 +669,16 @@ emit_checkpoint_row() {
     esac
 
     # shellcheck disable=SC2059  # CHECKPOINT_ROW_FMT is a trusted constant format
-    /usr/bin/printf "$CHECKPOINT_ROW_FMT" \
+    printf -v _ecr_line "$CHECKPOINT_ROW_FMT" \
         "$_ecr_track" "$_ecr_g" "$_ecr_issue" "$_ecr_stage" "$_ecr_elapsed" \
         "$_ecr_tok" "$_ecr_pr" "$_ecr_ci" "$_ecr_review" "$_ecr_statecol"
+    cp_body="${cp_body}${_ecr_line}"
+    # Signature: golem + its STATE cell only. ELAPSED advances and TOKENS(Δ) burns
+    # every sweep, so folding them in would defeat suppression for every working
+    # golem; statecol already encodes ⚠ BLOCKED/⚠ CI/⚠ gone and otherwise the plain
+    # .state, so it flips on exactly the transitions that need re-emission (#488).
+    cp_sig="${cp_sig}${_ecr_g}|${_ecr_statecol}
+"
 }
 
 # render_checkpoint [interval] — the compact per-track status+burn table + a
@@ -668,28 +694,55 @@ render_checkpoint() {
     collect_cache
     cp_sessions="$( (tmux ls 2>/dev/null | /usr/bin/grep -oE '^golem-[0-9]+' | /usr/bin/tr '\n' ' ') || true)"
 
+    # Both early returns below clear the prior signature (#488). A sweep that
+    # renders no table is a GAP in the operator's view: if we left cp_prev_sig
+    # intact, an all-golems-vanished sweep (or a transient jq-off-PATH sweep)
+    # followed by the same golem set reappearing at the same state would compare
+    # equal to the pre-gap signature and be wrongly suppressed as "no change",
+    # hiding the vanish→reappear transition. Clearing forces the next successful
+    # render to print in full (treated as the first sweep after the gap).
     if [ "${#cache[@]}" -eq 0 ] && [ -z "$cp_sessions" ] && [ ! -f "$pool" ]; then
         command echo "No active golems (no $status_dir/*.json, no golem-* tmux sessions)."
+        cp_prev_sig=""
+        cp_last_emit_at=""
         return 0
     fi
 
     # jq-gated: every column is a JSON read (mirrors the verbose token section).
     if ! command -v jq >/dev/null 2>&1; then
         command echo "golem-status --checkpoint: jq not found on PATH — cannot render checkpoint table" >&2
+        cp_prev_sig=""
+        cp_last_emit_at=""
         return 0
     fi
 
-    # Pool header (same shape as render_status).
+    # Buffer the whole render into cp_body and its actionable-state signature into
+    # cp_sig, then decide once at the end whether to emit the buffer or a single
+    # heartbeat line (#488). Reset both BEFORE any emit_checkpoint_row call (it
+    # appends to them). The column header and STATUS CHECKPOINT title are constant,
+    # so they go into cp_body but NOT cp_sig.
+    cp_body=""
+    cp_sig=""
+
+    # Pool header (same shape as render_status) — buffered, and folded into the
+    # signature (size/slots/backlog/queue are discrete, actionable state). The
+    # trailing blank line after the pool line matches render_status's byte layout
+    # (a `command echo ""` in the pre-#488 render) — kept in cp_body, out of cp_sig.
     if [ -f "$pool" ]; then
-        jq -r '"Pool: size=\(.size // "-")  slots=\((.slots // []) | length)/\(.size // "-")  backlog=\(.backlog_depth // "-")  queue=\(.queue // .accepting // "-")"' \
-            "$pool" 2>/dev/null || command echo "Pool: (unreadable $pool)"
-        command echo ""
+        _rc_pool="$(jq -r '"Pool: size=\(.size // "-")  slots=\((.slots // []) | length)/\(.size // "-")  backlog=\(.backlog_depth // "-")  queue=\(.queue // .accepting // "-")"' \
+            "$pool" 2>/dev/null || command echo "Pool: (unreadable $pool)")"
+        cp_body="${cp_body}${_rc_pool}
+
+"
+        cp_sig="${cp_sig}${_rc_pool}
+"
     fi
 
-    command echo "STATUS CHECKPOINT (per-track; burn Δ since last sweep):"
     # shellcheck disable=SC2059  # CHECKPOINT_ROW_FMT is a trusted constant format
-    /usr/bin/printf "$CHECKPOINT_ROW_FMT" \
+    printf -v _rc_hdr "$CHECKPOINT_ROW_FMT" \
         TRACK GOLEM ISSUE STAGE ELAPSED "TOKENS(Δ)" PR CI REVIEW STATE
+    cp_body="${cp_body}STATUS CHECKPOINT (per-track; burn Δ since last sweep):
+${_rc_hdr}"
 
     # Batch accumulators (mutated by emit_checkpoint_row, read by the footer).
     cp_total_tokens=0
@@ -773,27 +826,62 @@ render_checkpoint() {
     done
 
     # Live sessions with no cache file yet (mirror render_status's tail rows).
+    # Buffered like the cache rows; the session id + "(live)" state folds into the
+    # signature so a session appearing/vanishing re-emits.
     for sess in $cp_sessions; do
         n="${sess#golem-}"
         if [ ! -e "$status_dir/golem-$n.json" ] && [ ! -e "$status_dir/issue-$n.json" ]; then
             # shellcheck disable=SC2059  # CHECKPOINT_ROW_FMT is a trusted constant format
-            /usr/bin/printf "$CHECKPOINT_ROW_FMT" \
+            printf -v _rc_liverow "$CHECKPOINT_ROW_FMT" \
                 "—" "$sess" "$n" "(live)" "—" "—" "—" "—" "—" "(live)"
+            cp_body="${cp_body}${_rc_liverow}"
+            cp_sig="${cp_sig}${sess}|(live)
+"
         fi
     done
 
-    command echo ""
-    command echo "  PR/CI/Review are cache mirrors; authoritative CI/review live in the monitor PR poll (pr_status[])."
+    # Static cache-mirror note moved to the watch-startup banner (#488): it is
+    # documentation, not per-sweep status, so it no longer rides every render.
 
     # Aggregate rate — Δ/interval, WATCH mode only (an interval was resolved) and
     # only once a prior sweep exists (cp_have_delta); "—" otherwise, so a one-shot
-    # render and the first watch iteration never fake a burn rate.
+    # render and the first watch iteration never fake a burn rate. The footer stays
+    # OUT of cp_sig: Δ/rate are volatile by construction and must not defeat
+    # suppression.
     _rc_rate="—"
     if [ -n "$_rc_interval" ] && [ "$cp_have_delta" -eq 1 ] && [ "$_rc_interval" -gt 0 ] 2>/dev/null; then
         _rc_rate="$((cp_total_delta * 3600 / _rc_interval))/hr"
     fi
-    /usr/bin/printf 'BATCH: tokens=%s  Δ=%s  rate=%s  live=%s  blocked=%s  shipped=%s\n' \
+    printf -v _rc_footer 'BATCH: tokens=%s  Δ=%s  rate=%s  live=%s  blocked=%s  shipped=%s\n' \
         "$cp_total_tokens" "$cp_total_delta" "$_rc_rate" "$cp_live" "$cp_blocked" "$cp_shipped"
+    cp_body="${cp_body}
+${_rc_footer}"
+
+    # Change-suppression decision (#488). Only in watch mode (an interval was
+    # passed) AND only once a prior sweep's signature exists: a byte-identical
+    # actionable signature collapses to a single heartbeat line rather than
+    # re-printing the whole table. A one-shot --checkpoint (no interval) and the
+    # first watch sweep always print in full. cp_total_tokens etc. are already
+    # persisted by scrape_and_persist_tokens, so suppression never drops the burn
+    # baseline — it is display-only.
+    #
+    # Row count for the heartbeat: every golem row's signature line carries a `|`
+    # (`golem|statecol`, `sess|(live)`) while the pool header line does not, so a
+    # `|`-count over cp_sig totals cache rows AND live-only sessions — not just
+    # ${#cache[@]}, which would undercount session-only golems. Count `|`
+    # OCCURRENCES via `grep -o | wc -l`, NOT `grep -c`: GNU grep -c exits 1 on a
+    # zero count (a well-known quirk, not an error), which with a `|| echo 0`
+    # fallback double-appends and splits the heartbeat across two lines when a
+    # pool.json exists but no golem rows do (the zero-golem idle case).
+    _rc_golems="$(command printf '%s' "$cp_sig" | /usr/bin/grep -o '|' 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    [ -n "$_rc_golems" ] || _rc_golems=0
+    if [ -n "$_rc_interval" ] && [ -n "$cp_prev_sig" ] && [ "$cp_sig" = "$cp_prev_sig" ]; then
+        command echo "— no change since ${cp_last_emit_at:-earlier} (${_rc_golems} golem(s))"
+        return 0
+    fi
+    command printf '%s' "$cp_body"
+    cp_prev_sig="$cp_sig"
+    cp_last_emit_at="$(command date -u +%H:%MZ)"
 
     return 0
 }
@@ -894,6 +982,15 @@ fi
 # the honest aggregate rate) — passed only in watch mode.
 render_fn="render_status"
 [ "$checkpoint" -eq 1 ] && render_fn="render_checkpoint"
+
+# Print the cache-mirror caveat ONCE (#488) — to stderr, ahead of BOTH the
+# one-shot and the --watch checkpoint render — rather than on every sweep. It is
+# documentation, not status. Checkpoint mode only, where those columns exist; the
+# one-shot path below exits before the --watch banner, so emitting here (not in
+# the --watch block) keeps the caveat on the one-shot snapshot too.
+if [ "$checkpoint" -eq 1 ]; then
+    command echo "  PR/CI/Review are cache mirrors; authoritative CI/review live in the monitor PR poll (pr_status[])." >&2
+fi
 
 if [ "$watch" -eq 0 ]; then
     # One-shot: no interval → render_checkpoint prints rate=— (no prior sweep).
