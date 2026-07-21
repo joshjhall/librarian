@@ -37,7 +37,9 @@ accepted leading-zero numerals → bash reads `030` as OCTAL (silent wrong ceili
 still valid) + a `--extensions-used > MAX_EXTENSIONS` fail-loud guard + AC3
 bounded-poll-loop fixture. **Lesson: any digit string reaching `$(( ))` / `[ -lt
 ]` must reject leading zeros, not just `[!0-9]`.** NOTE: first commit says "Closes
-#327" but PR body says "Refs" (AC1 only partially satisfiable) — flagged for the
+
+# 327" but PR body says "Refs" (AC1 only partially satisfiable) — flagged for the
+
 human merger; likely keep #327 open for the enforcement follow-up.
 
 **Why:** re-opening this class = a model deep in review interpreting prose caps.
@@ -48,4 +50,5 @@ necessity — say so honestly in the PR rather than claiming criterion 1 met.
 
 Out of scope (PR notes as follow-ups): orchestrator backstop for a golem with
 committed work but no PR (Proposal 2); rebuild root-owned /opt/librarian to a
-#307-carrying build (Proposal 3 / Layer 2, needs sudo rsync).
+
+## 307-carrying build (Proposal 3 / Layer 2, needs sudo rsync)

@@ -7,7 +7,8 @@ metadata:
   originSessionId: 2f20e6d2-5247-4862-913c-53675082dbdd
 ---
 
-#321 (PR #342) closed the deferred secondary item from #257/PR #320 as
+# 321 (PR #342) closed the deferred secondary item from #257/PR #320 as
+
 **document-and-close**, not implement.
 
 An in-turn `AskUserQuestion` fork is surfaced via the Claude Code SDK
