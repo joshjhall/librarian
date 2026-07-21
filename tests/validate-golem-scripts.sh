@@ -2272,6 +2272,180 @@ EOF
         "the BLOCKED render carries a (gated Nm ago) age suffix (#422)"
 }
 
+# --- _gate_age_suffix silent no-op arms (#432 gap 2) ------------------------
+#
+# _gate_age_suffix has three fall-through arms that each `return 0` with NO
+# output: no-jq, no/empty `.ts`, and unparsable `.ts`. The render carries the
+# bare BLOCKED line (never an error, never a bogus "0s") on all three. The no-`ts`
+# and unparsable-`ts` arms are BOTH reachable end-to-end through the full render
+# — a no-`ts` gate bypasses golem-gate-watch.sh's TTL, and (since #432 wrapped the
+# snapshot's `fromdateiso8601` in `try … catch`) a malformed-`ts` gate degrades to
+# that same fresh fallback and surfaces BLOCKED too, where _gate_age_suffix's own
+# `_iso_to_epoch` still cannot parse it → no suffix. The no-jq arm yields an empty
+# BLOCKED section upstream, so it is covered by UNIT-testing the helper directly.
+# golem-status.sh carries a source guard for exactly this (mirrors
+# golem-resolve.sh / golem-gate-watch.sh).
+
+# gate_age_unit <outvar> <sandbox> <golem> <feed> <jq_mode>
+#   Source $STATUS inside the sandbox (GIT_*/GOLEM_* scrubbed, HOME pinned, like
+#   run_in) and call _gate_age_suffix <golem> <feed>, capturing its stdout into
+#   the caller's named variable. <jq_mode> "nojq" stubs jq off PATH (bash-only
+#   PATH, BASH_ENV unset so /etc/bash_env cannot restore it — mirrors
+#   validate-golem-notify.sh's run_notify nojq); "jq" leaves PATH intact. The
+#   source guard means sourcing runs only the helper defs, not the drive.
+# The internal capture var is prefixed (`_gau_out`, not `out`) so it can't shadow
+# the caller's chosen output variable: `printf -v "$__out"` would otherwise set
+# this function's local instead of the caller's, leaving the caller unbound under
+# `set -u` when it passes the name `out`.
+gate_age_unit() {
+    local __out="$1" dir="$2" golem="$3" feed="$4" jq_mode="$5" _gau_out
+    if [ "$jq_mode" = "nojq" ]; then
+        local stub="$dir/stub-bin"
+        /usr/bin/mkdir -p "$stub"
+        /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+        _gau_out="$(cd "$dir" &&
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub" HOME="$dir" \
+                GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+                "$REAL_BASH" -c 'source "$1"; _gate_age_suffix "$2" "$3"' \
+                _ "$STATUS" "$golem" "$feed" 2>/dev/null || true)"
+    else
+        _gau_out="$(cd "$dir" &&
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                HOME="$dir" \
+                GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+                "$REAL_BASH" -c 'source "$1"; _gate_age_suffix "$2" "$3"' \
+                _ "$STATUS" "$golem" "$feed" 2>/dev/null || true)"
+    fi
+    printf -v "$__out" '%s' "$_gau_out"
+}
+
+# no-`ts` arm: the golem's last feed line carries no `.ts` → empty output, no
+# error. (This is the arm the render CAN reach; the render-level counterpart is
+# test_status_blocked_no_ts_omits_gate_age below.)
+test_gate_age_suffix_no_ts_empty() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (_gate_age_suffix reads the feed with jq)"
+        return 0
+    fi
+    local sb out
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/feed.jsonl" <<'EOF'
+{"golem":"golem-3","event":"gate","message":"push gate"}
+EOF
+    gate_age_unit out "$sb" golem-3 "$sb/.worktrees/.status/feed.jsonl" jq
+    assert_output_empty "$out" "_gate_age_suffix emits nothing for a no-ts line"
+}
+
+# unparsable-`ts` arm: `_iso_to_epoch` returns empty for a non-date `.ts`, so the
+# `[ -n "$_gas_epoch" ]` guard trips → empty output, no error (never a bogus 0s).
+test_gate_age_suffix_bad_ts_empty() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (_gate_age_suffix reads the feed with jq)"
+        return 0
+    fi
+    local sb out
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/feed.jsonl" <<'EOF'
+{"golem":"golem-3","event":"gate","message":"push gate","ts":"not-a-date"}
+EOF
+    gate_age_unit out "$sb" golem-3 "$sb/.worktrees/.status/feed.jsonl" jq
+    assert_output_empty "$out" "_gate_age_suffix emits nothing for an unparsable ts"
+}
+
+# no-jq arm: the `command -v jq` guard trips first → empty output, no error, even
+# with a perfectly good dated line present (jq stubbed off PATH).
+test_gate_age_suffix_no_jq_empty() {
+    local sb out ts
+    new_sandbox sb
+    ts="$(/usr/bin/date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
+        /usr/bin/date -u -v-130S +%FT%TZ 2>/dev/null)"
+    /usr/bin/cat >"$sb/.worktrees/.status/feed.jsonl" <<EOF
+{"golem":"golem-3","event":"gate","message":"push gate","ts":"$ts"}
+EOF
+    gate_age_unit out "$sb" golem-3 "$sb/.worktrees/.status/feed.jsonl" nojq
+    assert_output_empty "$out" "_gate_age_suffix emits nothing when jq is absent"
+}
+
+# End-to-end: a no-`ts` gate surfaces in the BLOCKED list (it bypasses the TTL)
+# but its render carries NO "(gated … ago)" suffix — the negative counterpart to
+# test_status_blocked_shows_gate_age. Proves the fall-through is a clean omission
+# at the render level, not just in isolation.
+test_status_blocked_no_ts_omits_gate_age() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed snapshot needs jq)"
+        return 0
+    fi
+    local sb sd
+    new_sandbox sb
+    sd="$sb/.worktrees/.status"
+    /usr/bin/cat >"$sd/golem-3.json" <<'EOF'
+{ "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    # No `ts` → gate-watch treats it as fresh (bypasses TTL) so it surfaces
+    # BLOCKED, but _gate_age_suffix can derive no age → no suffix.
+    /usr/bin/cat >"$sd/feed.jsonl" <<'EOF'
+{"golem":"golem-3","event":"gate","message":"push gate"}
+EOF
+    run_in "$sb" "$STATUS"
+    assert_exit 0 "$RUN_RC" "golem-status exits 0 with a no-ts gate"
+    # Anchor on the BLOCKED-list render line ("  golem-N — <message>"), not the
+    # bare message, which also appears in the raw "Recent feed" echo at the bottom.
+    assert_contains "$RUN_OUT" "golem-3 — push gate" "the no-ts gate surfaces in the BLOCKED list"
+    assert_not_contains "$RUN_OUT" "(gated " \
+        "a no-ts BLOCKED line renders without a (gated Nm ago) suffix (#432)"
+}
+
+# Monitoring-integrity regression (#432): a single golem whose most-recent feed
+# line carries a NON-EMPTY but malformed `.ts` must NOT blank the whole BLOCKED
+# list. golem-gate-watch.sh's snapshot runs ONE `jq -rs` over the entire feed, so
+# before the `try … catch` wrap an unparsable `ts` aborted the program (exit 5,
+# swallowed by 2>/dev/null) and EVERY golem — even ones with a perfectly good
+# `ts` — dropped out of BLOCKED (the #24 blast radius, re-entered through a
+# strict-parse failure the null/empty guard doesn't cover). Plant two golems, one
+# bad-`ts` and one good-`ts`, and assert BOTH surface: the good one proves the
+# abort no longer nukes the list, the bad one proves it degrades to the fresh
+# fallback rather than vanishing.
+test_status_bad_ts_does_not_blank_blocked_list() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (feed snapshot needs jq)"
+        return 0
+    fi
+    local sb sd good_ts
+    new_sandbox sb
+    sd="$sb/.worktrees/.status"
+    /usr/bin/cat >"$sd/golem-3.json" <<'EOF'
+{ "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    /usr/bin/cat >"$sd/golem-5.json" <<'EOF'
+{ "golem": "golem-5", "issue": 5, "branch": "feature/issue-5",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    good_ts="$(/usr/bin/date -u -d '60 seconds ago' +%FT%TZ 2>/dev/null ||
+        /usr/bin/date -u -v-60S +%FT%TZ 2>/dev/null)"
+    # golem-3's most-recent line has a non-empty but unparsable `ts`; golem-5's
+    # is well-formed and recent. Pre-fix, golem-3's line aborted the snapshot jq
+    # and BOTH vanished.
+    /usr/bin/cat >"$sd/feed.jsonl" <<EOF
+{"golem":"golem-3","event":"gate","message":"bad-ts gate","ts":"not-a-date"}
+{"golem":"golem-5","event":"gate","message":"good-ts gate","ts":"$good_ts"}
+EOF
+    run_in "$sb" "$STATUS"
+    assert_exit 0 "$RUN_RC" "golem-status exits 0 with a mixed good/bad ts feed"
+    # Anchor on the BLOCKED-LIST line form ("  golem-N — <message>"), NOT a bare
+    # substring: golem-status.sh echoes the raw feed JSON verbatim under "Recent
+    # feed" at the bottom, so `assert_contains "$RUN_OUT" "good-ts gate"` would
+    # match that echo even when the BLOCKED list is empty — a false pass. The
+    # em-dash-separated render line appears ONLY when the golem actually surfaces
+    # BLOCKED. (Verified: reverting the try/catch fails both asserts here.)
+    assert_contains "$RUN_OUT" "golem-5 — good-ts gate" \
+        "the good-ts golem still renders in the BLOCKED list — a sibling's bad ts doesn't blank it (#432)"
+    assert_contains "$RUN_OUT" "golem-3 — bad-ts gate" \
+        "the bad-ts golem degrades to the fresh fallback and renders BLOCKED, rather than aborting the snapshot (#432)"
+}
+
 # The BLOCKED feed pass annotates an escalation/dead-end line that carries a
 # brokered-gate id with the inbox state (#395): `[inbox: awaiting|answered|
 # consumed]`. A routine permission gate (no gate-id token) stays un-annotated.
@@ -4456,6 +4630,11 @@ run_test test_attach_no_session_exits_1 "golem-attach: no session/container exit
 run_test test_status_empty_reports_no_golems "golem-status: empty state reports no active golems"
 run_test test_status_renders_planted_row "golem-status: planted cache row renders in the table"
 run_test test_status_blocked_shows_gate_age "golem-status: BLOCKED render shows a (gated Nm ago) gate-age suffix (#422)"
+run_test test_gate_age_suffix_no_ts_empty "golem-status: _gate_age_suffix emits nothing for a no-ts line (#432)"
+run_test test_gate_age_suffix_bad_ts_empty "golem-status: _gate_age_suffix emits nothing for an unparsable ts (#432)"
+run_test test_gate_age_suffix_no_jq_empty "golem-status: _gate_age_suffix emits nothing when jq is absent (#432)"
+run_test test_status_blocked_no_ts_omits_gate_age "golem-status: a no-ts BLOCKED line renders without a (gated Nm ago) suffix (#432)"
+run_test test_status_bad_ts_does_not_blank_blocked_list "golem-status: a malformed ts on one golem doesn't blank the whole BLOCKED list (#432)"
 run_test test_status_annotates_blocked_inbox_state "golem-status: annotates a BLOCKED escalation line with the inbox state (#395)"
 run_test test_status_inbox_state_awaiting_and_consumed "golem-status: inbox annotation renders awaiting + consumed (#395)"
 run_test test_status_inbox_annotation_uses_bracketed_gate "golem-status: annotation keys on the bracketed [gate-…] token, not a stray mention (#395)"

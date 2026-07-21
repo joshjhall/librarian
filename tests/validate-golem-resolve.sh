@@ -92,6 +92,92 @@ run_resolve() {
     RESOLVE_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
+# --- Isolated-tree helpers (no-jq escaper + missing-hook arms) ---------------
+#
+# The two deferred gaps (#432) drive golem-resolve.sh from a COPY placed in an
+# isolated <tree>/scripts/ dir, because the helper resolves its Notification hook
+# RELATIVE to its own location ("$SCRIPT_DIR/../hooks/golem-notify.sh"). Copying
+# it lets a case control what sits at that sibling path: a payload-capturing SINK
+# (to observe the no-jq escaper's output) or NOTHING / a non-exec stub (to drive
+# the missing-hook exit-1 arm).
+#
+# The REAL hook is deliberately NOT used for the no-jq case: on that path the hook
+# also lacks jq, so it cannot parse the piped payload and re-defaults the message
+# — the helper's escaped message never reaches the feed. The payload golem-resolve
+# EMITS is therefore the only surface on which its message escaping is observable,
+# which is exactly what the sink captures.
+
+# resolve_tree <outvar> <hook_kind>
+#   Builds an isolated tree: <tree>/scripts/golem-resolve.sh is a copy of the real
+#   helper; <tree>/hooks/golem-notify.sh depends on <hook_kind>:
+#     sink   -> an executable stub that writes its stdin (the payload the helper
+#               produced) verbatim to <tree>/payload.txt.
+#     none   -> not created — the missing-hook (`! -x`, nonexistent) exit-1 arm.
+#     noexec -> created but NOT chmod +x — the missing-hook (`! -x`, non-exec) arm.
+#   Assigns the tree path to the caller's named variable.
+resolve_tree() {
+    local __out="$1" hook_kind="$2" dir
+    dir="$(/usr/bin/mktemp -d "$WORKDIR/tree.XXXXXX")" || return 1
+    /usr/bin/mkdir -p "$dir/scripts" "$dir/hooks"
+    /usr/bin/cp "$RESOLVE" "$dir/scripts/golem-resolve.sh"
+    /usr/bin/chmod +x "$dir/scripts/golem-resolve.sh"
+    case "$hook_kind" in
+        sink)
+            # The sink uses /bin/cat by absolute path: the no-jq run strips PATH
+            # down to bash only, so a bare `cat` would not resolve.
+            /usr/bin/cat >"$dir/hooks/golem-notify.sh" <<EOF
+#!/usr/bin/env bash
+/bin/cat >"$dir/payload.txt" 2>/dev/null || true
+exit 0
+EOF
+            /usr/bin/chmod +x "$dir/hooks/golem-notify.sh"
+            ;;
+        noexec)
+            /usr/bin/printf '#!/usr/bin/env bash\nexit 0\n' >"$dir/hooks/golem-notify.sh"
+            # deliberately NOT chmod +x — exercises the non-exec `! -x` trigger.
+            ;;
+        none)
+            /usr/bin/rmdir "$dir/hooks" 2>/dev/null || true
+            ;;
+    esac
+    printf -v "$__out" '%s' "$dir"
+}
+
+# run_resolve_tree <tree> <jq_mode> <arg...>
+#   Runs the COPIED helper at <tree>/scripts/ with GIT_*/GOLEM_* scrubbed and HOME
+#   pinned. <jq_mode> "nojq" stubs jq off PATH (bash-only PATH from a symlink dir,
+#   BASH_ENV unset so /etc/bash_env cannot restore PATH — mirrors
+#   validate-golem-notify.sh's run_notify nojq); "jq" leaves PATH intact. Captures
+#   the exit code in RESOLVE_RC. These trees carry no feed, so RESOLVE_LINE is
+#   cleared — read <tree>/payload.txt for the sink capture instead.
+run_resolve_tree() {
+    local dir="$1" jq_mode="$2"
+    shift 2
+    local script="$dir/scripts/golem-resolve.sh"
+    RESOLVE_RC=0
+    RESOLVE_LINE=""
+    if [ "$jq_mode" = "nojq" ]; then
+        local stub="$dir/stub-bin"
+        /usr/bin/mkdir -p "$stub"
+        /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+        (
+            cd "$dir" &&
+                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                    "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                    PATH="$stub" HOME="$dir" \
+                    "$REAL_BASH" "$script" "$@"
+        ) >/dev/null 2>&1 || RESOLVE_RC=$?
+    else
+        (
+            cd "$dir" &&
+                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                    "${GOLEM_SCRUB[@]/#/--unset=}" \
+                    HOME="$dir" \
+                    "$REAL_BASH" "$script" "$@"
+        ) >/dev/null 2>&1 || RESOLVE_RC=$?
+    fi
+}
+
 # --- Emission (feed line carries golem-N + event resolved) ------------------
 
 test_git_available() {
@@ -172,6 +258,64 @@ test_missing_arg_usage() {
     assert_output_empty "$RESOLVE_LINE" "No feed line is written when no id is given"
 }
 
+# --- No-jq JSON escaper (#432 gap 1) ----------------------------------------
+
+# On the jq-less path golem-resolve.sh hand-rolls the Notification payload with
+# the same sanitizer as golem-notify.sh (strip backslashes + control chars,
+# escape quotes). That escaper is the only thing standing between an adversarial
+# free-text message and a corrupted `{"message":"…"}` payload. Feed a message
+# carrying an embedded double-quote AND backslash and assert the emitted payload
+# stays valid JSON with the backslash dropped and the quote preserved as string
+# data. A payload-capturing sink hook makes the helper's output observable (the
+# real hook, itself jq-less here, would re-default the message). jq validates the
+# capture, so the case skips cleanly when jq is absent.
+test_no_jq_escaper_emits_valid_json() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the escaped payload)"
+        return 0
+    fi
+    local tree cap msg
+    resolve_tree tree sink
+    run_resolve_tree "$tree" nojq 7 'a"b\c'
+    assert_equals "0" "$RESOLVE_RC" "Helper exits 0 on the no-jq path"
+    cap="$(/usr/bin/cat "$tree/payload.txt" 2>/dev/null || true)"
+    assert_not_empty "$cap" "The helper piped a payload to the hook"
+    assert_valid_json "$cap" \
+        "The hand-rolled payload is valid JSON despite a quote+backslash message"
+    msg="$(printf '%s' "$cap" | jq -r '.message' 2>/dev/null || true)"
+    # Backslash dropped, embedded double-quote preserved as string DATA, under
+    # the RESOLVED: leading marker the producer always emits.
+    assert_equals 'RESOLVED: a"bc' "$msg" \
+        "backslash dropped, embedded quote preserved as string data under RESOLVED:"
+}
+
+# --- Missing/non-exec hook → exit 1 (#432 gap 3) ----------------------------
+
+# When the sibling Notification hook is absent, golem-resolve.sh prints an error
+# and returns 1 WITHOUT touching the feed. Drive it from an isolated tree whose
+# hooks/ dir is empty, with a VALID id (so the failure is the `! -x` hook check,
+# not the exit-2 id validation). No jq dependency — assert exit 1 and no payload.
+test_missing_hook_exits_1() {
+    local tree
+    resolve_tree tree none
+    run_resolve_tree "$tree" jq 7
+    assert_equals "1" "$RESOLVE_RC" "Absent notify hook → exit 1"
+    assert_output_empty "$(/usr/bin/cat "$tree/payload.txt" 2>/dev/null || true)" \
+        "No payload is emitted when the hook is missing"
+}
+
+# A hook that EXISTS but is not executable trips the same `! -x` arm (exit 1):
+# the check is `-x`, not `-e`. Pin it distinctly so a future `-e` regression is
+# caught. Valid id again, so the exit is the hook check, not id validation.
+test_non_exec_hook_exits_1() {
+    local tree
+    resolve_tree tree noexec
+    run_resolve_tree "$tree" jq 7
+    assert_equals "1" "$RESOLVE_RC" "Non-executable notify hook → exit 1 (-x, not -e)"
+    assert_output_empty "$(/usr/bin/cat "$tree/payload.txt" 2>/dev/null || true)" \
+        "No payload is emitted when the hook is non-executable"
+}
+
 # --- Run --------------------------------------------------------------------
 
 run_test test_git_available "git is available (suite prerequisite)"
@@ -180,5 +324,8 @@ run_test test_prefixed_id_accepted "prefixed golem-N normalizes to golem-N"
 run_test test_custom_message_rides_through "custom message rides through under RESOLVED:"
 run_test test_invalid_id_rejected_no_feed "malformed id rejected (exit 2), feed untouched"
 run_test test_missing_arg_usage "missing id → usage, exit 2, feed untouched"
+run_test test_no_jq_escaper_emits_valid_json "no-jq escaper emits valid JSON for a quote+backslash message (#432)"
+run_test test_missing_hook_exits_1 "absent notify hook → exit 1, no payload (#432)"
+run_test test_non_exec_hook_exits_1 "non-exec notify hook → exit 1 (-x not -e), no payload (#432)"
 
 generate_report
