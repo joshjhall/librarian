@@ -249,8 +249,18 @@ emit_transitions() {
 # Extend these lists as new prompt shapes appear. pane_is_turn_end (#447) is the
 # odd one out — NOT a modal overlay but a turn-ended/idle-at-prompt footer read —
 # and so runs as panes_snapshot's LAST-RESORT branch, after all three modals.
+#
+# Like pane_is_fork and pane_liveness_class, both matchers are ANCHORED to the
+# pane's FOOTER region (last $pane_footer_lines lines, where a modal overlay
+# renders) — NOT the whole scrollback — the #246 protection (#452). The trigger
+# phrases (`Here is Claude's plan`, `Do you want to proceed`, …) appear in this
+# script's own comments, in tests/golem-gate-watch.sh, and in golem work output;
+# a golem editing/`cat`-ing such a file would otherwise self-trip a false
+# plan/permission gate push.
 pane_is_plan_gate() {
-    case "$1" in
+    local footer
+    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    case "$footer" in
         *"Ready to code"*) return 0 ;;
         *"ready to code"*) return 0 ;;
         *"Would you like to proceed"*) return 0 ;;
@@ -261,8 +271,11 @@ pane_is_plan_gate() {
 }
 
 # Generic permission-decision overlay (Bash/Edit/push/PR `ask` rules etc.).
+# Footer-anchored for the same #246/#452 reason as pane_is_plan_gate above.
 pane_is_gate() {
-    case "$1" in
+    local footer
+    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    case "$footer" in
         *"Do you want to proceed"*) return 0 ;;
     esac
     return 1

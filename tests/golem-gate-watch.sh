@@ -687,6 +687,21 @@ test_pane_is_plan_gate() {
         "'Yes, and use auto mode' is a plan gate"
     assert_equals "1" "$(_pane_rc pane_is_plan_gate "just some scrolling build output")" \
         "Unrelated work output is NOT a plan gate"
+
+    # Footer anchoring (#452, mirroring test_pane_is_fork_footer_anchored / the
+    # #246 pane_liveness_class fix): the matcher scans only the last GOLEM_PANE_
+    # FOOTER_LINES lines (default 8), NOT the whole scrollback. A golem
+    # editing/`cat`-ing a file whose text carries a plan phrase — this script's
+    # own comments and tests do — must not self-trip a false plan gate. `filler`
+    # pushes the scrolled phrase out of the footer window.
+    local filler
+    filler=$'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10'
+    assert_equals "1" \
+        "$(_pane_rc pane_is_plan_gate "grep 'Here is Claude'\''s plan' golem-gate-watch.sh"$'\n'"$filler"$'\n'"  ⏵⏵ esc to interrupt")" \
+        "A scrolled plan phrase above a working footer does not fake a plan gate"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_plan_gate "$filler"$'\n'"Here is Claude's plan:")" \
+        "A plan phrase inside the footer window still matches"
 }
 
 # pane_liveness_class (#229): source the script (main-guard makes it sourceable)
@@ -750,6 +765,18 @@ test_pane_is_gate() {
         "A plan overlay is NOT matched by the generic-gate matcher"
     assert_equals "1" "$(_pane_rc pane_is_gate "nothing to see")" \
         "Unrelated text is NOT a permission gate"
+
+    # Footer anchoring (#452): scoped to the last GOLEM_PANE_FOOTER_LINES lines,
+    # NOT the whole scrollback — a golem editing/`cat`-ing a file that mentions
+    # `Do you want to proceed` must not self-trip a false permission gate.
+    local filler
+    filler=$'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10'
+    assert_equals "1" \
+        "$(_pane_rc pane_is_gate "echo 'Do you want to proceed' >> fixtures.txt"$'\n'"$filler"$'\n'"  ⏵⏵ esc to interrupt")" \
+        "A scrolled 'Do you want to proceed' above a working footer does not fake a gate"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_gate "$filler"$'\n'"Do you want to proceed?")" \
+        "A 'Do you want to proceed' inside the footer window still matches"
 }
 
 # pane_is_fork (#257): the AskUserQuestion escalation-fork overlay matches on its
