@@ -225,7 +225,19 @@ clears and later re-occurs re-fires), so this is signal, not noise.
   renders over the alt-screen and is reliably scrapeable. It also catches an
   **`AskUserQuestion` escalation fork** by its `Enter to select` footer (as a
   last-resort match, after plan-gate and generic-gate), labelled
-  *"escalation — …"* like the feed's escalation lines (#257). A transient
+  *"escalation — …"* like the feed's escalation lines (#257). Finally — the true
+  last-resort branch, after all three modal matchers — it surfaces a
+  **turn-ended / idle-at-prompt** golem (#447): a session whose turn ended and
+  now sits at an empty prompt awaiting human input (e.g. commit signing halted on
+  a locked vault) paints only the ordinary `⏵⏵ auto mode on` footer with **no**
+  `esc to interrupt` run-spinner — not a modal overlay, so the three matchers
+  above miss it, yet the very stall class that silently parks an L4 run. It is
+  labelled *"⚠ idle at prompt — turn ended, awaiting input"* and, like every pane
+  line, fires once on the transition into that state and re-fires only after it
+  clears. Unlike the modal matchers it is **confirmed across two consecutive
+  polls** before it fires (a golem momentarily between turns can paint the idle
+  footer for a single tick), so a genuine stall surfaces one poll interval after
+  it begins — never on a normal turn boundary. A transient
   **zero-golem handoff window** (one session killed, the next not yet created) is
   a no-op poll, not a reason to terminate — the watch runs until the operator
   stops it (#621). See `mode-protocol.md` § *Gate-watch contract* for the prompt

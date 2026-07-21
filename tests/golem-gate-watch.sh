@@ -33,7 +33,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 GATE_WATCH="$REPO_ROOT/plugins/workflow/scripts/golem-gate-watch.sh"
 
-test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229)"
+test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229, #447)"
 
 # _pane_rc <function-name> <text> — source the script (the main-guard makes it
 # sourceable without running the drive block) in a subshell and call one of its
@@ -861,12 +861,173 @@ test_panes_snapshot_dispatch() {
     assert_not_contains "$PANES_OUT" "escalation —" \
         "A routine permission gate is NOT downgraded to an escalation"
 
-    # No-match pane: ordinary work output matches none of the three matchers ->
+    # No-match pane: ordinary work output matches none of the four matchers ->
     # panes_snapshot emits NOTHING (no golem line). Pins the silent fall-through
-    # end-to-end so an errant unconditional emit branch would be caught.
-    _run_panes_snapshot_tmux "just some scrolling build output"$'\n'"nothing modal here"
+    # end-to-end so an errant unconditional emit branch would be caught. The
+    # footer here is a bare-words 'auto mode on' WITHOUT the ⏵⏵ glyph, so it also
+    # pins that pane_is_turn_end's glyph guard holds in the dispatch chain.
+    _run_panes_snapshot_tmux "just some scrolling build output"$'\n'"auto mode on but no glyph"
     assert_not_contains "$PANES_OUT" "golem-9" \
         "A pane matching no overlay emits no line (silent fall-through)"
+}
+
+# pane_is_turn_end (#447): a turn-ended/idle-at-prompt golem paints the bare
+# `⏵⏵ auto mode on` footer with NO `esc to interrupt` run-spinner (rc 0). A pane
+# still running (spinner present) is NOT idle even with the same footer (rc 1,
+# spinner checked first); a bare-words `auto mode on` lacking the ⏵⏵ glyph is NOT
+# idle (rc 1); unrelated output is NOT idle (rc 1). Mirrors the `idle` arm of
+# pane_liveness_class — this is the stall class the pane push channel dropped
+# before #447.
+test_pane_is_turn_end() {
+    assert_equals "0" "$(_pane_rc pane_is_turn_end "  ⏵⏵ auto mode on")" \
+        "A '⏵⏵ auto mode on' footer with no spinner is turn-ended/idle"
+    assert_equals "1" "$(_pane_rc pane_is_turn_end "  ⏵⏵ auto mode on · esc to interrupt")" \
+        "The same footer WITH the run-spinner is working, not idle (spinner wins)"
+    assert_equals "1" "$(_pane_rc pane_is_turn_end "auto mode on")" \
+        "A bare-words 'auto mode on' without the ⏵⏵ glyph is NOT turn-ended"
+    assert_equals "1" "$(_pane_rc pane_is_turn_end "just some scrolling build output")" \
+        "Unrelated work output is NOT turn-ended"
+}
+
+# Footer anchoring (#447, mirroring test_pane_is_fork_footer_anchored / the #246
+# pane_liveness_class fix): pane_is_turn_end scans only the last
+# GOLEM_PANE_FOOTER_LINES lines. This very test file and golem-gate-watch.sh's own
+# comments carry `⏵⏵ auto mode on`, so a golem cat-ing/grepping them must not
+# self-trip a false idle. `filler` pushes the scrolled footer glyph out of the
+# window; the real footer below it (an active spinner) must win.
+test_pane_is_turn_end_footer_anchored() {
+    local filler
+    filler=$'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10'
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "grep '⏵⏵ auto mode on' golem-gate-watch.sh"$'\n'"$filler"$'\n'"  ⏵⏵ esc to interrupt")" \
+        "A scrolled '⏵⏵ auto mode on' above an active-spinner footer does not fake an idle"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "$filler"$'\n'"  ⏵⏵ auto mode on")" \
+        "A '⏵⏵ auto mode on' footer inside the window (no spinner) still matches"
+}
+
+# End-to-end turn-end dispatch (#447): drive the REAL panes_snapshot() via
+# `--once-panes` (reusing _run_panes_snapshot_tmux) to pin that a turn-ended pane
+# emits the idle-at-prompt label AND that it is the LAST-RESORT branch — a pane
+# that is BOTH a modal overlay and shows the idle footer is classified as the
+# overlay, never downgraded to idle.
+test_panes_snapshot_turn_end_dispatch() {
+    _run_panes_snapshot_tmux "⏺ done for now"$'\n'"  ⏵⏵ auto mode on"
+    assert_equals "0" "$PANES_RC" "panes_snapshot exits 0 for a turn-ended pane"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"⚠ idle at prompt — turn ended, awaiting input (check pane)" \
+        "A turn-ended pane emits the idle-at-prompt label end-to-end"
+
+    # Plan overlay + idle footer: plan-gate is checked first, so it wins.
+    _run_panes_snapshot_tmux "1. Yes, and use auto mode"$'\n'"  ⏵⏵ auto mode on"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"plan gate — ExitPlanMode awaiting approval" \
+        "A plan+idle pane emits the plan-gate label (plan wins over turn-end)"
+    assert_not_contains "$PANES_OUT" "idle at prompt" \
+        "A plan+idle pane is NOT downgraded to idle-at-prompt"
+
+    # Permission-gate + idle footer: the generic gate is checked before turn-end,
+    # so it wins (turn-end is the 4th-tier last resort, must lose to ANY modal).
+    _run_panes_snapshot_tmux "Do you want to proceed?"$'\n'"  ⏵⏵ auto mode on"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"permission gate — awaiting decision" \
+        "A gate+idle pane emits the permission-gate label (gate wins over turn-end)"
+    assert_not_contains "$PANES_OUT" "idle at prompt" \
+        "A gate+idle pane is NOT downgraded to idle-at-prompt"
+
+    # Fork + idle footer: the escalation fork is checked before turn-end, so it wins.
+    _run_panes_snapshot_tmux "What scope? "$'\n'"Enter to select · ↑/↓ to navigate"$'\n'"  ⏵⏵ auto mode on"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation — awaiting decision (carries options)" \
+        "A fork+idle pane emits the escalation label (fork wins over turn-end)"
+    assert_not_contains "$PANES_OUT" "idle at prompt" \
+        "A fork+idle pane is NOT downgraded to idle-at-prompt"
+}
+
+# confirm_turn_end two-consecutive-poll debounce (#447): the turn-end/idle line is
+# suppressed on the FIRST poll a golem looks idle and passed only once it is STILL
+# idle on the NEXT poll — so a momentary between-turns render never fires a false
+# idle. Real gates pass through immediately (they do not flicker). A golem that
+# clears re-confirms from scratch. Also covers a multi-golem single call (shared
+# accumulators don't cross-clobber) and the chained confirm_turn_end ->
+# emit_transitions drive-arm sequence (a fresh idle surfaces once, on its 2nd
+# poll). Like test_emit_transitions_dedup, all cases run in ONE subshell because
+# PENDING_TURN_END / LAST_EMIT are module state mutated across calls.
+test_confirm_turn_end_debounce() {
+    local out
+    # The literal turn-end message (the sourced $TURN_END_MSG is only in scope
+    # inside the subshell below; assertions in this outer scope use the literal).
+    local te="⚠ idle at prompt — turn ended, awaiting input (check pane)"
+    out="$(
+        source "$GATE_WATCH"
+        local idle="golem-3"$'\t'"$TURN_END_MSG"
+        # 1. First idle poll -> suppressed (CONFIRMED_SNAPSHOT empty).
+        command printf '[p1]'
+        confirm_turn_end "$idle"
+        command printf '%s' "$CONFIRMED_SNAPSHOT"
+        # 2. Second consecutive idle poll -> confirmed (passes through).
+        command printf '[p2]'
+        confirm_turn_end "$idle"
+        command printf '%s' "$CONFIRMED_SNAPSHOT"
+        # 3. A real gate passes through on its FIRST poll (no debounce). NOTE this
+        #    snapshot omits golem-3, so golem-3 also DROPS from PENDING_TURN_END here
+        #    (nextpending is rebuilt from scratch each call from only the lines in
+        #    this snapshot) — the clear happens at this step, not case 4.
+        command printf '[gate]'
+        confirm_turn_end "golem-4"$'\t'"permission gate — awaiting decision"
+        command printf '%s' "$CONFIRMED_SNAPSHOT"
+        # 4. A genuinely empty snapshot after the clear is a no-op; the FIRST idle
+        #    poll for golem-3 after it dropped is suppressed again (re-confirms from
+        #    scratch, not remembered across the clear).
+        command printf '[clear]'
+        confirm_turn_end ""
+        command printf '[reidle1]'
+        confirm_turn_end "$idle"
+        command printf '%s' "$CONFIRMED_SNAPSHOT"
+        # 5. Multi-golem SINGLE call: two idle golems + one real gate in ONE snapshot.
+        #    Pins that the per-line loop's shared accumulators do not let one golem's
+        #    line clobber another's pending flag / passthrough within a single call.
+        #    golem-3 was left pending by case 4's reidle1; golem-7 is fresh. So this
+        #    one call must: confirm golem-3 (its 2nd consecutive idle), suppress
+        #    golem-7 (its 1st idle), and pass golem-8's gate straight through.
+        command printf '[multi]'
+        confirm_turn_end "golem-3"$'\t'"$TURN_END_MSG"$'\n'"golem-7"$'\t'"$TURN_END_MSG"$'\n'"golem-8"$'\t'"permission gate — awaiting decision"
+        command printf '%s' "$CONFIRMED_SNAPSHOT"
+        # 6. Chained drive-arm sequence: confirm_turn_end -> emit_transitions in the
+        #    SAME shell, exactly as the --stream-panes arm wires it, across two polls.
+        #    Pins that emit_transitions reads the CONFIRMED (post-debounce) snapshot,
+        #    so a fresh idle golem surfaces on its SECOND poll and only ONCE (dedup).
+        #    golem-5 is a fresh id (never in PENDING_TURN_END above) and LAST_EMIT is
+        #    still empty here (earlier cases call only confirm_turn_end), so no state
+        #    reset is needed.
+        command printf '[chain1]'
+        confirm_turn_end "golem-5"$'\t'"$TURN_END_MSG"
+        emit_transitions "$CONFIRMED_SNAPSHOT" 0
+        command printf '[chain2]'
+        confirm_turn_end "golem-5"$'\t'"$TURN_END_MSG"
+        emit_transitions "$CONFIRMED_SNAPSHOT" 0
+        command printf '[chain3]'
+        confirm_turn_end "golem-5"$'\t'"$TURN_END_MSG"
+        emit_transitions "$CONFIRMED_SNAPSHOT" 0
+    )"
+    assert_contains "$out" "[p1][p2]" \
+        "The first idle poll emits nothing (suppressed pending confirmation)"
+    assert_contains "$out" "[p2]golem-3"$'\t'"$te" \
+        "The second consecutive idle poll confirms and passes the turn-end line"
+    assert_contains "$out" "[gate]golem-4"$'\t'"permission gate — awaiting decision" \
+        "A real gate passes through on its first poll (not debounced)"
+    assert_not_contains "$out" "[reidle1]golem-3" \
+        "After a clear, a single idle poll is suppressed again (re-confirms from scratch)"
+    # Multi-golem single call: golem-3 confirmed, golem-7 suppressed, golem-8 gate through.
+    assert_contains "$out" "[multi]golem-3"$'\t'"$te" \
+        "In a multi-golem call, a golem on its 2nd consecutive idle is confirmed"
+    assert_contains "$out" "golem-8"$'\t'"permission gate — awaiting decision" \
+        "In the same multi-golem call, a real gate still passes straight through"
+    assert_not_contains "$out" "[multi]golem-7" \
+        "In the same multi-golem call, a golem on its 1st idle is still suppressed"
+    # Chained sequence: golem-5 surfaces once, on chain2 (its 2nd poll), not chain1/3.
+    assert_not_contains "$out" "[chain1]golem-5" \
+        "Chained drive-arm: a fresh idle golem does not surface on its first poll"
+    assert_contains "$out" "[chain2]golem-5"$'\t'"$te" \
+        "Chained drive-arm: the idle golem surfaces on its second poll (post-debounce)"
+    assert_not_contains "$out" "[chain3]golem-5" \
+        "Chained drive-arm: the standing idle line is deduped by emit_transitions (not re-emitted)"
 }
 
 # emit_transitions: the transition-dedup contract that backs --stream/--stream-
@@ -936,6 +1097,10 @@ run_test test_pane_is_fork "pane_is_fork matches the AskUserQuestion escalation 
 run_test test_pane_is_fork_footer_anchored "pane_is_fork is footer-anchored (no self-trip on scrolled text)"
 run_test test_pane_fork_plan_precedence "pane_is_plan_gate wins over pane_is_fork on a plan+fork pane"
 run_test test_panes_snapshot_dispatch "panes_snapshot dispatch order + labels (plan/gate/fork) end-to-end"
+run_test test_pane_is_turn_end "pane_is_turn_end matches the turn-ended/idle-at-prompt footer only (#447)"
+run_test test_pane_is_turn_end_footer_anchored "pane_is_turn_end is footer-anchored (no self-trip on scrolled text)"
+run_test test_panes_snapshot_turn_end_dispatch "panes_snapshot emits idle-at-prompt as last-resort; overlay wins (#447)"
+run_test test_confirm_turn_end_debounce "confirm_turn_end: two-consecutive-poll debounce on the idle line; gates immediate (#447)"
 run_test test_pane_liveness_class "pane_liveness_class: spinner=working, error/idle footer=idle, spinner wins"
 run_test test_emit_transitions_dedup "emit_transitions: prime/standing/new/changed/re-gate dedup"
 
