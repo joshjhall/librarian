@@ -122,10 +122,14 @@ test_checker_agent_discovery_gate() {
         "$region" '[map] skipped project agent'
 }
 
-# Surface 3 — checker.md Step 3: project patterns.sh execution gate.
+# Surface 3 — checker.md Step 3: project patterns.sh execution gate. The END
+# anchor is the `#### Step 3a:` sub-heading (the agnix second-source sub-step,
+# issue #401), NOT `### Step 4:`: Step 3a sits between the patterns.sh gate and
+# Step 4, so anchoring to it keeps this region scoped to the original
+# `[prescan] skipped` gate section and under the <=60-line single-section guard.
 test_checker_prescan_gate() {
     local region
-    region="$(extract_between "$CHECKER" '### Step 3:' '### Step 4:')"
+    region="$(extract_between "$CHECKER" '### Step 3:' '#### Step 3a:')"
     assert_surface "checker Step 3 prescan" "$region" '[prescan] skipped'
 }
 
