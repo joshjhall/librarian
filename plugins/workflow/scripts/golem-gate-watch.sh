@@ -183,6 +183,16 @@ feed_snapshot() {
     # only each golem's MOST-RECENT line, so a later `idle`/`gate` (which always
     # carries a `.ts` now) supersedes a stale no-`ts` entry rather than it living
     # forever.
+    #
+    # The type/emptiness guard screens null/"" but NOT a non-empty string that
+    # fails `fromdateiso8601`'s strict `%Y-%m-%dT%H:%M:%SZ` parse (e.g. a truncated
+    # or garbage `ts` from a partial write / an untrusted external POST). That
+    # parse abort is program-wide — one malformed line blanks the ENTIRE snapshot
+    # for EVERY golem, not just its own (the exact #24 blast radius the empty guard
+    # was meant to close, re-entered through a different door). So wrap the parse in
+    # `try … catch true`: a line whose `ts` cannot be parsed degrades to the same
+    # TTL-bypass "fresh" fallback as a no-`ts` line — surfaced, and localized to
+    # itself — instead of aborting the whole jq program (#432).
     /usr/bin/tail -n 200 "$feed" 2>/dev/null |
         jq -rs --argjson ttl "$ttl" '
             (now) as $now
@@ -191,7 +201,7 @@ feed_snapshot() {
             | map(select(.golem != "golem-?"))
             | map(select((.event == "gate" or .event == "blocked" or .event == "escalation" or .event == "dead-end")
                          and (if (.ts | type) == "string" and .ts != ""
-                              then (($now - (.ts | fromdateiso8601)) < $ttl)
+                              then (try (($now - (.ts | fromdateiso8601)) < $ttl) catch true)
                               else true end)))
             | .[]
             | (.message // "awaiting decision") as $m

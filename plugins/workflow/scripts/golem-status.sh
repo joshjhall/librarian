@@ -833,6 +833,15 @@ is_positive_int() {
 # status sweep (#304). The loop carries no empty-poll exit (mirrors
 # golem-gate-watch.sh --stream*): a transient zero-golem handoff window renders
 # "No active golems" and keeps sweeping rather than terminating.
+#
+# Main-guard so the tests can SOURCE this file to unit-test the render helpers
+# (_gate_age_suffix, _iso_to_epoch, …) in isolation without running the drive
+# below (mirrors golem-resolve.sh:120 / golem-gate-watch.sh:842). When the file
+# is executed, `${BASH_SOURCE[0]}` == `$0`, the guard is false, and the drive
+# runs byte-identically; when it is sourced they differ and we return first.
+if [ "${BASH_SOURCE[0]}" != "${0}" ]; then
+    return 0
+fi
 watch=0
 checkpoint=0
 level=1
