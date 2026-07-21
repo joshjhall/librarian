@@ -40,6 +40,7 @@ WT_RM="$SCRIPTS/worktree-rm.sh"
 ATTACH="$SCRIPTS/golem-attach.sh"
 STATUS="$SCRIPTS/golem-status.sh"
 SCRAPE="$SCRIPTS/golem-token-scrape.sh"
+TRANSCRIPT_LIVENESS="$SCRIPTS/golem-transcript-liveness.sh"
 INBOX="$SCRIPTS/golem-inbox.sh"
 CONFIG="$SCRIPTS/config.sh"
 # The Mode-3 container entrypoint lives as a bash code block inside this skill
@@ -2686,6 +2687,346 @@ test_scrape_no_jq_exits_3() {
     assert_contains "$RUN_OUT" "jq not found" "names jq as the missing dependency"
 }
 
+# --- golem-transcript-liveness.sh (#248) ------------------------------------
+# Direct unit coverage of the transcript classifier — the working/idle/errored
+# read and its fail-loud exit codes. It resolves the SAME <projects>/<slug>/
+# transcript as golem-token-scrape.sh (reusing plant_transcript/slug_for above),
+# so the fixtures land where the script looks. The gate-watch suite exercises this
+# script through liveness_snapshot's wiring; these pin its own contract in
+# isolation.
+
+# run_liveness <sandbox> <worktree-arg> — invoke golem-transcript-liveness.sh with
+# the projects base pointed at the sandbox's fake $sb/projects. Captures
+# RUN_RC/RUN_OUT.
+run_liveness() {
+    local sb="$1" arg="$2"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$arg" 2>&1)" || RUN_RC=$?
+}
+
+# A last top-level assistant turn still in flight (stop_reason "tool_use") → working.
+test_liveness_working() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a turn-in-flight transcript exits 0"
+    assert_true "[ '$RUN_OUT' = 'working' ]" "classifies working (got '$RUN_OUT')"
+}
+
+# A last top-level assistant turn that ENDED (stop_reason "end_turn") → idle.
+test_liveness_idle() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}'
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a turn-ended transcript exits 0"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" "classifies idle (got '$RUN_OUT')"
+}
+
+# isApiErrorMessage on the last top-level assistant record → errored.
+test_liveness_errored_api() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"message":{"stop_reason":"stop_sequence"}}'
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "an API-error transcript exits 0"
+    assert_true "[ '$RUN_OUT' = 'errored' ]" "classifies errored (got '$RUN_OUT')"
+}
+
+# A trailing "Unknown command" system record with NO top-level turn yet is the
+# literal #229 first-command failure → errored (not indeterminate).
+test_liveness_errored_unknown_command() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"system","subtype":"informational","content":"Unknown command: /workflow:next-issue"}'
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "an unknown-command transcript exits 0"
+    assert_true "[ '$RUN_OUT' = 'errored' ]" "classifies errored (got '$RUN_OUT')"
+}
+
+# The OTHER errored-via-Unknown-command path (#248 review): an assistant turn that
+# already ENDED (end_turn) followed by a trailing "Unknown command" system record
+# promotes idle → errored via the `.key > $last.key` ordering branch. The sibling
+# test above exercises the no-top-level-turn branch; this pins the ordering branch,
+# which would silently degrade to a plain 'idle' on an off-by-one.
+test_liveness_errored_unknown_command_after_idle_turn() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(/usr/bin/printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
+            '{"type":"system","content":"Unknown command: /workflow:next-issue"}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "an idle-turn+trailing-unknown-command transcript exits 0"
+    assert_true "[ '$RUN_OUT' = 'errored' ]" "idle turn + trailing Unknown command promotes to errored (got '$RUN_OUT')"
+}
+
+# A sub-workflow (isSidechain true) tool_use record must NOT mask a top-level idle.
+test_liveness_sidechain_not_masking() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(/usr/bin/printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
+            '{"type":"assistant","isSidechain":true,"message":{"stop_reason":"tool_use"}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a mixed sidechain transcript exits 0"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" "top-level idle not masked by sidechain tool_use (got '$RUN_OUT')"
+}
+
+# No transcript dir → fail-loud (exit 2 + message), never a silent class. This is
+# the Mode-3-container / no-host-transcript path the caller falls back from.
+test_liveness_missing_transcript_fails_loud() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "no transcript dir exits 2 (fail-loud)"
+    assert_contains "$RUN_OUT" "no transcript dir" "names the missing transcript dir"
+}
+
+# A transcript with records but no top-level turn and no command error is
+# indeterminate → exit 2 (the caller falls back to the mtime heartbeat).
+test_liveness_indeterminate_exits_2() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 '{"type":"user","message":{"role":"user"}}'
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "an indeterminate transcript exits 2"
+    assert_contains "$RUN_OUT" "indeterminate" "names the indeterminate condition"
+}
+
+# No worktree argument → usage error (exit 1).
+test_liveness_no_arg_exits_1() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" "$REAL_BASH" "$TRANSCRIPT_LIVENESS" 2>&1)" || RUN_RC=$?
+    assert_exit 1 "$RUN_RC" "no worktree arg exits 1 (usage)"
+    assert_contains "$RUN_OUT" "usage:" "prints usage on the no-arg path"
+}
+
+# Missing jq on PATH → exit 3 fail-loud (mirrors test_scrape_no_jq_exits_3).
+test_liveness_no_jq_exits_3() {
+    local sb
+    new_sandbox sb
+    /usr/bin/mkdir -p "$sb/nojq-bin"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
+            PATH="$sb/nojq-bin" \
+            "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
+    assert_exit 3 "$RUN_RC" "transcript-liveness with no jq on PATH exits 3 (fail-loud)"
+    assert_contains "$RUN_OUT" "jq not found" "names jq as the missing dependency"
+}
+
+# A relative worktree arg resolves to the same slug as its absolute form (mirrors
+# test_scrape_relative_worktree_path — the pwd-prefix branch of the slug logic).
+test_liveness_relative_worktree_path() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
+    # cd into the sandbox and pass the RELATIVE path — pwd-prefixing must land on
+    # the same slug the absolute-path plant used.
+    run_liveness "$sb" ".worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a relative worktree arg resolves (exit 0)"
+    assert_true "[ '$RUN_OUT' = 'working' ]" "relative arg classifies working like the absolute one (got '$RUN_OUT')"
+}
+
+# Staleness bound (#248 review): a `working` verdict whose transcript has sat
+# unmodified past GOLEM_STALL_THRESHOLD is DEMOTED to indeterminate (exit 2) — a
+# crashed process frozen at stop_reason:"tool_use" must NOT read `working`
+# forever, or the caller's mtime stall check is permanently short-circuited.
+test_liveness_stale_working_demoted() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb tfile
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
+    # Backdate the planted session transcript well past the default 1200s window.
+    tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
+    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 3600))" "$tfile"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "a stale 'working' transcript is demoted to indeterminate (exit 2)"
+    assert_contains "$RUN_OUT" "stale 'working'" "names the staleness demotion"
+}
+
+# The staleness window is GOLEM_STALL_THRESHOLD-overridable: the same stale
+# transcript above still reads `working` when the threshold is widened past its
+# age (guards the env plumbing, symmetric to test_liveness_stale_working_demoted).
+test_liveness_stale_working_threshold_overridable() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb tfile
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
+    tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
+    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 3600))" "$tfile"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            GOLEM_STALL_THRESHOLD=7200 \
+            "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "a widened threshold keeps the 3600s-old transcript 'working' (exit 0)"
+    assert_true "[ '$RUN_OUT' = 'working' ]" "GOLEM_STALL_THRESHOLD widens the staleness window (got '$RUN_OUT')"
+}
+
+# A stale IDLE transcript is NOT demoted — only `working` is mtime-gated. A golem
+# parked/errored at its prompt for a long time is still correctly idle, and that
+# is the actionable signal (guards against over-broad staleness gating).
+test_liveness_stale_idle_not_demoted() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb tfile
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}'
+    tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
+    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 3600))" "$tfile"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a long-idle transcript still classifies (exit 0)"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" "a stale idle transcript is not demoted (got '$RUN_OUT')"
+}
+
+# Fail-open on the staleness guard (#248 review): when the transcript's mtime is
+# UNREADABLE (stat fails / returns non-numeric), the guard is skipped and the raw
+# `working` class is trusted, rather than a stat quirk demoting a possibly-live
+# golem. Force it by stubbing `stat` to emit garbage on a PATH that still carries
+# real bash/git/jq — the script reaches stat via `command stat`, so the stub wins.
+test_liveness_stale_working_stat_failure_fails_open() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb stub real_bash real_git real_jq
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
+    stub="$sb/stub-bin"
+    /usr/bin/mkdir -p "$stub"
+    real_bash="$(command -v bash)"
+    real_git="$(command -v git)"
+    real_jq="$(command -v jq)"
+    /usr/bin/ln -s "$real_bash" "$stub/bash"
+    /usr/bin/ln -s "$real_git" "$stub/git"
+    /usr/bin/ln -s "$real_jq" "$stub/jq"
+    # A `stat` that always emits non-numeric garbage and exits 0 — the script's
+    # `command stat` resolves this stub, so _newest_mtime is non-numeric and the
+    # guard's `'' | *[!0-9]*)` fail-open arm must fire (trust the class).
+    /usr/bin/printf '%s\n' '#!/usr/bin/env bash' 'echo not-a-number' >"$stub/stat"
+    /usr/bin/chmod +x "$stub/stat"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            PATH="$stub:/usr/bin:/bin" \
+            "$real_bash" "$TRANSCRIPT_LIVENESS" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "an unreadable mtime fails open on the guard (exit 0)"
+    assert_true "[ '$RUN_OUT' = 'working' ]" "a non-numeric stat result trusts the class, not a demotion (got '$RUN_OUT')"
+}
+
+# Newest-mtime session wins (#248 review, mirrors test_scrape_newest_session_wins):
+# two sessions in the same project dir with different classes — the newer one's
+# class is reported.
+test_liveness_newest_session_wins() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb dir
+    new_sandbox sb
+    dir="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")"
+    /usr/bin/mkdir -p "$dir"
+    # Older session: idle. Newer session: working. The newer must win.
+    /usr/bin/printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
+        >"$dir/old.jsonl"
+    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 600))" "$dir/old.jsonl"
+    /usr/bin/printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}' \
+        >"$dir/new.jsonl"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a two-session dir resolves (exit 0)"
+    assert_true "[ '$RUN_OUT' = 'working' ]" "the newest-mtime session's class wins (got '$RUN_OUT')"
+}
+
+# A truncated/malformed trailing JSONL line is tolerated (#248 review, mirrors
+# test_scrape_tolerates_truncated_trailing_line): `fromjson? // empty` skips it and
+# the valid record above still classifies.
+test_liveness_tolerates_truncated_trailing_line() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(/usr/bin/printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}' \
+            '{"type":"assistant","isSid')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a truncated trailing line does not abort classification (exit 0)"
+    assert_true "[ '$RUN_OUT' = 'working' ]" "the valid record classifies despite a truncated trailing line (got '$RUN_OUT')"
+}
+
 # golem-status renders the TOP-LEVEL TOKENS section: first read shows the count,
 # a second read with an UNCHANGED transcript shows 'frozen', and the cache JSON
 # gains top_level_tokens + top_level_tokens_at.
@@ -4140,6 +4481,23 @@ run_test test_status_frozen_iso_parse_failure_raw_render "golem-status: an unpar
 run_test test_status_fmt_dur_seconds_arm "golem-status: _fmt_dur seconds arm — a sub-60s freeze renders 'frozen Ns' (#392)"
 run_test test_status_fmt_dur_minute_arm "golem-status: _fmt_dur minutes arm — a >=60s freeze renders 'frozen Nm' (#392)"
 run_test test_scrape_relative_worktree_path "golem-token-scrape: a relative worktree arg resolves like an absolute one (#392)"
+run_test test_liveness_working "golem-transcript-liveness: turn-in-flight -> working (#248)"
+run_test test_liveness_idle "golem-transcript-liveness: turn-ended -> idle (#248)"
+run_test test_liveness_errored_api "golem-transcript-liveness: isApiErrorMessage -> errored (#248)"
+run_test test_liveness_errored_unknown_command "golem-transcript-liveness: trailing Unknown command (no turn) -> errored (#248)"
+run_test test_liveness_errored_unknown_command_after_idle_turn "golem-transcript-liveness: idle turn + trailing Unknown command -> errored (#248)"
+run_test test_liveness_sidechain_not_masking "golem-transcript-liveness: sidechain tool_use does not mask a top-level idle (#248)"
+run_test test_liveness_missing_transcript_fails_loud "golem-transcript-liveness: missing transcript exits 2 fail-loud (#248)"
+run_test test_liveness_indeterminate_exits_2 "golem-transcript-liveness: no top-level turn is indeterminate, exits 2 (#248)"
+run_test test_liveness_no_arg_exits_1 "golem-transcript-liveness: empty worktree arg exits 1 (#248)"
+run_test test_liveness_no_jq_exits_3 "golem-transcript-liveness: missing jq on PATH exits 3 fail-loud (#248)"
+run_test test_liveness_relative_worktree_path "golem-transcript-liveness: a relative worktree arg resolves like an absolute one (#248)"
+run_test test_liveness_stale_working_demoted "golem-transcript-liveness: a stale 'working' transcript is demoted to indeterminate (#248)"
+run_test test_liveness_stale_working_threshold_overridable "golem-transcript-liveness: GOLEM_STALL_THRESHOLD widens the staleness window (#248)"
+run_test test_liveness_stale_idle_not_demoted "golem-transcript-liveness: a stale idle transcript is not demoted (#248)"
+run_test test_liveness_stale_working_stat_failure_fails_open "golem-transcript-liveness: an unreadable mtime fails open on the staleness guard (#248)"
+run_test test_liveness_newest_session_wins "golem-transcript-liveness: newest-mtime session wins (#248)"
+run_test test_liveness_tolerates_truncated_trailing_line "golem-transcript-liveness: tolerates a truncated trailing JSONL line (#248)"
 run_test test_scrape_and_status_zero_tokens "golem-token-scrape/status: an all-sidechain transcript is a real 0, not tokens unknown (#392)"
 run_test test_status_no_jq_skips_token_block "golem-status: no jq on PATH skips the TOP-LEVEL TOKENS block, still exits 0 (#392)"
 run_test test_status_cache_row_missing_issue_tokens_unknown "golem-status: a cache row missing 'issue' shows tokens unknown (#392)"

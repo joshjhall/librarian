@@ -43,19 +43,30 @@
 #   "golem-N: possible stall — no progress for Nm" (older).
 # The mtime heartbeat proves only that the PROCESS/worktree is live, NOT that
 # work is happening — right after launch those mtimes are fresh even if the
-# session errored on line 1 and went idle at its prompt (issue #229). So when a
-# live golem-* tmux pane is scrapeable, `pane_liveness_class` overrides the mtime
-# proxy with a stronger read: "alive, working" when the `esc to interrupt` run-
-# spinner is in the footer, "⚠ died — API error" on the #446 death signature (an
-# `API Error` 4xx/5xx in the scrollback with no spinner — a golem whose process
-# died on a transient/terminal API error and parked at its prompt looking exactly
-# like a finished turn), or "⚠ idle at prompt" on an error/idle signature. The
-# match is anchored to the pane's FOOTER region (the last GOLEM_PANE_FOOTER_LINES
-# lines, where the spinner/input-box/footer chrome renders) rather than the whole
-# scrollback, so a golem cat-ing/grepping a file whose text happens to contain
-# those trigger phrases — this very script does — does not self-trip the
-# classifier (issue #246). The pane check is best-effort — headless/container
-# golems the host tmux can't see fall back to the reworded mtime heartbeat.
+# session errored on line 1 and went idle at its prompt (issue #229). So the
+# sweep tries two stronger reads before the mtime proxy, in order:
+#   1. pane (tmux) — when a live golem-* pane is scrapeable, `pane_liveness_class`
+#      reads "alive, working" from the `esc to interrupt` run-spinner in the
+#      footer, "⚠ died — API error" on the #446 death signature (an `API Error`
+#      4xx/5xx in the scrollback with no spinner — a golem whose process died on a
+#      transient/terminal API error and parked at its prompt looking exactly like
+#      a finished turn), or "⚠ idle at prompt" on an error/idle signature. The
+#      match is anchored to the pane's FOOTER region (the last GOLEM_PANE_FOOTER_LINES
+#      lines, where the spinner/input-box/footer chrome renders) rather than the
+#      whole scrollback, so a golem cat-ing/grepping a file whose text happens to
+#      contain those trigger phrases — this very script does — does not self-trip
+#      the classifier (issue #246).
+#   2. transcript (issue #248) — when the pane read does not classify (a
+#      headless / CI / container-only golem the host tmux CANNOT see, or an
+#      indeterminate pane), `golem-transcript-liveness.sh` reads the same
+#      working/idle/errored signal from the golem's on-disk Claude Code transcript
+#      (`message.stop_reason` / `isApiErrorMessage` on its top-level assistant
+#      records — structured fields, so immune by construction to the scrollback
+#      self-trip the pane tier had to footer-anchor around). This extends the #229
+#      idle/errored detection to the headless population the pane tier misses.
+# Both stronger reads are best-effort — a golem with no host-visible pane AND no
+# host-readable transcript (e.g. a Mode-3 container golem) falls back to the
+# reworded mtime heartbeat.
 # A golem currently sitting at a fresh feed gate is reported as gated, NOT
 # stalled (the two are distinct — a gate is expected supervision; a stall is
 # the suspect case). This is a SOFT, advisory signal: it never kills, blocks, or
@@ -746,7 +757,7 @@ liveness_snapshot() {
         done < <(feed_snapshot "$feed")
     fi
 
-    local now act age pane pclass
+    local now act age pane pclass tclass
     now="$(/usr/bin/date +%s)"
     # Stable numeric order so successive snapshots line up for the operator.
     for n in $(command echo "$golems" | /usr/bin/tr ' ' '\n' | /usr/bin/sort -n); do
@@ -759,7 +770,7 @@ liveness_snapshot() {
         # working" (run-spinner) from "idle/errored at the prompt" (#229), which
         # the mtime proxy cannot. Best-effort — a headless/container golem with
         # no host-visible tmux session yields no class and falls through to the
-        # mtime heartbeat below.
+        # transcript tier below.
         if command -v tmux >/dev/null 2>&1 && tmux has-session -t "golem-$n" 2>/dev/null; then
             pane="$(tmux capture-pane -p -t "golem-$n" 2>/dev/null || true)"
             if [ -n "$pane" ]; then
@@ -780,6 +791,34 @@ liveness_snapshot() {
                         ;;
                 esac
             fi
+        fi
+        # Transcript tier (#248): the pane read did not classify this golem — it
+        # has no host-visible tmux session (headless / CI / container-visible-only)
+        # or the pane was indeterminate. Read the same working/idle/errored signal
+        # from the golem's on-disk Claude Code transcript, which needs no TTY, so a
+        # headless golem that errored on line 1 and went idle (#229) is caught here
+        # instead of falling through to the mtime heartbeat that cannot see it.
+        # Best-effort like the pane read: any non-zero exit (no host transcript —
+        # e.g. a Mode-3 container golem — / no jq / indeterminate) falls through to
+        # the mtime heartbeat below. golem-transcript-liveness.sh resolves the same
+        # <projects>/<slug>/ transcript golem-token-scrape.sh does.
+        if [ -x "$SCRIPT_DIR/golem-transcript-liveness.sh" ]; then
+            tclass="$("$SCRIPT_DIR/golem-transcript-liveness.sh" \
+                "$root/$GOLEM_WORKTREE_DIR/issue-$n" 2>/dev/null || true)"
+            case "$tclass" in
+                working)
+                    /usr/bin/printf '%s\t%s\n' "golem-$n" "alive, working (transcript: turn in flight)"
+                    continue
+                    ;;
+                idle)
+                    /usr/bin/printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (transcript: turn ended)"
+                    continue
+                    ;;
+                errored)
+                    /usr/bin/printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — errored and idle (transcript: command error, check pane)"
+                    continue
+                    ;;
+            esac
         fi
         act="$(_golem_last_activity "$n" "$root" "$status_dir")"
         [ -z "$act" ] && continue
