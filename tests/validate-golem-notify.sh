@@ -60,7 +60,13 @@ GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
 # override set would redirect the feed out from under the fixed read-back path
 # and fail the whole suite. The override test sets GOLEM_STATUS_DIR explicitly
 # after this scrub, so it is unaffected.
-GOLEM_SCRUB=(GOLEM_STATUS_DIR GOLEM_WORKTREE_DIR)
+#
+# GOLEM_EVENT_SINKS / GOLEM_EVENT_SINK_TIMEOUT (#406) are scrubbed for the same
+# reason: an operator (or this worktree) running the suite with a sink configured
+# would fire real network POSTs from every default-path case and could fail the
+# no-network assertion. The sink-fan-out tests set GOLEM_EVENT_SINKS explicitly
+# after this scrub, so they are unaffected.
+GOLEM_SCRUB=(GOLEM_STATUS_DIR GOLEM_WORKTREE_DIR GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT)
 
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
@@ -223,6 +229,90 @@ run_notify_worktree_dir() {
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
     NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+}
+
+# --- HTTP sink fan-out plumbing (GOLEM_EVENT_SINKS, #406) --------------------
+
+# write_curl_stub <stub-dir>
+# Drops a `curl` stub into <stub-dir> that the sink-fan-out tests prepend to PATH
+# (so real jq/coreutils stay reachable while `command curl` in the hook resolves
+# to this stub — no network). The stub parses the hook's exact invocation
+#   curl -s -o /dev/null --connect-timeout T -m T -X POST -H '...' --data-raw L URL
+# pulling out the `--data-raw` payload and the trailing http(s) URL. It optionally
+# sleeps $STUB_SLEEP seconds (the never-block case simulates a hung endpoint) and,
+# when $STUB_CAPTURE_DIR is set, records ONE file per request (line 1 = URL, line
+# 2 = payload) via mktemp so concurrent backgrounded POSTs never collide.
+write_curl_stub() {
+    local stub="$1"
+    /usr/bin/mkdir -p "$stub"
+    /usr/bin/cat >"$stub/curl" <<'EOF'
+#!/bin/sh
+data=""
+url=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --data-raw) data="$2"; shift 2 ;;
+        -H | -X | --connect-timeout | -m | -o) shift 2 ;;
+        http://* | https://*) url="$1"; shift ;;
+        *) shift ;;
+    esac
+done
+if [ -n "${STUB_SLEEP:-}" ] && [ "${STUB_SLEEP}" != "0" ]; then
+    sleep "$STUB_SLEEP"
+fi
+if [ -n "${STUB_CAPTURE_DIR:-}" ]; then
+    f="$(mktemp "$STUB_CAPTURE_DIR/req.XXXXXX")"
+    printf '%s\n%s\n' "$url" "$data" >"$f"
+fi
+exit 0
+EOF
+    /usr/bin/chmod +x "$stub/curl"
+}
+
+# Feed line captured by run_notify_sinks (separate from NOTIFY_LINE so a test can
+# read both if needed).
+NOTIFY_FEED=""
+
+# run_notify_sinks <sandbox> <payload> <golem_id> <sinks> <capture_dir> [sleep_s] [timeout]
+# Runs the hook with GOLEM_EVENT_SINKS=<sinks> and the curl stub on PATH, so the
+# HTTP fan-out fires against the stub instead of the network. <capture_dir> and
+# <sleep_s> are handed to the stub via STUB_CAPTURE_DIR / STUB_SLEEP; [timeout]
+# overrides GOLEM_EVENT_SINK_TIMEOUT (default left to the hook's inline 2s). GIT_*
+# and GOLEM_* scrubbed exactly like run_notify, then GOLEM_EVENT_SINKS set after
+# the scrub. Feed line captured in NOTIFY_FEED, exit code in NOTIFY_RC.
+run_notify_sinks() {
+    local dir="$1" payload="$2" gid="$3" sinks="$4" capdir="$5"
+    local sleep_s="${6:-0}" timeout="${7:-2}"
+    local feed="$dir/.worktrees/.status/feed.jsonl"
+    local stub="$dir/stub-bin"
+    /usr/bin/rm -f "$feed"
+    write_curl_stub "$stub"
+    NOTIFY_RC=0
+    (
+        cd "$dir" &&
+            /usr/bin/printf '%s' "$payload" |
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub:$PATH" HOME="$dir" GOLEM_ID="$gid" \
+                GOLEM_EVENT_SINKS="$sinks" GOLEM_EVENT_SINK_TIMEOUT="$timeout" \
+                STUB_CAPTURE_DIR="$capdir" STUB_SLEEP="$sleep_s" \
+                "$REAL_BASH" "$NOTIFY"
+    ) >/dev/null 2>&1 || NOTIFY_RC=$?
+    NOTIFY_FEED="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+}
+
+# poll_capture_count <capture_dir> <want> — bounded wait (~3s) for <want> stub
+# request files to appear. The hook backgrounds each POST, so the capture files
+# land asynchronously; this replaces a fixed sleep with a bounded poll.
+poll_capture_count() {
+    local capdir="$1" want="$2" tries=0 n
+    while [ "$tries" -lt 30 ]; do
+        n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+        [ "$n" -ge "$want" ] && return 0
+        sleep 0.1
+        tries=$((tries + 1))
+    done
+    return 0
 }
 
 # --- Classifier (jq path) ---------------------------------------------------
@@ -539,6 +629,272 @@ test_defaults_match_config_sh() {
         "hook feed lands at config.sh's resolved GOLEM_STATUS_DIR default — no drift"
 }
 
+# Sibling drift guard for the #406 sink vars. golem-notify.sh INLINES config.sh's
+# GOLEM_EVENT_SINKS / GOLEM_EVENT_SINK_TIMEOUT defaults (not sourced, same reason
+# as above), and both files' comments claim this test pins the two equivalent.
+# That claim must be TRUE: assert the value each side resolves with both vars
+# unset is identical. config.sh is read in a GOLEM_SCRUB'd subshell (so this
+# worktree's own exported values can't leak in); the hook's inlined defaults are
+# read by sourcing ONLY its two `: "${GOLEM_EVENT_SINK*:=...}"` assignment lines
+# in a scrubbed subshell — the same isolation the config.sh side uses, and enough
+# to catch a one-sided default edit (e.g. bumping the timeout in config.sh but
+# not the hook) that would otherwise stay green.
+test_event_sink_defaults_match_config_sh() {
+    local cfg_sinks cfg_timeout hook_sinks hook_timeout
+    # config.sh side.
+    cfg_sinks="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+        '. "$1"; printf "%s" "$GOLEM_EVENT_SINKS"' _ "$CONFIG_SH" 2>/dev/null || true)"
+    cfg_timeout="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+        '. "$1"; printf "%s" "$GOLEM_EVENT_SINK_TIMEOUT"' _ "$CONFIG_SH" 2>/dev/null || true)"
+    # Hook side: eval ONLY the two inlined sink-default lines (grep them out so we
+    # do not run the whole hook), then print what they resolve to.
+    local hook_defaults
+    hook_defaults="$(/usr/bin/grep -E '^: "\$\{GOLEM_EVENT_SINK(S|_TIMEOUT):=' "$NOTIFY" || true)"
+    hook_sinks="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+        "$hook_defaults"'; printf "%s" "$GOLEM_EVENT_SINKS"' 2>/dev/null || true)"
+    hook_timeout="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+        "$hook_defaults"'; printf "%s" "$GOLEM_EVENT_SINK_TIMEOUT"' 2>/dev/null || true)"
+    # Known defaults (guards against BOTH sides drifting together to a new value).
+    assert_equals "" "$cfg_sinks" "config.sh GOLEM_EVENT_SINKS default is empty"
+    assert_equals "2" "$cfg_timeout" "config.sh GOLEM_EVENT_SINK_TIMEOUT default is 2"
+    # Equivalence: hook inlined defaults must match config.sh's (the drift guard).
+    assert_equals "$cfg_sinks" "$hook_sinks" \
+        "hook GOLEM_EVENT_SINKS default matches config.sh — no drift (#406)"
+    assert_equals "$cfg_timeout" "$hook_timeout" \
+        "hook GOLEM_EVENT_SINK_TIMEOUT default matches config.sh — no drift (#406)"
+}
+
+# --- Multi-sink HTTP fan-out (GOLEM_EVENT_SINKS, #406) -----------------------
+
+# One emission fans to feed.jsonl ALWAYS plus each http(s) URL in
+# GOLEM_EVENT_SINKS, from one code path (AC1). Empty/unset ⇒ feed only, no
+# network (AC2). Each POST is bounded + backgrounded so a hung endpoint never
+# blocks (AC3). The SAME classified payload goes to every sink (AC4). The stub
+# curl below stands in for the network; jq validates the captured payloads.
+
+# AC2 — with GOLEM_EVENT_SINKS unset, NO curl is invoked (feed only). The stub
+# would capture a request file if the hook called curl; asserting zero captures
+# proves the empty-list path spawns no network process — byte-for-byte the
+# pre-#406 behavior.
+test_sinks_empty_no_network() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb capdir n
+    new_sandbox sb
+    capdir="$sb/cap"
+    /usr/bin/mkdir -p "$capdir"
+    # Empty sinks list: the hook must not reach curl at all.
+    run_notify_sinks "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "" "$capdir"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (empty GOLEM_EVENT_SINKS)"
+    assert_valid_json "$NOTIFY_FEED" "feed line still written (empty sinks)"
+    poll_capture_count "$capdir" 1 # give any erroneous POST a chance to land
+    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    assert_equals "0" "$n" "empty GOLEM_EVENT_SINKS makes NO curl call (feed only, AC2)"
+}
+
+# AC1 + AC4 — two sinks each receive one POST carrying a payload byte-equal to
+# the feed line (same classified event to every sink), and both URLs are hit.
+test_sinks_fanout_same_payload() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the captured payloads)"
+        return 0
+    fi
+    local sb capdir n p1 p2 u1 u2
+    new_sandbox sb
+    capdir="$sb/cap"
+    /usr/bin/mkdir -p "$capdir"
+    run_notify_sinks "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "http://127.0.0.1:9/a http://127.0.0.1:9/b" "$capdir"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (two sinks)"
+    assert_valid_json "$NOTIFY_FEED" "feed line written (two sinks, AC1)"
+    poll_capture_count "$capdir" 2
+    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    assert_equals "2" "$n" "both sinks received one POST each (AC1)"
+    # Each capture file: line 1 = URL, line 2 = payload. Collect and compare.
+    u1=""
+    u2=""
+    p1=""
+    p2=""
+    for f in "$capdir"/req.*; do
+        [ -e "$f" ] || continue
+        if [ -z "$u1" ]; then
+            u1="$(/usr/bin/sed -n 1p "$f")"
+            p1="$(/usr/bin/sed -n 2p "$f")"
+        else
+            u2="$(/usr/bin/sed -n 1p "$f")"
+            p2="$(/usr/bin/sed -n 2p "$f")"
+        fi
+    done
+    assert_valid_json "$p1" "sink 1 payload is valid JSON (AC4)"
+    assert_valid_json "$p2" "sink 2 payload is valid JSON (AC4)"
+    assert_equals "$NOTIFY_FEED" "$p1" "sink 1 payload byte-equals the feed line (AC4)"
+    assert_equals "$NOTIFY_FEED" "$p2" "sink 2 payload byte-equals the feed line (AC4)"
+    # Both distinct URLs were hit (order-independent).
+    assert_true "[ '$u1' != '$u2' ] && [ -n '$u1' ] && [ -n '$u2' ]" \
+        "both distinct sink URLs were POSTed (AC1)"
+}
+
+# AC3 — a sink whose curl hangs well past the timeout must NOT block the hook.
+# The stub sleeps 30s; the hook backgrounds the POST, so it must return in well
+# under that. Assert both exit 0 AND a wall-clock bound, plus the feed line still
+# landed (feed is written before the fan, so a hung sink never costs the feed).
+test_sinks_never_block() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb capdir start elapsed
+    new_sandbox sb
+    capdir="$sb/cap"
+    /usr/bin/mkdir -p "$capdir"
+    start="$(/usr/bin/date +%s)"
+    # 30s stub sleep, 2s configured timeout: a blocking hook would wait ≥2s (or
+    # 30s if it also awaited the child); a non-blocking one returns near-instantly.
+    run_notify_sinks "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "http://127.0.0.1:9/slow" "$capdir" "30" "2"
+    elapsed="$(($(/usr/bin/date +%s) - start))"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 despite a hung sink (AC3)"
+    assert_valid_json "$NOTIFY_FEED" "feed line written before the hung POST (AC3)"
+    assert_true "[ '$elapsed' -lt 10 ]" \
+        "hook returned promptly (${elapsed}s) — a hung sink never blocks the golem (AC3)"
+}
+
+# Scheme guard — a non-http(s) entry in the list is skipped (no curl call for
+# it), while a sibling https entry in the SAME list is still POSTed. Guards
+# against handing a stray `file://`/`ftp://` token to curl.
+test_sinks_scheme_guard() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb capdir n u
+    new_sandbox sb
+    capdir="$sb/cap"
+    /usr/bin/mkdir -p "$capdir"
+    # A file:// entry (must be skipped) beside a valid https entry (must be hit).
+    run_notify_sinks "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "file:///etc/passwd https://127.0.0.1:9/ok" "$capdir"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (scheme guard)"
+    poll_capture_count "$capdir" 1
+    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    assert_equals "1" "$n" "only the https sink was POSTed; file:// entry skipped"
+    u="$(/usr/bin/sed -n 1p "$capdir"/req.* 2>/dev/null || true)"
+    assert_equals "https://127.0.0.1:9/ok" "$u" \
+        "the POSTed URL is the https sink, not the file:// entry"
+}
+
+# comma-separated list — GOLEM_EVENT_SINKS accepts commas as well as spaces (the
+# `tr ',' ' '` normalization). Two comma-separated sinks each get one POST.
+test_sinks_comma_separated() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb capdir n
+    new_sandbox sb
+    capdir="$sb/cap"
+    /usr/bin/mkdir -p "$capdir"
+    run_notify_sinks "$sb" \
+        '{"message":"Claude needs your permission to run git push"}' \
+        "golem-1" "http://127.0.0.1:9/a,http://127.0.0.1:9/b" "$capdir"
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 (comma-separated sinks)"
+    poll_capture_count "$capdir" 2
+    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    assert_equals "2" "$n" "comma-separated list fans to both sinks"
+}
+
+# curl-absent branch — GOLEM_EVENT_SINKS is non-empty but curl is not on PATH, so
+# the `&& command -v curl` half of the fan-out guard fails. The hook must degrade
+# gracefully: still exit 0 and still write the feed line, spawning no POST. Every
+# other sink test has curl present, so this is the only coverage of that half of
+# the `&&`. PATH holds only the bash stub (no curl), reached the same jq-free way
+# run_notify's nojq mode builds its hermetic PATH — but here jq IS needed to
+# validate the feed line, so it is gated on jq like the rest.
+test_sinks_curl_absent_degrades() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the feed line)"
+        return 0
+    fi
+    local sb feed stub
+    new_sandbox sb
+    feed="$sb/.worktrees/.status/feed.jsonl"
+    /usr/bin/rm -f "$feed"
+    # Hermetic PATH with bash only — no curl resolvable. The hook reaches its
+    # other tools via absolute /usr/bin/* paths, so bash-only PATH is sufficient
+    # (matching run_notify's nojq mode). jq is off this PATH too, but the hook's
+    # jq branch uses `command -v jq` and falls back to the hand-rolled encoder, so
+    # the feed line is still written; we read it back with the outer jq.
+    stub="$sb/stub-nocurl"
+    /usr/bin/mkdir -p "$stub"
+    /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+    NOTIFY_RC=0
+    (
+        cd "$sb" &&
+            /usr/bin/printf '%s' '{"message":"Claude needs your permission to run git push"}' |
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub" HOME="$sb" GOLEM_ID="golem-1" \
+                GOLEM_EVENT_SINKS="http://127.0.0.1:9/x" \
+                "$REAL_BASH" "$NOTIFY"
+    ) >/dev/null 2>&1 || NOTIFY_RC=$?
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 when curl is absent but sinks are set"
+    assert_true "[ -f '$feed' ]" \
+        "feed line still written when curl absent — fan-out degrades gracefully (#406)"
+}
+
+# unwritable-feed branch — the mkdir non-fatal change (`|| exit 0` -> `|| true`)
+# exists so a feed dir that can't be created does NOT skip the HTTP fan (one
+# emission = feed AND sinks). Simulate an unwritable status dir by pointing
+# GOLEM_STATUS_DIR under a read-only parent, and assert the sink STILL receives
+# its POST even though feed.jsonl could not be written — the behavior the diff's
+# comment promises.
+test_sinks_fire_when_feed_unwritable() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (needed to validate the capture)"
+        return 0
+    fi
+    local sb capdir stub ro
+    new_sandbox sb
+    capdir="$sb/cap"
+    /usr/bin/mkdir -p "$capdir"
+    write_curl_stub "$sb/stub-bin"
+    stub="$sb/stub-bin"
+    # A read-only parent dir: mkdir of <ro>/nope/.status must fail, so the feed
+    # write is impossible, but the HTTP fan must still run.
+    ro="$sb/readonly"
+    /usr/bin/mkdir -p "$ro"
+    /usr/bin/chmod 555 "$ro"
+    NOTIFY_RC=0
+    (
+        cd "$sb" &&
+            /usr/bin/printf '%s' '{"message":"Claude needs your permission to run git push"}' |
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub:$PATH" HOME="$sb" GOLEM_ID="golem-1" \
+                GOLEM_STATUS_DIR="readonly/nope/.status" \
+                GOLEM_EVENT_SINKS="http://127.0.0.1:9/x" \
+                STUB_CAPTURE_DIR="$capdir" STUB_SLEEP="0" \
+                "$REAL_BASH" "$NOTIFY"
+    ) >/dev/null 2>&1 || NOTIFY_RC=$?
+    # Restore perms so the sandbox cleanup (rm -rf) can remove it.
+    /usr/bin/chmod 755 "$ro" 2>/dev/null || true
+    assert_exit 0 "$NOTIFY_RC" "hook exits 0 when the feed dir is unwritable"
+    poll_capture_count "$capdir" 1
+    local n
+    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    assert_equals "1" "$n" \
+        "HTTP sink still POSTed even though feed.jsonl was unwritable (#406 AC1)"
+    assert_true "[ ! -f '$sb/readonly/nope/.status/feed.jsonl' ]" \
+        "feed.jsonl indeed not written under the read-only parent"
+}
+
 # --- Golem-id derivation fallback (branches 2 & 3) --------------------------
 
 # With GOLEM_ID unset, the hook derives the golem id from the worktree-root
@@ -659,6 +1015,14 @@ run_test test_status_dir_override_honored "status-dir: GOLEM_STATUS_DIR override
 run_test test_status_dir_default_unchanged "status-dir: GOLEM_STATUS_DIR unset still lands at .worktrees/.status (#405)"
 run_test test_status_dir_composed_from_worktree_dir "status-dir: GOLEM_WORKTREE_DIR-only override composes <dir>/.status (#424)"
 run_test test_defaults_match_config_sh "drift-guard: hook inlined defaults match config.sh (#424)"
+run_test test_event_sink_defaults_match_config_sh "drift-guard: sink-var inlined defaults match config.sh (#406)"
+run_test test_sinks_empty_no_network "sinks: empty GOLEM_EVENT_SINKS makes no curl call (#406 AC2)"
+run_test test_sinks_fanout_same_payload "sinks: fan same payload to two sinks + feed (#406 AC1/AC4)"
+run_test test_sinks_never_block "sinks: a hung sink never blocks the hook (#406 AC3)"
+run_test test_sinks_scheme_guard "sinks: non-http(s) entry skipped, https sibling POSTed (#406)"
+run_test test_sinks_comma_separated "sinks: comma-separated list fans to both sinks (#406)"
+run_test test_sinks_curl_absent_degrades "sinks: curl absent + sinks set degrades gracefully (#406)"
+run_test test_sinks_fire_when_feed_unwritable "sinks: HTTP fan fires even when feed dir unwritable (#406 AC1)"
 run_test test_golemid_issue_basename "golem-id: issue-N basename → golem-N"
 run_test test_golemid_golem_passthrough "golem-id: golem-* basename passes through"
 run_test test_golemid_placeholder "golem-id: unmatched basename → golem-? placeholder"

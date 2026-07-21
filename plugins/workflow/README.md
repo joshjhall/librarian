@@ -130,6 +130,8 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | --- | --- | --- |
 | `GOLEM_WORKTREE_DIR` | `.worktrees` | Per-issue worktree directory |
 | `GOLEM_STATUS_DIR` | `<worktree-dir>/.status` | Golem status JSON + feed |
+| `GOLEM_EVENT_SINKS` | (empty) | Space/comma list of `http(s)://` sinks `golem-notify.sh` POSTs each event to, besides `feed.jsonl` (empty ⇒ feed only, no network) |
+| `GOLEM_EVENT_SINK_TIMEOUT` | `2` | Per-POST connect+total timeout (seconds) for each `GOLEM_EVENT_SINKS` endpoint |
 | `GOLEM_BRANCH_PREFIX` | `feature/issue-` | Branch for issue N is `<prefix><N>` |
 | `GOLEM_BASE_REF` | `origin/main` | Ref new worktree branches fork from |
 | `GOLEM_WORKTREE_LOCAL_FILES` | `.env .claude/settings.local.json` | Gitignored files copied into a fresh worktree |

@@ -17,6 +17,17 @@
 #                        worktrees.                      Default: .worktrees
 #   GOLEM_STATUS_DIR     Directory holding golem status JSON + feed.jsonl.
 #                        Default: <GOLEM_WORKTREE_DIR>/.status
+#   GOLEM_EVENT_SINKS    Space/comma-separated list of http(s):// endpoints the
+#                        golem-notify.sh Notification hook POSTs each classified
+#                        event to, IN ADDITION to feed.jsonl (which is always
+#                        written). Empty/unset ⇒ feed only, no network calls —
+#                        byte-for-byte the pre-#406 behavior. Each POST is
+#                        best-effort and bounded (never blocks the golem).
+#                                                          Default: (empty)
+#   GOLEM_EVENT_SINK_TIMEOUT
+#                        Per-POST connect+total timeout (seconds) for each
+#                        GOLEM_EVENT_SINKS endpoint, so a slow/dead sink can
+#                        never wedge the golem.            Default: 2
 #   GOLEM_BRANCH_PREFIX  Branch-name prefix; the branch for issue N is
 #                        "<prefix><N>".                  Default: feature/issue-
 #   GOLEM_LEVEL          Autonomy level (1-4) baked into a golem's launch line
@@ -69,6 +80,29 @@
 # default so it travels with it).
 : "${GOLEM_STATUS_DIR:=${GOLEM_WORKTREE_DIR}/.status}"
 
+# Multi-sink event fan-out (#406, ADR-0001 Decision 2). golem-notify.sh writes
+# feed.jsonl ALWAYS and, in addition, POSTs each classified event to every
+# http(s):// URL in GOLEM_EVENT_SINKS (space/comma list), best-effort and bounded
+# by GOLEM_EVENT_SINK_TIMEOUT so a dead endpoint never wedges the golem. Empty
+# default ⇒ feed only, no network — the pre-#406 behavior unchanged. NOTE: the
+# hook inlines these two defaults rather than sourcing config.sh (see its header),
+# so this block is their documented home; the two stay pinned equivalent by
+# tests/validate-golem-notify.sh's test_event_sink_defaults_match_config_sh
+# drift guard.
+#
+# TRUST BOUNDARY: GOLEM_EVENT_SINKS is fully-trusted OPERATOR input — the same
+# trust model as PATH for these scripts (see repo_root's PATH-trust note below)
+# and the sinks the containers claude-host-event.sh already POSTs to. The event
+# payload carries the golem's classified message (which may include in-flight
+# permission-request text / file paths), and the hook does NOT restrict the host
+# (loopback/link-local/RFC1918/cloud-metadata are all reachable), enforce https,
+# or sign the request. So a sink URL is as sensitive as PATH: point it only at an
+# endpoint you control. Host allow-listing, https-only, and a shared-secret auth
+# header are deliberate NON-goals of this emitter — they belong to the
+# orchestrator-side receiver follow-up (#407), not this best-effort fan-out.
+: "${GOLEM_EVENT_SINKS:=}"
+: "${GOLEM_EVENT_SINK_TIMEOUT:=2}"
+
 # Branch naming: issue N -> "<GOLEM_BRANCH_PREFIX><N>".
 : "${GOLEM_BRANCH_PREFIX:=feature/issue-}"
 
@@ -100,7 +134,8 @@
 
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
-    GOLEM_HEARTBEAT_INTERVAL GOLEM_INBOX_WAIT GOLEM_INBOX_POLL
+    GOLEM_HEARTBEAT_INTERVAL GOLEM_INBOX_WAIT GOLEM_INBOX_POLL \
+    GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT
 
 # GIT_ENV_SCRUB_VARS — git's hook-exported environment variables that
 # _repo_root_git (below) and the worktree-new/-rm callers scrub before running
