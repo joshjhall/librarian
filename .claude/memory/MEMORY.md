@@ -2,6 +2,7 @@
 
 <!-- One line per memory (title + one-line hook). -->
 <!-- rumdl-disable MD013 -->
+- [No --no-verify: fix the lint](no-noverify-fix-the-lint.md) — operator directive: never --no-verify memory/docs to skip rumdl/typos; FIX it (wrap prose ≤120, correct spellings); don't run `rumdl fmt` blind (mangles leading #NNN→heading); only exception = MEMORY.md index (inline rumdl-disable); correct forward, don't force-push pushed main
 - [Token-burn audit 2026-07-21](token-burn-audit-2026-07-21.md) — 4-axis burn audit → #487-#495; biggest live lever = golems have NO --model dial (all Opus, #487); #488 status no-suppression = impl half of #485; #489 liveness un-deduped; fable/prose in #490-#495
 - [#487 GOLEM_MODEL launch knob](issue-487-golem-model-knob.md) — SHIPPED PR #496 (L1): GOLEM_MODEL env knob, unset=byte-identical; REUSABLE BUG = raw $VAR spliced into tmux `sh -c` cmd string → shell-injection (review HIGH, real); fix=backslash-escape `\`/`"`/backtick/`$` NOT allow-list; print-tests missed real `launch` argv; →#497
 - [#462 tracks build-order composition](issue-462-tracks-build-order.md) — SHIPPED PR #483 (L3, PARKED): composeTracks file-overlap-only → dependent dispatched as head w/ unbuilt deps; fix=two-level sort (buildClusters+topoOrderCluster, deps=PURE input, no-deps byte-identical); REUSABLE BUG = display field from RAW input not ACTUAL state → cycle-dropped edge falsely reported; →#484
