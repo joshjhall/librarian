@@ -119,32 +119,75 @@ no poll, no I/O, no dispatch). It is the first step of the setup flow
 them, choose the **autonomy level**, then **dispatch** one golem per track head.
 
 Call it with the same priority-ordered backlog the pool uses (each issue with its
-predicted files — `## Affected Files` + `component/*` labels):
+predicted files — `## Affected Files` + `component/*` labels — **and its
+build-order `deps`**):
 
 ```text
 args: {
   mode:       "tracks",
-  backlog:    [{ issue, files: [<predicted paths>] }, …],  // next-issue priority order
+  backlog:    [{ issue, files: [<predicted paths>], deps: [<issue#>] }, …],  // next-issue priority order
   trackCount: <2..4>,   // desired lanes (clamped; default 3)
   trackSize:  <3..5>,   // max issues per lane (clamped; default 5)
 }
 ```
 
+**Build order first, file-overlap second (issue #462).** Composition is a
+**two-level sort**: dependency clusters are honored as a *hard* constraint, then
+file-overlap is minimized *among peers*. Dependencies are **directed and
+semantic** — an issue A that `Depends on` B may share *zero* files with B (a
+Workflow harness depending on an agent definition, an API consumer depending on a
+new endpoint) — so a file-overlap-only composer can neither see the edge nor
+orient it, and would dispatch a dependent as a track head with its dependencies
+**unbuilt** (the golem then escalates "depends on unbuilt #A/#B" and the lane is
+dead on arrival). The `deps` array carries that edge into the pure composer.
+
+**The setup flow supplies `deps`** — it already fetches each backlog issue for
+`## Affected Files`, so it parses the dependency signal in the same pass and
+attaches it as `deps: [<issue#>]` (issue numbers this issue must be **built
+after**). Reuse the blocked-by detection from `next-issue/state-format.md` §
+Blocked-by Exclusion: a `Depends on #N` / `Blocked by #N` body reference
+(case-insensitive) or a native GitHub `blockedBy` relationship. Only in-backlog
+references form a cluster edge; a dep pointing at a closed / out-of-backlog issue
+is dropped and surfaced in `rationale`. `composeTracks` itself stays **pure**
+(no I/O) — it never parses issue bodies; it consumes the `deps` the setup flow
+already resolved.
+
 It returns `tracks` = `{ tracks, deferred, cross_track_overlap, rationale }`:
 
 - **`tracks`** — the composed lanes: `[{ lane, issues: [<ordered>] }]`. Each
-  lane's `issues` are in priority order = the **serial execution order** (issue
-  k+1 dispatches after issue k's PR merges). The greedy composition co-locates
-  overlapping issues in one lane (which keeps *cross*-lane overlap low) and opens
-  a fresh lane for work disjoint from every open lane while lanes remain. Priority
-  is honored **fuzzily** — a higher-priority issue may be deferred to balance
-  lanes and avoid collisions (explicitly desired).
+  lane's `issues` are in **serial execution order** (issue k+1 dispatches after
+  issue k's PR merges). Composition first groups issues into **dependency
+  clusters** (weakly-connected components over the `deps` edges) and orders each
+  cluster **topologically** — a dependency always precedes its dependent, the
+  deepest dependency is the track head, the final dependent is last; ties among
+  independent members break by priority. A cluster is always **co-located in one
+  lane**. It then runs the greedy file-overlap placement over
+  **clusters-as-units** — co-locating overlapping clusters in one lane (which
+  keeps *cross*-lane overlap low) and opening a fresh lane for work disjoint from
+  every open lane while lanes remain. Priority is honored **fuzzily** — a
+  higher-priority cluster may be deferred to balance lanes and avoid collisions
+  (explicitly desired). With **no `deps`** anywhere, every issue is a singleton
+  cluster and placement is identical to the pre-#462 file-overlap greedy. A lane
+  that co-located a dependency edge also carries a `deps_honored` array —
+  `["#19->#22", …]`, the in-lane `#dep->#dependent` edges, derived purely from
+  the `deps` input — surfaced in `tracks.json` so the operator sees why the lane
+  is ordered as it is (schema: `schemas/tracks.schema.json`).
 - **`deferred`** — backlog issues that did not fit (all lanes full or capped), in
-  priority order; a later composition sweep can pick them up.
+  priority order; a later composition sweep can pick them up. A dependency
+  cluster **larger than `trackSize`** splits: the topo-**prefix** (dependencies)
+  lands and the dependent **tail** defers — safe, because the tail's own
+  dependencies are already placed ahead of it, so the next sweep queues the tail
+  behind built work.
 - **`cross_track_overlap`** — count of lane pairs sharing ≥ 1 predicted file
-  (lower is better — the objective the composition minimizes).
+  (lower is better — the objective the composition minimizes, *subject to* the
+  dependency-cluster constraint).
 - **`rationale`** — short, deterministic, data-derived notes (lane count / sizes /
-  deferred count / overlap) for the proposal the operator approves.
+  co-located dependency clusters / any cycle or oversized-cluster split /
+  out-of-backlog dep refs / deferred count / overlap) for the proposal the
+  operator approves. A dependency **cycle** (e.g. `#5 → #6 → #5`) is reported
+  here and broken by falling back to priority order for that cluster — composition
+  never loops (mirrors `next-issue/state-format.md` § Dependency Queue cycle
+  handling).
 
 The composition persists to `.worktrees/.status/tracks.json` (schema:
 `schemas/tracks.schema.json`) once approved, carrying the per-track

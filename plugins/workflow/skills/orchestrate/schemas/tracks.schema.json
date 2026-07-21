@@ -37,6 +37,13 @@
             "type": "integer",
             "minimum": 1,
             "description": "DISPLAY CACHE: the issue currently dispatched (or last dispatched) for this lane. The live golem set is authoritative via PR/label state; lane-aware refill advances this as each issue's PR merges."
+          },
+          "deps_honored": {
+            "type": "array",
+            "description": "DISPLAY ONLY: build-order dependency edges (issue #462) co-located and ordered within this lane, e.g. [\"#19->#22\", \"#20->#22\"] meaning #19/#20 were placed ahead of #22 because #22 depends on them. Emitted by orchestrate/workflow.js `mode: \"tracks\"` (composeTracks), derived purely from each backlog item's `deps` array — the edges whose BOTH endpoints landed in this lane. (The setup flow resolves `deps` from `Depends on #N` / `Blocked by #N` / native blockedBy before calling the composer; composeTracks itself stays pure and only reads the resolved `deps`.) Shown so the operator sees why a lane is ordered as it is. Optional — a lane with no in-lane dependency edge omits it.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
