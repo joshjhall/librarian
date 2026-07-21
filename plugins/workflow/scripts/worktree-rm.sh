@@ -129,6 +129,35 @@ if [ -n "$stale_wt" ] && [ ! -e "$stale_wt" ]; then
     fi
 fi
 
+# Emit a terminal `reaped` feed event so a golem torn down here does not linger
+# on golem-status.sh's BLOCKED list (#446). Teardown otherwise leaves the golem's
+# last `gate` line as its most-recent feed entry, so the reader keeps rendering
+# it BLOCKED for the whole GOLEM_BLOCK_TTL window even though its PR merged and
+# its session is gone (the `golem-743` ghost in the issue). A `REAPED:`-prefixed
+# Notification classifies as the `reaped` kind, which — like `idle`/`resolved` —
+# is NOT in the BLOCKED set, so as the golem's most-recent line it supersedes the
+# stale gate on the next sweep. Only when something was actually removed
+# (`removed=1`): a no-op teardown had no live golem to reap.
+#
+# GOLEM_ID=golem-$N is forced for the same reason golem-resolve.sh forces it:
+# this script runs in the MAIN checkout (`cd "$root"` above), so the hook's
+# git-worktree-basename fallback would resolve to the main repo and stamp
+# `golem-?`, never correlating to the reaped golem. Best-effort and never fails
+# teardown — the hook always exits 0, and `|| true` keeps `set -e` from aborting
+# over a missing hook / absent jq.
+if [ "$removed" -eq 1 ]; then
+    notify_hook="$SCRIPT_DIR/../hooks/golem-notify.sh"
+    if [ -x "$notify_hook" ]; then
+        msg="REAPED: worktree/session for golem-$N torn down"
+        if command -v jq >/dev/null 2>&1; then
+            reaped_payload="$(jq -cn --arg m "$msg" '{message: $m}')"
+        else
+            reaped_payload="$(command printf '{"message":"%s"}' "$msg")"
+        fi
+        command printf '%s' "$reaped_payload" | GOLEM_ID="golem-$N" "$notify_hook" || true
+    fi
+fi
+
 if [ "$removed" -eq 0 ]; then
     command echo "worktree-rm: nothing to remove for issue $N ($wt / $br / $sess absent)"
 fi

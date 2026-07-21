@@ -17,7 +17,7 @@
 # exits 0.
 #
 # Input  (stdin):  Notification hook JSON, e.g. {"message":"...", ...}
-# Output (feed):   {"ts","golem","event":"gate|idle|escalation|dead-end|resolved","message"}
+# Output (feed):   {"ts","golem","event":"gate|idle|escalation|dead-end|resolved|reaped","message"}
 #
 # The `event` kind separates a real permission gate (a human decision the
 # orchestrator must surface) from a transient between-turn idle: Claude Code
@@ -106,27 +106,40 @@ fi
 #                which otherwise fires no Notification. Emitted with a message
 #                beginning `RESOLVED:`. Like `idle` it is not in the BLOCKED set,
 #                so as a golem's most-recent line it supersedes the stale gate.
+#   reaped     — a TERMINAL signal that this golem's worktree/session was torn
+#                down (issue #446). Emitted by scripts/worktree-rm.sh after a
+#                successful teardown, which otherwise leaves the golem's last
+#                `gate` line as its most-recent feed entry — so golem-status.sh
+#                lists a golem whose PR merged hours ago as BLOCKED for the whole
+#                GOLEM_BLOCK_TTL window (the `golem-743` ghost in #446). Emitted
+#                with a message beginning `REAPED:`. Like `idle`/`resolved` it is
+#                NOT in the BLOCKED set, so as the golem's most-recent line it
+#                supersedes the stale gate on the next sweep (no reader change
+#                needed). A reader-side liveness cross-check in
+#                golem-gate-watch.sh's feed_snapshot is the defense-in-depth for a
+#                golem torn down WITHOUT worktree-rm.sh (which emits no line).
 # Match case-insensitively on the message; default to `gate` so an unrecognized
 # notification surfaces (fail loud) rather than being silently dropped as idle.
 # The `dead-end`/`escalation`/`resolved` branches precede the `gate` default so
 # their markers win; `dead-end` is matched before `escalation` because it is the
 # more specific kind (a dead-end IS an escalation that also blocks L4).
 #
-# `resolved:` is anchored to the START of the (lower-cased) message — a PREFIX
-# match — while `dead-end:`/`escalation:` stay unanchored substrings. The
-# asymmetry is deliberate and load-bearing (#422 pre-PR review): a misclassified
-# `resolved` REMOVES a golem from the BLOCKED set (it mirrors `idle`, the only
-# other non-blocked kind), so misclassifying a REAL gate as `resolved` silently
-# hides a pending human decision — the exact failure #422 exists to prevent,
-# inverted. And `resolved:` is ordinary English that legitimately appears mid-
-# message in a real permission ask (e.g. a `git commit -m '… mark resolved: …'`
-# or `merge conflicts unresolved: …` prompt), so an unanchored match would drop
-# that genuine gate. The producer (`scripts/golem-resolve.sh`) always emits
-# `RESOLVED:` as a true LEADING marker, so a prefix match loses nothing and
-# closes the masking gap. A misclassified `dead-end`/`escalation`, by contrast,
-# only makes a gate MORE visible (both ARE surfaced in BLOCKED) — the safe
-# direction — so those keep their existing unanchored match. Do NOT "normalize"
-# `resolved:` back to an unanchored substring.
+# `resolved:` and `reaped:` are anchored to the START of the (lower-cased)
+# message — a PREFIX match — while `dead-end:`/`escalation:` stay unanchored
+# substrings. The asymmetry is deliberate and load-bearing (#422 pre-PR review):
+# a misclassified `resolved`/`reaped` REMOVES a golem from the BLOCKED set (both
+# mirror `idle`, the non-blocked kinds), so misclassifying a REAL gate as one of
+# them silently hides a pending human decision — the exact failure #422 exists to
+# prevent, inverted. And both words are ordinary English that legitimately appear
+# mid-message in a real permission ask (e.g. a `git commit -m '… mark resolved:
+# …'` / `merge conflicts unresolved: …` prompt, or a `… files reaped: …` message),
+# so an unanchored match would drop that genuine gate. The producers
+# (`scripts/golem-resolve.sh`, `scripts/worktree-rm.sh`) always emit
+# `RESOLVED:`/`REAPED:` as a true LEADING marker, so a prefix match loses nothing
+# and closes the masking gap. A misclassified `dead-end`/`escalation`, by
+# contrast, only makes a gate MORE visible (both ARE surfaced in BLOCKED) — the
+# safe direction — so those keep their existing unanchored match. Do NOT
+# "normalize" `resolved:`/`reaped:` back to an unanchored substring.
 #
 # Why only the `ESCALATION:`-prefixed path is classified as `escalation` here,
 # and an in-turn `AskUserQuestion` fork is NOT (issue #321, deferred out of
@@ -151,6 +164,7 @@ case "$(printf '%s' "$message" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
     *"dead-end:"*) event="dead-end" ;;
     *"escalation:"*) event="escalation" ;;
     "resolved:"*) event="resolved" ;;
+    "reaped:"*) event="reaped" ;;
     *) event="gate" ;;
 esac
 
@@ -197,9 +211,9 @@ else
     # remaining double quotes. Keeps every feed line valid JSON on this path.
     golem_safe="$(printf '%s' "${golem//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
     message_safe="$(printf '%s' "${message//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
-    # $event is a fixed literal (gate|idle|escalation|dead-end) set by the case
-    # above, never attacker-derived, so it needs no sanitizing — interpolate it
-    # directly.
+    # $event is a fixed literal (gate|idle|escalation|dead-end|resolved|reaped)
+    # set by the case above, never attacker-derived, so it needs no sanitizing —
+    # interpolate it directly.
     printf '{"ts":"%s","golem":"%s","event":"%s","message":"%s"}\n' \
         "$ts" "${golem_safe//\"/\\\"}" "$event" "${message_safe//\"/\\\"}" \
         >>"$feed" 2>/dev/null || true
