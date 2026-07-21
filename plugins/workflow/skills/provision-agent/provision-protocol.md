@@ -115,9 +115,33 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
            doc = json.load(f)
    except (OSError, ValueError):
        doc = {}
+   # Cached issue from a prior run, if any. Coerce to int defensively: a
+   # malformed cache (issue as a numeric string, or null) must NOT be trusted
+   # into a spurious mismatch — fail toward "no prior issue" (skip the reset)
+   # rather than wiping valid state on every same-issue write.
+   try:
+       prev_issue = int(doc["issue"])
+   except (KeyError, TypeError, ValueError):
+       prev_issue = None
+   issue = os.environ.get("ISSUE", "")
+   # Same agent slot reassigned to a different issue without the documented
+   # teardown ("Remove status file") → the bind-mounted host cache still holds
+   # the PREVIOUS issue's fields (started, plus pr/ci/review/blocking/errors set
+   # by status_poller, plus any future issue-scoped schema field). NONE are valid
+   # for the new issue, so drop them — keeping --checkpoint ELAPSED and the
+   # monitor's CI/PR/blocking columns honest for the new issue (#428), not just
+   # `started`. But PRESERVE the agent-slot IDENTITY fields (container, branch)
+   # that are written once at provisioning (SKILL.md Step 4) and never rewritten
+   # here or by status_poller — golem-status.sh keys Mode-3 detection off
+   # `.container` and golem-attach.sh finds the container by it, so wiping them
+   # breaks the live golem's monitoring/attach. Rebuild by KEEPING only identity
+   # (whitelist, so a future issue-scoped field is dropped by default). A fresh
+   # doc or a same-issue restart is unaffected: a same issue keeps its whole doc,
+   # so #415's started-idempotency holds.
+   if issue.isdigit() and prev_issue is not None and prev_issue != int(issue):
+       doc = {k: doc[k] for k in ("golem", "kind", "container", "branch") if k in doc}
    doc["golem"] = os.environ["AGENT_ID"]
    doc["kind"] = "container"
-   issue = os.environ.get("ISSUE", "")
    if issue.isdigit():
        doc["issue"] = int(issue)
    doc["state"] = os.environ["STATE"]
