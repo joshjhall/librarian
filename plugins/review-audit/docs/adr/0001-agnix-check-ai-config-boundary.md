@@ -165,7 +165,11 @@ no-op-with-clear-log when the binary is absent.
   GitHub-Action SHA-pin + dependabot discipline prevents. Pin to a specific
   version (e.g. `agnix@0.40.0`) and route bumps through dependabot's npm ecosystem.
   The install edit lives in the **`containers` submodule** (a separate repo), so
-  this is a cross-repo coordination item, not an in-repo change.
+  this is a cross-repo coordination item, not an in-repo change. librarian's own
+  consumers already pin `agnix@0.40.0` (this config's `.agnix.toml` and the CI
+  `code-scanning.yml`); the container install edit is tracked in the
+  `severity/high` companion issue **joshjhall/containers#769**, coordinated from
+  librarian tracking issue #400.
 
 ## Consequences
 
@@ -222,5 +226,8 @@ integrated.
    explicitly **not** deletion of the floor's checks.
 5. **CI SARIF gate** (#399, dep 2, parallel to 3/4) — `agnix --format sarif` upload
    / annotations in `.github/workflows`.
-6. **Pin agnix off `@latest`** (#400, free-floating, cross-repo) — in the
-   `containers` submodule; route bumps via dependabot's npm ecosystem.
+6. **Pin agnix off `@latest`** (#400 coordination; the install edit is tracked in
+   the `severity/high` companion issue joshjhall/containers#769, free-floating,
+   cross-repo) — in the `containers` submodule; route bumps via dependabot's npm
+   ecosystem. librarian-side is coordination only (this cross-link + config pin
+   already at `0.40.0`); containers#769 lands the submodule change.
