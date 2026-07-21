@@ -104,6 +104,28 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _valid_ts(ts: str) -> bool:
+    """True only for the exact `%Y-%m-%dT%H:%M:%SZ` shape the readers can parse.
+
+    This is a HARD requirement, not cosmetic: golem-gate-watch.sh's feed_snapshot
+    runs `jq -rs ... fromdateiso8601` over the last 200 feed lines to compute gate
+    freshness, and `fromdateiso8601` ABORTS the whole jq pipeline (non-zero exit,
+    swallowed by `2>/dev/null`) on ANY non-empty string it cannot parse — which
+    silently blanks the BLOCKED list for EVERY golem in that window, not just the
+    offending line. golem-notify.sh only ever wrote a trusted local
+    `date -u +%FT%TZ`, so that path was unreachable; this listener is the first
+    component to accept an externally-supplied `ts` over HTTP, so it must validate
+    the shape before appending or it reopens the #24 class of bug for the whole
+    floor. An unparsable `ts` is replaced with a fresh local stamp in
+    normalize_event, exactly as an absent one already is.
+    """
+    try:
+        datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def resolve_feed_path() -> str:
     """Resolve <repo-root>/<GOLEM_STATUS_DIR>/feed.jsonl the same way the readers do.
 
@@ -156,9 +178,18 @@ def normalize_event(payload: dict) -> dict | None:
     if not golem or golem == _ORPHAN_GOLEM:
         return None
     event = str(payload.get("event", "")).strip() or _DEFAULT_EVENT
-    message = payload.get("message", "")
-    message = str(message) if message != "" else _DEFAULT_MESSAGE
-    ts = str(payload.get("ts", "")).strip() or _iso_now()
+    # A JSON `null` message (not just an absent/empty one) must also fall back to
+    # the default: payload.get("message", "") returns None for an explicit null,
+    # and str(None) would otherwise write the literal "None" into the feed.
+    message = payload.get("message")
+    message = str(message) if message not in (None, "") else _DEFAULT_MESSAGE
+    # Accept a client-supplied `ts` ONLY if it is the exact shape the downstream
+    # readers can parse; otherwise stamp a fresh local one. An unvalidated `ts`
+    # here would abort golem-gate-watch.sh's jq `fromdateiso8601` pipeline and
+    # silently blank the whole BLOCKED floor (see _valid_ts, reopening #24).
+    ts = str(payload.get("ts", "")).strip()
+    if not _valid_ts(ts):
+        ts = _iso_now()
     return {"ts": ts, "golem": golem, "event": event, "message": message}
 
 

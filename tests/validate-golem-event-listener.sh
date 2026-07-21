@@ -123,6 +123,14 @@ PY
 # start_listener <sandbox> <port> — launch the listener in <sandbox> bound to
 # 127.0.0.1:<port>, wait until /healthz answers (bounded), set LISTENER_PID.
 # Returns non-zero if it never came up.
+#
+# Launches via the .sh SHIM ($LISTENER_SH), not python3 directly, so every
+# behavioral test also exercises the shim's success path — it sources config.sh,
+# resolves SCRIPT_DIR, passes the version gate, and `exec`s python3 (exec replaces
+# the shell in place, so $! still tracks the live server). A test that talked to
+# the Python file directly would leave the shim's happy path uncovered; the
+# separate fail-loud test only drives its no-python3 branch. BASH_ENV is unset so
+# a devcontainer's /etc/bash_env sourcing cannot perturb the shim's own bash.
 start_listener() {
     local dir="$1" port="$2" tries=0
     (
@@ -131,7 +139,7 @@ start_listener() {
                 "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
                 HOME="$dir" \
                 GOLEM_EVENT_LISTEN_ADDR=127.0.0.1 GOLEM_EVENT_LISTEN_PORT="$port" \
-                python3 "$LISTENER_PY"
+                "$REAL_BASH" "$LISTENER_SH"
     ) >"$dir/listener.log" 2>&1 &
     LISTENER_PID=$!
     while [ "$tries" -lt 50 ]; do
@@ -220,7 +228,8 @@ test_post_escalation_preserves_kind() {
     stop_listener
 }
 
-# Normalization: no `ts` re-stamped; absent `event` defaults to gate.
+# Normalization: no `ts` re-stamped; absent `event` defaults to gate; a JSON
+# `null` message falls back to the default (not the literal "None").
 test_normalization_defaults() {
     if python_unavailable || curl_unavailable; then
         skip_test "python3>=3.11 / curl not available"
@@ -237,6 +246,49 @@ test_normalization_defaults() {
     line="$(feed_of "$dir")"
     assert_contains "$line" '"event":"gate"' "absent event defaults to gate"
     assert_contains "$line" '"ts":"2' "absent ts is re-stamped (ISO-ish)"
+    # A JSON null message must NOT become the literal string "None".
+    post "$port" "/" '{"golem":"golem-4","event":"gate","message":null}' >/dev/null
+    line="$(feed_of "$dir")"
+    assert_contains "$line" 'awaiting decision' "null message falls back to default"
+    assert_not_contains "$line" '"message":"None"' "null message is not the literal None"
+    stop_listener
+}
+
+# CRITICAL regression (correctness#2): a client-supplied malformed `ts` must NOT
+# blank the whole BLOCKED floor. golem-gate-watch.sh's jq `fromdateiso8601` aborts
+# the entire pipeline on any unparsable ts (swallowed by 2>/dev/null), silently
+# dropping EVERY golem in the tail-200 window — not just the offending line. The
+# listener guards against this by re-stamping any ts that is not the exact
+# `%Y-%m-%dT%H:%M:%SZ` shape. This test POSTs a malformed-ts gate for one golem
+# and a well-formed gate for another, then asserts gate-watch --once still
+# surfaces BOTH — the well-formed golem's real gate must not vanish.
+test_malformed_ts_does_not_blank_floor() {
+    if python_unavailable || curl_unavailable; then
+        skip_test "python3>=3.11 / curl not available"
+        return 0
+    fi
+    local dir port out
+    new_sandbox dir
+    /usr/bin/printf '{"issue":1,"golem":"golem-1"}\n' >"$dir/.worktrees/.status/golem-1.json"
+    /usr/bin/printf '{"issue":2,"golem":"golem-2"}\n' >"$dir/.worktrees/.status/golem-2.json"
+    port="$(free_port)"
+    start_listener "$dir" "$port" || {
+        _fail "listener did not start"
+        return 1
+    }
+    # golem-1 sends a hostile/buggy fractional-second ts fromdateiso8601 cannot
+    # parse; golem-2 sends none (listener stamps a fresh valid one).
+    post "$port" "/" '{"ts":"2026-07-21T10:00:00.123456Z","golem":"golem-1","event":"gate","message":"gate one"}' >/dev/null
+    post "$port" "/" '{"golem":"golem-2","event":"gate","message":"gate two"}' >/dev/null
+    # The malformed ts was re-stamped on ingress, so BOTH lines are parseable and
+    # the jq pipeline never aborts.
+    assert_file_not_contains "$dir/.worktrees/.status/feed.jsonl" '2026-07-21T10:00:00.123456Z' \
+        "malformed ts is NOT written verbatim (re-stamped on ingress)"
+    out="$(cd "$dir" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV HOME="$dir" \
+        GOLEM_STATUS_DIR=.worktrees/.status "$REAL_BASH" "$GATE_WATCH" --once 2>/dev/null || true)"
+    assert_contains "$out" "golem-1" "malformed-ts golem still surfaces"
+    assert_contains "$out" "golem-2" "sibling well-formed golem NOT blanked by the bad ts"
     stop_listener
 }
 
@@ -339,7 +391,8 @@ test_shim_fails_loud_without_python() {
 run_test test_prereqs "prerequisites: python3>=3.11 + curl + files present"
 run_test test_post_gate_surfaces_via_gatewatch "gate POST → feed → gate-watch --once surfaces it (AC1/AC3)"
 run_test test_post_escalation_preserves_kind "escalation POST keeps its kind in the feed"
-run_test test_normalization_defaults "normalization: absent ts re-stamped, absent event → gate"
+run_test test_normalization_defaults "normalization: absent ts re-stamped, absent event → gate, null message → default"
+run_test test_malformed_ts_does_not_blank_floor "malformed client ts re-stamped — does not blank the BLOCKED floor (correctness#2)"
 run_test test_orphan_sentinel_not_appended "orphan golem-? ACKed but not appended"
 run_test test_bad_requests_rejected_without_crash "bad/oversized/wrong-method rejected without crash"
 run_test test_healthz "GET /healthz liveness probe"
