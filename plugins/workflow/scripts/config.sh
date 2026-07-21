@@ -44,6 +44,14 @@
 #   GOLEM_LEVEL          Autonomy level (1-4) baked into a golem's launch line
 #                        by golem-launch.sh. Overridden per-call by
 #                        `launch/print <N> --level M`.   Default: 4
+#   GOLEM_MODEL          Model passed (via `--model`) to every `claude`
+#                        invocation in a golem's launch line — both the
+#                        next-issue and ship-issue calls. Unset → NO `--model`
+#                        is emitted, so the golem inherits the operator/session
+#                        default (typically Opus) and the launch line is
+#                        byte-identical to the pre-knob behavior. Set (e.g.
+#                        `GOLEM_MODEL=sonnet`) to run the whole multi-hour
+#                        pipeline on a cheaper model.     Default: (unset)
 #   GOLEM_BASE_REF       The ref new worktree branches fork from.
 #                        Default: origin/main
 #   GOLEM_WORKTREE_LOCAL_FILES
@@ -146,6 +154,12 @@
 # set it in the environment rather than passing the flag.
 : "${GOLEM_LEVEL:=4}"
 
+# Model baked into a golem's launch line (both the next-issue and ship-issue
+# `claude` calls). Empty default → no `--model` is emitted, so an unset knob
+# leaves the launch line byte-identical to the pre-knob behavior and the golem
+# inherits the operator/session default. See golem_model_flag below.
+: "${GOLEM_MODEL:=}"
+
 # Ref that new worktree branches are created from.
 : "${GOLEM_BASE_REF:=origin/main}"
 
@@ -167,10 +181,45 @@
 : "${GOLEM_INBOX_POLL:=3}"
 
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
-    GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
+    GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL GOLEM_INBOX_WAIT GOLEM_INBOX_POLL \
     GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT \
     GOLEM_EVENT_LISTEN_ADDR GOLEM_EVENT_LISTEN_PORT GOLEM_EVENT_MAX_BODY
+
+# golem_model_flag — print ` --model "<GOLEM_MODEL>"` when GOLEM_MODEL is set,
+# else nothing. SINGLE SOURCE OF TRUTH for the model-flag shape: golem-launch.sh
+# (both the `print`/launch_line and the `launch` tmux string) and
+# worktree-new.sh's echoed launch hint all splice its output in after each
+# `claude` token. The leading space means the fragment slots in cleanly after
+# `claude` while an UNSET knob expands to the empty string, leaving the launch
+# line byte-identical to the pre-knob behavior (no regression — the invariant
+# tests/validate-golem-scripts.sh pins).
+#
+# QUOTING / INJECTION SAFETY: the emitted ` --model "…"` fragment lands inside a
+# DOUBLE-QUOTED word in the string that `tmux new-session` hands to `sh -c` (and,
+# for `print`/the hint, that an operator pastes into their shell). A raw value
+# containing `"`, backtick, `$`, or `\` would break out of that quoting — e.g.
+# GOLEM_MODEL='x"; rm -rf ~; echo "' would inject a command into the golem's
+# pane at dispatch. So backslash-escape exactly the four characters that are
+# special inside a POSIX double-quoted word — backslash FIRST (so the escapes we
+# add next are not themselves re-escaped), then `"`, backtick, `$`. This is
+# preferred over an allow-list regex because legitimate model ids include
+# bracketed forms (e.g. `claude-opus-4-8[1m]`) that a naive allow-list would
+# reject, while `[`/`]` are NOT special inside double quotes and pass through
+# untouched. `${v//old/new}` pattern substitution is bash-3.2 clean (NOT the
+# banned `${v,,}`/`${v^^}` case-conversion — see tests/lint-shell-portability.sh).
+# Pure POSIX otherwise (`command printf`, `[ -n ]`, plain function).
+golem_model_flag() {
+    local esc
+    if [ -n "${GOLEM_MODEL:-}" ]; then
+        esc=$GOLEM_MODEL
+        esc=${esc//\\/\\\\}
+        esc=${esc//\"/\\\"}
+        esc=${esc//\`/\\\`}
+        esc=${esc//\$/\\\$}
+        command printf ' --model "%s"' "$esc"
+    fi
+}
 
 # GIT_ENV_SCRUB_VARS — git's hook-exported environment variables that
 # _repo_root_git (below) and the worktree-new/-rm callers scrub before running

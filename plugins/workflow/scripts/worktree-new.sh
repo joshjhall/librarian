@@ -113,4 +113,8 @@ fi
 command echo ""
 command echo "Worktree ready: $wt (branch $br)"
 command echo "Launch a golem there with:"
-command echo "  tmux new-session -d -s golem-$N -c \"$root/$wt\" -e GOLEM_ID=golem-$N \"claude --permission-mode auto '/workflow:next-issue $N --level 4' ; claude --permission-mode auto '/workflow:ship-issue'\""
+# $(golem_model_flag) splices ` --model "…"` after each `claude` when GOLEM_MODEL
+# is set (so the copy-paste hint already carries the operator's chosen model),
+# and expands to nothing — byte-identical hint — when unset.
+MODEL_FLAG="$(golem_model_flag)"
+command echo "  tmux new-session -d -s golem-$N -c \"$root/$wt\" -e GOLEM_ID=golem-$N \"claude$MODEL_FLAG --permission-mode auto '/workflow:next-issue $N --level 4' ; claude$MODEL_FLAG --permission-mode auto '/workflow:ship-issue'\""

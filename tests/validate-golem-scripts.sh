@@ -266,6 +266,80 @@ test_launch_print_level_missing_value_exits_2() {
     assert_contains "$RUN_OUT" "--level needs a value" "explains a value is required"
 }
 
+# GOLEM_MODEL unset → NO `--model` in the emitted line (byte-identical to the
+# pre-knob launch shape — the #487 no-regression invariant).
+test_launch_print_model_unset_omits_flag() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$LAUNCH" print 5
+    assert_exit 0 "$RUN_RC" "print <N> with GOLEM_MODEL unset exits 0"
+    assert_not_contains "$RUN_OUT" "--model" \
+        "an unset GOLEM_MODEL emits no --model (byte-identical launch line)"
+}
+
+# `GOLEM_MODEL=sonnet print <N>` → ` --model "sonnet"` spliced after BOTH the
+# next-issue and ship-issue `claude` calls (#487).
+test_launch_print_model_set_both_claude_calls() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_MODEL=sonnet \
+            "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "GOLEM_MODEL=sonnet print <N> exits 0"
+    # Both claude invocations must carry the model — guard against injecting only
+    # one. next-issue call:
+    assert_contains "$RUN_OUT" "claude --model \"sonnet\" --permission-mode auto '/workflow:next-issue 5" \
+        "GOLEM_MODEL splices --model into the next-issue claude call"
+    # ship-issue call:
+    assert_contains "$RUN_OUT" "claude --model \"sonnet\" --permission-mode auto '/workflow:ship-issue'" \
+        "GOLEM_MODEL splices --model into the ship-issue claude call"
+}
+
+# GOLEM_MODEL reaches the REAL `launch` tmux dispatch path (not just `print`).
+# `launch_line()` (print) and the `launch` case splice golem_model_flag()
+# independently, so cover the dispatch argv the tmux stub captures too (#487).
+test_launch_dispatch_model_both_claude_calls() {
+    local sb log
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_MODEL=sonnet
+    assert_exit 0 "$RUN_RC" "launch with GOLEM_MODEL=sonnet dispatches (exit 0)"
+    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    assert_contains "$log" "claude --model \"sonnet\" --permission-mode auto '/workflow:next-issue 7" \
+        "GOLEM_MODEL reaches the real dispatch next-issue claude call"
+    assert_contains "$log" "claude --model \"sonnet\" --permission-mode auto '/workflow:ship-issue'" \
+        "GOLEM_MODEL reaches the real dispatch ship-issue claude call"
+}
+
+# INJECTION SAFETY (#487): a GOLEM_MODEL carrying shell-metacharacters must be
+# neutralized — golem_model_flag() backslash-escapes `"`/backtick/`$`/`\` so the
+# value cannot break out of the double-quoted `--model "…"` word that tmux runs
+# via `sh -c`. A malicious value like `x"; touch pwned; echo "` must appear
+# ESCAPED in the dispatch argv, and its injected `; touch pwned` must NOT run as
+# a standalone statement (the `\"` keeps it inside the quoted model token).
+test_launch_dispatch_model_shell_metachars_escaped() {
+    local sb log
+    new_sandbox sb
+    run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
+        'GOLEM_MODEL=x"; touch pwned; echo "'
+    assert_exit 0 "$RUN_RC" "launch with a metachar GOLEM_MODEL still dispatches (exit 0)"
+    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    # The embedded double quotes are backslash-escaped in the emitted argv, so the
+    # value stays one --model token rather than breaking out into new statements.
+    assert_contains "$log" 'claude --model "x\"; touch pwned; echo \""' \
+        "embedded quotes in GOLEM_MODEL are escaped, not left to break the quoting"
+    # And the stub never let the injected command run: no 'pwned' file is created.
+    if [ -e "$sb/pwned" ] || [ -e "$sb/.worktrees/issue-7/pwned" ]; then
+        assert_contains "MARKER-CREATED" "MARKER-ABSENT" \
+            "GOLEM_MODEL injection created a file — escaping failed"
+    else
+        assert_contains "ok" "ok" "no injected file created (escaping holds)"
+    fi
+}
+
 # `launch <N>` when the worktree is absent → exit 2 with a remediation pointing
 # at worktree-new.sh. Stops BEFORE any real `tmux new-session` (no worktree, so
 # the dir guard fires first). Stub both settings scopes at in-sandbox paths so
@@ -4571,6 +4645,10 @@ run_test test_launch_print_level_env_fallback "golem-launch: GOLEM_LEVEL is the 
 run_test test_launch_print_level_flag_beats_env "golem-launch: --level flag overrides GOLEM_LEVEL env (#301)"
 run_test test_launch_print_level_out_of_range_exits_2 "golem-launch: --level out of range exits 2 (#301)"
 run_test test_launch_print_level_missing_value_exits_2 "golem-launch: bare --level with no value exits 2 (#301)"
+run_test test_launch_print_model_unset_omits_flag "golem-launch: unset GOLEM_MODEL emits no --model, byte-identical line (#487)"
+run_test test_launch_print_model_set_both_claude_calls "golem-launch: GOLEM_MODEL splices --model into both claude calls (#487)"
+run_test test_launch_dispatch_model_both_claude_calls "golem-launch: GOLEM_MODEL reaches the real launch dispatch, both claude calls (#487)"
+run_test test_launch_dispatch_model_shell_metachars_escaped "golem-launch: GOLEM_MODEL shell-metachars are escaped, no injection (#487)"
 run_test test_launch_missing_worktree_exits_2 "golem-launch: launch with a missing worktree exits 2"
 run_test test_launch_preflight_rules_present_exits_0 "golem-launch: preflight with all rules present exits 0"
 run_test test_launch_preflight_rules_missing_exits_3 "golem-launch: preflight with a missing rule exits 3"
