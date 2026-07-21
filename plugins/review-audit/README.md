@@ -10,7 +10,7 @@ GitHub/GitLab issues, or written as structured files under `./audit/{timestamp}/
 — always alongside a report summary. The audit never produces "nothing": every
 run yields durable artifacts.
 
-## Skills (9)
+## Skills (10)
 
 - `codebase-audit` — periodic full-codebase sweep (tech debt, security, test
   gaps, architecture, docs); creates grouped issues. Invoke with
@@ -26,6 +26,9 @@ deterministic `patterns.sh` pre-scan with LLM analysis:
 - `check-code-health` — tech-debt markers, debug statements, empty error
   handlers, unused imports
 - `check-security` — hardcoded secrets, injection, XSS, insecure crypto
+- `check-lifecycle` — resource-lifetime defects: unreaped subprocesses,
+  terminate-without-kill timeouts, unclosed handles, unpaired listeners
+  (Swift/Python/JS/Go), plus LLM-only unjoined-worker + unbounded-growth
 - `check-docs-deadlinks` — broken internal/external links + missing anchors
 - `check-docs-examples` — doc code examples vs actual source
 - `check-docs-missing-api` — undocumented public APIs / complex functions

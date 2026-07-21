@@ -538,7 +538,7 @@ const mapPrompt = () =>
   `Apply the domain-override rule (a check-* skill overrides the audit-* agent ` +
   `for the same domain; a project agent overrides a built-in of the same name).\n` +
   `- Build ONE domain entry per scanner with its routed file subset (use the ` +
-  `Step 2 routing table: source->code-health/security/architecture, ` +
+  `Step 2 routing table: source->code-health/security/architecture/lifecycle, ` +
   `test->test-gaps, config->security, doc->docs+ai-config, ai-config->ai-config; ` +
   `project agents self-filter over all in-scope files via routing_hint).\n` +
   (onlyCategories
@@ -567,8 +567,9 @@ const scanPrompt = (domain) => {
     `Mode: scan:${name}.\n` +
     `Run the audit for THIS ONE domain only — scanner "${scanner}" (source: ${source}).\n` +
     `Execute your Steps 3-6 for this domain over the file subset below: run its ` +
-    `patterns.sh prescan FIRST (deterministic, certainty HIGH/method deterministic) ` +
-    `if it has one, then the heuristic pass, then the judgment pass on ambiguous ` +
+    `patterns.sh prescan FIRST (method deterministic, any certainty — most rows ` +
+    `HIGH; some scanners like check-lifecycle emit MEDIUM candidates for Pass-2 ` +
+    `confirmation) if it has one, then the heuristic pass, then the judgment pass on ambiguous ` +
     `cases, then within-skill dedup. Honor inline audit:acknowledge comments ` +
     `(route suppressed findings to acknowledged_findings). Filter to severity ` +
     `>= ${severityThreshold}. Emit the finding-schema object (scanner, findings[], ` +
