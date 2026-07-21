@@ -27,6 +27,9 @@ plugins/
     scripts/                      # bundled shell scripts, called via ${CLAUDE_PLUGIN_ROOT}
     hooks/                        # e.g. golem-notify.sh
 tests/validate-manifests.mjs      # zero-dep manifest validator (CI + pre-commit/pre-push)
+docs/verification/                # end-to-end verification reports for issues that
+                                  #   can't be fully exercised in-session; one file
+                                  #   per issue, named <skill>-e2e-<issue>.md
 containers/                       # pinned submodule — builds the devcontainer only
 ```
 
