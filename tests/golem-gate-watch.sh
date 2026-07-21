@@ -963,6 +963,22 @@ test_pane_is_plan_gate() {
     assert_equals "0" \
         "$(_pane_rc pane_is_plan_gate "$filler"$'\n'"Here is Claude's plan:")" \
         "A plan phrase inside the footer window still matches"
+
+    # Tail-window boundary (#459): pin the exact inclusive/exclusive edge of the
+    # default 8-line footer window, where `tail -n 8 <<<` over a here-string
+    # (trailing newline) makes an off-by-one easy to regress silently. Phrase +
+    # 7 filler = 8 lines -> phrase sits at the Nth-from-last line, inside the
+    # window (rc 0); phrase + 8 filler = 9 lines -> (N+1)th-from-last, outside
+    # (rc 1).
+    local edge_in edge_out
+    edge_in=$'f1\nf2\nf3\nf4\nf5\nf6\nf7'
+    edge_out=$'f1\nf2\nf3\nf4\nf5\nf6\nf7\nf8'
+    assert_equals "0" \
+        "$(_pane_rc pane_is_plan_gate "Here is Claude's plan:"$'\n'"$edge_in")" \
+        "A plan phrase at the Nth-from-last line is inside the footer window"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_plan_gate "Here is Claude's plan:"$'\n'"$edge_out")" \
+        "A plan phrase at the (N+1)th-from-last line is outside the footer window"
 }
 
 # pane_liveness_class (#229): source the script (main-guard makes it sourceable)
@@ -1045,6 +1061,20 @@ test_pane_is_gate() {
     assert_equals "0" \
         "$(_pane_rc pane_is_gate "$filler"$'\n'"Do you want to proceed?")" \
         "A 'Do you want to proceed' inside the footer window still matches"
+
+    # Tail-window boundary (#459): pin the exact inclusive/exclusive edge of the
+    # default 8-line footer window (see test_pane_is_plan_gate for the rationale).
+    # Phrase + 7 filler = 8 lines -> Nth-from-last, inside (rc 0); phrase + 8
+    # filler = 9 lines -> (N+1)th-from-last, outside (rc 1).
+    local edge_in edge_out
+    edge_in=$'f1\nf2\nf3\nf4\nf5\nf6\nf7'
+    edge_out=$'f1\nf2\nf3\nf4\nf5\nf6\nf7\nf8'
+    assert_equals "0" \
+        "$(_pane_rc pane_is_gate "Do you want to proceed?"$'\n'"$edge_in")" \
+        "A permission phrase at the Nth-from-last line is inside the footer window"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_gate "Do you want to proceed?"$'\n'"$edge_out")" \
+        "A permission phrase at the (N+1)th-from-last line is outside the footer window"
 }
 
 # pane_is_fork (#257): the AskUserQuestion escalation-fork overlay matches on its
