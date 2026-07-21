@@ -63,7 +63,10 @@ export const meta = {
 //     laneSlots?: number[],   //   which lanes freed a slot this sweep (one entry per free lane slot)
 //
 //     // --- tracks mode only (see the Tracks branch below) ---
-//     //   reuses `backlog` (priority order, each with predicted files); plus:
+//     //   reuses `backlog` (priority order, each with predicted files); each
+//     //   backlog item may also carry deps?: number[] — issue numbers this issue
+//     //   must be BUILT AFTER (build-order signal, issue #462; ignored by pool
+//     //   mode). plus:
 //     trackCount?: number,    // desired number of tracks (clamped to 2..4; default 3)
 //     trackSize?:  number,    // max issues per track (clamped to 3..5; default 5)
 //   }
@@ -291,6 +294,9 @@ const PR_FILES = {
 //     tracks: [{                 // 2..4 tracks, priority order preserved within each
 //       lane:   number,          // 0-based lane index
 //       issues: number[],        // 3..trackSize issue numbers, in serial execution order
+//       deps_honored?: string[], // in-lane build-order edges "#dep->#dependent" (issue
+//                                //   #462); present only when the lane has one, derived
+//                                //   purely from the `deps` input (no I/O)
 //     }],
 //     deferred: number[],        // backlog issues that did not fit (lanes full / capped),
 //                                //   in priority order — a later sweep can compose them
@@ -472,22 +478,146 @@ const setsOverlapCount = (a, b) => {
 }
 
 // ---------------------------------------------------------------------------
+// Dependency clustering (pure) — group backlog items into weakly-connected
+//   components over their in-backlog `deps` edges. A dependency and its
+//   dependent (transitively) land in the SAME cluster, which composeTracks then
+//   co-locates in one lane so the serial-execution edge (dependent dispatches
+//   only after the dependency's PR merges) is honored. Grouping is over the
+//   UNDIRECTED closure of the directed dep edges; ordering WITHIN the cluster is
+//   handled by topoOrderCluster below. Operates on item INDICES into the
+//   normalized, priority-ordered `items` array (stable). `indexByIssue` maps an
+//   issue number to its index; a dep pointing outside the backlog has no index
+//   and forms no edge. Union-find with path-halving; the root is always the
+//   smallest member index, so clusters sort deterministically by their
+//   highest-priority (lowest-index) member. A backlog with no `deps` yields one
+//   singleton cluster per issue — identical to the pre-dependency behavior.
+// ---------------------------------------------------------------------------
+function buildClusters(items, indexByIssue) {
+  const n = items.length
+  const parent = []
+  for (let i = 0; i < n; i++) parent.push(i)
+  const find = (x) => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]]
+      x = parent[x]
+    }
+    return x
+  }
+  const union = (a, b) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[Math.max(ra, rb)] = Math.min(ra, rb)
+  }
+  for (let i = 0; i < n; i++) {
+    for (const d of items[i].deps) {
+      const j = indexByIssue.get(d)
+      if (j !== undefined) union(i, j)
+    }
+  }
+  // Bucket indices by component root, ascending index within each cluster and
+  // clusters ordered by their smallest member index (= highest priority).
+  const groups = new Map() // root -> number[]
+  for (let i = 0; i < n; i++) {
+    const r = find(i)
+    if (!groups.has(r)) groups.set(r, [])
+    groups.get(r).push(i)
+  }
+  const clusters = [...groups.values()]
+  clusters.sort((a, b) => a[0] - b[0])
+  return clusters
+}
+
+// ---------------------------------------------------------------------------
+// Topological order within one dependency cluster (pure) — order the cluster's
+//   members so every dependency precedes its dependent (deepest dependency
+//   first = the track head; the final dependent last). `cluster` is an array of
+//   item indices (ascending = priority). Edge semantics: for issue X with
+//   `deps` containing d, d MUST come before X. Kahn's algorithm, breaking ties
+//   among same-depth (indegree-0) issues by priority (ascending index), so the
+//   order is deterministic and honors backlog priority among independent
+//   members. A dependency CYCLE (a back-edge leaving nodes unemittable) is
+//   reported via the returned `cycle` flag and broken by appending the remaining
+//   members in priority order — it NEVER loops (mirrors next-issue
+//   state-format.md § Dependency Queue cycle handling). Returns
+//   { issues:number[] (issue numbers in execution order), cycle:boolean }.
+// ---------------------------------------------------------------------------
+function topoOrderCluster(cluster, items) {
+  const idxByIssue = new Map()
+  for (const i of cluster) idxByIssue.set(items[i].issue, i)
+  const indegree = new Map()
+  const dependents = new Map() // dependency-idx -> [dependent-idx, ...]
+  for (const i of cluster) {
+    indegree.set(i, 0)
+    dependents.set(i, [])
+  }
+  for (const i of cluster) {
+    for (const d of items[i].deps) {
+      const j = idxByIssue.get(d)
+      if (j !== undefined) {
+        indegree.set(i, indegree.get(i) + 1)
+        dependents.get(j).push(i)
+      }
+    }
+  }
+  const ordered = []
+  const emitted = new Set()
+  const ready = cluster.filter((i) => indegree.get(i) === 0)
+  ready.sort((a, b) => a - b) // priority (index) order among ready nodes
+  while (ready.length) {
+    const i = ready.shift()
+    if (emitted.has(i)) continue
+    ordered.push(items[i].issue)
+    emitted.add(i)
+    for (const dep of dependents.get(i)) {
+      indegree.set(dep, indegree.get(dep) - 1)
+      if (indegree.get(dep) === 0) {
+        ready.push(dep)
+        ready.sort((a, b) => a - b) // clusters are small — linear resort is fine
+      }
+    }
+  }
+  let cycle = false
+  if (emitted.size < cluster.length) {
+    cycle = true
+    for (const i of cluster) if (!emitted.has(i)) ordered.push(items[i].issue)
+  }
+  return { issues: ordered, cycle }
+}
+
+// ---------------------------------------------------------------------------
 // Track composition (pure) — partition a priority-ordered backlog into 2..4
-//   ordered tracks that minimize CROSS-track file overlap while keeping each
-//   track internally orderable (its issues stay in priority order = the serial
-//   execution order the lane-aware refill will later consume). Pure and
-//   deterministic: no Date.now()/Math.random(); every choice is a function of
-//   input order + issue number, so the same backlog always yields the same
-//   partition. Exposed at module scope (before the orchestration boundary) so
-//   tests/validate-workflow-helpers.mjs can slice and unit-test it directly.
+//   ordered tracks by a TWO-LEVEL sort: build order first, file-overlap among
+//   peers second (issue #462). Dependencies are directed + semantic (a harness
+//   depending on an agent definition may share ZERO files), so file-overlap
+//   alone can neither see nor orient the edge; composing purely by overlap
+//   routinely dispatched a dependent as a track head ahead of its unbuilt deps.
+//   So: (1) group issues into dependency CLUSTERS (buildClusters) and topo-order
+//   each (topoOrderCluster) so a dependency precedes its dependent; (2) run the
+//   existing greedy file-overlap placement over CLUSTERS-as-units — a cluster is
+//   always co-located in one lane, and its members append in topo order. The
+//   dependency edge is the HARD constraint; cross-track file overlap is the
+//   secondary objective minimized subject to it.
 //
-// The objective is fuzzy-priority (issue #178): a higher-priority issue MAY be
-//   deferred to balance tracks and avoid collisions — explicitly desired. The
-//   greedy heuristic: walk the backlog in priority order and drop each issue
-//   into the lane it overlaps MOST (co-locating overlapping work in one lane is
-//   what keeps *cross*-lane overlap low), preferring to open a fresh lane when
-//   the issue is disjoint from every open lane and lanes remain. A lane is
-//   capped at `trackSize`; an issue that fits nowhere is deferred.
+//   `deps` is the OPTIONAL per-item build-order signal (issue numbers this issue
+//   must be built after). Parsing it from `Depends on #N` / `Blocked by #N` /
+//   native blockedBy is the SETUP FLOW's job (see pool-train-protocol.md § Track
+//   composition); this function stays pure — no I/O — so it is deterministic and
+//   unit-testable. With no `deps` anywhere, every issue is a singleton cluster
+//   and placement is byte-identical to the pre-dependency greedy.
+//
+//   Pure and deterministic: no Date.now()/Math.random(); every choice is a
+//   function of input order + issue number, so the same backlog always yields
+//   the same partition. Exposed at module scope (before the orchestration
+//   boundary) so tests/validate-workflow-helpers.mjs can slice and unit-test it.
+//
+//   The objective remains fuzzy-priority (issue #178): a higher-priority issue
+//   MAY be deferred to balance tracks and avoid collisions. The greedy drops
+//   each cluster into the lane it overlaps MOST (co-locating overlapping work in
+//   one lane keeps *cross*-lane overlap low), opening a fresh lane when disjoint
+//   from every open lane and lanes remain. A lane is capped at `trackSize`; a
+//   cluster larger than the remaining room splits — the topo-PREFIX
+//   (dependencies) lands, the dependent TAIL is deferred to a later sweep (safe:
+//   the tail's own deps are already placed ahead of it).
 // ---------------------------------------------------------------------------
 const clampInt = (v, lo, hi, dflt) =>
   Number.isInteger(v) ? Math.max(lo, Math.min(hi, v)) : dflt
@@ -496,52 +626,117 @@ function composeTracks(backlog, opts) {
   const trackCount = clampInt(opts && opts.trackCount, 2, 4, 3)
   const trackSize = clampInt(opts && opts.trackSize, 3, 5, 5)
 
-  // Normalize the backlog into { issue, files:Set } in the given priority order,
-  // dropping malformed entries. Mirrors runPool's defensive parse.
+  // Normalize the backlog into { issue, files:Set, deps:number[] } in the given
+  // priority order, dropping malformed entries. `deps` is filtered to integers
+  // (self-references dropped); out-of-backlog refs are surfaced below but form
+  // no cluster edge. Mirrors runPool's defensive parse.
   const items = []
   for (const c of Array.isArray(backlog) ? backlog : []) {
     if (!c || !Number.isInteger(c.issue)) continue
     const files = Array.isArray(c.files) ? c.files.filter(Boolean) : []
-    items.push({ issue: c.issue, files: new Set(files) })
+    const deps = Array.isArray(c.deps)
+      ? [...new Set(c.deps.filter((d) => Number.isInteger(d) && d !== c.issue))]
+      : []
+    items.push({ issue: c.issue, files: new Set(files), deps })
   }
 
-  // Each lane accumulates its issues (in priority order) and the union of their
-  // files, so a candidate's overlap with a lane is measured against everything
-  // already placed there.
+  const indexByIssue = new Map()
+  items.forEach((it, i) => indexByIssue.set(it.issue, i))
+
+  const notes = [] // cycle / split notes, appended after the head rationale lines
+
+  // Dep refs that point outside the backlog (closed / out-of-scope) form no
+  // cluster edge — surface them so the operator sees the cross-backlog edge.
+  const outRefs = []
+  for (const it of items) {
+    for (const d of it.deps) {
+      if (!indexByIssue.has(d)) outRefs.push(`#${it.issue}->#${d}`)
+    }
+  }
+
+  // Build dependency clusters and topo-order each; a cluster is one placement
+  // unit for the greedy below (co-located in a single lane, members in topo
+  // order — dependency first, dependent last).
+  const clusterIdx = buildClusters(items, indexByIssue)
+  const clusters = []
+  let multiCount = 0
+  for (const cIdx of clusterIdx) {
+    const { issues: orderedIssues, cycle } = topoOrderCluster(cIdx, items)
+    if (cycle) {
+      notes.push(
+        `dependency cycle in cluster [${orderedIssues.map((n) => `#${n}`).join(', ')}] ` +
+          `— edge(s) dropped, priority order used`,
+      )
+    }
+    if (orderedIssues.length > 1) multiCount++
+    const files = new Set()
+    for (const i of cIdx) for (const f of items[i].files) files.add(f)
+    clusters.push({ issues: orderedIssues, files })
+  }
+
+  // Each lane accumulates its issues (in placement order) and the union of their
+  // files, so a cluster's overlap with a lane is measured against everything
+  // already placed there. Clusters are iterated in priority order (buildClusters
+  // sorts by highest-priority member).
   const lanes = [] // [{ issues:number[], files:Set }]
   const deferred = []
 
-  for (const it of items) {
-    // Best open lane = the one this issue shares the most files with and that
+  for (const cl of clusters) {
+    // Best open lane = the one this cluster shares the most files with and that
     // still has room. Ties resolve to the lowest lane index (deterministic).
     let best = -1
     let bestOverlap = -1
     for (let i = 0; i < lanes.length; i++) {
       if (lanes[i].issues.length >= trackSize) continue
-      const ov = it.files.size ? setsOverlapCount(it.files, lanes[i].files) : 0
+      const ov = cl.files.size ? setsOverlapCount(cl.files, lanes[i].files) : 0
       if (ov > bestOverlap) {
         bestOverlap = ov
         best = i
       }
     }
 
-    // Open a fresh lane when the issue collides with no open lane (bestOverlap
+    // Open a fresh lane when the cluster collides with no open lane (bestOverlap
     // <= 0) and we are still under trackCount — this spreads disjoint work
     // across lanes. Otherwise fall into the best-overlapping lane with room.
+    let laneRef
     if ((bestOverlap <= 0 && lanes.length < trackCount) || best === -1) {
       if (lanes.length < trackCount) {
-        lanes.push({ issues: [it.issue], files: new Set(it.files) })
+        laneRef = { issues: [], files: new Set() }
+        lanes.push(laneRef)
+      } else {
+        // All lanes full or capped and nothing fits — defer the whole cluster.
+        for (const n of cl.issues) deferred.push(n)
         continue
       }
-      // All lanes full or capped and nothing fits — defer.
-      deferred.push(it.issue)
-      continue
+    } else {
+      laneRef = lanes[best]
     }
 
-    const lane = lanes[best]
-    lane.issues.push(it.issue)
-    for (const f of it.files) lane.files.add(f)
+    // Place as many cluster members (in topo order) as the lane has room for. A
+    // cluster larger than the remaining room splits: the topo-PREFIX
+    // (dependencies) lands here and the dependent TAIL is deferred — safe
+    // because the tail's own dependencies are already placed ahead of it, so a
+    // later sweep queues the tail behind built work.
+    const room = trackSize - laneRef.issues.length
+    const place = cl.issues.slice(0, room)
+    const tail = cl.issues.slice(room)
+    for (const n of place) {
+      laneRef.issues.push(n)
+      for (const f of items[indexByIssue.get(n)].files) laneRef.files.add(f)
+    }
+    if (tail.length) {
+      for (const n of tail) deferred.push(n)
+      notes.push(
+        `cluster [${cl.issues.map((n) => `#${n}`).join(', ')}] exceeds trackSize ` +
+          `${trackSize} — deferred tail [${tail.map((n) => `#${n}`).join(', ')}]`,
+      )
+    }
   }
+
+  // Deferred issues reported in priority order regardless of defer path.
+  deferred.sort(
+    (a, b) => (indexByIssue.get(a) ?? 0) - (indexByIssue.get(b) ?? 0),
+  )
 
   // Cross-track overlap: number of unordered lane pairs that share >= 1 file.
   // A lower number means the composition kept lanes more independent.
@@ -552,12 +747,45 @@ function composeTracks(backlog, opts) {
     }
   }
 
-  const tracks = lanes.map((l, i) => ({ lane: i, issues: l.issues }))
+  // Per-lane `deps_honored` — the build-order edges (`#dep->#dependent`) that
+  // were ACTUALLY honored: both endpoints landed in this lane AND the dependency
+  // precedes its dependent in the final serial order. Derived purely from the
+  // `deps` input + the placed order (no I/O). Reading the placed positions
+  // (not raw `deps` membership) is deliberate: when a dependency cycle forced
+  // topoOrderCluster to drop an edge and fall back to priority order, the
+  // dropped edge is NOT honored and must not be reported — otherwise the
+  // operator-facing evidence would contradict both the actual lane order and the
+  // `rationale` cycle note. A lane with no honored edge omits the field
+  // (schema-optional).
+  const tracks = lanes.map((l, i) => {
+    const pos = new Map()
+    l.issues.forEach((n, k) => pos.set(n, k))
+    const depsHonored = []
+    for (const n of l.issues) {
+      const it = items[indexByIssue.get(n)]
+      for (const d of it.deps) {
+        // Edge honored only if d is in-lane and placed strictly before n.
+        if (pos.has(d) && pos.get(d) < pos.get(n)) depsHonored.push(`#${d}->#${n}`)
+      }
+    }
+    const track = { lane: i, issues: l.issues }
+    if (depsHonored.length) track.deps_honored = depsHonored
+    return track
+  })
   const rationale = [
     `composed ${tracks.length} track(s) from ${items.length} backlog issue(s) ` +
       `(target ${trackCount} x <=${trackSize})`,
     `cross-track file-overlap pairs: ${crossTrackOverlap}`,
   ]
+  if (multiCount) {
+    rationale.push(
+      `${multiCount} dependency cluster(s) co-located in-lane, build-order first`,
+    )
+  }
+  for (const note of notes) rationale.push(note)
+  if (outRefs.length) {
+    rationale.push(`dep ref(s) outside backlog ignored: ${outRefs.join(', ')}`)
+  }
   if (deferred.length) {
     rationale.push(`${deferred.length} issue(s) deferred — lanes full or capped`)
   }
