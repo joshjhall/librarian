@@ -72,9 +72,16 @@ retains:
 
 When the agnix binary is present, its `CC-*` findings are treated as
 **authoritative on the overlap set**. At the finding-merge step, when an agnix
-rule and a check-ai-config category fire at the **same `file:line`**, the
-check-ai-config finding is dropped and agnix's is kept (richer message, rule ID,
-autofix hint). When agnix is **absent**, the check-ai-config finding stands.
+rule and a check-ai-config finding in an agnix-owned category describe the **same
+underlying issue** on the same file, the check-ai-config finding is dropped and
+agnix's is kept (richer message, rule ID, autofix hint). The match is **per
+issue** — keyed on same-`file` + same-category, not `file:line` (the floor
+anchors its whole-file frontmatter findings at line `1`, so a line key would miss
+them) and not a whole-category sweep (the floor emits multiple distinct findings
+per file+category, so only the specifically-superseded one is dropped and any
+sibling agnix did not report is retained). When agnix is **absent**, the
+check-ai-config finding stands. (Down-scoped to precedence-only dedup in
+follow-up 4, issue #402 — never deletion of the floor's checks.)
 
 The dedup is keyed on **actual agnix output present in this run** — never on
 "agnix is the designated owner." So it is a strict **no-op when agnix did not
