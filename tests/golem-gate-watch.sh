@@ -33,7 +33,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 GATE_WATCH="$REPO_ROOT/plugins/workflow/scripts/golem-gate-watch.sh"
 
-test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229, #446, #447)"
+test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229, #248, #446, #447)"
 
 # _pane_rc <function-name> <text> — source the script (the main-guard makes it
 # sourceable without running the drive block) in a subshell and call one of its
@@ -329,6 +329,91 @@ TMUX_STUB
             /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
                 PATH="$stub_bin" \
                 FAKE_PANE_TEXT="$pane_text" \
+                GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
+                GOLEM_WORKTREE_DIR=.worktrees \
+                GOLEM_STATUS_DIR=.worktrees/.status \
+                "$real_bash" "$GATE_WATCH" --once-liveness
+    ) >"$tmp/out" 2>/dev/null && LIVE_RC=0 || LIVE_RC=$?
+    LIVE_OUT="$(/usr/bin/cat "$tmp/out")"
+}
+
+# Liveness transcript wiring (#248): drive the TRANSCRIPT tier of
+# liveness_snapshot() end to end. Like _run_liveness_snapshot (the mtime helper),
+# the fake `tmux` answers `has-session` -> FAIL, so the pane branch is skipped
+# entirely (this is exactly the headless golem the transcript tier targets) and
+# the sweep reaches golem-transcript-liveness.sh. A transcript is planted under a
+# fake CLAUDE_PROJECTS_DIR keyed to golem-7's worktree slug — the same
+# `<abs-worktree>` with `/`+`.` -> `-` mapping golem-transcript-liveness.sh (and
+# golem-token-scrape.sh) resolve — so the real subprocess reads it. The golem-7
+# status file is still planted, so a MISSING transcript naturally falls through to
+# the mtime heartbeat (the fall-through case). Args: $1 = stall threshold (sec),
+# $2 = status-file age (sec ago), $3 = transcript body (newline-joined *.jsonl
+# lines; EMPTY plants no transcript so the tier misses and mtime wins). Sets
+# LIVE_RC / LIVE_OUT.
+_run_liveness_snapshot_transcript() {
+    local stall="$1" age_secs="$2" transcript="$3"
+    local tmp
+    tmp="$(/usr/bin/mktemp -d)" || return 1
+    # shellcheck disable=SC2064
+    trap "/usr/bin/rm -rf '$tmp'" RETURN
+
+    local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
+        GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
+
+    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
+    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+    # golem-7 status cache is the mtime activity proxy (the fall-through target);
+    # backdate its mtime so age = $age_secs deterministically.
+    /usr/bin/printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
+        >"$tmp/.worktrees/.status/golem-7.json"
+    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - age_secs))" \
+        "$tmp/.worktrees/.status/golem-7.json"
+
+    # Plant the transcript under a fake CLAUDE_PROJECTS_DIR at the slug the real
+    # subprocess will compute for golem-7's worktree ($tmp/.worktrees/issue-7,
+    # already absolute → abs == worktree). Slug maps `/` and `.` to `-`, exactly as
+    # the script does. An empty body plants nothing (missing-transcript case).
+    local fake_projects wt slug
+    fake_projects="$tmp/claude-projects"
+    wt="$tmp/.worktrees/issue-7"
+    slug="${wt//[\/.]/-}"
+    if [ -n "$transcript" ]; then
+        /usr/bin/mkdir -p "$fake_projects/$slug"
+        /usr/bin/printf '%s\n' "$transcript" >"$fake_projects/$slug/session.jsonl"
+    fi
+
+    # Hermetic PATH: real bash + git + jq symlinks (the transcript script needs
+    # jq), plus a fake tmux whose `ls` prints nothing and `has-session` FAILS so
+    # the pane branch is skipped and the sweep reaches the transcript tier.
+    local stub_bin real_bash real_git real_jq
+    stub_bin="$tmp/stub-bin"
+    /usr/bin/mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    real_git="$(command -v git)"
+    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+    real_jq="$(command -v jq || true)"
+    [ -n "$real_jq" ] && /usr/bin/ln -s "$real_jq" "$stub_bin/jq"
+    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    ls) exit 0 ;;
+    has-session) exit 1 ;;
+    capture-pane) exit 0 ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    /usr/bin/chmod +x "$stub_bin/tmux"
+
+    # --unset=BASH_ENV as in the sibling helpers. CLAUDE_PROJECTS_DIR points the
+    # transcript script at the planted fixture.
+    LIVE_RC=0
+    (
+        cd "$tmp" &&
+            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+                PATH="$stub_bin" \
+                CLAUDE_PROJECTS_DIR="$fake_projects" \
                 GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
                 GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
@@ -662,6 +747,135 @@ test_liveness_pane_blank_capture_falls_through() {
         "A blank capture-pane does not fabricate a 'working' verdict"
     assert_not_contains "$LIVE_OUT" "idle at prompt" \
         "A blank capture-pane does not fabricate an 'idle' verdict"
+}
+
+# --- Transcript tier wiring (#248) ------------------------------------------
+# The tests below drive the TRANSCRIPT tier of liveness_snapshot() end to end via
+# the real `--once-liveness`: no host-visible pane (fake tmux has-session FAILS),
+# so the sweep skips the pane branch — exactly the headless golem this tier
+# targets — and reads the golem's on-disk transcript instead. They cover the
+# `case "$tclass"` dispatch, its emitted strings, and the transcript-vs-mtime
+# precedence (the `last activity` wording marks the mtime fallback, absent when
+# the transcript tier classifies). All skip when jq is absent — the transcript
+# script (and thus the tier) is a no-op without it, exactly like the feed tests.
+
+# A transcript whose last top-level assistant turn is still in flight
+# (stop_reason "tool_use") classifies `working`: the wiring emits `alive, working`
+# from the transcript, winning over the fresh-status-file mtime heartbeat.
+test_liveness_transcript_working_wiring() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    _run_liveness_snapshot_transcript 1200 0 \
+        '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use"}]}}'
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for a working transcript"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "alive, working" \
+        "A turn-in-flight transcript emits the 'alive, working' wiring string"
+    assert_contains "$LIVE_OUT" "transcript" \
+        "The working line attributes the transcript source"
+    assert_not_contains "$LIVE_OUT" "last activity" \
+        "The transcript read wins over the mtime fallback (no 'last activity' wording)"
+}
+
+# A transcript whose last top-level assistant turn has ENDED (stop_reason
+# "end_turn") classifies `idle`: the wiring emits the `idle at prompt` warning.
+# This is the headless analog of the #229 pane idle signal — the whole point of
+# #248. `last activity` must be absent (transcript short-circuits before mtime).
+test_liveness_transcript_idle_wiring() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    _run_liveness_snapshot_transcript 1200 0 \
+        '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}'
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for an idle transcript"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "idle at prompt" \
+        "A turn-ended transcript emits the 'idle at prompt' warning (headless #229 analog)"
+    assert_not_contains "$LIVE_OUT" "last activity" \
+        "The transcript read wins over the mtime fallback (no 'last activity' wording)"
+}
+
+# The errored subclass: the last top-level assistant record carries
+# isApiErrorMessage. The wiring emits an idle-at-prompt warning that names the
+# error ("errored and idle") — the literal #229 first-command-failure case, now
+# caught for a headless golem.
+test_liveness_transcript_errored_wiring() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    _run_liveness_snapshot_transcript 1200 0 \
+        '{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"message":{"role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"API Error: 429"}]}}'
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for an errored transcript"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "idle at prompt" \
+        "An errored transcript still surfaces as idle at prompt"
+    assert_contains "$LIVE_OUT" "errored and idle" \
+        "The errored subclass is named distinctly in the liveness line"
+}
+
+# A sub-workflow (isSidechain true) churning tool_use records must NOT mask a
+# top-level idle: the classifier keys off top-level records only, so a golem whose
+# background review harness is active while the TOP level ended still reads idle.
+# Guards the isSidechain filter through the full wiring, not just the unit script.
+test_liveness_transcript_sidechain_not_masking() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    _run_liveness_snapshot_transcript 1200 0 \
+        "$(/usr/bin/printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}' \
+            '{"type":"assistant","isSidechain":true,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use"}]}}')"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 with sidechain churn"
+    assert_contains "$LIVE_OUT" "idle at prompt" \
+        "A top-level idle is not masked by an active sub-workflow (isSidechain filter)"
+    assert_not_contains "$LIVE_OUT" "alive, working" \
+        "Sidechain tool_use does not fabricate a top-level 'working' verdict"
+}
+
+# Precedence / fall-through: with NO transcript planted (empty body), the
+# transcript tier exits non-zero (no transcript dir) and the sweep falls through
+# to the mtime heartbeat — the `last activity` wording proves the fallback ran.
+# This is the Mode-3-container / no-host-transcript path.
+test_liveness_transcript_missing_falls_through() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    _run_liveness_snapshot_transcript 1200 0 ""
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 with no transcript"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "last activity" \
+        "A missing transcript falls through to the mtime heartbeat (transcript -> mtime precedence)"
+    assert_not_contains "$LIVE_OUT" "alive, working" \
+        "A missing transcript does not fabricate a 'working' verdict"
+}
+
+# An indeterminate transcript (records present but no top-level assistant turn and
+# no command error) must also fall through to the mtime heartbeat, not fabricate a
+# verdict — the script exits 2 (indeterminate) and the caller falls back.
+test_liveness_transcript_indeterminate_falls_through() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    _run_liveness_snapshot_transcript 1200 0 \
+        '{"type":"user","message":{"role":"user","content":"hi"}}'
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for an indeterminate transcript"
+    assert_contains "$LIVE_OUT" "last activity" \
+        "An indeterminate transcript falls through to the mtime heartbeat"
+    assert_not_contains "$LIVE_OUT" "idle at prompt" \
+        "An indeterminate transcript does not fabricate an idle verdict"
 }
 
 # --- Helper / mode coverage (#82) -------------------------------------------
@@ -1326,6 +1540,12 @@ run_test test_liveness_pane_idle_wiring "Liveness wiring: idle pane (#229) -> 'i
 run_test test_liveness_pane_died_wiring "Liveness wiring: died pane (#446) -> DIED label with class (pane wins over mtime)"
 run_test test_liveness_pane_indeterminate_falls_through "Liveness wiring: indeterminate pane falls through to mtime heartbeat"
 run_test test_liveness_pane_blank_capture_falls_through "Liveness wiring: blank capture-pane (guard false) falls through to mtime heartbeat"
+run_test test_liveness_transcript_working_wiring "Liveness transcript (#248): turn-in-flight -> 'alive, working' (transcript wins over mtime)"
+run_test test_liveness_transcript_idle_wiring "Liveness transcript (#248): turn-ended -> 'idle at prompt' (headless #229 analog)"
+run_test test_liveness_transcript_errored_wiring "Liveness transcript (#248): isApiErrorMessage -> 'errored and idle'"
+run_test test_liveness_transcript_sidechain_not_masking "Liveness transcript (#248): sidechain churn does not mask a top-level idle"
+run_test test_liveness_transcript_missing_falls_through "Liveness transcript (#248): missing transcript falls through to mtime heartbeat"
+run_test test_liveness_transcript_indeterminate_falls_through "Liveness transcript (#248): indeterminate transcript falls through to mtime heartbeat"
 run_test test_unknown_mode_exits_2 "Unknown mode exits 2 with a usage message"
 run_test test_no_arg_defaults_to_once "No argument defaults to --once (not the error path)"
 run_test test_fmt_age_formats "_fmt_age: seconds vs whole-minute formatting"
