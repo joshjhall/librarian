@@ -1524,6 +1524,79 @@ test_panes_snapshot_died_dispatch() {
         "A plan+error pane is NOT labelled a death (modal wins)"
 }
 
+# GOLEM_PANE_FOOTER_LINES env-override (#458, mirroring
+# test_liveness_threshold_env_overridable for GOLEM_STALL_THRESHOLD): every pane
+# matcher #458 names scopes its match to the last $pane_footer_lines lines, where
+# `pane_footer_lines="${GOLEM_PANE_FOOTER_LINES:-8}"` is read once at source time.
+# No prior test set the env var to a non-default value, so a regression that
+# silently ignored it (typo'd var name, value never reaching the sourced context)
+# would go uncaught. This pins the ${VAR:-default} wiring in BOTH directions
+# (shrink hides an in-default-window trigger; enlarge reveals an
+# out-of-default-window one) across ALL FIVE footer-keyed matchers named in the
+# issue — pane_is_gate, pane_is_fork, pane_is_plan_gate, pane_is_turn_end, and
+# pane_liveness_class — so a per-matcher hardcoded 8 (not reading the shared var)
+# is caught in any one of them, not just a single wiring point. _pane_rc sources
+# the script in a subshell, so the GOLEM_PANE_FOOTER_LINES= prefix reaches that
+# source-time read. (pane_is_api_error, added in #446, keys its PRIMARY match off
+# $pane_error_lines and uses $pane_footer_lines only for its spinner-veto guard,
+# so it is out of #458's footer-window scope.)
+test_pane_footer_lines_env_overridable() {
+    local four nine
+
+    # Shrink direction: a trigger 5 lines from the bottom is INSIDE the default
+    # 8-line window (match) but OUTSIDE a shrunk 3-line window (no match).
+    # Flipping match->no-match as the window shrinks proves the smaller value
+    # took effect. Exercised on the two rc-returning gate matchers.
+    four=$'f1\nf2\nf3\nf4'
+    assert_equals "0" "$(_pane_rc pane_is_gate "Do you want to proceed?"$'\n'"$four")" \
+        "pane_is_gate: a gate 5 lines up matches under the default 8-line window"
+    assert_equals "1" \
+        "$(GOLEM_PANE_FOOTER_LINES=3 _pane_rc pane_is_gate "Do you want to proceed?"$'\n'"$four")" \
+        "pane_is_gate: GOLEM_PANE_FOOTER_LINES=3 shrinks the window so the same gate falls outside it"
+    assert_equals "0" "$(_pane_rc pane_is_plan_gate "Here is Claude's plan:"$'\n'"$four")" \
+        "pane_is_plan_gate: a plan overlay 5 lines up matches under the default 8-line window"
+    assert_equals "1" \
+        "$(GOLEM_PANE_FOOTER_LINES=3 _pane_rc pane_is_plan_gate "Here is Claude's plan:"$'\n'"$four")" \
+        "pane_is_plan_gate: GOLEM_PANE_FOOTER_LINES=3 shrinks the window so the same plan overlay falls outside it"
+
+    # Enlarge direction: a trigger 10 lines from the bottom is OUTSIDE the
+    # default 8-line window (no match) but INSIDE an enlarged 12-line window
+    # (match). Exercised on the remaining rc matchers (fork, turn_end) plus the
+    # string-returning classifier (liveness_class emits "" vs "idle").
+    nine=$'g1\ng2\ng3\ng4\ng5\ng6\ng7\ng8\ng9'
+    assert_equals "1" "$(_pane_rc pane_is_fork "Enter to select · ↑/↓ to navigate"$'\n'"$nine")" \
+        "pane_is_fork: a fork footer 10 lines up falls outside the default 8-line window"
+    assert_equals "0" \
+        "$(GOLEM_PANE_FOOTER_LINES=12 _pane_rc pane_is_fork "Enter to select · ↑/↓ to navigate"$'\n'"$nine")" \
+        "pane_is_fork: GOLEM_PANE_FOOTER_LINES=12 enlarges the window so the same fork falls inside it"
+    assert_equals "1" "$(_pane_rc pane_is_turn_end "  ⏵⏵ auto mode on"$'\n'"$nine")" \
+        "pane_is_turn_end: an idle footer 10 lines up falls outside the default 8-line window"
+    assert_equals "0" \
+        "$(GOLEM_PANE_FOOTER_LINES=12 _pane_rc pane_is_turn_end "  ⏵⏵ auto mode on"$'\n'"$nine")" \
+        "pane_is_turn_end: GOLEM_PANE_FOOTER_LINES=12 enlarges the window so the same idle footer falls inside it"
+
+    # pane_liveness_class returns a CLASS STRING, not an rc — capture stdout via a
+    # sourced subshell. The env var is set BEFORE `source` (as _pane_rc does it)
+    # so the source-time `pane_footer_lines="${GOLEM_PANE_FOOTER_LINES:-8}"` read
+    # picks it up — NOT assigned to pane_footer_lines directly, which would bypass
+    # the very ${VAR:-default} wiring under test. Same enlarge direction: the idle
+    # footer 10 lines up is unclassified ("") under the default window, "idle"
+    # once the enlarged window covers it.
+    assert_equals "" \
+        "$( (
+            source "$GATE_WATCH"
+            pane_liveness_class "  ⏵⏵ auto mode on"$'\n'"$nine"
+        ) 2>/dev/null)" \
+        "pane_liveness_class: an idle footer 10 lines up is unclassified under the default 8-line window"
+    assert_equals "idle" \
+        "$( (
+            export GOLEM_PANE_FOOTER_LINES=12
+            source "$GATE_WATCH"
+            pane_liveness_class "  ⏵⏵ auto mode on"$'\n'"$nine"
+        ) 2>/dev/null)" \
+        "pane_liveness_class: GOLEM_PANE_FOOTER_LINES=12 enlarges the window so the same idle footer classifies idle"
+}
+
 run_test test_legacy_line_does_not_drop_golems "Legacy no-ts feed line does not drop all BLOCKED golems"
 run_test test_stale_ts_gate_ages_out "Stale dated gate ages out while no-ts golem stays fresh"
 run_test test_empty_ts_treated_as_fresh "Empty-string ts is treated as fresh, not a crash"
@@ -1558,6 +1631,7 @@ run_test test_panes_snapshot_dispatch "panes_snapshot dispatch order + labels (p
 run_test test_pane_is_turn_end "pane_is_turn_end matches the turn-ended/idle-at-prompt footer only (#447)"
 run_test test_pane_is_turn_end_footer_anchored "pane_is_turn_end is footer-anchored (no self-trip on scrolled text)"
 run_test test_panes_snapshot_turn_end_dispatch "panes_snapshot emits idle-at-prompt as last-resort; overlay wins (#447)"
+run_test test_pane_footer_lines_env_overridable "pane matchers: GOLEM_PANE_FOOTER_LINES is env-overridable both directions (#458)"
 run_test test_confirm_turn_end_debounce "confirm_turn_end: two-consecutive-poll debounce on the idle line; gates immediate (#447)"
 run_test test_pane_liveness_class "pane_liveness_class: spinner=working, error/idle footer=idle, spinner wins"
 run_test test_emit_transitions_dedup "emit_transitions: prime/standing/new/changed/re-gate dedup"
