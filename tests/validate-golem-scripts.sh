@@ -3935,6 +3935,93 @@ test_provision_write_status_started_idempotent() {
     # The state DID advance (proving the second write ran, not a no-op).
     assert_true "[ \"\$(jq -r '.state' '$status_file' 2>/dev/null)\" = 'pr-open' ]" \
         "the second write still updated the mutable state field"
+
+    # #428 same-issue guarantee: a later write for the SAME issue must NOT wipe
+    # the sibling monitor fields a prior status_poller write left (pr/ci/review/
+    # blocking) — the reassignment reset below is mismatch-only. Seed them, write
+    # again for issue 300, and confirm they survive (else the fleet monitor's
+    # CI/PR columns would blank on every in-flight poll).
+    jq '. + {pr:321, ci:"passing", review:"approved", blocking:false}' \
+        "$status_file" >"$status_file.tmp" && /usr/bin/mv "$status_file.tmp" "$status_file"
+    AGENT_ID=agent01 ISSUE=300 STATE=pr-open ERR="" LA="2026-06-16T12:00:00Z" \
+        python3 -c "$body" "$status_file"
+    assert_true "[ \"\$(jq -r '.pr // \"null\"' '$status_file' 2>/dev/null)\" = '321' ]" \
+        "a same-issue write preserves the poller-written pr field (#428 mismatch-only reset)"
+    assert_true "[ \"\$(jq -r '.ci // \"null\"' '$status_file' 2>/dev/null)\" = 'passing' ]" \
+        "a same-issue write preserves the poller-written ci field"
+}
+
+# #428: the SAME agent slot reassigned to a DIFFERENT issue without the
+# documented teardown ("Remove status file") → the bind-mounted host cache still
+# holds the PREVIOUS issue's fields. A write for the new issue must clear every
+# ISSUE-SCOPED field — not only `started` (ELAPSED, #415), but the sibling
+# monitor fields status_poller writes (pr/ci/review/blocking) and `errors` — so
+# --checkpoint and the fleet monitor never render the new issue with the old
+# issue's CI/PR/blocking signal or a stale error. It must, however, PRESERVE the
+# agent-slot IDENTITY fields (container/branch), which golem-status.sh keys
+# Mode-3 detection off and golem-attach.sh uses to find the container. Its own
+# sandbox — independent of the #415 idempotency test above.
+test_provision_write_status_issue_reassignment_resets_stale_fields() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip_test "python3 not available (write_status is a python heredoc)"
+        return 0
+    fi
+    local sb body status_file
+    new_sandbox sb
+    body="$(extract_write_status_py)"
+    assert_not_empty "$body" "the write_status() Python body was extracted"
+    assert_contains "$body" \
+        'doc = {k: doc[k] for k in ("golem", "kind", "container", "branch") if k in doc}' \
+        "the extracted body carries the issue-mismatch reset (keep-identity whitelist) (#428)"
+
+    status_file="$sb/.worktrees/.status/agent01.json"
+    # First write establishes an issue-300 row with a launch time.
+    AGENT_ID=agent01 ISSUE=300 STATE=working ERR="" LA="2026-01-01T00:00:00Z" \
+        python3 -c "$body" "$status_file"
+    # Seed the sibling poller fields + an error (a prior run that opened a failing
+    # PR) so the reset has stale issue-scoped state to clear, PLUS the agent-slot
+    # identity fields (container/branch) that must SURVIVE.
+    jq '. + {pr:555, ci:"failing", review:"changes-requested", blocking:true,
+             errors:["boom: previous issue failure"],
+             container:"proj-agent01-1", branch:"agent01"}' \
+        "$status_file" >"$status_file.tmp" && /usr/bin/mv "$status_file.tmp" "$status_file"
+    # Reassign the SAME slot to issue 999 (no teardown between).
+    AGENT_ID=agent01 ISSUE=999 STATE=working ERR="" LA="2026-09-01T09:00:00Z" \
+        python3 -c "$body" "$status_file"
+
+    assert_true "[ \"\$(jq -r '.started' '$status_file' 2>/dev/null)\" = '2026-09-01T09:00:00Z' ]" \
+        "reassigning the slot to a new issue re-stamps started to now"
+    assert_true "[ \"\$(jq -r '.issue' '$status_file' 2>/dev/null)\" = '999' ]" \
+        "the row rebound to the new issue number"
+    # The stale issue-scoped fields from issue 300 must be GONE — a reassigned
+    # golem that has not opened a PR must not render as ci-failing/blocking/errored.
+    assert_true "[ \"\$(jq -r '.pr // \"null\"' '$status_file' 2>/dev/null)\" = 'null' ]" \
+        "reassignment clears the previous issue's stale pr number"
+    assert_true "[ \"\$(jq -r '.ci // \"null\"' '$status_file' 2>/dev/null)\" = 'null' ]" \
+        "reassignment clears the previous issue's stale ci status"
+    assert_true "[ \"\$(jq -r '.review // \"null\"' '$status_file' 2>/dev/null)\" = 'null' ]" \
+        "reassignment clears the previous issue's stale review decision"
+    assert_true "[ \"\$(jq -r '.blocking // \"null\"' '$status_file' 2>/dev/null)\" = 'null' ]" \
+        "reassignment clears the previous issue's stale blocking flag"
+    assert_true "[ \"\$(jq -r '.errors | length' '$status_file' 2>/dev/null)\" = '0' ]" \
+        "reassignment clears the previous issue's stale error message"
+    # But the agent-slot IDENTITY fields must PERSIST — the container is still
+    # live; wiping these would break golem-status Mode-3 detection + golem-attach.
+    assert_true "[ \"\$(jq -r '.container // \"null\"' '$status_file' 2>/dev/null)\" = 'proj-agent01-1' ]" \
+        "reassignment PRESERVES the agent-slot container identity field"
+    assert_true "[ \"\$(jq -r '.branch // \"null\"' '$status_file' 2>/dev/null)\" = 'agent01' ]" \
+        "reassignment PRESERVES the agent-slot branch identity field"
+
+    # A malformed cache (issue as a numeric STRING, schema violation) must not be
+    # coerced into a spurious mismatch: a same-issue write with prev issue "300"
+    # (string) and ISSUE=300 must PRESERVE started, not wipe it (#428 defensive
+    # int() coercion). Seed a string issue + a started, write same issue.
+    printf '%s\n' '{"golem":"agent01","kind":"container","issue":"300","started":"2026-01-01T00:00:00Z"}' \
+        >"$status_file"
+    AGENT_ID=agent01 ISSUE=300 STATE=working ERR="" LA="2026-10-01T00:00:00Z" \
+        python3 -c "$body" "$status_file"
+    assert_true "[ \"\$(jq -r '.started' '$status_file' 2>/dev/null)\" = '2026-01-01T00:00:00Z' ]" \
+        "a numeric-string cached issue is coerced, not treated as a mismatch (started preserved)"
 }
 
 # --- Run all tests ----------------------------------------------------------
@@ -4078,6 +4165,7 @@ run_test test_status_checkpoint_derive_stage_fallbacks "golem-status: --checkpoi
 run_test test_status_checkpoint_container_never_gone "golem-status: --checkpoint never flags a container golem ⚠ gone (#415)"
 run_test test_status_checkpoint_issueless_row_not_gone "golem-status: --checkpoint issue-less (?) row is not wildcard-matched ⚠ gone (#415)"
 run_test test_status_checkpoint_double_lane_claim_dedup "golem-status: --checkpoint dedups a double-lane-claimed golem — one row, tokens once (#415)"
-run_test test_provision_write_status_started_idempotent "provision-agent: write_status() stamps started once and preserves it (idempotent write side of #415)"
+run_test test_provision_write_status_started_idempotent "provision-agent: write_status() stamps started once and preserves it + sibling fields on same-issue writes (#415/#428)"
+run_test test_provision_write_status_issue_reassignment_resets_stale_fields "provision-agent: write_status() clears issue-scoped fields but preserves container/branch identity on issue reassignment (#428)"
 
 generate_report
