@@ -4,16 +4,31 @@
 # `check-ai-config` skill are documented in
 # plugins/review-audit/docs/adr/0001-agnix-check-ai-config-boundary.md.
 #
-# This is a STARTER stub (issue #238). The disable list is finalized in the
-# follow-up that builds the agnix→TSV normalizer and the rule→category map.
+# Finalized against the ADR ownership table (issue #398, dep on the #397
+# agnix→TSV normalizer + rule→category map). The two overlapping numeric bloat
+# rules are disabled here; every other CC-* overlap stays agnix-owned.
 #
 # Boundary in one line: agnix owns the mechanical frontmatter/hook SCHEMA rules;
 # check-ai-config keeps the env-tunable bloat thresholds (thresholds.yml), the
 # repo-aware checks (claude-md-drift, config-inconsistency, harness-logic), and
 # the LLM heuristic pass. So the two overlapping numeric rules are disabled here.
+#
+# agnix version: 0.40.0. The binary itself is pinned where it is INSTALLED, not
+# here — the `containers` npm install (issue #400, cross-repo) and the CI SARIF
+# gate (.github/workflows/code-scanning.yml, `agnix@0.40.0`). This config's rule
+# IDs/schema track that pinned version; binary bumps route via #400 / dependabot
+# (ADR §5: never `@latest`). `tool_versions`/`spec_revisions` are intentionally
+# unset — no consumer needs version-aware CC-* validation yet, and pinning them
+# would add a second drift surface to keep in sync.
 
-# Target Claude Code specifically (this repo is a Claude Code plugin marketplace).
-tools = ["ClaudeCode"]
+# Select the Claude Code rule set (this repo is a Claude Code plugin
+# marketplace). The `tools` array takes agnix's kebab-case tool IDs — NOT the
+# PascalCase `ClaudeCode` of the deprecated `target` key. A PascalCase value here
+# is silently treated as "no matching tool": agnix drops the CC-AG-* / CC-HK-*
+# rules and only CC-MEM-* survive, and because this config value OVERRIDES the
+# consumers' CLI `--target claude-code`, that silent hole reaches both the
+# checker and CI paths. Keep it kebab-case.
+tools = ["claude-code"]
 
 # Report warnings and above; --strict in CI escalates warnings to errors.
 severity = "Warning"
@@ -22,7 +37,10 @@ severity = "Warning"
 # check-ai-config owns file-size limits via thresholds.yml (CLAUDE_MD_WARN/HIGH,
 # SKILL_*, AGENT_*, DOC_* — env-overridable and tuned to librarian's file
 # taxonomy). Disable agnix's fixed-threshold equivalents so a single file never
-# draws two contradictory line-limit / token-count findings.
+# draws two contradictory line-limit / token-count findings. Per the ADR §3
+# ownership table these are the ONLY CC-* rules check-ai-config owns; the rest
+# (CC-AG-*, CC-SK-*, CC-HK-*, CC-MCP-*/MCP-*, CC-PL-*, non-bloat CC-MEM-*) stay
+# agnix-owned and must keep firing.
 #   CC-MEM-014 — CLAUDE.md exceeds line limit
 #   CC-MEM-009 — token count exceeded
 disabled_rules = ["CC-MEM-014", "CC-MEM-009"]
