@@ -74,6 +74,23 @@ root="$(/usr/bin/dirname "$common_dir")"
 status_dir="$root/$GOLEM_STATUS_DIR"
 feed="$status_dir/feed.jsonl"
 
+# Multi-sink fan-out config (#406, ADR-0001 Decision 2). One classified event
+# fans to feed.jsonl ALWAYS plus zero-or-more HTTP sinks listed in
+# GOLEM_EVENT_SINKS (a space/comma list of http(s):// URLs). Empty/unset ⇒ pure
+# no-op beyond the feed, so default behavior is byte-for-byte unchanged. Each
+# POST is bounded by GOLEM_EVENT_SINK_TIMEOUT (connect+total seconds) and
+# best-effort — a hung/refused endpoint must never wedge the golem, so failures
+# are swallowed and the hook still exits 0. Defaults are inlined here rather than
+# sourced (same rationale as GOLEM_STATUS_DIR above: sourcing config.sh would
+# pull in its repo_root()/superproject probe and change the git-common-dir root
+# resolution). config.sh documents/exports the same two knobs as their home, and
+# tests/validate-golem-notify.sh's test_event_sink_defaults_match_config_sh
+# pins these inlined defaults equivalent to config.sh's (the #424 drift guard,
+# now covering the sink vars too). GOLEM_EVENT_SINKS is trusted operator input —
+# see the TRUST BOUNDARY note in config.sh and next to the scheme guard below.
+: "${GOLEM_EVENT_SINKS:=}"
+: "${GOLEM_EVENT_SINK_TIMEOUT:=2}"
+
 # Read the Notification payload; tolerate missing jq or a non-JSON body.
 payload="$(/bin/cat 2>/dev/null || true)"
 message=""
@@ -195,28 +212,77 @@ fi
 
 ts="$(/usr/bin/date -u +%FT%TZ)"
 
-# Append one feed line. Prefer jq for correct escaping; fall back to a
-# best-effort literal if jq is unavailable.
-/usr/bin/mkdir -p "$status_dir" 2>/dev/null || exit 0
+# Build the classified {ts, golem, event, message} JSON line ONCE, then fan the
+# SAME line to every sink (feed always; HTTP sinks best-effort). Prefer jq for
+# correct escaping; fall back to a best-effort literal if jq is unavailable. The
+# message (and, defensively, the golem id) are attacker-influenceable, so both
+# paths escape/sanitize them identically before this one string reaches any sink
+# (#406 AC4 — same escaped payload to every sink).
 if command -v jq >/dev/null 2>&1; then
-    jq -cn --arg ts "$ts" --arg golem "$golem" --arg event "$event" --arg message "$message" \
-        '{ts: $ts, golem: $golem, event: $event, message: $message}' \
-        >>"$feed" 2>/dev/null || true
+    line="$(jq -cn --arg ts "$ts" --arg golem "$golem" --arg event "$event" --arg message "$message" \
+        '{ts: $ts, golem: $golem, event: $event, message: $message}' 2>/dev/null || true)"
 else
-    # No jq: hand-roll the JSON. The message (and, defensively, the golem id)
-    # originate from the Notification payload / environment, so sanitize before
-    # interpolating: drop control chars and backslashes — which can't be
-    # escaped correctly without a real JSON encoder and would otherwise let a
-    # crafted payload break out of the string literal — then escape any
-    # remaining double quotes. Keeps every feed line valid JSON on this path.
+    # No jq: hand-roll the JSON. The message / golem id originate from the
+    # Notification payload / environment, so sanitize before interpolating: drop
+    # control chars and backslashes — which can't be escaped correctly without a
+    # real JSON encoder and would otherwise let a crafted payload break out of
+    # the string literal — then escape any remaining double quotes. Keeps the
+    # line valid JSON on this path.
     golem_safe="$(printf '%s' "${golem//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
     message_safe="$(printf '%s' "${message//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
     # $event is a fixed literal (gate|idle|escalation|dead-end|resolved|reaped)
     # set by the case above, never attacker-derived, so it needs no sanitizing —
     # interpolate it directly.
-    printf '{"ts":"%s","golem":"%s","event":"%s","message":"%s"}\n' \
-        "$ts" "${golem_safe//\"/\\\"}" "$event" "${message_safe//\"/\\\"}" \
-        >>"$feed" 2>/dev/null || true
+    line="$(printf '{"ts":"%s","golem":"%s","event":"%s","message":"%s"}' \
+        "$ts" "${golem_safe//\"/\\\"}" "$event" "${message_safe//\"/\\\"}")"
+fi
+
+# If the line failed to build (jq present but errored — essentially never for
+# well-formed string args), skip BOTH sinks: an empty `line` would append a bare
+# blank line to the feed (readers tolerate it, but it is noise) and POST an empty
+# body to every sink. Preserve the pre-#406 "write nothing on failure" behavior.
+if [ -z "$line" ]; then
+    exit 0
+fi
+
+# Sink 1 — feed.jsonl, ALWAYS. mkdir is non-fatal (was `|| exit 0`): a feed dir
+# that can't be created must NOT skip the HTTP fan below — one emission is feed
+# AND sinks (#406 AC1). Every failure is swallowed; the hook still exits 0.
+/usr/bin/mkdir -p "$status_dir" 2>/dev/null || true
+printf '%s\n' "$line" >>"$feed" 2>/dev/null || true
+
+# Sink 2..N — HTTP endpoints in GOLEM_EVENT_SINKS, best-effort. Skipped entirely
+# (no process spawned) when the list is empty or curl is absent, so an unset
+# GOLEM_EVENT_SINKS is byte-for-byte the pre-#406 behavior (AC2). Each POST is
+# bounded (--connect-timeout / -m) AND backgrounded, so a slow or dead endpoint
+# can never wedge the golem (AC3); the same `$line` goes to every sink (AC4).
+if [ -n "$GOLEM_EVENT_SINKS" ] && command -v curl >/dev/null 2>&1; then
+    # Normalize the comma/space-separated list to whitespace, then word-split it
+    # in the `for` (bash-3.2 clean: no arrays / mapfile). Scheme-guard each entry
+    # so only real http(s) URLs are POSTed — a stray non-URL token is skipped,
+    # not handed to curl. The guard is a scheme filter ONLY, not a security
+    # control: it does not restrict the host, so loopback/link-local/RFC1918/
+    # cloud-metadata targets are all reachable, and http:// is accepted. This is
+    # the accepted trust model — GOLEM_EVENT_SINKS is trusted operator input, as
+    # sensitive as PATH (see the TRUST BOUNDARY note in config.sh); host
+    # allow-listing / https-only / request signing are NON-goals of this
+    # best-effort emitter and belong to the receiver follow-up (#407).
+    sinks="$(printf '%s' "$GOLEM_EVENT_SINKS" | /usr/bin/tr ',' ' ')"
+    # shellcheck disable=SC2086  # intentional word-split of the sink URL list
+    for url in $sinks; do
+        case "$url" in
+            http://* | https://*) ;;
+            *) continue ;;
+        esac
+        # Fire-and-forget: bounded, all fds to /dev/null, backgrounded. The
+        # redirections detach the child so it never holds the caller's stdout
+        # pipe open, and `&` means the hook returns without awaiting the POST.
+        command curl -s -o /dev/null \
+            --connect-timeout "$GOLEM_EVENT_SINK_TIMEOUT" \
+            -m "$GOLEM_EVENT_SINK_TIMEOUT" \
+            -X POST -H 'Content-Type: application/json' \
+            --data-raw "$line" "$url" >/dev/null 2>&1 &
+    done
 fi
 
 exit 0
