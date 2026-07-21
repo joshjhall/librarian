@@ -163,10 +163,26 @@ reads its status/sink config through one consistent source.
    `feed.jsonl` always plus zero-or-more env-configured HTTP sinks, best-effort,
    never blocks the golem, always exits 0; converge with the containers
    `claude-host-event.sh` sink.
-3. **Orchestrator-push consumption / HTTP bridge** (#407, dep 2 + containers#735)
-   — give the orchestrate session a way to *receive* a golem's gate beyond
-   feed+Monitor (the additive listener of Decision 3); decide the listener's home;
-   works for container golems without a shared filesystem.
+3. **Orchestrator-push consumption / HTTP bridge** (#407, dep 2 + containers#735,
+   **LANDED librarian-side; container-golem end-to-end still blocked on
+   containers#735/#743**) — give the orchestrate session a way to *receive* a
+   golem's gate beyond feed+Monitor (the additive listener of Decision 3); decide
+   the listener's home; works for container golems without a shared filesystem.
+   Delivered as `scripts/golem-event-listener.{py,sh}`: an optional plugin-side
+   HTTP listener (the decided home — not an external service, keeping host /
+   bare-linux / container parity) that **appends each received POST into the
+   orchestrator's own `feed.jsonl`**. Because the #406 POST body is byte-identical
+   to a feed line, the received gate surfaces through the **existing**
+   `golem-gate-watch.sh --stream` Monitor floor with no new classification or
+   attribution path, satisfying "surfaces identically" for both golem types. It
+   binds loopback by default and is purely additive (absent ⇒ the feed + Monitor
+   floor is unchanged; worktree golems never need it). **Scope boundary:** the
+   *receiver* is complete and testable standalone (POST → feed → gate-watch), but
+   a real **container** golem cannot reach it until the container→host transport
+   and the `GOLEM_EVENT_SINKS`-into-`docker-compose.agents.yml` wiring land — both
+   item 4 (containers#735/#743). So #407's AC1 is fully met for **worktree**
+   golems and met **on the librarian side** for container golems; the container
+   end-to-end path completes only once item 4 ships.
 4. **containers transport + build-wired sink** (containers#743, cross-repo) —
    mount/forward `.worktrees/.status` across the container boundary
    (containers#735) and build-wire the container HTTP sink; tracked in the

@@ -248,6 +248,40 @@ A human operator gets the same proactive surface with **`${CLAUDE_PLUGIN_ROOT}/s
 notify/suppress/re-notify rules, and #600 (feed classification) / #587 (golem-id
 attribution).
 
+**Receive a container golem's gate — the optional HTTP listener (#407).** Both
+channels above are **file-mediated**: the feed channel tails a `feed.jsonl` on
+the orchestrator's own filesystem, and the pane channel scrapes a host-visible
+`tmux`. A **container golem** shares neither — its feed is trapped inside the
+container (the transport gap tracked in containers#735) — so its gate is
+invisible to both until the next PR/issue-label sweep. To close that gap without
+a shared filesystem, arm the **optional receiver**
+`${CLAUDE_PLUGIN_ROOT}/scripts/golem-event-listener.sh` alongside the two
+`Monitor`s above (a `Monitor`/background invocation), when supervising container
+golems:
+
+```text
+Monitor({                                       # optional: receive container-golem POSTs
+  command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-event-listener.sh",
+  description: "golem HTTP event receiver → feed.jsonl (container golems)",
+  persistent: true,
+})
+```
+
+The listener is the **consumption half** of the multi-sink event bus
+(ADR-0001 Decision 3): #406's `golem-notify.sh` already POSTs each classified
+event — a body **byte-identical to a `feed.jsonl` line** — to every
+`GOLEM_EVENT_SINKS` endpoint. A container golem points its `GOLEM_EVENT_SINKS`
+at this host listener (via the containers#735 transport; see
+`container-protocol.md`), and the listener **appends each received POST into the
+orchestrator's own `feed.jsonl`** — so its gate then surfaces through the **same
+feed channel `--stream` above, identically to a worktree golem's**
+(gate/escalation/dead-end classification + golem-id attribution preserved; no
+new surfacing path). It binds **loopback** by default (`GOLEM_EVENT_LISTEN_ADDR`
+/ `GOLEM_EVENT_LISTEN_PORT`, see the plugin README's env table). It is **purely
+additive**: when it is not armed, the feed + pane floor stands exactly as above,
+and worktree golems — which share the orchestrator's filesystem — never need it.
+The GitHub PR/issue-label poll is untouched.
+
 **Resolve a brokered gate centrally (the inbox — #227).** For an **escalation**
 or **dead-end** line (not a routine permission `gate`, and not a plan-gate — see
 the data-only invariant below), you can relay the decision back into the golem

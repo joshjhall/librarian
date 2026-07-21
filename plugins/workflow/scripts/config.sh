@@ -28,6 +28,17 @@
 #                        Per-POST connect+total timeout (seconds) for each
 #                        GOLEM_EVENT_SINKS endpoint, so a slow/dead sink can
 #                        never wedge the golem.            Default: 2
+#   GOLEM_EVENT_LISTEN_ADDR
+#                        Bind address of golem-event-listener (the #407 receiver
+#                        that appends POSTed events into feed.jsonl). Loopback by
+#                        default so it is not reachable off-host unless the
+#                        operator deliberately widens it.  Default: 127.0.0.1
+#   GOLEM_EVENT_LISTEN_PORT
+#                        Bind port of golem-event-listener; the port a container
+#                        golem's GOLEM_EVENT_SINKS points at.  Default: 8787
+#   GOLEM_EVENT_MAX_BODY Max accepted request-body size (bytes) for the listener,
+#                        so an oversized POST is rejected, not buffered.
+#                                                          Default: 65536
 #   GOLEM_BRANCH_PREFIX  Branch-name prefix; the branch for issue N is
 #                        "<prefix><N>".                  Default: feature/issue-
 #   GOLEM_LEVEL          Autonomy level (1-4) baked into a golem's launch line
@@ -103,6 +114,29 @@
 : "${GOLEM_EVENT_SINKS:=}"
 : "${GOLEM_EVENT_SINK_TIMEOUT:=2}"
 
+# Orchestrator-side event RECEIVER (#407, ADR-0001 Decision 3 — the consumption
+# half of the multi-sink bus above). golem-event-listener.{py,sh} is an OPTIONAL
+# HTTP listener that receives the events golem-notify.sh POSTs to a
+# GOLEM_EVENT_SINKS endpoint and appends each into THIS orchestrator's feed.jsonl,
+# so the existing golem-gate-watch.sh --stream Monitor floor surfaces a container
+# golem's gate identically to a locally-emitted one. It binds a socket only when
+# the operator runs it; absent, the feed + Monitor floor is unchanged (AC2). See
+# golem-event-listener.py for the full design and trust notes.
+#
+# TRUST BOUNDARY: the receiver is the counterpart to the emitter's trust model.
+# It binds LOOPBACK (GOLEM_EVENT_LISTEN_ADDR=127.0.0.1) by default, so it is not
+# reachable off-host unless the operator deliberately widens the bind address.
+# The received message is only ever re-serialized into the feed as a JSON string
+# (never interpreted as an instruction/path/shell word) and the body is bounded
+# by GOLEM_EVENT_MAX_BODY, so a malformed/oversized POST is rejected without
+# writing a feed line or crashing the listener. Host allow-listing beyond the
+# loopback default, TLS, and request signing stay deliberate NON-goals of this
+# best-effort receiver — the same stance the #406 emitter documented as the
+# receiver's concern.
+: "${GOLEM_EVENT_LISTEN_ADDR:=127.0.0.1}"
+: "${GOLEM_EVENT_LISTEN_PORT:=8787}"
+: "${GOLEM_EVENT_MAX_BODY:=65536}"
+
 # Branch naming: issue N -> "<GOLEM_BRANCH_PREFIX><N>".
 : "${GOLEM_BRANCH_PREFIX:=feature/issue-}"
 
@@ -135,7 +169,8 @@
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL GOLEM_INBOX_WAIT GOLEM_INBOX_POLL \
-    GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT
+    GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT \
+    GOLEM_EVENT_LISTEN_ADDR GOLEM_EVENT_LISTEN_PORT GOLEM_EVENT_MAX_BODY
 
 # GIT_ENV_SCRUB_VARS — git's hook-exported environment variables that
 # _repo_root_git (below) and the worktree-new/-rm callers scrub before running

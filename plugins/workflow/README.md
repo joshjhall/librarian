@@ -133,6 +133,9 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `GOLEM_STATUS_DIR` | `<worktree-dir>/.status` | Golem status JSON + feed |
 | `GOLEM_EVENT_SINKS` | (empty) | Space/comma list of `http(s)://` sinks `golem-notify.sh` POSTs each event to, besides `feed.jsonl` (empty ⇒ feed only, no network) |
 | `GOLEM_EVENT_SINK_TIMEOUT` | `2` | Per-POST connect+total timeout (seconds) for each `GOLEM_EVENT_SINKS` endpoint |
+| `GOLEM_EVENT_LISTEN_ADDR` | `127.0.0.1` | Bind address of the optional `golem-event-listener` receiver that appends POSTed events into `feed.jsonl` (loopback default; not reachable off-host unless widened) |
+| `GOLEM_EVENT_LISTEN_PORT` | `8787` | Bind port of `golem-event-listener` — the port a container golem's `GOLEM_EVENT_SINKS` targets |
+| `GOLEM_EVENT_MAX_BODY` | `65536` | Max accepted request-body size (bytes) for the listener; an oversized POST is rejected, not buffered |
 | `GOLEM_BRANCH_PREFIX` | `feature/issue-` | Branch for issue N is `<prefix><N>` |
 | `GOLEM_BASE_REF` | `origin/main` | Ref new worktree branches fork from |
 | `GOLEM_WORKTREE_LOCAL_FILES` | `.env .claude/settings.local.json` | Gitignored files copied into a fresh worktree |
