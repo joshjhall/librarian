@@ -356,8 +356,19 @@ mode, so the pull and push surfaces can never disagree. Two **co-equal** channel
   menu that also paints an `Enter to select` footer is classified as itself, not
   downgraded to an escalation — and the footer match is anchored to the pane's
   bottom lines (like the liveness classifier's #246 fix) so scrolled text
-  mentioning the phrase does not self-trip it. Relies on the alt-screen overlay
-  exception documented in the *Monitor (TTY-free)* bullet above.
+  mentioning the phrase does not self-trip it. As a **final** last-resort branch
+  (after plan-gate, permission-gate, and the fork) it also catches a
+  **turn-ended / idle-at-prompt** golem (#447) — one whose turn ended and now
+  waits at an empty prompt, painting the bare `⏵⏵ auto mode on` footer with no
+  `esc to interrupt` run-spinner (not a modal overlay, so the three matchers
+  above miss it). This is the vault-lock stall class that silently parked every
+  golem in a live L4 run; it is labelled *"⚠ idle at prompt — …"* and, being
+  footer-anchored and `⏵⏵`-glyph-gated, does not self-trip on scrollback. It is
+  **confirmed across two consecutive polls** before firing (so a momentary
+  between-turns render never pushes a false idle), whereas the three modal
+  matchers fire on the first poll. Relies
+  on the alt-screen overlay exception documented in the *Monitor (TTY-free)*
+  bullet above.
 
 **Notifies:** a real permission `gate` (feed: latest line per golem is a fresh
 `gate`/legacy `blocked` within `GOLEM_BLOCK_TTL`; pane: a prompt overlay is
@@ -365,12 +376,18 @@ present), a mid-flight `escalation` (feed: latest line is a fresh `escalation`,
 labelled *"escalation — …"* — issue #176; also caught on the pane channel via
 the `Enter to select` fork footer and labelled the same — issue #257), a
 `dead-end` (feed: latest line is a fresh `dead-end`, labelled *"dead-end — …"* —
-issue #180; the one block that holds even at L4), and a plan-gate `ExitPlanMode`
-(a `gate` in the feed, distinctly labeled on the pane channel).
+issue #180; the one block that holds even at L4), a plan-gate `ExitPlanMode`
+(a `gate` in the feed, distinctly labeled on the pane channel), and a
+**turn-ended / idle-at-prompt** golem (pane: `⏵⏵ auto mode on` footer with no
+`esc to interrupt` run-spinner, labelled *"⚠ idle at prompt — …"* — issue #447;
+the vault-lock/turn-end stall class, the pane channel's last-resort match after
+plan-gate/permission-gate/fork).
 
-**Suppressed:** a transient `idle` (feed noise); a `gate` superseded by a later
-`idle`/`gate` line; a `gate` aged past `GOLEM_BLOCK_TTL`; and — crucially for a
-stream — a **standing** gate already reported (see re-notify).
+**Suppressed:** a transient **feed** `idle` line (feed noise — distinct from the
+pane channel's turn-end/idle-at-prompt read above, which *is* notified); a `gate`
+superseded by a later `idle`/`gate` line; a `gate` aged past `GOLEM_BLOCK_TTL`;
+and — crucially for a stream — a **standing** gate already reported (see
+re-notify).
 
 **Re-notify (cleared/resumed).** The streaming modes emit only on the
 **transition into** a fresh gate, tracking the last-emitted state per golem: a

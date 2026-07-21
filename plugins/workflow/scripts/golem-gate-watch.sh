@@ -63,6 +63,7 @@
 #   --stream                 feed poll loop: emit on TRANSITION into a fresh
 #                            gate (dedupe standing gates), until killed
 #   --once-panes             pane snapshot: live golem-* sessions at a prompt
+#                            gate OR turn-ended/idle at their prompt (#447)
 #   --stream-panes           pane poll loop: emit on transition, until killed
 #   --once-liveness          liveness snapshot: per-golem heartbeat/stall, exit 0
 #   --stream-liveness        liveness poll loop: re-emit each golem's heartbeat
@@ -99,6 +100,12 @@ interval="${GOLEM_WATCH_INTERVAL:-5}"
 stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
 heartbeat_interval="${GOLEM_HEARTBEAT_INTERVAL:-60}"
 pane_footer_lines="${GOLEM_PANE_FOOTER_LINES:-8}"
+
+# The turn-end/idle-at-prompt push message (#447). Defined once here because two
+# functions couple on it: panes_snapshot() emits it, and confirm_turn_end()
+# recognizes it to apply the two-consecutive-poll debounce (below). A top-level
+# assignment so a SOURCED unit test sees it before calling either function.
+TURN_END_MSG="⚠ idle at prompt — turn ended, awaiting input (check pane)"
 
 # Resolve the MAIN checkout's status dir (the feed lives there even when invoked
 # from a worktree). repo_root (from config.sh) is bare-repo-safe.
@@ -239,7 +246,9 @@ emit_transitions() {
 # Modal prompt-overlay patterns. A live golem at a permission/plan gate — or an
 # AskUserQuestion escalation fork (#257) — paints one of these over its
 # alt-screen; matching them is reliable (unlike scraping scrolling work output).
-# Extend these lists as new prompt shapes appear.
+# Extend these lists as new prompt shapes appear. pane_is_turn_end (#447) is the
+# odd one out — NOT a modal overlay but a turn-ended/idle-at-prompt footer read —
+# and so runs as panes_snapshot's LAST-RESORT branch, after all three modals.
 pane_is_plan_gate() {
     case "$1" in
         *"Ready to code"*) return 0 ;;
@@ -296,8 +305,52 @@ pane_is_fork() {
     return 1
 }
 
+# Turn-ended / idle-at-prompt overlay (issue #447). NOT a modal overlay: a golem
+# that finished its turn and sits at an empty prompt awaiting human input — e.g.
+# commit signing halted on a locked 1Password vault, so the golem correctly
+# stopped rather than spin — paints only the ordinary `⏵⏵ auto mode on` footer
+# with no `esc to interrupt` run-spinner above it. The other three matchers detect
+# a MODAL prompt (plan/permission/fork), so this stall class slips past every push
+# channel — the exact hours-costing gap #447 describes. This matcher mirrors the
+# GLYPH arm of pane_liveness_class (the auto-mode-on footer with no spinner) — NOT
+# its `Unknown command` arm: that #229 error signature stays pull-only on the
+# liveness channel; the push channel deliberately reports only the turn-ended-at-
+# prompt footer here. So the pane push channel emits it too, letting it flow
+# through emit_transitions' dedup (fired once on the transition into the idle
+# state, re-fired only after it clears) rather than the un-deduped
+# --stream-liveness heartbeat that a Monitor push arm would drown in.
+#
+# Same two guards as pane_liveness_class (see #246): the match is ANCHORED to the
+# FOOTER region (last $pane_footer_lines lines) — this very script's comments carry
+# `auto mode on` and `esc to interrupt`, so a whole-scrollback match would
+# self-trip — and it requires the `⏵⏵` box-drawing glyph so a bare-words mention
+# stays unmatched. The run-spinner is checked FIRST: a working golem still paints
+# the `auto mode on` footer, so `esc to interrupt` present ⇒ NOT idle.
+#
+# This is a SINGLE-poll match. The two-consecutive-poll confirmation the issue
+# asks for — so a momentary between-turns render does not fire a false idle — is
+# layered on top in the --stream-panes drive arm via confirm_turn_end(), NOT here,
+# so --once-panes and the unit tests can assert the raw matcher in isolation.
+pane_is_turn_end() {
+    local footer
+    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    case "$footer" in
+        *"esc to interrupt"*) return 1 ;;
+    esac
+    case "$footer" in
+        *"⏵⏵"*"auto mode on"*) return 0 ;;
+    esac
+    return 1
+}
+
 # Print the current set of live golem-* sessions sitting at a prompt overlay,
 # one "<golem>\t<message>" line each. No-op (success) when tmux is absent.
+#
+# Dispatch order is load-bearing: plan-gate → permission-gate → escalation fork →
+# turn-end. Each modal matcher is checked before pane_is_turn_end so a real
+# overlay is classified as itself, never downgraded to the last-resort idle read
+# (a modal prompt still renders the `auto mode on` footer underneath it). This is
+# the same precedence discipline the fork branch already relies on.
 panes_snapshot() {
     command -v tmux >/dev/null 2>&1 || return 0
     local sessions sess pane
@@ -312,8 +365,59 @@ panes_snapshot() {
             /usr/bin/printf '%s\t%s\n' "$sess" "permission gate — awaiting decision"
         elif pane_is_fork "$pane"; then
             /usr/bin/printf '%s\t%s\n' "$sess" "escalation — awaiting decision (carries options)"
+        elif pane_is_turn_end "$pane"; then
+            /usr/bin/printf '%s\t%s\n' "$sess" "$TURN_END_MSG"
         fi
     done
+}
+
+# Two-consecutive-poll confirmation for the turn-end/idle-at-prompt signal (#447).
+# The raw panes_snapshot() emits $TURN_END_MSG the instant a golem's footer looks
+# idle. A golem momentarily BETWEEN turns — one response finished, the next
+# instruction/tool-result not yet rendered — can paint exactly that footer for a
+# single --stream-panes tick, which would push a false "idle at prompt". The issue
+# asks for the signal to be "confirmed across two consecutive polls to avoid firing
+# on a normal turn boundary", so this filter suppresses a turn-end line on the
+# FIRST poll it appears and passes it only once the SAME golem is still turn-ended
+# on the NEXT poll. Every other line (plan/permission/fork gate) passes through
+# untouched — those are modal overlays that do not flicker between turns.
+#
+# State is the space-delimited set PENDING_TURN_END (golems seen idle last poll but
+# not yet confirmed), threaded like emit_transitions' LAST_EMIT: a bash-3.2-clean
+# module global (no `declare -A`). A golem that clears (drops out of the snapshot,
+# or its line changes to a real gate) is dropped from the pending set, so a later
+# re-idle re-confirms from scratch.
+#
+# CRITICAL: like emit_transitions, this MUST run in the caller's shell (not a
+# `$(...)` subshell) or its PENDING_TURN_END mutation is discarded and the debounce
+# never confirms. So it does NOT print — it takes the snapshot as $1 and writes the
+# filtered snapshot to the global CONFIRMED_SNAPSHOT, mutating PENDING_TURN_END in
+# place. The caller reads CONFIRMED_SNAPSHOT and hands it to emit_transitions.
+PENDING_TURN_END=" "
+CONFIRMED_SNAPSHOT=""
+confirm_turn_end() {
+    local snapshot="$1"
+    local nextpending=" " out="" golem msg
+    while IFS=$'\t' read -r golem msg; do
+        [ -z "$golem" ] && continue
+        if [ "$msg" = "$TURN_END_MSG" ]; then
+            if _set_has "$PENDING_TURN_END" "$golem"; then
+                # Confirmed: idle on two consecutive polls — pass it through and KEEP
+                # pending so it is not re-suppressed while the stall persists (dedup
+                # of the standing line is emit_transitions' job downstream).
+                out="${out}${golem}"$'\t'"${msg}"$'\n'
+                _set_has "$nextpending" "$golem" || nextpending="${nextpending}${golem} "
+            else
+                # First idle poll for this golem: hold it back, mark pending.
+                nextpending="${nextpending}${golem} "
+            fi
+        else
+            # A non-turn-end line (real gate) passes straight through.
+            out="${out}${golem}"$'\t'"${msg}"$'\n'
+        fi
+    done <<<"$snapshot"
+    PENDING_TURN_END="$nextpending"
+    CONFIRMED_SNAPSHOT="$out"
 }
 
 # Classify a captured pane for the liveness sweep (issue #229). Unlike the
@@ -548,10 +652,24 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             done
             ;;
         --stream-panes)
-            emit_transitions "$(panes_snapshot)" 1
+            # panes_snapshot -> confirm_turn_end -> emit_transitions. confirm_turn_end
+            # applies the two-consecutive-poll debounce to the turn-end/idle line only
+            # (#447): a golem must look idle on two successive polls before its line is
+            # passed on, so a momentary between-turns render never pushes a false idle;
+            # real gates (plan/permission/fork) pass straight through. emit_transitions
+            # then dedups the confirmed standing line to a single push. Note this means
+            # a genuine idle takes prime + 1 poll (two observations) to surface — the
+            # confirmation the issue asks for.
+            # confirm_turn_end and emit_transitions BOTH mutate module state, so
+            # each must run in THIS shell — only the inner panes_snapshot capture is
+            # a subshell. confirm_turn_end writes CONFIRMED_SNAPSHOT; emit_transitions
+            # reads it.
+            confirm_turn_end "$(panes_snapshot)"
+            emit_transitions "$CONFIRMED_SNAPSHOT" 1
             while :; do
                 /usr/bin/sleep "$interval"
-                emit_transitions "$(panes_snapshot)" 0
+                confirm_turn_end "$(panes_snapshot)"
+                emit_transitions "$CONFIRMED_SNAPSHOT" 0
             done
             ;;
         --once-liveness)
