@@ -20,6 +20,19 @@ Invoked via `/orchestrate spawn <N>` (and by Phase D for container golems).
    launch the autonomous pipeline per golem (Phase D step 3). Write initial
    cache files to `.worktrees/.status/`.
 
+   **Wire the container golem's gate events back to the host (#407).** A
+   container golem shares no filesystem with the orchestrator, so its
+   `feed.jsonl` gates are invisible to the host feed/pane channels. To surface
+   them the moment they emit, point the container's `GOLEM_EVENT_SINKS` (the
+   #406 multi-sink emitter env) at the host's optional
+   `golem-event-listener.sh` receiver — e.g. `GOLEM_EVENT_SINKS=http://<host>:${GOLEM_EVENT_LISTEN_PORT:-8787}/`,
+   reaching the host over the containers#735 transport — and arm the receiver on
+   the orchestrator side (see `monitor-protocol.md` § *Receive a container
+   golem's gate*). The receiver appends each POST into the host `feed.jsonl`, so
+   the gate then surfaces through the **same** feed channel as a worktree golem's.
+   This is optional and additive: absent the sink/receiver, the container golem
+   still gates correctly — its gate is just not host-visible until a sweep.
+
 1. **Report** spawned golems with access commands:
 
    ```text
