@@ -100,15 +100,30 @@ Authoritative status comes from **PR + issue-label state**. The
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --checkpoint` (no `--watch`)
      and renders once. Use it when you actually want the burn/velocity read.
    - **Periodic, out-of-band via `CronCreate`** — schedule that same one-shot at a
-     modest off-minute interval and **redirect it to a file / the host
-     command-center**, so the render runs *outside* the live agent's context and
-     its cost is not paid in live tokens. This is the home for a standing
-     rolling table on a long batch.
+     modest off-minute interval and **redirect its output to a file** (a
+     `> status.txt` on the shared filesystem), so the render runs *outside* the
+     live agent's context and its cost is not paid in live tokens. This is the
+     home for a standing rolling table on a long batch. (A richer host
+     command-center sink is possible but out of scope — its shape is the
+     still-open consumption question in ADR-0001.)
 
-   If you *do* want the sweep armed inside the session (e.g. a short, closely
-   watched batch), arm it explicitly — it is no longer automatic. Run it TTY-free
-   via the bundled script so it works host / bare-linux / container identically
-   (no `just`):
+   **Exception — a Worker Pool / train still needs a periodic cadence as its
+   refill clock.** The event-driven default is right for a *fixed* batch (dispatch
+   N golems, watch them to done), where gate-watch catches everything actionable.
+   But Phase P's **pool refill** advances *on each Phase M sweep* — "the existing
+   cadence is the clock" (`pool-train-protocol.md` § Refill loop): the sweep is
+   what periodically detects a merged PR, frees the slot, and refills from the
+   backlog. Gate-watch fires only on gate *transitions*, never on "PR merged / CI
+   green / slot freed," so with **no** periodic cadence a pool would never refill.
+   Therefore, when `pool.queue == "accepting"` (a live worker pool), **do** arm a
+   periodic cadence — the opt-in sweep below, or an equivalent `CronCreate`
+   `/orchestrate status` render — as the refill clock. A plain fixed-batch
+   dispatch does not need it.
+
+   If you *do* want the sweep armed inside the session (a running Worker Pool, or
+   a short, closely watched batch), arm it explicitly — it is no longer automatic.
+   Run it TTY-free via the bundled script so it works host / bare-linux /
+   container identically (no `just`):
 
    ```text
    Monitor({                                       # OPT-IN rolling status sweep

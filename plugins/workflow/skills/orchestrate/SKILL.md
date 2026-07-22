@@ -398,7 +398,7 @@ included**. The orchestrator still never merges a golem branch into its own.
 
 ## Surface — Mid-Flight Commands
 
-Between monitor sweeps, the live session accepts:
+At any point during monitor/watch, the live session accepts:
 
 - **`merge #N`** — the human merges PR #N (or run `gh pr merge #N` if the repo's
   merge policy allows). The orchestrator does not merge into its own branch.

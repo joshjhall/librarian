@@ -669,7 +669,11 @@ orchestrator executes the `scripts/worktree-new.sh` + Phase D dispatch under the
 existing `ask` gates. The harness never launches a golem.
 
 The pool advances on each Phase M monitor sweep — there is **no background
-daemon**; the existing monitor cadence is the clock.
+daemon**; the sweep cadence is the clock. Post-#485 the rolling sweep is opt-in
+(gate-watch is the event-driven default and does not fire on "slot freed"), so a
+live pool **must arm** that periodic cadence (the `--watch` sweep or a
+`CronCreate` `/orchestrate status`) for refill to advance — see
+`pool-train-protocol.md` § Refill loop and `monitor-protocol.md` § Loop.
 
 ---
 

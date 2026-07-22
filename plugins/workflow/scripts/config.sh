@@ -78,7 +78,8 @@
 #   GOLEM_INBOX_POLL     Poll interval, seconds, of `consume`'s inner loop while
 #                        it waits for a matching decision.  Default: 3
 #   GOLEM_SWEEP_INTERVAL Cadence, seconds, of the orchestrator's Phase M status
-#                        sweep (golem-status.sh --watch, #304). Env OVERRIDE for
+#                        sweep (golem-status.sh --watch; opt-in since #485,
+#                        was default-on #304). Env OVERRIDE for
 #                        the level-scaled default: unset -> the per-level cadence
 #                        from autonomy-resolve.sh (L1 180 / L2 300 / L3 480 / L4
 #                        900). Deliberately has NO `:=` default line below — its
