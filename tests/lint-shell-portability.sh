@@ -97,14 +97,18 @@ scan_file() {
 # invocation, allowing the two legitimate uses of those prefixes:
 #   - the `#!/usr/bin/env bash` shebang (env is the ONE tool with a stable path),
 #   - `/usr/bin/env` itself anywhere (used to run a command with a scrubbed env).
-# Match a leading `/usr/bin/` or `/bin/` followed by a lowercase tool name that is
-# NOT `env`. Guards on BOTH sides so only a real tool invocation matches:
+# Match a leading `/usr/bin/` or `/bin/` followed by ANY lowercase tool name.
+# Guards on BOTH sides so only a real tool invocation matches:
 #   - leading `[^A-Za-z0-9_./]` (or start) so /usr/local/bin/x, /opt/... and an
 #     already-`command`'d name don't match;
 #   - trailing `[^/A-Za-z0-9_.-]` (or end) so a deeper PROJECT PATH like
 #     `$ROOT/bin/lib/release/x.sh` or `$sb/bin/release.sh` is NOT flagged — a tool
 #     invocation is followed by whitespace / `)` / `|` / etc., never `/` or `.`.
-PATHLIT_RE='(^|[^A-Za-z0-9_./])/(usr/bin|bin)/(env[A-Za-z0-9_-]|[a-df-z][a-z0-9_-]*)([^/A-Za-z0-9_.-]|$)'
+# The one allowed tool, `env` (the `#!/usr/bin/env` shebang and `/usr/bin/env -i`
+# exec-wrapper), is excluded PROCEDURALLY in scan_file_paths, not carved out of
+# the regex — an in-regex `[a-df-z]` first-letter exclusion would silently also
+# skip every other `e*` tool (echo, expr, eval, egrep …), a false-negative gap.
+PATHLIT_RE='(^|[^A-Za-z0-9_./])/(usr/bin|bin)/([a-z][a-z0-9_-]*)([^/A-Za-z0-9_.-]|$)'
 
 # scan_file_paths <path> — populate CUR_PATH_VIOLATIONS with `line N: <code>` for
 # each hardcoded coreutil-path invocation. Shebang (line 1) and comment lines are
@@ -130,7 +134,14 @@ scan_file_paths() {
             *"lint-allow-path:"*) continue ;;
         esac
         code="${code%%[[:space:]]#*}"
-        printf '%s\n' "$code" | command grep -qE "$PATHLIT_RE" || continue
+        # `env` is the one allowed tool (the `#!/usr/bin/env` shebang handled by
+        # the line-1 skip above, and the `/usr/bin/env -i` exec-wrapper). Blank out
+        # every `/usr/bin/env` and `/bin/env` occurrence (with its following
+        # separator so the boundary still matches) BEFORE the scan, so a line whose
+        # only absolute-path token is `env` no longer matches — while a line that
+        # ALSO invokes a real tool (`env … | /usr/bin/tr …`) still flags.
+        scan_code="$(printf '%s\n' "$code" | command sed -E 's#(^|[^A-Za-z0-9_./])/(usr/bin|bin)/env([^/A-Za-z0-9_.-]|$)#\1 \3#g')"
+        printf '%s\n' "$scan_code" | command grep -qE "$PATHLIT_RE" || continue
         CUR_PATH_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
     done <"$file"
 }
@@ -220,8 +231,11 @@ test_negative_case_paths_fire() {
 usrbin_hit="$(/usr/bin/mv a b)"
 binhit="$(/bin/cat f)"
 githit="$(/usr/bin/git status)"
+echohit="$(/bin/echo hi)"
+exprhit="$(/usr/bin/expr 1 + 1)"
 okcommand="$(command mv a b)"
 okenv="$(/usr/bin/env -i sh -c :)"
+okenvthentool="$(/usr/bin/env -i sh)"
 oklocal="$(/usr/local/bin/rm x)"
 okprojpath="$(source "$ROOT"/bin/lib/release/util.sh)"
 okprojscript="$(bash "$sb"/bin/release.sh patch)"
@@ -234,6 +248,10 @@ EOF
     assert_contains "$CUR_PATH_VIOLATIONS" "usrbin_hit" "/usr/bin/mv is flagged"
     assert_contains "$CUR_PATH_VIOLATIONS" "binhit" "/bin/cat is flagged"
     assert_contains "$CUR_PATH_VIOLATIONS" "githit" "/usr/bin/git is flagged"
+    # An `e*`-named tool must still be flagged (the exemption is `env` ALONE, not
+    # every tool starting with `e` — regression guard for the #443-review gap).
+    assert_contains "$CUR_PATH_VIOLATIONS" "echohit" "/bin/echo is flagged (not exempted as an e* tool)"
+    assert_contains "$CUR_PATH_VIOLATIONS" "exprhit" "/usr/bin/expr is flagged (not exempted as an e* tool)"
     # Portable / allowed forms must NOT surface.
     assert_not_contains "$CUR_PATH_VIOLATIONS" "okcommand" "command <tool> is NOT flagged"
     assert_not_contains "$CUR_PATH_VIOLATIONS" "okenv" "/usr/bin/env is NOT flagged"

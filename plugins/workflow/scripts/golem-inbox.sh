@@ -525,7 +525,10 @@ cmd_consume() {
         fi
 
         [ "$elapsed" -ge "$wait_s" ] && break
-        "$SLEEP" "$poll_s" 2>/dev/null || "$SLEEP" "$poll_s" 2>/dev/null || true
+        # Was a two-arm /usr/bin/sleep || command sleep fallback pre-#443; `_bin
+        # sleep` now resolves the one correct path (PATH-first, then dir scan), so
+        # a single attempt suffices — `|| true` keeps a sleep hiccup non-fatal.
+        "$SLEEP" "$poll_s" 2>/dev/null || true
         elapsed=$((elapsed + poll_s))
     done
 
