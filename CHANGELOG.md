@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-22
+
+### Added
+
+- Make next-issue /clear resume worktree-aware (#430)
+- Agnix→TSV normalizer for check-ai-config (#433)
+- Consume Mode-3 container token usage in golem-status (#440)
+- PreToolUse guard blocks destructive subagent shell (#448) (#450)
+- Add generic check-lifecycle scanner (#456)
+- Push turn-ended/idle-at-prompt stall on pane gate-watch (#447) (#455)
+- Multi-sink golem event emitter (GOLEM_EVENT_SINKS) (#468)
+- Wire agnix as optional checker pre-scan source (#469)
+- Headless-golem idle/error detection via session transcript (#473)
+- Orchestrator-push receiver for golem gate events (#407) (#476)
+- Build-order-aware orchestrate/tracks lane composition (#483)
+- Add GOLEM_MODEL launch knob for golem dispatch (#487) (#496)
+
+### CI/CD
+
+- Bump actions/setup-node in the actions group (#434)
+- Add agnix SARIF code-scanning gate (#460)
+
+### Changed
+
+- Rename pool.json `accepting` field to `queue` (#421)
+- Resolve golem-notify feed path via GOLEM_STATUS_DIR (#423)
+- Agnix precedence dedup matches per issue not per line (#402) (#477)
+- Suppress no-op golem-status checkpoint sweeps (#488) (#499)
+
+### Documentation
+
+- Record v0.7.0 release + confirmed PR-then-tag recipe
+- Foreground user-directed skills + fix component counts (#437)
+- Record 2026-07-19/20 orchestrate session memory learnings
+- Record #426 belt+origin-lock ship (PR #449)
+- Record #448 PreToolUse bash-guard ship, #426 fully closed
+- Verify /golem AC#3 + AC#5 in-session, move live ACs to #451 (#453)
+- Cross-link agnix pin to containers#769 companion issue (#463)
+- Record session memory learnings (#487 GOLEM_MODEL + backlog)
+- Wrap memory prose to satisfy rumdl MD013 (no --no-verify)
+- Record no---no-verify directive; fix the lint instead
+- Record #488 checkpoint-suppression + grep -c zero-count learnings
+
+### Fixed
+
+- Defer plan mode to Phase 2 so next-issue persists its state file (#425)
+- Clear send-keys-resolved plan gates from the BLOCKED list (#431)
+- Stub tmux in _run_liveness_snapshot to stop host golem leak (#438)
+- Ban destructive shell in read-only review agents (#426) (#449)
+- Footer-anchor pane_is_plan_gate/pane_is_gate matchers (#457)
+- Clear torn-down golem ghosts + surface API-error deaths in golem-status (#464)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.19.17 (#418)
+- Follow-up test coverage + Mode-3 started stamp for #283 (#427)
+- Finalize .agnix.toml tools/disable-list/version pin (#461)
+- Reset container golem status cache on issue reassignment (#466)
+
+### Testing
+
+- Guard golem-notify default drift + cover composed override (#439)
+- Remove fragile group-signal case from validate-golem-watch (#445)
+- Timestamped per-stage markers in run-all.sh (#442)
+- Add GOLEM_PANE_FOOTER_LINES env-override test for pane matchers (#479)
+- Add tail-window boundary cases for footer-anchored pane matchers (#480)
+- Cover golem-resolve + _gate_age_suffix fail-safe arms (#482)
+
 ## [0.7.0] - 2026-07-19
 
 ### Added
@@ -363,6 +431,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.8.0]: https://github.com/joshjhall/librarian/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/joshjhall/librarian/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/joshjhall/librarian/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/joshjhall/librarian/compare/v0.6.0...v0.6.1
