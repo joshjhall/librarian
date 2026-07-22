@@ -20,7 +20,7 @@
 # for a worked example), `while IFS= read` loops instead of mapfile, and
 # `tr '[:upper:]' '[:lower:]'` for case folding.
 #
-# Check 2 — hardcoded coreutil paths (#443): a `/usr/bin/<tool>` or `/bin/<tool>`
+# Check 2 — hardcoded core-utility paths (#443): a `/usr/bin/<tool>` or `/bin/<tool>`
 # invocation is banned (it exits 127 where the tool lives elsewhere — macOS /bin,
 # Homebrew git). Use the `command <tool>` builtin, which honors PATH while still
 # bypassing shell functions/aliases. Allowed: the `#!/usr/bin/env bash` shebang
@@ -87,7 +87,7 @@ scan_file() {
     done <"$file"
 }
 
-# --- Hardcoded coreutil-path ban (#443) -------------------------------------
+# --- Hardcoded core-utility-path ban (#443) -------------------------------------
 # A tool invoked by an absolute path (`/usr/bin/mv`, `/bin/cat`) is NOT portable:
 # on macOS core utils live in /bin, /usr/bin/realpath is absent, and Homebrew git
 # is at /opt/homebrew/bin/git — so under `set -euo pipefail` a wrong assumed path
@@ -111,7 +111,7 @@ scan_file() {
 PATHLIT_RE='(^|[^A-Za-z0-9_./])/(usr/bin|bin)/([a-z][a-z0-9_-]*)([^/A-Za-z0-9_.-]|$)'
 
 # scan_file_paths <path> — populate CUR_PATH_VIOLATIONS with `line N: <code>` for
-# each hardcoded coreutil-path invocation. Shebang (line 1) and comment lines are
+# each hardcoded core-utility-path invocation. Shebang (line 1) and comment lines are
 # skipped, matching scan_file's comment handling, so a doc mention of `/usr/bin/x`
 # does not register.
 CUR_PATH_VIOLATIONS=""
@@ -278,7 +278,7 @@ while IFS= read -r f; do
     [ -n "$f" ] || continue
     CUR_FILE="$f"
     run_test test_file_portable "${f#"$REPO_ROOT"/}: bash-3.2 clean"
-    run_test test_file_no_hardcoded_paths "${f#"$REPO_ROOT"/}: no hardcoded coreutil paths (#443)"
+    run_test test_file_no_hardcoded_paths "${f#"$REPO_ROOT"/}: no hardcoded core-utility paths (#443)"
 done <<<"$scripts_list"
 
 generate_report

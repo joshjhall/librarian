@@ -92,7 +92,7 @@ set -uo pipefail
 # --- Portable tool resolution (#443) ----------------------------------------
 # This script runs under a potentially stripped/hermetic PATH (its liveness /
 # --watch paths are tested with PATH reduced to a few stubs), so `command <tool>`
-# would fail to find an external coreutil there — yet a hardcoded /usr/bin/<tool>
+# would fail to find an external core utility there — yet a hardcoded /usr/bin/<tool>
 # is wrong on macOS. `_bin <tool>` honors PATH first (the `command -v` builtin
 # needs no external binary), then falls back to scanning the standard bin dirs so
 # it still resolves under a stripped PATH, then yields the bare name. Candidates
