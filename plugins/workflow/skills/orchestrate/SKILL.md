@@ -42,8 +42,9 @@ merge anything a golem leaves for them.
 **Companion files** (load before the matching phase):
 
 - `mode-protocol.md` — execution + golem dispatch modes, decision tree
-- `monitor-protocol.md` — Phase M (monitor) full protocol: PR-status sweep,
-  gate-watch, slow-review posture
+- `monitor-protocol.md` — Phase M (monitor) full protocol: event-driven push
+  gate-watch (the default surface), the opt-in / cron-scheduled rolling status
+  sweep, slow-review posture
 - `pool-train-protocol.md` — Phase P (worker pool) + Phase T (integration train)
   full step-by-step protocol
 - `merge-protocol.md` — cross-PR rebase conflict classification + test-runner
@@ -60,8 +61,8 @@ merge anything a golem leaves for them.
 | `/orchestrate pool <N>` | Phase P — Worker pool (set size, refill from backlog) |
 | `/orchestrate tracks [N]` | Phase P — Compose 2–4 ordered, low-collision tracks, then run the setup flow (propose → approve → choose L1–L4 → dispatch) |
 | `/orchestrate drain` / `pause` / `resume` | Phase P — Pool refill controls |
-| `/orchestrate` or `/orchestrate status` | Phase M — Monitor (one sweep) |
-| `/orchestrate monitor` / `watch` | Phase M — Monitor loop |
+| `/orchestrate` or `/orchestrate status` | Phase M — Monitor (one-shot status sweep, on demand) |
+| `/orchestrate monitor` / `watch` | Phase M — Monitor loop (event-driven push gate-watch by default; rolling sweep opt-in) |
 | `/orchestrate rebase` or `rebase <N>` | Phase R — Cross-PR rebase |
 | `/orchestrate train` or `train <N…>` | Phase T — Integration train (land a batch) |
 | `/orchestrate mode` | Phase 0 — Mode selection |
@@ -397,7 +398,7 @@ included**. The orchestrator still never merges a golem branch into its own.
 
 ## Surface — Mid-Flight Commands
 
-Between monitor sweeps, the live session accepts:
+At any point during monitor/watch, the live session accepts:
 
 - **`merge #N`** — the human merges PR #N (or run `gh pr merge #N` if the repo's
   merge policy allows). The orchestrator does not merge into its own branch.

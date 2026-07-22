@@ -24,7 +24,8 @@
 #   golem-status.sh [--checkpoint] --watch [--level N] [--interval S]
 #                                          re-render on a level-scaled interval
 #                                          until killed (orchestrator Phase M
-#                                          default-on sweep, #304). --checkpoint
+#                                          OPT-IN sweep — was default-on #304,
+#                                          superseded by #485). --checkpoint
 #                                          selects the compact render for the
 #                                          sweep; without it the sweep is verbose.
 #
@@ -917,8 +918,10 @@ is_positive_int() {
 
 # --- drive ------------------------------------------------------------------
 # Default (no args): one-shot render, exit. --watch: re-render on the resolved
-# interval until the operator kills it — the orchestrator's Phase M default-on
-# status sweep (#304). The loop carries no empty-poll exit (mirrors
+# interval until the operator kills it — the orchestrator's Phase M OPT-IN status
+# sweep (was default-on #304, superseded by #485; the event-driven push
+# gate-watch is now the default surface). The loop carries no empty-poll exit
+# (mirrors
 # golem-gate-watch.sh --stream*): a transient zero-golem handoff window renders
 # "No active golems" and keeps sweeping rather than terminating.
 #

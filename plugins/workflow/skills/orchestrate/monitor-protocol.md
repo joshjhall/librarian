@@ -74,18 +74,59 @@ Authoritative status comes from **PR + issue-label state**. The
    (`LIBRARIAN_CI_INFRA_RETRIES`, default 1) and degrades to escalate-with-note,
    never blocking shipping.
 
-1. **Loop** (for `monitor`/`watch`): the periodic status sweep is **on by
-   default at every level — arm it automatically, do NOT ask** ("would you like a
-   sweep?" is gone; #304). On entering `monitor`/`watch`, start the rolling
-   at-a-glance sweep and re-poll on its interval, surfacing changes. Between
-   sweeps, accept mid-flight commands (see Surface below). The operator can
-   silence or re-cadence it, but the default is armed.
+1. **Loop** (for `monitor`/`watch`): the default surface is **event-driven** —
+   arm the two **push** gate-watch channels below and act on the transitions they
+   emit. Do **NOT** auto-arm the persistent rolling `--checkpoint --watch` sweep
+   (this **supersedes** the #304 "arm the sweep automatically, do NOT ask"
+   default). The push gate-watch already fires on every actionable transition
+   (gate / escalation / dead-end / PR-ready) and costs ~nothing between events, so
+   a rolling pull sweep on a fixed cadence is redundant burn: it re-drives the
+   full token-scrape + PR/label render every interval and drops a checkpoint into
+   the live agent's context whether or not anything changed. On entering
+   `monitor`/`watch`, arm the gate-watch channels (see **Proactive gate-watch**
+   below) and accept mid-flight commands (see Surface below).
 
-   Run the sweep TTY-free via the bundled script so it works host / bare-linux /
+   **Act on transitions — do not reactively re-poll.** Each emitted gate-watch
+   line is a *decision* to make (approve a plan, triage CI, resolve an
+   escalation), not a trigger to re-run `gh pr list` + `capture-pane` across every
+   golem. The live agent should spend tokens on decisions, not on re-rendering an
+   at-a-glance table on a timer. A rolling checkpoint (when explicitly armed
+   below) is a **glance**, never a prompt to sweep everything again.
+
+   **The rolling status table is opt-in, not auto-armed.** Two ways to get it
+   without paying for it every interval in live context:
+
+   - **One-shot, on demand** — `/orchestrate status` runs a single
+     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --checkpoint` (no `--watch`)
+     and renders once. Use it when you actually want the burn/velocity read.
+   - **Periodic, out-of-band via `CronCreate`** — schedule that same one-shot at a
+     modest off-minute interval and **redirect its output to a file** (a
+     `> status.txt` on the shared filesystem), so the render runs *outside* the
+     live agent's context and its cost is not paid in live tokens. This is the
+     home for a standing rolling table on a long batch. (A richer host
+     command-center sink is possible but out of scope — its shape is the
+     still-open consumption question in ADR-0001.)
+
+   **Exception — a Worker Pool / train still needs a periodic cadence as its
+   refill clock.** The event-driven default is right for a *fixed* batch (dispatch
+   N golems, watch them to done), where gate-watch catches everything actionable.
+   But Phase P's **pool refill** advances *on each Phase M sweep* — "the existing
+   cadence is the clock" (`pool-train-protocol.md` § Refill loop): the sweep is
+   what periodically detects a merged PR, frees the slot, and refills from the
+   backlog. Gate-watch fires only on gate *transitions*, never on "PR merged / CI
+   green / slot freed," so with **no** periodic cadence a pool would never refill.
+   Therefore, when `pool.queue == "accepting"` (a live worker pool), **do** arm a
+   periodic cadence — the opt-in sweep below, or an equivalent `CronCreate`
+   `/orchestrate status` render — as the refill clock. A plain fixed-batch
+   dispatch does not need it.
+
+   If you *do* want the sweep armed inside the session (a running Worker Pool, or
+   a short, closely watched batch), arm it explicitly — it is no longer automatic.
+   Run it TTY-free via the bundled script so it works host / bare-linux /
    container identically (no `just`):
 
    ```text
-   Monitor({                                       # rolling status sweep
+   Monitor({                                       # OPT-IN rolling status sweep
      command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --checkpoint --watch --level N",
      description: "periodic golem status+burn checkpoint (level-scaled)",
      persistent: true,
@@ -118,7 +159,8 @@ Authoritative status comes from **PR + issue-label state**. The
    real `STATE` transition re-emits the full table promptly; a one-shot
    `--checkpoint` (no `--watch`) always renders in full.
 
-   **Cadence scales by autonomy level** — higher levels assume golems run longer
+   **Cadence scales by autonomy level** — *when the sweep is armed* (opt-in, or
+   the `CronCreate` render's schedule), higher levels assume golems run longer
    without oversight, so they sweep less often (the exact seconds live in
    `autonomy-resolve.sh sweep-interval --level N`, the single source of truth,
    #190/#304 — the skill does not re-derive them):
@@ -155,6 +197,12 @@ Authoritative status comes from **PR + issue-label state**. The
    Phase D "Label + cache" step (worktree golems) or the container entrypoint
    (Mode 3); a golem whose initial cache write omitted `started` renders ELAPSED
    as `—` (no fabricated age).
+
+   **This is purely about *how status is surfaced*.** Making the rolling sweep
+   opt-in changes nothing about gate handling: the **never-time-out human-gate**
+   guarantee (every kept gate waits indefinitely for a human) and the
+   **never-kill slow-review** posture (below) are unchanged — the push gate-watch
+   is precisely what enforces them, and it is now the always-on default.
 
 **Supervised live golems (pre-PR).** The PR poll above covers golems that have
 opened a PR. While a golem is still working it has no PR yet, so watch it

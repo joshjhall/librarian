@@ -467,15 +467,22 @@ this work.
 ### Status-sweep cadence
 
 The gate-watch above is a **push** surface, event-driven — it fires on the
-*transition into* a fresh gate. Its **pull** complement is the periodic **status
-sweep**: `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --watch`, a rolling
-at-a-glance re-render of every golem's row on a fixed interval. It is **on by
-default at every level (L1–L4)** — the orchestrator arms it on entering
-`monitor`/`watch` without asking (the old "would you like a sweep?" opt-in prompt
-is removed, #304); the operator may silence or re-cadence it.
+*transition into* a fresh gate — and it is the **default** monitor surface: the
+orchestrator arms it on entering `monitor`/`watch` and acts on the transitions it
+emits. Its **pull** complement is the periodic **status sweep**:
+`${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --watch`, a rolling at-a-glance
+re-render of every golem's row on a fixed interval. That rolling sweep is **no
+longer auto-armed** — it is **opt-in** (a one-shot `/orchestrate status`, or a
+`CronCreate` render that writes out-of-band so its cost is not paid in live
+tokens), which **supersedes** the #304 "arm the sweep by default at every level"
+decision (event-driven is cheaper and the push gate-watch already catches every
+actionable transition). The full rationale + the opt-in / cron mechanics live in
+`monitor-protocol.md` § *Loop*. When the sweep **is** armed, the operator may
+silence or re-cadence it.
 
-The interval **scales by autonomy level** (higher level → less frequent sweep,
-since golems run longer without oversight). The mapping is owned by
+The interval **scales by autonomy level** when the sweep is armed (higher level →
+less frequent sweep, since golems run longer without oversight). The mapping is
+owned by
 `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh sweep-interval --level N`
 (single source of truth for per-level dispositions, #190) — **L1 180s / L2 300s /
 L3 480s / L4 900s**. Precedence when `golem-status.sh --watch` resolves its
@@ -662,7 +669,11 @@ orchestrator executes the `scripts/worktree-new.sh` + Phase D dispatch under the
 existing `ask` gates. The harness never launches a golem.
 
 The pool advances on each Phase M monitor sweep — there is **no background
-daemon**; the existing monitor cadence is the clock.
+daemon**; the sweep cadence is the clock. Post-#485 the rolling sweep is opt-in
+(gate-watch is the event-driven default and does not fire on "slot freed"), so a
+live pool **must arm** that periodic cadence (the `--watch` sweep or a
+`CronCreate` `/orchestrate status`) for refill to advance — see
+`pool-train-protocol.md` § Refill loop and `monitor-protocol.md` § Loop.
 
 ---
 

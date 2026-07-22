@@ -35,7 +35,13 @@ one-way wind-down), `paused` (freeze refills without draining; resumable).
 ### Refill loop
 
 The pool advances **on each Phase M monitor sweep** (no background daemon — the
-existing cadence is the clock):
+sweep cadence is the clock). Since #485 made the rolling sweep **opt-in** (the
+default monitor surface is the event-driven push gate-watch, which fires only on
+gate transitions — never on "PR merged / slot freed"), a live pool **must arm a
+periodic cadence** for refill to advance: the opt-in `golem-status.sh --watch`
+sweep, or an equivalent `CronCreate` `/orchestrate status` render (see
+`monitor-protocol.md` § Loop → the Worker-Pool exception). Without it the pool
+never detects a freed slot:
 
 1. **Free slots.** The Phase M sweep already detects merged PRs; for each merged
    golem, prune its worktree (`${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh {N}`, which also deletes the
