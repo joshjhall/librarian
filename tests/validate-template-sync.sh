@@ -37,16 +37,16 @@ test_suite "codebase-audit issue-template sync"
 # Normalize a template to its sorted set of unique, non-blank, trimmed lines.
 # Reads from stdin, writes the normalized set to stdout.
 normalize_template() {
-    /usr/bin/awk '
+    command awk '
         { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
         $0 != "" { print }
-    ' | LC_ALL=C /usr/bin/sort -u
+    ' | LC_ALL=C command sort -u
 }
 
 # Extract the canonical template: the fenced ```markdown block under the
 # `## Issue Template` heading in issue-templates.md.
 extract_canonical() {
-    /usr/bin/awk '
+    command awk '
         /^## Issue Template[[:space:]]*$/ { in_section = 1; next }
         in_section && /^```/ {
             if (in_fence) { exit }
@@ -61,7 +61,7 @@ extract_canonical() {
 # leading indent + opening quote and the trailing quote/comma so an element like
 # `  '### Findings',` yields `### Findings` and an empty `''` yields a blank line.
 extract_inline() {
-    /usr/bin/awk '
+    command awk '
         /const ISSUE_TEMPLATE = \[/ { in_arr = 1; next }
         in_arr && /^\]\.join\(/ { exit }
         in_arr {
@@ -89,7 +89,7 @@ test_inline_matches_canonical() {
 
     if [ "$canonical" != "$inline" ]; then
         local diff_out
-        diff_out="$(/usr/bin/diff <(printf '%s\n' "$canonical") <(printf '%s\n' "$inline") || true)"
+        diff_out="$(command diff <(printf '%s\n' "$canonical") <(printf '%s\n' "$inline") || true)"
         local detail=()
         while IFS= read -r line; do
             [ -n "$line" ] && detail+=("$line")
@@ -108,7 +108,7 @@ test_detector_fires_on_drift() {
     canonical="$(extract_canonical | normalize_template)"
     inline="$(extract_inline | normalize_template)"
     # Simulate an inline copy that renamed a section heading.
-    tampered="$(extract_inline | /usr/bin/sed 's/### Findings/### Finding Items/' | normalize_template)"
+    tampered="$(extract_inline | command sed 's/### Findings/### Finding Items/' | normalize_template)"
 
     # Two guards so this negative fixture can't pass for the wrong reason:
     #   1. `tampered` must be non-empty — else a broken extract_inline (returns

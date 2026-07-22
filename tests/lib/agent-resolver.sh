@@ -27,7 +27,7 @@ agent_resolver_index() {
         -name '*.md' 2>/dev/null |
         while IFS= read -r f; do
             [ -n "$f" ] || continue
-            /usr/bin/basename "$f" .md
+            command basename "$f" .md
         done | command sort -u
 }
 
@@ -65,7 +65,7 @@ collect_skill_subagent_types() {
         [ -n "$skill_file" ] || continue
         [ -f "$skill_file" ] || continue
         # Extract only the frontmatter block (first ---...--- fence).
-        /usr/bin/awk '
+        command awk '
             NR == 1 && $0 == "---" { infm = 1; next }
             infm && $0 == "---" { exit }
             infm { print }
@@ -78,7 +78,7 @@ collect_skill_subagent_types() {
 # Internal: read a frontmatter block on stdin, emit "<skill>\t<name>" lines.
 _emit_subagent_types_from_frontmatter() {
     local skill_file="$1"
-    /usr/bin/awk -v skill="$skill_file" '
+    command awk -v skill="$skill_file" '
         function strip(s) {
             sub(/#.*$/, "", s)                       # drop trailing comment
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)

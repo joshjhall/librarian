@@ -62,8 +62,8 @@ if command -v python3 >/dev/null 2>&1 &&
     HAVE_PY=1
 fi
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 SK="$SKILLS_DIR/check-lifecycle"
 
@@ -76,7 +76,7 @@ emit_rows() {
         python3 "$SK/patterns.py" "$list" 2>/dev/null
     else
         /usr/bin/env PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null
-    fi | /usr/bin/awk -F '\t' -v c="$cat" '$3 == c'
+    fi | command awk -F '\t' -v c="$cat" '$3 == c'
 }
 
 # assert_fires LIST CAT NEEDLE MSG — the category fires (rows contain NEEDLE) in
@@ -99,7 +99,7 @@ assert_silent() {
 }
 
 # fresh_dir — unique scratch dir per fixture so path resolution is clean.
-fresh_dir() { /usr/bin/mktemp -d "$WORKDIR/case.XXXXXX"; }
+fresh_dir() { command mktemp -d "$WORKDIR/case.XXXXXX"; }
 
 # make_list OUTFILE PATH... — write a newline file list, echo its path.
 make_list() {
@@ -108,9 +108,9 @@ make_list() {
     : >"$out"
     local p
     for p in "$@"; do
-        /usr/bin/printf '%s\n' "$p" >>"$out"
+        command printf '%s\n' "$p" >>"$out"
     done
-    /usr/bin/printf '%s' "$out"
+    command printf '%s' "$out"
 }
 
 # ============================================================================
@@ -121,21 +121,21 @@ test_unreaped_subprocess() {
 
     # Swift Process()
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'let task = Process()' >"$d/a.swift"
+    command printf '%s\n' 'let task = Process()' >"$d/a.swift"
     list="$(make_list "$d/l" "$d/a.swift")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: Swift Process() spawn fires"
 
     # Python Popen / subprocess.Popen
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n%s\n' 'proc = subprocess.Popen(["ls"])' 'p2 = Popen(cmd)' >"$d/b.py"
+    command printf '%s\n%s\n' 'proc = subprocess.Popen(["ls"])' 'p2 = Popen(cmd)' >"$d/b.py"
     list="$(make_list "$d/l" "$d/b.py")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: Python Popen spawn fires"
 
     # JS spawn / execFile / bare exec (child_process.exec — the common Node form)
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n%s\n%s\n' \
+    command printf '%s\n%s\n%s\n' \
         'const child = spawn("ls", args)' \
         'const r = execFile("cat", [f])' \
         'const e = exec("ls -la", cb)' >"$d/c.js"
@@ -145,7 +145,7 @@ test_unreaped_subprocess() {
 
     # Go exec.Command
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'cmd := exec.Command("ls")' >"$d/d.go"
+    command printf '%s\n' 'cmd := exec.Command("ls")' >"$d/d.go"
     list="$(make_list "$d/l" "$d/d.go")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: Go exec.Command fires"
@@ -154,19 +154,19 @@ test_unreaped_subprocess() {
     # asserted independently so a regression dropping one can't hide behind
     # another (same isolation principle as the listener category).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const a = spawnSync("ls")' >"$d/ss.js"
+    command printf '%s\n' 'const a = spawnSync("ls")' >"$d/ss.js"
     list="$(make_list "$d/l" "$d/ss.js")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: JS spawnSync fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const b = execFileSync("cat", [f])' >"$d/efs.js"
+    command printf '%s\n' 'const b = execFileSync("cat", [f])' >"$d/efs.js"
     list="$(make_list "$d/l" "$d/efs.js")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: JS execFileSync fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const c = execSync("ls -la")' >"$d/es.js"
+    command printf '%s\n' 'const c = execSync("ls -la")' >"$d/es.js"
     list="$(make_list "$d/l" "$d/es.js")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: JS execSync fires"
@@ -174,7 +174,7 @@ test_unreaped_subprocess() {
     # Negative: a plain function call that merely CONTAINS "spawn" as a substring
     # of another identifier must NOT fire (word-boundary anchor).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const n = respawnCounter(x)' >"$d/neg.js"
+    command printf '%s\n' 'const n = respawnCounter(x)' >"$d/neg.js"
     list="$(make_list "$d/l" "$d/neg.js")"
     assert_silent "$list" unreaped-subprocess \
         "lifecycle: respawnCounter (substring, not a call) does NOT fire"
@@ -185,7 +185,7 @@ test_unreaped_subprocess() {
     # absorbs — pinning it here makes any future regex tightening a reviewed,
     # intentional change rather than a silent drift.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const m = /ab+c/.exec(input)' >"$d/re.js"
+    command printf '%s\n' 'const m = /ab+c/.exec(input)' >"$d/re.js"
     list="$(make_list "$d/l" "$d/re.js")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: regex.exec() fires (pinned FP; pass-2 dismisses)"
@@ -198,27 +198,27 @@ test_terminate_without_kill() {
     local d list
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'task.terminate()' >"$d/a.swift"
+    command printf '%s\n' 'task.terminate()' >"$d/a.swift"
     list="$(make_list "$d/l" "$d/a.swift")"
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
         "lifecycle: Swift .terminate() fires"
 
     # Python .terminate() — the arm exists for all four languages, assert it.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'proc.terminate()' >"$d/b.py"
+    command printf '%s\n' 'proc.terminate()' >"$d/b.py"
     list="$(make_list "$d/l" "$d/b.py")"
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
         "lifecycle: Python .terminate() fires"
 
     # JS .terminate() (e.g. a Worker) — assert the JS arm independently.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'child.terminate()' >"$d/c.js"
+    command printf '%s\n' 'child.terminate()' >"$d/c.js"
     list="$(make_list "$d/l" "$d/c.js")"
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
         "lifecycle: JS .terminate() fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'signal.Notify(c, os.Interrupt)' >"$d/d.go"
+    command printf '%s\n' 'signal.Notify(c, os.Interrupt)' >"$d/d.go"
     list="$(make_list "$d/l" "$d/d.go")"
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
         "lifecycle: Go os.Interrupt fires"
@@ -232,7 +232,7 @@ test_unclosed_handle() {
 
     # Python assignment form fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'f = open("x.txt")' >"$d/a.py"
+    command printf '%s\n' 'f = open("x.txt")' >"$d/a.py"
     list="$(make_list "$d/l" "$d/a.py")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: Python f = open() fires"
@@ -240,14 +240,14 @@ test_unclosed_handle() {
     # Python scoped `with open() as f:` stays SILENT (the low-FP boundary — no
     # `= open(` assignment).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'with open("x.txt") as f:' >"$d/b.py"
+    command printf '%s\n' 'with open("x.txt") as f:' >"$d/b.py"
     list="$(make_list "$d/l" "$d/b.py")"
     assert_silent "$list" unclosed-handle \
         "lifecycle: Python with open() as f is bounded (silent)"
 
     # Go os.Open / os.Create assignment fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'f, err := os.Open("x.txt")' >"$d/c.go"
+    command printf '%s\n' 'f, err := os.Open("x.txt")' >"$d/c.go"
     list="$(make_list "$d/l" "$d/c.go")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: Go os.Open fires"
@@ -258,41 +258,41 @@ test_unclosed_handle() {
     # dismisses. This documents the real (not defer-aware) behavior and guards
     # against a doc claim that the regex is boundary-aware when it is not.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n%s\n' 'f, err := os.Open("x.txt")' '	defer f.Close()' >"$d/deferred.go"
+    command printf '%s\n%s\n' 'f, err := os.Open("x.txt")' '	defer f.Close()' >"$d/deferred.go"
     list="$(make_list "$d/l" "$d/deferred.go")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: Go os.Open + defer still fires (candidate; pass-2 resolves)"
 
     # JS fs.openSync assignment fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const s = fs.openSync(path, "r")' >"$d/d.js"
+    command printf '%s\n' 'const s = fs.openSync(path, "r")' >"$d/d.js"
     list="$(make_list "$d/l" "$d/d.js")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: JS fs.openSync fires"
 
     # JS createReadStream/createWriteStream alternatives asserted independently.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const rs = fs.createReadStream(path)' >"$d/crs.js"
+    command printf '%s\n' 'const rs = fs.createReadStream(path)' >"$d/crs.js"
     list="$(make_list "$d/l" "$d/crs.js")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: JS fs.createReadStream fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const ws = fs.createWriteStream(path)' >"$d/cws.js"
+    command printf '%s\n' 'const ws = fs.createWriteStream(path)' >"$d/cws.js"
     list="$(make_list "$d/l" "$d/cws.js")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: JS fs.createWriteStream fires"
 
     # Go os.Create alternative asserted independently (os.Open covered above).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'g, err := os.Create("y.txt")' >"$d/cr.go"
+    command printf '%s\n' 'g, err := os.Create("y.txt")' >"$d/cr.go"
     list="$(make_list "$d/l" "$d/cr.go")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: Go os.Create fires"
 
     # Swift FileHandle() assignment fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'let fh = FileHandle(forReadingAtPath: p)' >"$d/e.swift"
+    command printf '%s\n' 'let fh = FileHandle(forReadingAtPath: p)' >"$d/e.swift"
     list="$(make_list "$d/l" "$d/e.swift")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: Swift FileHandle() fires"
@@ -308,32 +308,32 @@ test_unpaired_listener() {
     # one regex alternative can't hide behind another (the label is shared, so a
     # composite fixture would pass as long as any single alternative still fired).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'el.addEventListener("click", h)' >"$d/aev.js"
+    command printf '%s\n' 'el.addEventListener("click", h)' >"$d/aev.js"
     list="$(make_list "$d/l" "$d/aev.js")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: JS addEventListener fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const t = setInterval(tick, 1000)' >"$d/iv.js"
+    command printf '%s\n' 'const t = setInterval(tick, 1000)' >"$d/iv.js"
     list="$(make_list "$d/l" "$d/iv.js")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: JS setInterval fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'emitter.on("data", cb)' >"$d/on.js"
+    command printf '%s\n' 'emitter.on("data", cb)' >"$d/on.js"
     list="$(make_list "$d/l" "$d/on.js")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: JS .on( fires"
 
     # Both Swift alternatives (addObserver, scheduledTimer) asserted independently.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'NotificationCenter.default.addObserver(self, selector: s)' >"$d/obs.swift"
+    command printf '%s\n' 'NotificationCenter.default.addObserver(self, selector: s)' >"$d/obs.swift"
     list="$(make_list "$d/l" "$d/obs.swift")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Swift addObserver fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'let t = Timer.scheduledTimer(withTimeInterval: 1)' >"$d/tmr.swift"
+    command printf '%s\n' 'let t = Timer.scheduledTimer(withTimeInterval: 1)' >"$d/tmr.swift"
     list="$(make_list "$d/l" "$d/tmr.swift")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Swift scheduledTimer fires"
@@ -343,7 +343,7 @@ test_unpaired_listener() {
     # EventEmitter registration. A DELIBERATE false positive the MEDIUM certainty
     # + LLM pass-2 absorbs — pinned so a future regex tightening is intentional.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "machine.on('idle', handler)" >"$d/dsl.js"
+    command printf '%s\n' "machine.on('idle', handler)" >"$d/dsl.js"
     list="$(make_list "$d/l" "$d/dsl.js")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: generic .on() fires (pinned FP; pass-2 dismisses)"
@@ -358,7 +358,7 @@ test_ruled_out_false_positives() {
     # A background pipe-reader that drains and signals correctly — no acquisition
     # in ASSIGNMENT/open form, so no unclosed-handle row (the issue's #3a FP).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n%s\n%s\n' \
+    command printf '%s\n%s\n%s\n' \
         'for line in pipe:' \
         '    handler(line)' \
         'done.set()' >"$d/reader.py"
@@ -370,7 +370,7 @@ test_ruled_out_false_positives() {
     # (unbounded-growth is LLM-only; the pre-scan must stay silent here — the
     # issue's #3b FP).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n%s\n' 'cache[k] = v' 'del cache[k]' >"$d/cache.py"
+    command printf '%s\n%s\n' 'cache[k] = v' 'del cache[k]' >"$d/cache.py"
     list="$(make_list "$d/l" "$d/cache.py")"
     assert_silent "$list" unbounded-growth \
         "lifecycle: a cleared dict is bounded — no deterministic unbounded-growth row (issue FP #3b)"
@@ -384,22 +384,22 @@ test_test_file_and_skip() {
 
     # A spawn under a tests/ segment is suppressed WHOLESALE.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/tests"
-    /usr/bin/printf '%s\n' 'let task = Process()' >"$d/tests/helper.swift"
+    command mkdir -p "$d/tests"
+    command printf '%s\n' 'let task = Process()' >"$d/tests/helper.swift"
     list="$(make_list "$d/l" "$d/tests/helper.swift")"
     assert_silent "$list" unreaped-subprocess \
         "lifecycle: Process() under a tests/ segment is suppressed (wholesale)"
 
     # ...but contest.swift is NOT a test file (segment-anchored, not substring).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'let task = Process()' >"$d/contest.swift"
+    command printf '%s\n' 'let task = Process()' >"$d/contest.swift"
     list="$(make_list "$d/l" "$d/contest.swift")"
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: contest.swift is NOT a test file (segment-anchoring negative)"
 
     # A *.md carrying a spawn-shaped line is skipped wholesale (SKIP_GLOBS).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'Example: `let task = Process()`' >"$d/notes.md"
+    command printf '%s\n' 'Example: `let task = Process()`' >"$d/notes.md"
     list="$(make_list "$d/l" "$d/notes.md")"
     assert_silent "$list" unreaped-subprocess \
         "lifecycle: a spawn inside a *.md is skipped (SKIP_GLOBS)"
@@ -420,7 +420,7 @@ test_evidence_truncation_parity() {
     # `p = open(...)` fires unclosed-handle; pad the arg with an em-dash (—, 3
     # UTF-8 bytes) run so the line exceeds 80 characters and truncation engages.
     long="p = open(\"$(printf '%0.s—' $(seq 1 60))\")"
-    /usr/bin/printf '%s\n' "$long" >"$d/long.py"
+    command printf '%s\n' "$long" >"$d/long.py"
     list="$(make_list "$d/l" "$d/long.py")"
     if [ "$HAVE_PY" -eq 1 ]; then
         assert_equals \

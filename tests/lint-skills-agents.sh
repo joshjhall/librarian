@@ -82,7 +82,7 @@ list_skill_dirs_prefixed() {
 get_frontmatter_field() {
     local file="$1"
     local field="$2"
-    /usr/bin/sed -n '/^---$/,/^---$/p' "$file" |
+    command sed -n '/^---$/,/^---$/p' "$file" |
         command grep "^${field}:" |
         command sed "s/^${field}:[[:space:]]*//"
 }
@@ -108,7 +108,7 @@ is_valid_value() {
 workflow_meta_violations() {
     local wf_file="$1"
     local meta_block
-    meta_block="$(/usr/bin/awk '
+    meta_block="$(command awk '
         /export const meta/ { capturing = 1 }
         capturing {
             print
@@ -133,7 +133,7 @@ workflow_meta_violations() {
 # workflow_meta_violations so both see exactly the same block.
 workflow_meta_block() {
     local wf_file="$1"
-    /usr/bin/awk '
+    command awk '
         /export const meta/ { capturing = 1 }
         capturing {
             print
@@ -250,7 +250,7 @@ skill_unreferenced_required_tools() {
     [ -f "$meta_file" ] || return 0
 
     local names name
-    names="$(/usr/bin/awk '
+    names="$(command awk '
         /^required_tools:/ { c = 1; next }
         c && /^[a-zA-Z_]+:/ { c = 0 }
         c && /^[[:space:]]*-[[:space:]]*name:/ {
@@ -276,7 +276,7 @@ skill_unreferenced_required_tools() {
         local f
         while IFS= read -r f; do
             [ -n "$f" ] || continue
-            if /usr/bin/grep -qwE -- "$name" "$f" 2>/dev/null; then
+            if command grep -qwE -- "$name" "$f" 2>/dev/null; then
                 found=1
                 break
             fi
@@ -307,7 +307,7 @@ test_agent_frontmatter_fields() {
     while IFS= read -r agent_file; do
         [ -n "$agent_file" ] || continue
         local agent_name
-        agent_name="$(/usr/bin/basename "$agent_file" .md)"
+        agent_name="$(command basename "$agent_file" .md)"
 
         local name_val description_val tools_val model_val
         name_val="$(get_frontmatter_field "$agent_file" "name")"
@@ -329,7 +329,7 @@ test_agent_model_values() {
     while IFS= read -r agent_file; do
         [ -n "$agent_file" ] || continue
         local agent_name model_val
-        agent_name="$(/usr/bin/basename "$agent_file" .md)"
+        agent_name="$(command basename "$agent_file" .md)"
         model_val="$(get_frontmatter_field "$agent_file" "model")"
         [ -z "$model_val" ] && continue
         if ! is_valid_value "$model_val" "$VALID_MODELS"; then
@@ -362,7 +362,7 @@ test_agent_tool_values() {
     while IFS= read -r agent_file; do
         [ -n "$agent_file" ] || continue
         local agent_name tools_val invalid
-        agent_name="$(/usr/bin/basename "$agent_file" .md)"
+        agent_name="$(command basename "$agent_file" .md)"
         tools_val="$(get_frontmatter_field "$agent_file" "tools")"
         [ -z "$tools_val" ] && continue
 
@@ -393,7 +393,7 @@ test_skill_files_exist() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         assert_file_exists "$skill_dir/SKILL.md" "Skill $skill_name missing SKILL.md"
     done < <(list_skill_dirs)
 }
@@ -404,7 +404,7 @@ test_skill_frontmatter() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name skill_file desc_val
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         skill_file="$skill_dir/SKILL.md"
         [ -f "$skill_file" ] || continue
         desc_val="$(get_frontmatter_field "$skill_file" "description")"
@@ -418,7 +418,7 @@ test_skill_metadata_name_match() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name meta_file meta_name
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         meta_file="$skill_dir/metadata.yml"
         [ -f "$meta_file" ] || continue
         meta_name="$(command grep '^name:' "$meta_file" | command sed 's/^name:[[:space:]]*//')"
@@ -434,7 +434,7 @@ test_check_skill_structure() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name file
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         for file in $required_files; do
             assert_file_exists "$skill_dir/$file" \
                 "check-* skill $skill_name missing required file: $file"
@@ -449,7 +449,7 @@ test_loop_skill_structure() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name file
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         for file in $required_files; do
             assert_file_exists "$skill_dir/$file" \
                 "loop-* skill $skill_name missing required file: $file"
@@ -464,7 +464,7 @@ test_context_skill_structure() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name file
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         for file in $required_files; do
             assert_file_exists "$skill_dir/$file" \
                 "context-* skill $skill_name missing required file: $file"
@@ -478,7 +478,7 @@ test_patterns_sh_executable() {
     while IFS= read -r patterns_file; do
         [ -n "$patterns_file" ] || continue
         local skill_name
-        skill_name="$(/usr/bin/basename "$(/usr/bin/dirname "$patterns_file")")"
+        skill_name="$(command basename "$(command dirname "$patterns_file")")"
         assert_true "[ -x '$patterns_file' ]" \
             "Skill $skill_name: patterns.sh is not executable"
     done < <(command find "$PLUGINS_DIR" -path '*/skills/*' -name "patterns.sh" -type f 2>/dev/null | command sort)
@@ -493,7 +493,7 @@ test_workflow_meta_pure_literal() {
         [ -n "$wf_file" ] || continue
         [ -f "$wf_file" ] || continue
         local rel_name violations
-        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        rel_name="$(command basename "$(command dirname "$wf_file")")"
         violations="$(workflow_meta_violations "$wf_file")"
 
         if printf '%s\n' "$violations" | command grep -qx "concat"; then
@@ -519,7 +519,7 @@ test_workflow_js_node_check() {
         [ -n "$wf_file" ] || continue
         [ -f "$wf_file" ] || continue
         local rel_name node_err
-        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        rel_name="$(command basename "$(command dirname "$wf_file")")"
         if ! node_err="$(command node --check "$wf_file" 2>&1)"; then
             assert_true false \
                 "Workflow $rel_name: workflow.js has a syntax error: ${node_err}"
@@ -553,7 +553,7 @@ test_workflow_js_node_check_detects_syntax_error() {
         return
     fi
     local bad
-    bad="$(/usr/bin/mktemp --suffix=.js)"
+    bad="$(command mktemp --suffix=.js)"
     printf 'function broken( {\n  return 1\n' >"$bad"
     local err rc=0
     err="$(command node --check "$bad" 2>&1)" || rc=$?
@@ -569,7 +569,7 @@ test_workflow_phase_meta_consistency() {
         [ -n "$wf_file" ] || continue
         [ -f "$wf_file" ] || continue
         local rel_name mismatch
-        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        rel_name="$(command basename "$(command dirname "$wf_file")")"
         mismatch="$(workflow_phase_meta_mismatch "$wf_file")"
         if [ -n "$mismatch" ]; then
             assert_true false \
@@ -600,7 +600,7 @@ test_workflow_agenttype_resolves() {
         [ -n "$wf_file" ] || continue
         [ -f "$wf_file" ] || continue
         local rel_name dangling
-        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        rel_name="$(command basename "$(command dirname "$wf_file")")"
         dangling="$(workflow_dangling_agenttypes "$wf_file")"
         if [ -n "$dangling" ]; then
             assert_true false \
@@ -645,7 +645,7 @@ test_workflow_budget_floor_consistent() {
         [ -n "$wf_file" ] || continue
         [ -f "$wf_file" ] || continue
         local rel_name value
-        rel_name="$(/usr/bin/basename "$(/usr/bin/dirname "$wf_file")")"
+        rel_name="$(command basename "$(command dirname "$wf_file")")"
         value="$(workflow_budget_floor_value "$wf_file")"
         [ -n "$value" ] || continue
         assert_equals "$HOUSE_BUDGET_FLOOR" "$value" \
@@ -689,7 +689,7 @@ test_skill_required_tools_referenced() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name unreferenced
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         unreferenced="$(skill_unreferenced_required_tools "$skill_dir")"
         if [ -n "$unreferenced" ]; then
             assert_true false \

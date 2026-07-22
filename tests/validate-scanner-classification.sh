@@ -48,14 +48,14 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 test_suite "scanner test-file classification (#132/#134/#135/#139)"
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # scan SCRIPT LIST — run a scanner with the git env scrubbed, echo only the
 # debug-statement rows (3rd tab-column == debug-statement).
 scan() {
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$1" "$2" 2>/dev/null |
-        /usr/bin/awk -F '\t' '$3 == "debug-statement"'
+        command awk -F '\t' '$3 == "debug-statement"'
 }
 
 # scan_cat SCRIPT LIST CATEGORY — like scan(), but filter to an arbitrary finding
@@ -63,15 +63,15 @@ scan() {
 # patterns.sh-only tech-debt-marker / empty-handler tests use this.
 scan_cat() {
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$1" "$2" 2>/dev/null |
-        /usr/bin/awk -F '\t' -v c="$3" '$3 == c'
+        command awk -F '\t' -v c="$3" '$3 == c'
 }
 
 # has_row ROWS SUBSTR — 0 if any row contains SUBSTR.
-has_row() { /usr/bin/printf '%s\n' "$1" | /usr/bin/grep -qF "$2"; }
+has_row() { command printf '%s\n' "$1" | command grep -qF "$2"; }
 
 # fresh_dir — a unique per-case scratch dir under WORKDIR, so each test is
 # self-contained rather than sharing (and overwriting) one fixture tree.
-fresh_dir() { /usr/bin/mktemp -d "$WORKDIR/case.XXXXXX"; }
+fresh_dir() { command mktemp -d "$WORKDIR/case.XXXXXX"; }
 
 # --- Shared fixture tree --------------------------------------------------
 # setup_fixtures DIR — write a debug statement into a spread of files that
@@ -92,17 +92,17 @@ fresh_dir() { /usr/bin/mktemp -d "$WORKDIR/case.XXXXXX"; }
 # it, which is exactly what we assert.
 setup_fixtures() {
     local d="$1"
-    /usr/bin/mkdir -p "$d/src" "$d/tests" "$d/spec" "$d/x/__tests__"
-    /usr/bin/printf '%s\n' "console.log('real source');" >"$d/src/mod.js"
-    /usr/bin/printf '%s\n' "console.log('contest is NOT a test');" >"$d/contest.js"
-    /usr/bin/printf '%s\n' "console.log('tests/ dir, skip');" >"$d/tests/helper.js"
-    /usr/bin/printf '%s\n' "binding.pry" >"$d/spec/widget.rb"
-    /usr/bin/printf '%s\n' "console.log('__tests__ dir, skip');" >"$d/x/__tests__/a.ts"
-    /usr/bin/printf '%s\n' "print('test_ prefix, skip')" >"$d/test_util.py"
-    /usr/bin/printf '%s\n' "fmt.Println(\"_test suffix\")" >"$d/widget_test.go"
-    /usr/bin/printf '%s\n' "console.log('.spec suffix, skip');" >"$d/api.spec.js"
-    /usr/bin/printf '%s\n' "console.log('.test suffix, skip');" >"$d/mod.test.ts"
-    /usr/bin/printf '%s\n' \
+    command mkdir -p "$d/src" "$d/tests" "$d/spec" "$d/x/__tests__"
+    command printf '%s\n' "console.log('real source');" >"$d/src/mod.js"
+    command printf '%s\n' "console.log('contest is NOT a test');" >"$d/contest.js"
+    command printf '%s\n' "console.log('tests/ dir, skip');" >"$d/tests/helper.js"
+    command printf '%s\n' "binding.pry" >"$d/spec/widget.rb"
+    command printf '%s\n' "console.log('__tests__ dir, skip');" >"$d/x/__tests__/a.ts"
+    command printf '%s\n' "print('test_ prefix, skip')" >"$d/test_util.py"
+    command printf '%s\n' "fmt.Println(\"_test suffix\")" >"$d/widget_test.go"
+    command printf '%s\n' "console.log('.spec suffix, skip');" >"$d/api.spec.js"
+    command printf '%s\n' "console.log('.test suffix, skip');" >"$d/mod.test.ts"
+    command printf '%s\n' \
         "$d/src/mod.js" "$d/contest.js" "$d/tests/helper.js" "$d/spec/widget.rb" \
         "$d/x/__tests__/a.ts" "$d/test_util.py" "$d/widget_test.go" \
         "$d/api.spec.js" "$d/mod.test.ts" >"$d/list.txt"
@@ -199,11 +199,11 @@ test_patterns_tech_debt_fires() {
     : >"$d/list.txt"
     while IFS= read -r kw; do
         [ -n "$kw" ] || continue
-        /usr/bin/printf '%s\n' "# $kw: handle this" >"$d/debt_$kw.py"
-        /usr/bin/printf '%s\n' "$d/debt_$kw.py" >>"$d/list.txt"
+        command printf '%s\n' "# $kw: handle this" >"$d/debt_$kw.py"
+        command printf '%s\n' "$d/debt_$kw.py" >>"$d/list.txt"
     done <<<"$TECH_DEBT_KEYWORDS"
-    /usr/bin/printf '%s\n' "x = 1  # a plain comment, no marker" >"$d/clean.py"
-    /usr/bin/printf '%s\n' "$d/clean.py" >>"$d/list.txt"
+    command printf '%s\n' "x = 1  # a plain comment, no marker" >"$d/clean.py"
+    command printf '%s\n' "$d/clean.py" >>"$d/list.txt"
 
     rows="$(scan_cat "$PATTERNS" "$d/list.txt" tech-debt-marker)"
 
@@ -223,9 +223,9 @@ test_patterns_tech_debt_fires() {
 test_patterns_empty_handler_fires() {
     local d rows
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "try:" "    do()" "except Exception:" "    pass" >"$d/empty.py"
-    /usr/bin/printf '%s\n' "try:" "    do()" "except Exception:" "    handle()" >"$d/handled.py"
-    /usr/bin/printf '%s\n' "$d/empty.py" "$d/handled.py" >"$d/list.txt"
+    command printf '%s\n' "try:" "    do()" "except Exception:" "    pass" >"$d/empty.py"
+    command printf '%s\n' "try:" "    do()" "except Exception:" "    handle()" >"$d/handled.py"
+    command printf '%s\n' "$d/empty.py" "$d/handled.py" >"$d/list.txt"
     rows="$(scan_cat "$PATTERNS" "$d/list.txt" empty-handler)"
 
     if ! has_row "$rows" "$d/empty.py"; then
@@ -247,19 +247,19 @@ test_patterns_empty_handler_multilang_fires() {
     d="$(fresh_dir)"
 
     # JS/TS — inline empty catch vs a catch with a real body.
-    /usr/bin/printf '%s\n' "try { do(); } catch (e) {}" >"$d/empty.js"
-    /usr/bin/printf '%s\n' "try { do(); } catch (e) { handle(e); }" >"$d/handled.js"
+    command printf '%s\n' "try { do(); } catch (e) {}" >"$d/empty.js"
+    command printf '%s\n' "try { do(); } catch (e) { handle(e); }" >"$d/handled.js"
     # Java/Kotlin — same catch(){} shape.
-    /usr/bin/printf '%s\n' "try { doThing(); } catch (Exception e) {}" >"$d/empty.java"
-    /usr/bin/printf '%s\n' "try { doThing(); } catch (Exception e) { log(e); }" >"$d/handled.java"
+    command printf '%s\n' "try { doThing(); } catch (Exception e) {}" >"$d/empty.java"
+    command printf '%s\n' "try { doThing(); } catch (Exception e) { log(e); }" >"$d/handled.java"
     # Ruby — rescue whose next non-blank line closes the block, vs one with a body.
-    /usr/bin/printf '%s\n' "begin" "  do_it" "rescue" "end" >"$d/empty.rb"
-    /usr/bin/printf '%s\n' "begin" "  do_it" "rescue" "  handle" "end" >"$d/handled.rb"
+    command printf '%s\n' "begin" "  do_it" "rescue" "end" >"$d/empty.rb"
+    command printf '%s\n' "begin" "  do_it" "rescue" "  handle" "end" >"$d/handled.rb"
     # Go — swallowed error (empty braces) vs a handled one.
-    /usr/bin/printf '%s\n' "if err != nil {}" >"$d/empty.go"
-    /usr/bin/printf '%s\n' "if err != nil { return err }" >"$d/handled.go"
+    command printf '%s\n' "if err != nil {}" >"$d/empty.go"
+    command printf '%s\n' "if err != nil { return err }" >"$d/handled.go"
 
-    /usr/bin/printf '%s\n' \
+    command printf '%s\n' \
         "$d/empty.js" "$d/handled.js" \
         "$d/empty.java" "$d/handled.java" \
         "$d/empty.rb" "$d/handled.rb" \
@@ -281,7 +281,7 @@ test_patterns_empty_handler_multilang_fires() {
     # branch cross-firing on another language's file (all rows share the same
     # "empty-handler" category, so the per-language checks above can't catch it).
     local count
-    count="$(/usr/bin/printf '%s\n' "$rows" | /usr/bin/grep -c . || true)"
+    count="$(command printf '%s\n' "$rows" | command grep -c . || true)"
     if [ "$count" -ne 4 ]; then
         _fail "patterns.sh: expected exactly 4 empty-handler rows (one per language), got $count"
     fi

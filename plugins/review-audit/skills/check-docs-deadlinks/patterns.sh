@@ -33,7 +33,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -46,7 +46,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -54,14 +54,14 @@ while IFS= read -r file; do
     [ -f "$file" ] || continue
 
     # Get the directory of the current file for relative path resolution
-    file_dir=$(/usr/bin/dirname "$file")
+    file_dir=$(command dirname "$file")
 
     # --- Category: broken-relative-link ---
     # Match markdown links: [text](relative/path) — exclude URLs, anchors-only, and images
-    /usr/bin/grep -nE '\[([^]]*)\]\(([^)]+)\)' "$file" 2>/dev/null |
+    command grep -nE '\[([^]]*)\]\(([^)]+)\)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             # Extract the link target
-            target=$(/usr/bin/echo "$content" | /usr/bin/grep -oE '\]\([^)]+\)' | /usr/bin/head -1 | /usr/bin/sed 's/^](//' | /usr/bin/sed 's/)$//')
+            target=$(command echo "$content" | command grep -oE '\]\([^)]+\)' | command head -1 | command sed 's/^](//' | command sed 's/)$//')
 
             # Skip empty, URLs, mailto, anchors-only
             case "$target" in
@@ -69,7 +69,7 @@ while IFS= read -r file; do
             esac
 
             # Strip anchor from target for file existence check
-            target_file=$(/usr/bin/echo "$target" | /usr/bin/sed 's/#.*//')
+            target_file=$(command echo "$target" | command sed 's/#.*//')
             [ -z "$target_file" ] && continue
 
             # Resolve relative to the document's directory
@@ -77,7 +77,7 @@ while IFS= read -r file; do
 
             if [ ! -e "$resolved" ]; then
                 evidence=$(truncate_chars 80 "Link target not found: ${target}")
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "broken-relative-link" \
                     "$evidence" "HIGH"
             fi
@@ -85,18 +85,18 @@ while IFS= read -r file; do
 
     # --- Category: broken-anchor ---
     # Match same-file anchor links: [text](#heading)
-    /usr/bin/grep -nE '\[([^]]*)\]\(#([^)]+)\)' "$file" 2>/dev/null |
+    command grep -nE '\[([^]]*)\]\(#([^)]+)\)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
-            anchor=$(/usr/bin/echo "$content" | /usr/bin/grep -oE '\]\(#[^)]+\)' | /usr/bin/head -1 | /usr/bin/sed 's/^](#//' | /usr/bin/sed 's/)$//')
+            anchor=$(command echo "$content" | command grep -oE '\]\(#[^)]+\)' | command head -1 | command sed 's/^](#//' | command sed 's/)$//')
             [ -z "$anchor" ] && continue
 
             # Convert anchor to heading format for matching
             # GitHub/GitLab anchors: lowercase, spaces→hyphens, strip special chars
             # Search for matching heading in the same file
-            heading_pattern=$(/usr/bin/echo "$anchor" | /usr/bin/sed 's/-/ /g')
-            if ! /usr/bin/grep -qiE "^#{1,6} .*${heading_pattern}" "$file" 2>/dev/null; then
+            heading_pattern=$(command echo "$anchor" | command sed 's/-/ /g')
+            if ! command grep -qiE "^#{1,6} .*${heading_pattern}" "$file" 2>/dev/null; then
                 evidence=$(truncate_chars 80 "Anchor #${anchor} has no matching heading in file")
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "broken-anchor" \
                     "$evidence" "HIGH"
             fi
@@ -104,11 +104,11 @@ while IFS= read -r file; do
 
     # --- Category: suspicious-external-link ---
     # URLs with deprecation/sunset indicators
-    /usr/bin/grep -noE 'https?://[^ )>"]+' "$file" 2>/dev/null |
-        /usr/bin/grep -iE '(deprecated|sunset|eol|end-of-life|removed|legacy)' |
+    command grep -noE 'https?://[^ )>"]+' "$file" 2>/dev/null |
+        command grep -iE '(deprecated|sunset|eol|end-of-life|removed|legacy)' |
         while IFS=: read -r line_num url; do
             evidence=$(truncate_chars 80 "Suspicious URL: ${url}")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "suspicious-external-link" \
                 "$evidence" "HIGH"
         done || true

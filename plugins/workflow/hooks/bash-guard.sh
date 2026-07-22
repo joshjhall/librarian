@@ -82,8 +82,37 @@ set -uo pipefail
 
 DIAG_TAG="librarian-bash-guard"
 
+# --- Portable tool resolution (#443) ----------------------------------------
+# Claude Code invokes PreToolUse hooks with a potentially minimal environment, so
+# this hook historically hardcoded /usr/bin/<tool> to survive a stripped PATH.
+# Those absolute paths are WRONG on macOS (core utils in /bin) and hard-crash the
+# hook there. `_bin <tool>` honors PATH first (the `command -v` builtin needs no
+# external binary), then falls back to scanning the standard bin dirs so it still
+# resolves under a stripped PATH, then yields the bare name. The candidate list is
+# bare DIRECTORIES, not /usr/bin/<tool> literals, so the #443 lint does not flag
+# them. NOTE: the deny-set `case` patterns below (e.g. `rm | /bin/rm |
+# /usr/bin/rm`) are match DATA — the absolute-path command forms this guard must
+# DETECT in a scanned subagent command — NOT invocations, so they stay literal.
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+CAT="$(_bin cat)"
+SED="$(_bin sed)"
+HEAD="$(_bin head)"
+TR="$(_bin tr)"
+
 # --- Read stdin -------------------------------------------------------------
-payload="$(/bin/cat 2>/dev/null || true)"
+payload="$("$CAT" 2>/dev/null || true)"
 if [ -z "$payload" ]; then
     printf '%s: empty PreToolUse input; NOT enforcing (fail-open)\n' "$DIAG_TAG" >&2
     exit 0
@@ -124,12 +153,12 @@ if [ "$have_fields" -eq 0 ]; then
     # agent_id: capture the value after "agent_id"|"agentId" : "..." — a sed
     # regex tolerating whitespace around the colon. Empty if absent.
     agent_id="$(printf '%s' "$payload" |
-        /usr/bin/sed -n 's/.*"agent_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-        /usr/bin/head -n1)"
+        "$SED" -n 's/.*"agent_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        "$HEAD" -n1)"
     if [ -z "$agent_id" ]; then
         agent_id="$(printf '%s' "$payload" |
-            /usr/bin/sed -n 's/.*"agentId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-            /usr/bin/head -n1)"
+            "$SED" -n 's/.*"agentId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+            "$HEAD" -n1)"
     fi
     # command: value of "command":"..." inside tool_input. A command string may
     # contain escaped quotes; the scrape takes the shortest span to the first
@@ -137,8 +166,8 @@ if [ "$have_fields" -eq 0 ]; then
     # only DROP trailing deny-tokens (fail toward allow), and the primary jq path
     # handles the exact bytes whenever jq is present.
     command_str="$(printf '%s' "$payload" |
-        /usr/bin/sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-        /usr/bin/head -n1)"
+        "$SED" -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        "$HEAD" -n1)"
     if [ -z "$command_str" ]; then
         printf '%s: could not parse PreToolUse input; NOT enforcing (fail-open)\n' "$DIAG_TAG" >&2
         exit 0
@@ -157,9 +186,9 @@ fi
 # control chars to spaces — otherwise a multi-line script would join two
 # statements into one segment and hide a destructive second line (#448 review).
 norm="$(printf '%s' "$command_str" |
-    /usr/bin/tr '\n\r' ';;' |
-    /usr/bin/tr '[:cntrl:]' ' ' |
-    /usr/bin/tr -s ' ')"
+    "$TR" '\n\r' ';;' |
+    "$TR" '[:cntrl:]' ' ' |
+    "$TR" -s ' ')"
 
 # The ONLY sanctioned variable-target carve-out is deleting the very directory a
 # `mktemp -d` was assigned to: `d=$(mktemp -d); ... "$d"`. `mktemp_var` holds that
@@ -180,9 +209,9 @@ norm="$(printf '%s' "$command_str" |
 # d=$(mktemp -d)` (assign live, delete, THEN stage a scratch dir under the same
 # name) is not caught — the natural forms `d=$(mktemp -d); rm -rf "$d"` are.
 mktemp_var="$(printf '%s' "$norm" |
-    /usr/bin/tr ';&|' '\n\n\n' |
-    /usr/bin/sed -n 's/.*\(^\|[^A-Za-z0-9_]\)\([A-Za-z_][A-Za-z0-9_]*\)=[`$]\{1\}[({]*mktemp[[:space:]].*/\2/p' |
-    /usr/bin/head -n1)"
+    "$TR" ';&|' '\n\n\n' |
+    "$SED" -n 's/.*\(^\|[^A-Za-z0-9_]\)\([A-Za-z_][A-Za-z0-9_]*\)=[`$]\{1\}[({]*mktemp[[:space:]].*/\2/p' |
+    "$HEAD" -n1)"
 
 # is_scratch <path> -> return 0 only when the path is PREFIX-anchored under a
 # recognized scratch root (/tmp, /var/tmp, $TMPDIR). A substring match would
@@ -264,11 +293,11 @@ target_ok() {
     local seg="$1" tok saw_path=1 skip_next=0 is_truncate=1
     # Drop the command head (and, for git, the subcommand) — operands follow.
     case "$1" in
-        truncate\ * | /usr/bin/truncate\ *) is_truncate=0 ;;
+        truncate\ * | /usr/bin/truncate\ *) is_truncate=0 ;; # lint-allow-path: deny-set match DATA, not an invocation
     esac
     seg="${seg#* }"
     case "$1" in
-        git\ * | /usr/bin/git\ *) seg="${seg#* }" ;;
+        git\ * | /usr/bin/git\ *) seg="${seg#* }" ;; # lint-allow-path: deny-set match DATA, not an invocation
     esac
     for tok in $seg; do
         if [ "$skip_next" = "1" ]; then
@@ -312,7 +341,7 @@ target_ok() {
 # the two-char forms are not shredded into stray single breaks (#448 review).
 # bash-3.2 clean — translate every separator to a newline, then read the lines.
 segments="$(printf '%s' "$norm" |
-    /usr/bin/sed 's/&&/\n/g; s/||/\n/g; s/&/\n/g; s/;/\n/g; s/|/\n/g; s/\$(/\n/g; s/`/\n/g; s/(/\n/g; s/)/\n/g')"
+    "$SED" 's/&&/\n/g; s/||/\n/g; s/&/\n/g; s/;/\n/g; s/|/\n/g; s/\$(/\n/g; s/`/\n/g; s/(/\n/g; s/)/\n/g')"
 
 matched=""
 while IFS= read -r seg; do
@@ -366,22 +395,22 @@ while IFS= read -r seg; do
     head="${head#\'}"
     head="${head%\'}" # surrounding single quotes
     case "$head" in
-        rm | /bin/rm | /usr/bin/rm)
+        rm | /bin/rm | /usr/bin/rm) # lint-allow-path: deny-set match DATA, not an invocation
             target_ok "$seg" && continue
             matched="rm"
             break
             ;;
-        mv | /bin/mv | /usr/bin/mv)
+        mv | /bin/mv | /usr/bin/mv) # lint-allow-path: deny-set match DATA, not an invocation
             target_ok "$seg" && continue
             matched="mv"
             break
             ;;
-        truncate | /usr/bin/truncate)
+        truncate | /usr/bin/truncate) # lint-allow-path: deny-set match DATA, not an invocation
             target_ok "$seg" && continue
             matched="truncate"
             break
             ;;
-        git | /usr/bin/git)
+        git | /usr/bin/git) # lint-allow-path: deny-set match DATA, not an invocation
             rest="${seg#"$head"}"
             rest="${rest# }"
             # Skip git's global options so `sub` lands on the real subcommand:
@@ -460,7 +489,7 @@ fi
 # No jq: hand-roll the deny envelope. Sanitize the reason (drop backslashes and
 # control chars that can't be JSON-escaped without a real encoder, then escape
 # double quotes) so the output stays valid JSON.
-reason_safe="$(printf '%s' "${reason//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
+reason_safe="$(printf '%s' "${reason//\\/}" | "$TR" -d '[:cntrl:]')"
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
     "${reason_safe//\"/\\\"}"
 exit 0

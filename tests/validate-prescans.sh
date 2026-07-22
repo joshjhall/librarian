@@ -28,8 +28,8 @@ test_suite "Pre-scan empty/missing-input robustness"
 
 # Two empty file-list files; the scratch dir is cleaned up on exit. A pre-scan
 # that reads its input line-by-line sees zero lines from these.
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 EMPTY1="$WORKDIR/empty1.txt"
 EMPTY2="$WORKDIR/empty2.txt"
 : >"$EMPTY1"

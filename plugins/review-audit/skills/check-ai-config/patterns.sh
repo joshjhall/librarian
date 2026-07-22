@@ -42,7 +42,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -55,7 +55,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -79,11 +79,11 @@ get_frontmatter() {
     # no-match yields empty output with a zero pipeline status instead of tripping
     # `set -euo pipefail` and aborting the whole scan (#205). Mirrors the Python
     # primary, where an absent key returns "".
-    /usr/bin/sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null |
-        { /usr/bin/grep -E "^${key}:" || true; } |
-        /usr/bin/sed "s/^${key}:[[:space:]]*//" |
-        /usr/bin/sed 's/^["'\'']//' | /usr/bin/sed 's/["'\'']\s*$//' |
-        /usr/bin/head -1
+    command sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null |
+        { command grep -E "^${key}:" || true; } |
+        command sed "s/^${key}:[[:space:]]*//" |
+        command sed 's/^["'\'']//' | command sed 's/["'\'']\s*$//' |
+        command head -1
 }
 
 # =============================================================================
@@ -96,9 +96,9 @@ check_agent_frontmatter() {
 
     # Only check agent .md files (dirname/dirname.md pattern)
     local basename dirname dirbase
-    basename=$(/usr/bin/basename "$file")
-    dirname=$(/usr/bin/dirname "$file")
-    dirbase=$(/usr/bin/basename "$dirname")
+    basename=$(command basename "$file")
+    dirname=$(command dirname "$file")
+    dirbase=$(command basename "$dirname")
 
     # Skip if not an agent definition file
     case "$file" in
@@ -109,14 +109,14 @@ check_agent_frontmatter() {
     # Check naming convention: agent file should match directory name
     local expected_name="${dirbase}.md"
     if [ "$basename" != "$expected_name" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Agent file should be named ${expected_name}, found ${basename}" "HIGH"
     fi
 
     # Check for frontmatter existence
-    if ! /usr/bin/head -1 "$file" 2>/dev/null | /usr/bin/grep -q '^---$'; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+    if ! command head -1 "$file" 2>/dev/null | command grep -q '^---$'; then
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Missing YAML frontmatter (no opening ---)" "HIGH"
         return
@@ -130,36 +130,36 @@ check_agent_frontmatter() {
     model=$(get_frontmatter "$file" "model")
 
     if [ -z "$name" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Missing required frontmatter field: name" "HIGH"
     fi
 
     if [ -z "$desc" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Missing required frontmatter field: description" "HIGH"
     fi
 
     if [ -z "$tools" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Missing required frontmatter field: tools" "HIGH"
     fi
 
     if [ -z "$model" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Missing required frontmatter field: model" "HIGH"
     elif [ "$model" != "fable" ] && [ "$model" != "opus" ] && [ "$model" != "sonnet" ] && [ "$model" != "haiku" ] && [ "$model" != "inherit" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Invalid model value: ${model} (expected fable, opus, sonnet, haiku, or inherit)" "HIGH"
     fi
 
     # Check for wildcard tools
     if [ "$tools" = "*" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Agent uses wildcard tools (*) — scope to specific tools" "MEDIUM"
     fi
@@ -175,8 +175,8 @@ check_skill_frontmatter() {
 
     # Only check SKILL.md files in skills directories
     local basename dirname
-    basename=$(/usr/bin/basename "$file")
-    dirname=$(/usr/bin/dirname "$file")
+    basename=$(command basename "$file")
+    dirname=$(command dirname "$file")
 
     case "$file" in
         */skills/*/SKILL.md) ;;
@@ -184,8 +184,8 @@ check_skill_frontmatter() {
     esac
 
     # Check for frontmatter with description
-    if ! /usr/bin/head -1 "$file" 2>/dev/null | /usr/bin/grep -q '^---$'; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+    if ! command head -1 "$file" 2>/dev/null | command grep -q '^---$'; then
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "skill-frontmatter" \
             "Missing YAML frontmatter (no opening ---)" "HIGH"
         return
@@ -194,22 +194,22 @@ check_skill_frontmatter() {
     local desc
     desc=$(get_frontmatter "$file" "description")
     if [ -z "$desc" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "skill-frontmatter" \
             "Missing required frontmatter field: description" "HIGH"
     fi
 
     # Check for structural sections (workflow, categories, or conventions)
     # Reference-style skills use Categories/Conventions instead of Workflow
-    if ! /usr/bin/grep -qE '^## (Workflow|Step|Phase|Categories|Conventions|Rules|Patterns|When to)' "$file" 2>/dev/null; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+    if ! command grep -qE '^## (Workflow|Step|Phase|Categories|Conventions|Rules|Patterns|When to)' "$file" 2>/dev/null; then
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "skill-frontmatter" \
             "No structural section found (expected ## Workflow, ## Categories, or similar)" "MEDIUM"
     fi
 
     # Check for missing metadata.yml
     if [ ! -f "${dirname}/metadata.yml" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "skill-frontmatter" \
             "Missing metadata.yml in skill directory" "MEDIUM"
     fi
@@ -224,8 +224,8 @@ check_ai_file_bloat() {
     local file="$1"
     local basename lines threshold_warn threshold_high file_type category
 
-    basename=$(/usr/bin/basename "$file")
-    lines=$(/usr/bin/wc -l <"$file" 2>/dev/null) || return
+    basename=$(command basename "$file")
+    lines=$(command wc -l <"$file" 2>/dev/null) || return
     lines=$((lines + 0)) # ensure numeric
 
     # `category` splits documentation bloat (docs/*.md) into its own
@@ -260,11 +260,11 @@ check_ai_file_bloat() {
     esac
 
     if [ "$lines" -gt "$threshold_high" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "$category" \
             "${file_type} exceeds high threshold: ${lines} lines (>${threshold_high})" "HIGH"
     elif [ "$lines" -gt "$threshold_warn" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "$category" \
             "${file_type} exceeds warning threshold: ${lines} lines (>${threshold_warn})" "MEDIUM"
     fi
@@ -287,18 +287,18 @@ check_claude_md_drift() {
     esac
 
     local file_dir
-    file_dir=$(/usr/bin/dirname "$file")
+    file_dir=$(command dirname "$file")
 
     # Backtick-quoted relative path with a source-file extension and >=1 `/`. The
     # char class [A-Za-z0-9_.-] excludes `$ { } * :`, so `${VAR}` templates,
     # globs, and `scheme://` URLs cannot match — the skip is built into the regex.
-    /usr/bin/grep -noE '`[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.(sh|py|js|mjs|ts|json|ya?ml|md|toml)`' "$file" 2>/dev/null |
+    command grep -noE '`[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.(sh|py|js|mjs|ts|json|ya?ml|md|toml)`' "$file" 2>/dev/null |
         while IFS=: read -r line_num match; do
             target="${match#\`}"
             target="${target%\`}"
             if [ ! -e "${file_dir}/${target}" ]; then
                 evidence=$(truncate_chars 80 "$target")
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "claude-md-drift" \
                     "Referenced path not found: ${evidence}" "MEDIUM"
             fi
@@ -333,7 +333,7 @@ check_config_inconsistency() {
     # Backtick-quoted `<plugin>:<name>` (lowercase kebab both sides). The match
     # itself carries a colon, so split the grep `line:match` prefix manually
     # rather than via IFS=:.
-    /usr/bin/grep -noE '`[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*`' "$file" 2>/dev/null |
+    command grep -noE '`[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*`' "$file" 2>/dev/null |
         while IFS= read -r row; do
             line_num="${row%%:*}"
             match="${row#*:}"
@@ -345,7 +345,7 @@ check_config_inconsistency() {
             if [ ! -f "${plugins_dir}/${plugin}/agents/${name}.md" ] &&
                 [ ! -f "${plugins_dir}/${plugin}/skills/${name}/SKILL.md" ]; then
                 evidence=$(truncate_chars 80 "${plugin}:${name}")
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "config-inconsistency" \
                     "Referenced agent/skill not found: ${evidence}" "MEDIUM"
             fi
@@ -367,11 +367,11 @@ check_mcp_config() {
     esac
 
     # Check for http:// URLs (except localhost exceptions)
-    /usr/bin/grep -nE '"http://' "$file" 2>/dev/null |
-        /usr/bin/grep -vE '(localhost|127\.0\.0\.1|host\.docker\.internal)' |
+    command grep -nE '"http://' "$file" 2>/dev/null |
+        command grep -vE '(localhost|127\.0\.0\.1|host\.docker\.internal)' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "mcp-misconfiguration" \
                 "Insecure HTTP URL in config (use HTTPS): ${evidence}" "HIGH"
         done || true
@@ -392,19 +392,19 @@ check_hook_safety() {
     esac
 
     # Destructive commands without guards
-    /usr/bin/grep -nE '(rm\s+-rf\s|git\s+reset\s+--hard|git\s+clean\s+-fd|docker\s+system\s+prune)' "$file" 2>/dev/null |
+    command grep -nE '(rm\s+-rf\s|git\s+reset\s+--hard|git\s+clean\s+-fd|docker\s+system\s+prune)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hook-safety" \
                 "Destructive command in hook without confirmation: ${evidence}" "HIGH"
         done || true
 
     # Secret leaks — echoing env vars with secret-like names
-    /usr/bin/grep -nE '(echo|printf).*\$(ANTHROPIC_|GITHUB_TOKEN|GITLAB_TOKEN|API_KEY|SECRET|PASSWORD|OP_.*_REF)' "$file" 2>/dev/null |
+    command grep -nE '(echo|printf).*\$(ANTHROPIC_|GITHUB_TOKEN|GITLAB_TOKEN|API_KEY|SECRET|PASSWORD|OP_.*_REF)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hook-safety" \
                 "Potential secret leak in hook output: ${evidence}" "HIGH"
         done || true
@@ -430,11 +430,11 @@ check_harness_logic() {
     # Non-unique finding ref: a "${a}:${b}:${c}" template (3 interpolations,
     # colon-joined) with no index segment (#). Collides when two findings share
     # file+line+category. A fixed ref carries a trailing #${i}.
-    /usr/bin/grep -nE '`\$\{[^}]+\}:\$\{[^}]+\}:\$\{[^}]+\}`' "$file" 2>/dev/null |
-        /usr/bin/grep -vE '#\$\{' |
+    command grep -nE '`\$\{[^}]+\}:\$\{[^}]+\}:\$\{[^}]+\}`' "$file" 2>/dev/null |
+        command grep -vE '#\$\{' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Finding ref may collide (no per-finding index): ${evidence}" "MEDIUM"
         done || true
@@ -445,29 +445,29 @@ check_harness_logic() {
     # throws at runtime and silently degrades the fan-out. Portable check: flag
     # any agentType literal lacking a colon. Cannot confirm the <plugin> half
     # resolves without this repo's layout, so MEDIUM for the LLM pass to confirm.
-    /usr/bin/grep -nE "agentType:[[:space:]]*['\"][^'\":]+['\"]" "$file" 2>/dev/null |
+    command grep -nE "agentType:[[:space:]]*['\"][^'\":]+['\"]" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Bare agentType (needs <plugin>:<name> for the Workflow tool): ${evidence}" "MEDIUM"
         done || true
 
     # Unsafe interpolation into an auto-approving command.
-    /usr/bin/grep -nE 'dangerously-skip-permissions.*\$\{' "$file" 2>/dev/null |
+    command grep -nE 'dangerously-skip-permissions.*\$\{' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Interpolation into --dangerously-skip-permissions (validate first): ${evidence}" "HIGH"
         done || true
 
     # Supply-chain regen: full install form without a lockfile-only/no-scripts flag.
-    /usr/bin/grep -nE '(npm install|pnpm install|composer update|yarn install)' "$file" 2>/dev/null |
-        /usr/bin/grep -vE 'package-lock-only|ignore-scripts|no-scripts|lockfile-only|update-lockfile' |
+    command grep -nE '(npm install|pnpm install|composer update|yarn install)' "$file" 2>/dev/null |
+        command grep -vE 'package-lock-only|ignore-scripts|no-scripts|lockfile-only|update-lockfile' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "harness-logic" \
                 "Install/regen may run lifecycle scripts (use lockfile-only): ${evidence}" "MEDIUM"
         done || true

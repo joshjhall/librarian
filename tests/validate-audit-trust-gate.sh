@@ -53,7 +53,7 @@ test_suite "audit project-source integrity gate (#124/#125)"
 # grow the region to the rest of the file, and the env-var/log-line assertions
 # could pass on unrelated later sections while the gate prose was actually gone.
 extract_between() {
-    /usr/bin/awk -v s="$2" -v e="$3" '
+    command awk -v s="$2" -v e="$3" '
         index($0, s) { grab = 1; next }
         grab && index($0, e) { closed = 1; exit }
         grab { buf = buf $0 "\n" }
@@ -77,7 +77,7 @@ assert_surface() {
     # guard). Catch it here rather than letting the assertions below pass on a
     # bloated region that happens to contain the tokens somewhere.
     local line_count
-    line_count="$(printf '%s\n' "$region" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    line_count="$(printf '%s\n' "$region" | command wc -l | command tr -d ' ')"
     assert_true "[ \"$line_count\" -le 60 ]" \
         "$label: extracted region is a single section ($line_count lines, expected <= 60)"
 
@@ -88,14 +88,14 @@ assert_surface() {
     # single spaces first — several surfaces wrap "exact value `1`" across a line
     # break, so a raw substring match would miss them.
     local flat
-    flat="$(printf '%s' "$region" | /usr/bin/tr -s '[:space:]' ' ')"
+    flat="$(printf '%s' "$region" | command tr -s '[:space:]' ' ')"
     assert_contains "$flat" "exact value" "$label: documents exact-value-1 opt-in semantics"
 
     # Tamper: dropping every env-var line must remove the gate token AND change
     # the region. Comparison is plain bash (NOT assert_true, which eval's its
     # argument — the region holds shell metacharacters that eval would execute).
     local tampered changed="no"
-    tampered="$(printf '%s\n' "$region" | /usr/bin/grep -vF "$ENV_VAR" || true)"
+    tampered="$(printf '%s\n' "$region" | command grep -vF "$ENV_VAR" || true)"
     [ "$region" != "$tampered" ] && changed="yes"
     assert_not_contains "$tampered" "$ENV_VAR" \
         "$label: stripping the gate line removes the opt-in token (extract targets the real region)"

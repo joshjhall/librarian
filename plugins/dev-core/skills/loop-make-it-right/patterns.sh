@@ -42,7 +42,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -55,7 +55,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -71,22 +71,22 @@ while IFS= read -r file; do
     case "$file" in
         *.py)
             # Python: count lines from def to next def/class or dedent
-            /usr/bin/grep -n '^\s*def \w\+' "$file" 2>/dev/null |
+            command grep -n '^\s*def \w\+' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Count lines until next function/class at same or lower indent
-                    indent=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/[^ ].*//' | /usr/bin/wc -c)
-                    end_line=$(/usr/bin/sed -n "$((line_num + 1)),\$p" "$file" |
-                        /usr/bin/grep -n "^.\{0,${indent}\}[^ ]" |
-                        /usr/bin/head -1 | /usr/bin/cut -d: -f1)
+                    indent=$(command printf '%s' "$content" | command sed 's/[^ ].*//' | command wc -c)
+                    end_line=$(command sed -n "$((line_num + 1)),\$p" "$file" |
+                        command grep -n "^.\{0,${indent}\}[^ ]" |
+                        command head -1 | command cut -d: -f1)
                     if [ -n "$end_line" ]; then
                         func_lines=$((end_line))
                     else
-                        total=$(/usr/bin/wc -l <"$file")
+                        total=$(command wc -l <"$file")
                         func_lines=$((total - line_num))
                     fi
                     if [ "$func_lines" -gt "$MAX_FUNCTION_LINES" ]; then
                         evidence=$(truncate_chars 60 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "long-function" \
                             "Function ${func_lines} lines (max ${MAX_FUNCTION_LINES}): ${evidence}" "HIGH"
                     fi
@@ -94,21 +94,21 @@ while IFS= read -r file; do
             ;;
         *.ts | *.js | *.tsx | *.jsx | *.go | *.rs)
             # Brace-delimited languages: count from opening { to closing }
-            /usr/bin/grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' "$file" 2>/dev/null |
+            command grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' "$file" 2>/dev/null |
                 while IFS=: read -r line_num _content; do
                     # Simple heuristic: count lines from definition to next function
-                    next_func=$(/usr/bin/sed -n "$((line_num + 1)),\$p" "$file" |
-                        /usr/bin/grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' |
-                        /usr/bin/head -1 | /usr/bin/cut -d: -f1)
+                    next_func=$(command sed -n "$((line_num + 1)),\$p" "$file" |
+                        command grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' |
+                        command head -1 | command cut -d: -f1)
                     if [ -n "$next_func" ]; then
                         func_lines=$((next_func))
                     else
-                        total=$(/usr/bin/wc -l <"$file")
+                        total=$(command wc -l <"$file")
                         func_lines=$((total - line_num))
                     fi
                     if [ "$func_lines" -gt "$MAX_FUNCTION_LINES" ]; then
                         evidence=$(truncate_chars 60 "$_content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "long-function" \
                             "Function ${func_lines} lines (max ${MAX_FUNCTION_LINES}): ${evidence}" "HIGH"
                     fi
@@ -129,7 +129,7 @@ while IFS= read -r file; do
         *.ts | *.js | *.tsx | *.jsx | *.go | *.rs) nest_unit=2 ;;
     esac
     if [ "$nest_unit" -ne 0 ]; then
-        /usr/bin/awk -v max="$MAX_NESTING_DEPTH" -v unit="$nest_unit" '
+        command awk -v max="$MAX_NESTING_DEPTH" -v unit="$nest_unit" '
             /^[[:space:]]+[^[:space:]]/ {
                 match($0, /^[[:space:]]+/)
                 depth = int(RLENGTH / unit)
@@ -140,7 +140,7 @@ while IFS= read -r file; do
         ' "$file" 2>/dev/null |
             while IFS=$'\t' read -r line_num depth rawline; do
                 evidence=$(truncate_chars 60 "$rawline")
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "deep-nesting" \
                     "Nesting depth ${depth} (max ${MAX_NESTING_DEPTH}): ${evidence}" "HIGH"
             done || true
@@ -150,17 +150,17 @@ while IFS= read -r file; do
     # Single-character variable names outside common loop patterns
     case "$file" in
         *.py)
-            /usr/bin/grep -nE '^\s+[a-zA-Z]\s*=' "$file" 2>/dev/null |
-                /usr/bin/grep -vE '^\s*(for|with)\s+[a-zA-Z]\s+in\b|_\s*=' |
+            command grep -nE '^\s+[a-zA-Z]\s*=' "$file" 2>/dev/null |
+                command grep -vE '^\s*(for|with)\s+[a-zA-Z]\s+in\b|_\s*=' |
                 while IFS=: read -r line_num content; do
                     # Extract the variable name
-                    varname=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^[[:space:]]*\([a-zA-Z]\)[[:space:]]*=.*/\1/')
+                    varname=$(command printf '%s' "$content" | command sed 's/^[[:space:]]*\([a-zA-Z]\)[[:space:]]*=.*/\1/')
                     # Skip common loop vars and conventional single-char names
                     case "$varname" in
                         i | j | k | n | x | y | _ | e | f) continue ;;
                     esac
                     evidence=$(truncate_chars 60 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "single-char-name" \
                         "Single-character variable '${varname}': ${evidence}" "HIGH"
                 done || true

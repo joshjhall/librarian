@@ -57,7 +57,7 @@ test_suite "agnix → checker wiring (#401)"
 # rather than silently expanding it to EOF (which would let assertions pass on
 # unrelated later prose).
 extract_between() {
-    /usr/bin/awk -v s="$2" -v e="$3" '
+    command awk -v s="$2" -v e="$3" '
         index($0, s) { grab = 1; next }
         grab && index($0, e) { closed = 1; exit }
         grab { buf = buf $0 "\n" }
@@ -78,7 +78,7 @@ assert_wired() {
     # catch it here rather than letting a later assertion pass on stray prose.
     # Step 3a carries the enforced trust-gate branches, so it runs ~80 lines.
     local line_count
-    line_count="$(printf '%s\n' "$region" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    line_count="$(printf '%s\n' "$region" | command wc -l | command tr -d ' ')"
     assert_true "[ \"$line_count\" -le 90 ]" \
         "$label: extracted region is a single section ($line_count lines, expected <= 90)"
 
@@ -88,7 +88,7 @@ assert_wired() {
     # region. Plain bash comparison (NOT assert_true, which eval's its argument —
     # the region holds shell metacharacters eval would execute).
     local tampered changed="no"
-    tampered="$(printf '%s\n' "$region" | /usr/bin/grep -vF "$token" || true)"
+    tampered="$(printf '%s\n' "$region" | command grep -vF "$token" || true)"
     [ "$region" != "$tampered" ] && changed="yes"
     assert_not_contains "$tampered" "$token" \
         "$label: stripping the wired line removes '$token' (extract targets the real region)"

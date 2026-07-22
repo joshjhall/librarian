@@ -9,5 +9,5 @@ set -euo pipefail
 
 file="${1:-}"
 line="1"
-/usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "real-finding" "demo" "HIGH"
-/usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "x-finding" "demo" "HIGH"
+command printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "real-finding" "demo" "HIGH"
+command printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "x-finding" "demo" "HIGH"

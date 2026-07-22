@@ -47,17 +47,48 @@
 # resolution, golem-id derivation, and JSON escaping below are reused verbatim).
 set -uo pipefail
 
+# --- Portable tool resolution (#443) ----------------------------------------
+# Claude Code invokes this Notification hook with a potentially minimal
+# environment, so it historically hardcoded /usr/bin/<tool> to survive a stripped
+# PATH. Those absolute paths are WRONG on macOS (core utils in /bin, Homebrew git
+# elsewhere) and hard-crash the hook there. `_bin <tool>` honors PATH first (the
+# `command -v` builtin needs no external binary), then falls back to scanning the
+# standard bin dirs so it still resolves under a stripped PATH, then yields the
+# bare name. Candidates are bare DIRECTORIES, not /usr/bin/<tool> literals, so the
+# #443 lint does not flag them.
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+GIT="$(_bin git)"
+PWD_BIN="$(_bin pwd)"
+DIRNAME="$(_bin dirname)"
+CAT="$(_bin cat)"
+TR="$(_bin tr)"
+BASENAME="$(_bin basename)"
+DATE="$(_bin date)"
+MKDIR="$(_bin mkdir)"
+
 # Resolve the main repo root even when invoked from a worktree:
 # git-common-dir points at <main>/.git, whose parent is the main checkout.
-common_dir="$(/usr/bin/git rev-parse --git-common-dir 2>/dev/null || true)"
+common_dir="$("$GIT" rev-parse --git-common-dir 2>/dev/null || true)"
 if [ -z "$common_dir" ]; then
     exit 0 # not in a git repo — nothing to record, never block the golem
 fi
 case "$common_dir" in
     /*) ;; # already absolute
-    *) common_dir="$(/usr/bin/pwd)/$common_dir" ;;
+    *) common_dir="$("$PWD_BIN")/$common_dir" ;;
 esac
-root="$(/usr/bin/dirname "$common_dir")"
+root="$("$DIRNAME" "$common_dir")"
 
 # Resolve the status dir the same single way the reader scripts do
 # (golem-status.sh / golem-gate-watch.sh / golem-inbox.sh all use config.sh's
@@ -92,7 +123,7 @@ feed="$status_dir/feed.jsonl"
 : "${GOLEM_EVENT_SINK_TIMEOUT:=2}"
 
 # Read the Notification payload; tolerate missing jq or a non-JSON body.
-payload="$(/bin/cat 2>/dev/null || true)"
+payload="$("$CAT" 2>/dev/null || true)"
 message=""
 if command -v jq >/dev/null 2>&1; then
     message="$(printf '%s' "$payload" | jq -r '.message // empty' 2>/dev/null || true)"
@@ -175,7 +206,7 @@ fi
 # (`golem-gate-watch.sh` `pane_is_fork`, PR #320) is the best-effort surface that
 # observes a live in-turn fork's modal overlay; the two channels agreeing is only
 # expected for the `ESCALATION:`-prefixed path, not for an in-turn fork.
-case "$(printf '%s' "$message" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
+case "$(printf '%s' "$message" | "$TR" '[:upper:]' '[:lower:]')" in
     *"waiting for your input"*) event="idle" ;;
     *"waiting for input"*) event="idle" ;;
     *"dead-end:"*) event="dead-end" ;;
@@ -202,7 +233,7 @@ case "${GOLEM_ID:-}" in
     golem-*) golem="$GOLEM_ID" ;;
 esac
 if [ -z "$golem" ]; then
-    base="$(/usr/bin/basename "$(/usr/bin/git rev-parse --show-toplevel 2>/dev/null || /usr/bin/pwd)")"
+    base="$("$BASENAME" "$("$GIT" rev-parse --show-toplevel 2>/dev/null || "$PWD_BIN")")"
     case "$base" in
         issue-*) golem="golem-${base#issue-}" ;;
         golem-*) golem="$base" ;;
@@ -210,7 +241,7 @@ if [ -z "$golem" ]; then
     esac
 fi
 
-ts="$(/usr/bin/date -u +%FT%TZ)"
+ts="$("$DATE" -u +%FT%TZ)"
 
 # Build the classified {ts, golem, event, message} JSON line ONCE, then fan the
 # SAME line to every sink (feed always; HTTP sinks best-effort). Prefer jq for
@@ -228,8 +259,8 @@ else
     # real JSON encoder and would otherwise let a crafted payload break out of
     # the string literal — then escape any remaining double quotes. Keeps the
     # line valid JSON on this path.
-    golem_safe="$(printf '%s' "${golem//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
-    message_safe="$(printf '%s' "${message//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
+    golem_safe="$(printf '%s' "${golem//\\/}" | "$TR" -d '[:cntrl:]')"
+    message_safe="$(printf '%s' "${message//\\/}" | "$TR" -d '[:cntrl:]')"
     # $event is a fixed literal (gate|idle|escalation|dead-end|resolved|reaped)
     # set by the case above, never attacker-derived, so it needs no sanitizing —
     # interpolate it directly.
@@ -248,7 +279,7 @@ fi
 # Sink 1 — feed.jsonl, ALWAYS. mkdir is non-fatal (was `|| exit 0`): a feed dir
 # that can't be created must NOT skip the HTTP fan below — one emission is feed
 # AND sinks (#406 AC1). Every failure is swallowed; the hook still exits 0.
-/usr/bin/mkdir -p "$status_dir" 2>/dev/null || true
+"$MKDIR" -p "$status_dir" 2>/dev/null || true
 printf '%s\n' "$line" >>"$feed" 2>/dev/null || true
 
 # Sink 2..N — HTTP endpoints in GOLEM_EVENT_SINKS, best-effort. Skipped entirely
@@ -267,7 +298,7 @@ if [ -n "$GOLEM_EVENT_SINKS" ] && command -v curl >/dev/null 2>&1; then
     # sensitive as PATH (see the TRUST BOUNDARY note in config.sh); host
     # allow-listing / https-only / request signing are NON-goals of this
     # best-effort emitter and belong to the receiver follow-up (#407).
-    sinks="$(printf '%s' "$GOLEM_EVENT_SINKS" | /usr/bin/tr ',' ' ')"
+    sinks="$(printf '%s' "$GOLEM_EVENT_SINKS" | "$TR" ',' ' ')"
     # shellcheck disable=SC2086  # intentional word-split of the sink URL list
     for url in $sinks; do
         case "$url" in

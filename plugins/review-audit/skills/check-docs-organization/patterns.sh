@@ -47,7 +47,7 @@ fi
 
 # Determine project root from the file list (use the common prefix)
 # For simplicity, use the directory of the first file's git root
-PROJECT_ROOT=$(/usr/bin/git rev-parse --show-toplevel 2>/dev/null || /usr/bin/echo ".")
+PROJECT_ROOT=$(command git rev-parse --show-toplevel 2>/dev/null || command echo ".")
 
 # --- Category: missing-root-doc ---
 # Check for standard root-level documentation files
@@ -66,7 +66,7 @@ for expected_file in README.md LICENSE CHANGELOG.md; do
     esac
 
     if [ "$found" = "false" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "${PROJECT_ROOT}" "1" "missing-root-doc" \
             "Missing standard file: ${expected_file}" "HIGH"
     fi
@@ -89,7 +89,7 @@ candidate_dirs() {
             /*) abs="$f" ;;
             *) abs="${PROJECT_ROOT}/${f}" ;;
         esac
-        /usr/bin/dirname "$abs"
+        command dirname "$abs"
     done | command sort -u
 }
 
@@ -106,7 +106,7 @@ candidate_dirs | while IFS= read -r dir; do
 
     # Respect the configured max depth below the project root.
     rel="${dir#"${PROJECT_ROOT}"/}"
-    depth=$(/usr/bin/printf '%s\n' "$rel" | /usr/bin/awk -F/ '{print NF}')
+    depth=$(command printf '%s\n' "$rel" | command awk -F/ '{print NF}')
     [ "$depth" -le "$MAX_DEPTH" ] || continue
 
     # Skip excluded / generated trees. `*/.*` already covers any hidden
@@ -121,15 +121,15 @@ candidate_dirs | while IFS= read -r dir; do
     [ -f "${dir}/README" ] && continue
 
     # Count meaningful files (exclude hidden, generated)
-    file_count=$(/usr/bin/find "$dir" -maxdepth 1 -type f \
+    file_count=$(command find "$dir" -maxdepth 1 -type f \
         -not -name '.*' \
         -not -name '*.pyc' \
         -not -name '*.o' \
-        2>/dev/null | /usr/bin/wc -l)
+        2>/dev/null | command wc -l)
 
     if [ "$file_count" -ge "$MIN_FILES" ]; then
-        relative_dir=$(/usr/bin/echo "$dir" | /usr/bin/sed "s|^${PROJECT_ROOT}/||")
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        relative_dir=$(command echo "$dir" | command sed "s|^${PROJECT_ROOT}/||")
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$dir" "1" "missing-dir-readme" \
             "Directory ${relative_dir}/ has ${file_count} files but no README" "HIGH"
     fi

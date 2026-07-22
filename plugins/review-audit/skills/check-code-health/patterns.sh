@@ -46,7 +46,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -59,7 +59,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -97,10 +97,10 @@ while IFS= read -r file; do
 
     # --- Category: tech-debt-marker ---
     # TODO, FIXME, HACK, XXX, WORKAROUND comments
-    /usr/bin/grep -niE -- '\b(TODO|FIXME|HACK|XXX|WORKAROUND)\b' "$file" 2>/dev/null |
+    command grep -niE -- '\b(TODO|FIXME|HACK|XXX|WORKAROUND)\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "tech-debt-marker" \
                 "Tech debt marker: ${evidence}" "HIGH"
         done || true
@@ -115,67 +115,67 @@ while IFS= read -r file; do
         case "$file" in
             *.py)
                 # Python: print() used as debug (not in logging context)
-                /usr/bin/grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
-                    /usr/bin/grep -vE '(logging|logger|log\.)' |
+                command grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
+                    command grep -vE '(logging|logger|log\.)' |
                     while IFS=: read -r line_num content; do
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
                             "Debug print statement: ${evidence}" "HIGH"
                     done || true
                 # Python: breakpoint(), pdb
-                /usr/bin/grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
+                command grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
                             "Debugger statement: ${evidence}" "HIGH"
                     done || true
                 ;;
             *.js | *.ts | *.jsx | *.tsx)
                 # JavaScript/TypeScript: console.log, console.debug, console.warn
-                /usr/bin/grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
+                command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
                             "Console debug statement: ${evidence}" "HIGH"
                     done || true
                 # debugger keyword
-                /usr/bin/grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
+                command grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
                             "Debugger keyword: ${evidence}" "HIGH"
                     done || true
                 ;;
             *.rb)
                 # Ruby: binding.pry, puts used as debug
-                /usr/bin/grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
+                command grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
                             "Ruby debugger: ${evidence}" "HIGH"
                     done || true
                 ;;
             *.go)
                 # Go: fmt.Println used as debug (not in main or test)
-                /usr/bin/grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
+                command grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
                             "Debug print statement: ${evidence}" "HIGH"
                     done || true
                 ;;
             *.java | *.kt)
                 # Java/Kotlin: System.out.println, System.err.println
-                /usr/bin/grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
+                command grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
                     while IFS=: read -r line_num content; do
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
                             "Debug print statement: ${evidence}" "HIGH"
                     done || true
@@ -189,13 +189,13 @@ while IFS= read -r file; do
     case "$file" in
         *.py)
             # Python: except with only pass
-            /usr/bin/grep -nE -- '^\s*except' "$file" 2>/dev/null |
+            command grep -nE -- '^\s*except' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    next_line=$(/usr/bin/sed -n -- "$((line_num + 1)),\$p" "$file" |
-                        /usr/bin/grep -m1 -E '\S' | /usr/bin/head -1)
-                    if /usr/bin/printf '%s\n' "$next_line" | /usr/bin/grep -qE '^\s*pass\s*$' 2>/dev/null; then
+                    next_line=$(command sed -n -- "$((line_num + 1)),\$p" "$file" |
+                        command grep -m1 -E '\S' | command head -1)
+                    if command printf '%s\n' "$next_line" | command grep -qE '^\s*pass\s*$' 2>/dev/null; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-handler" \
                             "Empty except block (pass): ${evidence}" "HIGH"
                     fi
@@ -203,33 +203,33 @@ while IFS= read -r file; do
             ;;
         *.js | *.ts | *.jsx | *.tsx)
             # JS/TS: catch with empty body
-            /usr/bin/grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
+            command grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
                         "Empty catch block: ${evidence}" "HIGH"
                 done || true
             ;;
         *.java | *.kt)
             # Java/Kotlin: catch with empty body
-            /usr/bin/grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
+            command grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
                         "Empty catch block: ${evidence}" "HIGH"
                 done || true
             ;;
         *.rb)
             # Ruby: rescue with no body
-            /usr/bin/grep -nE -- '^\s*rescue\b' "$file" 2>/dev/null |
+            command grep -nE -- '^\s*rescue\b' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    next_line=$(/usr/bin/sed -n -- "$((line_num + 1)),\$p" "$file" |
-                        /usr/bin/grep -m1 -E '\S' | /usr/bin/head -1)
-                    if /usr/bin/printf '%s\n' "$next_line" | /usr/bin/grep -qE '^\s*(end|rescue)\s*$' 2>/dev/null; then
+                    next_line=$(command sed -n -- "$((line_num + 1)),\$p" "$file" |
+                        command grep -m1 -E '\S' | command head -1)
+                    if command printf '%s\n' "$next_line" | command grep -qE '^\s*(end|rescue)\s*$' 2>/dev/null; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-handler" \
                             "Empty rescue block: ${evidence}" "HIGH"
                     fi
@@ -237,10 +237,10 @@ while IFS= read -r file; do
             ;;
         *.go)
             # Go: if err != nil with empty body
-            /usr/bin/grep -nE -- 'if err != nil\s*\{\s*\}' "$file" 2>/dev/null |
+            command grep -nE -- 'if err != nil\s*\{\s*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
                         "Swallowed error: ${evidence}" "HIGH"
                 done || true

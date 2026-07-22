@@ -49,8 +49,8 @@ source "$SCRIPT_DIR/lib/harness.sh"
 test_suite "pre-review-gates scan categories + skip policy (#83)"
 
 # Module-level scratch dir, cleaned up once when the suite exits.
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # --- Helpers ----------------------------------------------------------------
 
@@ -70,13 +70,13 @@ run_gate() {
 # tab-separated column equals <category>. Filtering on column 3 implicitly
 # asserts the file\tline\tcategory\t... layout, not a loose substring.
 category_rows() {
-    /usr/bin/printf '%s\n' "$1" |
-        /usr/bin/awk -F '\t' -v cat="$2" '$3 == cat'
+    command printf '%s\n' "$1" |
+        command awk -F '\t' -v cat="$2" '$3 == cat'
 }
 
 # field <row> <n> — the n-th tab-separated column of a single TSV row.
 field() {
-    /usr/bin/printf '%s\n' "$1" | /usr/bin/awk -F '\t' -v n="$2" '{print $n}'
+    command printf '%s\n' "$1" | command awk -F '\t' -v n="$2" '{print $n}'
 }
 
 # make_list <dir> <file...> — write a newline-delimited file list of the given
@@ -88,14 +88,14 @@ make_list() {
     : >"$list"
     local f
     for f in "$@"; do
-        /usr/bin/printf '%s\n' "$dir/$f" >>"$list"
+        command printf '%s\n' "$dir/$f" >>"$list"
     done
-    /usr/bin/printf '%s' "$list"
+    command printf '%s' "$list"
 }
 
 # fresh_dir — a unique per-case scratch dir under WORKDIR.
 fresh_dir() {
-    /usr/bin/mktemp -d "$WORKDIR/case.XXXXXX"
+    command mktemp -d "$WORKDIR/case.XXXXXX"
 }
 
 # new_git_sandbox <varname> — a fresh `git init` sandbox with one seed commit so
@@ -103,18 +103,18 @@ fresh_dir() {
 # git calls run with the hook environment scrubbed so the sandbox is hermetic.
 new_git_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
+        git -C "$dir" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" config user.email "test@example.com"
+        git -C "$dir" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" config user.name "Test"
-    /usr/bin/printf 'seed\n' >"$dir/seed.txt"
+        git -C "$dir" config user.name "Test"
+    command printf 'seed\n' >"$dir/seed.txt"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" add seed.txt 2>/dev/null
+        git -C "$dir" add seed.txt 2>/dev/null
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
+        git -C "$dir" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -137,7 +137,7 @@ run_gate_in() {
 test_ai_slop_fires() {
     local d rows row
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "# It's worth noting that this is unedited output." >"$d/slop.py"
+    command printf '%s\n' "# It's worth noting that this is unedited output." >"$d/slop.py"
     run_gate "$(make_list "$d" slop.py)"
 
     assert_exit 0 "$GATE_RC" "gate exits 0 while emitting findings"
@@ -145,8 +145,8 @@ test_ai_slop_fires() {
     assert_not_empty "$rows" "ai-slop fixture must emit an ai-slop row"
 
     # First ai-slop row: 5 columns, file is slop.py, certainty HIGH.
-    row="$(/usr/bin/printf '%s\n' "$rows" | /usr/bin/head -1)"
-    assert_equals "5" "$(/usr/bin/printf '%s\n' "$row" | /usr/bin/awk -F '\t' '{print NF}')" \
+    row="$(command printf '%s\n' "$rows" | command head -1)"
+    assert_equals "5" "$(command printf '%s\n' "$row" | command awk -F '\t' '{print NF}')" \
         "ai-slop row must have 5 tab-separated columns"
     assert_contains "$(field "$row" 1)" "slop.py" "column 1 is the fixture path"
     assert_equals "HIGH" "$(field "$row" 5)" "hedging phrase is HIGH certainty"
@@ -158,7 +158,7 @@ test_ai_slop_fires() {
 test_debug_statement_fires() {
     local d rows
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "console.log('left in by accident');" >"$d/debug.js"
+    command printf '%s\n' "console.log('left in by accident');" >"$d/debug.js"
     run_gate "$(make_list "$d" debug.js)"
 
     rows="$(category_rows "$GATE_OUT" "debug-statement")"
@@ -174,12 +174,12 @@ test_debug_statement_fires() {
 test_missing_test_file_fires() {
     local d rows row
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "x = 1" >"$d/orphan.py"
+    command printf '%s\n' "x = 1" >"$d/orphan.py"
     run_gate "$(make_list "$d" orphan.py)"
 
     rows="$(category_rows "$GATE_OUT" "missing-test-file")"
     assert_not_empty "$rows" "orphan source must emit a missing-test-file row"
-    row="$(/usr/bin/printf '%s\n' "$rows" | /usr/bin/head -1)"
+    row="$(command printf '%s\n' "$rows" | command head -1)"
     assert_equals "1" "$(field "$row" 2)" "missing-test-file anchors at line 1"
     assert_equals "HIGH" "$(field "$row" 5)" "missing test for a source file is HIGH"
 }
@@ -191,7 +191,7 @@ test_missing_test_file_fires() {
 test_untested_public_api_fires() {
     local d rows
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "def public_thing(a):" "    return a" >"$d/api.py"
+    command printf '%s\n' "def public_thing(a):" "    return a" >"$d/api.py"
     run_gate "$(make_list "$d" api.py)"
 
     rows="$(category_rows "$GATE_OUT" "untested-public-api")"
@@ -206,8 +206,8 @@ test_untested_public_api_fires() {
 test_clean_source_silent() {
     local d
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "_total = 0" >"$d/clean.py"
-    /usr/bin/printf '%s\n' "def test_clean():" "    assert True" >"$d/test_clean.py"
+    command printf '%s\n' "_total = 0" >"$d/clean.py"
+    command printf '%s\n' "def test_clean():" "    assert True" >"$d/test_clean.py"
     # Scan only clean.py (not the test file).
     run_gate "$(make_list "$d" clean.py)"
 
@@ -225,25 +225,25 @@ test_skip_policy_override_honored() {
     local sb list skipped control
     new_git_sandbox sb
 
-    /usr/bin/mkdir -p "$sb/.claude" "$sb/generated" "$sb/src"
-    /usr/bin/printf '%s\n' \
+    command mkdir -p "$sb/.claude" "$sb/generated" "$sb/src"
+    command printf '%s\n' \
         "test_skip_patterns:" \
         "  - 'generated/**'" >"$sb/.claude/pre-review.yml"
 
-    /usr/bin/printf '%s\n' "value = 2" >"$sb/generated/gen_module.py"
-    /usr/bin/printf '%s\n' "value = 3" >"$sb/src/real_module.py"
+    command printf '%s\n' "value = 2" >"$sb/generated/gen_module.py"
+    command printf '%s\n' "value = 3" >"$sb/src/real_module.py"
 
     # Absolute paths in the list (the gate scans absolute paths; _PROJECT_ROOT
     # strips the prefix to derive the relative path check-ignore matches).
     list="$sb/files.txt"
-    /usr/bin/printf '%s\n' \
+    command printf '%s\n' \
         "$sb/generated/gen_module.py" \
         "$sb/src/real_module.py" >"$list"
 
     run_gate_in "$sb" "$list"
 
-    skipped="$(category_rows "$GATE_OUT" "missing-test-file" | /usr/bin/grep -c 'gen_module.py' || true)"
-    control="$(category_rows "$GATE_OUT" "missing-test-file" | /usr/bin/grep -c 'real_module.py' || true)"
+    skipped="$(category_rows "$GATE_OUT" "missing-test-file" | command grep -c 'gen_module.py' || true)"
+    control="$(category_rows "$GATE_OUT" "missing-test-file" | command grep -c 'real_module.py' || true)"
 
     assert_equals "0" "$skipped" \
         "generated/ source is suppressed by the project pre-review.yml override"

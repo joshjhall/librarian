@@ -53,13 +53,42 @@
 #       lines (all, or those for <gate-id>) and exit 0; print nothing if none.
 #
 # Runtime policy: bash-3.2 clean (no declare -A / mapfile / namerefs / ${v,,} /
-# ;;&), coreutils via /usr/bin/* or the `command` builtin, `set -uo pipefail`
+# ;;&), coreutils via the `command` builtin (PATH-resolved, not hardcoded
+# /usr/bin — #443), `set -uo pipefail`
 # (errors handled per-call, never `-e`). The write path mirrors golem-notify.sh:
 # prefer `jq -cn` for correct escaping, fall back to a sanitizing hand-rolled
 # printf when jq is absent, so every inbox line stays valid JSON.
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+# --- Portable tool resolution (#443) ----------------------------------------
+# This script runs under a potentially stripped PATH (its no-jq path is tested
+# with PATH reduced to bash+git), so `command <tool>` would fail to find an
+# external coreutil there — yet a hardcoded /usr/bin/<tool> is wrong on macOS.
+# `_bin <tool>` honors PATH first (the `command -v` builtin needs no external
+# binary), then falls back to scanning the standard bin dirs so it still resolves
+# under a stripped PATH, then yields the bare name. Candidates are bare
+# DIRECTORIES, not /usr/bin/<tool> literals, so the #443 lint does not flag them.
+# Defined before SCRIPT_DIR so even that resolution is portable.
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+DIRNAME="$(_bin dirname)"
+TR="$(_bin tr)"
+DATE="$(_bin date)"
+MKDIR="$(_bin mkdir)"
+SLEEP="$(_bin sleep)"
+
+SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
@@ -136,7 +165,7 @@ EOF
 # across DIFFERENT golems is harmless (separate inbox files).
 cmd_gateid() {
     local epoch rand
-    epoch="$(/usr/bin/date -u +%s 2>/dev/null || command echo 0)"
+    epoch="$("$DATE" -u +%s 2>/dev/null || command echo 0)"
     rand="$(command printf '%04x' $((RANDOM & 0xffff)))"
     command echo "gate-${epoch}-${rand}"
 }
@@ -189,9 +218,9 @@ cmd_answer() {
         command echo "golem-inbox answer: not inside a git repository" >&2
         return 1
     }
-    status_dir="$(/usr/bin/dirname "$inbox")"
-    ts="$(/usr/bin/date -u +%FT%TZ)"
-    /usr/bin/mkdir -p "$status_dir" 2>/dev/null || {
+    status_dir="$("$DIRNAME" "$inbox")"
+    ts="$("$DATE" -u +%FT%TZ)"
+    "$MKDIR" -p "$status_dir" 2>/dev/null || {
         command echo "golem-inbox answer: cannot create $status_dir" >&2
         return 1
     }
@@ -213,8 +242,8 @@ cmd_answer() {
         # charset above; event is a fixed literal. Mirrors golem-notify.sh's
         # no-jq escaper so every inbox line stays valid JSON on this path too.
         local option_safe note_safe
-        option_safe="$(command printf '%s' "${option//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
-        note_safe="$(command printf '%s' "${note//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
+        option_safe="$(command printf '%s' "${option//\\/}" | "$TR" -d '[:cntrl:]')"
+        note_safe="$(command printf '%s' "${note//\\/}" | "$TR" -d '[:cntrl:]')"
         command printf '{"ts":"%s","golem":"%s","gate":"%s","event":"answer","option":"%s","note":"%s"}\n' \
             "$ts" "$golem" "$gate" "${option_safe//\"/\\\"}" "${note_safe//\"/\\\"}" \
             >>"$inbox" 2>/dev/null || {
@@ -309,7 +338,7 @@ inbox_latest_answer_nojq() {
 # re-return the stale decision (idempotent consumption + audit trail).
 inbox_mark_consumed() {
     local inbox="$1" golem="$2" gate="$3" ts
-    ts="$(/usr/bin/date -u +%FT%TZ)"
+    ts="$("$DATE" -u +%FT%TZ)"
     if command -v jq >/dev/null 2>&1; then
         jq -cn --arg ts "$ts" --arg golem "$golem" --arg gate "$gate" \
             --arg event "consumed" \
@@ -496,7 +525,7 @@ cmd_consume() {
         fi
 
         [ "$elapsed" -ge "$wait_s" ] && break
-        /usr/bin/sleep "$poll_s" 2>/dev/null || command sleep "$poll_s" 2>/dev/null || true
+        "$SLEEP" "$poll_s" 2>/dev/null || "$SLEEP" "$poll_s" 2>/dev/null || true
         elapsed=$((elapsed + poll_s))
     done
 

@@ -89,8 +89,8 @@ if command -v python3 >/dev/null 2>&1 &&
     HAVE_PY=1
 fi
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 SK_WORK="$SKILLS_DIR/loop-make-it-work"
 SK_RIGHT="$SKILLS_DIR/loop-make-it-right"
@@ -118,7 +118,7 @@ emit_rows() {
     else
         /usr/bin/env PATTERNS_FORCE_BASH=1 "${env_kv[@]}" \
             "$REAL_BASH" "$skill/patterns.sh" "$@" 2>/dev/null
-    fi | /usr/bin/awk -F '\t' -v c="$cat" '$3 == c'
+    fi | command awk -F '\t' -v c="$cat" '$3 == c'
 }
 
 # assert_fires SKILLDIR CAT NEEDLE MSG ENV.. -- ARGS.. — the category fires (rows
@@ -148,7 +148,7 @@ assert_silent() {
 }
 
 # fresh_dir — unique scratch dir per fixture so path resolution is clean.
-fresh_dir() { /usr/bin/mktemp -d "$WORKDIR/case.XXXXXX"; }
+fresh_dir() { command mktemp -d "$WORKDIR/case.XXXXXX"; }
 
 # make_list OUTFILE PATH... — write a newline file list, echo its path.
 make_list() {
@@ -157,9 +157,9 @@ make_list() {
     : >"$out"
     local p
     for p in "$@"; do
-        /usr/bin/printf '%s\n' "$p" >>"$out"
+        command printf '%s\n' "$p" >>"$out"
     done
-    /usr/bin/printf '%s' "$out"
+    command printf '%s' "$out"
 }
 
 # Fake secrets assembled from fragments so THIS gate file holds no contiguous
@@ -176,28 +176,28 @@ test_work_stub_and_body() {
 
     # stub-detected: a TODO/FIXME/NotImplementedError marker fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def f():  # TODO: finish this' '    raise NotImplementedError' >"$d/s.py"
+    command printf '%s\n' 'def f():  # TODO: finish this' '    raise NotImplementedError' >"$d/s.py"
     list="$(make_list "$d/l" "$d/s.py")"
     assert_fires "$SK_WORK" stub-detected "Stub/placeholder" \
         "work: a TODO / NotImplementedError stub fires" -- "$list"
 
     # empty-body: Python def whose next non-blank line is only `pass`.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def empty():' '    pass' >"$d/e.py"
+    command printf '%s\n' 'def empty():' '    pass' >"$d/e.py"
     list="$(make_list "$d/l" "$d/e.py")"
     assert_fires "$SK_WORK" empty-body "Empty function body" \
         "work: a Python pass-only body fires" -- "$list"
 
     # empty-body: JS arrow with empty braces.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const f = () => {}' >"$d/e.js"
+    command printf '%s\n' 'const f = () => {}' >"$d/e.js"
     list="$(make_list "$d/l" "$d/e.js")"
     assert_fires "$SK_WORK" empty-body "Empty function body" \
         "work: a JS empty arrow body fires" -- "$list"
 
     # empty-body: Go empty func braces.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'func Noop() {}' >"$d/e.go"
+    command printf '%s\n' 'func Noop() {}' >"$d/e.go"
     list="$(make_list "$d/l" "$d/e.go")"
     assert_fires "$SK_WORK" empty-body "Empty function body" \
         "work: a Go empty func body fires" -- "$list"
@@ -205,7 +205,7 @@ test_work_stub_and_body() {
     # BOUNDARY: a def as the LAST line (no following non-blank) does NOT fire an
     # empty-body — _first_nonblank_after returns '' at EOF (the '' return arm).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'x = 1' 'def trailing():' >"$d/t.py"
+    command printf '%s\n' 'x = 1' 'def trailing():' >"$d/t.py"
     list="$(make_list "$d/l" "$d/t.py")"
     assert_silent "$SK_WORK" empty-body \
         "work: a def as the last line does not fire empty-body (EOF boundary)" -- "$list"
@@ -216,28 +216,28 @@ test_work_no_assertions() {
 
     # no-assertions: a Python test file with NO assert fires...
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def test_a():' '    do_thing()' >"$d/test_x.py"
+    command printf '%s\n' 'def test_a():' '    do_thing()' >"$d/test_x.py"
     list="$(make_list "$d/l" "$d/test_x.py")"
     assert_fires "$SK_WORK" no-assertions "no assertion statements" \
         "work: a Python test file with no assert fires" -- "$list"
 
     # ...but a Python test file WITH an assert stays silent (negative).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def test_a():' '    assert do_thing()' >"$d/test_y.py"
+    command printf '%s\n' 'def test_a():' '    assert do_thing()' >"$d/test_y.py"
     list="$(make_list "$d/l" "$d/test_y.py")"
     assert_silent "$SK_WORK" no-assertions \
         "work: a Python test file with an assert stays silent" -- "$list"
 
     # no-assertions: a JS *.test.ts with no expect/assert fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'it("works", () => { run(); });' >"$d/x.test.ts"
+    command printf '%s\n' 'it("works", () => { run(); });' >"$d/x.test.ts"
     list="$(make_list "$d/l" "$d/x.test.ts")"
     assert_fires "$SK_WORK" no-assertions "no assertion statements" \
         "work: a JS .test.ts with no expect fires" -- "$list"
 
     # no-assertions: a Go *_test.go with no t.Error/assert fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'package p' 'func TestX(t *testing.T) { run() }' >"$d/x_test.go"
+    command printf '%s\n' 'package p' 'func TestX(t *testing.T) { run() }' >"$d/x_test.go"
     list="$(make_list "$d/l" "$d/x_test.go")"
     assert_fires "$SK_WORK" no-assertions "no assertion statements" \
         "work: a Go _test.go with no t.Error fires" -- "$list"
@@ -251,7 +251,7 @@ test_right_long_function() {
 
     # Python long-function (max=1): a 2-line def fires; evidence colon-stripped.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def f():' '    a()' '    b()' >"$d/p.py"
+    command printf '%s\n' 'def f():' '    a()' '    b()' >"$d/p.py"
     list="$(make_list "$d/l" "$d/p.py")"
     assert_fires "$SK_RIGHT" long-function "def f()" \
         "right: a Python long function fires (colon-stripped evidence)" \
@@ -259,7 +259,7 @@ test_right_long_function() {
 
     # Brace long-function (max=1): a multi-line JS function fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'function foo() {' '  x()' '}' >"$d/b.js"
+    command printf '%s\n' 'function foo() {' '  x()' '}' >"$d/b.js"
     list="$(make_list "$d/l" "$d/b.js")"
     assert_fires "$SK_RIGHT" long-function "function foo()" \
         "right: a brace-language long function fires" \
@@ -271,7 +271,7 @@ test_right_deep_nesting() {
 
     # deep-nesting (max=0): an indented Python line fires (4-space unit).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def f():' '    deep()' >"$d/n.py"
+    command printf '%s\n' 'def f():' '    deep()' >"$d/n.py"
     list="$(make_list "$d/l" "$d/n.py")"
     assert_fires "$SK_RIGHT" deep-nesting "Nesting depth" \
         "right: an indented Python line fires deep-nesting" \
@@ -280,7 +280,7 @@ test_right_deep_nesting() {
     # deep-nesting (max=0): a brace-language file uses a 2-space unit — assert the
     # separate BRACE_EXTS arm fires (a JS line indented 2 spaces → depth 1).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'function f() {' '  deep()' '}' >"$d/n.js"
+    command printf '%s\n' 'function f() {' '  deep()' '}' >"$d/n.js"
     list="$(make_list "$d/l" "$d/n.js")"
     assert_fires "$SK_RIGHT" deep-nesting "Nesting depth" \
         "right: an indented brace-language line fires deep-nesting (2-space unit)" \
@@ -292,7 +292,7 @@ test_right_single_char() {
 
     # single-char-name: a non-conventional single letter assignment fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' '    z = compute()' >"$d/s.py"
+    command printf '%s\n' '    z = compute()' >"$d/s.py"
     list="$(make_list "$d/l" "$d/s.py")"
     assert_fires "$SK_RIGHT" single-char-name "Single-character variable 'z'" \
         "right: a single-char 'z' assignment fires" \
@@ -300,7 +300,7 @@ test_right_single_char() {
 
     # BOUNDARY: a conventional loop-counter 'x' is in SKIP_VARNAMES → silent.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' '    x = compute()' >"$d/x.py"
+    command printf '%s\n' '    x = compute()' >"$d/x.py"
     list="$(make_list "$d/l" "$d/x.py")"
     assert_silent "$SK_RIGHT" single-char-name \
         "right: a loop-counter 'x' stays silent (SKIP_VARNAMES boundary)" \
@@ -308,7 +308,7 @@ test_right_single_char() {
 
     # BOUNDARY: a `_ =` throwaway assignment is skipped by PY_SINGLE_SKIP_RE.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' '    _ = compute()' >"$d/u.py"
+    command printf '%s\n' '    _ = compute()' >"$d/u.py"
     list="$(make_list "$d/l" "$d/u.py")"
     assert_silent "$SK_RIGHT" single-char-name \
         "right: a '_ =' throwaway stays silent (skip-regex boundary)" \
@@ -323,21 +323,21 @@ test_secure_secret() {
 
     # hardcoded-secret: a keyed literal fires.
     d="$(fresh_dir)"
-    /usr/bin/printf 'api_key = "%s"\n' "$SECRET_VAL" >"$d/k.py"
+    command printf 'api_key = "%s"\n' "$SECRET_VAL" >"$d/k.py"
     list="$(make_list "$d/l" "$d/k.py")"
     assert_fires "$SK_SEC" hardcoded-secret "Possible hardcoded secret" \
         "secure: a keyed secret literal fires" -- "$list"
 
     # hardcoded-secret: an AWS access-key pattern fires.
     d="$(fresh_dir)"
-    /usr/bin/printf 'aws = "%s"\n' "$AKIA_TOK" >"$d/a.py"
+    command printf 'aws = "%s"\n' "$AKIA_TOK" >"$d/a.py"
     list="$(make_list "$d/l" "$d/a.py")"
     assert_fires "$SK_SEC" hardcoded-secret "AWS access key pattern" \
         "secure: an AWS AKIA key fires" -- "$list"
 
     # BOUNDARY: a *test* file carrying a real secret is skipped wholesale.
     d="$(fresh_dir)"
-    /usr/bin/printf 'api_key = "%s"\n' "$SECRET_VAL" >"$d/test_secrets.py"
+    command printf 'api_key = "%s"\n' "$SECRET_VAL" >"$d/test_secrets.py"
     list="$(make_list "$d/l" "$d/test_secrets.py")"
     assert_silent "$SK_SEC" hardcoded-secret \
         "secure: a secret inside a *test* file is skipped (SKIP_GLOBS boundary)" -- "$list"
@@ -348,21 +348,21 @@ test_secure_interpolation() {
 
     # Python execute(f"...") interpolation.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'cur.execute(f"SELECT * FROM t WHERE id={i}")' >"$d/q.py"
+    command printf '%s\n' 'cur.execute(f"SELECT * FROM t WHERE id={i}")' >"$d/q.py"
     list="$(make_list "$d/l" "$d/q.py")"
     assert_fires "$SK_SEC" string-interpolation-query "SQL with string interpolation" \
         "secure: a Python execute(f-string) fires" -- "$list"
 
     # JS query(`...SELECT...`) template literal.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'db.query(`SELECT * FROM t WHERE x=${v}`);' >"$d/q.js"
+    command printf '%s\n' 'db.query(`SELECT * FROM t WHERE x=${v}`);' >"$d/q.js"
     list="$(make_list "$d/l" "$d/q.js")"
     assert_fires "$SK_SEC" string-interpolation-query "SQL with string interpolation" \
         "secure: a JS query(template-literal) fires" -- "$list"
 
     # Go Query(fmt.Sprintf(...)).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'db.Query(fmt.Sprintf("SELECT %s", x))' >"$d/q.go"
+    command printf '%s\n' 'db.Query(fmt.Sprintf("SELECT %s", x))' >"$d/q.go"
     list="$(make_list "$d/l" "$d/q.go")"
     assert_fires "$SK_SEC" string-interpolation-query "SQL with string interpolation" \
         "secure: a Go Query(fmt.Sprintf) fires" -- "$list"
@@ -373,7 +373,7 @@ test_secure_dangerous_and_denylist() {
 
     # dangerous-function: subprocess.call(..., shell=True).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'subprocess.call(cmd, shell=True)' >"$d/d.py"
+    command printf '%s\n' 'subprocess.call(cmd, shell=True)' >"$d/d.py"
     list="$(make_list "$d/l" "$d/d.py")"
     assert_fires "$SK_SEC" dangerous-function "Dangerous function usage" \
         "secure: subprocess.call(shell=True) fires" -- "$list"
@@ -381,14 +381,14 @@ test_secure_dangerous_and_denylist() {
     # dangerous-function: the SECOND DANGER_FN_RE alternative, child_process.exec(,
     # fires independently of the subprocess.call arm above.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'child_process.exec(userCmd)' >"$d/cp.js"
+    command printf '%s\n' 'child_process.exec(userCmd)' >"$d/cp.js"
     list="$(make_list "$d/l" "$d/cp.js")"
     assert_fires "$SK_SEC" dangerous-function "Dangerous function usage" \
         "secure: child_process.exec( fires (2nd DANGER_FN_RE alternative)" -- "$list"
 
     # dangerous-function: yaml.load WITHOUT a Loader= fires...
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'data = yaml.load(payload)' >"$d/y.py"
+    command printf '%s\n' 'data = yaml.load(payload)' >"$d/y.py"
     list="$(make_list "$d/l" "$d/y.py")"
     assert_fires "$SK_SEC" dangerous-function "Unsafe deserialization" \
         "secure: yaml.load without Loader= fires" -- "$list"
@@ -396,21 +396,21 @@ test_secure_dangerous_and_denylist() {
     # dangerous-function: the OTHER UNSAFE_DESERIALIZE_RE alternative, marshal.loads(,
     # is always unsafe (no Loader= escape hatch applies).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'obj = marshal.loads(blob)' >"$d/m.py"
+    command printf '%s\n' 'obj = marshal.loads(blob)' >"$d/m.py"
     list="$(make_list "$d/l" "$d/m.py")"
     assert_fires "$SK_SEC" dangerous-function "Unsafe deserialization" \
         "secure: marshal.loads( fires (marshal deserialization alternative)" -- "$list"
 
     # ...but yaml.load WITH an explicit Loader= stays silent (exclusion boundary).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'data = yaml.load(payload, Loader=SafeLoader)' >"$d/ys.py"
+    command printf '%s\n' 'data = yaml.load(payload, Loader=SafeLoader)' >"$d/ys.py"
     list="$(make_list "$d/l" "$d/ys.py")"
     assert_silent "$SK_SEC" dangerous-function \
         "secure: yaml.load with Loader= stays silent (Loader exclusion boundary)" -- "$list"
 
     # denylist-validation: a blacklist array literal.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'blacklist = ["a", "b"]' >"$d/bl.py"
+    command printf '%s\n' 'blacklist = ["a", "b"]' >"$d/bl.py"
     list="$(make_list "$d/l" "$d/bl.py")"
     assert_fires "$SK_SEC" denylist-validation "Denylist pattern" \
         "secure: a blacklist array fires denylist-validation" -- "$list"
@@ -424,8 +424,8 @@ test_tested_missing_and_untested() {
 
     # missing-test-file + untested-public-api fire when NO sibling test exists.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/src"
-    /usr/bin/printf '%s\n' 'def public_fn():' '    return 0' >"$d/src/mod.py"
+    command mkdir -p "$d/src"
+    command printf '%s\n' 'def public_fn():' '    return 0' >"$d/src/mod.py"
     list="$(make_list "$d/l" "$d/src/mod.py")"
     assert_fires "$SK_TEST" missing-test-file "No test file found" \
         "tested: a source file with no sibling test fires missing-test-file" -- "$list"
@@ -434,9 +434,9 @@ test_tested_missing_and_untested() {
 
     # BOUNDARY: a sibling test_mod.py REFERENCING the fn suppresses BOTH.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/src"
-    /usr/bin/printf '%s\n' 'def public_fn():' '    return 0' >"$d/src/mod.py"
-    /usr/bin/printf '%s\n' 'def test_it():' '    public_fn()' >"$d/src/test_mod.py"
+    command mkdir -p "$d/src"
+    command printf '%s\n' 'def public_fn():' '    return 0' >"$d/src/mod.py"
+    command printf '%s\n' 'def test_it():' '    public_fn()' >"$d/src/test_mod.py"
     list="$(make_list "$d/l" "$d/src/mod.py")"
     assert_silent "$SK_TEST" missing-test-file \
         "tested: a present sibling test suppresses missing-test-file (boundary)" -- "$list"
@@ -446,9 +446,9 @@ test_tested_missing_and_untested() {
     # SPLIT: a sibling test that does NOT reference the fn → missing-test-file
     # silent (sibling exists) but untested-public-api still fires.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/src"
-    /usr/bin/printf '%s\n' 'def public_fn():' '    return 0' >"$d/src/mod.py"
-    /usr/bin/printf '%s\n' 'def test_other():' '    other()' >"$d/src/test_mod.py"
+    command mkdir -p "$d/src"
+    command printf '%s\n' 'def public_fn():' '    return 0' >"$d/src/mod.py"
+    command printf '%s\n' 'def test_other():' '    other()' >"$d/src/test_mod.py"
     list="$(make_list "$d/l" "$d/src/mod.py")"
     assert_silent "$SK_TEST" missing-test-file \
         "tested: an unrelated sibling test still suppresses missing-test-file" -- "$list"
@@ -457,8 +457,8 @@ test_tested_missing_and_untested() {
 
     # Go: an exported func with a sibling _test.go that does NOT reference it fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'package p' 'func DoThing() {}' >"$d/svc.go"
-    /usr/bin/printf '%s\n' 'package p' 'func TestOther(t *testing.T) {}' >"$d/svc_test.go"
+    command printf '%s\n' 'package p' 'func DoThing() {}' >"$d/svc.go"
+    command printf '%s\n' 'package p' 'func TestOther(t *testing.T) {}' >"$d/svc_test.go"
     list="$(make_list "$d/l" "$d/svc.go")"
     assert_fires "$SK_TEST" untested-public-api "No tests reference DoThing" \
         "tested: a Go exported func absent from _test.go fires untested-public-api" -- "$list"
@@ -471,42 +471,42 @@ test_tested_ts_and_rust() {
 
     # TS: a *.test.<ext> sibling suppresses missing-test-file; its absence fires.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/src"
-    /usr/bin/printf '%s\n' 'export const a = 1;' >"$d/src/comp.ts"
+    command mkdir -p "$d/src"
+    command printf '%s\n' 'export const a = 1;' >"$d/src/comp.ts"
     list="$(make_list "$d/l" "$d/src/comp.ts")"
     assert_fires "$SK_TEST" missing-test-file "No test file found" \
         "tested: a .ts file with no sibling test fires missing-test-file" -- "$list"
-    /usr/bin/printf '%s\n' 'test("c", () => {});' >"$d/src/comp.test.ts"
+    command printf '%s\n' 'test("c", () => {});' >"$d/src/comp.test.ts"
     assert_silent "$SK_TEST" missing-test-file \
         "tested: a <name>.test.ts sibling suppresses missing-test-file" -- "$list"
 
     # TS: a __tests__/<name>.test.<ext> sibling also suppresses it.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/src/__tests__"
-    /usr/bin/printf '%s\n' 'export const a = 1;' >"$d/src/widget.tsx"
-    /usr/bin/printf '%s\n' 'test("w", () => {});' >"$d/src/__tests__/widget.test.tsx"
+    command mkdir -p "$d/src/__tests__"
+    command printf '%s\n' 'export const a = 1;' >"$d/src/widget.tsx"
+    command printf '%s\n' 'test("w", () => {});' >"$d/src/__tests__/widget.test.tsx"
     list="$(make_list "$d/l" "$d/src/widget.tsx")"
     assert_silent "$SK_TEST" missing-test-file \
         "tested: a __tests__/<name>.test.tsx sibling suppresses missing-test-file" -- "$list"
 
     # Rust: an inline #[cfg(test)] block counts as a test (silent)...
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/src"
-    /usr/bin/printf '%s\n' 'fn thing() {}' '#[cfg(test)]' 'mod tests {}' >"$d/src/lib.rs"
+    command mkdir -p "$d/src"
+    command printf '%s\n' 'fn thing() {}' '#[cfg(test)]' 'mod tests {}' >"$d/src/lib.rs"
     list="$(make_list "$d/l" "$d/src/lib.rs")"
     assert_silent "$SK_TEST" missing-test-file \
         "tested: a Rust file with inline #[cfg(test)] suppresses missing-test-file" -- "$list"
 
     # ...and a bare .rs with NEITHER cfg(test) NOR a ../tests dir fires...
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/src"
-    /usr/bin/printf '%s\n' 'fn other() {}' >"$d/src/bare.rs"
+    command mkdir -p "$d/src"
+    command printf '%s\n' 'fn other() {}' >"$d/src/bare.rs"
     list="$(make_list "$d/l" "$d/src/bare.rs")"
     assert_fires "$SK_TEST" missing-test-file "No test file found" \
         "tested: a bare .rs with no cfg(test)/../tests fires missing-test-file" -- "$list"
 
     # ...but the same bare .rs beside a ../tests directory is suppressed (isdir arm).
-    /usr/bin/mkdir -p "$d/tests"
+    command mkdir -p "$d/tests"
     assert_silent "$SK_TEST" missing-test-file \
         "tested: a bare .rs beside a ../tests dir suppresses missing-test-file (isdir arm)" -- "$list"
 }
@@ -519,14 +519,14 @@ test_documented_python() {
 
     # undocumented-public-function: a py def with no docstring fires...
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def compute():' '    return 0' >"$d/f.py"
+    command printf '%s\n' 'def compute():' '    return 0' >"$d/f.py"
     list="$(make_list "$d/l" "$d/f.py")"
     assert_fires "$SK_DOC" undocumented-public-function "No docstring" \
         "documented: an undocumented py def fires" -- "$list"
 
     # ...but a def WITH a docstring stays silent (docstring boundary).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def compute():' '    """Compute it."""' '    return 0' >"$d/g.py"
+    command printf '%s\n' 'def compute():' '    """Compute it."""' '    return 0' >"$d/g.py"
     list="$(make_list "$d/l" "$d/g.py")"
     assert_silent "$SK_DOC" undocumented-public-function \
         "documented: a py def with a docstring stays silent" -- "$list"
@@ -534,14 +534,14 @@ test_documented_python() {
     # BOUNDARY: a def followed by a BLANK line then the docstring stays silent
     # (the blank-skip loop advances past the blank before checking).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'def compute():' '' '    """Doc after a blank."""' '    return 0' >"$d/h.py"
+    command printf '%s\n' 'def compute():' '' '    """Doc after a blank."""' '    return 0' >"$d/h.py"
     list="$(make_list "$d/l" "$d/h.py")"
     assert_silent "$SK_DOC" undocumented-public-function \
         "documented: a docstring after a blank line stays silent (blank-skip boundary)" -- "$list"
 
     # undocumented-public-class: a py class with no docstring fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'class Widget:' '    x = 1' >"$d/c.py"
+    command printf '%s\n' 'class Widget:' '    x = 1' >"$d/c.py"
     list="$(make_list "$d/l" "$d/c.py")"
     assert_fires "$SK_DOC" undocumented-public-class "No docstring" \
         "documented: an undocumented py class fires" -- "$list"
@@ -554,14 +554,14 @@ test_documented_other_langs() {
     # (A leading line keeps the export off line 1 — scan_js only inspects a def
     # with a real predecessor line, `if prev > 0`.)
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const x = 1;' 'export function doThing() {}' >"$d/e.js"
+    command printf '%s\n' 'const x = 1;' 'export function doThing() {}' >"$d/e.js"
     list="$(make_list "$d/l" "$d/e.js")"
     assert_fires "$SK_DOC" undocumented-export "No JSDoc" \
         "documented: an undocumented JS export fires" -- "$list"
 
     # ...and a JS `export class` routes to undocumented-public-class (category split).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'const y = 2;' 'export class Thing {}' >"$d/e2.js"
+    command printf '%s\n' 'const y = 2;' 'export class Thing {}' >"$d/e2.js"
     list="$(make_list "$d/l" "$d/e2.js")"
     assert_fires "$SK_DOC" undocumented-public-class "No JSDoc" \
         "documented: an undocumented JS export class fires the class category" -- "$list"
@@ -570,35 +570,35 @@ test_documented_other_langs() {
     # preceding line must itself match `^\s*\*/`, i.e. a multi-line JSDoc close —
     # a single-line `/** ... */` would not).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' '/**' ' * Does the thing.' ' */' 'export function doThing() {}' >"$d/e3.js"
+    command printf '%s\n' '/**' ' * Does the thing.' ' */' 'export function doThing() {}' >"$d/e3.js"
     list="$(make_list "$d/l" "$d/e3.js")"
     assert_silent "$SK_DOC" undocumented-export \
         "documented: a JS export with a JSDoc block stays silent" -- "$list"
 
     # undocumented-export: a Go exported func with no GoDoc comment fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'package p' 'func DoThing() {}' >"$d/g.go"
+    command printf '%s\n' 'package p' 'func DoThing() {}' >"$d/g.go"
     list="$(make_list "$d/l" "$d/g.go")"
     assert_fires "$SK_DOC" undocumented-export "No GoDoc for DoThing" \
         "documented: an undocumented Go exported func fires" -- "$list"
 
     # ...but a Go func with a `// DoThing` GoDoc line stays silent.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'package p' '// DoThing does the thing.' 'func DoThing() {}' >"$d/g2.go"
+    command printf '%s\n' 'package p' '// DoThing does the thing.' 'func DoThing() {}' >"$d/g2.go"
     list="$(make_list "$d/l" "$d/g2.go")"
     assert_silent "$SK_DOC" undocumented-export \
         "documented: a Go func with a GoDoc comment stays silent" -- "$list"
 
     # undocumented-public-function: a shell function with no preceding comment fires.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' 'x=1' 'deploy() {' '  true' '}' >"$d/s.sh"
+    command printf '%s\n' 'x=1' 'deploy() {' '  true' '}' >"$d/s.sh"
     list="$(make_list "$d/l" "$d/s.sh")"
     assert_fires "$SK_DOC" undocumented-public-function "No comment before function" \
         "documented: an uncommented shell function fires" -- "$list"
 
     # ...but a shell function with a preceding `#` comment stays silent.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' '# deploy the app' 'deploy() {' '  true' '}' >"$d/s2.sh"
+    command printf '%s\n' '# deploy the app' 'deploy() {' '  true' '}' >"$d/s2.sh"
     list="$(make_list "$d/l" "$d/s2.sh")"
     assert_silent "$SK_DOC" undocumented-public-function \
         "documented: a commented shell function stays silent" -- "$list"

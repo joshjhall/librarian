@@ -11,8 +11,8 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-BIN_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(/usr/bin/dirname "$BIN_DIR")"
+BIN_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(command dirname "$BIN_DIR")"
 CHANGELOG="$PROJECT_ROOT/CHANGELOG.md"
 
 # Extract the "## [VERSION]" section up to (but not including) the next "## [".

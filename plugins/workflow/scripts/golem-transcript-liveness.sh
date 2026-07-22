@@ -89,8 +89,34 @@
 # (issue #228/#241 — a hardcoded path exits 127 off /usr/bin). shellcheck clean.
 set -uo pipefail
 
+# --- Portable tool resolution (#443) ----------------------------------------
+# This script runs under a potentially stripped/hermetic PATH (its liveness /
+# --watch paths are tested with PATH reduced to a few stubs), so `command <tool>`
+# would fail to find an external coreutil there — yet a hardcoded /usr/bin/<tool>
+# is wrong on macOS. `_bin <tool>` honors PATH first (the `command -v` builtin
+# needs no external binary), then falls back to scanning the standard bin dirs so
+# it still resolves under a stripped PATH, then yields the bare name. Candidates
+# are bare DIRECTORIES, not /usr/bin/<tool> literals, so the #443 lint does not
+# flag them. Defined before SCRIPT_DIR so even that resolution is portable.
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+CAT="$(_bin cat)"
+DATE="$(_bin date)"
+STAT="$(_bin stat)"
+
 usage() {
-    command cat >&2 <<'EOF'
+    "$CAT" >&2 <<'EOF'
 usage: golem-transcript-liveness.sh <worktree-dir>
 
 Prints the golem's liveness class (working|idle|errored) read from its Claude
@@ -196,8 +222,8 @@ class="$(
 # %m`, mirroring golem-gate-watch.sh's _mtime_epoch). Empty if it cannot stat —
 # in which case the staleness guard below is skipped (fail-open on the guard, not
 # on the verdict) rather than demoting a possibly-live `working` on a stat quirk.
-_newest_mtime="$(command stat -c %Y "$newest" 2>/dev/null ||
-    command stat -f %m "$newest" 2>/dev/null || true)"
+_newest_mtime="$("$STAT" -c %Y "$newest" 2>/dev/null ||
+    "$STAT" -f %m "$newest" 2>/dev/null || true)"
 stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
 
 case "$class" in
@@ -211,7 +237,7 @@ case "$class" in
         case "$_newest_mtime" in
             '' | *[!0-9]*) command printf '%s\n' "working" ;;
             *)
-                _now="$(command date +%s)"
+                _now="$("$DATE" +%s)"
                 _age=$((_now - _newest_mtime))
                 [ "$_age" -lt 0 ] && _age=0
                 if [ "$_age" -gt "$stall_threshold" ]; then

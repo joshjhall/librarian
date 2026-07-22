@@ -34,8 +34,8 @@ test_suite "Release toolchain coverage"
 # Module-level scratch dir, cleaned up once when the suite exits. Each sandbox is
 # a fresh subdir under it, so a per-helper RETURN trap (which would fire when the
 # helper returns, before the test body runs) is unnecessary.
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # make_bin_sandbox <varname>
 # Creates a fresh sandbox subdir with a copy of bin/ and a synthetic VERSION
@@ -45,9 +45,9 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 make_bin_sandbox() {
     local __out="$1"
     local dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/cp -R "$REPO_ROOT/bin" "$dir/bin"
-    /usr/bin/printf '1.2.3\n' >"$dir/VERSION"
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    command cp -R "$REPO_ROOT/bin" "$dir/bin"
+    command printf '1.2.3\n' >"$dir/VERSION"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -59,13 +59,13 @@ make_bin_sandbox() {
 make_full_sandbox() {
     local __out="$1"
     local dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/cp -R "$REPO_ROOT/bin" "$dir/bin"
-    /usr/bin/mkdir -p "$dir/tests"
-    /usr/bin/cp "$REPO_ROOT/tests/validate-manifests.mjs" "$dir/tests/"
-    /usr/bin/cp -R "$REPO_ROOT/.claude-plugin" "$dir/.claude-plugin"
-    /usr/bin/cp -R "$REPO_ROOT/plugins" "$dir/plugins"
-    /usr/bin/printf '1.2.3\n' >"$dir/VERSION"
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    command cp -R "$REPO_ROOT/bin" "$dir/bin"
+    command mkdir -p "$dir/tests"
+    command cp "$REPO_ROOT/tests/validate-manifests.mjs" "$dir/tests/"
+    command cp -R "$REPO_ROOT/.claude-plugin" "$dir/.claude-plugin"
+    command cp -R "$REPO_ROOT/plugins" "$dir/plugins"
+    command printf '1.2.3\n' >"$dir/VERSION"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -79,11 +79,11 @@ make_full_sandbox() {
 make_stamp_sandbox() {
     local __out="$1"
     local dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/mkdir -p "$dir/bin" "$dir/.claude-plugin" \
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    command mkdir -p "$dir/bin" "$dir/.claude-plugin" \
         "$dir/plugins/demo/.claude-plugin"
-    /usr/bin/cp "$REPO_ROOT/bin/stamp-versions.mjs" "$dir/bin/"
-    /usr/bin/cat >"$dir/.claude-plugin/marketplace.json" <<'EOF'
+    command cp "$REPO_ROOT/bin/stamp-versions.mjs" "$dir/bin/"
+    command cat >"$dir/.claude-plugin/marketplace.json" <<'EOF'
 {
   "name": "demo-marketplace",
   "plugins": [
@@ -91,7 +91,7 @@ make_stamp_sandbox() {
   ]
 }
 EOF
-    /usr/bin/cat >"$dir/plugins/demo/.claude-plugin/plugin.json" <<'EOF'
+    command cat >"$dir/plugins/demo/.claude-plugin/plugin.json" <<'EOF'
 {
   "name": "demo",
   "version": "0.0.0",
@@ -146,7 +146,7 @@ test_release_happy_path() {
     bash "$sb/bin/release.sh" patch --non-interactive --skip-changelog --force \
         >/dev/null 2>&1 || rc=$?
     assert_exit 0 "$rc" "release.sh patch --non-interactive --skip-changelog --force succeeds"
-    assert_equals "1.2.4" "$(/usr/bin/cat "$sb/VERSION")" "VERSION bumped 1.2.3 → 1.2.4"
+    assert_equals "1.2.4" "$(command cat "$sb/VERSION")" "VERSION bumped 1.2.3 → 1.2.4"
     assert_file_contains "$sb/plugins/dev-core/.claude-plugin/plugin.json" \
         '"version": "1.2.4"' "dev-core plugin.json stamped to 1.2.4"
 }
@@ -154,7 +154,7 @@ test_release_happy_path() {
 test_release_missing_version_file() {
     local sb rc=0 err
     make_bin_sandbox sb
-    /usr/bin/rm -f "$sb/VERSION"
+    command rm -f "$sb/VERSION"
     err="$(bash "$sb/bin/release.sh" patch --non-interactive --force 2>&1 >/dev/null)" || rc=$?
     assert_exit 1 "$rc" "release.sh exits 1 when VERSION is missing"
     assert_contains "$err" "VERSION file not found" "release.sh reports the missing VERSION file"
@@ -190,7 +190,7 @@ test_release_no_args() {
 # Drop a synthetic CHANGELOG.md at the sandbox root (the PROJECT_ROOT the script
 # resolves relative to bin/).
 seed_changelog() {
-    /usr/bin/cat >"$1/CHANGELOG.md" <<'EOF'
+    command cat >"$1/CHANGELOG.md" <<'EOF'
 # Changelog
 
 ## [9.9.9] - 2026-01-01
@@ -243,7 +243,7 @@ test_release_notes_fallback_no_section() {
 test_release_notes_fallback_no_changelog() {
     local sb out
     make_bin_sandbox sb
-    /usr/bin/rm -f "$sb/CHANGELOG.md"
+    command rm -f "$sb/CHANGELOG.md"
     out="$(bash "$sb/bin/generate-release-notes.sh" 1.0.0 2>/dev/null)"
     assert_contains "$out" "## Release v1.0.0" "fallback header when CHANGELOG.md is absent"
     assert_contains "$out" "claude plugin marketplace add" "fallback includes install instructions"
@@ -278,13 +278,13 @@ run_git_automation() {
     local sb="$1" ac="$2" at="$3" ap="$4" agr="$5" gh_mode="${6:-ok}" push_rc="${7:-0}"
     local tag_push_rc="${8:-$push_rc}"
     local stub="$sb/stubbin"
-    /usr/bin/mkdir -p "$stub"
+    command mkdir -p "$stub"
     # git stub: a `push` subcommand returns a per-ref code so the branch push
     # (`push origin <branch>`) and the tag push (`push origin v<tag>`) can fail
     # independently — the pushed ref is $3, and a tag ref is the only one that
     # starts with `v`. Every other subcommand (commit/tag/rev-parse/...) succeeds.
     # Absolute /bin/sh shebang so it runs regardless of PATH contents.
-    /usr/bin/cat >"$stub/git" <<EOF
+    command cat >"$stub/git" <<EOF
 #!/bin/sh
 case "\$1" in
     push)
@@ -295,31 +295,36 @@ case "\$1" in
     *) exit 0 ;;
 esac
 EOF
-    /usr/bin/chmod +x "$stub/git"
+    command chmod +x "$stub/git"
     # mktemp stub: delegates to the real mktemp but also records the created path
     # to "$sb/notes_tempfile_path" so a test can assert the unsigned-fallback
     # subshell's EXIT trap actually removed the release-notes temp file.
-    # git-automation.sh creates it via `command mktemp`, which honors PATH.
-    /usr/bin/cat >"$stub/mktemp" <<EOF
+    # git-automation.sh creates it via `command mktemp`, which honors PATH — and
+    # this stub named `mktemp` is on that PATH, so the stub must delegate to the
+    # REAL mktemp by its resolved absolute path (captured before the stub shadows
+    # PATH); a `command mktemp` inside the stub would recurse into the stub.
+    local real_mktemp
+    real_mktemp="$(command -v mktemp)"
+    command cat >"$stub/mktemp" <<EOF
 #!/bin/sh
-f="\$(/usr/bin/mktemp "\$@")" || exit 1
+f="\$("$real_mktemp" "\$@")" || exit 1
 printf '%s\n' "\$f" >"$sb/notes_tempfile_path"
 printf '%s\n' "\$f"
 EOF
-    /usr/bin/chmod +x "$stub/mktemp"
-    /usr/bin/rm -f "$sb/gh_called"
+    command chmod +x "$stub/mktemp"
+    command rm -f "$sb/gh_called"
     if [ "$gh_mode" = "ok" ] || [ "$gh_mode" = "fail" ]; then
         local gh_rc=0
         [ "$gh_mode" = "fail" ] && gh_rc=1
-        /usr/bin/cat >"$stub/gh" <<EOF
+        command cat >"$stub/gh" <<EOF
 #!/bin/sh
 touch "$sb/gh_called"
 exit $gh_rc
 EOF
-        /usr/bin/chmod +x "$stub/gh"
+        command chmod +x "$stub/gh"
     fi
     # A .git marker so the function's early "not a git repository" guard passes.
-    /usr/bin/mkdir -p "$sb/.git"
+    command mkdir -p "$sb/.git"
     (
         # ok/fail: stub prepended to a full PATH so the git/gh stubs shadow the
         # real binaries while coreutils + generate-release-notes.sh (used by the
@@ -413,7 +418,7 @@ test_git_automation_gh_release_failure_degrades() {
     # notes temp file even when gh fails. The mktemp stub recorded the path; if
     # the trap (or the subshell) regressed, the file would still be present here.
     local notes_file
-    notes_file="$(/usr/bin/cat "$sb/notes_tempfile_path" 2>/dev/null)"
+    notes_file="$(command cat "$sb/notes_tempfile_path" 2>/dev/null)"
     assert_true "[ -n '$notes_file' ]" "the fallback path created a release-notes temp file"
     assert_true "[ ! -e '$notes_file' ]" "the subshell EXIT trap removed the release-notes temp file"
 }
@@ -446,7 +451,7 @@ test_git_automation_not_a_git_repo() {
     local sb out rc=0
     make_bin_sandbox sb
     # No .git marker: the early guard returns 0 without touching git/gh.
-    /usr/bin/rm -rf "$sb/.git"
+    command rm -rf "$sb/.git"
     out="$(
         cd "$sb" || exit 1
         BIN_DIR="$sb/bin" GH_REPO="joshjhall/librarian" \
@@ -478,44 +483,44 @@ test_git_automation_not_a_git_repo() {
 run_generate_changelog() {
     local sb="$1" skip="$2" mode="${3:-success}"
     local stub="$sb/stubbin"
-    /usr/bin/mkdir -p "$stub"
+    command mkdir -p "$stub"
 
     # git-cliff stub, per mode. Invoked as `git-cliff -o CHANGELOG.md --tag v9.9.9
     # --include-path '**/*'`; each writes CHANGELOG.md in cwd, then exits.
     case "$mode" in
         runfail)
             # Partial write, then failure (return 1, file not to be trusted).
-            /usr/bin/cat >"$stub/git-cliff" <<'EOF'
+            command cat >"$stub/git-cliff" <<'EOF'
 #!/bin/sh
 printf '# Changelog\n' >CHANGELOG.md
 exit 1
 EOF
-            /usr/bin/chmod +x "$stub/git-cliff"
+            command chmod +x "$stub/git-cliff"
             ;;
         empty)
             # Headerless render: no "## [version]" section, but exit 0 — the
             # silent-wipe hazard the empty-render guard must catch.
-            /usr/bin/cat >"$stub/git-cliff" <<'EOF'
+            command cat >"$stub/git-cliff" <<'EOF'
 #!/bin/sh
 printf '# Changelog\n' >CHANGELOG.md
 exit 0
 EOF
-            /usr/bin/chmod +x "$stub/git-cliff"
+            command chmod +x "$stub/git-cliff"
             ;;
         success)
             # Valid render WITH a version section and trailing blank lines, so the
             # MD012 trailing-blank trim is exercised too.
-            /usr/bin/cat >"$stub/git-cliff" <<'EOF'
+            command cat >"$stub/git-cliff" <<'EOF'
 #!/bin/sh
 printf '# Changelog\n\n## [9.9.9] - 2026-01-01\n\n### Added\n\n- SENTINEL_NEW\n\n\n\n' >CHANGELOG.md
 exit 0
 EOF
-            /usr/bin/chmod +x "$stub/git-cliff"
+            command chmod +x "$stub/git-cliff"
             ;;
     esac
 
     # Sentinel so an "untouched" assertion is meaningful on the skip/absent paths.
-    /usr/bin/printf 'SENTINEL_ORIGINAL\n' >"$sb/CHANGELOG.md"
+    command printf 'SENTINEL_ORIGINAL\n' >"$sb/CHANGELOG.md"
 
     (
         PATH="$stub:$PATH"
@@ -580,7 +585,7 @@ test_changelog_success_trims_trailing_blanks() {
     assert_contains "$out" "Generated CHANGELOG.md" "the success path announces completion"
     assert_file_contains "$sb/CHANGELOG.md" "## \[9.9.9\]" "the new version's section is present"
     # MD012: trailing blank lines trimmed → the last line is the final content line.
-    assert_equals "- SENTINEL_NEW" "$(/usr/bin/tail -n 1 "$sb/CHANGELOG.md")" "trailing blank lines are trimmed"
+    assert_equals "- SENTINEL_NEW" "$(command tail -n 1 "$sb/CHANGELOG.md")" "trailing blank lines are trimmed"
 }
 
 # --- Group F: release.sh call-site abort guard (finding #1) ------------------
@@ -594,13 +599,13 @@ test_changelog_success_trims_trailing_blanks() {
 seed_failing_git_cliff() {
     local sb="$1"
     local stub="$sb/stubbin"
-    /usr/bin/mkdir -p "$stub"
-    /usr/bin/cat >"$stub/git-cliff" <<'EOF'
+    command mkdir -p "$stub"
+    command cat >"$stub/git-cliff" <<'EOF'
 #!/bin/sh
 printf '# Changelog\n' >CHANGELOG.md
 exit 1
 EOF
-    /usr/bin/chmod +x "$stub/git-cliff"
+    command chmod +x "$stub/git-cliff"
     printf '%s' "$stub"
 }
 
@@ -679,8 +684,8 @@ source "$REPO_ROOT/bin/lib/release/git-cliff.sh"
 # named variable.
 gc_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/gc.XXXXXX")" || return 1
-    /usr/bin/mkdir -p "$dir/stubbin" "$dir/payload"
+    dir="$(command mktemp -d "$WORKDIR/gc.XXXXXX")" || return 1
+    command mkdir -p "$dir/stubbin" "$dir/payload"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -694,7 +699,7 @@ gc_sandbox() {
 #   fail     — exit 1 without writing (the undownloadable-checksum path).
 gc_stub_curl() {
     local sb="$1" mode="$2"
-    /usr/bin/cat >"$sb/stubbin/curl" <<EOF
+    command cat >"$sb/stubbin/curl" <<EOF
 #!/bin/sh
 # Parse out the -o target (the last arg after -o).
 out=""
@@ -708,11 +713,11 @@ case "$mode" in
     fail) exit 1 ;;
     ok)
         [ -n "\$out" ] || exit 1
-        /bin/cat "$sb/expected_sha" >"\$out"
+        command cat "$sb/expected_sha" >"\$out"
         exit 0 ;;
 esac
 EOF
-    /usr/bin/chmod +x "$sb/stubbin/curl"
+    command chmod +x "$sb/stubbin/curl"
 }
 
 # run_verify_sha512 <sandbox> <hermetic>
@@ -750,11 +755,11 @@ test_ensure_git_cliff_short_circuits_when_present() {
     # `command -v git-cliff` guard WITHOUT attempting any install. A marker file
     # proves the install machinery (cargo/curl) was never reached — the stub
     # git-cliff is inert (exit 0) and touches nothing.
-    /usr/bin/cat >"$sb/stubbin/git-cliff" <<'EOF'
+    command cat >"$sb/stubbin/git-cliff" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/stubbin/git-cliff"
+    command chmod +x "$sb/stubbin/git-cliff"
     out="$(
         run_path="$sb/stubbin:$PATH"
         PATH="$run_path"
@@ -770,7 +775,7 @@ EOF
 test_verify_sha512_download_failure_refuses() {
     local sb rc=0 out
     gc_sandbox sb
-    /usr/bin/printf 'payload-bytes\n' >"$sb/payload/$GC_ASSET"
+    command printf 'payload-bytes\n' >"$sb/payload/$GC_ASSET"
     gc_stub_curl "$sb" fail
     out="$(run_verify_sha512 "$sb")" || rc=$?
     assert_exit 1 "$rc" "verify returns non-zero when the .sha512 cannot be downloaded"
@@ -781,7 +786,7 @@ test_verify_sha512_tampered_payload_refuses() {
     local sb rc=0
     gc_sandbox sb
     local real bogus
-    /usr/bin/printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
+    command printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
     # The published checksum names a WELL-FORMED but WRONG digest (a
     # swapped/tampered asset). Derive it from the payload's REAL 128-hex digest
     # with its first nibble flipped: this stays a valid 128-char SHA-512 line, so
@@ -789,12 +794,12 @@ test_verify_sha512_tampered_payload_refuses() {
     # (`FAILED`) — NOT the "no properly formatted checksum lines found" PARSE
     # rejection a wrong-length placeholder (e.g. 130 chars) would trip instead,
     # which would leave the real mismatch path of this supply-chain gate untested.
-    real="$(cd "$sb/payload" && /usr/bin/sha512sum "$GC_ASSET" | /usr/bin/cut -c1-128)"
+    real="$(cd "$sb/payload" && command sha512sum "$GC_ASSET" | command cut -c1-128)"
     case "$real" in
         0*) bogus="1${real#?}" ;;
         *) bogus="0${real#?}" ;;
     esac
-    /usr/bin/printf '%s  %s\n' "$bogus" "$GC_ASSET" >"$sb/expected_sha"
+    command printf '%s  %s\n' "$bogus" "$GC_ASSET" >"$sb/expected_sha"
     gc_stub_curl "$sb" ok
     run_verify_sha512 "$sb" >/dev/null 2>&1 && rc=0 || rc=$?
     assert_exit 1 "$rc" "verify returns non-zero when the digest does not match the payload"
@@ -803,12 +808,12 @@ test_verify_sha512_tampered_payload_refuses() {
 test_verify_sha512_matching_payload_succeeds() {
     local sb rc=0
     gc_sandbox sb
-    /usr/bin/printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
+    command printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
     # The published checksum is the REAL digest of the payload — verify must pass.
     # Compute `<hexdigest>  <asset>` exactly as sha512sum -c consumes it.
     (
         cd "$sb/payload" || exit 1
-        /usr/bin/sha512sum "$GC_ASSET"
+        command sha512sum "$GC_ASSET"
     ) >"$sb/expected_sha"
     gc_stub_curl "$sb" ok
     run_verify_sha512 "$sb" >/dev/null 2>&1 && rc=0 || rc=$?
@@ -818,12 +823,12 @@ test_verify_sha512_matching_payload_succeeds() {
 test_verify_sha512_no_digest_tool_fails_closed() {
     local sb rc=0 out
     gc_sandbox sb
-    /usr/bin/printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
+    command printf 'the-real-payload\n' >"$sb/payload/$GC_ASSET"
     # A valid matching checksum, so the ONLY reason to fail is the absent digest
     # tool — proving the else-arm fails closed rather than skipping verification.
     (
         cd "$sb/payload" || exit 1
-        /usr/bin/sha512sum "$GC_ASSET"
+        command sha512sum "$GC_ASSET"
     ) >"$sb/expected_sha"
     gc_stub_curl "$sb" ok
     # hermetic PATH = stubbin only → no sha512sum / shasum resolvable.
@@ -871,7 +876,7 @@ run_ensure_git_cliff() {
 # (fail), to drive the cargo branch and its `return $?`.
 gc_stub_cargo() {
     local sb="$1" mode="$2"
-    /usr/bin/cat >"$sb/stubbin/cargo" <<EOF
+    command cat >"$sb/stubbin/cargo" <<EOF
 #!/bin/sh
 echo "\$*" >"$sb/cargo_args"
 case "$mode" in
@@ -879,7 +884,7 @@ case "$mode" in
     *) exit 1 ;;
 esac
 EOF
-    /usr/bin/chmod +x "$sb/stubbin/cargo"
+    command chmod +x "$sb/stubbin/cargo"
 }
 
 # gc_stub_uname <sandbox> <arch> <os>
@@ -888,14 +893,14 @@ EOF
 # regardless of the real host. os is lowercased by the function (via `tr`).
 gc_stub_uname() {
     local sb="$1" arch="$2" os="$3"
-    /usr/bin/cat >"$sb/stubbin/uname" <<EOF
+    command cat >"$sb/stubbin/uname" <<EOF
 #!/bin/sh
 case "\$1" in
     -m) echo "$arch" ;;
     *) echo "$os" ;;
 esac
 EOF
-    /usr/bin/chmod +x "$sb/stubbin/uname"
+    command chmod +x "$sb/stubbin/uname"
 }
 
 # gc_stub_curl_install <sandbox> <ok|badsum|dlfail>
@@ -914,14 +919,14 @@ gc_stub_curl_install() {
     local sb="$1" mode="$2"
     local payload="git-cliff-fake-tarball-payload"
     local digest
-    digest="$(printf '%s' "$payload" | /usr/bin/sha512sum | /usr/bin/cut -c1-128)"
+    digest="$(printf '%s' "$payload" | command sha512sum | command cut -c1-128)"
     if [ "$mode" = "badsum" ]; then
         case "$digest" in
             0*) digest="1${digest#?}" ;;
             *) digest="0${digest#?}" ;;
         esac
     fi
-    /usr/bin/cat >"$sb/stubbin/curl" <<EOF
+    command cat >"$sb/stubbin/curl" <<EOF
 #!/bin/sh
 url=""; out=""
 while [ \$# -gt 0 ]; do
@@ -934,11 +939,11 @@ done
 echo "\$url" >>"$sb/curl_urls"
 EOF
     if [ "$mode" = "dlfail" ]; then
-        /usr/bin/cat >>"$sb/stubbin/curl" <<'EOF'
+        command cat >>"$sb/stubbin/curl" <<'EOF'
 exit 1
 EOF
     else
-        /usr/bin/cat >>"$sb/stubbin/curl" <<EOF
+        command cat >>"$sb/stubbin/curl" <<EOF
 [ -n "\$out" ] || exit 1
 case "\$url" in
     *.sha512)
@@ -949,7 +954,7 @@ esac
 exit 0
 EOF
     fi
-    /usr/bin/chmod +x "$sb/stubbin/curl"
+    command chmod +x "$sb/stubbin/curl"
 }
 
 # gc_stub_tar <sandbox> <ok|fail>
@@ -958,7 +963,7 @@ EOF
 # it exits 1 to drive the tar-extraction-failure branch.
 gc_stub_tar() {
     local sb="$1" mode="$2"
-    /usr/bin/cat >"$sb/stubbin/tar" <<EOF
+    command cat >"$sb/stubbin/tar" <<EOF
 #!/bin/sh
 mode="$mode"
 cdir=""
@@ -971,11 +976,11 @@ done
 if [ "\$mode" = "fail" ]; then
     exit 1
 fi
-/bin/mkdir -p "\$cdir/git-cliff-${GC_INSTALL_VERSION}"
+command mkdir -p "\$cdir/git-cliff-${GC_INSTALL_VERSION}"
 : >"\$cdir/git-cliff-${GC_INSTALL_VERSION}/git-cliff"
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/stubbin/tar"
+    command chmod +x "$sb/stubbin/tar"
 }
 
 # gc_stub_sudo <sandbox>
@@ -987,13 +992,13 @@ EOF
 # happy path still completes and returns 0.
 gc_stub_sudo() {
     local sb="$1"
-    /usr/bin/cat >"$sb/stubbin/sudo" <<EOF
+    command cat >"$sb/stubbin/sudo" <<EOF
 #!/bin/sh
 : >"$sb/sudo_called"
 echo "\$*" >>"$sb/sudo_args"
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/stubbin/sudo"
+    command chmod +x "$sb/stubbin/sudo"
 }
 
 test_ensure_git_cliff_cargo_success() {
@@ -1175,7 +1180,7 @@ test_stamp_empty_plugins() {
     local sb rc=0 err
     make_stamp_sandbox sb
     # Valid version, but marketplace.json carries an empty plugins[] array.
-    /usr/bin/cat >"$sb/.claude-plugin/marketplace.json" <<'EOF'
+    command cat >"$sb/.claude-plugin/marketplace.json" <<'EOF'
 {
   "name": "demo-marketplace",
   "plugins": []
@@ -1195,7 +1200,7 @@ test_stamp_missing_version_field() {
     local sb rc=0 err
     make_stamp_sandbox sb
     # Valid version + plugins[], but the referenced plugin.json has no version key.
-    /usr/bin/cat >"$sb/plugins/demo/.claude-plugin/plugin.json" <<'EOF'
+    command cat >"$sb/plugins/demo/.claude-plugin/plugin.json" <<'EOF'
 {
   "name": "demo",
   "description": "demo plugin"

@@ -57,8 +57,8 @@ if ! command -v jq >/dev/null 2>&1; then
     return 0 2>/dev/null || exit 0
 fi
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # --- stub agnix: echoes a captured JSON fixture regardless of args -----------
 # The fixture mirrors the REAL agnix schema captured from the 0.40.0 binary, i.e.
@@ -67,9 +67,9 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 # every mapped prefix, plus a VER-001 project-level row (empty file) and an
 # unmapped AS-* row — both of which MUST be dropped.
 STUB="$WORKDIR/stub-agnix.sh"
-/usr/bin/cat >"$STUB" <<'STUBEOF'
+command cat >"$STUB" <<'STUBEOF'
 #!/usr/bin/env bash
-/usr/bin/cat <<'JSON'
+command cat <<'JSON'
 {
   "version": "0.40.0",
   "files_checked": 6,
@@ -88,57 +88,57 @@ STUB="$WORKDIR/stub-agnix.sh"
 }
 JSON
 STUBEOF
-/usr/bin/chmod +x "$STUB"
+command chmod +x "$STUB"
 
 # A stub that emits a very long message so the 80-codepoint truncation shows.
 STUB_LONG="$WORKDIR/stub-long.sh"
-/usr/bin/cat >"$STUB_LONG" <<'STUBEOF'
+command cat >"$STUB_LONG" <<'STUBEOF'
 #!/usr/bin/env bash
-/usr/bin/cat <<'JSON'
+command cat <<'JSON'
 {"version":"0.40.0","files_checked":1,"diagnostics":[
  {"rule":"CC-AG-001","file":"a.md","line":1,"message":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","rule_severity":"HIGH"}
 ],"summary":{}}
 JSON
 STUBEOF
-/usr/bin/chmod +x "$STUB_LONG"
+command chmod +x "$STUB_LONG"
 
 # A stub emitting non-JSON -> fail-loud parse path.
 STUB_BAD="$WORKDIR/stub-bad.sh"
-/usr/bin/printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "not json {{{"' >"$STUB_BAD"
-/usr/bin/chmod +x "$STUB_BAD"
+command printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "not json {{{"' >"$STUB_BAD"
+command chmod +x "$STUB_BAD"
 
 # A stub emitting nothing -> fail-loud empty-output path.
 STUB_EMPTY="$WORKDIR/stub-empty.sh"
-/usr/bin/printf '%s\n%s\n' '#!/usr/bin/env bash' 'printf ""' >"$STUB_EMPTY"
-/usr/bin/chmod +x "$STUB_EMPTY"
+command printf '%s\n%s\n' '#!/usr/bin/env bash' 'printf ""' >"$STUB_EMPTY"
+command chmod +x "$STUB_EMPTY"
 
 # A stub emitting a top-level JSON ARRAY (not an object) -> malformed-shape
 # fail-loud. Both impls must exit 2 with no output, not silently no-op (python)
 # or emit (bash). Pins the parity the pre-PR review found diverging.
 STUB_TOPARR="$WORKDIR/stub-toparr.sh"
-/usr/bin/printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "[1,2,3]"' >"$STUB_TOPARR"
-/usr/bin/chmod +x "$STUB_TOPARR"
+command printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "[1,2,3]"' >"$STUB_TOPARR"
+command chmod +x "$STUB_TOPARR"
 
 # A stub whose top-level `diagnostics` value is JSON null (a plausible serde
 # Option<Vec<..>> shape for zero findings) -> both impls treat it as a clean
 # empty result (exit 0, no output), matching jq's `(.diagnostics // [])`. NOT a
 # hard failure. Pins the top-level null-coalescing parity.
 STUB_DIAGNULL="$WORKDIR/stub-diagnull.sh"
-/usr/bin/printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "{\"diagnostics\": null}"' >"$STUB_DIAGNULL"
-/usr/bin/chmod +x "$STUB_DIAGNULL"
+command printf '%s\n%s\n' '#!/usr/bin/env bash' 'echo "{\"diagnostics\": null}"' >"$STUB_DIAGNULL"
+command chmod +x "$STUB_DIAGNULL"
 
 # A stub whose diagnostics array holds a VALID dict followed by a NON-dict
 # element -> both impls must fail loud (exit 2) with NO partial row on stdout
 # (the valid dict must not leak before the error). Pins fail-loud-before-output.
 STUB_NONDICT="$WORKDIR/stub-nondict.sh"
-/usr/bin/cat >"$STUB_NONDICT" <<'STUBEOF'
+command cat >"$STUB_NONDICT" <<'STUBEOF'
 #!/usr/bin/env bash
-/usr/bin/printf '%s\n' '{"diagnostics":[{"rule":"CC-AG-001","file":"a.md","line":1,"message":"m","rule_severity":"HIGH"},42]}'
+command printf '%s\n' '{"diagnostics":[{"rule":"CC-AG-001","file":"a.md","line":1,"message":"m","rule_severity":"HIGH"},42]}'
 STUBEOF
-/usr/bin/chmod +x "$STUB_NONDICT"
+command chmod +x "$STUB_NONDICT"
 
 FILE_LIST="$WORKDIR/list.txt"
-/usr/bin/printf '%s\n' "agents/a.md" >"$FILE_LIST"
+command printf '%s\n' "agents/a.md" >"$FILE_LIST"
 EMPTY_LIST="$WORKDIR/empty.txt"
 : >"$EMPTY_LIST"
 
@@ -149,7 +149,7 @@ EMPTY_LIST="$WORKDIR/empty.txt"
 ARGC_FILE="$WORKDIR/argc.txt"
 CONFIG_FILE="$WORKDIR/config-seen.txt"
 STUB_ARGC="$WORKDIR/stub-argc.sh"
-/usr/bin/cat >"$STUB_ARGC" <<STUBEOF
+command cat >"$STUB_ARGC" <<STUBEOF
 #!/usr/bin/env bash
 # Skip the leading "--format json --target claude-code validate", record an
 # optional "--config X" (value, and that it precedes the "--" marker), then the
@@ -184,31 +184,31 @@ printf '%s' "\$_paths" >"$ARGC_FILE"
 printf '%s' "\$_config" >"$CONFIG_FILE"
 printf '%s\n' '{"diagnostics":[]}'
 STUBEOF
-/usr/bin/chmod +x "$STUB_ARGC"
+command chmod +x "$STUB_ARGC"
 SPACE_LIST="$WORKDIR/space-list.txt"
-/usr/bin/printf '%s\n' "some dir/with space/agent.md" >"$SPACE_LIST"
+command printf '%s\n' "some dir/with space/agent.md" >"$SPACE_LIST"
 
 # A manifest with a real path, a blank line, and a WHITESPACE-ONLY line: both
 # impls must drop the blank + whitespace-only lines (python's `ln.strip()`, bash's
 # `*[![:space:]]*` guard) and pass exactly ONE path. A bash `case "" )`-only guard
 # would leak the whitespace line as a spurious agnix arg (parity break).
 WS_LIST="$WORKDIR/ws-list.txt"
-/usr/bin/printf '%s\n' "agents/real.md" "" "   " >"$WS_LIST"
+command printf '%s\n' "agents/real.md" "" "   " >"$WS_LIST"
 
 # A stub whose diagnostics carry JSON `null` fields: file=null (must be DROPPED,
 # not emitted at file "None"), and line/message/rule_severity=null (must coalesce
 # to "" — matching jq's `// ""`), plus a normal mapped row. Pins python↔bash
 # parity on null values (a bare str(None) would emit the literal "None").
 STUB_NULL="$WORKDIR/stub-null.sh"
-/usr/bin/cat >"$STUB_NULL" <<'STUBEOF'
+command cat >"$STUB_NULL" <<'STUBEOF'
 #!/usr/bin/env bash
-/usr/bin/printf '%s\n' '{"diagnostics":[{"rule":"CC-AG-001","file":null,"line":1,"message":"dropped: null file","rule_severity":"HIGH"},{"rule":"CC-SK-001","file":"skills/s.md","line":null,"message":null,"rule_severity":null}]}'
+command printf '%s\n' '{"diagnostics":[{"rule":"CC-AG-001","file":null,"line":1,"message":"dropped: null file","rule_severity":"HIGH"},{"rule":"CC-SK-001","file":"skills/s.md","line":null,"message":null,"rule_severity":null}]}'
 STUBEOF
-/usr/bin/chmod +x "$STUB_NULL"
+command chmod +x "$STUB_NULL"
 
 # Expected byte-correct TSV for the full fixture (mapped rows only, insertion
 # order). Tabs are literal via printf's \t. This is acceptance criterion 1.
-EXPECTED_TSV="$(/usr/bin/printf '%s\n' \
+EXPECTED_TSV="$(command printf '%s\n' \
     "agents/a.md	1	agent-frontmatter	[CC-AG-001] Agent frontmatter is missing required 'name' field	HIGH" \
     "skills/s/SKILL.md	3	skill-frontmatter	[CC-SK-001] Invalid model value	HIGH" \
     "hooks/h.sh	7	hook-safety	[CC-HK-009] Dangerous command pattern detected	HIGH" \
@@ -229,7 +229,7 @@ run_bash() {
     RUN_ERR="$WORKDIR/stderr.$$"
     RUN_OUT="$(AGNIX_BIN="$_rb_bin" PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SH" "$@" 2>"$RUN_ERR")" &&
         RUN_RC=0 || RUN_RC=$?
-    RUN_ERR="$(/usr/bin/cat "$RUN_ERR" 2>/dev/null || true)"
+    RUN_ERR="$(command cat "$RUN_ERR" 2>/dev/null || true)"
 }
 
 # run_py <bin> -- <args...> — same for the python primary; used only for parity.
@@ -265,7 +265,7 @@ test_evidence_truncated_to_80() {
     # The `[RULE] message` evidence column is capped at 80 codepoints (matches
     # patterns.py str[:80]); parity holds on the boundary.
     run_bash "$STUB_LONG" "$FILE_LIST"
-    _ev="$(/usr/bin/printf '%s' "$RUN_OUT" | /usr/bin/awk -F'\t' 'NR==1{print length($4)}')"
+    _ev="$(command printf '%s' "$RUN_OUT" | command awk -F'\t' 'NR==1{print length($4)}')"
     assert_equals "80" "$_ev" "bash: evidence truncated to 80 codepoints"
     if [ "$HAVE_PY" = "1" ]; then
         run_py "$STUB_LONG" "$FILE_LIST"
@@ -293,7 +293,7 @@ test_absent_binary_noop() {
 test_missing_arg_usage() {
     RUN_ERR="$WORKDIR/stderr.$$"
     RUN_OUT="$(PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SH" 2>"$RUN_ERR")" && RUN_RC=0 || RUN_RC=$?
-    RUN_ERR="$(/usr/bin/cat "$RUN_ERR")"
+    RUN_ERR="$(command cat "$RUN_ERR")"
     assert_exit 1 "$RUN_RC" "bash: missing arg exits 1"
     assert_contains "$RUN_ERR" "Usage:" "bash: missing arg prints Usage"
     if [ "$HAVE_PY" = "1" ]; then
@@ -375,12 +375,12 @@ test_agnix_present_jq_absent_fails_loud() {
     # needs, but NO jq. The bash fallback must fail loud (exit 2), never silently
     # emit nothing (that would be a coverage hole masquerading as a clean scan).
     _bindir="$WORKDIR/nojq-bin"
-    /usr/bin/mkdir -p "$_bindir"
+    command mkdir -p "$_bindir"
     for _t in bash sed grep printf cat tr awk head mktemp rm chmod dirname mkdir; do
         _p="$(command -v "$_t" 2>/dev/null || true)"
-        [ -n "$_p" ] && /usr/bin/ln -sf "$_p" "$_bindir/$_t"
+        [ -n "$_p" ] && command ln -sf "$_p" "$_bindir/$_t"
     done
-    /usr/bin/ln -sf "$STUB" "$_bindir/agnix"
+    command ln -sf "$STUB" "$_bindir/agnix"
     # PATTERNS_FORCE_BASH=1 keeps it on the bash body; python3 is absent from the
     # trimmed PATH so the shim cannot exec the primary anyway. `env -u BASH_ENV`
     # is REQUIRED: on this devcontainer a non-interactive bash sources
@@ -391,7 +391,7 @@ test_agnix_present_jq_absent_fails_loud() {
     AGNIX_BIN="agnix" PATTERNS_FORCE_BASH=1 /usr/bin/env -u BASH_ENV PATH="$_bindir" \
         "$REAL_BASH" "$SH" "$FILE_LIST" >/dev/null 2>"$_jq_err" && _jq_rc=0 || _jq_rc=$?
     assert_exit 2 "$_jq_rc" "bash: agnix present but jq absent exits 2 (fail loud)"
-    assert_contains "$(/usr/bin/cat "$_jq_err")" "jq is required" "bash: jq-absent message is actionable"
+    assert_contains "$(command cat "$_jq_err")" "jq is required" "bash: jq-absent message is actionable"
 }
 
 # --- 4. empty file-list edge -------------------------------------------------
@@ -416,11 +416,11 @@ test_space_path_is_one_arg() {
     : >"$ARGC_FILE"
     run_bash "$STUB_ARGC" "$SPACE_LIST"
     assert_exit 0 "$RUN_RC" "bash: space-path manifest exits 0"
-    assert_equals "1" "$(/usr/bin/cat "$ARGC_FILE")" "bash: space path passed as one argv element"
+    assert_equals "1" "$(command cat "$ARGC_FILE")" "bash: space path passed as one argv element"
     if [ "$HAVE_PY" = "1" ]; then
         : >"$ARGC_FILE"
         run_py "$STUB_ARGC" "$SPACE_LIST"
-        assert_equals "1" "$(/usr/bin/cat "$ARGC_FILE")" "python: space path passed as one argv element"
+        assert_equals "1" "$(command cat "$ARGC_FILE")" "python: space path passed as one argv element"
     fi
 }
 
@@ -430,11 +430,11 @@ test_whitespace_only_line_dropped() {
     : >"$ARGC_FILE"
     run_bash "$STUB_ARGC" "$WS_LIST"
     assert_exit 0 "$RUN_RC" "bash: whitespace-line manifest exits 0"
-    assert_equals "1" "$(/usr/bin/cat "$ARGC_FILE")" "bash: blank + whitespace-only lines dropped (one path)"
+    assert_equals "1" "$(command cat "$ARGC_FILE")" "bash: blank + whitespace-only lines dropped (one path)"
     if [ "$HAVE_PY" = "1" ]; then
         : >"$ARGC_FILE"
         run_py "$STUB_ARGC" "$WS_LIST"
-        assert_equals "1" "$(/usr/bin/cat "$ARGC_FILE")" "python: blank + whitespace-only lines dropped (one path)"
+        assert_equals "1" "$(command cat "$ARGC_FILE")" "python: blank + whitespace-only lines dropped (one path)"
     fi
 }
 
@@ -450,14 +450,14 @@ test_agnix_config_placement() {
     RUN_OUT="$(AGNIX_BIN="$STUB_ARGC" AGNIX_CONFIG="$_cfg" PATTERNS_FORCE_BASH=1 \
         "$REAL_BASH" "$SH" "$SPACE_LIST" 2>"$RUN_ERR")" && RUN_RC=0 || RUN_RC=$?
     assert_exit 0 "$RUN_RC" "bash: AGNIX_CONFIG run exits 0"
-    assert_equals "$_cfg" "$(/usr/bin/cat "$CONFIG_FILE")" "bash: --config value forwarded intact (pre-'--', one arg)"
-    assert_equals "1" "$(/usr/bin/cat "$ARGC_FILE")" "bash: --config does not perturb the path count"
+    assert_equals "$_cfg" "$(command cat "$CONFIG_FILE")" "bash: --config value forwarded intact (pre-'--', one arg)"
+    assert_equals "1" "$(command cat "$ARGC_FILE")" "bash: --config does not perturb the path count"
     if [ "$HAVE_PY" = "1" ]; then
         : >"$ARGC_FILE"
         : >"$CONFIG_FILE"
         AGNIX_BIN="$STUB_ARGC" AGNIX_CONFIG="$_cfg" python3 "$PY" "$SPACE_LIST" >/dev/null 2>&1 || true
-        assert_equals "$_cfg" "$(/usr/bin/cat "$CONFIG_FILE")" "python: --config value forwarded intact (pre-'--', one arg)"
-        assert_equals "1" "$(/usr/bin/cat "$ARGC_FILE")" "python: --config does not perturb the path count"
+        assert_equals "$_cfg" "$(command cat "$CONFIG_FILE")" "python: --config value forwarded intact (pre-'--', one arg)"
+        assert_equals "1" "$(command cat "$ARGC_FILE")" "python: --config does not perturb the path count"
     fi
 }
 

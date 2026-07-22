@@ -67,10 +67,10 @@ git_clean() {
 # --- Fixture: a main checkout + a real linked worktree ----------------------
 # MAIN_DIR is the primary checkout; WT_DIR is a linked worktree of it. Both are
 # real on disk so the hook's `git -C "$cwd" rev-parse` returns true roots.
-FIXTURE="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$FIXTURE"' EXIT
+FIXTURE="$(command mktemp -d)"
+trap 'command rm -rf "$FIXTURE"' EXIT
 MAIN_DIR="$FIXTURE/repo"
-/usr/bin/mkdir -p "$MAIN_DIR"
+command mkdir -p "$MAIN_DIR"
 git_clean -C "$MAIN_DIR" init -q
 git_clean -C "$MAIN_DIR" config user.email "test@example.com"
 git_clean -C "$MAIN_DIR" config user.name "Test"
@@ -96,7 +96,7 @@ SM_OK=0
 SM_SUPER=""
 SM_WT=""
 SM_SUB=""
-if _sub_src="$FIXTURE/sub_src" && /usr/bin/mkdir -p "$_sub_src" &&
+if _sub_src="$FIXTURE/sub_src" && command mkdir -p "$_sub_src" &&
     git_clean -C "$_sub_src" init -q 2>/dev/null &&
     git_clean -C "$_sub_src" config user.email "test@example.com" &&
     git_clean -C "$_sub_src" config user.name "Test" &&
@@ -104,7 +104,7 @@ if _sub_src="$FIXTURE/sub_src" && /usr/bin/mkdir -p "$_sub_src" &&
     git_clean -C "$_sub_src" add f 2>/dev/null &&
     git_clean -C "$_sub_src" -c commit.gpgsign=false commit -qm s 2>/dev/null; then
     SM_SUPER="$FIXTURE/outer"
-    /usr/bin/mkdir -p "$SM_SUPER"
+    command mkdir -p "$SM_SUPER"
     if git_clean -C "$SM_SUPER" init -q 2>/dev/null &&
         git_clean -C "$SM_SUPER" config user.email "test@example.com" &&
         git_clean -C "$SM_SUPER" config user.name "Test" &&
@@ -133,9 +133,9 @@ run_guard() {
         "$cwd" "$tool" "$field" "$path")"
     if [ "$mode" = "nojq" ]; then
         local stub="$FIXTURE/stub-bin"
-        /usr/bin/mkdir -p "$stub"
-        /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
-        /usr/bin/ln -sf "$REAL_GIT" "$stub/git"
+        command mkdir -p "$stub"
+        command ln -sf "$REAL_BASH" "$stub/bash"
+        command ln -sf "$REAL_GIT" "$stub/git"
         GUARD_OUT="$(printf '%s' "$payload" |
             /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     else

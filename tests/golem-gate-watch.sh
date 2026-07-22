@@ -64,13 +64,13 @@ _stamp_feed_traces() {
     local status_dir="$1" line g
     shift
     for line in "$@"; do
-        g="$(/usr/bin/printf '%s\n' "$line" |
-            /usr/bin/grep -oE '"golem"[[:space:]]*:[[:space:]]*"[^"]*"' |
-            /usr/bin/sed -E 's/.*"([^"]*)"$/\1/' | /usr/bin/head -n1)"
+        g="$(command printf '%s\n' "$line" |
+            command grep -oE '"golem"[[:space:]]*:[[:space:]]*"[^"]*"' |
+            command sed -E 's/.*"([^"]*)"$/\1/' | command head -n1)"
         case "$g" in
             '' | 'golem-?') continue ;;
         esac
-        /usr/bin/printf '{"golem":"%s"}\n' "$g" >"$status_dir/$g.json"
+        command printf '{"golem":"%s"}\n' "$g" >"$status_dir/$g.json"
     done
 }
 
@@ -88,9 +88,9 @@ _run_once_snapshot() {
     local ttl="$1"
     shift
     local tmp
-    tmp="$(/usr/bin/mktemp -d)" || return 1
+    tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
-    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    trap "command rm -rf '$tmp'" RETURN
 
     # Scrub git's hook-exported environment: when this suite runs from a
     # `git push` pre-push hook, git exports GIT_DIR / GIT_INDEX_FILE / etc. into
@@ -102,11 +102,11 @@ _run_once_snapshot() {
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
     /usr/bin/env "${git_scrub[@]/#/--unset=}" \
-        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+        git -C "$tmp" init -q 2>/dev/null || return 1
+    command mkdir -p "$tmp/.worktrees/.status"
     local line
     for line in "$@"; do
-        /usr/bin/printf '%s\n' "$line"
+        command printf '%s\n' "$line"
     done >"$tmp/.worktrees/.status/feed.jsonl"
     _stamp_feed_traces "$tmp/.worktrees/.status" "$@"
 
@@ -122,7 +122,7 @@ _run_once_snapshot() {
                 GOLEM_STATUS_DIR=.worktrees/.status \
                 bash "$GATE_WATCH" --once
     ) >"$tmp/out" 2>/dev/null && SNAP_RC=0 || SNAP_RC=$?
-    SNAP_OUT="$(/usr/bin/cat "$tmp/out")"
+    SNAP_OUT="$(command cat "$tmp/out")"
 }
 
 # As _run_once_snapshot, but runs the script with `jq` stubbed OFF $PATH so the
@@ -135,19 +135,19 @@ _run_once_snapshot_no_jq() {
     local ttl="$1"
     shift
     local tmp
-    tmp="$(/usr/bin/mktemp -d)" || return 1
+    tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
-    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
     /usr/bin/env "${git_scrub[@]/#/--unset=}" \
-        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+        git -C "$tmp" init -q 2>/dev/null || return 1
+    command mkdir -p "$tmp/.worktrees/.status"
     local line
     for line in "$@"; do
-        /usr/bin/printf '%s\n' "$line"
+        command printf '%s\n' "$line"
     done >"$tmp/.worktrees/.status/feed.jsonl"
     _stamp_feed_traces "$tmp/.worktrees/.status" "$@"
 
@@ -157,9 +157,9 @@ _run_once_snapshot_no_jq() {
     # works even if the harness was launched via an absolute path.
     local stub_bin real_bash
     stub_bin="$tmp/stub-bin"
-    /usr/bin/mkdir -p "$stub_bin"
+    command mkdir -p "$stub_bin"
     real_bash="$(command -v bash)"
-    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    command ln -s "$real_bash" "$stub_bin/bash"
 
     # BASH_ENV is sourced by every non-interactive bash before it runs; some
     # environments (e.g. this devcontainer's /etc/bash_env) RESET $PATH there,
@@ -174,7 +174,7 @@ _run_once_snapshot_no_jq() {
                 GOLEM_STATUS_DIR=.worktrees/.status \
                 "$real_bash" "$GATE_WATCH" --once
     ) >"$tmp/out" 2>/dev/null && SNAP_RC=0 || SNAP_RC=$?
-    SNAP_OUT="$(/usr/bin/cat "$tmp/out")"
+    SNAP_OUT="$(command cat "$tmp/out")"
 }
 
 # Liveness sweep (#38): run the real script `--once-liveness` against a throwaway
@@ -188,26 +188,26 @@ _run_liveness_snapshot() {
     local stall="$1" age_secs="$2"
     shift 2
     local tmp
-    tmp="$(/usr/bin/mktemp -d)" || return 1
+    tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064
-    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
     /usr/bin/env "${git_scrub[@]/#/--unset=}" \
-        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+        git -C "$tmp" init -q 2>/dev/null || return 1
+    command mkdir -p "$tmp/.worktrees/.status"
     # A single golem-7 status-cache file is the activity proxy. Backdate its
     # mtime so age = $age_secs deterministically.
-    /usr/bin/printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
+    command printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
         >"$tmp/.worktrees/.status/golem-7.json"
-    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - age_secs))" \
+    command touch -d "@$(($(command date +%s) - age_secs))" \
         "$tmp/.worktrees/.status/golem-7.json"
     if [ "$#" -gt 0 ]; then
         local line
         for line in "$@"; do
-            /usr/bin/printf '%s\n' "$line"
+            command printf '%s\n' "$line"
         done >"$tmp/.worktrees/.status/feed.jsonl"
     fi
 
@@ -221,17 +221,17 @@ _run_liveness_snapshot() {
     # is empty) — the sweep then falls through to the reworded mtime heartbeat.
     local stub_bin real_bash real_git real_jq
     stub_bin="$tmp/stub-bin"
-    /usr/bin/mkdir -p "$stub_bin"
+    command mkdir -p "$stub_bin"
     real_bash="$(command -v bash)"
     real_git="$(command -v git)"
-    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
-    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+    command ln -s "$real_bash" "$stub_bin/bash"
+    command ln -s "$real_git" "$stub_bin/git"
     # jq symlinked through when present: the gate-detection path (feed parsing)
     # needs it, and these tests skip themselves when jq is absent. Unlike the
     # _tmux sibling (whose tests never touch the feed), this helper's callers do.
     real_jq="$(command -v jq || true)"
-    [ -n "$real_jq" ] && /usr/bin/ln -s "$real_jq" "$stub_bin/jq"
-    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+    [ -n "$real_jq" ] && command ln -s "$real_jq" "$stub_bin/jq"
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
     ls) exit 0 ;;
@@ -240,7 +240,7 @@ case "$1" in
     *) exit 0 ;;
 esac
 TMUX_STUB
-    /usr/bin/chmod +x "$stub_bin/tmux"
+    command chmod +x "$stub_bin/tmux"
 
     # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
     # non-interactive bash, which would undo the hermetic PATH (same guard as the
@@ -255,7 +255,7 @@ TMUX_STUB
                 GOLEM_STATUS_DIR=.worktrees/.status \
                 "$real_bash" "$GATE_WATCH" --once-liveness
     ) >"$tmp/out" 2>/dev/null && LIVE_RC=0 || LIVE_RC=$?
-    LIVE_OUT="$(/usr/bin/cat "$tmp/out")"
+    LIVE_OUT="$(command cat "$tmp/out")"
 }
 
 # Liveness pane wiring (#229/#247): as _run_liveness_snapshot, but stubs `tmux`
@@ -280,45 +280,45 @@ TMUX_STUB
 _run_liveness_snapshot_tmux() {
     local stall="$1" age_secs="$2" pane_text="$3"
     local tmp
-    tmp="$(/usr/bin/mktemp -d)" || return 1
+    tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064
-    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
     /usr/bin/env "${git_scrub[@]/#/--unset=}" \
-        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+        git -C "$tmp" init -q 2>/dev/null || return 1
+    command mkdir -p "$tmp/.worktrees/.status"
     # golem-7 status cache is the activity proxy that discovers golem-7 into the
     # sweep; backdate its mtime so age = $age_secs deterministically.
-    /usr/bin/printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
+    command printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
         >"$tmp/.worktrees/.status/golem-7.json"
-    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - age_secs))" \
+    command touch -d "@$(($(command date +%s) - age_secs))" \
         "$tmp/.worktrees/.status/golem-7.json"
 
     # Hermetic PATH: real bash + real git symlinks, plus a fake tmux script.
     local stub_bin real_bash real_git
     stub_bin="$tmp/stub-bin"
-    /usr/bin/mkdir -p "$stub_bin"
+    command mkdir -p "$stub_bin"
     real_bash="$(command -v bash)"
     real_git="$(command -v git)"
-    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
-    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+    command ln -s "$real_bash" "$stub_bin/bash"
+    command ln -s "$real_git" "$stub_bin/git"
 
     # Fake tmux: `ls` -> nothing (only the status file seeds the sweep);
     # `has-session` -> success; `capture-pane` -> the canned pane text from
     # $FAKE_PANE_TEXT; anything else -> success no-op. Kept bash-3.2 clean.
-    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
     ls) exit 0 ;;
     has-session) exit 0 ;;
-    capture-pane) /usr/bin/printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
+    capture-pane) command printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
     *) exit 0 ;;
 esac
 TMUX_STUB
-    /usr/bin/chmod +x "$stub_bin/tmux"
+    command chmod +x "$stub_bin/tmux"
 
     # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
     # non-interactive bash, which would undo the hermetic PATH (same guard as the
@@ -334,7 +334,7 @@ TMUX_STUB
                 GOLEM_STATUS_DIR=.worktrees/.status \
                 "$real_bash" "$GATE_WATCH" --once-liveness
     ) >"$tmp/out" 2>/dev/null && LIVE_RC=0 || LIVE_RC=$?
-    LIVE_OUT="$(/usr/bin/cat "$tmp/out")"
+    LIVE_OUT="$(command cat "$tmp/out")"
 }
 
 # Liveness transcript wiring (#248): drive the TRANSCRIPT tier of
@@ -353,21 +353,21 @@ TMUX_STUB
 _run_liveness_snapshot_transcript() {
     local stall="$1" age_secs="$2" transcript="$3"
     local tmp
-    tmp="$(/usr/bin/mktemp -d)" || return 1
+    tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064
-    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
     /usr/bin/env "${git_scrub[@]/#/--unset=}" \
-        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+        git -C "$tmp" init -q 2>/dev/null || return 1
+    command mkdir -p "$tmp/.worktrees/.status"
     # golem-7 status cache is the mtime activity proxy (the fall-through target);
     # backdate its mtime so age = $age_secs deterministically.
-    /usr/bin/printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
+    command printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
         >"$tmp/.worktrees/.status/golem-7.json"
-    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - age_secs))" \
+    command touch -d "@$(($(command date +%s) - age_secs))" \
         "$tmp/.worktrees/.status/golem-7.json"
 
     # Plant the transcript under a fake CLAUDE_PROJECTS_DIR at the slug the real
@@ -379,8 +379,8 @@ _run_liveness_snapshot_transcript() {
     wt="$tmp/.worktrees/issue-7"
     slug="${wt//[\/.]/-}"
     if [ -n "$transcript" ]; then
-        /usr/bin/mkdir -p "$fake_projects/$slug"
-        /usr/bin/printf '%s\n' "$transcript" >"$fake_projects/$slug/session.jsonl"
+        command mkdir -p "$fake_projects/$slug"
+        command printf '%s\n' "$transcript" >"$fake_projects/$slug/session.jsonl"
     fi
 
     # Hermetic PATH: real bash + git + jq symlinks (the transcript script needs
@@ -388,14 +388,14 @@ _run_liveness_snapshot_transcript() {
     # the pane branch is skipped and the sweep reaches the transcript tier.
     local stub_bin real_bash real_git real_jq
     stub_bin="$tmp/stub-bin"
-    /usr/bin/mkdir -p "$stub_bin"
+    command mkdir -p "$stub_bin"
     real_bash="$(command -v bash)"
     real_git="$(command -v git)"
-    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
-    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+    command ln -s "$real_bash" "$stub_bin/bash"
+    command ln -s "$real_git" "$stub_bin/git"
     real_jq="$(command -v jq || true)"
-    [ -n "$real_jq" ] && /usr/bin/ln -s "$real_jq" "$stub_bin/jq"
-    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+    [ -n "$real_jq" ] && command ln -s "$real_jq" "$stub_bin/jq"
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
     ls) exit 0 ;;
@@ -404,7 +404,7 @@ case "$1" in
     *) exit 0 ;;
 esac
 TMUX_STUB
-    /usr/bin/chmod +x "$stub_bin/tmux"
+    command chmod +x "$stub_bin/tmux"
 
     # --unset=BASH_ENV as in the sibling helpers. CLAUDE_PROJECTS_DIR points the
     # transcript script at the planted fixture.
@@ -419,7 +419,7 @@ TMUX_STUB
                 GOLEM_STATUS_DIR=.worktrees/.status \
                 "$real_bash" "$GATE_WATCH" --once-liveness
     ) >"$tmp/out" 2>/dev/null && LIVE_RC=0 || LIVE_RC=$?
-    LIVE_OUT="$(/usr/bin/cat "$tmp/out")"
+    LIVE_OUT="$(command cat "$tmp/out")"
 }
 
 # Regression: a legacy line with no `.ts` field must NOT abort the pipeline and
@@ -629,7 +629,7 @@ test_liveness_gated_not_stalled() {
     fi
     # Old activity (would otherwise be a stall) + a fresh gate for the SAME golem.
     _run_liveness_snapshot 1200 3600 \
-        "{\"golem\":\"golem-7\",\"event\":\"gate\",\"message\":\"push gate\",\"ts\":\"$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+        "{\"golem\":\"golem-7\",\"event\":\"gate\",\"message\":\"push gate\",\"ts\":\"$(command date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
     assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for a gated golem"
     assert_contains "$LIVE_OUT" "gated" "Gated golem is reported gated, not stalled"
@@ -830,7 +830,7 @@ test_liveness_transcript_sidechain_not_masking() {
         return 0
     fi
     _run_liveness_snapshot_transcript 1200 0 \
-        "$(/usr/bin/printf '%s\n%s' \
+        "$(command printf '%s\n%s' \
             '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}' \
             '{"type":"assistant","isSidechain":true,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use"}]}}')"
 
@@ -904,7 +904,7 @@ test_no_arg_defaults_to_once() {
     local out rc=0
     # Run from a tmpdir with no git repo context; --once resolves no feed and
     # exits 0 cleanly (status_dir empty -> the [ -n "$feed" ] guard skips).
-    out="$(cd "$(/usr/bin/mktemp -d)" && bash "$GATE_WATCH" 2>&1)" && rc=0 || rc=$?
+    out="$(cd "$(command mktemp -d)" && bash "$GATE_WATCH" 2>&1)" && rc=0 || rc=$?
     assert_equals "0" "$rc" "No argument defaults to --once and exits 0"
     assert_not_contains "$out" "unknown mode" "Default mode does not hit the error path"
 }
@@ -1131,24 +1131,24 @@ test_pane_fork_plan_precedence() {
 _run_panes_snapshot_tmux() {
     local pane_text="$1"
     local tmp stub_bin real_bash
-    tmp="$(/usr/bin/mktemp -d)" || return 1
+    tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064
-    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    trap "command rm -rf '$tmp'" RETURN
     stub_bin="$tmp/stub-bin"
-    /usr/bin/mkdir -p "$stub_bin"
+    command mkdir -p "$stub_bin"
     real_bash="$(command -v bash)"
-    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    command ln -s "$real_bash" "$stub_bin/bash"
     # Fake tmux: `ls` -> one live golem session; `capture-pane` -> the canned
     # pane text; anything else -> success no-op. Kept bash-3.2 clean.
-    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
-    ls) /usr/bin/printf '%s\n' "golem-9: 1 windows" ;;
-    capture-pane) /usr/bin/printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
+    ls) command printf '%s\n' "golem-9: 1 windows" ;;
+    capture-pane) command printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
     *) exit 0 ;;
 esac
 TMUX_STUB
-    /usr/bin/chmod +x "$stub_bin/tmux"
+    command chmod +x "$stub_bin/tmux"
     # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
     # non-interactive bash, which would undo the hermetic PATH.
     PANES_RC=0
@@ -1158,7 +1158,7 @@ TMUX_STUB
                 FAKE_PANE_TEXT="$pane_text" \
                 "$real_bash" "$GATE_WATCH" --once-panes
     ) >"$tmp/out" 2>/dev/null && PANES_RC=0 || PANES_RC=$?
-    PANES_OUT="$(/usr/bin/cat "$tmp/out")"
+    PANES_OUT="$(command cat "$tmp/out")"
 }
 
 PANES_OUT=""
@@ -1369,21 +1369,21 @@ test_emit_transitions_dedup() {
         source "$GATE_WATCH"
         # 1. Prime with one standing gate -> no output.
         command printf '[prime]'
-        emit_transitions "$(/usr/bin/printf 'golem-1\tpush gate\n')" 1
+        emit_transitions "$(command printf 'golem-1\tpush gate\n')" 1
         # 2. Same gate on the next tick -> suppressed (already primed).
         command printf '[standing]'
-        emit_transitions "$(/usr/bin/printf 'golem-1\tpush gate\n')" 0
+        emit_transitions "$(command printf 'golem-1\tpush gate\n')" 0
         # 3. A genuinely new golem -> emits.
         command printf '[new]'
-        emit_transitions "$(/usr/bin/printf 'golem-1\tpush gate\ngolem-2\tPR gate\n')" 0
+        emit_transitions "$(command printf 'golem-1\tpush gate\ngolem-2\tPR gate\n')" 0
         # 4. golem-1's message changes -> re-emits; golem-2 unchanged -> silent.
         command printf '[changed]'
-        emit_transitions "$(/usr/bin/printf 'golem-1\tmerge gate\ngolem-2\tPR gate\n')" 0
+        emit_transitions "$(command printf 'golem-1\tmerge gate\ngolem-2\tPR gate\n')" 0
         # 5. golem-2 clears (empty snapshot for it) then re-gates -> fresh emit.
         command printf '[clear]'
-        emit_transitions "$(/usr/bin/printf 'golem-1\tmerge gate\n')" 0
+        emit_transitions "$(command printf 'golem-1\tmerge gate\n')" 0
         command printf '[regate]'
-        emit_transitions "$(/usr/bin/printf 'golem-1\tmerge gate\ngolem-2\tPR gate\n')" 0
+        emit_transitions "$(command printf 'golem-1\tmerge gate\ngolem-2\tPR gate\n')" 0
     )"
     # Prime + standing emit nothing between their markers.
     assert_contains "$out" "[prime][standing][new]" \
@@ -1412,35 +1412,35 @@ test_ghost_gate_dropped_when_no_trace() {
         return 0
     fi
     local tmp
-    tmp="$(/usr/bin/mktemp -d)" || return 1
+    tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064
-    trap "/usr/bin/rm -rf '$tmp'" RETURN
+    trap "command rm -rf '$tmp'" RETURN
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
     /usr/bin/env "${git_scrub[@]/#/--unset=}" \
-        /usr/bin/git -C "$tmp" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$tmp/.worktrees/.status"
+        git -C "$tmp" init -q 2>/dev/null || return 1
+    command mkdir -p "$tmp/.worktrees/.status"
     local ts
-    ts="$(/usr/bin/date -u +%FT%TZ)"
+    ts="$(command date -u +%FT%TZ)"
     {
-        /usr/bin/printf '{"ts":"%s","golem":"golem-1","event":"gate","message":"needs permission"}\n' "$ts"
-        /usr/bin/printf '{"ts":"%s","golem":"golem-2","event":"gate","message":"needs permission"}\n' "$ts"
+        command printf '{"ts":"%s","golem":"golem-1","event":"gate","message":"needs permission"}\n' "$ts"
+        command printf '{"ts":"%s","golem":"golem-2","event":"gate","message":"needs permission"}\n' "$ts"
     } >"$tmp/.worktrees/.status/feed.jsonl"
     # Only golem-2 gets a cache-file trace; golem-1 is a ghost (torn down, no trace).
-    /usr/bin/printf '{"golem":"golem-2","issue":2}\n' >"$tmp/.worktrees/.status/golem-2.json"
+    command printf '{"golem":"golem-2","issue":2}\n' >"$tmp/.worktrees/.status/golem-2.json"
 
     # A fake tmux whose `ls`/`has-session` report NO sessions, so a real host golem
     # cannot leak a trace in (mirrors the #436 hermetic-tmux guard elsewhere).
     local stub_bin real_bash real_jq real_git
     stub_bin="$tmp/stub-bin"
-    /usr/bin/mkdir -p "$stub_bin"
+    command mkdir -p "$stub_bin"
     real_bash="$(command -v bash)"
-    /usr/bin/ln -s "$real_bash" "$stub_bin/bash"
+    command ln -s "$real_bash" "$stub_bin/bash"
     real_git="$(command -v git)"
-    /usr/bin/ln -s "$real_git" "$stub_bin/git"
+    command ln -s "$real_git" "$stub_bin/git"
     real_jq="$(command -v jq || true)"
-    [ -n "$real_jq" ] && /usr/bin/ln -s "$real_jq" "$stub_bin/jq"
-    /usr/bin/cat >"$stub_bin/tmux" <<'TMUX_STUB'
+    [ -n "$real_jq" ] && command ln -s "$real_jq" "$stub_bin/jq"
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
     ls) exit 0 ;;
@@ -1448,17 +1448,17 @@ case "$1" in
     *) exit 0 ;;
 esac
 TMUX_STUB
-    /usr/bin/chmod +x "$stub_bin/tmux"
+    command chmod +x "$stub_bin/tmux"
 
     # Two more gated golems exercise the OTHER two KEEP probes of
     # golem_has_live_trace: golem-3 kept via an `issue-N.json` cache alias,
     # golem-4 kept via an on-disk worktree dir (no cache file of its own).
     {
-        /usr/bin/printf '{"ts":"%s","golem":"golem-3","event":"gate","message":"needs permission"}\n' "$ts"
-        /usr/bin/printf '{"ts":"%s","golem":"golem-4","event":"gate","message":"needs permission"}\n' "$ts"
+        command printf '{"ts":"%s","golem":"golem-3","event":"gate","message":"needs permission"}\n' "$ts"
+        command printf '{"ts":"%s","golem":"golem-4","event":"gate","message":"needs permission"}\n' "$ts"
     } >>"$tmp/.worktrees/.status/feed.jsonl"
-    /usr/bin/printf '{"golem":"golem-3","issue":3}\n' >"$tmp/.worktrees/.status/issue-3.json"
-    /usr/bin/mkdir -p "$tmp/.worktrees/issue-4"
+    command printf '{"golem":"golem-3","issue":3}\n' >"$tmp/.worktrees/.status/issue-3.json"
+    command mkdir -p "$tmp/.worktrees/issue-4"
 
     local out rc=0
     out="$(

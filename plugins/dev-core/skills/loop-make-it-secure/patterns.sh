@@ -42,7 +42,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -55,7 +55,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -73,19 +73,19 @@ while IFS= read -r file; do
     # so the single quote is a real quote char (#183; the old ["\x27] never
     # matched a single-quoted value because grep does not expand \x27 in a
     # bracket expression).
-    /usr/bin/grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)\s*[=:]\s*["'\''][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
+    command grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)\s*[=:]\s*["'\''][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Possible hardcoded secret: ${evidence}" "HIGH"
         done || true
 
     # AWS-style access keys (AKIA...)
-    /usr/bin/grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
+    command grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "AWS access key pattern: ${evidence}" "HIGH"
         done || true
@@ -98,30 +98,30 @@ while IFS= read -r file; do
             # ["'] written ["'\''] so a single-quoted f'...' also matches (#183;
             # the old ["\x27] missed f'... because \x27 is not expanded in a
             # bracket expression).
-            /usr/bin/grep -nE '(execute|cursor)\s*\(\s*f["'\'']' "$file" 2>/dev/null |
+            command grep -nE '(execute|cursor)\s*\(\s*f["'\'']' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
                 done || true
             ;;
         *.ts | *.js | *.tsx | *.jsx)
             # Template literal SQL
-            /usr/bin/grep -nE '(query|execute)\s*\(\s*`[^`]*(SELECT|INSERT|UPDATE|DELETE)' "$file" 2>/dev/null |
+            command grep -nE '(query|execute)\s*\(\s*`[^`]*(SELECT|INSERT|UPDATE|DELETE)' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
                 done || true
             ;;
         *.go)
             # fmt.Sprintf with SQL
-            /usr/bin/grep -nE '(Exec|Query|QueryRow)\s*\(\s*fmt\.Sprintf' "$file" 2>/dev/null |
+            command grep -nE '(Exec|Query|QueryRow)\s*\(\s*fmt\.Sprintf' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
                 done || true
@@ -131,10 +131,10 @@ while IFS= read -r file; do
     # --- Category: dangerous-function ---
     # Functions that enable code injection or unsafe deserialization
     # Note: this script DETECTS these patterns for remediation, it does not use them
-    /usr/bin/grep -nE '\b(subprocess\.call\s*\(.*shell\s*=\s*True|child_process\.exec\s*\()' "$file" 2>/dev/null |
+    command grep -nE '\b(subprocess\.call\s*\(.*shell\s*=\s*True|child_process\.exec\s*\()' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "dangerous-function" \
                 "Dangerous function usage: ${evidence}" "HIGH"
         done || true
@@ -145,21 +145,21 @@ while IFS= read -r file; do
     # yaml exclusion is a second `grep -v` on the line rather than an inline
     # `(?!...)` — the old inline lookahead never matched anything, disabling
     # yaml.load detection entirely (#183).
-    /usr/bin/grep -nE '\b(yaml\.load\s*\(|marshal\.loads?\s*\()' "$file" 2>/dev/null |
-        /usr/bin/grep -vE 'Loader\s*=' |
+    command grep -nE '\b(yaml\.load\s*\(|marshal\.loads?\s*\()' "$file" 2>/dev/null |
+        command grep -vE 'Loader\s*=' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "dangerous-function" \
                 "Unsafe deserialization: ${evidence}" "HIGH"
         done || true
 
     # --- Category: denylist-validation ---
     # Input validation patterns using denylists (!=, not in [bad values])
-    /usr/bin/grep -niE '(blacklist|blocklist|denylist|banned|forbidden)\s*=\s*\[' "$file" 2>/dev/null |
+    command grep -niE '(blacklist|blocklist|denylist|banned|forbidden)\s*=\s*\[' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "denylist-validation" \
                 "Denylist pattern (prefer allowlist): ${evidence}" "HIGH"
         done || true

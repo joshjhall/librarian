@@ -63,7 +63,7 @@ SIDE_EFFECT_PATTERNS=(
 while IFS= read -r planned; do
     [ -z "$planned" ] && continue
     # Trim whitespace
-    planned=$(/usr/bin/printf '%s' "$planned" | /usr/bin/sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    planned=$(command printf '%s' "$planned" | command sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     [ -z "$planned" ] && continue
 
     # Check if planned file (or a file within a planned directory) appears
@@ -86,7 +86,7 @@ while IFS= read -r planned; do
     done <"$ACTUAL_FILES"
 
     if [ "$found" -eq 0 ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$planned" "0" "planned-not-touched" \
             "Planned file not found in git diff" "HIGH"
     fi
@@ -101,7 +101,7 @@ while IFS= read -r actual; do
     found=0
     while IFS= read -r planned; do
         [ -z "$planned" ] && continue
-        planned=$(/usr/bin/printf '%s' "$planned" | /usr/bin/sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        planned=$(command printf '%s' "$planned" | command sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         [ -z "$planned" ] && continue
         # Exact match
         if [ "$actual" = "$planned" ]; then
@@ -133,10 +133,10 @@ while IFS= read -r actual; do
         is_test_for_planned=0
         while IFS= read -r planned; do
             [ -z "$planned" ] && continue
-            planned=$(/usr/bin/printf '%s' "$planned" | /usr/bin/sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            planned=$(command printf '%s' "$planned" | command sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             [ -z "$planned" ] && continue
             # Extract base name without extension for matching
-            planned_base=$(/usr/bin/basename "$planned" | /usr/bin/sed 's/\.[^.]*$//')
+            planned_base=$(command basename "$planned" | command sed 's/\.[^.]*$//')
             case "$actual" in
                 *test*"$planned_base"* | *"$planned_base"*test* | *"$planned_base"*spec*)
                     is_test_for_planned=1
@@ -146,11 +146,11 @@ while IFS= read -r actual; do
         done <"$PLANNED_FILES"
 
         if [ "$is_side_effect" -eq 1 ] || [ "$is_test_for_planned" -eq 1 ]; then
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$actual" "0" "unplanned-modification" \
                 "Modified but not in plan (side-effect or test)" "LOW"
         else
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$actual" "0" "unplanned-modification" \
                 "Modified but not listed in plan" "MEDIUM"
         fi

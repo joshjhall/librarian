@@ -33,7 +33,32 @@
 # never blocks and swallows hook errors (the hook itself always exits 0).
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+# --- Portable tool resolution (#443) ----------------------------------------
+# This helper runs under a potentially stripped PATH (its no-jq escaper path is
+# tested with PATH reduced to bash only), so `command <tool>` would fail to find
+# an external coreutil there — yet a hardcoded /usr/bin/<tool> is wrong on macOS.
+# `_bin <tool>` honors PATH first (the `command -v` builtin needs no external
+# binary), then falls back to scanning the standard bin dirs so it still resolves
+# under a stripped PATH, then yields the bare name. Candidates are bare
+# DIRECTORIES, not /usr/bin/<tool> literals, so the #443 lint does not flag them.
+# Defined before SCRIPT_DIR so even that resolution is portable.
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+DIRNAME="$(_bin dirname)"
+TR="$(_bin tr)"
+
+SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
 
 # The Notification hook lives one level up under hooks/. Resolve it relative to
 # this script so golem-resolve.sh works whether invoked via CLAUDE_PLUGIN_ROOT
@@ -105,7 +130,7 @@ resolve_main() {
         payload="$(jq -cn --arg m "RESOLVED: $message" '{message: $m}')"
     else
         local msg_safe
-        msg_safe="$(command printf '%s' "RESOLVED: ${message//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
+        msg_safe="$(command printf '%s' "RESOLVED: ${message//\\/}" | "$TR" -d '[:cntrl:]')"
         payload="$(command printf '{"message":"%s"}' "${msg_safe//\"/\\\"}")"
     fi
 

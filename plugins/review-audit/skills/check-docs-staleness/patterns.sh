@@ -42,7 +42,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -55,13 +55,13 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
 # Current date components for staleness comparison
-CURRENT_YEAR=$(/usr/bin/date +%Y)
-CURRENT_MONTH=$(/usr/bin/date +%m)
+CURRENT_YEAR=$(command date +%Y)
+CURRENT_MONTH=$(command date +%m)
 
 # Staleness threshold in months (default 12, overridable via env)
 STALENESS_MONTHS="${CHECK_STALENESS_MONTHS:-12}"
@@ -87,18 +87,18 @@ while IFS= read -r file; do
 
     # --- Category: expired-date ---
     # Match YYYY-MM-DD and YYYY/MM/DD patterns
-    /usr/bin/grep -nE '\b(20[0-9]{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12][0-9]|3[01])\b' "$file" 2>/dev/null |
+    command grep -nE '\b(20[0-9]{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12][0-9]|3[01])\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             # Extract year and month from the match
-            year=$(/usr/bin/echo "$content" | /usr/bin/grep -oE '20[0-9]{2}' | /usr/bin/head -1)
-            month=$(/usr/bin/echo "$content" | /usr/bin/grep -oE '20[0-9]{2}[-/](0[1-9]|1[0-2])' | /usr/bin/head -1 | /usr/bin/grep -oE '(0[1-9]|1[0-2])$')
+            year=$(command echo "$content" | command grep -oE '20[0-9]{2}' | command head -1)
+            month=$(command echo "$content" | command grep -oE '20[0-9]{2}[-/](0[1-9]|1[0-2])' | command head -1 | command grep -oE '(0[1-9]|1[0-2])$')
 
             if [ -n "$year" ] && [ -n "$month" ]; then
                 # Strip leading zero for arithmetic
-                month_num=$(/usr/bin/echo "$month" | /usr/bin/sed 's/^0//')
+                month_num=$(command echo "$month" | command sed 's/^0//')
                 if is_date_stale "$year" "$month_num"; then
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "expired-date" \
                         "Date reference older than ${STALENESS_MONTHS} months: ${evidence}" "HIGH"
                 fi
@@ -107,7 +107,7 @@ while IFS= read -r file; do
 
     # --- Category: outdated-reference ---
     # Version references (vN.N.N or N.N.N patterns in doc context)
-    /usr/bin/grep -nE '\bv?[0-9]+\.[0-9]+\.[0-9]+\b' "$file" 2>/dev/null |
+    command grep -nE '\bv?[0-9]+\.[0-9]+\.[0-9]+\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             # Skip lines that are clearly changelog entries or release notes
             case "$content" in
@@ -116,28 +116,28 @@ while IFS= read -r file; do
                 *"- v"*) continue ;;
             esac
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "outdated-reference" \
                 "Version reference to verify: ${evidence}" "HIGH"
         done || true
 
     # --- Category: stale-comment ---
     # Staleness markers: TODO/FIXME/HACK combined with staleness keywords
-    /usr/bin/grep -niE '(TODO|FIXME|XXX|HACK|WORKAROUND).*(updat|outdat|stale|obsolete|deprecat|remov|old |was )' "$file" 2>/dev/null |
+    command grep -niE '(TODO|FIXME|XXX|HACK|WORKAROUND).*(updat|outdat|stale|obsolete|deprecat|remov|old |was )' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "stale-comment" \
                 "Staleness marker: ${evidence}" "HIGH"
         done || true
 
     # --- Category: outdated-reference ---
     # Broken-looking URLs (common patterns for dead links in docs)
-    /usr/bin/grep -nE 'https?://[^ )>"]+' "$file" 2>/dev/null |
-        /usr/bin/grep -iE '(deprecated|removed|old|legacy|archive|sunset)' |
+    command grep -nE 'https?://[^ )>"]+' "$file" 2>/dev/null |
+        command grep -iE '(deprecated|removed|old|legacy|archive|sunset)' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "outdated-reference" \
                 "URL with deprecation indicators: ${evidence}" "HIGH"
         done || true

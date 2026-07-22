@@ -37,7 +37,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -50,7 +50,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -60,8 +60,8 @@ check_prev_lines() {
     local file="$1" target_line="$2" pattern="$3"
     local start=$((target_line - 3))
     [ "$start" -lt 1 ] && start=1
-    /usr/bin/sed -n "${start},$((target_line - 1))p" "$file" 2>/dev/null |
-        /usr/bin/grep -qE "$pattern"
+    command sed -n "${start},$((target_line - 1))p" "$file" 2>/dev/null |
+        command grep -qE "$pattern"
 }
 
 while IFS= read -r file; do
@@ -71,7 +71,7 @@ while IFS= read -r file; do
         # --- Python ---
         *.py)
             # Find module-level function/class definitions
-            /usr/bin/grep -nE '^(def |class )[A-Za-z_]' "$file" 2>/dev/null |
+            command grep -nE '^(def |class )[A-Za-z_]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Skip private definitions — anchor on the NAME (token after
                     # def/class), NOT a whole-line substring, so a public def
@@ -84,10 +84,10 @@ while IFS= read -r file; do
                     # Check for docstring (triple quotes) in preceding lines
                     if ! check_prev_lines "$file" "$line_num" '"""'; then
                         # Also check if function body starts with docstring
-                        next_lines=$(/usr/bin/sed -n "$((line_num + 1)),$((line_num + 2))p" "$file" 2>/dev/null)
-                        if ! /usr/bin/echo "$next_lines" | /usr/bin/grep -qE '^\s+"""'; then
+                        next_lines=$(command sed -n "$((line_num + 1)),$((line_num + 2))p" "$file" 2>/dev/null)
+                        if ! command echo "$next_lines" | command grep -qE '^\s+"""'; then
                             evidence=$(truncate_chars 80 "$content")
-                            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                            command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-api" \
                                 "Python: ${evidence}" "HIGH"
                         fi
@@ -98,12 +98,12 @@ while IFS= read -r file; do
         # --- JavaScript/TypeScript ---
         *.js | *.ts | *.jsx | *.tsx)
             # Find exported functions, classes, types
-            /usr/bin/grep -nE '^export (function|class|const|type|interface|enum) ' "$file" 2>/dev/null |
+            command grep -nE '^export (function|class|const|type|interface|enum) ' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Check for JSDoc comment (/**) in preceding lines
                     if ! check_prev_lines "$file" "$line_num" '/\*\*'; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "JS/TS: ${evidence}" "HIGH"
                     fi
@@ -114,15 +114,15 @@ while IFS= read -r file; do
         *.go)
             # Find exported functions (capitalized, not in test files)
             case "$file" in *_test.go) continue ;; esac
-            /usr/bin/grep -nE '^func [A-Z]' "$file" 2>/dev/null |
+            command grep -nE '^func [A-Z]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Go convention: comment line immediately before with function name
-                    func_name=$(/usr/bin/echo "$content" | /usr/bin/grep -oE 'func [A-Z][A-Za-z0-9]*' | /usr/bin/awk '{print $2}')
+                    func_name=$(command echo "$content" | command grep -oE 'func [A-Z][A-Za-z0-9]*' | command awk '{print $2}')
                     if [ -n "$func_name" ]; then
-                        prev_line=$(/usr/bin/sed -n "$((line_num - 1))p" "$file" 2>/dev/null)
-                        if ! /usr/bin/echo "$prev_line" | /usr/bin/grep -q "// ${func_name}"; then
+                        prev_line=$(command sed -n "$((line_num - 1))p" "$file" 2>/dev/null)
+                        if ! command echo "$prev_line" | command grep -q "// ${func_name}"; then
                             evidence=$(truncate_chars 80 "$content")
-                            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                            command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-api" \
                                 "Go: ${evidence}" "HIGH"
                         fi
@@ -133,12 +133,12 @@ while IFS= read -r file; do
         # --- Rust ---
         *.rs)
             # Find pub fn and pub struct
-            /usr/bin/grep -nE '^pub (fn|struct|enum|trait|type) ' "$file" 2>/dev/null |
+            command grep -nE '^pub (fn|struct|enum|trait|type) ' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Check for /// doc comment
                     if ! check_prev_lines "$file" "$line_num" '^\s*///'; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Rust: ${evidence}" "HIGH"
                     fi
@@ -148,7 +148,7 @@ while IFS= read -r file; do
         # --- Shell ---
         *.sh | *.bash)
             # Find function definitions
-            /usr/bin/grep -nE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]' "$file" 2>/dev/null |
+            command grep -nE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Skip private functions — anchor on the NAME, not a
                     # whole-line substring (#348): `_helper()` and
@@ -160,7 +160,7 @@ while IFS= read -r file; do
                     # Check for # comment on preceding line
                     if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Shell: ${evidence}" "HIGH"
                     fi
@@ -169,11 +169,11 @@ while IFS= read -r file; do
 
         # --- Ruby ---
         *.rb)
-            /usr/bin/grep -nE '^\s*def [a-z]' "$file" 2>/dev/null |
+            command grep -nE '^\s*def [a-z]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Ruby: ${evidence}" "HIGH"
                     fi
@@ -182,11 +182,11 @@ while IFS= read -r file; do
 
         # --- Java/Kotlin ---
         *.java | *.kt)
-            /usr/bin/grep -nE '^\s*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
+            command grep -nE '^\s*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     if ! check_prev_lines "$file" "$line_num" '/\*\*'; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
                             "Java/Kotlin: ${evidence}" "HIGH"
                     fi

@@ -107,7 +107,7 @@ jq_validate_against_schema() {
 # sub-objects like certainty; the example finding is last).
 extract_json_from_markdown() {
     local file="$1"
-    /usr/bin/awk '
+    command awk '
         /^```json$/ { in_fence=1; content=""; next }
         /^```$/ && in_fence { in_fence=0; last=content; next }
         in_fence { content = content (content ? "\n" : "") $0 }
@@ -232,7 +232,7 @@ test_next_issue_schema_accepts_valid_doc() {
         return
     fi
     local tmpdoc
-    tmpdoc="$(/usr/bin/mktemp)"
+    tmpdoc="$(command mktemp)"
     # Exercises autonomy_level, plan_comment_url, and a full checkpoint object —
     # the fields the autonomy-level work relies on (#215 dropped the autonomous /
     # plan_gated mirror fields; the schema now rejects them).
@@ -262,7 +262,7 @@ test_next_issue_schema_accepts_valid_doc() {
 JSON
     assert_true "jq_validate_against_schema '$schema_file' '$tmpdoc'" \
         "valid next-issue-state doc rejected by schema validator"
-    /usr/bin/rm -f "$tmpdoc"
+    command rm -f "$tmpdoc"
 }
 
 # additionalProperties:false rejects a doc carrying an unknown top-level key —
@@ -279,7 +279,7 @@ test_next_issue_schema_rejects_unknown_property() {
         return
     fi
     local tmpdoc
-    tmpdoc="$(/usr/bin/mktemp)"
+    tmpdoc="$(command mktemp)"
     # Same minimal-valid doc plus the removed plan_gated mirror, which is now an
     # unknown top-level key that must be rejected (#215).
     cat >"$tmpdoc" <<'JSON'
@@ -296,7 +296,7 @@ JSON
     # The validator must FAIL here (unknown key under additionalProperties:false).
     assert_true "! jq_validate_against_schema '$schema_file' '$tmpdoc'" \
         "schema validator accepted the removed plan_gated mirror field"
-    /usr/bin/rm -f "$tmpdoc"
+    command rm -f "$tmpdoc"
 }
 
 # next-issue-queue.schema.json is valid JSON + closed (when present + jq).
@@ -331,7 +331,7 @@ test_next_issue_queue_schema_accepts_valid_doc() {
         return
     fi
     local tmpdoc
-    tmpdoc="$(/usr/bin/mktemp)"
+    tmpdoc="$(command mktemp)"
     # A queue driving toward #5 with deps #4, #2 resolved deepest-first.
     cat >"$tmpdoc" <<'JSON'
 {
@@ -346,7 +346,7 @@ test_next_issue_queue_schema_accepts_valid_doc() {
 JSON
     assert_true "jq_validate_against_schema '$schema_file' '$tmpdoc'" \
         "valid next-issue-queue doc rejected by schema validator"
-    /usr/bin/rm -f "$tmpdoc"
+    command rm -f "$tmpdoc"
 }
 
 # additionalProperties:false rejects a queue doc with an unknown top-level key.
@@ -362,7 +362,7 @@ test_next_issue_queue_schema_rejects_unknown_property() {
         return
     fi
     local tmpdoc
-    tmpdoc="$(/usr/bin/mktemp)"
+    tmpdoc="$(command mktemp)"
     # Same minimal-valid doc plus a bogus top-level key that must be rejected.
     cat >"$tmpdoc" <<'JSON'
 {
@@ -379,7 +379,7 @@ JSON
     # The validator must FAIL here (unknown key under additionalProperties:false).
     assert_true "! jq_validate_against_schema '$schema_file' '$tmpdoc'" \
         "queue schema validator accepted an unknown top-level property"
-    /usr/bin/rm -f "$tmpdoc"
+    command rm -f "$tmpdoc"
 }
 
 # --- check-* Contract Tests -------------------------------------------------
@@ -394,7 +394,7 @@ test_check_contract_json_valid() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file json tmpfile
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         [ -f "$contract_file" ] || continue
 
@@ -402,11 +402,11 @@ test_check_contract_json_valid() {
         assert_not_empty "$json" "check-* skill $skill_name: no JSON found in contract.md"
         [ -z "$json" ] && continue
 
-        tmpfile="$(/usr/bin/mktemp)"
+        tmpfile="$(command mktemp)"
         printf '%s' "$json" >"$tmpfile"
         assert_true "jq empty '$tmpfile' 2>/dev/null" \
             "check-* skill $skill_name: contract.md JSON is not valid"
-        /usr/bin/rm -f "$tmpfile"
+        command rm -f "$tmpfile"
     done < <(list_prefixed_skill_dirs "check-")
 }
 
@@ -420,19 +420,19 @@ test_check_contract_required_fields() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file json tmpfile field
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         [ -f "$contract_file" ] || continue
         json="$(extract_json_from_markdown "$contract_file")"
         [ -z "$json" ] && continue
 
-        tmpfile="$(/usr/bin/mktemp)"
+        tmpfile="$(command mktemp)"
         printf '%s' "$json" >"$tmpfile"
         for field in $FINDING_REQUIRED_FIELDS; do
             assert_true "jq -e 'has(\"$field\")' '$tmpfile' >/dev/null 2>&1" \
                 "check-* skill $skill_name: contract example missing required field '$field'"
         done
-        /usr/bin/rm -f "$tmpfile"
+        command rm -f "$tmpfile"
     done < <(list_prefixed_skill_dirs "check-")
 }
 
@@ -446,13 +446,13 @@ test_check_contract_enum_values() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file json tmpfile
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         [ -f "$contract_file" ] || continue
         json="$(extract_json_from_markdown "$contract_file")"
         [ -z "$json" ] && continue
 
-        tmpfile="$(/usr/bin/mktemp)"
+        tmpfile="$(command mktemp)"
         printf '%s' "$json" >"$tmpfile"
 
         local severity effort cert_level cert_method cert_conf
@@ -481,7 +481,7 @@ test_check_contract_enum_values() {
             assert_true "printf '%s' '$cert_conf' | command grep -qE '^[01]\\.?[0-9]*$'" \
                 "check-* skill $skill_name: certainty confidence '$cert_conf' out of 0-1 range"
         fi
-        /usr/bin/rm -f "$tmpfile"
+        command rm -f "$tmpfile"
     done < <(list_prefixed_skill_dirs "check-")
 }
 
@@ -491,7 +491,7 @@ test_check_contract_version() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         [ -f "$contract_file" ] || continue
         assert_true "command grep -q 'version:' '$contract_file'" \
@@ -511,18 +511,18 @@ test_loop_contract_json_valid() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file json tmpfile
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         [ -f "$contract_file" ] || continue
         json="$(extract_json_from_markdown "$contract_file")"
         assert_not_empty "$json" "loop-* skill $skill_name: no JSON found in contract.md"
         [ -z "$json" ] && continue
 
-        tmpfile="$(/usr/bin/mktemp)"
+        tmpfile="$(command mktemp)"
         printf '%s' "$json" >"$tmpfile"
         assert_true "jq empty '$tmpfile' 2>/dev/null" \
             "loop-* skill $skill_name: contract.md JSON is not valid"
-        /usr/bin/rm -f "$tmpfile"
+        command rm -f "$tmpfile"
     done < <(list_prefixed_skill_dirs "loop-")
 }
 
@@ -536,19 +536,19 @@ test_loop_contract_required_fields() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file json tmpfile field
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         [ -f "$contract_file" ] || continue
         json="$(extract_json_from_markdown "$contract_file")"
         [ -z "$json" ] && continue
 
-        tmpfile="$(/usr/bin/mktemp)"
+        tmpfile="$(command mktemp)"
         printf '%s' "$json" >"$tmpfile"
         for field in $LOOP_REQUIRED_FIELDS; do
             assert_true "jq -e 'has(\"$field\")' '$tmpfile' >/dev/null 2>&1" \
                 "loop-* skill $skill_name: contract example missing required field '$field'"
         done
-        /usr/bin/rm -f "$tmpfile"
+        command rm -f "$tmpfile"
     done < <(list_prefixed_skill_dirs "loop-")
 }
 
@@ -558,7 +558,7 @@ test_loop_contract_version() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         [ -f "$contract_file" ] || continue
         assert_true "command grep -q 'version:' '$contract_file'" \
@@ -574,7 +574,7 @@ test_category_cross_check() {
     while IFS= read -r skill_dir; do
         [ -n "$skill_dir" ] || continue
         local skill_name contract_file patterns_file contract_cats patterns_cats cat
-        skill_name="$(/usr/bin/basename "$skill_dir")"
+        skill_name="$(command basename "$skill_dir")"
         contract_file="$skill_dir/contract.md"
         patterns_file="$skill_dir/patterns.sh"
         [ -f "$contract_file" ] || continue

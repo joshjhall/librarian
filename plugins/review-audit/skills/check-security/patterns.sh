@@ -44,7 +44,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -57,7 +57,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -80,37 +80,37 @@ while IFS= read -r file; do
     # --- Category: hardcoded-secret ---
 
     # AWS access keys (AKIA followed by 16 uppercase alphanumeric chars)
-    /usr/bin/grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
+    command grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "AWS access key pattern: ${evidence}" "HIGH"
         done || true
 
     # GitHub tokens (ghp_, gho_, ghs_, ghr_, github_pat_)
-    /usr/bin/grep -nE '(ghp_|gho_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}' "$file" 2>/dev/null |
+    command grep -nE '(ghp_|gho_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "GitHub token pattern: ${evidence}" "HIGH"
         done || true
 
     # Stripe keys (sk_live_, rk_live_, pk_live_)
-    /usr/bin/grep -nE '(sk_live_|rk_live_|pk_live_)[A-Za-z0-9]{20,}' "$file" 2>/dev/null |
+    command grep -nE '(sk_live_|rk_live_|pk_live_)[A-Za-z0-9]{20,}' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Stripe live key pattern: ${evidence}" "HIGH"
         done || true
 
     # Private key headers
-    /usr/bin/grep -nE 'BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY' "$file" 2>/dev/null |
+    command grep -nE 'BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Private key header: ${evidence}" "HIGH"
         done || true
@@ -122,11 +122,11 @@ while IFS= read -r file; do
     # escaped ', and reopens. (Earlier this was `["\x27]`, but GNU grep does not
     # expand \x27 inside a bracket expression — it added literal \,x,2,7 to the
     # class, so any value containing x/2/7 was silently missed. Fixed in #168.)
-    /usr/bin/grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)\s*[=:]\s*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
-        /usr/bin/grep -viE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_|#|//|/\*)' |
+    command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)\s*[=:]\s*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
+        command grep -viE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_|#|//|/\*)' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
                 "Possible hardcoded credential: ${evidence}" "HIGH"
         done || true
@@ -140,28 +140,28 @@ while IFS= read -r file; do
             # as ["'\''] so the single quote is literal (see #168 — the old
             # ["\x27] never matched f'SELECT because \x27 is not expanded in a
             # bracket expression).
-            /usr/bin/grep -nE 'f["'\''](SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
+            command grep -nE 'f["'\''](SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "injection-risk" \
                         "SQL in f-string: ${evidence}" "HIGH"
                 done || true
             ;;
         *.js | *.ts | *.jsx | *.tsx)
-            /usr/bin/grep -nE '`(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\$\{' "$file" 2>/dev/null |
+            command grep -nE '`(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\$\{' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "injection-risk" \
                         "SQL in template literal: ${evidence}" "HIGH"
                 done || true
             ;;
         *.rb)
-            /usr/bin/grep -nE '"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*#\{' "$file" 2>/dev/null |
+            command grep -nE '"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*#\{' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "injection-risk" \
                         "SQL with string interpolation: ${evidence}" "HIGH"
                 done || true
@@ -169,10 +169,10 @@ while IFS= read -r file; do
     esac
 
     # String concatenation with SQL keywords (all languages)
-    /usr/bin/grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*' "$file" 2>/dev/null |
+    command grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "injection-risk" \
                 "SQL string concatenation: ${evidence}" "HIGH"
         done || true
@@ -180,37 +180,37 @@ while IFS= read -r file; do
     # --- Category: xss-risk ---
 
     # React: raw HTML rendering
-    /usr/bin/grep -n "$XSS_REACT_PATTERN" "$file" 2>/dev/null |
+    command grep -n "$XSS_REACT_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "React raw HTML rendering: ${evidence}" "HIGH"
         done || true
 
     # Vue: v-html directive
-    /usr/bin/grep -n "$XSS_VUE_PATTERN" "$file" 2>/dev/null |
+    command grep -n "$XSS_VUE_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "Vue raw HTML directive: ${evidence}" "HIGH"
         done || true
 
     # Django/Jinja: |safe filter, mark_safe()
-    /usr/bin/grep -nE "$XSS_SAFE_PATTERN" "$file" 2>/dev/null |
+    command grep -nE "$XSS_SAFE_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "Template safe filter bypassing escaping: ${evidence}" "HIGH"
         done || true
 
     # Blade: unescaped output
-    /usr/bin/grep -n "$XSS_BLADE_PATTERN" "$file" 2>/dev/null |
+    command grep -n "$XSS_BLADE_PATTERN" "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "xss-risk" \
                 "Blade unescaped output: ${evidence}" "HIGH"
         done || true
@@ -222,22 +222,22 @@ while IFS= read -r file; do
     # fired (the line always starts with a digit), so comment lines were flagged
     # too. `^[0-9]+:\s*(#|...)` skips a line whose first non-space code char opens
     # a comment. (Fixed in #168.)
-    /usr/bin/grep -nEi '\b(md5|sha1)\s*\(' "$file" 2>/dev/null |
-        /usr/bin/grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
+    command grep -nEi '\b(md5|sha1)\s*\(' "$file" 2>/dev/null |
+        command grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "insecure-crypto" \
                 "Weak hash algorithm: ${evidence}" "HIGH"
         done || true
 
     # ECB mode encryption (skip comment-only lines — same grep -n prefix fix as
     # the weak-hash probe above; see #168).
-    /usr/bin/grep -nEi '\bECB\b|MODE_ECB|mode.*ecb' "$file" 2>/dev/null |
-        /usr/bin/grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
+    command grep -nEi '\bECB\b|MODE_ECB|mode.*ecb' "$file" 2>/dev/null |
+        command grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "insecure-crypto" \
                 "ECB mode encryption: ${evidence}" "HIGH"
         done || true

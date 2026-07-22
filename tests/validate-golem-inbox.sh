@@ -60,8 +60,8 @@ test_suite "golem-inbox.sh brokered gate reverse channel (#227)"
 # --- Sandbox plumbing -------------------------------------------------------
 
 # Module-level scratch dir, cleaned up once when the suite exits.
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname>
 # A fresh `git init` repo with a `.worktrees/.status/` dir. golem-inbox.sh
@@ -69,10 +69,10 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 # repo_root() (git-common-dir), so a bare init (no commit needed) is enough.
 new_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$dir/.worktrees/.status"
+        git -C "$dir" init -q 2>/dev/null || return 1
+    command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -102,17 +102,17 @@ run_inbox() {
 # run_inbox_nojq <sandbox> <arg...>
 # Like run_inbox but with a hermetic PATH holding only bash, git, and env — so
 # `command -v jq` fails and the hand-rolled JSON escaper / grep reader are taken.
-# git + env MUST stay on PATH (config.sh repo_root uses `command git`). BASH_ENV
+# git + env MUST stay on PATH (config.sh repo_root uses `git`). BASH_ENV
 # is unset for the child: this devcontainer's /etc/bash_env resets $PATH there,
 # which would silently undo the stub PATH.
 run_inbox_nojq() {
     local dir="$1"
     shift
     local stub="$dir/stub-bin"
-    /usr/bin/mkdir -p "$stub"
-    /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
-    /usr/bin/ln -sf "$REAL_GIT" "$stub/git"
-    /usr/bin/ln -sf "$REAL_ENV" "$stub/env"
+    command mkdir -p "$stub"
+    command ln -sf "$REAL_BASH" "$stub/bash"
+    command ln -sf "$REAL_GIT" "$stub/git"
+    command ln -sf "$REAL_ENV" "$stub/env"
     INBOX_RC=0
     INBOX_OUT="$(
         cd "$dir" &&
@@ -168,7 +168,7 @@ test_roundtrip_answer_then_consume() {
     assert_exit 0 "$INBOX_RC" "answer exits 0"
     inbox="$sb/.worktrees/.status/inbox-golem-3.jsonl"
     assert_file_exists "$inbox" "answer created inbox-golem-3.jsonl"
-    assert_valid_json "$(/usr/bin/tail -n 1 "$inbox")" "answer line is valid JSON"
+    assert_valid_json "$(command tail -n 1 "$inbox")" "answer line is valid JSON"
 
     run_inbox "$sb" consume golem-3 "$GATE"
     assert_exit 0 "$INBOX_RC" "consume exits 0"
@@ -537,7 +537,7 @@ test_no_jq_roundtrip_adversarial() {
     inbox="$sb/.worktrees/.status/inbox-golem-5.jsonl"
     assert_file_exists "$inbox" "no-jq answer created the inbox"
     if command -v jq >/dev/null 2>&1; then
-        assert_valid_json "$(/usr/bin/tail -n 1 "$inbox")" \
+        assert_valid_json "$(command tail -n 1 "$inbox")" \
             "no-jq answer line is valid JSON despite quote+backslash option"
     fi
     # The backslash is dropped and the quote preserved as data (mirrors the

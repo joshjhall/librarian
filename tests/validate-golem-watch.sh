@@ -102,15 +102,15 @@ test_suite "golem-watch.sh streaming dispatcher (#221)"
 
 # Module-level scratch dir, cleaned up once when the suite exits. The RETURN-time
 # pkill in run_watch is the primary reaper; this is the backstop.
-WORKDIR="$(/usr/bin/mktemp -d)"
+WORKDIR="$(command mktemp -d)"
 cleanup() {
     # Kill any fake pane process still sleeping, then drop the scratch dir. The
     # sandboxes are `mktemp -d "$WORKDIR/gate.XXXXXX"`, so their paths look like
     # `$WORKDIR/gate.aB12Cd/golem-gate-watch.sh` — match the `gate.` mktemp
     # prefix, NOT a literal `gate/` subdir (which never exists, so the old
     # pattern reaped nothing and let fakes leak on every run).
-    /usr/bin/pkill -f "$WORKDIR/gate\..*/golem-gate-watch.sh" 2>/dev/null || true
-    /usr/bin/rm -rf "$WORKDIR"
+    command pkill -f "$WORKDIR/gate\..*/golem-gate-watch.sh" 2>/dev/null || true
+    command rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
 
@@ -139,9 +139,9 @@ trap cleanup EXIT
 # Assigns the staging dir to the caller's named variable.
 make_stage() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/gate.XXXXXX")" || return 1
-    /usr/bin/cp "$WATCH" "$dir/golem-watch.sh"
-    /usr/bin/cat >"$dir/golem-gate-watch.sh" <<'EOF'
+    dir="$(command mktemp -d "$WORKDIR/gate.XXXXXX")" || return 1
+    command cp "$WATCH" "$dir/golem-watch.sh"
+    command cat >"$dir/golem-gate-watch.sh" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     --stream-panes)
@@ -171,7 +171,7 @@ case "${1:-}" in
         ;;
 esac
 EOF
-    /usr/bin/chmod +x "$dir/golem-gate-watch.sh"
+    command chmod +x "$dir/golem-gate-watch.sh"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -201,9 +201,9 @@ EOF
 #                    — 1s does not.
 make_stage_starve() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/gate.XXXXXX")" || return 1
-    /usr/bin/cp "$WATCH" "$dir/golem-watch.sh"
-    /usr/bin/cat >"$dir/golem-gate-watch.sh" <<'EOF'
+    dir="$(command mktemp -d "$WORKDIR/gate.XXXXXX")" || return 1
+    command cp "$WATCH" "$dir/golem-watch.sh"
+    command cat >"$dir/golem-gate-watch.sh" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     --stream-panes)
@@ -229,7 +229,7 @@ case "${1:-}" in
         ;;
 esac
 EOF
-    /usr/bin/chmod +x "$dir/golem-gate-watch.sh"
+    command chmod +x "$dir/golem-gate-watch.sh"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -249,14 +249,14 @@ WATCH_WORKER_PID=""
 run_watch() {
     local dir="$1"
     local worker_file="$dir/pane_worker" out_file="$dir/out"
-    /usr/bin/rm -f "$worker_file" "$out_file"
+    command rm -f "$worker_file" "$out_file"
     (
         cd "$dir" &&
             PANE_WORKER_FILE="$worker_file" \
-                /usr/bin/timeout 10 "$REAL_BASH" "$dir/golem-watch.sh"
+                command timeout 10 "$REAL_BASH" "$dir/golem-watch.sh"
     ) >"$out_file" 2>&1 || true
-    WATCH_OUT="$(/usr/bin/cat "$out_file" 2>/dev/null || true)"
-    WATCH_WORKER_PID="$(/usr/bin/cat "$worker_file" 2>/dev/null || true)"
+    WATCH_OUT="$(command cat "$out_file" 2>/dev/null || true)"
+    WATCH_WORKER_PID="$(command cat "$worker_file" 2>/dev/null || true)"
 }
 
 # Both channels dispatched and were prefixed distinctly.
@@ -298,8 +298,8 @@ test_trap_kills_background_pane() {
     # the trap's SIGTERM never false-fails; a real leak still fails once elapsed.
     local tries=0 alive=1
     while [ "$tries" -lt 50 ]; do
-        if /usr/bin/kill -0 "$WATCH_WORKER_PID" 2>/dev/null; then
-            /usr/bin/sleep 0.2
+        if command kill -0 "$WATCH_WORKER_PID" 2>/dev/null; then
+            command sleep 0.2
         else
             alive=0
             break
@@ -347,7 +347,7 @@ test_starvation_poll_falls_through_bounded() {
 # including macOS bash 3.2.
 test_trap_spec_arms_int_and_term() {
     assert_true \
-        "/usr/bin/grep -Eq '^[[:space:]]*trap[[:space:]]+cleanup_pane([[:space:]]+[A-Z]+)*[[:space:]]+INT([[:space:]]+[A-Z]+)*([[:space:]]+[A-Z]+)*\$' '$WATCH' && /usr/bin/grep -Eq '^[[:space:]]*trap[[:space:]]+cleanup_pane([[:space:]]+[A-Z]+)*[[:space:]]+TERM([[:space:]]+[A-Z]+)*\$' '$WATCH'" \
+        "command grep -Eq '^[[:space:]]*trap[[:space:]]+cleanup_pane([[:space:]]+[A-Z]+)*[[:space:]]+INT([[:space:]]+[A-Z]+)*([[:space:]]+[A-Z]+)*\$' '$WATCH' && command grep -Eq '^[[:space:]]*trap[[:space:]]+cleanup_pane([[:space:]]+[A-Z]+)*[[:space:]]+TERM([[:space:]]+[A-Z]+)*\$' '$WATCH'" \
         "golem-watch.sh arms its cleanup trap on INT and TERM (not just EXIT)"
 }
 

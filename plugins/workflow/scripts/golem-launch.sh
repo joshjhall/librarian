@@ -103,7 +103,7 @@
 #      launch: plugin version skew detected (running helper != active install)
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
@@ -201,7 +201,7 @@ settings_has_rules() {
 
 preflight() {
     local root proj_settings global_settings
-    root="$(repo_root)" || root="$(/usr/bin/pwd)"
+    root="$(repo_root)" || root="$(command pwd)"
     proj_settings="$root/${CLAUDE_PROJECT_SETTINGS:-.claude/settings.local.json}"
     global_settings="${CLAUDE_GLOBAL_SETTINGS:-$HOME/.claude/settings.json}"
 
@@ -377,7 +377,7 @@ parse_level_flag() {
 # one definition (one source of truth for the launch shape).
 launch_line() {
     local n="$1" level="$2" root wt
-    root="$(repo_root)" || root="$(/usr/bin/pwd)"
+    root="$(repo_root)" || root="$(command pwd)"
     wt="$root/$GOLEM_WORKTREE_DIR/issue-$n"
     # ONE standalone new-session, matching Bash(tmux new-session:*). The chained
     # `;` second prompt is the resume backstop (NOT `&&`); see orchestrate
@@ -426,7 +426,7 @@ case "$cmd" in
         # classifier denial. Continue on exit 3 so a host that authorizes
         # allow-once (without persisting the rule) can still proceed this run.
         preflight || true
-        root="$(repo_root)" || root="$(/usr/bin/pwd)"
+        root="$(repo_root)" || root="$(command pwd)"
         wt="$root/$GOLEM_WORKTREE_DIR/issue-$N"
         if [ ! -d "$wt" ]; then
             command echo "golem-launch: worktree $wt missing — run worktree-new.sh $N first" >&2

@@ -68,13 +68,13 @@ test_crossref_detector_fires_on_fixture() {
     # Drive the collector over a throwaway plugins tree containing the fixture as
     # a SKILL.md, and assert the collector surfaces the dangling name.
     local tmp
-    tmp="$(/usr/bin/mktemp -d)"
-    /usr/bin/mkdir -p "$tmp/p/skills/dangling-fixture"
-    /usr/bin/cp "$fixture" "$tmp/p/skills/dangling-fixture/SKILL.md"
+    tmp="$(command mktemp -d)"
+    command mkdir -p "$tmp/p/skills/dangling-fixture"
+    command cp "$fixture" "$tmp/p/skills/dangling-fixture/SKILL.md"
 
     local collected
     collected="$(collect_skill_subagent_types "$tmp")"
-    /usr/bin/rm -rf "$tmp"
+    command rm -rf "$tmp"
 
     assert_contains "$collected" "$bad_name" \
         "Collector extracts subagent_type '$bad_name' from the fixture frontmatter"
@@ -110,11 +110,11 @@ test_crossref_detector_fires_on_list_fixtures() {
         # Drive the gate over a throwaway plugins tree holding the fixture as a
         # SKILL.md. The trap guarantees cleanup even if a command below exits
         # non-zero under `set -euo pipefail`, so no temp dir leaks on failure.
-        tmp="$(/usr/bin/mktemp -d)"
+        tmp="$(command mktemp -d)"
         # shellcheck disable=SC2064  # expand $tmp now, not at trap time
-        trap "/usr/bin/rm -rf '$tmp'" RETURN
-        /usr/bin/mkdir -p "$tmp/p/skills/$fixture"
-        /usr/bin/cp "$path" "$tmp/p/skills/$fixture/SKILL.md"
+        trap "command rm -rf '$tmp'" RETURN
+        command mkdir -p "$tmp/p/skills/$fixture"
+        command cp "$path" "$tmp/p/skills/$fixture/SKILL.md"
 
         collected="$(collect_skill_subagent_types "$tmp")"
 
@@ -132,7 +132,7 @@ test_crossref_detector_fires_on_list_fixtures() {
                 "Gate flags '$name' from $fixture as dangling"
         done
 
-        /usr/bin/rm -rf "$tmp"
+        command rm -rf "$tmp"
         trap - RETURN
     done
 }

@@ -42,7 +42,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -55,7 +55,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -64,10 +64,10 @@ while IFS= read -r file; do
 
     # --- Category: stub-detected ---
     # Match TODO, FIXME, STUB, PLACEHOLDER, NotImplementedError, unimplemented!
-    /usr/bin/grep -niE '\b(TODO|FIXME|STUB|PLACEHOLDER)\b|NotImplementedError|raise NotImplementedError|unimplemented!\(\)|todo!\(\)|panic\("not implemented"\)' "$file" 2>/dev/null |
+    command grep -niE '\b(TODO|FIXME|STUB|PLACEHOLDER)\b|NotImplementedError|raise NotImplementedError|unimplemented!\(\)|todo!\(\)|panic\("not implemented"\)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "stub-detected" \
                 "Stub/placeholder: ${evidence}" "HIGH"
         done || true
@@ -76,17 +76,17 @@ while IFS= read -r file; do
     # Python: function with only pass or ellipsis body
     case "$file" in
         *.py)
-            /usr/bin/grep -nE '^\s*def\s+\w+' "$file" 2>/dev/null |
+            command grep -nE '^\s*def\s+\w+' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Check if next non-blank line is pass or ... . NOTE: grep -m1
                     # (NOT -nm1): a stray -n prefixed "<lineno>:" to next_line, so
                     # the `^\s*(pass|...)` check never matched and this arm was
                     # dead (#183).
-                    next_line=$(/usr/bin/sed -n "$((line_num + 1)),\$p" "$file" |
-                        /usr/bin/grep -m1 -E '\S' | /usr/bin/head -1)
-                    if echo "$next_line" | /usr/bin/grep -qE '^\s*(pass|\.\.\.)\s*$' 2>/dev/null; then
+                    next_line=$(command sed -n "$((line_num + 1)),\$p" "$file" |
+                        command grep -m1 -E '\S' | command head -1)
+                    if echo "$next_line" | command grep -qE '^\s*(pass|\.\.\.)\s*$' 2>/dev/null; then
                         evidence=$(truncate_chars 80 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-body" \
                             "Empty function body: ${evidence}" "HIGH"
                     fi
@@ -97,20 +97,20 @@ while IFS= read -r file; do
             # [[:space:]]* for the inner whitespace — the old `[\s]*` was a bracket
             # class of literal backslash/'s', not whitespace, so `{ }` (a real
             # space) was missed (#183).
-            /usr/bin/grep -nE '(function\s+\w+|=>\s*)\{[[:space:]]*\}' "$file" 2>/dev/null |
+            command grep -nE '(function\s+\w+|=>\s*)\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-body" \
                         "Empty function body: ${evidence}" "HIGH"
                 done || true
             ;;
         *.go)
             # Go: function with empty braces ([[:space:]]* not [\s]*, see #183).
-            /usr/bin/grep -nE '^func\s+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
+            command grep -nE '^func\s+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     evidence=$(truncate_chars 80 "$content")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-body" \
                         "Empty function body: ${evidence}" "HIGH"
                 done || true
@@ -121,22 +121,22 @@ while IFS= read -r file; do
     # Test files without any assertion statements
     case "$file" in
         *test*.py | *_spec.py)
-            if ! /usr/bin/grep -qE '\b(assert|assertEqual|assertTrue|assertFalse|assertRaises|assertIn|pytest\.raises)\b' "$file" 2>/dev/null; then
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            if ! command grep -qE '\b(assert|assertEqual|assertTrue|assertFalse|assertRaises|assertIn|pytest\.raises)\b' "$file" 2>/dev/null; then
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "1" "no-assertions" \
                     "Test file contains no assertion statements" "HIGH"
             fi
             ;;
         *.test.ts | *.test.js | *.spec.ts | *.spec.js | *.test.tsx | *.test.jsx)
-            if ! /usr/bin/grep -qE '\b(expect|assert|should)\b' "$file" 2>/dev/null; then
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            if ! command grep -qE '\b(expect|assert|should)\b' "$file" 2>/dev/null; then
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "1" "no-assertions" \
                     "Test file contains no assertion statements" "HIGH"
             fi
             ;;
         *_test.go)
-            if ! /usr/bin/grep -qE '\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)\b' "$file" 2>/dev/null; then
-                /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            if ! command grep -qE '\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)\b' "$file" 2>/dev/null; then
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "1" "no-assertions" \
                     "Test file contains no assertion statements" "HIGH"
             fi

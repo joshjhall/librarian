@@ -55,7 +55,7 @@ test_suite "shared scanner sync (#89/#132/#133)"
 # for REGION. The sentinel lines themselves are excluded: their text names the
 # *other* file, so it differs between copies and must not be compared.
 extract_shared() {
-    /usr/bin/awk -v region="$2" '
+    command awk -v region="$2" '
         index($0, "# >>> shared:" region) { in_region = 1; next }
         index($0, "# <<< shared:" region) { in_region = 0 }
         in_region { print }
@@ -68,7 +68,7 @@ extract_shared() {
 # ordered-multiset equality: a reordered, duplicated, or dropped line all
 # surface as drift, not just a changed evidence string.
 normalize() {
-    /usr/bin/awk '
+    command awk '
         { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
         $0 != "" { print }
     '
@@ -76,7 +76,7 @@ normalize() {
 
 # sentinel_count NEEDLE FILE — occurrences of the fixed string NEEDLE in FILE.
 sentinel_count() {
-    /usr/bin/grep -cF "$1" "$2" || true
+    command grep -cF "$1" "$2" || true
 }
 
 # assert_region_synced REGION — both copies of REGION are present (one open +
@@ -99,7 +99,7 @@ assert_region_synced() {
 
     if [ "$canonical" != "$duplicate" ]; then
         local diff_out
-        diff_out="$(/usr/bin/diff <(printf '%s\n' "$canonical") <(printf '%s\n' "$duplicate") || true)"
+        diff_out="$(command diff <(printf '%s\n' "$canonical") <(printf '%s\n' "$duplicate") || true)"
         local detail=()
         while IFS= read -r line; do
             [ -n "$line" ] && detail+=("$line")
@@ -143,7 +143,7 @@ test_detector_fires_on_drift() {
     local dbg dbg_tampered
     dbg="$(extract_shared "$CANONICAL" debug-statement-scan | normalize)"
     dbg_tampered="$(extract_shared "$CANONICAL" debug-statement-scan |
-        /usr/bin/sed 's/Debug print statement/Debug print/' | normalize)"
+        command sed 's/Debug print statement/Debug print/' | normalize)"
     assert_not_empty "$dbg_tampered" "tampered debug extract is non-empty (extract still works)"
     local dbg_changed="no" dbg_drift="none"
     [ "$dbg" != "$dbg_tampered" ] && dbg_changed="yes"
@@ -155,7 +155,7 @@ test_detector_fires_on_drift() {
     local itf itf_tampered
     itf="$(extract_shared "$CANONICAL" is-test-file | normalize)"
     itf_tampered="$(extract_shared "$CANONICAL" is-test-file |
-        /usr/bin/sed 's/_spec\./_zzz./' | normalize)"
+        command sed 's/_spec\./_zzz./' | normalize)"
     assert_not_empty "$itf_tampered" "tampered is-test-file extract is non-empty"
     local itf_changed="no" itf_drift="none"
     [ "$itf" != "$itf_tampered" ] && itf_changed="yes"

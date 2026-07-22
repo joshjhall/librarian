@@ -76,8 +76,8 @@ test_suite "golem-notify.sh Notification hook (#221)"
 # --- Sandbox plumbing -------------------------------------------------------
 
 # Module-level scratch dir, cleaned up once when the suite exits.
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname>
 # A fresh `git init` repo with a `.worktrees/.status/` dir. golem-notify.sh
@@ -86,10 +86,10 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 # sandbox path to the caller's named variable.
 new_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$dir/.worktrees/.status"
+        git -C "$dir" init -q 2>/dev/null || return 1
+    command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -102,10 +102,10 @@ new_sandbox() {
 # named variable.
 new_named_sandbox() {
     local __out="$1" name="$2" dir="$WORKDIR/$2"
-    /usr/bin/mkdir -p "$dir" || return 1
+    command mkdir -p "$dir" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$dir/.worktrees/.status"
+        git -C "$dir" init -q 2>/dev/null || return 1
+    command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -125,15 +125,15 @@ NOTIFY_LINE=""
 run_notify() {
     local dir="$1" payload="$2" gid="$3" mode="${4:-}"
     local feed="$dir/.worktrees/.status/feed.jsonl"
-    /usr/bin/rm -f "$feed"
+    command rm -f "$feed"
     NOTIFY_RC=0
     if [ "$mode" = "nojq" ]; then
         local stub="$dir/stub-bin"
-        /usr/bin/mkdir -p "$stub"
-        /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+        command mkdir -p "$stub"
+        command ln -sf "$REAL_BASH" "$stub/bash"
         (
             cd "$dir" &&
-                /usr/bin/printf '%s' "$payload" |
+                command printf '%s' "$payload" |
                 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                     "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
                     PATH="$stub" HOME="$dir" GOLEM_ID="$gid" \
@@ -142,14 +142,14 @@ run_notify() {
     else
         (
             cd "$dir" &&
-                /usr/bin/printf '%s' "$payload" |
+                command printf '%s' "$payload" |
                 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                     "${GOLEM_SCRUB[@]/#/--unset=}" \
                     HOME="$dir" GOLEM_ID="$gid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
     fi
-    NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+    NOTIFY_LINE="$(command tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
 # run_notify_no_gid <sandbox> <payload> [subdir]
@@ -169,21 +169,21 @@ run_notify_no_gid() {
     local dir="$1" payload="$2" sub="${3:-}"
     local feed="$dir/.worktrees/.status/feed.jsonl"
     local rundir="$dir"
-    /usr/bin/rm -f "$feed"
+    command rm -f "$feed"
     if [ -n "$sub" ]; then
-        /usr/bin/mkdir -p "$dir/$sub"
+        command mkdir -p "$dir/$sub"
         rundir="$dir/$sub"
     fi
     NOTIFY_RC=0
     (
         cd "$rundir" &&
-            /usr/bin/printf '%s' "$payload" |
+            command printf '%s' "$payload" |
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                 "${GOLEM_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID \
                 HOME="$dir" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
-    NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+    NOTIFY_LINE="$(command tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
 # run_notify_status_dir <sandbox> <payload> <golem_id> <status_dir_override>
@@ -195,17 +195,17 @@ run_notify_no_gid() {
 run_notify_status_dir() {
     local dir="$1" payload="$2" gid="$3" override="$4"
     local feed="$dir/$override/feed.jsonl"
-    /usr/bin/rm -f "$feed"
+    command rm -f "$feed"
     NOTIFY_RC=0
     (
         cd "$dir" &&
-            /usr/bin/printf '%s' "$payload" |
+            command printf '%s' "$payload" |
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                 "${GOLEM_SCRUB[@]/#/--unset=}" \
                 HOME="$dir" GOLEM_ID="$gid" GOLEM_STATUS_DIR="$override" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
-    NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+    NOTIFY_LINE="$(command tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
 # run_notify_worktree_dir <sandbox> <payload> <golem_id> <worktree_override>
@@ -218,17 +218,17 @@ run_notify_status_dir() {
 run_notify_worktree_dir() {
     local dir="$1" payload="$2" gid="$3" wt="$4"
     local feed="$dir/$wt/.status/feed.jsonl"
-    /usr/bin/rm -f "$feed"
+    command rm -f "$feed"
     NOTIFY_RC=0
     (
         cd "$dir" &&
-            /usr/bin/printf '%s' "$payload" |
+            command printf '%s' "$payload" |
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                 "${GOLEM_SCRUB[@]/#/--unset=}" \
                 HOME="$dir" GOLEM_ID="$gid" GOLEM_WORKTREE_DIR="$wt" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
-    NOTIFY_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+    NOTIFY_LINE="$(command tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
 # --- HTTP sink fan-out plumbing (GOLEM_EVENT_SINKS, #406) --------------------
@@ -244,8 +244,8 @@ run_notify_worktree_dir() {
 # 2 = payload) via mktemp so concurrent backgrounded POSTs never collide.
 write_curl_stub() {
     local stub="$1"
-    /usr/bin/mkdir -p "$stub"
-    /usr/bin/cat >"$stub/curl" <<'EOF'
+    command mkdir -p "$stub"
+    command cat >"$stub/curl" <<'EOF'
 #!/bin/sh
 data=""
 url=""
@@ -266,7 +266,7 @@ if [ -n "${STUB_CAPTURE_DIR:-}" ]; then
 fi
 exit 0
 EOF
-    /usr/bin/chmod +x "$stub/curl"
+    command chmod +x "$stub/curl"
 }
 
 # Feed line captured by run_notify_sinks (separate from NOTIFY_LINE so a test can
@@ -285,12 +285,12 @@ run_notify_sinks() {
     local sleep_s="${6:-0}" timeout="${7:-2}"
     local feed="$dir/.worktrees/.status/feed.jsonl"
     local stub="$dir/stub-bin"
-    /usr/bin/rm -f "$feed"
+    command rm -f "$feed"
     write_curl_stub "$stub"
     NOTIFY_RC=0
     (
         cd "$dir" &&
-            /usr/bin/printf '%s' "$payload" |
+            command printf '%s' "$payload" |
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                 "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
                 PATH="$stub:$PATH" HOME="$dir" GOLEM_ID="$gid" \
@@ -298,7 +298,7 @@ run_notify_sinks() {
                 STUB_CAPTURE_DIR="$capdir" STUB_SLEEP="$sleep_s" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
-    NOTIFY_FEED="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+    NOTIFY_FEED="$(command tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
 # poll_capture_count <capture_dir> <want> — bounded wait (~3s) for <want> stub
@@ -307,7 +307,7 @@ run_notify_sinks() {
 poll_capture_count() {
     local capdir="$1" want="$2" tries=0 n
     while [ "$tries" -lt 30 ]; do
-        n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+        n="$(command ls -1 "$capdir" 2>/dev/null | command wc -l | command tr -d ' ')"
         [ "$n" -ge "$want" ] && return 0
         sleep 0.1
         tries=$((tries + 1))
@@ -649,7 +649,7 @@ test_event_sink_defaults_match_config_sh() {
     # Hook side: eval ONLY the two inlined sink-default lines (grep them out so we
     # do not run the whole hook), then print what they resolve to.
     local hook_defaults
-    hook_defaults="$(/usr/bin/grep -E '^: "\$\{GOLEM_EVENT_SINK(S|_TIMEOUT):=' "$NOTIFY" || true)"
+    hook_defaults="$(command grep -E '^: "\$\{GOLEM_EVENT_SINK(S|_TIMEOUT):=' "$NOTIFY" || true)"
     hook_sinks="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
         "$hook_defaults"'; printf "%s" "$GOLEM_EVENT_SINKS"' 2>/dev/null || true)"
     hook_timeout="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
@@ -684,7 +684,7 @@ test_sinks_empty_no_network() {
     local sb capdir n
     new_sandbox sb
     capdir="$sb/cap"
-    /usr/bin/mkdir -p "$capdir"
+    command mkdir -p "$capdir"
     # Empty sinks list: the hook must not reach curl at all.
     run_notify_sinks "$sb" \
         '{"message":"Claude needs your permission to run git push"}' \
@@ -692,7 +692,7 @@ test_sinks_empty_no_network() {
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 (empty GOLEM_EVENT_SINKS)"
     assert_valid_json "$NOTIFY_FEED" "feed line still written (empty sinks)"
     poll_capture_count "$capdir" 1 # give any erroneous POST a chance to land
-    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    n="$(command ls -1 "$capdir" 2>/dev/null | command wc -l | command tr -d ' ')"
     assert_equals "0" "$n" "empty GOLEM_EVENT_SINKS makes NO curl call (feed only, AC2)"
 }
 
@@ -706,14 +706,14 @@ test_sinks_fanout_same_payload() {
     local sb capdir n p1 p2 u1 u2
     new_sandbox sb
     capdir="$sb/cap"
-    /usr/bin/mkdir -p "$capdir"
+    command mkdir -p "$capdir"
     run_notify_sinks "$sb" \
         '{"message":"Claude needs your permission to run git push"}' \
         "golem-1" "http://127.0.0.1:9/a http://127.0.0.1:9/b" "$capdir"
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 (two sinks)"
     assert_valid_json "$NOTIFY_FEED" "feed line written (two sinks, AC1)"
     poll_capture_count "$capdir" 2
-    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    n="$(command ls -1 "$capdir" 2>/dev/null | command wc -l | command tr -d ' ')"
     assert_equals "2" "$n" "both sinks received one POST each (AC1)"
     # Each capture file: line 1 = URL, line 2 = payload. Collect and compare.
     u1=""
@@ -723,11 +723,11 @@ test_sinks_fanout_same_payload() {
     for f in "$capdir"/req.*; do
         [ -e "$f" ] || continue
         if [ -z "$u1" ]; then
-            u1="$(/usr/bin/sed -n 1p "$f")"
-            p1="$(/usr/bin/sed -n 2p "$f")"
+            u1="$(command sed -n 1p "$f")"
+            p1="$(command sed -n 2p "$f")"
         else
-            u2="$(/usr/bin/sed -n 1p "$f")"
-            p2="$(/usr/bin/sed -n 2p "$f")"
+            u2="$(command sed -n 1p "$f")"
+            p2="$(command sed -n 2p "$f")"
         fi
     done
     assert_valid_json "$p1" "sink 1 payload is valid JSON (AC4)"
@@ -751,14 +751,14 @@ test_sinks_never_block() {
     local sb capdir start elapsed
     new_sandbox sb
     capdir="$sb/cap"
-    /usr/bin/mkdir -p "$capdir"
-    start="$(/usr/bin/date +%s)"
+    command mkdir -p "$capdir"
+    start="$(command date +%s)"
     # 30s stub sleep, 2s configured timeout: a blocking hook would wait ≥2s (or
     # 30s if it also awaited the child); a non-blocking one returns near-instantly.
     run_notify_sinks "$sb" \
         '{"message":"Claude needs your permission to run git push"}' \
         "golem-1" "http://127.0.0.1:9/slow" "$capdir" "30" "2"
-    elapsed="$(($(/usr/bin/date +%s) - start))"
+    elapsed="$(($(command date +%s) - start))"
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 despite a hung sink (AC3)"
     assert_valid_json "$NOTIFY_FEED" "feed line written before the hung POST (AC3)"
     assert_true "[ '$elapsed' -lt 10 ]" \
@@ -776,16 +776,16 @@ test_sinks_scheme_guard() {
     local sb capdir n u
     new_sandbox sb
     capdir="$sb/cap"
-    /usr/bin/mkdir -p "$capdir"
+    command mkdir -p "$capdir"
     # A file:// entry (must be skipped) beside a valid https entry (must be hit).
     run_notify_sinks "$sb" \
         '{"message":"Claude needs your permission to run git push"}' \
         "golem-1" "file:///etc/passwd https://127.0.0.1:9/ok" "$capdir"
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 (scheme guard)"
     poll_capture_count "$capdir" 1
-    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    n="$(command ls -1 "$capdir" 2>/dev/null | command wc -l | command tr -d ' ')"
     assert_equals "1" "$n" "only the https sink was POSTed; file:// entry skipped"
-    u="$(/usr/bin/sed -n 1p "$capdir"/req.* 2>/dev/null || true)"
+    u="$(command sed -n 1p "$capdir"/req.* 2>/dev/null || true)"
     assert_equals "https://127.0.0.1:9/ok" "$u" \
         "the POSTed URL is the https sink, not the file:// entry"
 }
@@ -800,13 +800,13 @@ test_sinks_comma_separated() {
     local sb capdir n
     new_sandbox sb
     capdir="$sb/cap"
-    /usr/bin/mkdir -p "$capdir"
+    command mkdir -p "$capdir"
     run_notify_sinks "$sb" \
         '{"message":"Claude needs your permission to run git push"}' \
         "golem-1" "http://127.0.0.1:9/a,http://127.0.0.1:9/b" "$capdir"
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 (comma-separated sinks)"
     poll_capture_count "$capdir" 2
-    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    n="$(command ls -1 "$capdir" 2>/dev/null | command wc -l | command tr -d ' ')"
     assert_equals "2" "$n" "comma-separated list fans to both sinks"
 }
 
@@ -825,19 +825,19 @@ test_sinks_curl_absent_degrades() {
     local sb feed stub
     new_sandbox sb
     feed="$sb/.worktrees/.status/feed.jsonl"
-    /usr/bin/rm -f "$feed"
+    command rm -f "$feed"
     # Hermetic PATH with bash only — no curl resolvable. The hook reaches its
     # other tools via absolute /usr/bin/* paths, so bash-only PATH is sufficient
     # (matching run_notify's nojq mode). jq is off this PATH too, but the hook's
     # jq branch uses `command -v jq` and falls back to the hand-rolled encoder, so
     # the feed line is still written; we read it back with the outer jq.
     stub="$sb/stub-nocurl"
-    /usr/bin/mkdir -p "$stub"
-    /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+    command mkdir -p "$stub"
+    command ln -sf "$REAL_BASH" "$stub/bash"
     NOTIFY_RC=0
     (
         cd "$sb" &&
-            /usr/bin/printf '%s' '{"message":"Claude needs your permission to run git push"}' |
+            command printf '%s' '{"message":"Claude needs your permission to run git push"}' |
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                 "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
                 PATH="$stub" HOME="$sb" GOLEM_ID="golem-1" \
@@ -863,18 +863,18 @@ test_sinks_fire_when_feed_unwritable() {
     local sb capdir stub ro
     new_sandbox sb
     capdir="$sb/cap"
-    /usr/bin/mkdir -p "$capdir"
+    command mkdir -p "$capdir"
     write_curl_stub "$sb/stub-bin"
     stub="$sb/stub-bin"
     # A read-only parent dir: mkdir of <ro>/nope/.status must fail, so the feed
     # write is impossible, but the HTTP fan must still run.
     ro="$sb/readonly"
-    /usr/bin/mkdir -p "$ro"
-    /usr/bin/chmod 555 "$ro"
+    command mkdir -p "$ro"
+    command chmod 555 "$ro"
     NOTIFY_RC=0
     (
         cd "$sb" &&
-            /usr/bin/printf '%s' '{"message":"Claude needs your permission to run git push"}' |
+            command printf '%s' '{"message":"Claude needs your permission to run git push"}' |
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
                 "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
                 PATH="$stub:$PATH" HOME="$sb" GOLEM_ID="golem-1" \
@@ -884,11 +884,11 @@ test_sinks_fire_when_feed_unwritable() {
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
     # Restore perms so the sandbox cleanup (rm -rf) can remove it.
-    /usr/bin/chmod 755 "$ro" 2>/dev/null || true
+    command chmod 755 "$ro" 2>/dev/null || true
     assert_exit 0 "$NOTIFY_RC" "hook exits 0 when the feed dir is unwritable"
     poll_capture_count "$capdir" 1
     local n
-    n="$(/usr/bin/ls -1 "$capdir" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    n="$(command ls -1 "$capdir" 2>/dev/null | command wc -l | command tr -d ' ')"
     assert_equals "1" "$n" \
         "HTTP sink still POSTed even though feed.jsonl was unwritable (#406 AC1)"
     assert_true "[ ! -f '$sb/readonly/nope/.status/feed.jsonl' ]" \

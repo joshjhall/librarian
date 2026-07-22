@@ -101,7 +101,39 @@
 # terminates the watch; it stops only when the operator/harness kills it.
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+# --- Portable tool resolution (#443) ----------------------------------------
+# This script runs under a potentially stripped/hermetic PATH (its liveness /
+# --watch paths are tested with PATH reduced to a few stubs), so `command <tool>`
+# would fail to find an external coreutil there — yet a hardcoded /usr/bin/<tool>
+# is wrong on macOS. `_bin <tool>` honors PATH first (the `command -v` builtin
+# needs no external binary), then falls back to scanning the standard bin dirs so
+# it still resolves under a stripped PATH, then yields the bare name. Candidates
+# are bare DIRECTORIES, not /usr/bin/<tool> literals, so the #443 lint does not
+# flag them. Defined before SCRIPT_DIR so even that resolution is portable.
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+DATE="$(_bin date)"
+DIRNAME="$(_bin dirname)"
+GREP="$(_bin grep)"
+HEAD="$(_bin head)"
+SLEEP="$(_bin sleep)"
+SORT="$(_bin sort)"
+STAT="$(_bin stat)"
+TAIL="$(_bin tail)"
+TR="$(_bin tr)"
+
+SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
@@ -193,7 +225,7 @@ feed_snapshot() {
     # `try … catch true`: a line whose `ts` cannot be parsed degrades to the same
     # TTL-bypass "fresh" fallback as a no-`ts` line — surfaced, and localized to
     # itself — instead of aborting the whole jq program (#432).
-    /usr/bin/tail -n 200 "$feed" 2>/dev/null |
+    "$TAIL" -n 200 "$feed" 2>/dev/null |
         jq -rs --argjson ttl "$ttl" '
             (now) as $now
             | group_by(.golem)
@@ -209,7 +241,7 @@ feed_snapshot() {
               elif .event == "escalation" then "\(.golem)\tescalation — \($m)"
               else "\(.golem)\t\($m)" end
           ' 2>/dev/null |
-        /usr/bin/sort -u
+        "$SORT" -u
 }
 
 # golem_has_live_trace <golem-id> — true when ANY on-disk/tmux trace of the golem
@@ -274,7 +306,7 @@ feed_snapshot_live() {
         while IFS=$'\t' read -r g msg; do
             [ -n "$g" ] || continue
             if golem_has_live_trace "$g"; then
-                /usr/bin/printf '%s\t%s\n' "$g" "$msg"
+                command printf '%s\t%s\n' "$g" "$msg"
             fi
         done
 }
@@ -335,7 +367,7 @@ emit_transitions() {
         prev="$(_map_get "$LAST_EMIT" "$golem")"
         if [ "$prev" != "$msg" ]; then
             LAST_EMIT="$(_map_set "$LAST_EMIT" "$golem" "$msg")"
-            [ "$prime" = "1" ] || /usr/bin/printf '%s\t%s\n' "$golem" "$msg"
+            [ "$prime" = "1" ] || command printf '%s\t%s\n' "$golem" "$msg"
         fi
     done <<<"$snapshot"
     # Forget golems no longer gated, so a future re-gate is a fresh transition:
@@ -369,7 +401,7 @@ emit_transitions() {
 # plan/permission gate push.
 pane_is_plan_gate() {
     local footer
-    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
     case "$footer" in
         *"Ready to code"*) return 0 ;;
         *"ready to code"*) return 0 ;;
@@ -384,7 +416,7 @@ pane_is_plan_gate() {
 # Footer-anchored for the same #246/#452 reason as pane_is_plan_gate above.
 pane_is_gate() {
     local footer
-    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
     case "$footer" in
         *"Do you want to proceed"*) return 0 ;;
     esac
@@ -421,7 +453,7 @@ pane_is_gate() {
 #      into a false `escalation` notification.
 pane_is_fork() {
     local footer
-    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
     case "$footer" in
         *"Enter to select"*) return 0 ;;
     esac
@@ -456,7 +488,7 @@ pane_is_fork() {
 # so --once-panes and the unit tests can assert the raw matcher in isolation.
 pane_is_turn_end() {
     local footer
-    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
     case "$footer" in
         *"esc to interrupt"*) return 1 ;;
     esac
@@ -487,16 +519,16 @@ pane_is_api_error() {
     local pane="$1" footer window
     # Guard 1: an active run-spinner in the footer means the process is alive and
     # working — never a death, whatever the scrollback holds.
-    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$pane")"
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$pane")"
     case "$footer" in
         *"esc to interrupt"*) return 1 ;;
     esac
     # Guard 2: the specific `API Error` signature with a status code, scanned over
     # the wider death window. grep -E over the tail (not a bash glob) so the digit
     # class is exact; anchored to `API Error` immediately preceding the code.
-    window="$(/usr/bin/tail -n "$pane_error_lines" <<<"$pane")"
-    if /usr/bin/printf '%s\n' "$window" |
-        /usr/bin/grep -qE 'API Error[^0-9]*(4[0-9][0-9]|5[0-9][0-9])'; then
+    window="$("$TAIL" -n "$pane_error_lines" <<<"$pane")"
+    if command printf '%s\n' "$window" |
+        "$GREP" -qE 'API Error[^0-9]*(4[0-9][0-9]|5[0-9][0-9])'; then
         return 0
     fi
     return 1
@@ -511,10 +543,10 @@ pane_is_api_error() {
 # code — but never emit a bare classification).
 pane_api_error_class() {
     local pane="$1" window code
-    window="$(/usr/bin/tail -n "$pane_error_lines" <<<"$pane")"
-    code="$(/usr/bin/printf '%s\n' "$window" |
-        /usr/bin/grep -oE 'API Error[^0-9]*(4[0-9][0-9]|5[0-9][0-9])' |
-        /usr/bin/grep -oE '(4[0-9][0-9]|5[0-9][0-9])' | /usr/bin/head -n1)"
+    window="$("$TAIL" -n "$pane_error_lines" <<<"$pane")"
+    code="$(command printf '%s\n' "$window" |
+        "$GREP" -oE 'API Error[^0-9]*(4[0-9][0-9]|5[0-9][0-9])' |
+        "$GREP" -oE '(4[0-9][0-9]|5[0-9][0-9])' | "$HEAD" -n1)"
     case "$code" in
         429 | 5??) command echo "retriable ($code)" ;;
         '') command echo "unknown" ;;
@@ -533,24 +565,24 @@ pane_api_error_class() {
 panes_snapshot() {
     command -v tmux >/dev/null 2>&1 || return 0
     local sessions sess pane
-    sessions="$(tmux ls 2>/dev/null | /usr/bin/grep -oE '^golem-[0-9]+' || true)"
+    sessions="$(tmux ls 2>/dev/null | "$GREP" -oE '^golem-[0-9]+' || true)"
     [ -z "$sessions" ] && return 0
     for sess in $sessions; do
         pane="$(tmux capture-pane -p -t "$sess" 2>/dev/null || true)"
         [ -z "$pane" ] && continue
         if pane_is_plan_gate "$pane"; then
-            /usr/bin/printf '%s\t%s\n' "$sess" "plan gate — ExitPlanMode awaiting approval"
+            command printf '%s\t%s\n' "$sess" "plan gate — ExitPlanMode awaiting approval"
         elif pane_is_gate "$pane"; then
-            /usr/bin/printf '%s\t%s\n' "$sess" "permission gate — awaiting decision"
+            command printf '%s\t%s\n' "$sess" "permission gate — awaiting decision"
         elif pane_is_fork "$pane"; then
-            /usr/bin/printf '%s\t%s\n' "$sess" "escalation — awaiting decision (carries options)"
+            command printf '%s\t%s\n' "$sess" "escalation — awaiting decision (carries options)"
         elif pane_is_api_error "$pane"; then
             # BEFORE pane_is_turn_end: a died-on-API-error pane also paints the bare
             # turn-end footer, so the more-specific death read must win (#446).
-            /usr/bin/printf '%s\t%s: %s (check pane)\n' \
+            command printf '%s\t%s: %s (check pane)\n' \
                 "$sess" "$DIED_MSG_PREFIX" "$(pane_api_error_class "$pane")"
         elif pane_is_turn_end "$pane"; then
-            /usr/bin/printf '%s\t%s\n' "$sess" "$TURN_END_MSG"
+            command printf '%s\t%s\n' "$sess" "$TURN_END_MSG"
         fi
     done
 }
@@ -636,7 +668,7 @@ confirm_turn_end() {
 # footer). Prints the class.
 pane_liveness_class() {
     local footer
-    footer="$(/usr/bin/tail -n "$pane_footer_lines" <<<"$1")"
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
     case "$footer" in
         *"esc to interrupt"*)
             command echo "working"
@@ -674,7 +706,7 @@ pane_liveness_class() {
 _mtime_epoch() {
     local path="$1" m=""
     [ -e "$path" ] || return 0
-    m="$(/usr/bin/stat -c %Y "$path" 2>/dev/null || /usr/bin/stat -f %m "$path" 2>/dev/null || true)"
+    m="$("$STAT" -c %Y "$path" 2>/dev/null || "$STAT" -f %m "$path" 2>/dev/null || true)"
     case "$m" in
         '' | *[!0-9]*) return 0 ;;
         *) command echo "$m" ;;
@@ -738,7 +770,7 @@ liveness_snapshot() {
             [ -z "$sess" ] && continue
             n="${sess#golem-}"
             _set_has "$golems" "$n" || golems="${golems}${n} "
-        done < <(tmux ls 2>/dev/null | /usr/bin/grep -oE '^golem-[0-9]+' || true)
+        done < <(tmux ls 2>/dev/null | "$GREP" -oE '^golem-[0-9]+' || true)
     fi
     if [ -n "$status_dir" ] && [ -d "$status_dir" ]; then
         for f in "$status_dir"/golem-*.json "$status_dir"/issue-*.json; do
@@ -768,12 +800,12 @@ liveness_snapshot() {
     fi
 
     local now act age pane pclass tclass
-    now="$(/usr/bin/date +%s)"
+    now="$("$DATE" +%s)"
     # Stable numeric order so successive snapshots line up for the operator.
-    for n in $(command echo "$golems" | /usr/bin/tr ' ' '\n' | /usr/bin/sort -n); do
+    for n in $(command echo "$golems" | "$TR" ' ' '\n' | "$SORT" -n); do
         [ -z "$n" ] && continue
         if _set_has "$gated" "$n"; then
-            /usr/bin/printf '%s\t%s\n' "golem-$n" "gated — awaiting decision (not a stall)"
+            command printf '%s\t%s\n' "golem-$n" "gated — awaiting decision (not a stall)"
             continue
         fi
         # Prefer a live pane read over the mtime heartbeat: it can tell "actually
@@ -787,16 +819,16 @@ liveness_snapshot() {
                 pclass="$(pane_liveness_class "$pane")"
                 case "$pclass" in
                     working)
-                        /usr/bin/printf '%s\t%s\n' "golem-$n" "alive, working (esc-to-interrupt active)"
+                        command printf '%s\t%s\n' "golem-$n" "alive, working (esc-to-interrupt active)"
                         continue
                         ;;
                     died)
-                        /usr/bin/printf '%s\t%s: %s (check pane)\n' \
+                        command printf '%s\t%s: %s (check pane)\n' \
                             "golem-$n" "$DIED_MSG_PREFIX" "$(pane_api_error_class "$pane")"
                         continue
                         ;;
                     idle)
-                        /usr/bin/printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (check pane)"
+                        command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (check pane)"
                         continue
                         ;;
                 esac
@@ -817,15 +849,15 @@ liveness_snapshot() {
                 "$root/$GOLEM_WORKTREE_DIR/issue-$n" 2>/dev/null || true)"
             case "$tclass" in
                 working)
-                    /usr/bin/printf '%s\t%s\n' "golem-$n" "alive, working (transcript: turn in flight)"
+                    command printf '%s\t%s\n' "golem-$n" "alive, working (transcript: turn in flight)"
                     continue
                     ;;
                 idle)
-                    /usr/bin/printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (transcript: turn ended)"
+                    command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (transcript: turn ended)"
                     continue
                     ;;
                 errored)
-                    /usr/bin/printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — errored and idle (transcript: command error, check pane)"
+                    command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — errored and idle (transcript: command error, check pane)"
                     continue
                     ;;
             esac
@@ -835,9 +867,9 @@ liveness_snapshot() {
         age=$((now - act))
         [ "$age" -lt 0 ] && age=0
         if [ "$age" -gt "$stall_threshold" ]; then
-            /usr/bin/printf '%s\t%s\n' "golem-$n" "possible stall — no progress for $(_fmt_age "$age")"
+            command printf '%s\t%s\n' "golem-$n" "possible stall — no progress for $(_fmt_age "$age")"
         else
-            /usr/bin/printf '%s\t%s\n' "golem-$n" "alive (process up, last activity $(_fmt_age "$age") ago)"
+            command printf '%s\t%s\n' "golem-$n" "alive (process up, last activity $(_fmt_age "$age") ago)"
         fi
     done
 }
@@ -880,7 +912,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             # fresh transition.
             [ -n "$feed" ] && emit_transitions "$(feed_snapshot_live "$feed")" 1
             while :; do
-                /usr/bin/sleep "$interval"
+                "$SLEEP" "$interval"
                 [ -n "$feed" ] && emit_transitions "$(feed_snapshot_live "$feed")" 0
             done
             ;;
@@ -900,7 +932,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             confirm_turn_end "$(panes_snapshot)"
             emit_transitions "$CONFIRMED_SNAPSHOT" 1
             while :; do
-                /usr/bin/sleep "$interval"
+                "$SLEEP" "$interval"
                 confirm_turn_end "$(panes_snapshot)"
                 emit_transitions "$CONFIRMED_SNAPSHOT" 0
             done
@@ -916,7 +948,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             # (a handful of stats per golem); GOLEM_HEARTBEAT_INTERVAL paces it.
             while :; do
                 liveness_snapshot "$status_dir" "$feed"
-                /usr/bin/sleep "$heartbeat_interval"
+                "$SLEEP" "$heartbeat_interval"
             done
             ;;
     esac
