@@ -52,6 +52,22 @@
 #       worktree-new.sh legitimately seeds, etc.),
 #     - relative target, or no target path in the payload.
 #
+# TOPOLOGY COVERAGE (#501). The main-checkout root is derived per git topology
+# from the common-dir PATH STRUCTURE (never from worktree-writable config keys —
+# see the TRUST ANCHOR note at the derivation block below):
+#   - STANDARD (common-dir = …/<repo>/.git): enforced — main root = its parent
+#     (the original #475 case).
+#   - SUBMODULE-vendored (common-dir …/.git/modules/<name>): enforced — main root =
+#     the SUPERPROJECT (strip /.git/modules/…). A leak into the submodule's real
+#     checkout (inside the superproject) is DENIED, not failed-open.
+#   - BARE-repo host OR any EXOTIC gitdir (common-dir neither …/.git nor
+#     …/.git/modules/…, e.g. a `--separate-git-dir` store): the main root is not
+#     derivable from the path structure, and the only remaining bare-vs-exotic
+#     discriminator (`core.bare` / `--is-bare-repository`) is worktree-poisonable,
+#     so the guard FAILS OPEN LOUDLY rather than trust it. A bare host's legitimate
+#     own-worktree edits already passed the topology-independent worktree-first
+#     allow, so only a cross-tree target reaches this loud path.
+#
 # ACCEPTED OUT-OF-SCOPE GAPS (documented, deliberately not covered):
 #   - The `Bash` tool. Scanning arbitrary shell for a leaked write target is
 #     noisy (a mere `cat /workspace/<repo>/...` read is not a leak) and the
@@ -60,14 +76,19 @@
 #     paths, never a bare /workspace/<repo>/... root) is the belt for Bash.
 #   - A symlink whose target escapes the worktree. Path resolution here is
 #     lexical (segment collapse of `.`/`..`), not a realpath() through symlinks.
-#   - Non-standard git topologies where the main checkout is NOT the parent of
-#     git-common-dir: a SUBMODULE-vendored golem flow (common-dir under
-#     .git/modules/<name>) and a BARE-repo worktree host (common-dir a bare
-#     `<name>.git`). Rather than mis-scope these silently, the guard FAILS OPEN
-#     LOUDLY for them (see the top-level-.git gate below); enforcing them (via
-#     config.sh's --show-superproject-working-tree probe) is deferred to #501.
-#   These pass with a loud stderr diagnostic BY DESIGN; the prompt belt + human
-#   review back them up. A silent leak is the one outcome avoided everywhere.
+#   - A bare-host or EXOTIC gitdir (above) whose scope cannot be derived from the
+#     path structure: fails open with a loud stderr diagnostic BY DESIGN; the
+#     prompt belt + human review back it up.
+#   - A golem REWRITING its own `$worktree/.git` gitlink file to point at a decoy
+#     repo defeats the git-dir==common-dir main-session gate ABOVE (making its cwd
+#     look like a primary checkout that is never blocked). That is a distinct,
+#     pre-existing #475 trust-anchor gap — the disarming write itself is a normal
+#     worktree-scoped edit this guard allows, and closing it needs a cross-cut fix
+#     spanning this gate AND bash-guard's Bash matcher — tracked as its own
+#     follow-up, out of #501's topology scope. (The RELATED `core.worktree` /
+#     `extensions.worktreeConfig` toplevel-redirect vector IS closed here — see the
+#     structural worktree_root derivation below.)
+#   A silent leak is the one outcome avoided everywhere.
 #
 # FAILURE MODE — fail-open, fail-LOUD on trouble (mirrors bash-guard, #448). On
 # any parse/resolution failure (empty stdin, non-JSON, `cwd` not in a git repo,
@@ -256,60 +277,147 @@ if [ "$git_dir_abs" = "$common_dir_abs" ]; then
     exit 0
 fi
 
-# Linked worktree. Its own root is the toplevel of `cwd`.
-worktree_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)"
-
-# The MAIN checkout root is the parent of the shared git-common-dir, but ONLY in
-# the standard non-submodule, non-bare topology where common-dir is the repo's
-# top-level `.git` directory (…/<repo>/.git -> …/<repo>). That is precisely the
-# layout #475 was observed in (a golem worktree of the primary checkout).
+# Linked worktree. Resolve its own root — but NOT via `rev-parse --show-toplevel`,
+# whose answer a worktree-writable `core.worktree` can redirect: with
+# `extensions.worktreeConfig=true` (a key in the shared common-dir config) plus a
+# `git config --worktree core.worktree <main-checkout>`, both issued from the
+# worktree cwd, `--show-toplevel` returns the MAIN checkout root — which would make
+# the worktree-first allow below match main-checkout targets and SILENTLY ALLOW a
+# leak (the #501 cycle-3 CRITICAL; a pre-existing #475 gap this restructure's
+# "only the path structure is trustworthy" invariant must actually honor).
 #
-# In two other topologies the parent-of-common derivation is WRONG and would
-# silently mis-scope (a false ALLOW = a silent leak, the exact failure this guard
-# exists to prevent — flagged in the #475 pre-PR review):
-#   - SUBMODULE: common-dir is <super>/.git/modules/<name>, whose parent is the
-#     git-internal .git/modules dir, NOT the submodule's checkout root.
-#   - BARE-REPO worktree host: common-dir is a bare `…/<name>.git` with no
-#     "main checkout" at its parent at all.
-# `repo_root()` in scripts/config.sh handles the submodule case for the golem
-# scripts via `--show-superproject-working-tree`; wiring that (and a bare-host
-# primary-worktree probe) into this guard is deferred to #501. Until then, only
-# enforce when common-dir is a plain top-level `.git`; otherwise fail open LOUDLY
-# (a detectable degraded-allow) rather than mis-scope silently.
-case "$common_dir_abs" in
-    */.git) ;; # plain top-level .git — parent is the main checkout
+# Instead derive the root STRUCTURALLY from the linked worktree's gitdir pointer
+# file `<git_dir>/gitdir` (written once at `git worktree add` time, NOT a
+# `git config` value): it holds `<worktree>/.git`, so stripping the trailing
+# `/.git` yields the true worktree root. Fall back to `--show-toplevel` only when
+# that file is absent, and in BOTH cases cross-check that `cwd` (which comes from
+# the PreToolUse JSON — Claude Code's own tmux launch, not any git-config-derived
+# value) actually lives under the resolved root; a mismatch means the derivation
+# was redirected, so fail open LOUDLY rather than trust a poisoned root.
+worktree_root=""
+if [ -f "$git_dir_abs/gitdir" ]; then
+    _gf="$("$CAT" "$git_dir_abs/gitdir" 2>/dev/null | "$HEAD" -n1)"
+    _gf="${_gf%/.git}" # `<worktree>/.git` -> `<worktree>`
+    case "$_gf" in
+        /*) worktree_root="$(cd "$_gf" 2>/dev/null && pwd || true)" ;;
+    esac
+fi
+if [ -z "$worktree_root" ]; then
+    worktree_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+if [ -z "$worktree_root" ]; then
+    printf '%s: could not resolve the worktree root for cwd (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$cwd" >&2
+    exit 0
+fi
+# Cross-check against the (non-config-derived) cwd: the session's cwd must be
+# inside its own worktree. If it is not, worktree_root was redirected (a poisoned
+# core.worktree, or a stale/mismatched gitdir file) — do not trust it.
+case "$cwd" in
+    "$worktree_root" | "$worktree_root"/*) ;;
     *)
-        printf '%s: git-common-dir (%s) is not a top-level .git (submodule/bare topology); worktree-scope not derivable — NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
+        printf '%s: resolved worktree root (%s) does not contain cwd (%s) — worktree scope untrustworthy (possible core.worktree redirect); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$worktree_root" "$cwd" >&2
         exit 0
         ;;
 esac
-main_root="${common_dir_abs%/*}"
-if [ -z "$worktree_root" ] || [ -z "$main_root" ]; then
-    printf '%s: could not resolve worktree/main roots for cwd (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$cwd" >&2
-    exit 0
-fi
 
-# --- Path scope: worktree (allow) BEFORE main (deny) ------------------------
-# The worktree lives INSIDE main_root, so a target under the worktree also
-# matches main_root — test the worktree prefix first and allow it.
+# --- Worktree-first ALLOW (topology-independent) ----------------------------
+# A target INSIDE this worktree is the correct destination in EVERY topology —
+# standard, submodule, and bare-repo host alike — so allow it before any
+# topology derivation. Doing this first means a bare-host golem's edits to its
+# own tree pass SILENTLY (no diagnostic), and only a genuinely cross-tree target
+# reaches the derivation below — so the derivation never has to carve out a
+# silent-allow branch that a poisonable signal could be abused to reach.
 case "$target" in
     "$worktree_root" | "$worktree_root"/*) exit 0 ;;
 esac
 
-# Not under the worktree. Deny only when it is under the MAIN checkout root —
-# a target outside the repo entirely (/tmp, $HOME/.claude.json, another repo) is
-# not this guard's concern and passes.
+# The MAIN checkout root that a cross-tree leak could land in depends on the git
+# TOPOLOGY. #475 handled only the STANDARD case (common-dir = …/<repo>/.git, main
+# root = its parent); #501 extends enforcement to the submodule topology.
+#
+# TRUST ANCHOR — derive the topology from the common-dir PATH STRUCTURE, NOT from
+# config keys. `core.bare` / `core.worktree` live in the SHARED common-dir config,
+# which the very golem worktree session this guard polices can rewrite with a plain
+# `git config core.bare true` / `git config core.worktree <decoy>` (those keys are
+# not worktree-scoped). Trusting ANY of them — including `--is-bare-repository`,
+# which just reads `core.bare` — was a confirmed silent-bypass: a one-line command
+# flips the guard into an allow branch, disabling the #475/#501 control for the
+# session (#501 pre-PR review, two dynamic repros). A `git config` write CANNOT
+# relocate the common-dir PATH, so only the path structure is trustworthy:
+#
+#   - SUBMODULE (common-dir matches …/.git/modules/…): the cross-tree leak target
+#     is the whole SUPERPROJECT working tree — strip from the first `/.git/modules/`
+#     to get its root (%% takes the longest suffix so nested module dirs resolve to
+#     the outermost superproject). The submodule's real checkout lives INSIDE the
+#     superproject, so a leak into it is DENIED. Structural, so a poisoned
+#     core.worktree decoy cannot redirect it.
+#   - STANDARD (common-dir = …/<repo>/.git): parent of the common-dir is the main
+#     checkout (the original #475 derivation). Reached whenever common-dir ends in a
+#     literal `/.git`, so a stray or poisoned `core.bare=true` on a normal checkout
+#     (the documented core.bare-misconfig class) no longer flips it — the structural
+#     match wins and enforcement stands.
+#   - NEITHER (bare-repo host OR any exotic gitdir, e.g. a `--separate-git-dir`
+#     store): the main-checkout root is not derivable from the path structure
+#     alone, and the only remaining discriminators (`core.bare` /
+#     `--is-bare-repository`) are worktree-poisonable — so DO NOT trust them. Fail
+#     open LOUDLY. A genuine bare host loses nothing (its own-worktree edits already
+#     passed the worktree-first allow above; only a cross-tree target lands here,
+#     and that is precisely the case worth a loud diagnostic), and an exotic gitdir
+#     gets the same detectable degraded-allow it always had — with no poisonable
+#     silent-allow branch anywhere.
+main_root=""
+topology=""
+case "$common_dir_abs" in
+    */.git/modules/*)
+        main_root="${common_dir_abs%%/.git/modules/*}"
+        topology="submodule"
+        ;;
+    */.git)
+        main_root="${common_dir_abs%/*}"
+        topology="standard"
+        ;;
+    *)
+        printf '%s: git-common-dir (%s) is neither a top-level .git nor a submodule module dir; worktree-scope not derivable from the path structure, and config signals (core.bare) are worktree-poisonable — NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
+        exit 0
+        ;;
+esac
+# Defensive: a common-dir at the filesystem root (…=/.git or /.git/modules/<n>)
+# would strip to the empty string, and an empty main_root turns the scope `case`
+# below into `"" | ""/*` — which glob-matches EVERY absolute target (over-block).
+# Not reachable in this deployment (worktrees live under /workspace/<repo>/…), but
+# cheap to close: an empty main_root is undecidable, so fail open LOUDLY.
+if [ -z "$main_root" ]; then
+    printf '%s: derived an empty main-checkout root from common-dir (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
+    exit 0
+fi
+
+# --- Path scope: DENY a cross-tree target under the MAIN checkout root -------
+# The worktree-first allow above already cleared targets inside this worktree, so
+# a target still matching main_root here is genuinely cross-tree (in the submodule
+# case that includes the submodule's real checkout, which sits under the
+# superproject but outside this worktree). A target outside the repo entirely
+# (/tmp, $HOME/.claude.json, another repo) is not this guard's concern and passes.
 case "$target" in
     "$main_root" | "$main_root"/*) ;;
     *) exit 0 ;;
 esac
 
 # --- Deny -------------------------------------------------------------------
-# Map the leaked main-checkout path to where it SHOULD have gone in the worktree,
-# so the reason both explains and offers the fix.
+# Build the reason. In the STANDARD topology the worktree mirrors main_root's
+# subtree, so the leaked path maps cleanly to `$worktree_root/$rel` and
+# `git -C $main_root checkout -- $rel` is the correct restore. In the SUBMODULE
+# topology the worktree is a checkout of the SUBMODULE repo (it does NOT mirror
+# the superproject layout — the submodule lives at a subpath there, e.g. `sub/`),
+# so that prefix-substitution would fabricate a non-existent path and a recovery
+# command against an untracked pathspec (the #501 cycle-3 correctness finding).
+# Give topology-accurate guidance instead of a wrong concrete path.
 rel="${target#"$main_root"/}"
-suggested="$worktree_root/$rel"
-reason="Blocked a worktree-escaping edit (#475): this golem session runs in the worktree \`${worktree_root}\`, but the target \`${target}\` is in the MAIN checkout \`${main_root}\`. Edits here land silently in main (the worktree \`git status\` stays clean) and can revert an already-merged PR on recovery. Use the worktree path instead: \`${suggested}\`. If a file was already leaked into main, restore ONLY it there (\`git -C ${main_root} checkout -- ${rel}\`) and re-apply it fresh in the worktree on the correct base — never blind-copy from main (stale-base revert risk)."
+if [ "$topology" = "submodule" ]; then
+    reason="Blocked a worktree-escaping edit (#475/#501): this golem session runs in the submodule worktree \`${worktree_root}\`, but the target \`${target}\` is in the SUPERPROJECT checkout \`${main_root}\` (outside this worktree). Edits here land silently in the superproject tree (this worktree's \`git status\` stays clean) and can revert already-merged work on recovery. Do NOT write there from this worktree: make the change in the correct checkout for that path (the submodule's own working tree, or the superproject checkout, whichever owns \`${target}\`) on the right base. If a file was already leaked, restore it in the tree that owns it — never blind-copy from a stale checkout (revert risk)."
+else
+    suggested="$worktree_root/$rel"
+    reason="Blocked a worktree-escaping edit (#475): this golem session runs in the worktree \`${worktree_root}\`, but the target \`${target}\` is in the MAIN checkout \`${main_root}\`. Edits here land silently in main (the worktree \`git status\` stays clean) and can revert an already-merged PR on recovery. Use the worktree path instead: \`${suggested}\`. If a file was already leaked into main, restore ONLY it there (\`git -C ${main_root} checkout -- ${rel}\`) and re-apply it fresh in the worktree on the correct base — never blind-copy from main (stale-base revert risk)."
+fi
 
 if command -v jq >/dev/null 2>&1; then
     jq -cn --arg reason "$reason" \
