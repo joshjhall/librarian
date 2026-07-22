@@ -2465,7 +2465,9 @@ EOF
     run_in "$sb" "$STATUS"
     assert_exit 0 "$RUN_RC" "golem-status exits 0 with a no-ts gate"
     # Anchor on the BLOCKED-list render line ("  golem-N — <message>"), not the
-    # bare message, which also appears in the raw "Recent feed" echo at the bottom.
+    # bare message. (The raw "Recent feed" JSON echo that used to also carry this
+    # substring was removed in #488 — the render now prints only a feed line count
+    # — but the render-line anchor is the correct assertion regardless.)
     assert_contains "$RUN_OUT" "golem-3 — push gate" "the no-ts gate surfaces in the BLOCKED list"
     assert_not_contains "$RUN_OUT" "(gated " \
         "a no-ts BLOCKED line renders without a (gated Nm ago) suffix (#432)"
@@ -2509,11 +2511,12 @@ EOF
     run_in "$sb" "$STATUS"
     assert_exit 0 "$RUN_RC" "golem-status exits 0 with a mixed good/bad ts feed"
     # Anchor on the BLOCKED-LIST line form ("  golem-N — <message>"), NOT a bare
-    # substring: golem-status.sh echoes the raw feed JSON verbatim under "Recent
-    # feed" at the bottom, so `assert_contains "$RUN_OUT" "good-ts gate"` would
-    # match that echo even when the BLOCKED list is empty — a false pass. The
-    # em-dash-separated render line appears ONLY when the golem actually surfaces
-    # BLOCKED. (Verified: reverting the try/catch fails both asserts here.)
+    # substring. The em-dash-separated render line appears ONLY when the golem
+    # actually surfaces BLOCKED — a bare `good-ts gate` substring would be a weaker
+    # assertion (before #488 the raw "Recent feed" JSON echo also carried it, a
+    # classic false pass; that echo is now a one-line count, but the render-line
+    # anchor remains the correct discriminator). Verified: reverting the try/catch
+    # fails both asserts here.
     assert_contains "$RUN_OUT" "golem-5 — good-ts gate" \
         "the good-ts golem still renders in the BLOCKED list — a sibling's bad ts doesn't blank it (#432)"
     assert_contains "$RUN_OUT" "golem-3 — bad-ts gate" \
@@ -2727,6 +2730,303 @@ test_status_watch_uses_resolver_default() {
     assert_exit 0 "$RUN_RC" "bounded --watch loop exits cleanly"
     assert_contains "$RUN_OUT" "Status sweep every 900s (level 4)" \
         "header shows the L4 resolver default (900s)"
+}
+
+# --- golem-status.sh --checkpoint change-suppression (#488) ------------------
+
+# A no-op --watch checkpoint sweep must not re-emit the whole table. With one
+# stable cache row and GOLEM_SWEEP_INTERVAL=1 over a ~3s window, the full
+# "STATUS CHECKPOINT" table renders exactly ONCE (first sweep) and every later
+# unchanged sweep collapses to a single "no change since" heartbeat line. This is
+# the primary AC: two consecutive no-change sweeps emit no repeated full table.
+test_status_checkpoint_suppresses_noop_sweep() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    if ! command -v timeout >/dev/null 2>&1; then
+        skip_test "timeout not available (cannot bound the --watch loop)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    run_in_watch "$sb" 3 GOLEM_SWEEP_INTERVAL=1 -- --checkpoint --watch --level 3
+    assert_exit 0 "$RUN_RC" "bounded --checkpoint --watch loop exits cleanly"
+    local table_count
+    table_count="$(/usr/bin/printf '%s\n' "$RUN_OUT" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    assert_true "[ '$table_count' = '1' ]" \
+        "the full table renders exactly once across a no-change window (got $table_count)"
+    assert_contains "$RUN_OUT" "no change since" \
+        "later no-op sweeps collapse to a heartbeat line (proves >=2 sweeps, suppressed)"
+}
+
+# render_source_checkpoint <outvar> <sandbox> <interval> — source $STATUS in the
+# sandbox (source guard, like gate_age_unit) and call render_checkpoint N times
+# IN ONE PROCESS so the module-scope cp_prev_sig persists across calls (the same
+# thing the --watch loop relies on). The sequence is fixed here: render once,
+# render again unchanged, flip golem-42's .blocking to true, render a third time.
+# Captures the combined stdout of all three renders so a single assertion set can
+# check "printed → suppressed → re-emitted". Deterministic (no timing).
+render_source_seq() {
+    local __out="$1" dir="$2" interval="$3" _rss_out
+    _rss_out="$(cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$dir" \
+            TMUX= TMUX_TMPDIR="$dir/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" -c '
+                source "$1"
+                render_checkpoint "$2"
+                render_checkpoint "$2"
+                printf "%s" "{ \"golem\": \"golem-42\", \"issue\": 42, \"state\": \"impl\", \"blocking\": true }" \
+                    >"$3/golem-42.json"
+                render_checkpoint "$2"
+            ' _ "$STATUS" "$interval" "$dir/.worktrees/.status" 2>/dev/null || true)"
+    printf -v "$__out" '%s' "$_rss_out"
+}
+
+# A real row-state change re-emits promptly even after a suppressed sweep. Drive
+# render_checkpoint three times in one process: (1) first render prints the table,
+# (2) an identical sweep is suppressed to a heartbeat, (3) after flipping .blocking
+# the table re-emits with the ⚠ BLOCKED marker. Anchors on the render-line/marker
+# forms, never a bare feed echo (repo memory on feed-echo false-passes).
+test_status_checkpoint_reemits_on_state_change() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb out table_count
+    new_sandbox sb
+    /usr/bin/printf '%s' \
+        '{ "golem": "golem-42", "issue": 42, "state": "impl", "blocking": false }' \
+        >"$sb/.worktrees/.status/golem-42.json"
+    render_source_seq out "$sb" 60
+    # Two full tables total: the first render and the post-flip re-emit. The middle
+    # (unchanged) sweep is suppressed, so the count is 2, not 3.
+    table_count="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    assert_true "[ '$table_count' = '2' ]" \
+        "table prints on render 1 and re-emits on the state change, but not the unchanged sweep (got $table_count)"
+    assert_contains "$out" "no change since" \
+        "the unchanged middle sweep is suppressed to a heartbeat"
+    assert_contains "$out" "⚠ BLOCKED" \
+        "the post-flip re-emit carries the BLOCKED state marker"
+}
+
+# The verbose render must NOT dump raw feed JSON (#488) — that was pure
+# token-dense duplication of the classified BLOCKED/LIVENESS blocks. Plant a feed
+# line with a distinctive marker; the render shows the one-line "Recent feed:"
+# count but never the raw JSON.
+test_status_verbose_no_raw_feed_dump() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb sd
+    new_sandbox sb
+    sd="$sb/.worktrees/.status"
+    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+{ "golem": "golem-7", "issue": 7, "branch": "feature/issue-7",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    /usr/bin/cat >"$sd/feed.jsonl" <<'EOF'
+{"golem":"golem-7","event":"idle","message":"DISTINCTFEEDMARKER working","ts":"2026-07-21T00:00:00Z"}
+EOF
+    run_in "$sb" "$STATUS"
+    assert_exit 0 "$RUN_RC" "verbose render exits 0 with a planted feed"
+    assert_contains "$RUN_OUT" "Recent feed: 1 line(s)" \
+        "the verbose render shows a one-line feed count, not the raw JSON tail"
+    assert_not_contains "$RUN_OUT" "DISTINCTFEEDMARKER" \
+        "the raw feed JSON is no longer echoed into the render (#488)"
+}
+
+# render_source_gap <outvar> <sandbox> <interval> — like render_source_seq but the
+# MIDDLE sweep hits the empty-state early return (the golem cache file is removed),
+# then the SAME golem at the SAME state reappears. Drives render_checkpoint three
+# times in one process: (1) render full, (2) remove golem-42.json → "No active
+# golems" early return, (3) restore the identical golem-42.json → render again.
+render_source_gap() {
+    local __out="$1" dir="$2" interval="$3" _rsg_out
+    _rsg_out="$(cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$dir" \
+            TMUX= TMUX_TMPDIR="$dir/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" -c '
+                row="{ \"golem\": \"golem-42\", \"issue\": 42, \"state\": \"impl\", \"blocking\": false }"
+                source "$1"
+                render_checkpoint "$2"
+                rm -f "$3/golem-42.json"
+                render_checkpoint "$2"
+                printf "%s" "$row" >"$3/golem-42.json"
+                render_checkpoint "$2"
+            ' _ "$STATUS" "$interval" "$dir/.worktrees/.status" 2>/dev/null || true)"
+    printf -v "$__out" '%s' "$_rsg_out"
+}
+
+# Regression (#488, review Bug 1): a sweep that renders NO table (all golems
+# vanished → empty-state early return) is a GAP; the prior signature must be
+# cleared so the SAME golem set reappearing at the SAME state is NOT wrongly
+# suppressed as "no change". Without the clear, sweep 3 would compare equal to
+# sweep 1's signature and hide the vanish→reappear transition behind a heartbeat.
+test_status_checkpoint_gap_clears_suppression() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb out table_count
+    new_sandbox sb
+    /usr/bin/printf '%s' \
+        '{ "golem": "golem-42", "issue": 42, "state": "impl", "blocking": false }' \
+        >"$sb/.worktrees/.status/golem-42.json"
+    render_source_gap out "$sb" 60
+    # Two full tables: sweep 1 and the post-reappear sweep 3. Sweep 2 is the
+    # empty-state early return (no table, no heartbeat). A stale-suppression bug
+    # would make this count 1 (sweep 3 suppressed) — the discriminator.
+    table_count="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    assert_true "[ '$table_count' = '2' ]" \
+        "the reappearing golem re-renders in full after an empty-state gap, not a heartbeat (got $table_count)"
+    assert_contains "$out" "No active golems" \
+        "the middle sweep hit the empty-state early return (the gap)"
+    assert_not_contains "$out" "no change since" \
+        "the reappear is never collapsed to a heartbeat — the gap cleared the prior signature (#488)"
+}
+
+# Regression (#488, review Bug 2): the blank separator line between the pool
+# header and the STATUS CHECKPOINT title (present in the pre-#488 render) must
+# survive the buffer restructure — a byte-layout parity check.
+test_status_checkpoint_pool_header_blank_line() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-9.json" <<'EOF'
+{ "golem": "golem-9", "issue": 9, "state": "impl", "blocking": false }
+EOF
+    /usr/bin/cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
+{ "size": 3, "slots": [1, 2], "backlog_depth": 5, "accepting": "open" }
+EOF
+    run_in "$sb" "$STATUS" --checkpoint
+    assert_exit 0 "$RUN_RC" "one-shot --checkpoint with a pool exits 0"
+    # The pool line, a blank line, then the title — the exact three-line sequence.
+    assert_contains "$RUN_OUT" "queue=open"$'\n'$'\n'"STATUS CHECKPOINT" \
+        "a blank line separates the pool header from the checkpoint title (#488)"
+}
+
+# Regression (#488, review Bug 3): a one-shot --checkpoint (no --watch) must still
+# surface the cache-mirror caveat (on stderr) — the relocation from per-sweep to
+# once-at-startup must not drop it from the one-shot snapshot path.
+test_status_checkpoint_oneshot_shows_cache_mirror_note() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    /usr/bin/cat >"$sb/.worktrees/.status/golem-9.json" <<'EOF'
+{ "golem": "golem-9", "issue": 9, "state": "impl", "blocking": false }
+EOF
+    run_in "$sb" "$STATUS" --checkpoint
+    assert_exit 0 "$RUN_RC" "one-shot --checkpoint exits 0"
+    # run_in merges stdout+stderr; the caveat lands on stderr but is captured here.
+    assert_contains "$RUN_OUT" "PR/CI/Review are cache mirrors" \
+        "the one-shot --checkpoint still prints the cache-mirror caveat (#488)"
+}
+
+# Regression (#488, review follow-up): the heartbeat's golem count uses a
+# `grep -o '|' | wc -l` count, NOT `grep -c '|'` — GNU grep -c exits 1 on a zero
+# count, which with a `|| echo 0` fallback double-appends and splits the heartbeat
+# across two lines. The bug ONLY surfaces when cp_sig has zero `|` rows: a
+# pool.json present (so the empty-state early return is skipped) but no golem
+# cache rows and no live sessions. Drive render_checkpoint twice in-process; the
+# suppressed 2nd sweep must be a SINGLE line reading "(0 golem(s))".
+test_status_checkpoint_zero_golem_heartbeat_single_line() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb out hb_lines
+    new_sandbox sb
+    # pool.json only — no golem-*.json, no tmux sessions (TMUX_TMPDIR is empty).
+    /usr/bin/cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
+{ "size": 3, "slots": [], "backlog_depth": 0, "accepting": "open" }
+EOF
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" -c 'source "$1"; render_checkpoint "$2"; render_checkpoint "$2"' \
+            _ "$STATUS" 60 2>/dev/null || true)"
+    # The suppressed sweep's heartbeat must be exactly one line with (0 golem(s)) —
+    # a split count renders "(0" and "0 golem(s))" on two lines.
+    assert_contains "$out" "no change since" \
+        "the zero-golem sweep is suppressed to a heartbeat"
+    assert_contains "$out" "(0 golem(s))" \
+        "the zero-golem heartbeat count is a clean single-line 0, not a split grep -c count (#488)"
+    hb_lines="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c 'golem(s))')"
+    assert_true "[ '$hb_lines' = '1' ]" \
+        "the heartbeat 'golem(s)' phrase renders on exactly one line (got $hb_lines)"
+}
+
+# render_source_multi <outvar> <sandbox> <interval> — three in-process renders
+# over a MULTI-golem batch (the real use case, not the single-row fixtures the
+# other #488 tests use): render full, render again unchanged (all suppressed),
+# then flip ONLY golem-2's .blocking and render again — the whole table must
+# re-emit (coarse-grained) with golem-2 ⚠ BLOCKED and the others still present.
+render_source_multi() {
+    local __out="$1" dir="$2" interval="$3" _rsm_out
+    _rsm_out="$(cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$dir" \
+            TMUX= TMUX_TMPDIR="$dir/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" -c '
+                source "$1"
+                render_checkpoint "$2"
+                render_checkpoint "$2"
+                printf "%s" "{ \"golem\": \"golem-2\", \"issue\": 2, \"state\": \"impl\", \"blocking\": true }" \
+                    >"$3/golem-2.json"
+                render_checkpoint "$2"
+            ' _ "$STATUS" "$interval" "$dir/.worktrees/.status" 2>/dev/null || true)"
+    printf -v "$__out" '%s' "$_rsm_out"
+}
+
+# Regression (#488, review test-coverage finding): the suppression signature is
+# built by concatenating EVERY row's golem|statecol across a batch. With 3 golems,
+# an unchanged sweep must suppress the whole table, and flipping ONE golem's state
+# must re-emit the whole table (all three rows) — the coarse-grained guarantee the
+# feature exists for. Asserts the exact 3-count heartbeat too.
+test_status_checkpoint_multi_golem_batch_suppression() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    local sb out table_count
+    new_sandbox sb
+    /usr/bin/printf '%s' '{ "golem": "golem-1", "issue": 1, "state": "impl", "blocking": false }' \
+        >"$sb/.worktrees/.status/golem-1.json"
+    /usr/bin/printf '%s' '{ "golem": "golem-2", "issue": 2, "state": "impl", "blocking": false }' \
+        >"$sb/.worktrees/.status/golem-2.json"
+    /usr/bin/printf '%s' '{ "golem": "golem-3", "issue": 3, "state": "impl", "blocking": false }' \
+        >"$sb/.worktrees/.status/golem-3.json"
+    render_source_multi out "$sb" 60
+    # Full table on sweep 1 and the post-flip sweep 3; sweep 2 suppressed.
+    table_count="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    assert_true "[ '$table_count' = '2' ]" \
+        "the 3-golem batch renders once, suppresses the unchanged sweep, and re-emits the whole table on a single-row flip (got $table_count)"
+    assert_contains "$out" "(3 golem(s))" \
+        "the heartbeat counts all three batch rows"
+    assert_contains "$out" "⚠ BLOCKED" \
+        "the re-emitted table carries golem-2's flipped BLOCKED state"
+    # All three rows are present in the re-emitted table (coarse-grained re-emit,
+    # not just the changed row) — golem-1 and golem-3 render alongside golem-2.
+    assert_contains "$out" "golem-1" "golem-1 is still rendered in the re-emitted table"
+    assert_contains "$out" "golem-3" "golem-3 is still rendered in the re-emitted table"
 }
 
 # --- golem-token-scrape.sh + golem-status token signal (#371) ---------------
@@ -4721,6 +5021,14 @@ run_test test_status_watch_bad_level_exits_2 "golem-status: --watch --level out 
 run_test test_status_watch_bad_interval_exits_2 "golem-status: --watch --interval non-integer exits 2 (#304)"
 run_test test_status_watch_loops_with_env_override "golem-status: --watch re-renders; GOLEM_SWEEP_INTERVAL overrides the level default (#304)"
 run_test test_status_watch_uses_resolver_default "golem-status: --watch uses the resolver's level-scaled default cadence (#304)"
+run_test test_status_checkpoint_suppresses_noop_sweep "golem-status: --checkpoint --watch suppresses no-op sweeps (full table once, then heartbeat) (#488)"
+run_test test_status_checkpoint_reemits_on_state_change "golem-status: --checkpoint re-emits promptly on a row state change after suppression (#488)"
+run_test test_status_verbose_no_raw_feed_dump "golem-status: verbose render shows a feed count, not the raw JSON tail (#488)"
+run_test test_status_checkpoint_gap_clears_suppression "golem-status: an empty-state gap clears suppression — a reappearing golem re-renders, not a heartbeat (#488)"
+run_test test_status_checkpoint_pool_header_blank_line "golem-status: --checkpoint keeps the blank line between pool header and title (#488)"
+run_test test_status_checkpoint_oneshot_shows_cache_mirror_note "golem-status: one-shot --checkpoint still shows the cache-mirror caveat (#488)"
+run_test test_status_checkpoint_zero_golem_heartbeat_single_line "golem-status: zero-golem heartbeat count is a clean single-line 0, not a split grep -c (#488)"
+run_test test_status_checkpoint_multi_golem_batch_suppression "golem-status: multi-golem batch suppresses unchanged sweep + re-emits whole table on a single-row flip (#488)"
 run_test test_scrape_sums_top_level_only "golem-token-scrape: sums top-level output_tokens only, excludes sidechain (#371)"
 run_test test_scrape_missing_transcript_fails_loud "golem-token-scrape: missing transcript fails loud (exit 2), never a silent 0 (#371)"
 run_test test_scrape_no_arg_exits_1 "golem-token-scrape: empty worktree arg fails loud (#371)"

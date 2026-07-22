@@ -99,11 +99,24 @@ Authoritative status comes from **PR + issue-label state**. The
    burn `Δ`, aggregate `rate/hr`, and `live/blocked/shipped` counts). It gives the
    operator a rolling burn/velocity read without polling. Drop `--checkpoint` to
    fall back to the verbose multi-section render (pool header, flat golem table,
-   BLOCKED list, liveness, per-golem TOP-LEVEL TOKENS, recent feed). The two are
+   BLOCKED list, liveness, per-golem TOP-LEVEL TOKENS, and a one-line **recent
+   feed count** — not a raw JSON tail, #488). The two are
    **mutually exclusive per sweep** — both re-drive the same token scrape, so
    running both in one sweep would reset the burn-Δ baseline. (This
    "status-checkpoint table" is distinct from the plan checkpoint at
    `ExitPlanMode` and the poll harness's per-PR resumability checkpoint.)
+
+   **No-op sweeps are suppressed (#488).** In `--watch` mode the checkpoint
+   render collapses a sweep whose **actionable state is unchanged** (per-golem
+   `STATE` cell — incl. `⚠ BLOCKED`/`⚠ CI`/`⚠ gone` — plus the pool header) to a
+   single `— no change since HH:MM (N golem(s))` heartbeat instead of re-printing
+   the whole table, so a batch of quietly-working golems does not flood live
+   context with byte-identical repaints. Volatile fields (`ELAPSED`, `TOKENS(Δ)`,
+   the `rate/hr` footer) are deliberately **excluded** from the change check —
+   they move every sweep and would defeat suppression — but the token
+   scrape/persist still runs each sweep, so the burn baseline never drifts. A
+   real `STATE` transition re-emits the full table promptly; a one-shot
+   `--checkpoint` (no `--watch`) always renders in full.
 
    **Cadence scales by autonomy level** — higher levels assume golems run longer
    without oversight, so they sweep less often (the exact seconds live in
