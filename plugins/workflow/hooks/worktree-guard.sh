@@ -59,8 +59,15 @@
 #     golem SKILL prompt guidance (always use worktree-relative / $PWD-anchored
 #     paths, never a bare /workspace/<repo>/... root) is the belt for Bash.
 #   - A symlink whose target escapes the worktree. Path resolution here is
-#     lexical (prefix + `..` rejection), not a realpath() through symlinks.
-#   These pass silently BY DESIGN; the prompt belt + human review back them up.
+#     lexical (segment collapse of `.`/`..`), not a realpath() through symlinks.
+#   - Non-standard git topologies where the main checkout is NOT the parent of
+#     git-common-dir: a SUBMODULE-vendored golem flow (common-dir under
+#     .git/modules/<name>) and a BARE-repo worktree host (common-dir a bare
+#     `<name>.git`). Rather than mis-scope these silently, the guard FAILS OPEN
+#     LOUDLY for them (see the top-level-.git gate below); enforcing them (via
+#     config.sh's --show-superproject-working-tree probe) is deferred to #501.
+#   These pass with a loud stderr diagnostic BY DESIGN; the prompt belt + human
+#   review back them up. A silent leak is the one outcome avoided everywhere.
 #
 # FAILURE MODE — fail-open, fail-LOUD on trouble (mirrors bash-guard, #448). On
 # any parse/resolution failure (empty stdin, non-JSON, `cwd` not in a git repo,
@@ -111,9 +118,15 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 if [ "$have_fields" -eq 0 ]; then
-    # jq absent or parse failed — hand-roll extraction. These simple scrapes can
-    # only ADD enforcement (find a cwd/target jq would have found), never relax
-    # it, and any miss lands in the fail-open+loud branch below.
+    # jq absent or parse failed — hand-roll extraction. These simple scrapes take
+    # the shortest span to the first unescaped closing quote, so a path value
+    # containing a literal escaped quote (`\"`) is TRUNCATED (jq would decode it).
+    # This is an ACCEPTED no-jq gap, matching bash-guard's own hand-roll: a
+    # truncated target usually still scopes correctly (the truncation lands after
+    # the root prefix) or lands in the fail-open+loud branch, but a path whose own
+    # checkout-root segment contains a literal `"` could in principle mis-scope in
+    # the no-jq fallback ONLY. Paths with embedded quotes are pathological; the jq
+    # path (present in every normal deployment) handles the exact bytes.
     cwd="$(printf '%s' "$payload" |
         /usr/bin/sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
         /usr/bin/head -n1)"
@@ -139,13 +152,43 @@ case "$target" in
     *) exit 0 ;;
 esac
 
-# --- Reject `..` traversal (fail-open + loud) -------------------------------
-# Path scoping below is lexical prefix matching; a `..` segment could escape the
-# worktree prefix and defeat it. Rather than mis-scope, fail open loudly.
+# --- Lexically normalize `.` / `..` segments --------------------------------
+# Path scoping below is lexical prefix matching, so a `..` segment would defeat
+# it — and `$WT/../seed.txt` (which resolves to a MAIN-checkout path) is exactly
+# the natural leak shape #475 exists to catch, NOT an edge to wave through. So
+# collapse `.`/`..` here in pure bash (no realpath/stat, no symlink resolution —
+# consistent with the guard's lexical, filesystem-free design) BEFORE scoping.
+# A `..` that would pop past the filesystem root is a malformed absolute path we
+# cannot scope — that case alone fails open loudly.
 case "$target" in
-    *"/../"* | *"/..")
-        printf '%s: target contains a .. traversal (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$target" >&2
-        exit 0
+    *"/./"* | *"/." | *"/../"* | *"/..")
+        _norm=""
+        _rest="${target#/}" # strip the leading slash; segments follow
+        _bad=0
+        while [ -n "$_rest" ]; do
+            _seg="${_rest%%/*}"
+            case "$_rest" in
+                */*) _rest="${_rest#*/}" ;;
+                *) _rest="" ;;
+            esac
+            case "$_seg" in
+                "" | ".") ;; # empty (//) or current-dir: drop
+                "..")
+                    if [ -z "$_norm" ]; then
+                        _bad=1 # would escape past `/`
+                        break
+                    fi
+                    _norm="${_norm%/*}" # pop the last kept segment
+                    ;;
+                *) _norm="$_norm/$_seg" ;;
+            esac
+        done
+        if [ "$_bad" -ne 0 ]; then
+            printf '%s: target escapes the filesystem root (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$target" >&2
+            exit 0
+        fi
+        # A fully-collapsed path (every segment popped) means the root itself.
+        target="${_norm:-/}"
         ;;
 esac
 
@@ -181,12 +224,33 @@ if [ "$git_dir_abs" = "$common_dir_abs" ]; then
     exit 0
 fi
 
-# Linked worktree. Its own root is the toplevel of `cwd`; the MAIN checkout root
-# is the parent of the shared git-common-dir (…/<repo>/.git -> …/<repo>).
-# main_root = parent of the shared git-common-dir (…/<repo>/.git -> …/<repo>).
-# Pure parameter expansion — no `dirname` binary, so it works even under a
-# stripped PATH (the fail-open+loud test showed a bare `dirname` is unavailable).
+# Linked worktree. Its own root is the toplevel of `cwd`.
 worktree_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)"
+
+# The MAIN checkout root is the parent of the shared git-common-dir, but ONLY in
+# the standard non-submodule, non-bare topology where common-dir is the repo's
+# top-level `.git` directory (…/<repo>/.git -> …/<repo>). That is precisely the
+# layout #475 was observed in (a golem worktree of the primary checkout).
+#
+# In two other topologies the parent-of-common derivation is WRONG and would
+# silently mis-scope (a false ALLOW = a silent leak, the exact failure this guard
+# exists to prevent — flagged in the #475 pre-PR review):
+#   - SUBMODULE: common-dir is <super>/.git/modules/<name>, whose parent is the
+#     git-internal .git/modules dir, NOT the submodule's checkout root.
+#   - BARE-REPO worktree host: common-dir is a bare `…/<name>.git` with no
+#     "main checkout" at its parent at all.
+# `repo_root()` in scripts/config.sh handles the submodule case for the golem
+# scripts via `--show-superproject-working-tree`; wiring that (and a bare-host
+# primary-worktree probe) into this guard is deferred to #501. Until then, only
+# enforce when common-dir is a plain top-level `.git`; otherwise fail open LOUDLY
+# (a detectable degraded-allow) rather than mis-scope silently.
+case "$common_dir_abs" in
+    */.git) ;; # plain top-level .git — parent is the main checkout
+    *)
+        printf '%s: git-common-dir (%s) is not a top-level .git (submodule/bare topology); worktree-scope not derivable — NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
+        exit 0
+        ;;
+esac
 main_root="${common_dir_abs%/*}"
 if [ -z "$worktree_root" ] || [ -z "$main_root" ]; then
     printf '%s: could not resolve worktree/main roots for cwd (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$cwd" >&2

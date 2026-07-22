@@ -86,6 +86,40 @@ git_clean -C "$MAIN_DIR" worktree add -q -b feature/issue-1 "$WT_DIR" >/dev/null
 MAIN_DIR="$(cd "$MAIN_DIR" && pwd)"
 WT_DIR="$(cd "$WT_DIR" && pwd)"
 
+# --- Submodule fixture (#475 pre-PR review finding #1) ----------------------
+# In a submodule-vendored deployment, git-common-dir is <super>/.git/modules/<n>,
+# whose parent is a git-internal dir, NOT the submodule's checkout root. Deriving
+# main_root from parent-of-common would MIS-SCOPE and silently ALLOW a real leak,
+# so the guard fails open LOUDLY for this topology instead. Build it so the test
+# can assert that (skips cleanly if submodule wiring is unavailable in the env).
+SM_OK=0
+SM_SUPER=""
+SM_WT=""
+SM_SUB=""
+if _sub_src="$FIXTURE/sub_src" && /usr/bin/mkdir -p "$_sub_src" &&
+    git_clean -C "$_sub_src" init -q 2>/dev/null &&
+    git_clean -C "$_sub_src" config user.email "test@example.com" &&
+    git_clean -C "$_sub_src" config user.name "Test" &&
+    { printf 'x\n' >"$_sub_src/f"; } &&
+    git_clean -C "$_sub_src" add f 2>/dev/null &&
+    git_clean -C "$_sub_src" -c commit.gpgsign=false commit -qm s 2>/dev/null; then
+    SM_SUPER="$FIXTURE/outer"
+    /usr/bin/mkdir -p "$SM_SUPER"
+    if git_clean -C "$SM_SUPER" init -q 2>/dev/null &&
+        git_clean -C "$SM_SUPER" config user.email "test@example.com" &&
+        git_clean -C "$SM_SUPER" config user.name "Test" &&
+        git_clean -C "$SM_SUPER" -c protocol.file.allow=always \
+            -c commit.gpgsign=false submodule add -q "$_sub_src" sub 2>/dev/null &&
+        git_clean -C "$SM_SUPER" -c commit.gpgsign=false commit -qm add-sub 2>/dev/null &&
+        git_clean -C "$SM_SUPER/sub" worktree add -q -b feature/issue-20 \
+            "$SM_SUPER/sub_wt20" >/dev/null 2>&1; then
+        SM_SUPER="$(cd "$SM_SUPER" && pwd)"
+        SM_WT="$(cd "$SM_SUPER/sub_wt20" && pwd)"
+        SM_SUB="$SM_SUPER/sub"
+        SM_OK=1
+    fi
+fi
+
 # --- Runner -----------------------------------------------------------------
 # run_guard <cwd> <tool> <path-field> <path> [nojq] — build a PreToolUse payload
 # and pipe it to the REAL hook with git env scrubbed; capture stdout in
@@ -189,11 +223,49 @@ test_allow_relative_path() {
     run_guard "$WT_DIR" "Edit" "file_path" "plugins/relative.md"
     assert_equals "allow" "$(decision "$GUARD_OUT")" "relative target allowed (resolves against worktree cwd)"
 }
-test_allow_dotdot_traversal_failopen() {
+# --- `.`/`..` lexical normalization (#475 pre-PR review finding #2) ----------
+# `$WT/../<file>` resolves to a MAIN-checkout path — the natural leak shape, NOT
+# an edge to wave through. The guard collapses `.`/`..` lexically before scoping.
+test_deny_dotdot_into_main() {
     jq_required || return 0
-    # A `..` target can't be scoped lexically -> fail-open (allow), loudly.
-    run_guard "$WT_DIR" "Edit" "file_path" "$MAIN_DIR/../repo/seed.txt"
-    assert_equals "allow" "$(decision "$GUARD_OUT")" ".. traversal fails open (allow)"
+    # WT_DIR == MAIN_DIR/.worktrees/issue-1, so `../../seed.txt` normalizes up two
+    # levels (issue-1 -> .worktrees -> repo) to MAIN_DIR/seed.txt — a real leak.
+    run_guard "$WT_DIR" "Edit" "file_path" "$WT_DIR/../../seed.txt"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "\$WT/../.. into the main checkout is denied (normalized)"
+}
+test_allow_dot_within_worktree() {
+    jq_required || return 0
+    run_guard "$WT_DIR" "Edit" "file_path" "$WT_DIR/./sub/../seed.txt"
+    assert_equals "allow" "$(decision "$GUARD_OUT")" "\`.\`/\`..\` staying within the worktree is allowed"
+}
+test_root_escape_failopen() {
+    jq_required || return 0
+    # A `..` that would pop past `/` is malformed and cannot be scoped -> fail-open.
+    run_guard "$WT_DIR" "Edit" "file_path" "/../etc/passwd"
+    assert_equals "allow" "$(decision "$GUARD_OUT")" "a root-escaping .. fails open (allow)"
+}
+
+# --- Non-standard topology: submodule fails open LOUDLY, never silently ------
+# The critical property (finding #1): a leak into the submodule's REAL checkout
+# from a submodule linked-worktree session must NOT be a silent allow. The guard
+# cannot derive the scope here, so it must allow with a LOUD stderr diagnostic (a
+# detectable degraded-allow), never a silent one.
+test_submodule_failopen_is_loud() {
+    if [ "$SM_OK" -ne 1 ]; then
+        skip_test "submodule fixture unavailable in this environment"
+        return 0
+    fi
+    local payload err
+    payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/g.txt"}}' \
+        "$SM_WT" "$SM_SUB")"
+    # Capture stderr; stdout must be empty (allow).
+    err="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+    assert_contains "$err" "submodule/bare topology" "submodule leak fails open with a LOUD diagnostic (not silent)"
+    local out
+    out="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+    assert_output_empty "$out" "submodule leak emits no deny envelope (fail-open allow)"
 }
 
 # --- Parse-failure: fail-open + loud ----------------------------------------
@@ -261,7 +333,10 @@ run_test test_allow_worktree_nested_new "allow: new file under the worktree"
 run_test test_allow_main_session "main-session: edit of own tree allowed"
 run_test test_allow_out_of_repo_tmp "allow: out-of-repo /tmp target"
 run_test test_allow_relative_path "allow: relative target"
-run_test test_allow_dotdot_traversal_failopen "allow: .. traversal fails open"
+run_test test_deny_dotdot_into_main "review2: \$WT/.. into main is denied (normalized)"
+run_test test_allow_dot_within_worktree "review2: ./.. within worktree allowed"
+run_test test_root_escape_failopen "review2: root-escaping .. fails open"
+run_test test_submodule_failopen_is_loud "review1: submodule leak fails open LOUDLY"
 run_test test_parse_empty_allows "parse-fail: empty stdin allows"
 run_test test_parse_empty_is_loud "parse-fail: empty stdin is loud"
 run_test test_parse_nonjson_allows "parse-fail: non-JSON allows"
