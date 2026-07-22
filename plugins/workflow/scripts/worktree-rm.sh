@@ -32,7 +32,7 @@
 # Usage: worktree-rm.sh <issue-number>
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
@@ -64,8 +64,8 @@ wt="$GOLEM_WORKTREE_DIR/issue-$N"
 br="${GOLEM_BRANCH_PREFIX}${N}"
 removed=0
 
-if /usr/bin/git worktree list --porcelain | /usr/bin/grep -qx "worktree $root/$wt"; then
-    if /usr/bin/git worktree remove "$wt" 2>/dev/null; then
+if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then
+    if command git worktree remove "$wt" 2>/dev/null; then
         command echo "  removed worktree $wt"
         removed=1
     else
@@ -82,8 +82,8 @@ if /usr/bin/git worktree list --porcelain | /usr/bin/grep -qx "worktree $root/$w
         # regular file AND a populated submodule, git prints the submodule
         # message, so a bare `--force` would SILENTLY discard the user's changes
         # (verified) — the ignore-submodules status is what tells them apart.
-        dirty="$(/usr/bin/git -C "$wt" status --porcelain --ignore-submodules=all 2>/dev/null || true)"
-        if [ -z "$dirty" ] && /usr/bin/git worktree remove --force "$wt" 2>/dev/null; then
+        dirty="$(command git -C "$wt" status --porcelain --ignore-submodules=all 2>/dev/null || true)"
+        if [ -z "$dirty" ] && command git worktree remove --force "$wt" 2>/dev/null; then
             command echo "  removed worktree $wt (forced past clean submodules)"
             removed=1
         else
@@ -94,8 +94,8 @@ if /usr/bin/git worktree list --porcelain | /usr/bin/grep -qx "worktree $root/$w
     fi
 fi
 
-if [ -n "$(/usr/bin/git branch --list "$br")" ]; then
-    /usr/bin/git branch -D "$br"
+if [ -n "$(command git branch --list "$br")" ]; then
+    command git branch -D "$br"
     command echo "  deleted branch $br"
     removed=1
 fi
@@ -118,13 +118,13 @@ fi
 # Only unset it when it points at a path that no longer exists — a legit,
 # existing core.worktree is left untouched. `cd "$root"` above put us in the main
 # checkout, so `git config` reads/writes the main config.
-stale_wt="$(/usr/bin/git config --get core.worktree 2>/dev/null || true)"
+stale_wt="$(command git config --get core.worktree 2>/dev/null || true)"
 if [ -n "$stale_wt" ] && [ ! -e "$stale_wt" ]; then
-    /usr/bin/git config --unset core.worktree || true
-    /usr/bin/git worktree prune || true
+    command git config --unset core.worktree || true
+    command git worktree prune || true
     command echo "  repaired stale core.worktree ($stale_wt no longer exists)"
     removed=1
-    if [ "$(/usr/bin/git rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]; then
+    if [ "$(command git rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]; then
         command echo "worktree-rm: WARNING: main checkout still not a work tree after core.worktree repair" >&2
     fi
 fi

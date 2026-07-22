@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Bash portability guardrail (issue #17).
+# Bash portability guardrail (issues #17, #443).
 #
 # The skill code tools and helper scripts must run on base macOS, whose stock
-# /bin/bash is 3.2 (2007). A single script silently relying on a bash-4-only
-# feature malfunctions there rather than failing loudly — exactly the trap #17
-# closes. This gate greps librarian-proper `*.sh` for the bash-4+ constructs we
-# forbid and fails with `file:line` so a regression is caught before it ships.
+# /bin/bash is 3.2 (2007) and whose core utilities live in /bin, not /usr/bin. A
+# script silently relying on a bash-4-only feature — or on a hardcoded tool path
+# that is wrong on this host — malfunctions there rather than failing loudly. This
+# gate greps librarian-proper `*.sh` for both traps and fails with `file:line` so
+# a regression is caught before it ships.
 #
-# Forbidden constructs (all bash-4+, unavailable in 3.2):
+# Check 1 — forbidden bash-4+ constructs (#17), all unavailable in 3.2:
 #   - `declare -A` / `local -A`      associative arrays
 #   - `mapfile` / `readarray`        read-into-array builtins
 #   - `declare -n` / `local -n`      namerefs
@@ -19,12 +20,18 @@
 # for a worked example), `while IFS= read` loops instead of mapfile, and
 # `tr '[:upper:]' '[:lower:]'` for case folding.
 #
+# Check 2 — hardcoded core-utility paths (#443): a `/usr/bin/<tool>` or `/bin/<tool>`
+# invocation is banned (it exits 127 where the tool lives elsewhere — macOS /bin,
+# Homebrew git). Use the `command <tool>` builtin, which honors PATH while still
+# bypassing shell functions/aliases. Allowed: the `#!/usr/bin/env bash` shebang
+# and `/usr/bin/env` itself (env is the one tool with a stable path).
+#
 # Scope: `plugins/ tests/ bin/` only. The `containers/` submodule is a separate
 # repo that deliberately requires bash 5 — out of scope here.
 #
-# Detection strips comments before matching (a `# ... declare -A ...` mention in
-# prose or documentation is not usage) and skips the fixture heredoc in this file
-# itself. Pure bash + coreutils + grep; no network.
+# Detection strips comments before matching (a `# ... declare -A ...` or
+# `# ... /usr/bin/rm ...` mention in prose is not usage) and skips the fixture
+# heredocs in this file itself. Pure bash + coreutils + grep; no network.
 
 set -euo pipefail
 
@@ -80,12 +87,78 @@ scan_file() {
     done <"$file"
 }
 
+# --- Hardcoded core-utility-path ban (#443) -------------------------------------
+# A tool invoked by an absolute path (`/usr/bin/mv`, `/bin/cat`) is NOT portable:
+# on macOS core utils live in /bin, /usr/bin/realpath is absent, and Homebrew git
+# is at /opt/homebrew/bin/git — so under `set -euo pipefail` a wrong assumed path
+# hard-crashes a script whose tool is present on PATH. The portable idiom is the
+# `command` builtin (`command mv`), which honors PATH while still bypassing shell
+# functions/aliases. This check bans a hardcoded `/usr/bin/<tool>` or `/bin/<tool>`
+# invocation, allowing the two legitimate uses of those prefixes:
+#   - the `#!/usr/bin/env bash` shebang (env is the ONE tool with a stable path),
+#   - `/usr/bin/env` itself anywhere (used to run a command with a scrubbed env).
+# Match a leading `/usr/bin/` or `/bin/` followed by ANY lowercase tool name.
+# Guards on BOTH sides so only a real tool invocation matches:
+#   - leading `[^A-Za-z0-9_./]` (or start) so /usr/local/bin/x, /opt/... and an
+#     already-`command`'d name don't match;
+#   - trailing `[^/A-Za-z0-9_.-]` (or end) so a deeper PROJECT PATH like
+#     `$ROOT/bin/lib/release/x.sh` or `$sb/bin/release.sh` is NOT flagged — a tool
+#     invocation is followed by whitespace / `)` / `|` / etc., never `/` or `.`.
+# The one allowed tool, `env` (the `#!/usr/bin/env` shebang and `/usr/bin/env -i`
+# exec-wrapper), is excluded PROCEDURALLY in scan_file_paths, not carved out of
+# the regex — an in-regex `[a-df-z]` first-letter exclusion would silently also
+# skip every other `e*` tool (echo, expr, eval, egrep …), a false-negative gap.
+PATHLIT_RE='(^|[^A-Za-z0-9_./])/(usr/bin|bin)/([a-z][a-z0-9_-]*)([^/A-Za-z0-9_.-]|$)'
+
+# scan_file_paths <path> — populate CUR_PATH_VIOLATIONS with `line N: <code>` for
+# each hardcoded core-utility-path invocation. Shebang (line 1) and comment lines are
+# skipped, matching scan_file's comment handling, so a doc mention of `/usr/bin/x`
+# does not register.
+CUR_PATH_VIOLATIONS=""
+scan_file_paths() {
+    local file="$1"
+    CUR_PATH_VIOLATIONS=""
+    local lineno=0 line code
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        [ "$lineno" -eq 1 ] && continue # shebang
+        code="$line"
+        case "$code" in
+            \#*) continue ;;
+        esac
+        # An explicit `# lint-allow-path: <reason>` marker exempts a line where an
+        # absolute tool path is deliberate — e.g. a generated stub that must run
+        # under a stripped PATH (where `command <tool>` cannot resolve). The
+        # marker must carry a reason so the exemption is justified, not silent.
+        case "$line" in
+            *"lint-allow-path:"*) continue ;;
+        esac
+        code="${code%%[[:space:]]#*}"
+        # `env` is the one allowed tool (the `#!/usr/bin/env` shebang handled by
+        # the line-1 skip above, and the `/usr/bin/env -i` exec-wrapper). Blank out
+        # every `/usr/bin/env` and `/bin/env` occurrence (with its following
+        # separator so the boundary still matches) BEFORE the scan, so a line whose
+        # only absolute-path token is `env` no longer matches — while a line that
+        # ALSO invokes a real tool (`env … | /usr/bin/tr …`) still flags.
+        scan_code="$(printf '%s\n' "$code" | command sed -E 's#(^|[^A-Za-z0-9_./])/(usr/bin|bin)/env([^/A-Za-z0-9_.-]|$)#\1 \3#g')"
+        printf '%s\n' "$scan_code" | command grep -qE "$PATHLIT_RE" || continue
+        CUR_PATH_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+    done <"$file"
+}
+
 # Per-file test body (reads CUR_FILE).
 CUR_FILE=""
 test_file_portable() {
     scan_file "$CUR_FILE"
     assert_equals "" "$CUR_VIOLATIONS" \
         "$(command basename "$CUR_FILE") must be bash-3.2 clean (no declare -A/mapfile/nameref/case-conv/;;&)"
+}
+
+# Per-file test body for the hardcoded-path ban (reads CUR_FILE).
+test_file_no_hardcoded_paths() {
+    scan_file_paths "$CUR_FILE"
+    assert_equals "" "$CUR_PATH_VIOLATIONS" \
+        "$(command basename "$CUR_FILE") must invoke coreutils via \`command <tool>\`, not a hardcoded /usr/bin//bin path (#443)"
 }
 
 # Negative case: scan_file's violation branch must actually fire on each
@@ -140,6 +213,54 @@ EOF
     assert_not_contains "$CUR_VIOLATIONS" "okfold" "tr-based case folding is NOT flagged"
 }
 
+# Negative case for the hardcoded-path ban: scan_file_paths must fire on a
+# hardcoded /usr/bin//bin invocation and must NOT fire on the portable
+# `command <tool>` form, the env shebang, /usr/bin/env, /usr/local/bin, or a
+# prose comment mentioning an absolute path.
+test_negative_case_paths_fire() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/paths.sh" <<'EOF'
+#!/usr/bin/env bash
+usrbin_hit="$(/usr/bin/mv a b)"
+binhit="$(/bin/cat f)"
+githit="$(/usr/bin/git status)"
+echohit="$(/bin/echo hi)"
+exprhit="$(/usr/bin/expr 1 + 1)"
+okcommand="$(command mv a b)"
+okenv="$(/usr/bin/env -i sh -c :)"
+okenvthentool="$(/usr/bin/env -i sh)"
+oklocal="$(/usr/local/bin/rm x)"
+okprojpath="$(source "$ROOT"/bin/lib/release/util.sh)"
+okprojscript="$(bash "$sb"/bin/release.sh patch)"
+# a prose comment naming /usr/bin/rm is commentpath_ok
+EOF
+
+    scan_file_paths "$tmp/paths.sh"
+
+    assert_not_empty "$CUR_PATH_VIOLATIONS" "scan_file_paths flags hardcoded paths (violation branch fires)"
+    assert_contains "$CUR_PATH_VIOLATIONS" "usrbin_hit" "/usr/bin/mv is flagged"
+    assert_contains "$CUR_PATH_VIOLATIONS" "binhit" "/bin/cat is flagged"
+    assert_contains "$CUR_PATH_VIOLATIONS" "githit" "/usr/bin/git is flagged"
+    # An `e*`-named tool must still be flagged (the exemption is `env` ALONE, not
+    # every tool starting with `e` — regression guard for the #443-review gap).
+    assert_contains "$CUR_PATH_VIOLATIONS" "echohit" "/bin/echo is flagged (not exempted as an e* tool)"
+    assert_contains "$CUR_PATH_VIOLATIONS" "exprhit" "/usr/bin/expr is flagged (not exempted as an e* tool)"
+    # Portable / allowed forms must NOT surface.
+    assert_not_contains "$CUR_PATH_VIOLATIONS" "okcommand" "command <tool> is NOT flagged"
+    assert_not_contains "$CUR_PATH_VIOLATIONS" "okenv" "/usr/bin/env is NOT flagged"
+    assert_not_contains "$CUR_PATH_VIOLATIONS" "oklocal" "/usr/local/bin/<tool> is NOT flagged"
+    assert_not_contains "$CUR_PATH_VIOLATIONS" "okprojpath" "a deeper /bin/lib/... project path is NOT flagged"
+    assert_not_contains "$CUR_PATH_VIOLATIONS" "okprojscript" "a /bin/<name>.sh project script path is NOT flagged"
+    assert_not_contains "$CUR_PATH_VIOLATIONS" "commentpath_ok" "A prose comment naming an absolute path is NOT flagged"
+}
+
 # Discover the corpus.
 scripts_list="$(list_shell_scripts)"
 
@@ -151,11 +272,13 @@ test_corpus_non_empty() {
 
 run_test test_corpus_non_empty "Shell-script corpus is non-empty (gate is not a no-op)"
 run_test test_negative_case_fires "scan_file flags every forbidden construct (violation path)"
+run_test test_negative_case_paths_fire "scan_file_paths flags hardcoded /usr/bin//bin paths (#443)"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
     CUR_FILE="$f"
     run_test test_file_portable "${f#"$REPO_ROOT"/}: bash-3.2 clean"
+    run_test test_file_no_hardcoded_paths "${f#"$REPO_ROOT"/}: no hardcoded core-utility paths (#443)"
 done <<<"$scripts_list"
 
 generate_report

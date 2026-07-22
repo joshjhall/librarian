@@ -57,8 +57,8 @@ test_suite "seed-worktree-trust path validation"
 
 # Module-level scratch dir, cleaned up once when the suite exits. Each sandbox is
 # a fresh subdir, so no per-test trap is needed (mirrors validate-release.sh).
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname>
 # Creates a fresh git repo sandbox with a `.worktrees/` dir and an empty `{}`
@@ -67,11 +67,11 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 # sandbox is hermetic even under a pre-push hook.
 new_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$dir/.worktrees"
-    /usr/bin/printf '{}\n' >"$dir/claude.json"
+        git -C "$dir" init -q 2>/dev/null || return 1
+    command mkdir -p "$dir/.worktrees"
+    command printf '{}\n' >"$dir/claude.json"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -88,10 +88,10 @@ new_sandbox_with_worktree() {
     # bash 3.2).
     new_sandbox __sb || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$__sb" -c user.email=t@t -c user.name=t \
+        git -C "$__sb" -c user.email=t@t -c user.name=t \
         commit -q --allow-empty -m init 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$__sb" worktree add -q "$__sb/.worktrees/issue-100" \
+        git -C "$__sb" worktree add -q "$__sb/.worktrees/issue-100" \
         -b feature/issue-100 2>/dev/null || return 1
     printf -v "$__out" '%s' "$__sb"
 }
@@ -136,7 +136,7 @@ test_outside_repo_root_refused() {
     # sandbox root — mirrors the real exploit vector (an existing host dir) and
     # exercises realpath against a path that exists, not just a lexical one.
     outside="$WORKDIR/elsewhere/issue-7"
-    /usr/bin/mkdir -p "$outside"
+    command mkdir -p "$outside"
     run_seed "$sb" "$outside"
     assert_exit 3 "$SEED_RC" "path outside repo root is refused (exit 3)"
     assert_contains "$SEED_OUT" "not under repo root" "explains the root violation"
@@ -172,7 +172,7 @@ test_non_digit_suffix_refused() {
 test_in_repo_wrong_dir_refused() {
     local sb
     new_sandbox sb
-    /usr/bin/mkdir -p "$sb/src"
+    command mkdir -p "$sb/src"
     run_seed "$sb" "$sb/src/issue-7"
     assert_exit 3 "$SEED_RC" "in-repo path outside the worktree dir is refused (exit 3)"
     assert_contains "$SEED_OUT" "is not a" "explains the worktree-dir violation"
@@ -184,7 +184,7 @@ test_in_repo_wrong_dir_refused() {
 # inherited GIT_DIR can supply a repo context.
 test_not_in_git_repo_refused() {
     local nogit
-    nogit="$(/usr/bin/mktemp -d "$WORKDIR/nogit.XXXXXX")"
+    nogit="$(command mktemp -d "$WORKDIR/nogit.XXXXXX")"
     SEED_RC=0
     SEED_OUT="$(cd "$nogit" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -219,9 +219,9 @@ test_jq_absent_skips() {
     local sb stub_bin
     new_sandbox sb
     stub_bin="$sb/stub-bin"
-    /usr/bin/mkdir -p "$stub_bin"
-    /usr/bin/ln -s "$REAL_BASH" "$stub_bin/bash"
-    /usr/bin/ln -s "$REAL_GIT" "$stub_bin/git"
+    command mkdir -p "$stub_bin"
+    command ln -s "$REAL_BASH" "$stub_bin/bash"
+    command ln -s "$REAL_GIT" "$stub_bin/git"
     SEED_RC=0
     SEED_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
@@ -252,13 +252,13 @@ test_config_absent_skips() {
 test_malformed_config_skips() {
     local sb leftover
     new_sandbox sb
-    /usr/bin/printf 'not json {{{' >"$sb/claude.json"
+    command printf 'not json {{{' >"$sb/claude.json"
     run_seed "$sb" "$sb/.worktrees/issue-9"
     assert_exit 0 "$SEED_RC" "malformed config → jq fails, skip exits 0"
     assert_contains "$SEED_OUT" "could not update" "reports the jq failure"
     assert_file_contains "$sb/claude.json" "not json" \
         "malformed config is left byte-for-byte untouched"
-    leftover="$(/usr/bin/find "$sb" -maxdepth 1 -name 'claude.json.*' 2>/dev/null)"
+    leftover="$(command find "$sb" -maxdepth 1 -name 'claude.json.*' 2>/dev/null)"
     assert_equals "" "$leftover" "no temp file left beside config after jq failure"
 }
 
@@ -266,7 +266,7 @@ test_malformed_config_skips() {
 test_worktree_dir_override() {
     local sb
     new_sandbox sb
-    /usr/bin/mkdir -p "$sb/custom-wt"
+    command mkdir -p "$sb/custom-wt"
     SEED_RC=0
     SEED_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" GOLEM_WORKTREE_DIR=custom-wt \
@@ -285,7 +285,7 @@ test_worktree_dir_override() {
 test_worktree_dir_override_replaces_default() {
     local sb
     new_sandbox sb
-    /usr/bin/mkdir -p "$sb/custom-wt"
+    command mkdir -p "$sb/custom-wt"
     SEED_RC=0
     SEED_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" GOLEM_WORKTREE_DIR=custom-wt \
@@ -307,8 +307,8 @@ test_symlink_escape_refused() {
     local sb target
     new_sandbox sb
     target="$WORKDIR/escape-target"
-    /usr/bin/mkdir -p "$target"
-    /usr/bin/ln -s "$target" "$sb/.worktrees/issue-7"
+    command mkdir -p "$target"
+    command ln -s "$target" "$sb/.worktrees/issue-7"
     run_seed "$sb" "$sb/.worktrees/issue-7"
     assert_exit 3 "$SEED_RC" "symlink escaping the repo root is refused (exit 3)"
     assert_contains "$SEED_OUT" "not under repo root" \
@@ -348,7 +348,7 @@ test_cwd_independent_root_from_sibling_worktree() {
 test_outside_repo_refused_from_sibling_worktree() {
     local sb
     new_sandbox_with_worktree sb
-    /usr/bin/mkdir -p "$WORKDIR/elsewhere/issue-7"
+    command mkdir -p "$WORKDIR/elsewhere/issue-7"
     SEED_RC=0
     SEED_OUT="$(cd "$sb/.worktrees/issue-100" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -378,7 +378,7 @@ test_removed_worktree_cwd_refuses_cleanly() {
     SEED_OUT="$( (
         cd "$sb/.worktrees/issue-100" &&
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                /usr/bin/git -C "$sb" worktree remove --force \
+                git -C "$sb" worktree remove --force \
                 "$sb/.worktrees/issue-100" 2>/dev/null
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
             "$REAL_BASH" "$SEED_SCRIPT" "$sb/.worktrees/issue-7" \
@@ -398,10 +398,10 @@ test_removed_worktree_cwd_refuses_cleanly() {
 # INJECTED` in the invocation dir and asserting it never runs.
 test_bare_name_invocation_refuses() {
     local scriptdir
-    scriptdir="$(/usr/bin/mktemp -d "$WORKDIR/barename.XXXXXX")"
-    /usr/bin/cp "$SEED_SCRIPT" "$scriptdir/seed-worktree-trust.sh"
+    scriptdir="$(command mktemp -d "$WORKDIR/barename.XXXXXX")"
+    command cp "$SEED_SCRIPT" "$scriptdir/seed-worktree-trust.sh"
     # A config.sh here would be sourced iff the fallback wrongly used $(pwd).
-    /usr/bin/printf 'echo INJECTED\n' >"$scriptdir/config.sh"
+    command printf 'echo INJECTED\n' >"$scriptdir/config.sh"
     SEED_RC=0
     SEED_OUT="$(cd "$scriptdir" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -428,9 +428,9 @@ test_scrubs_tainted_git_env() {
     local sb outer
     new_sandbox sb
     # A second, unrelated real repo the tainted env would pin repo_root() to.
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")"
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null
+        git -C "$outer" init -q 2>/dev/null
     SEED_RC=0
     SEED_OUT="$(cd "$sb" &&
         GIT_DIR="$outer/.git" GIT_COMMON_DIR="$outer/.git" \

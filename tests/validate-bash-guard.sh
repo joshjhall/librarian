@@ -46,8 +46,8 @@ source "$SCRIPT_DIR/lib/harness.sh"
 test_suite "bash-guard.sh PreToolUse hook (#448)"
 
 # Module-level scratch dir for the no-jq stub, cleaned up once at exit.
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # --- Runner -----------------------------------------------------------------
 # run_guard <payload-json> [nojq] — pipe the payload to the REAL hook; capture
@@ -62,8 +62,8 @@ run_guard() {
     GUARD_RC=0
     if [ "$mode" = "nojq" ]; then
         local stub="$WORKDIR/stub-bin"
-        /usr/bin/mkdir -p "$stub"
-        /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+        command mkdir -p "$stub"
+        command ln -sf "$REAL_BASH" "$stub/bash"
         GUARD_OUT="$(printf '%s' "$payload" |
             /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>/dev/null)" || GUARD_RC=$?
     else

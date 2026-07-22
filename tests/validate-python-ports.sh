@@ -50,10 +50,10 @@ list_python_ports() {
 # scanner cares about. It is deliberately generic (secrets, SQL, XSS, crypto,
 # debug markers) so the same tree meaningfully exercises any ported tool; a tool
 # that finds nothing in it still asserts parity (both impls emit nothing).
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 FIXDIR="$WORKDIR/fix"
-/usr/bin/mkdir -p "$FIXDIR"
+command mkdir -p "$FIXDIR"
 
 # The fake secret tokens (GitHub PAT, AWS key, Stripe key) are assembled at
 # runtime from fragments so this TEST FILE contains no contiguous secret for the
@@ -69,7 +69,7 @@ STRIPE_TOK="sk_""live_""ABCDEFGHIJKLMNOPQRSTUV"
 # Loader= (its fixed deserialization filter), and a def whose body is only `pass`
 # (loop-make-it-work's fixed empty-body arm). A divergence between the bash and
 # python impls on any of these fails the parity assertion below.
-/usr/bin/cat >"$FIXDIR/app.py" <<'EOF'
+command cat >"$FIXDIR/app.py" <<'EOF'
 import hashlib
 query = f"SELECT * FROM users WHERE id={user_id}"
 single_q = f'SELECT * FROM t WHERE id={i}'
@@ -85,18 +85,18 @@ safe_loaded = yaml.load(payload, Loader=SafeLoader)
 def empty_impl():
     pass
 EOF
-/usr/bin/printf 'gh = "%s"\n' "$GH_TOK" >>"$FIXDIR/app.py"
+command printf 'gh = "%s"\n' "$GH_TOK" >>"$FIXDIR/app.py"
 
-/usr/bin/cat >"$FIXDIR/app.ts" <<'EOF'
+command cat >"$FIXDIR/app.ts" <<'EOF'
 const sql = `SELECT * FROM t WHERE x=${val}`;
 node.innerHTML = raw;
 const spaced = () => { }
 EOF
-/usr/bin/printf 'const awsKey = "%s";\n' "$AWS_TOK" >>"$FIXDIR/app.ts"
+command printf 'const awsKey = "%s";\n' "$AWS_TOK" >>"$FIXDIR/app.ts"
 
 # app.go exercises loop-make-it-documented's fixed Go GoDoc arm and
 # loop-make-it-work's fixed empty-brace whitespace class (#183).
-/usr/bin/cat >"$FIXDIR/app.go" <<'EOF'
+command cat >"$FIXDIR/app.go" <<'EOF'
 package main
 
 func Undocumented() {}
@@ -104,25 +104,25 @@ func Undocumented() {}
 func Spaced() { }
 EOF
 
-/usr/bin/cat >"$FIXDIR/view.html" <<'EOF'
+command cat >"$FIXDIR/view.html" <<'EOF'
 <div v-html="userInput"></div>
 {{ value|safe }}
 {!! $unescaped !!}
 EOF
 
-/usr/bin/cat >"$FIXDIR/model.rb" <<'EOF'
+command cat >"$FIXDIR/model.rb" <<'EOF'
 sql = "SELECT * FROM t WHERE id=#{id}"
 cipher = OpenSSL::Cipher.new('AES-128-ECB')
 EOF
 
 # Skip-glob coverage: an .env.example holding a secret must be ignored.
-/usr/bin/printf 'key = "%s"\n' "$STRIPE_TOK" >"$FIXDIR/secrets.env.example"
+command printf 'key = "%s"\n' "$STRIPE_TOK" >"$FIXDIR/secrets.env.example"
 
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example"; do
-    /usr/bin/printf '%s\n' "$f" >>"$FILE_LIST"
+    command printf '%s\n' "$f" >>"$FILE_LIST"
 done
 
 EMPTY="$WORKDIR/empty.txt"
@@ -134,8 +134,8 @@ EMPTY="$WORKDIR/empty.txt"
 # from "actual" and an unplanned actual file exercise both categories.
 DRIFT_ACTUAL="$WORKDIR/drift-actual.txt"
 DRIFT_PLANNED="$WORKDIR/drift-planned.txt"
-/usr/bin/printf '%s\n' "src/foo.py" "src/unplanned.py" "package-lock.json" >"$DRIFT_ACTUAL"
-/usr/bin/printf '%s\n' "src/foo.py" "src/never_touched.py" >"$DRIFT_PLANNED"
+command printf '%s\n' "src/foo.py" "src/unplanned.py" "package-lock.json" >"$DRIFT_ACTUAL"
+command printf '%s\n' "src/foo.py" "src/never_touched.py" >"$DRIFT_PLANNED"
 
 # port_is_two_arg PY — 0 (true) if this port takes two file-list args. Mirrors
 # the same special-case in tests/validate-prescans.sh (keyed on the skill dir).

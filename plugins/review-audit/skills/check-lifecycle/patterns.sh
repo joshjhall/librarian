@@ -50,7 +50,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -63,7 +63,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -87,10 +87,10 @@ is_test_file() {
 # emit_rows PATTERN CATEGORY LABEL FILE — one MEDIUM row per matching line,
 # evidence = "LABEL: <first 80 chars of the line>". Mirrors patterns.py emit().
 emit_rows() {
-    /usr/bin/grep -nE -- "$1" "$4" 2>/dev/null |
+    command grep -nE -- "$1" "$4" 2>/dev/null |
         while IFS=: read -r line_num content; do
             evidence=$(truncate_chars 80 "$content")
-            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$4" "$line_num" "$2" "$3: ${evidence}" "MEDIUM"
         done || true
 }

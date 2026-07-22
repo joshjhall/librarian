@@ -101,7 +101,7 @@ fi
 
 # Canonicalize both sides so `..` / symlink traversal can't escape the root.
 # The worktree path may not exist yet (parent dir does), so resolve leniently.
-canon() { /usr/bin/realpath -m -- "$1" 2>/dev/null || command echo "$1"; }
+canon() { command realpath -m -- "$1" 2>/dev/null || command echo "$1"; }
 repo_root_canon="$(canon "$repo_root")"
 wt_canon="$(canon "$wt_path")"
 
@@ -143,15 +143,15 @@ if ! command -v jq >/dev/null 2>&1 || [ ! -f "$cfg" ]; then
 fi
 
 # Temp file adjacent to $cfg (same filesystem) so the final rename is atomic.
-tmp="$(/usr/bin/mktemp "${cfg}.XXXXXX")"
+tmp="$(command mktemp "${cfg}.XXXXXX")"
 if command jq --arg p "$wt_path" \
     '.projects[$p].hasTrustDialogAccepted = true' "$cfg" >"$tmp" 2>/dev/null; then
-    /usr/bin/mv "$tmp" "$cfg"
+    command mv "$tmp" "$cfg"
     command echo "  seeded workspace trust for $wt_path (settings.local.json + defaultMode:auto will load)"
 else
     # jq failed (malformed config, etc.) — leave $cfg untouched and clean up.
     command echo "  skipped trust seed (could not update $cfg)"
 fi
 # Safety net for the failure path; on success $tmp was renamed away (no-op).
-/usr/bin/rm -f "$tmp"
+command rm -f "$tmp"
 exit 0

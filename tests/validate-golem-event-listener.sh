@@ -85,12 +85,12 @@ test_prereqs() {
 
 # --- Sandbox + listener lifecycle -------------------------------------------
 
-WORKDIR="$(/usr/bin/mktemp -d)"
+WORKDIR="$(command mktemp -d)"
 # Track a started listener so the EXIT trap always reaps it.
 LISTENER_PID=""
 cleanup() {
-    [ -n "$LISTENER_PID" ] && /bin/kill "$LISTENER_PID" 2>/dev/null || true
-    /usr/bin/rm -rf "$WORKDIR"
+    [ -n "$LISTENER_PID" ] && command kill "$LISTENER_PID" 2>/dev/null || true
+    command rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
 
@@ -100,10 +100,10 @@ trap cleanup EXIT
 # caller's `dir` unset under `set -u`).
 new_sandbox() {
     local __out="$1" _newdir
-    _newdir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    _newdir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$_newdir" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$_newdir/.worktrees/.status"
+        git -C "$_newdir" init -q 2>/dev/null || return 1
+    command mkdir -p "$_newdir/.worktrees/.status"
     printf -v "$__out" '%s' "$_newdir"
 }
 
@@ -147,15 +147,15 @@ start_listener() {
             return 0
         fi
         # Bail early if the process already died (e.g. bind collision).
-        /bin/kill -0 "$LISTENER_PID" 2>/dev/null || return 1
-        /usr/bin/sleep 0.1
+        command kill -0 "$LISTENER_PID" 2>/dev/null || return 1
+        command sleep 0.1
         tries=$((tries + 1))
     done
     return 1
 }
 
 stop_listener() {
-    [ -n "$LISTENER_PID" ] && /bin/kill "$LISTENER_PID" 2>/dev/null || true
+    [ -n "$LISTENER_PID" ] && command kill "$LISTENER_PID" 2>/dev/null || true
     LISTENER_PID=""
 }
 
@@ -167,7 +167,7 @@ post() {
         --data-raw "$body" "http://127.0.0.1:$port$path" 2>/dev/null || echo "000"
 }
 
-feed_of() { /bin/cat "$1/.worktrees/.status/feed.jsonl" 2>/dev/null || true; }
+feed_of() { command cat "$1/.worktrees/.status/feed.jsonl" 2>/dev/null || true; }
 
 # --- Tests ------------------------------------------------------------------
 
@@ -183,12 +183,12 @@ test_post_gate_surfaces_via_gatewatch() {
     fi
     local dir port code out
     new_sandbox dir
-    /usr/bin/printf '{"issue":5,"golem":"golem-5"}\n' >"$dir/.worktrees/.status/golem-5.json"
+    command printf '{"issue":5,"golem":"golem-5"}\n' >"$dir/.worktrees/.status/golem-5.json"
     port="$(free_port)"
     if ! start_listener "$dir" "$port"; then
         _fail "listener did not start" "log: $(
             feed_of "$dir"
-            /bin/cat "$dir/listener.log" 2>/dev/null
+            command cat "$dir/listener.log" 2>/dev/null
         )"
         return 1
     fi
@@ -269,8 +269,8 @@ test_malformed_ts_does_not_blank_floor() {
     fi
     local dir port out
     new_sandbox dir
-    /usr/bin/printf '{"issue":1,"golem":"golem-1"}\n' >"$dir/.worktrees/.status/golem-1.json"
-    /usr/bin/printf '{"issue":2,"golem":"golem-2"}\n' >"$dir/.worktrees/.status/golem-2.json"
+    command printf '{"issue":1,"golem":"golem-1"}\n' >"$dir/.worktrees/.status/golem-1.json"
+    command printf '{"issue":2,"golem":"golem-2"}\n' >"$dir/.worktrees/.status/golem-2.json"
     port="$(free_port)"
     start_listener "$dir" "$port" || {
         _fail "listener did not start"
@@ -323,7 +323,7 @@ test_bad_requests_rejected_without_crash() {
     fi
     local dir port code
     new_sandbox dir
-    /usr/bin/printf '{"issue":8,"golem":"golem-8"}\n' >"$dir/.worktrees/.status/golem-8.json"
+    command printf '{"issue":8,"golem":"golem-8"}\n' >"$dir/.worktrees/.status/golem-8.json"
     port="$(free_port)"
     start_listener "$dir" "$port" || {
         _fail "listener did not start"
@@ -370,12 +370,12 @@ test_shim_fails_loud_without_python() {
     local dir bindir rc out
     new_sandbox dir
     bindir="$dir/bin"
-    /usr/bin/mkdir -p "$bindir"
+    command mkdir -p "$bindir"
     # Provide only the shell + a dirname/pwd the shim needs at startup, but NO
     # python3, so the version gate cannot be satisfied.
     for tool in bash env dirname pwd; do
         p="$(command -v "$tool" 2>/dev/null || true)"
-        [ -n "$p" ] && /bin/ln -sf "$p" "$bindir/$tool"
+        [ -n "$p" ] && command ln -sf "$p" "$bindir/$tool"
     done
     rc=0
     # Unset BASH_ENV: on a devcontainer it points at /etc/bash_env, which sources

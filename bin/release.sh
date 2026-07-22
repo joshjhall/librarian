@@ -23,8 +23,8 @@ export AUTO_GITHUB_RELEASE=false
 # GitHub repo slug used for release URLs / notes.
 export GH_REPO="${GH_REPO:-joshjhall/librarian}"
 
-BIN_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(/usr/bin/dirname "$BIN_DIR")"
+BIN_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(command dirname "$BIN_DIR")"
 export BIN_DIR
 
 # shellcheck source=lib/version-utils.sh

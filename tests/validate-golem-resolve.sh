@@ -50,8 +50,8 @@ test_suite "golem-resolve.sh clearing-signal helper (#422)"
 
 # --- Sandbox plumbing -------------------------------------------------------
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname> — a fresh `git init` repo with a `.worktrees/.status/`
 # dir. The hook resolves its feed under <repo-root>/.worktrees/.status via
@@ -59,10 +59,10 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 # caller's named variable.
 new_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$dir/.worktrees/.status"
+        git -C "$dir" init -q 2>/dev/null || return 1
+    command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -80,7 +80,7 @@ run_resolve() {
     local dir="$1"
     shift
     local feed="$dir/.worktrees/.status/feed.jsonl"
-    /usr/bin/rm -f "$feed"
+    command rm -f "$feed"
     RESOLVE_RC=0
     (
         cd "$dir" &&
@@ -89,7 +89,7 @@ run_resolve() {
                 HOME="$dir" \
                 "$REAL_BASH" "$RESOLVE" "$@"
     ) >/dev/null 2>&1 || RESOLVE_RC=$?
-    RESOLVE_LINE="$(/usr/bin/tail -n 1 "$feed" 2>/dev/null || true)"
+    RESOLVE_LINE="$(command tail -n 1 "$feed" 2>/dev/null || true)"
 }
 
 # --- Isolated-tree helpers (no-jq escaper + missing-hook arms) ---------------
@@ -117,27 +117,29 @@ run_resolve() {
 #   Assigns the tree path to the caller's named variable.
 resolve_tree() {
     local __out="$1" hook_kind="$2" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/tree.XXXXXX")" || return 1
-    /usr/bin/mkdir -p "$dir/scripts" "$dir/hooks"
-    /usr/bin/cp "$RESOLVE" "$dir/scripts/golem-resolve.sh"
-    /usr/bin/chmod +x "$dir/scripts/golem-resolve.sh"
+    dir="$(command mktemp -d "$WORKDIR/tree.XXXXXX")" || return 1
+    command mkdir -p "$dir/scripts" "$dir/hooks"
+    command cp "$RESOLVE" "$dir/scripts/golem-resolve.sh"
+    command chmod +x "$dir/scripts/golem-resolve.sh"
     case "$hook_kind" in
         sink)
             # The sink uses /bin/cat by absolute path: the no-jq run strips PATH
-            # down to bash only, so a bare `cat` would not resolve.
-            /usr/bin/cat >"$dir/hooks/golem-notify.sh" <<EOF
+            # down to bash only, so a bare `cat` (or `command cat`) would not
+            # resolve. This is a generated STUB that must survive a stripped PATH,
+            # so the absolute path is deliberate here.
+            command cat >"$dir/hooks/golem-notify.sh" <<EOF
 #!/usr/bin/env bash
-/bin/cat >"$dir/payload.txt" 2>/dev/null || true
+/bin/cat >"$dir/payload.txt" 2>/dev/null || true  # lint-allow-path: stripped-PATH stub
 exit 0
 EOF
-            /usr/bin/chmod +x "$dir/hooks/golem-notify.sh"
+            command chmod +x "$dir/hooks/golem-notify.sh"
             ;;
         noexec)
-            /usr/bin/printf '#!/usr/bin/env bash\nexit 0\n' >"$dir/hooks/golem-notify.sh"
+            command printf '#!/usr/bin/env bash\nexit 0\n' >"$dir/hooks/golem-notify.sh"
             # deliberately NOT chmod +x — exercises the non-exec `! -x` trigger.
             ;;
         none)
-            /usr/bin/rmdir "$dir/hooks" 2>/dev/null || true
+            command rmdir "$dir/hooks" 2>/dev/null || true
             ;;
     esac
     printf -v "$__out" '%s' "$dir"
@@ -158,8 +160,8 @@ run_resolve_tree() {
     RESOLVE_LINE=""
     if [ "$jq_mode" = "nojq" ]; then
         local stub="$dir/stub-bin"
-        /usr/bin/mkdir -p "$stub"
-        /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+        command mkdir -p "$stub"
+        command ln -sf "$REAL_BASH" "$stub/bash"
         (
             cd "$dir" &&
                 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -278,7 +280,7 @@ test_no_jq_escaper_emits_valid_json() {
     resolve_tree tree sink
     run_resolve_tree "$tree" nojq 7 'a"b\c'
     assert_equals "0" "$RESOLVE_RC" "Helper exits 0 on the no-jq path"
-    cap="$(/usr/bin/cat "$tree/payload.txt" 2>/dev/null || true)"
+    cap="$(command cat "$tree/payload.txt" 2>/dev/null || true)"
     assert_not_empty "$cap" "The helper piped a payload to the hook"
     assert_valid_json "$cap" \
         "The hand-rolled payload is valid JSON despite a quote+backslash message"
@@ -300,7 +302,7 @@ test_missing_hook_exits_1() {
     resolve_tree tree none
     run_resolve_tree "$tree" jq 7
     assert_equals "1" "$RESOLVE_RC" "Absent notify hook → exit 1"
-    assert_output_empty "$(/usr/bin/cat "$tree/payload.txt" 2>/dev/null || true)" \
+    assert_output_empty "$(command cat "$tree/payload.txt" 2>/dev/null || true)" \
         "No payload is emitted when the hook is missing"
 }
 
@@ -312,7 +314,7 @@ test_non_exec_hook_exits_1() {
     resolve_tree tree noexec
     run_resolve_tree "$tree" jq 7
     assert_equals "1" "$RESOLVE_RC" "Non-executable notify hook → exit 1 (-x, not -e)"
-    assert_output_empty "$(/usr/bin/cat "$tree/payload.txt" 2>/dev/null || true)" \
+    assert_output_empty "$(command cat "$tree/payload.txt" 2>/dev/null || true)" \
         "No payload is emitted when the hook is non-executable"
 }
 

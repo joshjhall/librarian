@@ -65,8 +65,8 @@ test_suite "golem/worktree helper scripts (#82)"
 # --- Sandbox plumbing -------------------------------------------------------
 
 # Module-level scratch dir, cleaned up once when the suite exits.
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname>
 # Creates a fresh git repo sandbox with one seed commit (so HEAD exists and can
@@ -76,26 +76,26 @@ trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
 # with the git environment scrubbed so the sandbox is hermetic under a hook.
 new_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
+        git -C "$dir" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" config user.email "test@example.com"
+        git -C "$dir" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" config user.name "Test"
-    /usr/bin/printf 'seed\n' >"$dir/seed.txt"
+        git -C "$dir" config user.name "Test"
+    command printf 'seed\n' >"$dir/seed.txt"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" add seed.txt 2>/dev/null
+        git -C "$dir" add seed.txt 2>/dev/null
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$dir/.worktrees/.status"
+        git -C "$dir" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
+    command mkdir -p "$dir/.worktrees/.status"
     # An empty, per-sandbox tmux socket dir. Pointing TMUX_TMPDIR here makes
     # `tmux ls` find no server (so golem-status/attach see ZERO sessions),
     # isolating the tests from REAL golem-* tmux sessions on the host — without
     # it, golem-status.sh's `tmux ls` picks up live golems and the empty-state
     # branch never fires.
-    /usr/bin/mkdir -p "$dir/.tmux"
-    /usr/bin/printf '{}\n' >"$dir/.claude.json"
+    command mkdir -p "$dir/.tmux"
+    command printf '{}\n' >"$dir/.claude.json"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -307,7 +307,7 @@ test_launch_dispatch_model_both_claude_calls() {
     new_sandbox sb
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" GOLEM_MODEL=sonnet
     assert_exit 0 "$RUN_RC" "launch with GOLEM_MODEL=sonnet dispatches (exit 0)"
-    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
     assert_contains "$log" "claude --model \"sonnet\" --permission-mode auto '/workflow:next-issue 7" \
         "GOLEM_MODEL reaches the real dispatch next-issue claude call"
     assert_contains "$log" "claude --model \"sonnet\" --permission-mode auto '/workflow:ship-issue'" \
@@ -326,7 +326,7 @@ test_launch_dispatch_model_shell_metachars_escaped() {
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
         'GOLEM_MODEL=x"; touch pwned; echo "'
     assert_exit 0 "$RUN_RC" "launch with a metachar GOLEM_MODEL still dispatches (exit 0)"
-    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
     # The embedded double quotes are backslash-escaped in the emitted argv, so the
     # value stays one --model token rather than breaking out into new statements.
     assert_contains "$log" 'claude --model "x\"; touch pwned; echo \""' \
@@ -347,8 +347,8 @@ test_launch_dispatch_model_shell_metachars_escaped() {
 test_launch_missing_worktree_exits_2() {
     local sb
     new_sandbox sb
-    /usr/bin/printf '{}\n' >"$sb/proj-settings.json"
-    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    command printf '{}\n' >"$sb/proj-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -371,7 +371,7 @@ test_launch_preflight_rules_present_exits_0() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/proj-settings.json" <<'EOF'
+    command cat >"$sb/proj-settings.json" <<'EOF'
 {
   "permissions": {
     "allow": [
@@ -382,7 +382,7 @@ test_launch_preflight_rules_present_exits_0() {
   }
 }
 EOF
-    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -404,10 +404,10 @@ test_launch_preflight_rules_missing_exits_3() {
     local sb
     new_sandbox sb
     # Project file present but with only TWO of the three required rules.
-    /usr/bin/cat >"$sb/proj-settings.json" <<'EOF'
+    command cat >"$sb/proj-settings.json" <<'EOF'
 { "permissions": { "allow": ["Bash(tmux new-session:*)", "Bash(tmux ls:*)"] } }
 EOF
-    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -433,7 +433,7 @@ PLUGIN_MANIFEST="$REPO_ROOT/plugins/workflow/.claude-plugin/plugin.json"
 # write_installed_plugins <path> <version> — fabricate an installed_plugins.json
 # whose workflow@librarian record carries <version>.
 write_installed_plugins() {
-    /usr/bin/cat >"$1" <<EOF
+    command cat >"$1" <<EOF
 { "plugins": { "workflow@librarian": [ { "version": "$2" } ] } }
 EOF
 }
@@ -450,8 +450,8 @@ test_launch_version_match_passes() {
     new_sandbox sb
     ver="$(jq -r '.version' "$PLUGIN_MANIFEST")"
     write_installed_plugins "$sb/installed.json" "$ver"
-    /usr/bin/printf '{}\n' >"$sb/proj-settings.json"
-    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    command printf '{}\n' >"$sb/proj-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -500,8 +500,8 @@ test_launch_version_skew_escape_hatch() {
     local sb
     new_sandbox sb
     write_installed_plugins "$sb/installed.json" "0.0.1-stale"
-    /usr/bin/printf '{}\n' >"$sb/proj-settings.json"
-    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    command printf '{}\n' >"$sb/proj-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -529,8 +529,8 @@ test_launch_version_unknown_sentinel_skips() {
     local sb
     new_sandbox sb
     write_installed_plugins "$sb/installed.json" "unknown"
-    /usr/bin/printf '{}\n' >"$sb/proj-settings.json"
-    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    command printf '{}\n' >"$sb/proj-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -593,14 +593,14 @@ test_launch_version_undeterminable_skips() {
 # prepend to PATH via stdout is unnecessary; callers use "$sb/bin".
 plant_tmux_stub() {
     local sb="$1"
-    /usr/bin/mkdir -p "$sb/bin"
-    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 # Test stub: log argv, never start a real session.
 printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/bin/tmux"
+    command chmod +x "$sb/bin/tmux"
 }
 
 # run_launch_auth <sandbox> [extra env KEY=VAL ...] — invoke `launch 7` with the
@@ -611,9 +611,9 @@ run_launch_auth() {
     local sb="$1"
     shift
     plant_tmux_stub "$sb"
-    /usr/bin/mkdir -p "$sb/.worktrees/issue-7"
-    /usr/bin/printf '{ "permissions": { "allow": ["Bash(tmux new-session:*)", "Bash(tmux ls:*)", "Bash(tmux kill-session:*)"] } }\n' >"$sb/proj-settings.json"
-    /usr/bin/printf '{}\n' >"$sb/global-settings.json"
+    command mkdir -p "$sb/.worktrees/issue-7"
+    command printf '{ "permissions": { "allow": ["Bash(tmux new-session:*)", "Bash(tmux ls:*)", "Bash(tmux kill-session:*)"] } }\n' >"$sb/proj-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
     # --unset=BASH_ENV is load-bearing: in the devcontainer BASH_ENV points at
     # /etc/bash_env, which every non-interactive bash sources — and its
     # /etc/bashrc.d/ scripts (a) hard-RESET $PATH (shadowing the $sb/bin stub
@@ -644,10 +644,10 @@ run_launch_auth() {
 test_launch_auth_cache_injects_token() {
     local sb log
     new_sandbox sb
-    /usr/bin/printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://bifrost.example\n' >"$sb/op-cache"
+    command printf 'export ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244\nexport ANTHROPIC_BASE_URL=https://bifrost.example\n' >"$sb/op-cache"
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache"
     assert_exit 0 "$RUN_RC" "launch with a cache token dispatches (exit 0)"
-    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
     assert_contains "$log" "ANTHROPIC_AUTH_TOKEN=sk-secret-tok-244" "the resolved token is injected via tmux -e"
     assert_contains "$log" "ANTHROPIC_BASE_URL=https://bifrost.example" "the cache base URL rides along"
     assert_not_contains "$RUN_OUT" "sk-secret-tok-244" "the token is NEVER echoed to stdout/stderr"
@@ -661,7 +661,7 @@ test_launch_auth_no_source_no_injection() {
     # Point the cache default at a nonexistent path so /dev/shm is never read.
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache"
     assert_exit 0 "$RUN_RC" "launch with no token source dispatches (exit 0)"
-    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
     assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no token is injected when none resolves"
     assert_not_contains "$RUN_OUT" "WARNING" "no warning when there is no cache marker"
 }
@@ -677,19 +677,19 @@ test_launch_auth_op_hang_is_bounded() {
     fi
     local sb log
     new_sandbox sb
-    /usr/bin/cat >"$sb/bin-op" <<'EOF'
+    command cat >"$sb/bin-op" <<'EOF'
 #!/usr/bin/env bash
 sleep 60
 EOF
     # op must be on the same PATH dir as the tmux stub; plant it there after
     # run_launch_auth creates bin/ — so pre-create bin/ and the op stub, then run.
-    /usr/bin/mkdir -p "$sb/bin"
-    /usr/bin/cp "$sb/bin-op" "$sb/bin/op"
-    /usr/bin/chmod +x "$sb/bin/op"
+    command mkdir -p "$sb/bin"
+    command cp "$sb/bin-op" "$sb/bin/op"
+    command chmod +x "$sb/bin/op"
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/no-such-cache" \
         OP_ANTHROPIC_AUTH_TOKEN_REF="op://vault/anthropic/token"
     assert_exit 0 "$RUN_RC" "a hanging op read is bounded — dispatch still completes (exit 0)"
-    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
     assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "a timed-out op read injects no token"
 }
 
@@ -699,11 +699,11 @@ test_launch_auth_cache_marker_no_token_warns() {
     local sb log
     new_sandbox sb
     # Cache is readable but exports something OTHER than the token.
-    /usr/bin/printf 'export SOME_OTHER_SECRET=1\n' >"$sb/op-cache"
+    command printf 'export SOME_OTHER_SECRET=1\n' >"$sb/op-cache"
     run_launch_auth "$sb" OP_SECRETS_CACHE="$sb/op-cache"
     assert_exit 0 "$RUN_RC" "an empty cache still dispatches (exit 0)"
     assert_contains "$RUN_OUT" "WARNING" "warns when a cache marker is present but no token resolves"
-    log="$(/usr/bin/cat "$sb/tmux-args.log" 2>/dev/null || true)"
+    log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
     assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no empty token is injected"
 }
 
@@ -729,7 +729,7 @@ test_worktree_new_creates_worktree() {
         "the worktree checkout contains the repo's files"
     local branches
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-31")"
+        git -C "$sb" branch --list "feature/issue-31")"
     assert_not_empty "$branches" "the feature/issue-31 branch was created"
 }
 
@@ -755,7 +755,7 @@ test_worktree_new_existing_branch_exits_1() {
     assert_exit 0 "$RUN_RC" "first worktree-new succeeds"
     # Drop the worktree only (the branch lingers).
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" worktree remove .worktrees/issue-33 2>/dev/null
+        git -C "$sb" worktree remove .worktrees/issue-33 2>/dev/null
     run_in "$sb" "$WT_NEW" 33
     assert_exit 1 "$RUN_RC" "worktree-new with a lingering branch exits 1"
     assert_contains "$RUN_OUT" "branch" "explains the branch already exists"
@@ -780,7 +780,7 @@ test_worktree_new_no_hardcoded_usr_bin() {
 test_worktree_new_copies_local_files() {
     local sb
     new_sandbox sb
-    /usr/bin/printf 'SECRET=1\n' >"$sb/.env"
+    command printf 'SECRET=1\n' >"$sb/.env"
     local out rc=0
     out="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -886,15 +886,15 @@ test_worktree_new_from_submodule_placement() {
 test_worktree_new_scrubs_tainted_git_env_for_mutations() {
     local sb outer
     new_sandbox sb
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.email "test@example.com"
+        git -C "$outer" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.name "Test"
+        git -C "$outer" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+        git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
 
     # Run worktree-new from the sandbox with the git env TAINTED toward outer.
     # No GIT_SCRUB on this invocation — the taint is the whole point; the script's
@@ -913,9 +913,9 @@ test_worktree_new_scrubs_tainted_git_env_for_mutations() {
 
     local sb_branch outer_branch
     sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-78")"
+        git -C "$sb" branch --list "feature/issue-78")"
     outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" branch --list "feature/issue-78")"
+        git -C "$outer" branch --list "feature/issue-78")"
     assert_not_empty "$sb_branch" \
         "the branch ref lands in the SANDBOX repo, not the tainted GIT_DIR target"
     assert_output_empty "$outer_branch" \
@@ -938,9 +938,9 @@ test_worktree_new_scrubs_tainted_git_env_for_mutations() {
 # (the same pitfall _make_super_with_submodule sidesteps with its `sup`).
 _seed_failing_ref_hook() {
     local __out="$2" hdir="$1/evil-hooks"
-    /usr/bin/mkdir -p "$hdir"
-    /usr/bin/printf '#!/bin/sh\nexit 1\n' >"$hdir/reference-transaction"
-    /usr/bin/chmod +x "$hdir/reference-transaction"
+    command mkdir -p "$hdir"
+    command printf '#!/bin/sh\nexit 1\n' >"$hdir/reference-transaction" # lint-allow-path: shebang in generated fixture-script data
+    command chmod +x "$hdir/reference-transaction"
     printf -v "$__out" '%s' "$hdir"
 }
 
@@ -979,7 +979,7 @@ test_worktree_new_scrubs_git_config_injection_for_mutations() {
         "the worktree is created in the sandbox despite the config injection"
     local sb_branch
     sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-76")"
+        git -C "$sb" branch --list "feature/issue-76")"
     assert_not_empty "$sb_branch" \
         "the branch ref lands in the sandbox despite the GIT_CONFIG_* injection (scrub clears the dynamic pairs)"
 }
@@ -1018,15 +1018,15 @@ test_worktree_new_from_submodule_placement_under_taint() {
     # Third, unrelated outer repo whose .git the taint points at (the split-brain
     # target). Scrubbed setup so its own creation is not itself tainted.
     local outer
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.email "test@example.com"
+        git -C "$outer" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.name "Test"
+        git -C "$outer" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+        git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
 
     # Invoke worktree-new from INSIDE the submodule working tree (<super>/mod) with
     # the git env TAINTED toward outer. No GIT_SCRUB on this invocation — the
@@ -1055,9 +1055,9 @@ test_worktree_new_from_submodule_placement_under_taint() {
     # itself tainted.
     local super_branch outer_branch
     super_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" branch --list "feature/issue-45")"
+        git -C "$super" branch --list "feature/issue-45")"
     outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" branch --list "feature/issue-45")"
+        git -C "$outer" branch --list "feature/issue-45")"
     assert_not_empty "$super_branch" \
         "the branch ref lands in the superproject, not the tainted GIT_DIR target"
     assert_output_empty "$outer_branch" \
@@ -1086,15 +1086,15 @@ test_worktree_new_from_submodule_placement_under_taint() {
 test_worktree_new_readonly_tainted_git_env_fails_loud() {
     local sb outer
     new_sandbox sb
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.email "test@example.com"
+        git -C "$outer" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.name "Test"
+        git -C "$outer" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+        git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
 
     # Source worktree-new inside a child bash that makes GIT_DIR/GIT_COMMON_DIR
     # `declare -rx` (readonly + exported) BEFORE the script's `unset` runs, so the
@@ -1116,9 +1116,9 @@ test_worktree_new_readonly_tainted_git_env_fails_loud() {
     # No mutation: no branch in the sandbox OR the outer repo, and no worktree dir.
     local sb_branch outer_branch
     sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-78")"
+        git -C "$sb" branch --list "feature/issue-78")"
     outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" branch --list "feature/issue-78")"
+        git -C "$outer" branch --list "feature/issue-78")"
     assert_output_empty "$sb_branch" \
         "no branch ref created in the sandbox (aborted before the mutation)"
     assert_output_empty "$outer_branch" \
@@ -1139,7 +1139,7 @@ test_config_repo_root_no_hardcoded_usr_bin() {
     # Scope to repo_root()'s body (the header comment legitimately shows a
     # /usr/bin/dirname sourcing example) and drop comment lines, so only real
     # tool invocations are checked.
-    body="$(/usr/bin/awk '/^repo_root\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$CONFIG")"
+    body="$(command awk '/^repo_root\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$CONFIG")"
     hits="$(command printf '%s\n' "$body" |
         command grep -vE '^[[:space:]]*#' |
         command grep -nE '/usr/bin/(git|pwd|dirname)' || true)"
@@ -1166,8 +1166,8 @@ test_config_repo_root_honors_path() {
     # would be unresolvable; the symlink needs no interpreter. repo_root's other
     # tools (pwd/echo) are bash builtins, so git is the only PATH dependency.
     local shim="$sb/shim"
-    /usr/bin/mkdir -p "$shim"
-    /usr/bin/ln -s "$real_git" "$shim/git"
+    command mkdir -p "$shim"
+    command ln -s "$real_git" "$shim/git"
 
     local out rc=0
     out="$(cd "$sb" &&
@@ -1182,7 +1182,7 @@ test_config_repo_root_honors_path() {
     sb_real="$(cd "$sb" && command pwd -P)"
     out_real="$(cd "$out" 2>/dev/null && command pwd -P || command echo "$out")"
     assert_equals "$sb_real" "$out_real" \
-        "repo_root resolves the repo root via PATH, not /usr/bin/git"
+        "repo_root resolves the repo root via PATH, not command git"
 }
 
 # Edge case (#278): repo_root()'s pure-bash dirname must match GNU `dirname` for
@@ -1195,16 +1195,16 @@ test_config_repo_root_dirname_root_edge() {
     local sb bin
     new_sandbox sb
     bin="$sb/bin"
-    /usr/bin/mkdir -p "$bin"
+    command mkdir -p "$bin"
     {
-        /usr/bin/printf '#!/usr/bin/env bash\n'
+        command printf '#!/usr/bin/env bash\n'
         # Only intercept the common-dir probe; anything else is unexpected here.
-        /usr/bin/printf 'case "$*" in\n'
-        /usr/bin/printf '  *--git-common-dir*) command echo "/.git" ;;\n'
-        /usr/bin/printf '  *) exit 1 ;;\n'
-        /usr/bin/printf 'esac\n'
+        command printf 'case "$*" in\n'
+        command printf '  *--git-common-dir*) command echo "/.git" ;;\n'
+        command printf '  *) exit 1 ;;\n'
+        command printf 'esac\n'
     } >"$bin/git"
-    /usr/bin/chmod +x "$bin/git"
+    command chmod +x "$bin/git"
 
     # Unset BASH_ENV too: /etc/bash_env re-adds the real PATH on the devcontainer
     # for non-interactive bash, which would let the real git outrank the shim.
@@ -1227,15 +1227,15 @@ test_config_repo_root_relative_common_dir() {
     local sb bin
     new_sandbox sb
     bin="$sb/bin"
-    /usr/bin/mkdir -p "$bin"
+    command mkdir -p "$bin"
     {
-        /usr/bin/printf '#!/usr/bin/env bash\n'
-        /usr/bin/printf 'case "$*" in\n'
-        /usr/bin/printf '  *--git-common-dir*) command echo ".git" ;;\n'
-        /usr/bin/printf '  *) exit 1 ;;\n'
-        /usr/bin/printf 'esac\n'
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'case "$*" in\n'
+        command printf '  *--git-common-dir*) command echo ".git" ;;\n'
+        command printf '  *) exit 1 ;;\n'
+        command printf 'esac\n'
     } >"$bin/git"
-    /usr/bin/chmod +x "$bin/git"
+    command chmod +x "$bin/git"
 
     local out rc=0
     out="$(cd "$sb" &&
@@ -1263,17 +1263,17 @@ test_config_repo_root_relative_super_root() {
     local sb bin
     new_sandbox sb
     bin="$sb/bin"
-    /usr/bin/mkdir -p "$bin"
+    command mkdir -p "$bin"
     # A real relative target so the realpath compare proves pwd was prepended.
-    /usr/bin/mkdir -p "$sb/sup"
+    command mkdir -p "$sb/sup"
     {
-        /usr/bin/printf '#!/usr/bin/env bash\n'
-        /usr/bin/printf 'case "$*" in\n'
-        /usr/bin/printf '  *--show-superproject-working-tree*) command echo "sup" ;;\n'
-        /usr/bin/printf '  *) exit 1 ;;\n'
-        /usr/bin/printf 'esac\n'
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'case "$*" in\n'
+        command printf '  *--show-superproject-working-tree*) command echo "sup" ;;\n'
+        command printf '  *) exit 1 ;;\n'
+        command printf 'esac\n'
     } >"$bin/git"
-    /usr/bin/chmod +x "$bin/git"
+    command chmod +x "$bin/git"
 
     local out rc=0
     out="$(cd "$sb" &&
@@ -1301,9 +1301,9 @@ test_config_repo_root_relative_super_root() {
 test_config_repo_root_scrubs_tainted_git_env() {
     local sb outer
     new_sandbox sb
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")"
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
 
     local out rc=0
     out="$(cd "$sb" &&
@@ -1346,14 +1346,14 @@ _assert_config_injection_scrubbed() {
     new_sandbox sb
     # Seed a known real value the injection tries to override.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" config user.name "REALNAME"
+        git -C "$sb" config user.name "REALNAME"
 
     # (a) Bare git under the taint reads the INJECTED value — proves the vector is
     # live and reaches this repo (guards against a test that passes vacuously). The
     # bare git's own exit code is irrelevant here; only the value it reads matters.
     local bare
     bare="$(cd "$sb" &&
-        /usr/bin/env "$@" "$REAL_BASH" -c 'command git config --get user.name' 2>&1)" || true
+        /usr/bin/env "$@" "$REAL_BASH" -c 'git config --get user.name' 2>&1)" || true
     assert_equals "INJECTED" "$bare" \
         "$label: bare git honors the injected user.name (the taint is real)"
 
@@ -1394,7 +1394,7 @@ test_config_repo_root_scrubs_git_config_parameters() {
 test_config_repo_root_scrubs_git_ceiling_directories() {
     local sb
     new_sandbox sb
-    /usr/bin/mkdir -p "$sb/sub"
+    command mkdir -p "$sb/sub"
 
     local out rc=0
     out="$(cd "$sb/sub" &&
@@ -1443,7 +1443,7 @@ _assert_config_file_injection_scrubbed() {
     # GLOBAL/SYSTEM scope loses to repo-local, so a local seed would shadow the
     # injection and the bare read would never surface INJECTED (a vacuous test).
     local injfile="$sb/inject.cfg"
-    /usr/bin/printf '[inject]\n\tmarker = INJECTED\n' >"$injfile"
+    command printf '[inject]\n\tmarker = INJECTED\n' >"$injfile"
 
     # (a) Bare git under the taint reads the INJECTED value — the file redirect is
     # live. HOME is pinned at the sandbox so a stray real ~/.gitconfig can't shadow
@@ -1492,7 +1492,7 @@ _assert_bool_var_scrubbed() {
     local sb
     new_sandbox sb
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" config inject.marker "REALNAME"
+        git -C "$sb" config inject.marker "REALNAME"
 
     # (a0) Baseline: the SAME bare call with NO taint exits 0. Proves the fixture
     # is sound, so the fatal in (a) is attributable to the taint — not a broken
@@ -1564,9 +1564,9 @@ test_config_repo_root_scrubs_git_discovery_across_filesystem() {
 test_config_repo_root_scrubs_readonly_tainted_git_env() {
     local sb outer
     new_sandbox sb
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")"
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
 
     # declare -rx makes GIT_DIR/GIT_COMMON_DIR readonly AND exported inside the
     # child bash before sourcing config.sh, so a bare `unset` in repo_root's
@@ -1593,34 +1593,34 @@ test_config_repo_root_scrubs_readonly_tainted_git_env() {
 # (old git / file protocol disallowed).
 test_config_repo_root_submodule_superproject() {
     local sub super name rc=0
-    sub="$(/usr/bin/mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
-    super="$(/usr/bin/mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
+    sub="$(command mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
+    super="$(command mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
     name="mod"
     # Inner submodule repo with one commit so it can be added.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" init -q 2>/dev/null || return 1
+        git -C "$sub" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" config user.email "test@example.com"
+        git -C "$sub" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" config user.name "Test"
+        git -C "$sub" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
+        git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
     # Superproject that embeds it as a submodule. `protocol.file.allow=always`
     # is required for a local-path submodule add on modern git.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" init -q 2>/dev/null || return 1
+        git -C "$super" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" config user.email "test@example.com"
+        git -C "$super" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" config user.name "Test"
+        git -C "$super" config user.name "Test"
     if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
+        git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$sub" "$name" 2>/dev/null; then
         skip_test "git submodule add unavailable — cannot build the fixture"
         return 0
     fi
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
+        git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
 
     # Invoke repo_root from INSIDE the submodule working tree.
     local out
@@ -1663,37 +1663,37 @@ test_config_repo_root_submodule_superproject() {
 # `git submodule add` is unavailable (old git / file protocol disallowed).
 test_config_repo_root_submodule_superproject_scrubs_tainted_git_env() {
     local sub super outer name rc=0
-    sub="$(/usr/bin/mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
-    super="$(/usr/bin/mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    sub="$(command mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
+    super="$(command mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     name="mod"
     # Inner submodule repo with one commit so it can be added.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" init -q 2>/dev/null || return 1
+        git -C "$sub" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" config user.email "test@example.com"
+        git -C "$sub" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" config user.name "Test"
+        git -C "$sub" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
+        git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
     # Superproject that embeds it as a submodule.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" init -q 2>/dev/null || return 1
+        git -C "$super" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" config user.email "test@example.com"
+        git -C "$super" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" config user.name "Test"
+        git -C "$super" config user.name "Test"
     if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
+        git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$sub" "$name" 2>/dev/null; then
         skip_test "git submodule add unavailable — cannot build the fixture"
         return 0
     fi
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
+        git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
     # Third, unrelated outer repo whose .git the taint points at.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
 
     # Invoke repo_root from INSIDE the submodule working tree UNDER TAINT: the
     # invocation is NOT scrubbed (no `env --unset`), and GIT_DIR/GIT_WORK_TREE/
@@ -1746,37 +1746,37 @@ test_config_repo_root_submodule_superproject_scrubs_tainted_git_env() {
 # `git submodule add` is unavailable (old git / file protocol disallowed).
 test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env() {
     local sub super outer name rc=0
-    sub="$(/usr/bin/mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
-    super="$(/usr/bin/mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    sub="$(command mktemp -d "$WORKDIR/sub.XXXXXX")" || return 1
+    super="$(command mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     name="mod"
     # Inner submodule repo with one commit so it can be added.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" init -q 2>/dev/null || return 1
+        git -C "$sub" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" config user.email "test@example.com"
+        git -C "$sub" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" config user.name "Test"
+        git -C "$sub" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
+        git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
     # Superproject that embeds it as a submodule.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" init -q 2>/dev/null || return 1
+        git -C "$super" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" config user.email "test@example.com"
+        git -C "$super" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" config user.name "Test"
+        git -C "$super" config user.name "Test"
     if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
+        git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$sub" "$name" 2>/dev/null; then
         skip_test "git submodule add unavailable — cannot build the fixture"
         return 0
     fi
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
+        git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
     # Third, unrelated outer repo whose .git the taint points at.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
 
     # Invoke repo_root from INSIDE the submodule working tree UNDER a READONLY
     # taint: GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR are `declare -rx` (readonly +
@@ -1912,7 +1912,7 @@ test_worktree_rm_round_trip() {
     assert_contains "$RUN_OUT" "deleted branch" "reports the branch deletion"
     local branches
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-34")"
+        git -C "$sb" branch --list "feature/issue-34")"
     assert_equals "" "$branches" "the feature/issue-34 branch is gone after rm"
 }
 
@@ -1940,10 +1940,10 @@ test_worktree_rm_emits_reaped_feed_line() {
     assert_file_exists "$feed" "worktree-rm wrote a feed line on teardown"
     # The most-recent line for golem-51 must be a reaped event with the right id.
     local reaped
-    reaped="$(/usr/bin/grep '"golem":"golem-51"' "$feed" 2>/dev/null | /usr/bin/tail -n1)"
+    reaped="$(command grep '"golem":"golem-51"' "$feed" 2>/dev/null | command tail -n1)"
     assert_not_empty "$reaped" "a feed line for golem-51 was written"
     local ev
-    ev="$(/usr/bin/printf '%s' "$reaped" | jq -r '.event' 2>/dev/null)"
+    ev="$(command printf '%s' "$reaped" | jq -r '.event' 2>/dev/null)"
     assert_equals "reaped" "$ev" "the teardown line classifies as event=reaped (#446)"
     # No golem-? ghost id: the forced GOLEM_ID must have resolved to golem-51.
     assert_not_contains "$reaped" "golem-?" "the reaped line carries golem-51, not the golem-? sentinel"
@@ -1969,17 +1969,17 @@ test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
 
     # A separate outer repo carrying an identically-named branch. If worktree-rm
     # ran its `git branch -D` in the tainted env, it would delete THIS branch.
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.email "test@example.com"
+        git -C "$outer" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.name "Test"
+        git -C "$outer" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+        git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
+        git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
 
     # Run worktree-rm from the sandbox with the git env TAINTED toward outer.
     # No GIT_SCRUB on this invocation — the taint is the point; the script's own
@@ -1998,9 +1998,9 @@ test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
 
     local sb_branch outer_branch
     sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-79")"
+        git -C "$sb" branch --list "feature/issue-79")"
     outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" branch --list "feature/issue-79")"
+        git -C "$outer" branch --list "feature/issue-79")"
     assert_output_empty "$sb_branch" \
         "the SANDBOX branch was deleted (the mutation targeted the right repo)"
     assert_not_empty "$outer_branch" \
@@ -2044,7 +2044,7 @@ test_worktree_rm_scrubs_git_config_injection_for_mutations() {
         "the worktree directory is gone after rm despite the config injection"
     local sb_branch
     sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-77")"
+        git -C "$sb" branch --list "feature/issue-77")"
     assert_output_empty "$sb_branch" \
         "the sandbox branch was deleted despite the GIT_CONFIG_* injection (scrub clears the dynamic pairs)"
 }
@@ -2074,17 +2074,17 @@ test_worktree_rm_readonly_tainted_git_env_fails_loud() {
 
     # A separate outer repo carrying an identically-named branch: if worktree-rm
     # ran its `git branch -D` in the tainted env it would delete THIS branch.
-    outer="$(/usr/bin/mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
+    outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" init -q 2>/dev/null || return 1
+        git -C "$outer" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.email "test@example.com"
+        git -C "$outer" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" config user.name "Test"
+        git -C "$outer" config user.name "Test"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
+        git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
+        git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
 
     # Source worktree-rm inside a child bash that makes GIT_DIR/GIT_COMMON_DIR
     # `declare -rx` BEFORE the script's `unset` runs, so the unset fails and
@@ -2107,9 +2107,9 @@ test_worktree_rm_readonly_tainted_git_env_fails_loud() {
     # same-named branch is untouched (no cross-repo delete).
     local sb_branch outer_branch
     sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" branch --list "feature/issue-79")"
+        git -C "$sb" branch --list "feature/issue-79")"
     outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$outer" branch --list "feature/issue-79")"
+        git -C "$outer" branch --list "feature/issue-79")"
     assert_not_empty "$sb_branch" \
         "the sandbox branch survives (aborted before the destructive branch -D)"
     assert_true "[ -e \"$sb/.worktrees/issue-79\" ]" \
@@ -2133,42 +2133,42 @@ _make_super_with_submodule() {
     # instead of exporting the path back (the pitfall new_sandbox sidesteps with
     # its `dir`).
     local __out="$1" inner sup
-    inner="$(/usr/bin/mktemp -d "$WORKDIR/smsub.XXXXXX")" || return 1
-    sup="$(/usr/bin/mktemp -d "$WORKDIR/smsuper.XXXXXX")" || return 1
+    inner="$(command mktemp -d "$WORKDIR/smsub.XXXXXX")" || return 1
+    sup="$(command mktemp -d "$WORKDIR/smsuper.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$inner" init -q 2>/dev/null || return 1
+        git -C "$inner" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$inner" config user.email "test@example.com"
+        git -C "$inner" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$inner" config user.name "Test"
-    /usr/bin/mkdir -p "$inner/bin"
-    /usr/bin/printf '#!/bin/sh\n' >"$inner/bin/fix.sh"
+        git -C "$inner" config user.name "Test"
+    command mkdir -p "$inner/bin"
+    command printf '#!/bin/sh\n' >"$inner/bin/fix.sh" # lint-allow-path: shebang in generated fixture-script data
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$inner" add bin/fix.sh 2>/dev/null
+        git -C "$inner" add bin/fix.sh 2>/dev/null
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$inner" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
+        git -C "$inner" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sup" init -q 2>/dev/null || return 1
+        git -C "$sup" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sup" config user.email "test@example.com"
+        git -C "$sup" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sup" config user.name "Test"
-    /usr/bin/printf 'main\n' >"$sup/app.txt"
+        git -C "$sup" config user.name "Test"
+    command printf 'main\n' >"$sup/app.txt"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sup" add app.txt 2>/dev/null
+        git -C "$sup" add app.txt 2>/dev/null
     if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sup" -c protocol.file.allow=always -c commit.gpgsign=false \
+        git -C "$sup" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$inner" mod 2>/dev/null; then
         return 2
     fi
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sup" -c commit.gpgsign=false commit -qm "add mod" 2>/dev/null || return 1
-    /usr/bin/mkdir -p "$sup/.worktrees/.status" "$sup/.tmux"
-    /usr/bin/printf '{}\n' >"$sup/.claude.json"
+        git -C "$sup" -c commit.gpgsign=false commit -qm "add mod" 2>/dev/null || return 1
+    command mkdir -p "$sup/.worktrees/.status" "$sup/.tmux"
+    command printf '{}\n' >"$sup/.claude.json"
     # A submodule clone reads the invoking user's GLOBAL config (not the
     # superproject's repo-local config), and run_in pins HOME=$dir, so put
     # protocol.file.allow here to let the file:// submodule clone succeed.
-    /usr/bin/printf '[protocol "file"]\n\tallow = always\n' >"$sup/.gitconfig"
+    command printf '[protocol "file"]\n\tallow = always\n' >"$sup/.gitconfig"
     printf -v "$__out" '%s' "$sup"
     return 0
 }
@@ -2217,7 +2217,7 @@ test_worktree_rm_refuses_dirty_regular_file_with_submodule() {
     run_in "$super" "$WT_NEW" 41
     assert_exit 0 "$RUN_RC" "worktree-new succeeds with a submodule present"
     # Dirty a tracked, non-submodule file in the worktree.
-    /usr/bin/printf 'UNCOMMITTED USER WORK\n' >>"$super/.worktrees/issue-41/app.txt"
+    command printf 'UNCOMMITTED USER WORK\n' >>"$super/.worktrees/issue-41/app.txt"
     run_in "$super" "$WT_RM" 41
     assert_exit 1 "$RUN_RC" "worktree-rm refuses a worktree with dirty regular files"
     assert_contains "$RUN_OUT" "uncommitted changes" "explains there are uncommitted changes"
@@ -2233,16 +2233,16 @@ test_worktree_rm_repairs_stale_core_worktree() {
     # Simulate the corruption an interrupted `git worktree remove --force`
     # leaves behind: core.worktree pointing at a now-deleted worktree path.
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" config core.worktree "$sb/.worktrees/issue-99"
+        git -C "$sb" config core.worktree "$sb/.worktrees/issue-99"
     run_in "$sb" "$WT_RM" 99
     assert_exit 0 "$RUN_RC" "worktree-rm exits 0 while repairing a stale core.worktree"
     assert_contains "$RUN_OUT" "repaired stale core.worktree" "reports the repair"
     local val inside
     val="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" config --get core.worktree || true)"
+        git -C "$sb" config --get core.worktree || true)"
     assert_equals "" "$val" "the stale core.worktree is unset after repair"
     inside="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" rev-parse --is-inside-work-tree 2>/dev/null || true)"
+        git -C "$sb" rev-parse --is-inside-work-tree 2>/dev/null || true)"
     assert_equals "true" "$inside" "the main checkout is a work tree again after repair"
 }
 
@@ -2253,12 +2253,12 @@ test_worktree_rm_preserves_valid_core_worktree() {
     new_sandbox sb
     # Point core.worktree at a path that exists on disk (the sandbox itself).
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" config core.worktree "$sb"
+        git -C "$sb" config core.worktree "$sb"
     run_in "$sb" "$WT_RM" 99
     assert_exit 0 "$RUN_RC" "worktree-rm exits 0 with a valid core.worktree"
     local val
     val="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$sb" config --get core.worktree || true)"
+        git -C "$sb" config --get core.worktree || true)"
     assert_equals "$sb" "$val" "a valid, existing core.worktree is left untouched"
 }
 
@@ -2306,7 +2306,7 @@ test_status_renders_planted_row() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
@@ -2329,15 +2329,15 @@ test_status_blocked_shows_gate_age() {
     local sb sd ts
     new_sandbox sb
     sd="$sb/.worktrees/.status"
-    /usr/bin/cat >"$sd/golem-3.json" <<'EOF'
+    command cat >"$sd/golem-3.json" <<'EOF'
 { "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
     # A gate dated ~2 minutes ago: recent enough to stay inside the TTL, old
     # enough that _fmt_dur renders "2m" (a non-zero, human-visible age).
-    ts="$(/usr/bin/date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
-        /usr/bin/date -u -v-130S +%FT%TZ 2>/dev/null)"
-    /usr/bin/cat >"$sd/feed.jsonl" <<EOF
+    ts="$(command date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
+        command date -u -v-130S +%FT%TZ 2>/dev/null)"
+    command cat >"$sd/feed.jsonl" <<EOF
 {"golem":"golem-3","event":"gate","message":"push gate","ts":"$ts"}
 EOF
     run_in "$sb" "$STATUS"
@@ -2375,8 +2375,8 @@ gate_age_unit() {
     local __out="$1" dir="$2" golem="$3" feed="$4" jq_mode="$5" _gau_out
     if [ "$jq_mode" = "nojq" ]; then
         local stub="$dir/stub-bin"
-        /usr/bin/mkdir -p "$stub"
-        /usr/bin/ln -sf "$REAL_BASH" "$stub/bash"
+        command mkdir -p "$stub"
+        command ln -sf "$REAL_BASH" "$stub/bash"
         _gau_out="$(cd "$dir" &&
             /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
                 PATH="$stub" HOME="$dir" \
@@ -2404,7 +2404,7 @@ test_gate_age_suffix_no_ts_empty() {
     fi
     local sb out
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/feed.jsonl" <<'EOF'
+    command cat >"$sb/.worktrees/.status/feed.jsonl" <<'EOF'
 {"golem":"golem-3","event":"gate","message":"push gate"}
 EOF
     gate_age_unit out "$sb" golem-3 "$sb/.worktrees/.status/feed.jsonl" jq
@@ -2420,7 +2420,7 @@ test_gate_age_suffix_bad_ts_empty() {
     fi
     local sb out
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/feed.jsonl" <<'EOF'
+    command cat >"$sb/.worktrees/.status/feed.jsonl" <<'EOF'
 {"golem":"golem-3","event":"gate","message":"push gate","ts":"not-a-date"}
 EOF
     gate_age_unit out "$sb" golem-3 "$sb/.worktrees/.status/feed.jsonl" jq
@@ -2432,9 +2432,9 @@ EOF
 test_gate_age_suffix_no_jq_empty() {
     local sb out ts
     new_sandbox sb
-    ts="$(/usr/bin/date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
-        /usr/bin/date -u -v-130S +%FT%TZ 2>/dev/null)"
-    /usr/bin/cat >"$sb/.worktrees/.status/feed.jsonl" <<EOF
+    ts="$(command date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
+        command date -u -v-130S +%FT%TZ 2>/dev/null)"
+    command cat >"$sb/.worktrees/.status/feed.jsonl" <<EOF
 {"golem":"golem-3","event":"gate","message":"push gate","ts":"$ts"}
 EOF
     gate_age_unit out "$sb" golem-3 "$sb/.worktrees/.status/feed.jsonl" nojq
@@ -2453,13 +2453,13 @@ test_status_blocked_no_ts_omits_gate_age() {
     local sb sd
     new_sandbox sb
     sd="$sb/.worktrees/.status"
-    /usr/bin/cat >"$sd/golem-3.json" <<'EOF'
+    command cat >"$sd/golem-3.json" <<'EOF'
 { "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
     # No `ts` → gate-watch treats it as fresh (bypasses TTL) so it surfaces
     # BLOCKED, but _gate_age_suffix can derive no age → no suffix.
-    /usr/bin/cat >"$sd/feed.jsonl" <<'EOF'
+    command cat >"$sd/feed.jsonl" <<'EOF'
 {"golem":"golem-3","event":"gate","message":"push gate"}
 EOF
     run_in "$sb" "$STATUS"
@@ -2491,20 +2491,20 @@ test_status_bad_ts_does_not_blank_blocked_list() {
     local sb sd good_ts
     new_sandbox sb
     sd="$sb/.worktrees/.status"
-    /usr/bin/cat >"$sd/golem-3.json" <<'EOF'
+    command cat >"$sd/golem-3.json" <<'EOF'
 { "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
-    /usr/bin/cat >"$sd/golem-5.json" <<'EOF'
+    command cat >"$sd/golem-5.json" <<'EOF'
 { "golem": "golem-5", "issue": 5, "branch": "feature/issue-5",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
-    good_ts="$(/usr/bin/date -u -d '60 seconds ago' +%FT%TZ 2>/dev/null ||
-        /usr/bin/date -u -v-60S +%FT%TZ 2>/dev/null)"
+    good_ts="$(command date -u -d '60 seconds ago' +%FT%TZ 2>/dev/null ||
+        command date -u -v-60S +%FT%TZ 2>/dev/null)"
     # golem-3's most-recent line has a non-empty but unparsable `ts`; golem-5's
     # is well-formed and recent. Pre-fix, golem-3's line aborted the snapshot jq
     # and BOTH vanished.
-    /usr/bin/cat >"$sd/feed.jsonl" <<EOF
+    command cat >"$sd/feed.jsonl" <<EOF
 {"golem":"golem-3","event":"gate","message":"bad-ts gate","ts":"not-a-date"}
 {"golem":"golem-5","event":"gate","message":"good-ts gate","ts":"$good_ts"}
 EOF
@@ -2541,7 +2541,7 @@ test_status_annotates_blocked_inbox_state() {
     sd="$sb/.worktrees/.status"
     gid="gate-1784398516-abcd"
     # A cache row so render_status renders the BLOCKED section at all.
-    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+    command cat >"$sd/golem-7.json" <<'EOF'
 { "golem": "golem-7", "issue": 7, "branch": "feature/issue-7",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
@@ -2551,7 +2551,7 @@ EOF
     # TTL treats a missing ts as fresh, so the lines surface without clock
     # coupling. The routine line pins the anchored-regex fix: an unanchored scan
     # would falsely annotate it from that substring (the #395 review's Bug 2).
-    /usr/bin/cat >"$sd/feed.jsonl" <<EOF
+    command cat >"$sd/feed.jsonl" <<EOF
 {"golem":"golem-7","event":"escalation","message":"ESCALATION: [$gid] pick sidecar"}
 {"golem":"golem-4","event":"gate","message":"Claude needs permission to run: git branch -D fix/gate-1111111111-aaaa"}
 EOF
@@ -2582,10 +2582,10 @@ test_status_inbox_annotation_uses_bracketed_gate() {
     new_sandbox sb
     sd="$sb/.worktrees/.status"
     real="gate-2222222222-real"
-    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+    command cat >"$sd/golem-7.json" <<'EOF'
 { "golem": "golem-7", "issue": 7, "branch": "b", "state": "impl", "phase": "p", "blocking": false }
 EOF
-    /usr/bin/printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: after gate-1000000000-old, now [%s] pick sidecar"}\n' \
+    command printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: after gate-1000000000-old, now [%s] pick sidecar"}\n' \
         "$real" >"$sd/feed.jsonl"
     inbox_in "$sb" answer golem-7 "$real" B
     run_in "$sb" "$STATUS"
@@ -2605,10 +2605,10 @@ test_status_inbox_state_awaiting_and_consumed() {
     new_sandbox sb
     sd="$sb/.worktrees/.status"
     gid="gate-1784398600-aaaa"
-    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+    command cat >"$sd/golem-7.json" <<'EOF'
 { "golem": "golem-7", "issue": 7, "branch": "b", "state": "impl", "phase": "p", "blocking": false }
 EOF
-    /usr/bin/printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: [%s] x"}\n' \
+    command printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: [%s] x"}\n' \
         "$gid" >"$sd/feed.jsonl"
     run_in "$sb" "$STATUS"
     assert_contains "$RUN_OUT" "[inbox: awaiting]" "no inbox answer yet → awaiting"
@@ -2618,10 +2618,10 @@ EOF
     new_sandbox sb2
     sd2="$sb2/.worktrees/.status"
     gid2="gate-1784398700-bbbb"
-    /usr/bin/cat >"$sd2/golem-7.json" <<'EOF'
+    command cat >"$sd2/golem-7.json" <<'EOF'
 { "golem": "golem-7", "issue": 7, "branch": "b", "state": "impl", "phase": "p", "blocking": false }
 EOF
-    /usr/bin/printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: [%s] x"}\n' \
+    command printf '{"golem":"golem-7","event":"escalation","message":"ESCALATION: [%s] x"}\n' \
         "$gid2" >"$sd2/feed.jsonl"
     inbox_in "$sb2" answer golem-7 "$gid2" B
     inbox_in "$sb2" consume golem-7 "$gid2"
@@ -2656,7 +2656,7 @@ run_in_watch() {
             GOLEM_BASE_REF=HEAD \
             GOLEM_WORKTREE_LOCAL_FILES="" \
             "${extra_env[@]}" \
-            /usr/bin/timeout "$secs" "$REAL_BASH" "$STATUS" "$@" 2>&1)" || RUN_RC=$?
+            timeout "$secs" "$REAL_BASH" "$STATUS" "$@" 2>&1)" || RUN_RC=$?
     [ "$RUN_RC" = "124" ] && RUN_RC=0
 }
 
@@ -2701,7 +2701,7 @@ test_status_watch_loops_with_env_override() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
@@ -2712,7 +2712,7 @@ EOF
     # The planted header line should render at least twice across ~3 one-second
     # sweeps — proof the loop re-polls rather than rendering once.
     local count
-    count="$(/usr/bin/printf '%s\n' "$RUN_OUT" | /usr/bin/grep -c '^GOLEM ')"
+    count="$(command printf '%s\n' "$RUN_OUT" | command grep -c '^GOLEM ')"
     assert_true "[ '$count' -ge 2 ]" "renders repeatedly (>=2 sweeps in 3s, got $count)"
 }
 
@@ -2750,14 +2750,14 @@ test_status_checkpoint_suppresses_noop_sweep() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
     run_in_watch "$sb" 3 GOLEM_SWEEP_INTERVAL=1 -- --checkpoint --watch --level 3
     assert_exit 0 "$RUN_RC" "bounded --checkpoint --watch loop exits cleanly"
     local table_count
-    table_count="$(/usr/bin/printf '%s\n' "$RUN_OUT" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    table_count="$(command printf '%s\n' "$RUN_OUT" | command grep -c '^STATUS CHECKPOINT')"
     assert_true "[ '$table_count' = '1' ]" \
         "the full table renders exactly once across a no-change window (got $table_count)"
     assert_contains "$RUN_OUT" "no change since" \
@@ -2801,13 +2801,13 @@ test_status_checkpoint_reemits_on_state_change() {
     fi
     local sb out table_count
     new_sandbox sb
-    /usr/bin/printf '%s' \
+    command printf '%s' \
         '{ "golem": "golem-42", "issue": 42, "state": "impl", "blocking": false }' \
         >"$sb/.worktrees/.status/golem-42.json"
     render_source_seq out "$sb" 60
     # Two full tables total: the first render and the post-flip re-emit. The middle
     # (unchanged) sweep is suppressed, so the count is 2, not 3.
-    table_count="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    table_count="$(command printf '%s\n' "$out" | command grep -c '^STATUS CHECKPOINT')"
     assert_true "[ '$table_count' = '2' ]" \
         "table prints on render 1 and re-emits on the state change, but not the unchanged sweep (got $table_count)"
     assert_contains "$out" "no change since" \
@@ -2828,11 +2828,11 @@ test_status_verbose_no_raw_feed_dump() {
     local sb sd
     new_sandbox sb
     sd="$sb/.worktrees/.status"
-    /usr/bin/cat >"$sd/golem-7.json" <<'EOF'
+    command cat >"$sd/golem-7.json" <<'EOF'
 { "golem": "golem-7", "issue": 7, "branch": "feature/issue-7",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
-    /usr/bin/cat >"$sd/feed.jsonl" <<'EOF'
+    command cat >"$sd/feed.jsonl" <<'EOF'
 {"golem":"golem-7","event":"idle","message":"DISTINCTFEEDMARKER working","ts":"2026-07-21T00:00:00Z"}
 EOF
     run_in "$sb" "$STATUS"
@@ -2879,14 +2879,14 @@ test_status_checkpoint_gap_clears_suppression() {
     fi
     local sb out table_count
     new_sandbox sb
-    /usr/bin/printf '%s' \
+    command printf '%s' \
         '{ "golem": "golem-42", "issue": 42, "state": "impl", "blocking": false }' \
         >"$sb/.worktrees/.status/golem-42.json"
     render_source_gap out "$sb" 60
     # Two full tables: sweep 1 and the post-reappear sweep 3. Sweep 2 is the
     # empty-state early return (no table, no heartbeat). A stale-suppression bug
     # would make this count 1 (sweep 3 suppressed) — the discriminator.
-    table_count="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    table_count="$(command printf '%s\n' "$out" | command grep -c '^STATUS CHECKPOINT')"
     assert_true "[ '$table_count' = '2' ]" \
         "the reappearing golem re-renders in full after an empty-state gap, not a heartbeat (got $table_count)"
     assert_contains "$out" "No active golems" \
@@ -2905,10 +2905,10 @@ test_status_checkpoint_pool_header_blank_line() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-9.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-9.json" <<'EOF'
 { "golem": "golem-9", "issue": 9, "state": "impl", "blocking": false }
 EOF
-    /usr/bin/cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
 { "size": 3, "slots": [1, 2], "backlog_depth": 5, "accepting": "open" }
 EOF
     run_in "$sb" "$STATUS" --checkpoint
@@ -2928,7 +2928,7 @@ test_status_checkpoint_oneshot_shows_cache_mirror_note() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-9.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-9.json" <<'EOF'
 { "golem": "golem-9", "issue": 9, "state": "impl", "blocking": false }
 EOF
     run_in "$sb" "$STATUS" --checkpoint
@@ -2953,7 +2953,7 @@ test_status_checkpoint_zero_golem_heartbeat_single_line() {
     local sb out hb_lines
     new_sandbox sb
     # pool.json only — no golem-*.json, no tmux sessions (TMUX_TMPDIR is empty).
-    /usr/bin/cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
 { "size": 3, "slots": [], "backlog_depth": 0, "accepting": "open" }
 EOF
     out="$(cd "$sb" &&
@@ -2968,7 +2968,7 @@ EOF
         "the zero-golem sweep is suppressed to a heartbeat"
     assert_contains "$out" "(0 golem(s))" \
         "the zero-golem heartbeat count is a clean single-line 0, not a split grep -c count (#488)"
-    hb_lines="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c 'golem(s))')"
+    hb_lines="$(command printf '%s\n' "$out" | command grep -c 'golem(s))')"
     assert_true "[ '$hb_lines' = '1' ]" \
         "the heartbeat 'golem(s)' phrase renders on exactly one line (got $hb_lines)"
 }
@@ -3008,15 +3008,15 @@ test_status_checkpoint_multi_golem_batch_suppression() {
     fi
     local sb out table_count
     new_sandbox sb
-    /usr/bin/printf '%s' '{ "golem": "golem-1", "issue": 1, "state": "impl", "blocking": false }' \
+    command printf '%s' '{ "golem": "golem-1", "issue": 1, "state": "impl", "blocking": false }' \
         >"$sb/.worktrees/.status/golem-1.json"
-    /usr/bin/printf '%s' '{ "golem": "golem-2", "issue": 2, "state": "impl", "blocking": false }' \
+    command printf '%s' '{ "golem": "golem-2", "issue": 2, "state": "impl", "blocking": false }' \
         >"$sb/.worktrees/.status/golem-2.json"
-    /usr/bin/printf '%s' '{ "golem": "golem-3", "issue": 3, "state": "impl", "blocking": false }' \
+    command printf '%s' '{ "golem": "golem-3", "issue": 3, "state": "impl", "blocking": false }' \
         >"$sb/.worktrees/.status/golem-3.json"
     render_source_multi out "$sb" 60
     # Full table on sweep 1 and the post-flip sweep 3; sweep 2 suppressed.
-    table_count="$(/usr/bin/printf '%s\n' "$out" | /usr/bin/grep -c '^STATUS CHECKPOINT')"
+    table_count="$(command printf '%s\n' "$out" | command grep -c '^STATUS CHECKPOINT')"
     assert_true "[ '$table_count' = '2' ]" \
         "the 3-golem batch renders once, suppresses the unchanged sweep, and re-emits the whole table on a single-row flip (got $table_count)"
     assert_contains "$out" "(3 golem(s))" \
@@ -3049,8 +3049,8 @@ plant_transcript() {
     local slug dir
     slug="$(slug_for "$wt")"
     dir="$sb/projects/$slug"
-    /usr/bin/mkdir -p "$dir"
-    /usr/bin/printf '%s\n' "$body" >"$dir/session.jsonl"
+    command mkdir -p "$dir"
+    command printf '%s\n' "$body" >"$dir/session.jsonl"
 }
 
 # run_scrape <sandbox> <worktree-arg> — invoke golem-token-scrape.sh with the
@@ -3178,11 +3178,11 @@ test_scrape_newest_session_wins() {
     local slug dir
     slug="$(slug_for "$sb/.worktrees/issue-42")"
     dir="$sb/projects/$slug"
-    /usr/bin/mkdir -p "$dir"
-    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"usage":{"output_tokens":10}}}' >"$dir/old.jsonl"
+    command mkdir -p "$dir"
+    command printf '%s\n' '{"isSidechain":false,"message":{"usage":{"output_tokens":10}}}' >"$dir/old.jsonl"
     # Ensure a distinct, newer mtime on the second file.
-    /usr/bin/sleep 1
-    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"usage":{"output_tokens":77}}}' >"$dir/new.jsonl"
+    command sleep 1
+    command printf '%s\n' '{"isSidechain":false,"message":{"usage":{"output_tokens":77}}}' >"$dir/new.jsonl"
     run_scrape "$sb" "$sb/.worktrees/issue-42"
     assert_exit 0 "$RUN_RC" "scrape with two sessions exits 0"
     assert_contains "$RUN_OUT" "77" "the newest-mtime session (77) is the one summed"
@@ -3199,13 +3199,13 @@ test_scrape_tolerates_truncated_trailing_line() {
     new_sandbox sb
     slug="$(slug_for "$sb/.worktrees/issue-42")"
     dir="$sb/projects/$slug"
-    /usr/bin/mkdir -p "$dir"
+    command mkdir -p "$dir"
     # Two valid top-level records (60) then a truncated final line (no newline,
     # unterminated JSON) — the fromjson? guard must drop it without aborting.
     {
-        /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"a","usage":{"output_tokens":40}}}'
-        /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"b","usage":{"output_tokens":20}}}'
-        /usr/bin/printf '%s' '{"isSidechain":false,"message":{"usage":{'
+        command printf '%s\n' '{"isSidechain":false,"message":{"id":"a","usage":{"output_tokens":40}}}'
+        command printf '%s\n' '{"isSidechain":false,"message":{"id":"b","usage":{"output_tokens":20}}}'
+        command printf '%s' '{"isSidechain":false,"message":{"usage":{'
     } >"$dir/session.jsonl"
     run_scrape "$sb" "$sb/.worktrees/issue-42"
     assert_exit 0 "$RUN_RC" "scrape tolerates a truncated trailing line (exit 0)"
@@ -3217,7 +3217,7 @@ test_scrape_tolerates_truncated_trailing_line() {
 test_scrape_no_jq_exits_3() {
     local sb
     new_sandbox sb
-    /usr/bin/mkdir -p "$sb/nojq-bin"
+    command mkdir -p "$sb/nojq-bin"
     # A PATH holding only coreutils the script needs (via /usr/bin) but NO jq. We
     # point PATH at an empty stub dir plus /usr/bin sans jq is hard to guarantee,
     # so instead prepend a stub dir and drop /usr/bin's jq by pointing PATH at a
@@ -3330,7 +3330,7 @@ test_liveness_errored_unknown_command_after_idle_turn() {
     local sb
     new_sandbox sb
     plant_transcript "$sb" 42 \
-        "$(/usr/bin/printf '%s\n%s' \
+        "$(command printf '%s\n%s' \
             '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
             '{"type":"system","content":"Unknown command: /workflow:next-issue"}')"
     run_liveness "$sb" "$sb/.worktrees/issue-42"
@@ -3347,7 +3347,7 @@ test_liveness_sidechain_not_masking() {
     local sb
     new_sandbox sb
     plant_transcript "$sb" 42 \
-        "$(/usr/bin/printf '%s\n%s' \
+        "$(command printf '%s\n%s' \
             '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
             '{"type":"assistant","isSidechain":true,"message":{"stop_reason":"tool_use"}}')"
     run_liveness "$sb" "$sb/.worktrees/issue-42"
@@ -3400,7 +3400,7 @@ test_liveness_no_arg_exits_1() {
 test_liveness_no_jq_exits_3() {
     local sb
     new_sandbox sb
-    /usr/bin/mkdir -p "$sb/nojq-bin"
+    command mkdir -p "$sb/nojq-bin"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -3445,7 +3445,7 @@ test_liveness_stale_working_demoted() {
         '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
     # Backdate the planted session transcript well past the default 1200s window.
     tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
-    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 3600))" "$tfile"
+    command touch -d "@$(($(command date +%s) - 3600))" "$tfile"
     run_liveness "$sb" "$sb/.worktrees/issue-42"
     assert_exit 2 "$RUN_RC" "a stale 'working' transcript is demoted to indeterminate (exit 2)"
     assert_contains "$RUN_OUT" "stale 'working'" "names the staleness demotion"
@@ -3464,7 +3464,7 @@ test_liveness_stale_working_threshold_overridable() {
     plant_transcript "$sb" 42 \
         '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
     tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
-    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 3600))" "$tfile"
+    command touch -d "@$(($(command date +%s) - 3600))" "$tfile"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -3489,7 +3489,7 @@ test_liveness_stale_idle_not_demoted() {
     plant_transcript "$sb" 42 \
         '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}'
     tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
-    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 3600))" "$tfile"
+    command touch -d "@$(($(command date +%s) - 3600))" "$tfile"
     run_liveness "$sb" "$sb/.worktrees/issue-42"
     assert_exit 0 "$RUN_RC" "a long-idle transcript still classifies (exit 0)"
     assert_true "[ '$RUN_OUT' = 'idle' ]" "a stale idle transcript is not demoted (got '$RUN_OUT')"
@@ -3510,18 +3510,18 @@ test_liveness_stale_working_stat_failure_fails_open() {
     plant_transcript "$sb" 42 \
         '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
     stub="$sb/stub-bin"
-    /usr/bin/mkdir -p "$stub"
+    command mkdir -p "$stub"
     real_bash="$(command -v bash)"
     real_git="$(command -v git)"
     real_jq="$(command -v jq)"
-    /usr/bin/ln -s "$real_bash" "$stub/bash"
-    /usr/bin/ln -s "$real_git" "$stub/git"
-    /usr/bin/ln -s "$real_jq" "$stub/jq"
+    command ln -s "$real_bash" "$stub/bash"
+    command ln -s "$real_git" "$stub/git"
+    command ln -s "$real_jq" "$stub/jq"
     # A `stat` that always emits non-numeric garbage and exits 0 — the script's
     # `command stat` resolves this stub, so _newest_mtime is non-numeric and the
     # guard's `'' | *[!0-9]*)` fail-open arm must fire (trust the class).
-    /usr/bin/printf '%s\n' '#!/usr/bin/env bash' 'echo not-a-number' >"$stub/stat"
-    /usr/bin/chmod +x "$stub/stat"
+    command printf '%s\n' '#!/usr/bin/env bash' 'echo not-a-number' >"$stub/stat"
+    command chmod +x "$stub/stat"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
@@ -3544,12 +3544,12 @@ test_liveness_newest_session_wins() {
     local sb dir
     new_sandbox sb
     dir="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")"
-    /usr/bin/mkdir -p "$dir"
+    command mkdir -p "$dir"
     # Older session: idle. Newer session: working. The newer must win.
-    /usr/bin/printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
+    command printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
         >"$dir/old.jsonl"
-    /usr/bin/touch -d "@$(($(/usr/bin/date +%s) - 600))" "$dir/old.jsonl"
-    /usr/bin/printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}' \
+    command touch -d "@$(($(command date +%s) - 600))" "$dir/old.jsonl"
+    command printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}' \
         >"$dir/new.jsonl"
     run_liveness "$sb" "$sb/.worktrees/issue-42"
     assert_exit 0 "$RUN_RC" "a two-session dir resolves (exit 0)"
@@ -3567,7 +3567,7 @@ test_liveness_tolerates_truncated_trailing_line() {
     local sb
     new_sandbox sb
     plant_transcript "$sb" 42 \
-        "$(/usr/bin/printf '%s\n%s' \
+        "$(command printf '%s\n%s' \
             '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}' \
             '{"type":"assistant","isSid')"
     run_liveness "$sb" "$sb/.worktrees/issue-42"
@@ -3585,7 +3585,7 @@ test_status_token_first_then_frozen() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "blocking": false }
 EOF
@@ -3607,7 +3607,7 @@ EOF
     # regression would still render "150 tokens, frozen 0s" and pass a substring
     # check, but it defeats the whole freeze-duration signal, so assert the
     # persisted anchor is unchanged across the two sweeps.
-    /usr/bin/sleep 1
+    command sleep 1
     run_status_scrape "$sb"
     assert_contains "$RUN_OUT" "150 tokens, frozen" "second read with an unchanged count shows frozen"
     local anchor2
@@ -3624,7 +3624,7 @@ test_status_token_advancing_on_change() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "blocking": false }
 EOF
@@ -3635,7 +3635,7 @@ EOF
     local slug dir
     slug="$(slug_for "$sb/.worktrees/issue-42")"
     dir="$sb/projects/$slug"
-    /usr/bin/printf '%s\n' \
+    command printf '%s\n' \
         '{"isSidechain":false,"message":{"usage":{"output_tokens":100}}}' \
         '{"isSidechain":false,"message":{"usage":{"output_tokens":25}}}' >"$dir/session.jsonl"
     run_status_scrape "$sb"
@@ -3652,7 +3652,7 @@ test_status_token_container_pending() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false }
 EOF
@@ -3681,7 +3681,7 @@ test_status_token_container_populated() {
         skip_test "date toolchain cannot seed an ISO anchor"
         return 0
     fi
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+    command cat >"$sb/.worktrees/.status/agent01.json" <<EOF
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false,
   "top_level_tokens": 4242, "top_level_tokens_at": "$anchor" }
@@ -3690,7 +3690,7 @@ EOF
     assert_exit 0 "$RUN_RC" "golem-status with a populated container row exits 0"
     assert_contains "$RUN_OUT" "4242 tokens, frozen" \
         "a posted container golem renders the mechanical frozen phrase, same as Mode 2 (#390)"
-    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq '4242 tokens, frozen [0-9]+m'" \
+    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '4242 tokens, frozen [0-9]+m'" \
         "the seeded ~130s anchor renders _fmt_dur's minutes arm ('frozen Nm')"
     assert_not_contains "$RUN_OUT" "awaiting token push" "a posted container is not shown as pending"
     # READ-ONLY: golem-status must not rewrite the producer-owned fields.
@@ -3723,7 +3723,7 @@ test_status_token_container_malformed_degrades() {
     fi
     # (a) A leading-zero count ("089" — the octal hazard) with a VALID anchor →
     # the count blanks → container-pending, never a bash arithmetic error.
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+    command cat >"$sb/.worktrees/.status/agent01.json" <<EOF
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false,
   "top_level_tokens": "089", "top_level_tokens_at": "$good_anchor" }
@@ -3735,7 +3735,7 @@ EOF
     assert_not_contains "$RUN_OUT" "089 tokens" "the octal-hazard count is never rendered as a frozen reading"
     # (b) A VALID count with a NON-ISO anchor ("now") → the anchor blanks →
     # container-pending, never a plausible-but-wrong `date -d "now"` duration.
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false,
   "top_level_tokens": 4242, "top_level_tokens_at": "now" }
@@ -3763,7 +3763,7 @@ test_status_token_container_partial_post() {
         return 0
     fi
     # Count present, anchor absent.
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false,
   "top_level_tokens": 4242 }
@@ -3773,7 +3773,7 @@ EOF
         "count present but anchor absent degrades to container-pending (#390)"
     assert_not_contains "$RUN_OUT" "4242 tokens, frozen" "a count-only partial POST never renders a frozen phrase"
     # Anchor present, count absent.
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+    command cat >"$sb/.worktrees/.status/agent01.json" <<EOF
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false,
   "top_level_tokens_at": "$anchor" }
@@ -3791,7 +3791,7 @@ test_status_token_unknown_no_transcript() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-77.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-77.json" <<'EOF'
 { "golem": "golem-77", "issue": 77, "branch": "feature/issue-77",
   "state": "working", "blocking": false }
 EOF
@@ -3816,7 +3816,7 @@ test_status_frozen_iso_parse_failure_raw_render() {
     new_sandbox sb
     # Seed a matching prior count (150 = what TRANSCRIPT_MIXED scrapes to) so the
     # sweep reads UNCHANGED → frozen, plus a garbage anchor `date` cannot parse.
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "blocking": false,
   "top_level_tokens": 150, "top_level_tokens_at": "not-a-date" }
@@ -3844,7 +3844,7 @@ test_status_fmt_dur_seconds_arm() {
         skip_test "date could not compute a past anchor"
         return 0
     fi
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "blocking": false,
   "top_level_tokens": 150, "top_level_tokens_at": "$anchor" }
@@ -3854,7 +3854,7 @@ EOF
     assert_exit 0 "$RUN_RC" "golem-status with a ~20s anchor exits 0"
     # ~20s is well below the 60s boundary, so a few seconds of test latency can't
     # flip the arm. Match the render form, not an exact second count.
-    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq 'frozen [0-9]+s'" \
+    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq 'frozen [0-9]+s'" \
         "an anchor under 60s renders _fmt_dur's seconds arm ('frozen Ns')"
     assert_not_contains "$RUN_OUT" "frozen 0m" "a sub-minute freeze never rounds to minutes"
 }
@@ -3872,7 +3872,7 @@ test_status_fmt_dur_minute_arm() {
         skip_test "date could not compute a past anchor"
         return 0
     fi
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "blocking": false,
   "top_level_tokens": 150, "top_level_tokens_at": "$anchor" }
@@ -3881,14 +3881,14 @@ EOF
     run_status_scrape "$sb"
     assert_exit 0 "$RUN_RC" "golem-status with a ~130s anchor exits 0"
     # ~130s is well above the 60s boundary (renders "2m"), clear of test latency.
-    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq 'frozen [0-9]+m'" \
+    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq 'frozen [0-9]+m'" \
         "an anchor at/above 60s renders _fmt_dur's minutes arm ('frozen Nm')"
     # And NO token line renders the seconds form — a bogus dual-render (minute +
     # second line for the same golem) must fail. `grep -q` matches any line, so
     # `!` is true only when zero lines carry a 'tokens, frozen Ns' form. (An
     # earlier `grep -Evq` was tautological: header/other lines always fail the
     # match, so per-line inversion was unconditionally true — #392 pre-PR review.)
-    assert_true "! printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq 'tokens, frozen [0-9]+s'" \
+    assert_true "! printf '%s' \"\$RUN_OUT\" | command grep -Eq 'tokens, frozen [0-9]+s'" \
         "the minutes arm never also emits a seconds-form freeze line"
 }
 
@@ -3932,7 +3932,7 @@ test_scrape_and_status_zero_tokens() {
     assert_exit 0 "$RUN_RC" "scrape of an all-sidechain transcript exits 0"
     assert_true "[ '$RUN_OUT' = '0' ]" "an all-sidechain transcript scrapes to 0 (got '$RUN_OUT')"
     # (b) golem-status renders the 0 as a first reading, distinct from unknown.
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "blocking": false }
 EOF
@@ -3953,13 +3953,13 @@ test_status_no_jq_skips_token_block() {
     local sb shim tp
     new_sandbox sb
     shim="$sb/shim"
-    /usr/bin/mkdir -p "$shim"
+    command mkdir -p "$shim"
     for t in git dirname env date mktemp mv rm tmux bash sh; do
-        tp="$(command -v "$t" 2>/dev/null)" && /usr/bin/ln -s "$tp" "$shim/$t"
+        tp="$(command -v "$t" 2>/dev/null)" && command ln -s "$tp" "$shim/$t"
     done
     # A cache row makes the cache array non-empty, so the ONLY reason the token
     # block is skipped is the jq gate itself (not the empty-cache short-circuit).
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "blocking": false }
 EOF
@@ -3993,7 +3993,7 @@ test_status_cache_row_missing_issue_tokens_unknown() {
     new_sandbox sb
     # No `issue` key at all — a valid golem row (renders in the table) but the
     # token loop cannot resolve a worktree to scrape.
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-88.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-88.json" <<'EOF'
 { "golem": "golem-88", "branch": "feature/issue-88",
   "state": "working", "blocking": false }
 EOF
@@ -4023,16 +4023,16 @@ EOF
 write_two_golem_tracks_sandbox() {
     local __out="$1" _wtgs_sb
     new_sandbox _wtgs_sb
-    /usr/bin/cat >"$_wtgs_sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$_wtgs_sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "pr": 310, "blocking": false,
   "started": "2026-07-19T00:00:00Z" }
 EOF
-    /usr/bin/cat >"$_wtgs_sb/.worktrees/.status/golem-89.json" <<'EOF'
+    command cat >"$_wtgs_sb/.worktrees/.status/golem-89.json" <<'EOF'
 { "golem": "golem-89", "issue": 89, "branch": "feature/issue-89",
   "state": "ci-failing", "phase": "implement", "blocking": true }
 EOF
-    /usr/bin/cat >"$_wtgs_sb/.worktrees/.status/tracks.json" <<'EOF'
+    command cat >"$_wtgs_sb/.worktrees/.status/tracks.json" <<'EOF'
 { "tracks": [ { "lane": 0, "issues": [42], "autonomy_level": 2 },
               { "lane": 1, "issues": [89], "autonomy_level": 3 } ] }
 EOF
@@ -4074,7 +4074,7 @@ test_status_checkpoint_delta_across_sweeps() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
@@ -4085,7 +4085,7 @@ EOF
     local slug dir
     slug="$(slug_for "$sb/.worktrees/issue-42")"
     dir="$sb/projects/$slug"
-    /usr/bin/printf '%s\n' \
+    command printf '%s\n' \
         '{"isSidechain":false,"message":{"id":"m1","usage":{"output_tokens":100}}}' \
         '{"isSidechain":false,"message":{"id":"m2","usage":{"output_tokens":25}}}' >"$dir/session.jsonl"
     run_status_scrape "$sb" --checkpoint
@@ -4102,7 +4102,7 @@ test_status_checkpoint_no_tracks_untracked_group() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
@@ -4177,20 +4177,20 @@ test_status_checkpoint_reset_on_count_drop() {
     fi
     local sb slug dir
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-5.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-5.json" <<'EOF'
 { "golem": "golem-5", "issue": 5, "branch": "feature/issue-5",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
     slug="$(slug_for "$sb/.worktrees/issue-5")"
     dir="$sb/projects/$slug"
-    /usr/bin/mkdir -p "$dir"
+    command mkdir -p "$dir"
     # Sweep 1: a 500-token session establishes the baseline.
-    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"a","usage":{"output_tokens":500}}}' >"$dir/session.jsonl"
+    command printf '%s\n' '{"isSidechain":false,"message":{"id":"a","usage":{"output_tokens":500}}}' >"$dir/session.jsonl"
     run_status_scrape "$sb" --checkpoint
     assert_contains "$RUN_OUT" "500 (first)" "first sweep establishes the 500-token baseline"
     # Sweep 2: a fresh, SMALLER session (count drops 500 -> 50) — a new baseline.
-    /usr/bin/sleep 1
-    /usr/bin/printf '%s\n' '{"isSidechain":false,"message":{"id":"b","usage":{"output_tokens":50}}}' >"$dir/session2.jsonl"
+    command sleep 1
+    command printf '%s\n' '{"isSidechain":false,"message":{"id":"b","usage":{"output_tokens":50}}}' >"$dir/session2.jsonl"
     run_status_scrape "$sb" --checkpoint
     assert_contains "$RUN_OUT" "50 (reset)" "a count drop renders as (reset), a new baseline"
     assert_not_contains "$RUN_OUT" "(+-" "a drop never renders a negative signed delta"
@@ -4211,26 +4211,26 @@ test_status_checkpoint_session_gone_marker() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "blocking": false }
 EOF
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-99.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-99.json" <<'EOF'
 { "golem": "golem-99", "issue": 99, "branch": "feature/issue-99",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
     # A tmux stub that lists ONLY golem-42 alive (golem-99's session is gone).
     # golem-status.sh scans `tmux ls | grep -oE '^golem-[0-9]+'`, so the stub
     # prints one matching line for `ls` and nothing for other subcommands.
-    /usr/bin/mkdir -p "$sb/bin"
-    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
     ls) printf 'golem-42: 1 windows\n' ;;
 esac
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/bin/tmux"
+    command chmod +x "$sb/bin/tmux"
     # --unset=BASH_ENV: in the devcontainer BASH_ENV points at /etc/bash_env,
     # which resets $PATH on non-interactive bash and would shadow the stub tmux
     # with the real one (see the devcontainer-bash-env-path-reset note).
@@ -4268,7 +4268,7 @@ test_status_checkpoint_corrupt_prev_tokens_no_drop() {
     local sb
     new_sandbox sb
     # Seed a cache row whose persisted count is a corrupt string ("089").
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-8.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-8.json" <<'EOF'
 { "golem": "golem-8", "issue": 8, "branch": "feature/issue-8",
   "state": "working", "phase": "implement", "blocking": false,
   "top_level_tokens": "089", "top_level_tokens_at": "2026-07-19T00:00:00Z" }
@@ -4285,7 +4285,7 @@ EOF
     # An OVERFLOW-sized persisted value (>18 digits, past bash's signed 64-bit
     # range) must also degrade to a safe 'first' reading — NOT throw "integer
     # expression expected" and misclassify as frozen (a false #369 takeover signal).
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-8.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-8.json" <<'EOF'
 { "golem": "golem-8", "issue": 8, "branch": "feature/issue-8",
   "state": "working", "phase": "implement", "blocking": false,
   "top_level_tokens": 99999999999999999999999999999, "top_level_tokens_at": "2026-07-19T00:00:00Z" }
@@ -4305,7 +4305,7 @@ test_status_checkpoint_stage_prefers_phase_detail() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-7.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-7.json" <<'EOF'
 { "golem": "golem-7", "issue": 7, "branch": "feature/issue-7",
   "state": "working", "phase": "implement", "phase_detail": "loop:make-it-tested",
   "blocking": false }
@@ -4325,11 +4325,11 @@ test_status_checkpoint_ci_and_shipped_markers() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-11.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-11.json" <<'EOF'
 { "golem": "golem-11", "issue": 11, "branch": "feature/issue-11",
   "state": "ci-failing", "phase": "implement", "blocking": false }
 EOF
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-12.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-12.json" <<'EOF'
 { "golem": "golem-12", "issue": 12, "branch": "feature/issue-12",
   "state": "merged", "phase": "ship", "blocking": false }
 EOF
@@ -4349,11 +4349,11 @@ test_status_checkpoint_container_and_unknown_tokens() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false }
 EOF
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-77.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-77.json" <<'EOF'
 { "golem": "golem-77", "issue": 77, "branch": "feature/issue-77",
   "state": "working", "blocking": false }
 EOF
@@ -4378,7 +4378,7 @@ test_status_checkpoint_container_populated_tokens() {
         skip_test "date toolchain cannot seed an ISO anchor"
         return 0
     fi
-    /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+    command cat >"$sb/.worktrees/.status/agent01.json" <<EOF
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false,
   "top_level_tokens": 4242, "top_level_tokens_at": "$anchor" }
@@ -4410,7 +4410,7 @@ test_status_checkpoint_elapsed_from_started() {
         skip_test "date could not compute a past anchor"
         return 0
     fi
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<EOF
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "review-cycle", "phase": "ship", "blocking": false,
   "started": "$anchor" }
@@ -4420,7 +4420,7 @@ EOF
     assert_exit 0 "$RUN_RC" "golem-status --checkpoint with a .started anchor exits 0"
     # ~130s → 2m (well past the 60s boundary, so a few seconds of test latency
     # can't flip the arm). Match the render form, not an exact minute count.
-    assert_true "printf '%s' \"\$RUN_OUT\" | /usr/bin/grep -Eq '[0-9]+m'" \
+    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '[0-9]+m'" \
         "ELAPSED renders a real minutes duration derived from .started"
     assert_not_contains "$RUN_OUT" "frozen 0m" "a >60s elapsed never rounds to 0m"
 }
@@ -4446,11 +4446,11 @@ test_status_checkpoint_empty_and_no_jq_guards() {
     # cache row (so the empty-state guard is passed and the jq gate is the sole
     # reason the table is skipped).
     shim="$sb/shim"
-    /usr/bin/mkdir -p "$shim"
+    command mkdir -p "$shim"
     for t in git dirname env date mktemp mv rm tmux bash sh; do
-        tp="$(command -v "$t" 2>/dev/null)" && /usr/bin/ln -s "$tp" "$shim/$t"
+        tp="$(command -v "$t" 2>/dev/null)" && command ln -s "$tp" "$shim/$t"
     done
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "blocking": false }
 EOF
@@ -4484,11 +4484,11 @@ test_status_checkpoint_pool_header() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
-    /usr/bin/cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/pool.json" <<'EOF'
 { "size": 3, "slots": [42, 89], "backlog_depth": 5, "queue": "open" }
 EOF
     run_status_scrape "$sb" --checkpoint
@@ -4513,20 +4513,20 @@ test_status_checkpoint_live_tail_row() {
     local sb
     new_sandbox sb
     # A cache row for a DIFFERENT golem so the table renders; golem-77 has none.
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
     # A tmux stub listing golem-77 alive (no cache file for it → a (live) row).
-    /usr/bin/mkdir -p "$sb/bin"
-    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
     ls) printf 'golem-77: 1 windows\n' ;;
 esac
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/bin/tmux"
+    command chmod +x "$sb/bin/tmux"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -4559,15 +4559,15 @@ test_status_checkpoint_lane_boundary_padding() {
     fi
     local sb
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-4.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-4.json" <<'EOF'
 { "golem": "golem-4", "issue": 4, "branch": "feature/issue-4",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
-    /usr/bin/cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
 { "tracks": [ { "lane": 0, "issues": [42], "autonomy_level": 2 } ] }
 EOF
     run_status_scrape "$sb" --checkpoint
@@ -4576,11 +4576,11 @@ EOF
     # NOT in lane [42], and only a prefix (unpadded) match would pull it in. The
     # golem-4 row (its trailing space disambiguates it from golem-42) must render
     # and its first (TRACK) cell must not be L0.
-    assert_true "/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep -q 'golem-4 '" "golem-4 renders a row"
-    assert_true "! /usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-4 ' | /usr/bin/grep -q '^L0'" \
+    assert_true "command printf '%s\n' \"\$RUN_OUT\" | command grep -q 'golem-4 '" "golem-4 renders a row"
+    assert_true "! command printf '%s\n' \"\$RUN_OUT\" | command grep 'golem-4 ' | command grep -q '^L0'" \
         "golem-4 is NOT pulled into lane 0 (issue 42's lane) by a prefix match"
     # golem-42 IS in lane 0 → its row starts with L0 (proves the lane join works).
-    assert_true "/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-42' | /usr/bin/grep -q '^L0'" \
+    assert_true "command printf '%s\n' \"\$RUN_OUT\" | command grep 'golem-42' | command grep -q '^L0'" \
         "golem-42 IS grouped under its lane (L0)"
 }
 
@@ -4596,17 +4596,17 @@ test_status_checkpoint_derive_stage_fallbacks() {
     local sb
     new_sandbox sb
     # (a) .phase win — no .phase_detail.
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-1.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-1.json" <<'EOF'
 { "golem": "golem-1", "issue": 1, "branch": "feature/issue-1",
   "state": "working", "phase": "implement-phase", "blocking": false }
 EOF
     # (b) .state win — neither .phase_detail nor .phase.
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-2.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-2.json" <<'EOF'
 { "golem": "golem-2", "issue": 2, "branch": "feature/issue-2",
   "state": "state-token", "blocking": false }
 EOF
     # (c) "—" — none of the three Stage sources present.
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-3.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-3.json" <<'EOF'
 { "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
   "blocking": false }
 EOF
@@ -4616,7 +4616,7 @@ EOF
     assert_contains "$RUN_OUT" "state-token" "STAGE falls back to .state when .phase_detail and .phase are absent"
     # golem-3 has no Stage source at all → its STAGE cell is the "—" sentinel. Its
     # STATE is also "—" (no .state), so assert the golem-3 row carries a "—" cell.
-    assert_true "/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-3 ' | /usr/bin/grep -q '—'" \
+    assert_true "command printf '%s\n' \"\$RUN_OUT\" | command grep 'golem-3 ' | command grep -q '—'" \
         "STAGE degrades to — when no .phase_detail/.phase/.state is present"
 }
 
@@ -4642,15 +4642,15 @@ test_status_checkpoint_container_never_gone() {
     # A tmux stub showing a SIBLING golem-42 alive (proving the server is
     # reachable) — the condition under which session_gone would fire for a row
     # with no matching session. The container must be exempt regardless.
-    /usr/bin/mkdir -p "$sb/bin"
-    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
     ls) printf 'golem-42: 1 windows\n' ;;
 esac
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/bin/tmux"
+    command chmod +x "$sb/bin/tmux"
     # Two passes over the SAME scenario: (1) an unposted container (→
     # container-pending token-state) and (2) a populated container (posted
     # top_level_tokens + a valid anchor → the `container` token-state). Both must
@@ -4658,13 +4658,13 @@ EOF
     local _label _cache
     for _label in pending populated; do
         if [ "$_label" = populated ]; then
-            /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<EOF
+            command cat >"$sb/.worktrees/.status/agent01.json" <<EOF
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false,
   "top_level_tokens": 4242, "top_level_tokens_at": "$anchor" }
 EOF
         else
-            /usr/bin/cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
+            command cat >"$sb/.worktrees/.status/agent01.json" <<'EOF'
 { "golem": "agent01", "issue": 300, "container": "proj-agent01-1",
   "branch": "agent01", "state": "working", "blocking": false }
 EOF
@@ -4687,7 +4687,7 @@ EOF
         # The container row keeps its plain state and is never flagged gone. Assert on
         # the agent01 row(s) EXACTLY: zero of them may carry ⚠ gone (a `grep | grep -qv`
         # would pass as soon as ONE line lacked the marker — vacuous with a footer line).
-        assert_true "[ \"\$(/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'agent01' | /usr/bin/grep -c '⚠ gone')\" -eq 0 ]" \
+        assert_true "[ \"\$(command printf '%s\n' \"\$RUN_OUT\" | command grep 'agent01' | command grep -c '⚠ gone')\" -eq 0 ]" \
             "no $_label-container agent01 row is flagged ⚠ gone (both token-states exempt from session_gone)"
     done
 }
@@ -4704,21 +4704,21 @@ test_status_checkpoint_issueless_row_not_gone() {
     local sb
     new_sandbox sb
     # A cache row with NO issue field → .issue falls back to "?".
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-mystery.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-mystery.json" <<'EOF'
 { "golem": "golem-mystery", "branch": "feature/mystery",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
     # A tmux stub with a live sibling golem-42 — the exact condition under which
     # the "?"-as-wildcard glob would false-match and flag the issue-less row gone.
-    /usr/bin/mkdir -p "$sb/bin"
-    /usr/bin/cat >"$sb/bin/tmux" <<'EOF'
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
     ls) printf 'golem-42: 1 windows\n' ;;
 esac
 exit 0
 EOF
-    /usr/bin/chmod +x "$sb/bin/tmux"
+    command chmod +x "$sb/bin/tmux"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -4736,7 +4736,7 @@ EOF
     assert_contains "$RUN_OUT" "golem-mystery" "the issue-less golem still renders its row"
     # Zero golem-mystery rows may carry ⚠ gone — an exact count, not a `grep -qv`
     # that would pass on the first non-matching line (vacuous with a footer line).
-    assert_true "[ \"\$(/usr/bin/printf '%s\n' \"\$RUN_OUT\" | /usr/bin/grep 'golem-mystery' | /usr/bin/grep -c '⚠ gone')\" -eq 0 ]" \
+    assert_true "[ \"\$(command printf '%s\n' \"\$RUN_OUT\" | command grep 'golem-mystery' | command grep -c '⚠ gone')\" -eq 0 ]" \
         "no issue-less (?) row is spuriously flagged ⚠ gone by the wildcard glob"
 }
 
@@ -4751,13 +4751,13 @@ test_status_checkpoint_double_lane_claim_dedup() {
     fi
     local sb count
     new_sandbox sb
-    /usr/bin/cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
 { "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
   "state": "working", "phase": "implement", "blocking": false }
 EOF
     # Issue 42 listed under BOTH lane 0 and lane 1 (malformed) — the dedup guard
     # must emit the row once, under the FIRST lane that claims it (L0).
-    /usr/bin/cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
 { "tracks": [ { "lane": 0, "issues": [42], "autonomy_level": 2 },
               { "lane": 1, "issues": [42], "autonomy_level": 3 } ] }
 EOF
@@ -4765,7 +4765,7 @@ EOF
     run_status_scrape "$sb" --checkpoint
     assert_exit 0 "$RUN_RC" "--checkpoint with a double-claimed issue exits 0"
     # The golem-42 row appears exactly once, not once per claiming lane.
-    count="$(/usr/bin/printf '%s\n' "$RUN_OUT" | /usr/bin/grep -c 'golem-42')"
+    count="$(command printf '%s\n' "$RUN_OUT" | command grep -c 'golem-42')"
     assert_true "[ '$count' -eq 1 ]" "golem-42 renders exactly once despite two lane claims (got $count)"
     # Its 150 tokens are counted once, not doubled to 300 in the batch total.
     assert_contains "$RUN_OUT" "tokens=150" "the double-claimed golem's tokens are summed once, not doubled"
@@ -4780,7 +4780,7 @@ EOF
 # markdown-fence indent so the body runs as standalone Python. Mirrors
 # validate-template-sync.sh's inline-extraction approach.
 extract_write_status_py() {
-    /usr/bin/awk '
+    command awk '
         /LA="\$\(now\)" command python3 - "\$STATUS_FILE" <<'"'"'PY'"'"'/ { grab = 1; next }
         grab && /^   PY$/ { exit }
         grab { sub(/^   /, ""); print }
@@ -4831,7 +4831,7 @@ test_provision_write_status_started_idempotent() {
     # again for issue 300, and confirm they survive (else the fleet monitor's
     # CI/PR columns would blank on every in-flight poll).
     jq '. + {pr:321, ci:"passing", review:"approved", blocking:false}' \
-        "$status_file" >"$status_file.tmp" && /usr/bin/mv "$status_file.tmp" "$status_file"
+        "$status_file" >"$status_file.tmp" && command mv "$status_file.tmp" "$status_file"
     AGENT_ID=agent01 ISSUE=300 STATE=pr-open ERR="" LA="2026-06-16T12:00:00Z" \
         python3 -c "$body" "$status_file"
     assert_true "[ \"\$(jq -r '.pr // \"null\"' '$status_file' 2>/dev/null)\" = '321' ]" \
@@ -4873,7 +4873,7 @@ test_provision_write_status_issue_reassignment_resets_stale_fields() {
     jq '. + {pr:555, ci:"failing", review:"changes-requested", blocking:true,
              errors:["boom: previous issue failure"],
              container:"proj-agent01-1", branch:"agent01"}' \
-        "$status_file" >"$status_file.tmp" && /usr/bin/mv "$status_file.tmp" "$status_file"
+        "$status_file" >"$status_file.tmp" && command mv "$status_file.tmp" "$status_file"
     # Reassign the SAME slot to issue 999 (no teardown between).
     AGENT_ID=agent01 ISSUE=999 STATE=working ERR="" LA="2026-09-01T09:00:00Z" \
         python3 -c "$body" "$status_file"
@@ -4975,7 +4975,7 @@ run_test test_worktree_new_scrubs_git_config_injection_for_mutations "worktree-n
 run_test test_worktree_new_from_submodule_placement_under_taint "worktree-new: from inside a submodule UNDER a tainted git env lands worktree + branch at <super>, not .git/modules or the outer repo (#365, #338, #328)"
 run_test test_worktree_new_readonly_tainted_git_env_fails_loud "worktree-new: aborts fail-loud (non-zero, no mutation) under a readonly-tainted GIT_DIR (#368)"
 run_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
-run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not /usr/bin/git (#278)"
+run_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
 run_test test_config_repo_root_relative_common_dir "config.sh: repo_root absolutizes a relative common dir via command pwd (#278)"
 run_test test_config_repo_root_scrubs_tainted_git_env "config.sh: repo_root scrubs a tainted GIT_DIR/GIT_COMMON_DIR (#279)"

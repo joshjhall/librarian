@@ -6,4 +6,4 @@ set -euo pipefail
 
 file="${1:-}"
 line="1"
-/usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "alpha-finding" "demo" "HIGH"
+command printf '%s\t%s\t%s\t%s\t%s\n' "$file" "$line" "alpha-finding" "demo" "HIGH"

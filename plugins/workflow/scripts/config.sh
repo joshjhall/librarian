@@ -2,7 +2,7 @@
 # config.sh — shared, env-overridable configuration for the workflow plugin's
 # bundled golem/worktree scripts. Source this near the top of every script:
 #
-#     SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+#     SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 #     # shellcheck source=./config.sh
 #     . "$SCRIPT_DIR/config.sh"
 #
@@ -285,7 +285,7 @@ _git_env_scrub_names() {
 # only `git` on PATH, #278) keeps working. On a readonly GIT_* var `unset` FAILS,
 # so fall back to `env -u`, which UNEXPORTS the vars for the git child regardless
 # of the readonly attribute — `repo_root()` then still resolves the real root
-# rather than the tainted one. `env` (and git) are PATH-resolved (`command env` /
+# rather than the tainted one. `env` (and git) are PATH-resolved (`env` /
 # the child `git`), matching #278's no-hardcoded-/usr/bin rule; env is reached
 # ONLY on the readonly path, never in the common case.
 #

@@ -45,11 +45,11 @@ fi
 
 FILE_LIST="${1:-}"
 if [ -z "$FILE_LIST" ]; then
-    /usr/bin/printf '%s\n' "Usage: agnix-normalize.sh <file-list>" >&2
+    command printf '%s\n' "Usage: agnix-normalize.sh <file-list>" >&2
     exit 1
 fi
 if [ ! -f "$FILE_LIST" ]; then
-    /usr/bin/printf '%s\n' "Error: file list not found: $FILE_LIST" >&2
+    command printf '%s\n' "Error: file list not found: $FILE_LIST" >&2
     exit 1
 fi
 
@@ -59,7 +59,7 @@ AGNIX_BIN="${AGNIX_BIN:-agnix}"
 # Accept either a PATH-resolvable name or a direct executable/file path (the test
 # stub and AGNIX_CONFIG posture both pass explicit paths).
 if ! command -v "$AGNIX_BIN" >/dev/null 2>&1 && [ ! -f "$AGNIX_BIN" ]; then
-    /usr/bin/printf '%s\n' "[skip] agnix-normalize: agnix binary not found (AGNIX_BIN=$AGNIX_BIN); floor pre-scan stands alone" >&2
+    command printf '%s\n' "[skip] agnix-normalize: agnix binary not found (AGNIX_BIN=$AGNIX_BIN); floor pre-scan stands alone" >&2
     exit 0
 fi
 
@@ -84,7 +84,7 @@ fi
 
 # agnix present but jq missing -> fail loud (the bash path parses JSON with jq).
 if ! command -v jq >/dev/null 2>&1; then
-    /usr/bin/printf '%s\n' "agnix-normalize: jq is required for the bash fallback but was not found" >&2
+    command printf '%s\n' "agnix-normalize: jq is required for the bash fallback but was not found" >&2
     exit 2
 fi
 
@@ -106,9 +106,9 @@ else
 fi
 
 # Fail loud on empty output (agnix could not run usefully).
-_trimmed="$(/usr/bin/printf '%s' "$AGNIX_OUT" | /usr/bin/tr -d '[:space:]')"
+_trimmed="$(command printf '%s' "$AGNIX_OUT" | command tr -d '[:space:]')"
 if [ -z "$_trimmed" ]; then
-    /usr/bin/printf '%s\n' "agnix-normalize: agnix produced no JSON output" >&2
+    command printf '%s\n' "agnix-normalize: agnix produced no JSON output" >&2
     exit 2
 fi
 
@@ -157,14 +157,14 @@ if type != "object" then error("not an object") else . end
 # fails loud with NO partial rows on stdout, matching the Python primary's
 # fail-loud-before-output contract. Capture the rc without `set -e` aborting.
 _jq_rc=0
-_jq_out="$(/usr/bin/printf '%s' "$AGNIX_OUT" | jq -r "$JQ_PROG" 2>/dev/null)" || _jq_rc=$?
+_jq_out="$(command printf '%s' "$AGNIX_OUT" | jq -r "$JQ_PROG" 2>/dev/null)" || _jq_rc=$?
 if [ "$_jq_rc" -ne 0 ]; then
-    /usr/bin/printf '%s\n' "agnix-normalize: could not parse agnix JSON" >&2
+    command printf '%s\n' "agnix-normalize: could not parse agnix JSON" >&2
     exit 2
 fi
 # Only print when there is something (an empty buffer must not emit a blank line).
 if [ -n "$_jq_out" ]; then
-    /usr/bin/printf '%s\n' "$_jq_out"
+    command printf '%s\n' "$_jq_out"
 fi
 
 exit 0

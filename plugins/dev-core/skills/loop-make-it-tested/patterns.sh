@@ -42,7 +42,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -55,7 +55,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -67,8 +67,8 @@ while IFS= read -r file; do
         *test* | *spec* | *__pycache__* | *.md | *.yml | *.yaml | *.json | *.toml) continue ;;
     esac
 
-    basename=$(/usr/bin/basename "$file")
-    dirname=$(/usr/bin/dirname "$file")
+    basename=$(command basename "$file")
+    dirname=$(command dirname "$file")
     name_no_ext="${basename%.*}"
     ext="${basename##*.}"
 
@@ -109,7 +109,7 @@ while IFS= read -r file; do
             ;;
         rs)
             # Rust: check for mod tests in same file or tests/ directory
-            if /usr/bin/grep -q '#\[cfg(test)\]' "$file" 2>/dev/null; then
+            if command grep -q '#\[cfg(test)\]' "$file" 2>/dev/null; then
                 has_test=true
             elif [ -d "${dirname}/../tests" ]; then
                 has_test=true
@@ -118,7 +118,7 @@ while IFS= read -r file; do
     esac
 
     if [ "$has_test" = "false" ]; then
-        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+        command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "missing-test-file" \
             "No test file found for ${basename}" "HIGH"
     fi
@@ -128,13 +128,13 @@ while IFS= read -r file; do
     case "$ext" in
         py)
             # Public functions (not starting with _)
-            /usr/bin/grep -nE '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
+            command grep -nE '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    func_name=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
+                    func_name=$(command printf '%s' "$content" | command sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
                     # Check if this function appears in any test file nearby
-                    if ! /usr/bin/grep -rql "\b${func_name}\b" "${dirname}"/test_*.py "${dirname}"/tests/test_*.py 2>/dev/null; then
+                    if ! command grep -rql "\b${func_name}\b" "${dirname}"/test_*.py "${dirname}"/tests/test_*.py 2>/dev/null; then
                         evidence=$(truncate_chars 60 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \
                             "No tests reference ${func_name}: ${evidence}" "HIGH"
                     fi
@@ -142,13 +142,13 @@ while IFS= read -r file; do
             ;;
         go)
             # Exported functions (capitalized)
-            /usr/bin/grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
+            command grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    func_name=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
+                    func_name=$(command printf '%s' "$content" | command sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     test_file="${dirname}/${name_no_ext}_test.go"
-                    if [ -f "$test_file" ] && ! /usr/bin/grep -q "\b${func_name}\b" "$test_file" 2>/dev/null; then
+                    if [ -f "$test_file" ] && ! command grep -q "\b${func_name}\b" "$test_file" 2>/dev/null; then
                         evidence=$(truncate_chars 60 "$content")
-                        /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \
                             "No tests reference ${func_name}: ${evidence}" "HIGH"
                     fi

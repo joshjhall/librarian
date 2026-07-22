@@ -42,7 +42,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -55,7 +55,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -67,7 +67,7 @@ while IFS= read -r file; do
         *test* | *spec* | *__pycache__* | *.md | *.yml | *.yaml | *.json | *.toml | *.lock) continue ;;
     esac
 
-    basename=$(/usr/bin/basename "$file")
+    basename=$(command basename "$file")
     ext="${basename##*.}"
 
     case "$ext" in
@@ -77,7 +77,7 @@ while IFS= read -r file; do
             # and the char-aware bash helper truncates rawtext, matching the
             # python primary on multibyte defs/classes (#17 equivalence). rawtext
             # is the trailing field so a `read -r cat line rawtext` keeps it whole.
-            /usr/bin/awk '
+            command awk '
                 /^def [a-zA-Z][a-zA-Z0-9_]*\(/ {
                     func_line = NR
                     func_text = $0
@@ -99,26 +99,26 @@ while IFS= read -r file; do
             ' "$file" 2>/dev/null |
                 while IFS=$'\t' read -r category line_num rawtext; do
                     evidence=$(truncate_chars 60 "$rawtext")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "$category" \
                         "No docstring: ${evidence}" "HIGH"
                 done || true
             ;;
         ts | js | tsx | jsx)
             # --- TypeScript/JavaScript: exported functions without JSDoc ---
-            /usr/bin/grep -n '^export\s\+\(async\s\+\)\?function\s\+\w\+\|^export\s\+\(default\s\+\)\?class\s\+\w\+' "$file" 2>/dev/null |
+            command grep -n '^export\s\+\(async\s\+\)\?function\s\+\w\+\|^export\s\+\(default\s\+\)\?class\s\+\w\+' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     # Check if preceded by JSDoc comment (/** ... */)
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
-                        prev_content=$(/usr/bin/sed -n "${prev_line}p" "$file")
-                        if ! /usr/bin/printf '%s' "$prev_content" | /usr/bin/grep -qE '^\s*\*/' 2>/dev/null; then
+                        prev_content=$(command sed -n "${prev_line}p" "$file")
+                        if ! command printf '%s' "$prev_content" | command grep -qE '^\s*\*/' 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
                             category="undocumented-export"
-                            if /usr/bin/printf '%s' "$content" | /usr/bin/grep -q 'class' 2>/dev/null; then
+                            if command printf '%s' "$content" | command grep -q 'class' 2>/dev/null; then
                                 category="undocumented-public-class"
                             fi
-                            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                            command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "$category" \
                                 "No JSDoc: ${evidence}" "HIGH"
                         fi
@@ -130,15 +130,15 @@ while IFS= read -r file; do
             # grep -nE (extended regex): the pattern uses `\(` for a literal
             # paren, which in a BASIC regex opens an unclosed group (grep errors,
             # matches nothing). With -E the arm actually runs (#183; it was dead).
-            /usr/bin/grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
+            command grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
-                    func_name=$(/usr/bin/printf '%s' "$content" | /usr/bin/sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
+                    func_name=$(command printf '%s' "$content" | command sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
-                        prev_content=$(/usr/bin/sed -n "${prev_line}p" "$file")
-                        if ! /usr/bin/printf '%s' "$prev_content" | /usr/bin/grep -qE "^// ${func_name}" 2>/dev/null; then
+                        prev_content=$(command sed -n "${prev_line}p" "$file")
+                        if ! command printf '%s' "$prev_content" | command grep -qE "^// ${func_name}" 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
-                            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                            command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-export" \
                                 "No GoDoc for ${func_name}: ${evidence}" "HIGH"
                         fi
@@ -147,14 +147,14 @@ while IFS= read -r file; do
             ;;
         sh | bash)
             # --- Shell: functions without usage comment ---
-            /usr/bin/grep -n '^\w\+()' "$file" 2>/dev/null |
+            command grep -n '^\w\+()' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
-                        prev_content=$(/usr/bin/sed -n "${prev_line}p" "$file")
-                        if ! /usr/bin/printf '%s' "$prev_content" | /usr/bin/grep -qE '^\s*#' 2>/dev/null; then
+                        prev_content=$(command sed -n "${prev_line}p" "$file")
+                        if ! command printf '%s' "$prev_content" | command grep -qE '^\s*#' 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
-                            /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                            command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-function" \
                                 "No comment before function: ${evidence}" "HIGH"
                         fi

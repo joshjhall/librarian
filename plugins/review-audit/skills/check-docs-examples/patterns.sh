@@ -23,7 +23,7 @@ fi
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | /usr/bin/grep -qixF "$_cand"; then
+    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -36,7 +36,7 @@ truncate_chars() {
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
     else
-        /usr/bin/printf "%.${n}s" "$s"
+        command printf "%.${n}s" "$s"
     fi
 }
 
@@ -50,7 +50,7 @@ if [ "${PATTERNS_FORCE_BASH:-0}" != "1" ] && [ -f "$_here/patterns.py" ] &&
     exec python3 "$_here/patterns.py" "$@"
 fi
 
-PROJECT_ROOT=$(/usr/bin/git rev-parse --show-toplevel 2>/dev/null || /usr/bin/echo ".")
+PROJECT_ROOT=$(command git rev-parse --show-toplevel 2>/dev/null || command echo ".")
 
 while IFS= read -r file; do
     [ -f "$file" ] || continue
@@ -109,10 +109,10 @@ while IFS= read -r file; do
             # match makes this command substitution non-zero and aborts the
             # WHOLE scan mid-file (silently dropping every later finding). The
             # empty result is already handled by the `[ -n "$module" ]` guard.
-            module=$(/usr/bin/echo "$line" | /usr/bin/grep -oE '^(from|import) [a-zA-Z_][a-zA-Z0-9_.]*' | /usr/bin/awk '{print $2}' | /usr/bin/head -1 || true)
+            module=$(command echo "$line" | command grep -oE '^(from|import) [a-zA-Z_][a-zA-Z0-9_.]*' | command awk '{print $2}' | command head -1 || true)
             if [ -n "$module" ]; then
                 # Convert module path to file path
-                module_path=$(/usr/bin/echo "$module" | /usr/bin/sed 's/\./\//g')
+                module_path=$(command echo "$module" | command sed 's/\./\//g')
                 # Check if the module exists as a file or directory
                 if [ ! -f "${PROJECT_ROOT}/${module_path}.py" ] &&
                     [ ! -f "${PROJECT_ROOT}/${module_path}/__init__.py" ] &&
@@ -124,7 +124,7 @@ while IFS= read -r file; do
                             flask | django | fastapi | requests | numpy | pandas | click | pydantic) continue ;;
                     esac
                     evidence=$(truncate_chars 80 "Import not found in project: ${line}")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "broken-example" \
                         "$evidence" "HIGH"
                 fi
@@ -137,11 +137,11 @@ while IFS= read -r file; do
             # same reason as the python arm above — a no-match grep here would
             # otherwise abort the whole scan under `set -e` (a shell code block
             # line without a `.sh` reference is common). Guarded by `[ -n "$script" ]`.
-            script=$(/usr/bin/echo "$line" | /usr/bin/grep -oE '(\./|bash |sh )[a-zA-Z0-9_./-]+\.sh' | /usr/bin/sed 's/^bash //' | /usr/bin/sed 's/^sh //' | /usr/bin/head -1 || true)
+            script=$(command echo "$line" | command grep -oE '(\./|bash |sh )[a-zA-Z0-9_./-]+\.sh' | command sed 's/^bash //' | command sed 's/^sh //' | command head -1 || true)
             if [ -n "$script" ]; then
                 if [ ! -f "${PROJECT_ROOT}/${script}" ]; then
                     evidence=$(truncate_chars 80 "Script not found: ${script}")
-                    /usr/bin/printf '%s\t%s\t%s\t%s\t%s\n' \
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "broken-example" \
                         "$evidence" "HIGH"
                 fi

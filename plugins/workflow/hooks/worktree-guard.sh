@@ -87,8 +87,40 @@ set -uo pipefail
 
 DIAG_TAG="librarian-worktree-guard"
 
+# --- Portable tool resolution (#443) ----------------------------------------
+# Claude Code invokes PreToolUse hooks with a potentially minimal environment, so
+# this hook historically hardcoded /usr/bin/<tool> to survive a stripped PATH.
+# But those absolute paths are WRONG on macOS (core utils in /bin, no
+# /usr/bin/realpath) and hard-crash the hook there. `_bin <tool>` reconciles
+# both: it honors PATH first (via the `command -v` builtin, which needs no
+# external binary — correct on macOS/Homebrew/normal shells), then falls back to
+# scanning the standard bin dirs so it still resolves when PATH is stripped, and
+# finally yields the bare name (let the shell's own PATH try). The candidate list
+# is bare DIRECTORIES, not /usr/bin/<tool> literals, so
+# tests/lint-shell-portability.sh's #443 ban does not flag them. Each tool is
+# resolved ONCE into an explicit var below (no dynamic var names → no dependency
+# on `tr`, which itself would need resolving).
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+# Resolve the tools this hook uses, once, at load.
+CAT="$(_bin cat)"
+SED="$(_bin sed)"
+HEAD="$(_bin head)"
+TR="$(_bin tr)"
+
 # --- Read stdin -------------------------------------------------------------
-payload="$(/bin/cat 2>/dev/null || true)"
+payload="$("$CAT" 2>/dev/null || true)"
 if [ -z "$payload" ]; then
     printf '%s: empty PreToolUse input; NOT enforcing (fail-open)\n' "$DIAG_TAG" >&2
     exit 0
@@ -128,15 +160,15 @@ if [ "$have_fields" -eq 0 ]; then
     # the no-jq fallback ONLY. Paths with embedded quotes are pathological; the jq
     # path (present in every normal deployment) handles the exact bytes.
     cwd="$(printf '%s' "$payload" |
-        /usr/bin/sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-        /usr/bin/head -n1)"
+        "$SED" -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        "$HEAD" -n1)"
     target="$(printf '%s' "$payload" |
-        /usr/bin/sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-        /usr/bin/head -n1)"
+        "$SED" -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        "$HEAD" -n1)"
     if [ -z "$target" ]; then
         target="$(printf '%s' "$payload" |
-            /usr/bin/sed -n 's/.*"notebook_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-            /usr/bin/head -n1)"
+            "$SED" -n 's/.*"notebook_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+            "$HEAD" -n1)"
     fi
     if [ -z "$target" ]; then
         printf '%s: could not parse a target path from PreToolUse input; NOT enforcing (fail-open)\n' "$DIAG_TAG" >&2
@@ -287,7 +319,7 @@ fi
 # No jq: hand-roll the deny envelope. Sanitize the reason (drop backslashes and
 # control chars that can't be JSON-escaped without a real encoder, then escape
 # double quotes) so the output stays valid JSON.
-reason_safe="$(printf '%s' "${reason//\\/}" | /usr/bin/tr -d '[:cntrl:]')"
+reason_safe="$(printf '%s' "${reason//\\/}" | "$TR" -d '[:cntrl:]')"
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
     "${reason_safe//\"/\\\"}"
 exit 0

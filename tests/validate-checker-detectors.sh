@@ -47,8 +47,8 @@ if command -v python3 >/dev/null 2>&1 &&
     HAVE_PY=1
 fi
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # --- Scanner drivers ---------------------------------------------------------
 # run_py CAT LIST [ENV...] — python impl rows for one category. Extra args are
@@ -58,7 +58,7 @@ run_py() {
     shift 2
     [ "$HAVE_PY" -eq 1 ] || return 0
     /usr/bin/env "$@" python3 "$PY" "$list" 2>/dev/null |
-        /usr/bin/awk -F '\t' -v c="$cat" '$3 == c'
+        command awk -F '\t' -v c="$cat" '$3 == c'
 }
 
 # run_sh CAT LIST [ENV...] — bash fallback rows for one category (forced bash).
@@ -66,19 +66,19 @@ run_sh() {
     local cat="$1" list="$2"
     shift 2
     /usr/bin/env PATTERNS_FORCE_BASH=1 "$@" "$REAL_BASH" "$SH" "$list" 2>/dev/null |
-        /usr/bin/awk -F '\t' -v c="$cat" '$3 == c'
+        command awk -F '\t' -v c="$cat" '$3 == c'
 }
 
 # list_of PATH... — write a newline file list into WORKDIR, echo its path.
 list_of() {
     local lf
-    lf="$(/usr/bin/mktemp "$WORKDIR/list.XXXXXX")"
-    /usr/bin/printf '%s\n' "$@" >"$lf"
-    /usr/bin/printf '%s\n' "$lf"
+    lf="$(command mktemp "$WORKDIR/list.XXXXXX")"
+    command printf '%s\n' "$@" >"$lf"
+    command printf '%s\n' "$lf"
 }
 
 # fresh_dir — unique scratch dir per fixture so path globs match cleanly.
-fresh_dir() { /usr/bin/mktemp -d "$WORKDIR/case.XXXXXX"; }
+fresh_dir() { command mktemp -d "$WORKDIR/case.XXXXXX"; }
 
 # assert_fires CAT LIST NEEDLE MSG [ENV...] — the category fires (contains NEEDLE)
 # in BOTH impls. Python side is skipped (not failed) when python3 is absent.
@@ -115,26 +115,26 @@ test_agent_frontmatter() {
     d="$(fresh_dir)"
 
     # Wrong basename: agents/foo/bar.md (expected foo.md).
-    /usr/bin/mkdir -p "$d/agents/foo"
+    command mkdir -p "$d/agents/foo"
     f="$d/agents/foo/bar.md"
-    /usr/bin/printf '%s\n' "---" "name: x" "description: y" "tools: Read" "model: opus" "---" >"$f"
+    command printf '%s\n' "---" "name: x" "description: y" "tools: Read" "model: opus" "---" >"$f"
     list="$(list_of "$f")"
     assert_fires agent-frontmatter "$list" "should be named foo.md" \
         "agent-frontmatter: wrong basename flagged"
 
     # Missing opening frontmatter fence.
-    /usr/bin/mkdir -p "$d/agents/nofm"
+    command mkdir -p "$d/agents/nofm"
     f="$d/agents/nofm/nofm.md"
-    /usr/bin/printf '%s\n' "# Just a heading" "no frontmatter here" >"$f"
+    command printf '%s\n' "# Just a heading" "no frontmatter here" >"$f"
     list="$(list_of "$f")"
     assert_fires agent-frontmatter "$list" "Missing YAML frontmatter" \
         "agent-frontmatter: missing opening --- flagged"
 
     # Present frontmatter missing all four required fields. Both impls now report
     # (bash's get_frontmatter no longer crashes on a missing field — #205 fixed).
-    /usr/bin/mkdir -p "$d/agents/bare"
+    command mkdir -p "$d/agents/bare"
     f="$d/agents/bare/bare.md"
-    /usr/bin/printf '%s\n' "---" "unrelated: value" "---" "body" >"$f"
+    command printf '%s\n' "---" "unrelated: value" "---" "body" >"$f"
     list="$(list_of "$f")"
     assert_fires agent-frontmatter "$list" "field: name" \
         "agent-frontmatter: missing name flagged"
@@ -146,25 +146,25 @@ test_agent_frontmatter() {
         "agent-frontmatter: missing model flagged"
 
     # Invalid model value.
-    /usr/bin/mkdir -p "$d/agents/badmodel"
+    command mkdir -p "$d/agents/badmodel"
     f="$d/agents/badmodel/badmodel.md"
-    /usr/bin/printf '%s\n' "---" "name: x" "description: y" "tools: Read" "model: gpt4" "---" >"$f"
+    command printf '%s\n' "---" "name: x" "description: y" "tools: Read" "model: gpt4" "---" >"$f"
     list="$(list_of "$f")"
     assert_fires agent-frontmatter "$list" "Invalid model value: gpt4" \
         "agent-frontmatter: invalid model flagged"
 
     # Wildcard tools (MEDIUM).
-    /usr/bin/mkdir -p "$d/agents/wild"
+    command mkdir -p "$d/agents/wild"
     f="$d/agents/wild/wild.md"
-    /usr/bin/printf '%s\n' "---" "name: x" "description: y" "tools: '*'" "model: opus" "---" >"$f"
+    command printf '%s\n' "---" "name: x" "description: y" "tools: '*'" "model: opus" "---" >"$f"
     list="$(list_of "$f")"
     assert_fires agent-frontmatter "$list" "wildcard tools" \
         "agent-frontmatter: wildcard tools flagged"
 
     # Counter: a fully-valid agent file emits nothing.
-    /usr/bin/mkdir -p "$d/agents/good"
+    command mkdir -p "$d/agents/good"
     f="$d/agents/good/good.md"
-    /usr/bin/printf '%s\n' "---" "name: good" "description: A well-formed agent." \
+    command printf '%s\n' "---" "name: good" "description: A well-formed agent." \
         "tools: Read, Grep" "model: sonnet" "---" "# Good" "body" >"$f"
     list="$(list_of "$f")"
     assert_silent agent-frontmatter "$list" \
@@ -181,9 +181,9 @@ test_skill_frontmatter() {
     # now report all three rows — bash's get_frontmatter no longer crashes on the
     # missing `description` before reaching the section / metadata checks (#205).
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/skills/nodesc"
+    command mkdir -p "$d/skills/nodesc"
     f="$d/skills/nodesc/SKILL.md"
-    /usr/bin/printf '%s\n' "---" "name: nodesc" "---" "Some prose with no section heading." >"$f"
+    command printf '%s\n' "---" "name: nodesc" "---" "Some prose with no section heading." >"$f"
     list="$(list_of "$f")"
     assert_fires skill-frontmatter "$list" "field: description" \
         "skill-frontmatter: missing description flagged"
@@ -194,20 +194,20 @@ test_skill_frontmatter() {
 
     # Missing opening fence.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/skills/nofm"
+    command mkdir -p "$d/skills/nofm"
     f="$d/skills/nofm/SKILL.md"
-    /usr/bin/printf '%s\n' "# No frontmatter" "body" >"$f"
+    command printf '%s\n' "# No frontmatter" "body" >"$f"
     list="$(list_of "$f")"
     assert_fires skill-frontmatter "$list" "Missing YAML frontmatter" \
         "skill-frontmatter: missing opening --- flagged"
 
     # Counter: valid description + structural section + sibling metadata.yml.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/skills/good"
+    command mkdir -p "$d/skills/good"
     f="$d/skills/good/SKILL.md"
-    /usr/bin/printf '%s\n' "---" "description: A well-formed skill." "---" \
+    command printf '%s\n' "---" "description: A well-formed skill." "---" \
         "## Workflow" "1. Do the thing." >"$f"
-    /usr/bin/printf '%s\n' "name: good" >"$d/skills/good/metadata.yml"
+    command printf '%s\n' "name: good" >"$d/skills/good/metadata.yml"
     list="$(list_of "$f")"
     assert_silent skill-frontmatter "$list" \
         "skill-frontmatter: a valid skill (desc + section + metadata) is silent"
@@ -222,7 +222,7 @@ test_ai_file_bloat() {
 
     # 5-line CLAUDE.md with HIGH driven to 3 -> exceeds high (HIGH).
     f="$d/CLAUDE.md"
-    /usr/bin/printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
+    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
     list="$(list_of "$f")"
     assert_fires ai-file-bloat "$list" "exceeds high threshold" \
         "ai-file-bloat: CLAUDE.md over high threshold flagged" \
@@ -239,10 +239,10 @@ test_ai_file_bloat() {
         CLAUDE_MD_WARN=50 CLAUDE_MD_HIGH=99
 
     # SKILL.md threshold arm (separate env family).
-    /usr/bin/mkdir -p "$d/skills/big"
+    command mkdir -p "$d/skills/big"
     f="$d/skills/big/SKILL.md"
-    /usr/bin/printf '%s\n' "---" "description: d" "---" "## Workflow" "a" "b" "c" >"$f"
-    /usr/bin/printf '%s\n' "name: big" >"$d/skills/big/metadata.yml"
+    command printf '%s\n' "---" "description: d" "---" "## Workflow" "a" "b" "c" >"$f"
+    command printf '%s\n' "name: big" >"$d/skills/big/metadata.yml"
     list="$(list_of "$f")"
     assert_fires ai-file-bloat "$list" "skill definition exceeds high threshold" \
         "ai-file-bloat: SKILL.md over high threshold flagged" \
@@ -257,14 +257,14 @@ test_mcp_config() {
     d="$(fresh_dir)"
 
     f="$d/mcp.json"
-    /usr/bin/printf '%s\n' '{' '  "url": "http://evil.example.com/mcp"' '}' >"$f"
+    command printf '%s\n' '{' '  "url": "http://evil.example.com/mcp"' '}' >"$f"
     list="$(list_of "$f")"
     assert_fires mcp-misconfiguration "$list" "Insecure HTTP URL" \
         "mcp-misconfiguration: external http:// flagged"
 
     # Counter: localhost / 127.0.0.1 http:// is allowlisted.
     f="$d/mcp-local.json"
-    /usr/bin/printf '%s\n' '{' '  "a": "http://localhost:8080"' '  ,"b": "http://127.0.0.1:9000"' '}' >"$f"
+    command printf '%s\n' '{' '  "a": "http://localhost:8080"' '  ,"b": "http://127.0.0.1:9000"' '}' >"$f"
     list="$(list_of "$f")"
     assert_silent mcp-misconfiguration "$list" \
         "mcp-misconfiguration: localhost/127.0.0.1 http:// is allowlisted"
@@ -279,11 +279,11 @@ test_hook_safety() {
 
     f="$d/hook.sh"
     {
-        /usr/bin/printf '%s\n' "#!/usr/bin/env bash"
-        /usr/bin/printf '%s\n' "rm -rf /tmp/x"
-        /usr/bin/printf '%s\n' "git reset --hard origin/main"
+        command printf '%s\n' "#!/usr/bin/env bash"
+        command printf '%s\n' "rm -rf /tmp/x"
+        command printf '%s\n' "git reset --hard origin/main"
         # Secret-echo assembled so this test file holds no echo+token on one line.
-        /usr/bin/printf 'echo %s\n' '$GITHUB_TOKEN'
+        command printf 'echo %s\n' '$GITHUB_TOKEN'
     } >"$f"
     list="$(list_of "$f")"
     assert_fires hook-safety "$list" "Destructive command" \
@@ -293,7 +293,7 @@ test_hook_safety() {
 
     # Counter: a benign hook line emits nothing.
     f="$d/benign.sh"
-    /usr/bin/printf '%s\n' "#!/usr/bin/env bash" "echo hello" "ls -la" >"$f"
+    command printf '%s\n' "#!/usr/bin/env bash" "echo hello" "ls -la" >"$f"
     list="$(list_of "$f")"
     assert_silent hook-safety "$list" \
         "hook-safety: a benign hook is silent"
@@ -309,13 +309,13 @@ test_harness_logic() {
     f="$d/workflow.js"
     {
         # ref-collision: three-part template ref with no per-finding #${...}.
-        /usr/bin/printf '%s\n' 'const ref = `${domain}:${file}:${cat}`'
+        command printf '%s\n' 'const ref = `${domain}:${file}:${cat}`'
         # bare agentType (no <plugin>:<name> namespace).
-        /usr/bin/printf "%s\n" "agentType: 'reviewer'"
+        command printf "%s\n" "agentType: 'reviewer'"
         # unsafe interpolation into --dangerously-skip-permissions.
-        /usr/bin/printf '%s\n' 'run(`claude --dangerously-skip-permissions ${task}`)'
+        command printf '%s\n' 'run(`claude --dangerously-skip-permissions ${task}`)'
         # install without a lockfile-only guard.
-        /usr/bin/printf '%s\n' 'sh("npm install")'
+        command printf '%s\n' 'sh("npm install")'
     } >"$f"
     list="$(list_of "$f")"
     assert_fires harness-logic "$list" "ref may collide" \
@@ -330,9 +330,9 @@ test_harness_logic() {
     # Counter: namespaced agentType + lockfile-only install + indexed ref.
     f="$d/safe.workflow.js"
     {
-        /usr/bin/printf '%s\n' 'const ref = `${domain}:${file}:${cat}#${idx}`'
-        /usr/bin/printf "%s\n" "agentType: 'review-audit:checker'"
-        /usr/bin/printf '%s\n' 'sh("npm install --ignore-scripts")'
+        command printf '%s\n' 'const ref = `${domain}:${file}:${cat}#${idx}`'
+        command printf "%s\n" "agentType: 'review-audit:checker'"
+        command printf '%s\n' 'sh("npm install --ignore-scripts")'
     } >"$f"
     list="$(list_of "$f")"
     assert_silent harness-logic "$list" \
@@ -348,9 +348,9 @@ test_doc_file_bloat() {
     local d f list
     d="$(fresh_dir)"
 
-    /usr/bin/mkdir -p "$d/docs"
+    command mkdir -p "$d/docs"
     f="$d/docs/guide.md"
-    /usr/bin/printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
+    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
     list="$(list_of "$f")"
 
     # 5-line docs file, HIGH driven to 3 -> exceeds high (HIGH), under doc-file-bloat.
@@ -382,15 +382,15 @@ test_claude_md_drift() {
 
     # A real target (created) and a ghost target, plus a ${VAR} template, a glob,
     # and a URL — only the ghost path must fire.
-    /usr/bin/mkdir -p "$d/bin"
+    command mkdir -p "$d/bin"
     : >"$d/bin/real.sh"
     f="$d/CLAUDE.md"
     {
-        /usr/bin/printf '%s\n' 'Good ref `bin/real.sh` here.'
-        /usr/bin/printf '%s\n' 'Bad ref `bin/ghost.sh` here.'
-        /usr/bin/printf '%s\n' 'Template `${ROOT}/scripts/x.sh` is skipped.'
-        /usr/bin/printf '%s\n' 'Glob `plugins/*/patterns.sh` is skipped.'
-        /usr/bin/printf '%s\n' 'URL https://x.example/a.md is skipped.'
+        command printf '%s\n' 'Good ref `bin/real.sh` here.'
+        command printf '%s\n' 'Bad ref `bin/ghost.sh` here.'
+        command printf '%s\n' 'Template `${ROOT}/scripts/x.sh` is skipped.'
+        command printf '%s\n' 'Glob `plugins/*/patterns.sh` is skipped.'
+        command printf '%s\n' 'URL https://x.example/a.md is skipped.'
     } >"$f"
     list="$(list_of "$f")"
     assert_fires claude-md-drift "$list" "bin/ghost.sh" \
@@ -398,10 +398,10 @@ test_claude_md_drift() {
 
     # Counter: a CLAUDE.md whose only backtick path exists is silent.
     d="$(fresh_dir)"
-    /usr/bin/mkdir -p "$d/bin"
+    command mkdir -p "$d/bin"
     : >"$d/bin/present.sh"
     f="$d/CLAUDE.md"
-    /usr/bin/printf '%s\n' 'Only ref `bin/present.sh` which exists.' >"$f"
+    command printf '%s\n' 'Only ref `bin/present.sh` which exists.' >"$f"
     list="$(list_of "$f")"
     assert_silent claude-md-drift "$list" \
         "claude-md-drift: an existing backtick path is silent"
@@ -410,8 +410,8 @@ test_claude_md_drift() {
     d="$(fresh_dir)"
     f="$d/CLAUDE.md"
     {
-        /usr/bin/printf '%s\n' 'Template `${ROOT}/scripts/x.sh` only.'
-        /usr/bin/printf '%s\n' 'Glob `plugins/*/patterns.sh` only.'
+        command printf '%s\n' 'Template `${ROOT}/scripts/x.sh` only.'
+        command printf '%s\n' 'Glob `plugins/*/patterns.sh` only.'
     } >"$f"
     list="$(list_of "$f")"
     assert_silent claude-md-drift "$list" \
@@ -428,31 +428,31 @@ test_config_inconsistency() {
     d="$(fresh_dir)"
 
     # A plugins tree with one real agent + one real skill in plugin "demo".
-    /usr/bin/mkdir -p "$d/plugins/demo/agents"
+    command mkdir -p "$d/plugins/demo/agents"
     : >"$d/plugins/demo/agents/checker.md"
-    /usr/bin/mkdir -p "$d/plugins/demo/skills/build"
+    command mkdir -p "$d/plugins/demo/skills/build"
     : >"$d/plugins/demo/skills/build/SKILL.md"
 
     # The scanned skill md cites a real agent, a real skill, a non-plugin token,
     # and a ghost — only the ghost must fire.
-    /usr/bin/mkdir -p "$d/plugins/demo/skills/host"
+    command mkdir -p "$d/plugins/demo/skills/host"
     f="$d/plugins/demo/skills/host/SKILL.md"
     {
-        /usr/bin/printf '%s\n' 'Real agent `demo:checker` ok.'
-        /usr/bin/printf '%s\n' 'Real skill `demo:build` ok.'
-        /usr/bin/printf '%s\n' 'Non-plugin `go:generate` skipped.'
-        /usr/bin/printf '%s\n' 'Ghost `demo:ghost` bad.'
+        command printf '%s\n' 'Real agent `demo:checker` ok.'
+        command printf '%s\n' 'Real skill `demo:build` ok.'
+        command printf '%s\n' 'Non-plugin `go:generate` skipped.'
+        command printf '%s\n' 'Ghost `demo:ghost` bad.'
     } >"$f"
     list="$(list_of "$f")"
     assert_fires config-inconsistency "$list" "demo:ghost" \
         "config-inconsistency: broken plugin:name cross-ref flagged"
 
     # Counter: an agent md citing only resolvable refs is silent.
-    /usr/bin/mkdir -p "$d/plugins/demo/agents"
+    command mkdir -p "$d/plugins/demo/agents"
     f="$d/plugins/demo/agents/clean.md"
     {
-        /usr/bin/printf '%s\n' 'See `demo:checker` and `demo:build`.'
-        /usr/bin/printf '%s\n' 'And `go:generate` (non-plugin, ignored).'
+        command printf '%s\n' 'See `demo:checker` and `demo:build`.'
+        command printf '%s\n' 'And `go:generate` (non-plugin, ignored).'
     } >"$f"
     list="$(list_of "$f")"
     assert_silent config-inconsistency "$list" \

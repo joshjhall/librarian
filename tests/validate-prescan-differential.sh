@@ -40,8 +40,8 @@ if ! command -v python3 >/dev/null 2>&1 ||
     return 0 2>/dev/null || exit 0
 fi
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # --- Corpus 1: the whole librarian-proper tree ------------------------------
 # One path per line; excludes the containers/ submodule (separate repo), VCS

@@ -81,8 +81,8 @@ if command -v python3 >/dev/null 2>&1 &&
     HAVE_PY=1
 fi
 
-WORKDIR="$(/usr/bin/mktemp -d)"
-trap '/usr/bin/rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
 
 # Per-skill directories.
 SK_STALE="$SKILLS_DIR/check-docs-staleness"
@@ -108,7 +108,7 @@ emit_rows() {
             cd "$cwd" &&
                 /usr/bin/env PATTERNS_FORCE_BASH=1 "$@" "$REAL_BASH" "$skill/patterns.sh" "$list" 2>/dev/null
         )
-    fi | /usr/bin/awk -F '\t' -v c="$cat" '$3 == c'
+    fi | command awk -F '\t' -v c="$cat" '$3 == c'
 }
 
 # assert_fires SKILLDIR LIST CWD CAT NEEDLE MSG [ENV...] — the category fires
@@ -139,7 +139,7 @@ assert_silent() {
 }
 
 # fresh_dir — unique scratch dir per fixture so path resolution is clean.
-fresh_dir() { /usr/bin/mktemp -d "$WORKDIR/case.XXXXXX"; }
+fresh_dir() { command mktemp -d "$WORKDIR/case.XXXXXX"; }
 
 # make_list OUTFILE PATH... — write a newline file list, echo its path.
 make_list() {
@@ -148,22 +148,22 @@ make_list() {
     : >"$out"
     local p
     for p in "$@"; do
-        /usr/bin/printf '%s\n' "$p" >>"$out"
+        command printf '%s\n' "$p" >>"$out"
     done
-    /usr/bin/printf '%s' "$out"
+    command printf '%s' "$out"
 }
 
 # new_git_sandbox <varname> — a fresh `git init` sandbox with one seed commit so
 # `git rev-parse --show-toplevel` resolves to the sandbox. Hook env scrubbed.
 new_git_sandbox() {
     local __out="$1" dir
-    dir="$(/usr/bin/mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
+    dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" init -q 2>/dev/null || return 1
+        git -C "$dir" init -q 2>/dev/null || return 1
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" config user.email "test@example.com"
+        git -C "$dir" config user.email "test@example.com"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        /usr/bin/git -C "$dir" config user.name "Test"
+        git -C "$dir" config user.name "Test"
     printf -v "$__out" '%s' "$dir"
 }
 
@@ -178,9 +178,9 @@ test_staleness() {
     # threshold is exactly now (equal is NOT stale -> silent); with =-1 the
     # threshold is now+1 (now < now+1 -> stale -> fires). Same fixture, env flip:
     # a `<` -> `<=` regression flips the silent case to firing.
-    now_ym="$(/usr/bin/date +%Y-%m)"
+    now_ym="$(command date +%Y-%m)"
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Doc last updated ${now_ym}-15 in this release." >"$d/cur.md"
+    command printf '%s\n' "Doc last updated ${now_ym}-15 in this release." >"$d/cur.md"
     list="$(make_list "$d/l" "$d/cur.md")"
     assert_silent "$SK_STALE" "$list" "$WORKDIR" expired-date \
         "staleness: a current-month date is NOT stale at the threshold (equal)" \
@@ -192,7 +192,7 @@ test_staleness() {
 
     # A comfortably-old date fires under the default threshold (12 months).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Originally written 2001-01-15 for v1." >"$d/old.md"
+    command printf '%s\n' "Originally written 2001-01-15 for v1." >"$d/old.md"
     list="$(make_list "$d/l" "$d/old.md")"
     assert_fires "$SK_STALE" "$list" "$WORKDIR" expired-date \
         "Date reference older than 12 months" \
@@ -200,14 +200,14 @@ test_staleness() {
 
     # A far-future date is never stale (exercises the is_date_stale False arm).
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Planned for 2099-01-15 at the earliest." >"$d/future.md"
+    command printf '%s\n' "Planned for 2099-01-15 at the earliest." >"$d/future.md"
     list="$(make_list "$d/l" "$d/future.md")"
     assert_silent "$SK_STALE" "$list" "$WORKDIR" expired-date \
         "staleness: a future date is not stale"
 
     # --- outdated-reference: bare version fires; changelog/list forms excluded. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Install release v1.2.3 from the archive." >"$d/ver.md"
+    command printf '%s\n' "Install release v1.2.3 from the archive." >"$d/ver.md"
     list="$(make_list "$d/l" "$d/ver.md")"
     assert_fires "$SK_STALE" "$list" "$WORKDIR" outdated-reference \
         "Version reference to verify" \
@@ -215,8 +215,8 @@ test_staleness() {
 
     d="$(fresh_dir)"
     {
-        /usr/bin/printf '%s\n' "## [1.2.3] section header"
-        /usr/bin/printf '%s\n' "- v1.2.3 bullet entry"
+        command printf '%s\n' "## [1.2.3] section header"
+        command printf '%s\n' "- v1.2.3 bullet entry"
     } >"$d/changelog.md"
     list="$(make_list "$d/l" "$d/changelog.md")"
     assert_silent "$SK_STALE" "$list" "$WORKDIR" outdated-reference \
@@ -224,28 +224,28 @@ test_staleness() {
 
     # --- outdated-reference: a URL carrying a deprecation indicator. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Docs at http://example.com/legacy/api page." >"$d/depurl.md"
+    command printf '%s\n' "Docs at http://example.com/legacy/api page." >"$d/depurl.md"
     list="$(make_list "$d/l" "$d/depurl.md")"
     assert_fires "$SK_STALE" "$list" "$WORKDIR" outdated-reference \
         "URL with deprecation indicators" \
         "staleness: a URL with a deprecation word fires outdated-reference"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Docs at http://example.com/current/api page." >"$d/liveurl.md"
+    command printf '%s\n' "Docs at http://example.com/current/api page." >"$d/liveurl.md"
     list="$(make_list "$d/l" "$d/liveurl.md")"
     assert_silent "$SK_STALE" "$list" "$WORKDIR" outdated-reference \
         "staleness: a plain URL with no deprecation word is silent"
 
     # --- stale-comment: a staleness marker phrase. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "# TODO: this section is outdated and should change" >"$d/marker.md"
+    command printf '%s\n' "# TODO: this section is outdated and should change" >"$d/marker.md"
     list="$(make_list "$d/l" "$d/marker.md")"
     assert_fires "$SK_STALE" "$list" "$WORKDIR" stale-comment \
         "Staleness marker" \
         "staleness: TODO + 'outdated' fires stale-comment"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "# TODO: implement the new feature next sprint" >"$d/todo.md"
+    command printf '%s\n' "# TODO: implement the new feature next sprint" >"$d/todo.md"
     list="$(make_list "$d/l" "$d/todo.md")"
     assert_silent "$SK_STALE" "$list" "$WORKDIR" stale-comment \
         "staleness: a plain TODO with no staleness word is silent"
@@ -259,7 +259,7 @@ test_deadlinks() {
 
     # --- broken-relative-link: missing target fires; existing target silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "See [the guide](./missing-guide.md) for details." >"$d/doc.md"
+    command printf '%s\n' "See [the guide](./missing-guide.md) for details." >"$d/doc.md"
     list="$(make_list "$d/l" "$d/doc.md")"
     assert_fires "$SK_DEAD" "$list" "$WORKDIR" broken-relative-link \
         "Link target not found: ./missing-guide.md" \
@@ -267,7 +267,7 @@ test_deadlinks() {
 
     d="$(fresh_dir)"
     : >"$d/present.md"
-    /usr/bin/printf '%s\n' "See [the guide](./present.md) for details." >"$d/doc.md"
+    command printf '%s\n' "See [the guide](./present.md) for details." >"$d/doc.md"
     list="$(make_list "$d/l" "$d/doc.md")"
     assert_silent "$SK_DEAD" "$list" "$WORKDIR" broken-relative-link \
         "deadlinks: an existing relative link target is silent"
@@ -276,12 +276,12 @@ test_deadlinks() {
     # are skipped — none may fire broken-relative-link.
     d="$(fresh_dir)"
     {
-        /usr/bin/printf '%s\n' "A [x](http://example.com/a) link."
-        /usr/bin/printf '%s\n' "A [x](https://example.com/b) link."
-        /usr/bin/printf '%s\n' "A [x](mailto:dev@example.com) link."
-        /usr/bin/printf '%s\n' "A [x](#local-anchor) link."
-        /usr/bin/printf '%s\n' "A [x](ftp://example.com/c) link."
-        /usr/bin/printf '%s\n' "An [x]() empty link."
+        command printf '%s\n' "A [x](http://example.com/a) link."
+        command printf '%s\n' "A [x](https://example.com/b) link."
+        command printf '%s\n' "A [x](mailto:dev@example.com) link."
+        command printf '%s\n' "A [x](#local-anchor) link."
+        command printf '%s\n' "A [x](ftp://example.com/c) link."
+        command printf '%s\n' "An [x]() empty link."
     } >"$d/schemes.md"
     list="$(make_list "$d/l" "$d/schemes.md")"
     assert_silent "$SK_DEAD" "$list" "$WORKDIR" broken-relative-link \
@@ -290,8 +290,8 @@ test_deadlinks() {
     # --- broken-anchor: no matching heading fires; matching heading silent. ---
     d="$(fresh_dir)"
     {
-        /usr/bin/printf '%s\n' "Jump to [the section](#ghost-section)."
-        /usr/bin/printf '%s\n' "## Some Other Heading"
+        command printf '%s\n' "Jump to [the section](#ghost-section)."
+        command printf '%s\n' "## Some Other Heading"
     } >"$d/anchor.md"
     list="$(make_list "$d/l" "$d/anchor.md")"
     assert_fires "$SK_DEAD" "$list" "$WORKDIR" broken-anchor \
@@ -300,8 +300,8 @@ test_deadlinks() {
 
     d="$(fresh_dir)"
     {
-        /usr/bin/printf '%s\n' "Jump to [the section](#real-section)."
-        /usr/bin/printf '%s\n' "## Real Section"
+        command printf '%s\n' "Jump to [the section](#real-section)."
+        command printf '%s\n' "## Real Section"
     } >"$d/anchor-ok.md"
     list="$(make_list "$d/l" "$d/anchor-ok.md")"
     assert_silent "$SK_DEAD" "$list" "$WORKDIR" broken-anchor \
@@ -309,14 +309,14 @@ test_deadlinks() {
 
     # --- suspicious-external-link: a deprecation indicator in the URL. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Old docs: https://example.com/deprecated-api here." >"$d/susp.md"
+    command printf '%s\n' "Old docs: https://example.com/deprecated-api here." >"$d/susp.md"
     list="$(make_list "$d/l" "$d/susp.md")"
     assert_fires "$SK_DEAD" "$list" "$WORKDIR" suspicious-external-link \
         "Suspicious URL" \
         "deadlinks: a URL with a deprecation indicator fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "Current docs: https://example.com/stable-api here." >"$d/plain.md"
+    command printf '%s\n' "Current docs: https://example.com/stable-api here." >"$d/plain.md"
     list="$(make_list "$d/l" "$d/plain.md")"
     assert_silent "$SK_DEAD" "$list" "$WORKDIR" suspicious-external-link \
         "deadlinks: a plain external URL is silent"
@@ -331,39 +331,39 @@ test_examples() {
     new_git_sandbox sb
 
     # --- python fence: unresolvable import fires; known + in-project silent. ---
-    /usr/bin/printf '%s\n' \
+    command printf '%s\n' \
         '```python' 'import nonexistent_pkg_xyz' '```' >"$sb/broken-import.md"
     list="$(make_list "$WORKDIR/ex1" "$sb/broken-import.md")"
     assert_fires "$SK_EXAMPLES" "$list" "$sb" broken-example \
         "Import not found in project: import nonexistent_pkg_xyz" \
         "examples: a python import absent from the project fires"
 
-    /usr/bin/printf '%s\n' '```python' 'import os' '```' >"$sb/known-import.md"
+    command printf '%s\n' '```python' 'import os' '```' >"$sb/known-import.md"
     list="$(make_list "$WORKDIR/ex2" "$sb/known-import.md")"
     assert_silent "$SK_EXAMPLES" "$list" "$sb" broken-example \
         "examples: a stdlib import (os) is silent"
 
     : >"$sb/localmod.py"
-    /usr/bin/printf '%s\n' '```python' 'import localmod' '```' >"$sb/proj-import.md"
+    command printf '%s\n' '```python' 'import localmod' '```' >"$sb/proj-import.md"
     list="$(make_list "$WORKDIR/ex3" "$sb/proj-import.md")"
     assert_silent "$SK_EXAMPLES" "$list" "$sb" broken-example \
         "examples: an import resolving to a project file is silent"
 
     # --- shell fence: missing script fires; present script silent. ---
-    /usr/bin/printf '%s\n' '```bash' './missing-tool.sh' '```' >"$sb/broken-sh.md"
+    command printf '%s\n' '```bash' './missing-tool.sh' '```' >"$sb/broken-sh.md"
     list="$(make_list "$WORKDIR/ex4" "$sb/broken-sh.md")"
     assert_fires "$SK_EXAMPLES" "$list" "$sb" broken-example \
         "Script not found: ./missing-tool.sh" \
         "examples: a shell fence referencing a missing script fires"
 
     : >"$sb/present-tool.sh"
-    /usr/bin/printf '%s\n' '```bash' 'bash present-tool.sh' '```' >"$sb/present-sh.md"
+    command printf '%s\n' '```bash' 'bash present-tool.sh' '```' >"$sb/present-sh.md"
     list="$(make_list "$WORKDIR/ex5" "$sb/present-sh.md")"
     assert_silent "$SK_EXAMPLES" "$list" "$sb" broken-example \
         "examples: a shell fence referencing a present script is silent"
 
     # --- js/ts and unknown fences set state but emit nothing (branch coverage). ---
-    /usr/bin/printf '%s\n' \
+    command printf '%s\n' \
         '```js' 'import { z } from "./nope";' '```' \
         '```' 'plain block content' '```' >"$sb/other-fences.md"
     list="$(make_list "$WORKDIR/ex6" "$sb/other-fences.md")"
@@ -371,7 +371,7 @@ test_examples() {
         "examples: js and unknown fences emit nothing"
 
     # --- non-markdown files are skipped wholesale. ---
-    /usr/bin/printf '%s\n' '```python' 'import nonexistent_pkg_xyz' '```' >"$sb/not-a-doc.txt"
+    command printf '%s\n' '```python' 'import nonexistent_pkg_xyz' '```' >"$sb/not-a-doc.txt"
     list="$(make_list "$WORKDIR/ex7" "$sb/not-a-doc.txt")"
     assert_silent "$SK_EXAMPLES" "$list" "$sb" broken-example \
         "examples: a non-.md/.rst file is skipped"
@@ -385,26 +385,26 @@ test_missing_api() {
 
     # --- Python: undocumented fires; docstring-before, body-docstring, private silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "CONST = 1" "def compute_total():" "    return 0" >"$d/u.py"
+    command printf '%s\n' "CONST = 1" "def compute_total():" "    return 0" >"$d/u.py"
     list="$(make_list "$d/l" "$d/u.py")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Python: def compute_total" \
         "missing-api py: an undocumented public def fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' '"""Module docstring."""' "def compute_total():" "    return 0" >"$d/doc.py"
+    command printf '%s\n' '"""Module docstring."""' "def compute_total():" "    return 0" >"$d/doc.py"
     list="$(make_list "$d/l" "$d/doc.py")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api py: a preceding docstring documents the def"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "def compute_total():" '    """Body docstring."""' "    return 0" >"$d/body.py"
+    command printf '%s\n' "def compute_total():" '    """Body docstring."""' "    return 0" >"$d/body.py"
     list="$(make_list "$d/l" "$d/body.py")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api py: a body-opening docstring documents the def"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "def _private_helper():" "    return 0" >"$d/priv.py"
+    command printf '%s\n' "def _private_helper():" "    return 0" >"$d/priv.py"
     list="$(make_list "$d/l" "$d/priv.py")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api py: a private (_-prefixed) def is skipped"
@@ -414,14 +414,14 @@ test_missing_api() {
     # MENTIONS `def _x` must still fire (the old `"def _" in content` test
     # silently swallowed it). Assert both the def and the class arm.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "def public_alias():  # def _legacy_name kept" "    return 0" >"$d/mention.py"
+    command printf '%s\n' "def public_alias():  # def _legacy_name kept" "    return 0" >"$d/mention.py"
     list="$(make_list "$d/l" "$d/mention.py")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Python: def public_alias" \
         "missing-api py: a public def whose comment mentions 'def _' still fires (#348)"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "class Public:  # class _Old alias" "    pass" >"$d/mention_cls.py"
+    command printf '%s\n' "class Public:  # class _Old alias" "    pass" >"$d/mention_cls.py"
     list="$(make_list "$d/l" "$d/mention_cls.py")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Python: class Public" \
@@ -429,74 +429,74 @@ test_missing_api() {
 
     # --- JS/TS: undocumented export fires; /** */ block silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "const A = 1;" "export function doThing() {}" >"$d/u.ts"
+    command printf '%s\n' "const A = 1;" "export function doThing() {}" >"$d/u.ts"
     list="$(make_list "$d/l" "$d/u.ts")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "JS/TS: export function doThing" \
         "missing-api ts: an undocumented export fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "/** Does the thing. */" "export function doThing() {}" >"$d/doc.ts"
+    command printf '%s\n' "/** Does the thing. */" "export function doThing() {}" >"$d/doc.ts"
     list="$(make_list "$d/l" "$d/doc.ts")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api ts: a preceding /** */ documents the export"
 
     # --- Go: undocumented exported func fires; doc-comment + _test.go silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "package main" "" "func DoThing() {}" >"$d/u.go"
+    command printf '%s\n' "package main" "" "func DoThing() {}" >"$d/u.go"
     list="$(make_list "$d/l" "$d/u.go")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Go: func DoThing" \
         "missing-api go: an undocumented exported func fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "package main" "// DoThing does the thing." "func DoThing() {}" >"$d/doc.go"
+    command printf '%s\n' "package main" "// DoThing does the thing." "func DoThing() {}" >"$d/doc.go"
     list="$(make_list "$d/l" "$d/doc.go")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api go: a '// DoThing' doc comment documents the func"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "package main" "" "func DoThing() {}" >"$d/x_test.go"
+    command printf '%s\n' "package main" "" "func DoThing() {}" >"$d/x_test.go"
     list="$(make_list "$d/l" "$d/x_test.go")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api go: a _test.go file is skipped wholesale"
 
     # --- Rust: undocumented pub fires; /// doc silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "const A: u8 = 1;" "pub fn do_thing() {}" >"$d/u.rs"
+    command printf '%s\n' "const A: u8 = 1;" "pub fn do_thing() {}" >"$d/u.rs"
     list="$(make_list "$d/l" "$d/u.rs")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Rust: pub fn do_thing" \
         "missing-api rs: an undocumented pub fn fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "/// Does the thing." "pub fn do_thing() {}" >"$d/doc.rs"
+    command printf '%s\n' "/// Does the thing." "pub fn do_thing() {}" >"$d/doc.rs"
     list="$(make_list "$d/l" "$d/doc.rs")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api rs: a preceding /// documents the pub fn"
 
     # --- Shell: undocumented func fires; # comment + private silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "set -e" "deploy() {" "  true" "}" >"$d/u.sh"
+    command printf '%s\n' "set -e" "deploy() {" "  true" "}" >"$d/u.sh"
     list="$(make_list "$d/l" "$d/u.sh")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Shell: deploy()" \
         "missing-api sh: an undocumented function fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "# Deploy the app." "deploy() {" "  true" "}" >"$d/doc.sh"
+    command printf '%s\n' "# Deploy the app." "deploy() {" "  true" "}" >"$d/doc.sh"
     list="$(make_list "$d/l" "$d/doc.sh")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api sh: a preceding # comment documents the function"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "_helper() {" "  true" "}" >"$d/priv.sh"
+    command printf '%s\n' "_helper() {" "  true" "}" >"$d/priv.sh"
     list="$(make_list "$d/l" "$d/priv.sh")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api sh: a private (_-prefixed) function is skipped"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "function _priv() {" "  true" "}" >"$d/privfn.sh"
+    command printf '%s\n' "function _priv() {" "  true" "}" >"$d/privfn.sh"
     list="$(make_list "$d/l" "$d/privfn.sh")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api sh: a private 'function _'-prefixed function is skipped"
@@ -505,7 +505,7 @@ test_missing_api() {
     # `function _x` must still fire (the old `*"function _"*` whole-line glob
     # swallowed it). Name-anchored skip fixes it.
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "deploy() {  # function _old_deploy renamed" "  true" "}" >"$d/mention.sh"
+    command printf '%s\n' "deploy() {  # function _old_deploy renamed" "  true" "}" >"$d/mention.sh"
     list="$(make_list "$d/l" "$d/mention.sh")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Shell: deploy()" \
@@ -513,28 +513,28 @@ test_missing_api() {
 
     # --- Ruby: undocumented def fires; # comment silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "class C" "  def process" "  end" "end" >"$d/u.rb"
+    command printf '%s\n' "class C" "  def process" "  end" "end" >"$d/u.rb"
     list="$(make_list "$d/l" "$d/u.rb")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Ruby: " \
         "missing-api rb: an undocumented def fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "class C" "  # Process it." "  def process" "  end" "end" >"$d/doc.rb"
+    command printf '%s\n' "class C" "  # Process it." "  def process" "  end" "end" >"$d/doc.rb"
     list="$(make_list "$d/l" "$d/doc.rb")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api rb: a preceding # comment documents the def"
 
     # --- Java/Kotlin: undocumented public method fires; /** */ silent. ---
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "class C {" "  public void doThing() {}" "}" >"$d/u.java"
+    command printf '%s\n' "class C {" "  public void doThing() {}" "}" >"$d/u.java"
     list="$(make_list "$d/l" "$d/u.java")"
     assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "Java/Kotlin: " \
         "missing-api java: an undocumented public method fires"
 
     d="$(fresh_dir)"
-    /usr/bin/printf '%s\n' "class C {" "  /** Does the thing. */" "  public void doThing() {}" "}" >"$d/doc.java"
+    command printf '%s\n' "class C {" "  /** Does the thing. */" "  public void doThing() {}" "}" >"$d/doc.java"
     list="$(make_list "$d/l" "$d/doc.java")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api java: a preceding /** */ documents the public method"
@@ -548,7 +548,7 @@ test_organization() {
 
     # --- missing-root-doc: absent README/LICENSE/CHANGELOG fire. ---
     new_git_sandbox sb
-    /usr/bin/mkdir -p "$sb/src"
+    command mkdir -p "$sb/src"
     : >"$sb/src/a.py"
     list="$(make_list "$WORKDIR/org1" "$sb/src/a.py")"
     assert_fires "$SK_ORG" "$list" "$sb" missing-root-doc \
@@ -561,7 +561,7 @@ test_organization() {
     : >"$sb/README.md"
     : >"$sb/CHANGELOG.md"
     : >"$sb/LICENCE.md"
-    /usr/bin/mkdir -p "$sb/src"
+    command mkdir -p "$sb/src"
     : >"$sb/src/a.py"
     list="$(make_list "$WORKDIR/org2" "$sb/src/a.py")"
     assert_silent "$SK_ORG" "$list" "$sb" missing-root-doc \
@@ -573,7 +573,7 @@ test_organization() {
     : >"$sb/README.md"
     : >"$sb/LICENSE"
     : >"$sb/CHANGELOG.md"
-    /usr/bin/mkdir -p "$sb/pkg"
+    command mkdir -p "$sb/pkg"
     : >"$sb/pkg/f1.py"
     : >"$sb/pkg/f2.py"
     : >"$sb/pkg/f3.py"
@@ -591,7 +591,7 @@ test_organization() {
     : >"$sb/README.md"
     : >"$sb/LICENSE"
     : >"$sb/CHANGELOG.md"
-    /usr/bin/mkdir -p "$sb/pkg"
+    command mkdir -p "$sb/pkg"
     : >"$sb/pkg/README.md"
     : >"$sb/pkg/f1.py"
     : >"$sb/pkg/f2.py"
@@ -605,7 +605,7 @@ test_organization() {
     : >"$sb/README.md"
     : >"$sb/LICENSE"
     : >"$sb/CHANGELOG.md"
-    /usr/bin/mkdir -p "$sb/a/b"
+    command mkdir -p "$sb/a/b"
     : >"$sb/a/b/f1.py"
     : >"$sb/a/b/f2.py"
     list="$(make_list "$WORKDIR/org5" "$sb/a/b/f1.py" "$sb/a/b/f2.py")"
@@ -621,7 +621,7 @@ test_organization() {
     : >"$sb/README.md"
     : >"$sb/LICENSE"
     : >"$sb/CHANGELOG.md"
-    /usr/bin/mkdir -p "$sb/node_modules/pkg"
+    command mkdir -p "$sb/node_modules/pkg"
     : >"$sb/node_modules/pkg/f1.js"
     : >"$sb/node_modules/pkg/f2.js"
     list="$(make_list "$WORKDIR/org6" "$sb/node_modules/pkg/f1.js" "$sb/node_modules/pkg/f2.js")"

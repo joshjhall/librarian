@@ -39,7 +39,40 @@
 # (Δ/interval); a one-shot --checkpoint prints rate=— (no prior sweep to diff).
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && pwd)"
+# --- Portable tool resolution (#443) ----------------------------------------
+# This script runs under a potentially stripped/hermetic PATH (its liveness /
+# --watch paths are tested with PATH reduced to a few stubs), so `command <tool>`
+# would fail to find an external core utility there — yet a hardcoded /usr/bin/<tool>
+# is wrong on macOS. `_bin <tool>` honors PATH first (the `command -v` builtin
+# needs no external binary), then falls back to scanning the standard bin dirs so
+# it still resolves under a stripped PATH, then yields the bare name. Candidates
+# are bare DIRECTORIES, not /usr/bin/<tool> literals, so the #443 lint does not
+# flag them. Defined before SCRIPT_DIR so even that resolution is portable.
+_BIN_CANDIDATE_DIRS="/usr/bin /bin /usr/local/bin /opt/homebrew/bin /sbin /usr/sbin"
+_bin() {
+    _br="$(command -v "$1" 2>/dev/null || true)"
+    if [ -z "$_br" ]; then
+        for _bd in $_BIN_CANDIDATE_DIRS; do
+            [ -x "$_bd/$1" ] && {
+                _br="$_bd/$1"
+                break
+            }
+        done
+    fi
+    printf '%s' "${_br:-$1}"
+}
+AWK="$(_bin awk)"
+DATE="$(_bin date)"
+DIRNAME="$(_bin dirname)"
+GREP="$(_bin grep)"
+HEAD="$(_bin head)"
+RM="$(_bin rm)"
+SLEEP="$(_bin sleep)"
+TAIL="$(_bin tail)"
+TR="$(_bin tr)"
+WC="$(_bin wc)"
+
+SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
 
@@ -64,7 +97,7 @@ cp_last_emit_at=""
 # _now_iso — current UTC time as an ISO-8601 Z timestamp (mirrors the
 # golem-notify.sh feed-line idiom). The "frozen since" anchor for token freezes.
 _now_iso() {
-    command date -u +%FT%TZ
+    "$DATE" -u +%FT%TZ
 }
 
 # _iso_to_epoch <iso> — parse an ISO-8601 Z timestamp to epoch seconds, trying
@@ -75,8 +108,8 @@ _now_iso() {
 _iso_to_epoch() {
     _ie_iso="$1"
     [ -n "$_ie_iso" ] || return 0
-    command date -u -d "$_ie_iso" +%s 2>/dev/null && return 0
-    command date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_ie_iso" +%s 2>/dev/null && return 0
+    "$DATE" -u -d "$_ie_iso" +%s 2>/dev/null && return 0
+    "$DATE" -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$_ie_iso" +%s 2>/dev/null && return 0
     return 0
 }
 
@@ -106,14 +139,14 @@ _gate_age_suffix() {
     _gas_feed="$2"
     [ -f "$_gas_feed" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
-    _gas_ts="$(/usr/bin/tail -n 200 "$_gas_feed" 2>/dev/null |
+    _gas_ts="$("$TAIL" -n 200 "$_gas_feed" 2>/dev/null |
         jq -rs --arg g "$_gas_golem" '
             [ .[] | select(.golem == $g) ] | last | (.ts // "")
           ' 2>/dev/null)"
     [ -n "$_gas_ts" ] || return 0
     _gas_epoch="$(_iso_to_epoch "$_gas_ts")"
     [ -n "$_gas_epoch" ] || return 0
-    _gas_now="$(command date -u +%s 2>/dev/null)" || return 0
+    _gas_now="$("$DATE" -u +%s 2>/dev/null)" || return 0
     _gas_d=$((_gas_now - _gas_epoch))
     [ "$_gas_d" -lt 0 ] && _gas_d=0
     command printf '  (gated %s ago)' "$(_fmt_dur "$_gas_d")"
@@ -132,7 +165,7 @@ _frozen_phrase() {
     _fp_at="$2"
     _fp_epoch="$(_iso_to_epoch "$_fp_at")"
     if [ -n "$_fp_epoch" ]; then
-        _fp_now="$(command date -u +%s)"
+        _fp_now="$("$DATE" -u +%s)"
         _fp_d=$((_fp_now - _fp_epoch))
         [ "$_fp_d" -lt 0 ] && _fp_d=0
         command echo "$_fp_cur tokens, frozen $(_fmt_dur "$_fp_d")"
@@ -285,9 +318,9 @@ scrape_and_persist_tokens() {
     if [ -n "$_sapt_tmp" ] && jq --argjson t "$_sapt_cur" --arg at "$_sapt_at" \
         '. + {top_level_tokens: $t, top_level_tokens_at: $at}' \
         "$_sapt_f" >"$_sapt_tmp" 2>/dev/null; then
-        command mv "$_sapt_tmp" "$_sapt_f" 2>/dev/null || command rm -f "$_sapt_tmp"
+        command mv "$_sapt_tmp" "$_sapt_f" 2>/dev/null || "$RM" -f "$_sapt_tmp"
     else
-        [ -n "$_sapt_tmp" ] && command rm -f "$_sapt_tmp"
+        [ -n "$_sapt_tmp" ] && "$RM" -f "$_sapt_tmp"
     fi
     if [ -z "$_sapt_prev" ]; then
         _sapt_state="first"
@@ -309,7 +342,7 @@ scrape_and_persist_tokens() {
 render_status() {
     collect_cache
 
-    sessions="$(tmux ls 2>/dev/null | /usr/bin/grep -oE '^golem-[0-9]+' || true)"
+    sessions="$(tmux ls 2>/dev/null | "$GREP" -oE '^golem-[0-9]+' || true)"
     if [ "${#cache[@]}" -eq 0 ] && [ -z "$sessions" ] && [ ! -f "$pool" ]; then
         command echo "No active golems (no $status_dir/*.json, no golem-* tmux sessions)."
         return 0
@@ -323,7 +356,7 @@ render_status() {
         command echo ""
     fi
 
-    /usr/bin/printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' \
+    command printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' \
         GOLEM ISSUE BRANCH PR STATE PHASE BLOCKING
     for f in "${cache[@]}"; do
         jq -r '[
@@ -336,7 +369,7 @@ render_status() {
             (if .blocking then "YES" else "-" end)
         ] | @tsv' "$f" 2>/dev/null |
             while IFS=$'\t' read -r g i b p s ph bl; do
-                /usr/bin/printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' "$g" "$i" "$b" "$p" "$s" "$ph" "$bl"
+                command printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' "$g" "$i" "$b" "$p" "$s" "$ph" "$bl"
             done
     done
 
@@ -344,7 +377,7 @@ render_status() {
     for sess in $sessions; do
         n="${sess#golem-}"
         if [ ! -e "$status_dir/golem-$n.json" ] && [ ! -e "$status_dir/issue-$n.json" ]; then
-            /usr/bin/printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' \
+            command printf '%-10s %-6s %-22s %-5s %-12s %-10s %-8s\n' \
                 "$sess" "$n" "-" "-" "(live)" "-" "-"
         fi
     done
@@ -382,7 +415,7 @@ render_status() {
     if [ -f "$feed" ] && [ -x "$SCRIPT_DIR/golem-gate-watch.sh" ]; then
         feed_out="$("$SCRIPT_DIR/golem-gate-watch.sh" --once 2>/dev/null)"
         if [ -n "$feed_out" ]; then
-            /usr/bin/printf '%s\n' "$feed_out" |
+            command printf '%s\n' "$feed_out" |
                 while IFS=$'\t' read -r g msg; do
                     [ -n "$g$msg" ] || continue # awk NF guard: skip blank lines
                     # Extract the correlation id from the BRACKETED "[gate-…]"
@@ -397,7 +430,7 @@ render_status() {
                     # message yields its one real id and a token-less line yields
                     # empty (→ no annotation, correct for a non-brokered gate).
                     gate_id="$(command printf '%s' "$msg" |
-                        /usr/bin/grep -oE '\[gate-[0-9]+-[0-9a-z]+\]' | /usr/bin/head -n1)"
+                        "$GREP" -oE '\[gate-[0-9]+-[0-9a-z]+\]' | "$HEAD" -n1)"
                     # Strip the surrounding brackets before querying.
                     gate_id="${gate_id#[}"
                     gate_id="${gate_id%]}"
@@ -412,14 +445,14 @@ render_status() {
                             # unexpected output falls through to the plain line, so
                             # a broken sibling never blanks the BLOCKED list.
                             awaiting | answered | consumed)
-                                /usr/bin/printf '  %s — %s  [inbox: %s]%s\n' "$g" "$msg" "$st" "$age"
+                                command printf '  %s — %s  [inbox: %s]%s\n' "$g" "$msg" "$st" "$age"
                                 ;;
                             *)
-                                /usr/bin/printf '  %s — %s%s\n' "$g" "$msg" "$age"
+                                command printf '  %s — %s%s\n' "$g" "$msg" "$age"
                                 ;;
                         esac
                     else
-                        /usr/bin/printf '  %s — %s%s\n' "$g" "$msg" "$age"
+                        command printf '  %s — %s%s\n' "$g" "$msg" "$age"
                     fi
                 done
             # Set OUTSIDE the pipe subshell (the loop above runs in a subshell, so
@@ -446,10 +479,10 @@ render_status() {
         command echo "LIVENESS (advisory — heartbeat / possible stall):"
         liveness="$(
             "$SCRIPT_DIR/golem-gate-watch.sh" --once-liveness 2>/dev/null |
-                /usr/bin/awk -F'\t' 'NF { printf "  %s — %s\n", $1, $2 }'
+                "$AWK" -F'\t' 'NF { printf "  %s — %s\n", $1, $2 }'
         )"
         if [ -n "$liveness" ]; then
-            /usr/bin/printf '%s\n' "$liveness"
+            command printf '%s\n' "$liveness"
         else
             command echo "  (no liveness proxy available)"
         fi
@@ -509,7 +542,7 @@ render_status() {
     # already carry the actionable feed content; tailing the raw JSON here (#488)
     # was pure token-dense duplication that buried the one changed line.
     if [ -f "$feed" ]; then
-        _rs_feed_lines="$(/usr/bin/wc -l <"$feed" 2>/dev/null | /usr/bin/tr -d ' ')"
+        _rs_feed_lines="$("$WC" -l <"$feed" 2>/dev/null | "$TR" -d ' ')"
         [ -n "$_rs_feed_lines" ] || _rs_feed_lines=0
         command echo ""
         command echo "Recent feed: $_rs_feed_lines line(s) ($feed)"
@@ -590,7 +623,7 @@ emit_checkpoint_row() {
     if [ -n "$_ecr_started" ]; then
         _ecr_se="$(_iso_to_epoch "$_ecr_started")"
         if [ -n "$_ecr_se" ]; then
-            _ecr_now="$(command date -u +%s)"
+            _ecr_now="$("$DATE" -u +%s)"
             _ecr_d=$((_ecr_now - _ecr_se))
             [ "$_ecr_d" -lt 0 ] && _ecr_d=0
             _ecr_elapsed="$(_fmt_dur "$_ecr_d")"
@@ -693,7 +726,7 @@ emit_checkpoint_row() {
 render_checkpoint() {
     _rc_interval="${1:-}"
     collect_cache
-    cp_sessions="$( (tmux ls 2>/dev/null | /usr/bin/grep -oE '^golem-[0-9]+' | /usr/bin/tr '\n' ' ') || true)"
+    cp_sessions="$( (tmux ls 2>/dev/null | "$GREP" -oE '^golem-[0-9]+' | "$TR" '\n' ' ') || true)"
 
     # Both early returns below clear the prior signature (#488). A sweep that
     # renders no table is a GAP in the operator's view: if we left cp_prev_sig
@@ -782,7 +815,7 @@ ${_rc_hdr}"
     while [ "$_rc_lane" -lt "$_rc_nlanes" ]; do
         _rc_laneno="$(jq -r ".tracks[$_rc_lane].lane // $_rc_lane" "$tracks" 2>/dev/null)"
         # This lane's issues as a space-padded string for the membership glob.
-        _rc_laneissues=" $(jq -r ".tracks[$_rc_lane].issues[]?" "$tracks" 2>/dev/null | /usr/bin/tr '\n' ' ')"
+        _rc_laneissues=" $(jq -r ".tracks[$_rc_lane].issues[]?" "$tracks" 2>/dev/null | "$TR" '\n' ' ')"
         _rc_i=0
         while [ "$_rc_i" -lt "$_rc_n" ]; do
             _rc_iss="${cache_issue[$_rc_i]}"
@@ -874,7 +907,7 @@ ${_rc_footer}"
     # zero count (a well-known quirk, not an error), which with a `|| echo 0`
     # fallback double-appends and splits the heartbeat across two lines when a
     # pool.json exists but no golem rows do (the zero-golem idle case).
-    _rc_golems="$(command printf '%s' "$cp_sig" | /usr/bin/grep -o '|' 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+    _rc_golems="$(command printf '%s' "$cp_sig" | "$GREP" -o '|' 2>/dev/null | "$WC" -l | "$TR" -d ' ')"
     [ -n "$_rc_golems" ] || _rc_golems=0
     if [ -n "$_rc_interval" ] && [ -n "$cp_prev_sig" ] && [ "$cp_sig" = "$cp_prev_sig" ]; then
         command echo "— no change since ${cp_last_emit_at:-earlier} (${_rc_golems} golem(s))"
@@ -882,7 +915,7 @@ ${_rc_footer}"
     fi
     command printf '%s' "$cp_body"
     cp_prev_sig="$cp_sig"
-    cp_last_emit_at="$(command date -u +%H:%MZ)"
+    cp_last_emit_at="$("$DATE" -u +%H:%MZ)"
 
     return 0
 }
@@ -1014,5 +1047,5 @@ command echo "Status sweep every ${interval}s (level $level). Ctrl-C to stop." >
 while :; do
     "$render_fn" "$interval"
     command echo ""
-    /usr/bin/sleep "$interval"
+    "$SLEEP" "$interval"
 done
