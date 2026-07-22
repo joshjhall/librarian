@@ -91,6 +91,28 @@ For 2+ issues in parallel, or detached/headless work, use **`/orchestrate`**
    `ship-issue`'s `^agent` commit-only detection, so a solo run pushes and opens a
    PR normally (unlike a container golem's `agent{N}` branch).
 
+1. **Stay inside the worktree — never edit the main checkout (#475).** From here
+   on this session's cwd is the worktree. Address every `Edit`/`Write`/`Bash`
+   file target by a **worktree-relative** path (`plugins/...`) or a
+   **`$PWD`-anchored** absolute path — **never** a bare main-checkout root path
+   (`/workspace/<repo>/plugins/...`, or a path copied from a doc/grep result that
+   is rooted at the main checkout). Git worktrees share no filesystem-level
+   protection, so an absolute path aimed at the main tree writes there
+   **silently**: the worktree's `git status` stays clean and the leak only
+   surfaces as a stray dirty file on `main` (which is often on a *stale* base, so
+   a blind recovery can revert an already-merged PR). The bundled
+   `hooks/worktree-guard.sh` PreToolUse guard **blocks** an `Edit`/`Write` whose
+   absolute target lands in the main checkout outside this worktree — if you hit
+   that denial, re-issue the edit against the worktree path it names.
+
+   **If a file was already leaked into the main checkout** (e.g. from a `Bash`
+   `>` redirect, which the guard does not cover): restore **only** that file in
+   main — `git -C <main-root> checkout -- <leaked-file>` — then re-apply the
+   change **fresh in the worktree** on the correct base. **Never** blind-copy the
+   leaked file from main into the worktree: the main checkout may be behind
+   `origin/main`, so copying stale bytes can revert a since-merged PR
+   (the stale-base-squash-reverts-merged-pr class).
+
 ### Phase C — Run the pipeline
 
 Invoke `/next-issue` via the **Skill tool**, passing `N` and any `--level`:
