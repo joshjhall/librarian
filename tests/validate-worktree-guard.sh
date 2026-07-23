@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 # Coverage for the PreToolUse worktree-scope guard hook
-# plugins/workflow/hooks/worktree-guard.sh (issue #475).
+# plugins/workflow/hooks/worktree-guard.sh (issues #475, #501).
+#
+# #501 extends the guard from the standard topology to per-topology main_root
+# derivation from the common-dir PATH STRUCTURE (NOT worktree-writable config): a
+# SUBMODULE-vendored worktree leak into the submodule's real checkout is now
+# DENIED (was an interim loud fail-open). A BARE-repo host / EXOTIC (e.g.
+# separate-git-dir) gitdir cannot be scoped from the path alone, and the only
+# remaining discriminator (core.bare) is worktree-poisonable, so a CROSS-TREE
+# target there fails open LOUDLY — while the host's own-worktree edits pass the
+# topology-independent worktree-first allow silently. Because the derivation must
+# survive the golem poisoning core.bare/core.worktree in the shared config (two
+# #501 pre-PR review CRITICALs, dynamic-repro'd), dedicated poison + stray-
+# misconfig + separate-git-dir cases assert no such write yields a silent allow.
+# (One trust-anchor gap is NOT closed here and is tracked as a follow-up: a golem
+# rewriting its own $WT/.git gitlink defeats the #475 main-session identity gate —
+# out of #501's topology scope.) Cases below.
 #
 # The guard blocks a golem worktree session from editing a MAIN-CHECKOUT path
 # (the silent absolute-path leak that can revert a merged PR), while never
@@ -50,7 +65,7 @@ REAL_GIT="$(command -v git)"
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
-test_suite "worktree-guard.sh PreToolUse hook (#475)"
+test_suite "worktree-guard.sh PreToolUse hook (#475, #501)"
 
 # git env that must NOT leak into the fixture or the hook's own `git -C` — else
 # the OUTER repo's GIT_DIR pins scope to the wrong tree. Held as an array so the
@@ -118,6 +133,31 @@ if _sub_src="$FIXTURE/sub_src" && command mkdir -p "$_sub_src" &&
         SM_SUB="$SM_SUPER/sub"
         SM_OK=1
     fi
+fi
+
+# --- Bare-repo worktree-host fixture (#501) ---------------------------------
+# A bare repo has NO working tree of its own, so a linked-worktree session there
+# has no "main checkout" for an edit to leak INTO — the worktree-escaping-leak
+# class is structurally impossible. The guard must ALLOW (a correct allow), and —
+# unlike the interim submodule fail-open — do so WITHOUT a loud diagnostic (there
+# is nothing degraded about it). Build `bare.git` (core.bare=true) + a linked
+# worktree; skip cleanly if bare-worktree wiring is unavailable in the env.
+BARE_OK=0
+BARE_GITDIR=""
+BARE_WT=""
+if _bseed="$FIXTURE/bare_seed" && command mkdir -p "$_bseed" &&
+    git_clean -C "$_bseed" init -q 2>/dev/null &&
+    git_clean -C "$_bseed" config user.email "test@example.com" &&
+    git_clean -C "$_bseed" config user.name "Test" &&
+    { printf 'a\n' >"$_bseed/a"; } &&
+    git_clean -C "$_bseed" add a 2>/dev/null &&
+    git_clean -C "$_bseed" -c commit.gpgsign=false commit -qm a 2>/dev/null &&
+    git_clean clone -q --bare "$_bseed" "$FIXTURE/bare.git" 2>/dev/null &&
+    git_clean -C "$FIXTURE/bare.git" worktree add -q -b feature/issue-30 \
+        "$FIXTURE/bare_wt30" >/dev/null 2>&1; then
+    BARE_GITDIR="$(cd "$FIXTURE/bare.git" && pwd)"
+    BARE_WT="$(cd "$FIXTURE/bare_wt30" && pwd)"
+    BARE_OK=1
 fi
 
 # --- Runner -----------------------------------------------------------------
@@ -245,27 +285,321 @@ test_root_escape_failopen() {
     assert_equals "allow" "$(decision "$GUARD_OUT")" "a root-escaping .. fails open (allow)"
 }
 
-# --- Non-standard topology: submodule fails open LOUDLY, never silently ------
-# The critical property (finding #1): a leak into the submodule's REAL checkout
-# from a submodule linked-worktree session must NOT be a silent allow. The guard
-# cannot derive the scope here, so it must allow with a LOUD stderr diagnostic (a
-# detectable degraded-allow), never a silent one.
-test_submodule_failopen_is_loud() {
+# --- Submodule topology: leak into the submodule's real checkout is DENIED ----
+# #501 (was the interim fail-open, #475 pre-PR review finding #1). A submodule
+# linked-worktree session (common-dir under <super>/.git/modules/<name>) editing
+# the submodule's REAL checkout (<super>/<name>, outside its worktree) must be
+# DENIED — the guard now derives main_root from the common-dir's core.worktree
+# and enforces instead of failing open.
+test_submodule_deny_leak() {
+    jq_required || return 0
     if [ "$SM_OK" -ne 1 ]; then
         skip_test "submodule fixture unavailable in this environment"
         return 0
     fi
-    local payload err
-    payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/g.txt"}}' \
-        "$SM_WT" "$SM_SUB")"
-    # Capture stderr; stdout must be empty (allow).
+    run_guard "$SM_WT" "Edit" "file_path" "$SM_SUB/f"
+    assert_valid_json "$GUARD_OUT" "submodule deny output is valid JSON"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "submodule->real-checkout leak denied (enforced, not fail-open)"
+    local reason
+    reason="$(printf '%s' "$GUARD_OUT" | jq -r '.hookSpecificOutput.permissionDecisionReason' 2>/dev/null)"
+    assert_contains "$reason" "$SM_SUB" "submodule deny reason names the leaked submodule-checkout path"
+    assert_contains "$reason" "$SM_WT" "submodule deny reason names the worktree it should have used"
+}
+# The submodule worktree's OWN files must still be allowed (the derivation did not
+# over-broaden into blocking the worktree itself).
+test_submodule_allow_own_worktree() {
+    jq_required || return 0
+    if [ "$SM_OK" -ne 1 ]; then
+        skip_test "submodule fixture unavailable in this environment"
+        return 0
+    fi
+    run_guard "$SM_WT" "Edit" "file_path" "$SM_WT/f"
+    assert_equals "allow" "$(decision "$GUARD_OUT")" "submodule worktree's own path allowed"
+}
+# Poisoning core.bare / core.worktree in the SUBMODULE's own module config (the
+# topology that branch actually governs — review finding: the standard-fixture
+# poison tests below don't exercise the submodule path) must not disarm the guard:
+# the structural `*/.git/modules/*` match ignores both keys, so the leak into the
+# submodule's real checkout stays DENIED.
+test_submodule_poison_still_denies() {
+    jq_required || return 0
+    if [ "$SM_OK" -ne 1 ]; then
+        skip_test "submodule fixture unavailable in this environment"
+        return 0
+    fi
+    local sm_common
+    sm_common="$(git_clean -C "$SM_WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -z "$sm_common" ]; then
+        skip_test "could not resolve submodule common-dir"
+        return 0
+    fi
+    git_clean -C "$SM_WT" config -f "$sm_common/config" core.bare true 2>/dev/null || true
+    git_clean -C "$SM_WT" config -f "$sm_common/config" core.worktree "$FIXTURE" 2>/dev/null || true
+    run_guard "$SM_WT" "Edit" "file_path" "$SM_SUB/f"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "submodule core.bare/core.worktree poison does NOT disarm the guard (structural */.git/modules/* wins)"
+}
+
+# --- Config-poisoning: the guard's trust anchor must be non-poisonable --------
+# #501 pre-PR review (CRITICAL, dynamic repro): the topology derivation must NOT
+# trust core.bare/core.worktree read live from the SHARED common-dir config,
+# because the golem worktree session this guard polices can rewrite those keys
+# (`git config core.bare true` / `core.worktree <decoy>` from its own cwd write
+# into the shared config — core.* is not worktree-scoped). If it did, a two-line
+# command would flip the guard into a silent-allow (bare branch) or redirect
+# main_root to a decoy, disabling the #475/#501 control. The fix derives topology
+# from the common-dir PATH STRUCTURE, which `git config` cannot relocate. These
+# tests POISON the config from the worktree, then assert the leak is STILL denied.
+test_poison_core_bare_still_denies() {
+    jq_required || return 0
+    # Fresh main+worktree fixture so poisoning does not disturb the shared ones.
+    local pdir="$FIXTURE/poison_bare" pmain pwt
+    command mkdir -p "$pdir" || {
+        skip_test "poison fixture setup failed"
+        return 0
+    }
+    pmain="$pdir/repo"
+    command mkdir -p "$pmain"
+    git_clean -C "$pmain" init -q 2>/dev/null || {
+        skip_test "poison fixture git init failed"
+        return 0
+    }
+    git_clean -C "$pmain" config user.email "test@example.com"
+    git_clean -C "$pmain" config user.name "Test"
+    printf 'seed\n' >"$pmain/seed.txt"
+    git_clean -C "$pmain" add seed.txt 2>/dev/null
+    git_clean -C "$pmain" -c commit.gpgsign=false commit -qm seed 2>/dev/null
+    pwt="$pmain/.worktrees/issue-99"
+    git_clean -C "$pmain" worktree add -q -b feature/issue-99 "$pwt" >/dev/null 2>&1 || {
+        skip_test "poison fixture worktree add failed"
+        return 0
+    }
+    pmain="$(cd "$pmain" && pwd)"
+    pwt="$(cd "$pwt" && pwd)"
+    # ATTACK: set core.bare=true from the worktree cwd (writes the shared config).
+    git_clean -C "$pwt" config core.bare true 2>/dev/null || true
+    # The leak into the real main checkout must STILL be denied (structure wins).
+    run_guard "$pwt" "Edit" "file_path" "$pmain/seed.txt"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "core.bare=true poison does NOT flip the guard to a silent allow"
+}
+test_poison_core_worktree_still_denies() {
+    jq_required || return 0
+    local pdir="$FIXTURE/poison_wt" pmain pwt pdecoy
+    command mkdir -p "$pdir" || {
+        skip_test "poison fixture setup failed"
+        return 0
+    }
+    pmain="$pdir/repo"
+    command mkdir -p "$pmain"
+    git_clean -C "$pmain" init -q 2>/dev/null || {
+        skip_test "poison fixture git init failed"
+        return 0
+    }
+    git_clean -C "$pmain" config user.email "test@example.com"
+    git_clean -C "$pmain" config user.name "Test"
+    printf 'seed\n' >"$pmain/seed.txt"
+    git_clean -C "$pmain" add seed.txt 2>/dev/null
+    git_clean -C "$pmain" -c commit.gpgsign=false commit -qm seed 2>/dev/null
+    pwt="$pmain/.worktrees/issue-98"
+    git_clean -C "$pmain" worktree add -q -b feature/issue-98 "$pwt" >/dev/null 2>&1 || {
+        skip_test "poison fixture worktree add failed"
+        return 0
+    }
+    pmain="$(cd "$pmain" && pwd)"
+    pwt="$(cd "$pwt" && pwd)"
+    pdecoy="$pdir/decoy"
+    command mkdir -p "$pdecoy"
+    # ATTACK: redirect core.worktree to a decoy from the worktree cwd.
+    git_clean -C "$pwt" config core.worktree "$pdecoy" 2>/dev/null || true
+    run_guard "$pwt" "Edit" "file_path" "$pmain/seed.txt"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "core.worktree decoy poison does NOT redirect main_root away from the real leak"
+}
+# #501 cycle-3 CRITICAL (dynamic repro): a worktree-scoped core.worktree override
+# (`extensions.worktreeConfig=true` + `git config --worktree core.worktree <main>`,
+# both writable from the worktree cwd) redirects `rev-parse --show-toplevel` onto
+# the MAIN checkout, which — if trusted for worktree_root — makes the worktree-first
+# allow match main-checkout targets and SILENTLY ALLOW a leak. The fix derives
+# worktree_root structurally from the gitdir pointer file + cross-checks cwd, so
+# the leak must STILL be denied after this poison.
+test_poison_worktree_config_toplevel_still_denies() {
+    jq_required || return 0
+    local pdir="$FIXTURE/poison_wtcfg" pmain pwt
+    command mkdir -p "$pdir" || {
+        skip_test "worktreeConfig poison fixture setup failed"
+        return 0
+    }
+    pmain="$pdir/repo"
+    command mkdir -p "$pmain"
+    git_clean -C "$pmain" init -q 2>/dev/null || {
+        skip_test "worktreeConfig poison fixture git init failed"
+        return 0
+    }
+    git_clean -C "$pmain" config user.email "test@example.com"
+    git_clean -C "$pmain" config user.name "Test"
+    printf 'seed\n' >"$pmain/seed.txt"
+    git_clean -C "$pmain" add seed.txt 2>/dev/null
+    git_clean -C "$pmain" -c commit.gpgsign=false commit -qm seed 2>/dev/null
+    pwt="$pmain/.worktrees/issue-96"
+    git_clean -C "$pmain" worktree add -q -b feature/issue-96 "$pwt" >/dev/null 2>&1 || {
+        skip_test "worktreeConfig poison fixture worktree add failed"
+        return 0
+    }
+    pmain="$(cd "$pmain" && pwd)"
+    pwt="$(cd "$pwt" && pwd)"
+    # ATTACK: turn on worktree config and redirect this worktree's toplevel to main.
+    git_clean -C "$pwt" config extensions.worktreeConfig true 2>/dev/null || true
+    git_clean -C "$pwt" config --worktree core.worktree "$pmain" 2>/dev/null || true
+    # Sanity: confirm the attack actually redirected show-toplevel (else the test
+    # would vacuously pass without exercising the vector).
+    local redirected
+    redirected="$(git_clean -C "$pwt" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ "$redirected" != "$pmain" ]; then
+        skip_test "extensions.worktreeConfig unsupported in this git version"
+        return 0
+    fi
+    run_guard "$pwt" "Edit" "file_path" "$pmain/seed.txt"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "worktreeConfig core.worktree toplevel redirect does NOT silence a leak (structural worktree_root + cwd cross-check)"
+}
+
+# --- Stray core.bare on a real working checkout must NOT silence a leak -------
+# #501 review (MEDIUM, the documented core.bare-misconfig class): a stray
+# core.bare=true left on a NORMAL checkout (not a real bare host) must not flip
+# the guard to the silent bare-allow. Structural derivation keys off the `*/.git`
+# common-dir path, so the standard arm still wins here. (Same shape as the poison
+# test, framed as an accidental misconfig rather than an attack.)
+test_stray_core_bare_misconfig_still_denies() {
+    jq_required || return 0
+    local pdir="$FIXTURE/stray_bare" pmain pwt
+    command mkdir -p "$pdir" || {
+        skip_test "stray-bare fixture setup failed"
+        return 0
+    }
+    pmain="$pdir/repo"
+    command mkdir -p "$pmain"
+    git_clean -C "$pmain" init -q 2>/dev/null || {
+        skip_test "stray-bare fixture git init failed"
+        return 0
+    }
+    git_clean -C "$pmain" config user.email "test@example.com"
+    git_clean -C "$pmain" config user.name "Test"
+    printf 'seed\n' >"$pmain/seed.txt"
+    git_clean -C "$pmain" add seed.txt 2>/dev/null
+    git_clean -C "$pmain" -c commit.gpgsign=false commit -qm seed 2>/dev/null
+    pwt="$pmain/.worktrees/issue-97"
+    git_clean -C "$pmain" worktree add -q -b feature/issue-97 "$pwt" >/dev/null 2>&1 || {
+        skip_test "stray-bare fixture worktree add failed"
+        return 0
+    }
+    pmain="$(cd "$pmain" && pwd)"
+    pwt="$(cd "$pwt" && pwd)"
+    # Stray misconfig written directly into the shared top-level .git config.
+    git_clean -C "$pwt" config -f "$pmain/.git/config" core.bare true 2>/dev/null || true
+    run_guard "$pwt" "Edit" "file_path" "$pmain/seed.txt"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "stray core.bare=true on a real checkout does NOT silence a leak (structural */.git wins)"
+}
+
+# --- Bare-repo host topology (#501) -----------------------------------------
+# A bare-repo worktree host has no main working tree. Two behaviours:
+#   1. The host's own linked-worktree files pass the TOPOLOGY-INDEPENDENT
+#      worktree-first allow SILENTLY — no derivation, no diagnostic.
+#   2. A CROSS-TREE target (e.g. into the bare gitdir itself) reaches the residual
+#      derivation branch, whose only bare-vs-exotic discriminator (`core.bare` /
+#      `--is-bare-repository`) is worktree-POISONABLE — so #501 refuses to trust it
+#      and FAILS OPEN LOUDLY (cycle-2 review CRITICAL: a `git config core.bare true`
+#      from a separate-git-dir worktree otherwise flipped a loud fail-open into a
+#      SILENT allow). The bare host loses nothing real: its legitimate edits are
+#      case 1; only a genuinely cross-tree target lands here, worth a diagnostic.
+test_bare_host_own_worktree_allows_silently() {
+    jq_required || return 0
+    if [ "$BARE_OK" -ne 1 ]; then
+        skip_test "bare-repo-host fixture unavailable in this environment"
+        return 0
+    fi
+    run_guard "$BARE_WT" "Edit" "file_path" "$BARE_WT/a"
+    assert_equals "allow" "$(decision "$GUARD_OUT")" "bare-host worktree's own path allowed"
+    local err
+    err="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/a"}}' "$BARE_WT" "$BARE_WT" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+    assert_output_empty "$err" "bare-host own-worktree allow is silent (worktree-first, no diagnostic)"
+}
+test_bare_host_cross_tree_failopen_is_loud() {
+    if [ "$BARE_OK" -ne 1 ]; then
+        skip_test "bare-repo-host fixture unavailable in this environment"
+        return 0
+    fi
+    local payload err out
+    payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/hooks/x"}}' \
+        "$BARE_WT" "$BARE_GITDIR")"
     err="$(printf '%s' "$payload" |
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
-    assert_contains "$err" "submodule/bare topology" "submodule leak fails open with a LOUD diagnostic (not silent)"
-    local out
     out="$(printf '%s' "$payload" |
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
-    assert_output_empty "$out" "submodule leak emits no deny envelope (fail-open allow)"
+    assert_contains "$err" "worktree-scope not derivable" "bare-host cross-tree target fails open with a LOUD diagnostic"
+    assert_output_empty "$out" "bare-host cross-tree fail-open emits no deny envelope"
+}
+
+# --- Exotic / separate-git-dir gitdir: cross-tree fails open LOUDLY, immune to
+# --- core.bare poisoning (#501 cycle-2 CRITICAL) -----------------------------
+# A `git init --separate-git-dir=<store>` main checkout gives a common-dir that
+# matches neither `*/.git` nor `*/.git/modules/*` — the residual branch. #501 must
+# fail open LOUDLY there, AND must NOT be flippable to a silent allow by a
+# worktree-side `git config core.bare true` (the exact cycle-2 repro). This is the
+# genuinely-exotic case, built from a real git feature (not a hand-mangled gitdir).
+_exotic_sgd_fixture() {
+    # Sets EX_MAIN / EX_WT / EX_STORE; returns 1 (skip) if the env can't build it.
+    EX_ROOT="$FIXTURE/sgd_$1"
+    command mkdir -p "$EX_ROOT" || return 1
+    EX_MAIN="$EX_ROOT/work"
+    EX_STORE="$EX_ROOT/store"
+    command mkdir -p "$EX_MAIN" || return 1
+    git_clean -C "$EX_MAIN" init -q --separate-git-dir="$EX_STORE" 2>/dev/null || return 1
+    git_clean -C "$EX_MAIN" config user.email "test@example.com"
+    git_clean -C "$EX_MAIN" config user.name "Test"
+    { printf 'x\n' >"$EX_MAIN/seed.txt"; } || return 1
+    git_clean -C "$EX_MAIN" add seed.txt 2>/dev/null || return 1
+    git_clean -C "$EX_MAIN" -c commit.gpgsign=false commit -qm s 2>/dev/null || return 1
+    git_clean -C "$EX_MAIN" worktree add -q -b "feature/issue-$1" "$EX_ROOT/wt" >/dev/null 2>&1 || return 1
+    EX_MAIN="$(cd "$EX_MAIN" && pwd)"
+    EX_WT="$(cd "$EX_ROOT/wt" && pwd)"
+    # Confirm the common-dir really landed in the residual (non-.git, non-module) shape.
+    local cd
+    cd="$(git_clean -C "$EX_WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    case "$cd" in
+        "" | */.git | */.git/modules/*) return 1 ;;
+    esac
+    return 0
+}
+test_exotic_sgd_cross_tree_failopen_is_loud() {
+    if ! _exotic_sgd_fixture 41; then
+        skip_test "separate-git-dir fixture unavailable in this environment"
+        return 0
+    fi
+    local payload err out
+    payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/seed.txt"}}' \
+        "$EX_WT" "$EX_MAIN")"
+    err="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+    out="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+    assert_contains "$err" "worktree-scope not derivable" "separate-git-dir cross-tree target fails open LOUDLY"
+    assert_output_empty "$out" "separate-git-dir cross-tree fail-open emits no deny envelope"
+}
+test_exotic_sgd_core_bare_poison_stays_loud() {
+    if ! _exotic_sgd_fixture 42; then
+        skip_test "separate-git-dir fixture unavailable in this environment"
+        return 0
+    fi
+    # ATTACK (cycle-2 repro): poison core.bare from the worktree cwd. The residual
+    # branch must STILL fail open LOUDLY, never flip to a silent allow.
+    git_clean -C "$EX_WT" config core.bare true 2>/dev/null || true
+    local payload err out
+    payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/seed.txt"}}' \
+        "$EX_WT" "$EX_MAIN")"
+    err="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+    out="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+    assert_contains "$err" "worktree-scope not derivable" "core.bare poison does NOT silence the exotic fail-open (stays loud)"
+    assert_output_empty "$out" "core.bare poison emits no deny envelope but also no silent-allow regression"
 }
 
 # --- Parse-failure: fail-open + loud ----------------------------------------
@@ -336,7 +670,17 @@ run_test test_allow_relative_path "allow: relative target"
 run_test test_deny_dotdot_into_main "review2: \$WT/.. into main is denied (normalized)"
 run_test test_allow_dot_within_worktree "review2: ./.. within worktree allowed"
 run_test test_root_escape_failopen "review2: root-escaping .. fails open"
-run_test test_submodule_failopen_is_loud "review1: submodule leak fails open LOUDLY"
+run_test test_submodule_deny_leak "#501: submodule leak into real checkout is DENIED"
+run_test test_submodule_allow_own_worktree "#501: submodule worktree's own path allowed"
+run_test test_submodule_poison_still_denies "#501: submodule config poison does NOT disarm"
+run_test test_poison_core_bare_still_denies "#501: core.bare=true poison still denies (non-poisonable)"
+run_test test_poison_core_worktree_still_denies "#501: core.worktree decoy poison still denies"
+run_test test_poison_worktree_config_toplevel_still_denies "#501: worktreeConfig toplevel redirect still denies"
+run_test test_stray_core_bare_misconfig_still_denies "#501: stray core.bare misconfig still denies"
+run_test test_bare_host_own_worktree_allows_silently "#501: bare-host own worktree allowed silently"
+run_test test_bare_host_cross_tree_failopen_is_loud "#501: bare-host cross-tree fails open LOUDLY"
+run_test test_exotic_sgd_cross_tree_failopen_is_loud "#501: separate-git-dir cross-tree fails open LOUDLY"
+run_test test_exotic_sgd_core_bare_poison_stays_loud "#501: core.bare poison stays loud (no silent-allow)"
 run_test test_parse_empty_allows "parse-fail: empty stdin allows"
 run_test test_parse_empty_is_loud "parse-fail: empty stdin is loud"
 run_test test_parse_nonjson_allows "parse-fail: non-JSON allows"
