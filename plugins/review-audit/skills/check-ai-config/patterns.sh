@@ -245,7 +245,11 @@ check_ai_file_bloat() {
             threshold_high=$SKILL_HIGH
             file_type="skill definition"
             ;;
-        */agents/*/*.md)
+        */agents/*/*.md | */agents/*.md)
+            # Match BOTH the flat agents/<name>.md (Claude Code's discovery form)
+            # and the nested agents/<name>/<name>.md a harness-bearing agent uses,
+            # so a flat agent over the line threshold is not missed (#494). Mirrors
+            # the patterns.py bloat branch exactly (bash<->python parity).
             threshold_warn=$AGENT_WARN
             threshold_high=$AGENT_HIGH
             file_type="agent definition"
