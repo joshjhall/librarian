@@ -728,6 +728,25 @@ test_liveness_pane_indeterminate_falls_through() {
         "An indeterminate pane does not fabricate a 'working' verdict"
 }
 
+# Own-work-pending pull-channel wiring (#517): a golem parked on its OWN monitors
+# paints the bare `⏵⏵ auto mode on` footer (no spinner), which pane_liveness_class
+# now classifies "" (indeterminate) via the own-work guard rather than "idle". This
+# drives the REAL `--once-liveness` sweep end-to-end (not just the sourced function)
+# to prove the guard is wired through liveness_snapshot's dispatch: the sweep must
+# fall through to the mtime heartbeat (`last activity`) and NOT emit `idle at
+# prompt`. Sibling to test_liveness_pane_indeterminate_falls_through, with an
+# own-work footer instead of unrelated build output.
+test_liveness_pane_own_work_wiring() {
+    _run_liveness_snapshot_tmux 1200 0 "⏺ working"$'\n'"  ⏵⏵ auto mode on · PR #514 · 1 shell, 1 monitor"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for an own-work-pending pane"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "last activity" \
+        "An own-work-pending pane falls through to the mtime heartbeat (#517 pull channel)"
+    assert_not_contains "$LIVE_OUT" "idle at prompt" \
+        "A golem parked on its own monitors is NOT reported idle on the liveness channel (#517)"
+}
+
 # Distinct precedence path from the indeterminate case above: a session that
 # EXISTS (has-session succeeds) but whose capture-pane comes back EMPTY. The
 # script's own header flags this ("capture-pane is blank until the pane paints")
@@ -1001,6 +1020,12 @@ test_pane_liveness_class() {
         "The #229 'Unknown command' failure marks the pane idle"
     assert_equals "idle" "$(_pane_class "❯"$'\n'"  ⏵⏵ auto mode on")" \
         "A bare 'auto mode on' footer (no spinner) marks the pane idle"
+    # #517: a golem parked on its OWN monitors paints the same bare auto-mode footer
+    # but is alive with a queued next action — the own-work guard makes the pull
+    # classifier return "" (indeterminate) so the caller falls through to the mtime
+    # heartbeat instead of falsely reporting idle. Mirrors the push-channel fix.
+    assert_equals "" "$(_pane_class "⏺ working"$'\n'"  ⏵⏵ auto mode on · 2 monitors")" \
+        "A golem parked on its own monitors is indeterminate, NOT idle (#517 pull channel)"
     # Spinner precedence: both the working spinner AND the auto-mode footer on
     # screen must resolve to working, not idle (a working auto-mode golem shows
     # both). Guards the check order in the classifier.
@@ -1231,6 +1256,110 @@ test_pane_is_turn_end_footer_anchored() {
         "A '⏵⏵ auto mode on' footer inside the window (no spinner) still matches"
 }
 
+# pane_pending_own_work exclusion (#517): a golem parked BETWEEN turns on its OWN
+# background monitors / a running dynamic workflow / the review harness has no
+# `esc to interrupt` spinner (its turn ended; the monitors are what it awaits) but
+# is NOT awaiting a human — it has a queued next action. pane_is_turn_end must NOT
+# classify it idle (rc 1), or the #447 push false-fires and trains the operator to
+# ignore the signal. The two-poll debounce cannot help (the footer holds this shape
+# across polls), so the matcher itself excludes. Every signature is anchored to the
+# ACTUAL footer chrome via `grep -E` (a leading `·`/`,` separator before `N
+# monitor`, the `Waiting for N dynamic workflow` prefix, an `N/M` fraction
+# immediately before `agents done`) so ordinary completion prose that merely
+# mentions those words — even with an INCIDENTAL digit nearby (a PR/issue number, a
+# count) — does NOT suppress a genuine idle. The negative assertions pin exactly
+# that: re-introducing the #517 false-NEGATIVE (a real idle silently swallowed)
+# would be a regression, so they exercise the digit-adjacency traps the cycle-2
+# review reproduced.
+test_pane_is_turn_end_pending_own_work() {
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "⏵⏵ auto mode on · PR #514 · 1 shell, 1 monitor")" \
+        "A '1 shell, 1 monitor' footer (own-work pending) is NOT idle (the golem-491 case)"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "⏵⏵ auto mode on · PR #514 · 2 monitors")" \
+        "A '2 monitors' footer (own-work pending) is NOT idle"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "✻ Churned for 3h 32m · 1 shell, 1 monitor still running"$'\n'"  ⏵⏵ auto mode on")" \
+        "A '1 monitor still running' churn footer is NOT idle"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "Waiting for 1 dynamic workflow to finish"$'\n'"  ⏵⏵ auto mode on")" \
+        "A 'Waiting for 1 dynamic workflow' wait (own-work pending) is NOT idle"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "Waiting for the force-push notification to finish"$'\n'"  ⏵⏵ auto mode on")" \
+        "A 'Waiting for … to finish' wait — the CI/force-push Monitor case — is NOT idle (issue's 2nd body pattern)"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_turn_end "next-issue-review  5/6 agents done"$'\n'"  ⏵⏵ auto mode on")" \
+        "A 'N/6 agents done' review-harness footer is NOT idle"
+    # Preserved true cases: ordinary completion prose — including prose with an
+    # INCIDENTAL digit near the trigger word — must NOT suppress a genuine idle, or
+    # the fix would re-introduce the #517 false-NEGATIVE it exists to prevent. These
+    # are the exact digit-adjacency traps the cycle-2 review reproduced against a
+    # bare case-glob (an unrelated digit + a later monitor/agents-done mention).
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "i'll start a monitor next"$'\n'"  ⏵⏵ auto mode on")" \
+        "A bare-word 'monitor' in prose with an otherwise-idle footer STILL fires (real idle preserved)"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "Filed 3 monitor-related bugs today"$'\n'"  ⏵⏵ auto mode on")" \
+        "An incidental 'N monitor'-adjacent prose (no chrome separator) STILL fires (real idle preserved)"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "Fixed the flaky test, 3 monitors were involved in triage."$'\n'"  ⏵⏵ auto mode on")" \
+        "Comma-then-'N monitor' prose (NOT the 'N shell, N monitor' chrome) STILL fires (real idle preserved)"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "Review complete: 6 agents done."$'\n'"  ⏵⏵ auto mode on")" \
+        "A bare '6 agents done.' idle summary (no N/M fraction) STILL fires (real idle preserved)"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "PR #12/34 merged, all agents done."$'\n'"  ⏵⏵ auto mode on")" \
+        "An incidental 'N/M' PR number + later 'agents done' STILL fires (real idle preserved)"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_turn_end "reviewed all 5 dynamic workflow docs"$'\n'"  ⏵⏵ auto mode on")" \
+        "An incidental 'N dynamic workflow' prose (no 'Waiting for' prefix) STILL fires (real idle preserved)"
+}
+
+# pane_pending_own_work in isolation (#517): the raw predicate returns 0 only on a
+# footer whose chrome actually advertises own-work — a `·`/`,` separator before
+# `N monitor`, the `Waiting for N dynamic workflow` prefix, or an `N/M` fraction
+# immediately before `agents done`. It returns 1 for everything else, INCLUDING
+# prose that merely places an incidental digit near a trigger word (the cycle-2
+# digit-adjacency traps), unanchored completion summaries, and an empty pane.
+# Footer-anchored to the same window as its siblings.
+test_pane_pending_own_work() {
+    # Positives — real chrome.
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "⏵⏵ auto mode on · 1 monitor")" \
+        "A '· N monitor' footer is own-work pending"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "PR #514 · 3 monitors still running")" \
+        "A '· N monitor still running' footer is own-work pending"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "Waiting for 2 dynamic workflow to finish")" \
+        "A 'Waiting for N dynamic workflow' wait is own-work pending"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "Waiting for the force-push notification to finish")" \
+        "A 'Waiting for … to finish' wait (no 'dynamic workflow') is own-work pending (issue's 2nd body pattern)"
+    assert_equals "0" "$(_pane_rc pane_pending_own_work "next-issue-review 4/6 agents done")" \
+        "An 'N/M agents done' harness footer is own-work pending"
+    # Negatives — plain idle, bare-word prose, AND incidental-digit-adjacency traps
+    # (the cycle-2 false positives a bare case-glob matched).
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "  ⏵⏵ auto mode on")" \
+        "A plain idle footer is NOT own-work pending"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "the monitor tool is handy")" \
+        "A bare-word 'monitor' (no digit) is NOT own-work pending"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "Filed 3 monitor-related bugs today")" \
+        "An incidental '3 monitor'-adjacent prose (no chrome separator) is NOT own-work pending"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "see issue #1 monitor config")" \
+        "An incidental '1 monitor' in prose (no separator) is NOT own-work pending"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "he noted, 4 monitors flagged issues")" \
+        "A bare comma before 'N monitors' (NOT 'N shell, N monitor' chrome) is NOT own-work pending (cycle-3)"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "Fixed the setup, 2 monitors confirmed working.")" \
+        "A comma-then-'N monitors' completion summary is NOT own-work pending (cycle-3)"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "Review complete: 6 agents done.")" \
+        "A bare '6 agents done.' summary (no N/M fraction) is NOT own-work pending"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "PR #12/34 merged, all agents done.")" \
+        "An incidental 'N/M' + later 'agents done' is NOT own-work pending"
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "reviewed all 5 dynamic workflow docs")" \
+        "An incidental 'N dynamic workflow' prose (no 'Waiting for') is NOT own-work pending"
+    # Cross-line trap: a fraction on one line, 'agents done' on another, must NOT
+    # match (grep is per-line; a case-glob would have matched across the newline).
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "Completed 4/6 setup steps"$'\n'"separately, 12 things agents done elsewhere")" \
+        "An 'N/M' and 'agents done' on DIFFERENT lines do NOT match (per-line grep)"
+}
+
 # End-to-end turn-end dispatch (#447): drive the REAL panes_snapshot() via
 # `--once-panes` (reusing _run_panes_snapshot_tmux) to pin that a turn-ended pane
 # emits the idle-at-prompt label AND that it is the LAST-RESORT branch — a pane
@@ -1263,6 +1392,16 @@ test_panes_snapshot_turn_end_dispatch() {
         "A fork+idle pane emits the escalation label (fork wins over turn-end)"
     assert_not_contains "$PANES_OUT" "idle at prompt" \
         "A fork+idle pane is NOT downgraded to idle-at-prompt"
+
+    # Own-work-pending + idle footer (#517): a golem parked on its own monitors
+    # paints the bare turn-end footer but is NOT awaiting a human — panes_snapshot
+    # must emit NO idle line for it (pane_pending_own_work excludes it inside
+    # pane_is_turn_end, the last-resort branch).
+    _run_panes_snapshot_tmux "⏺ working"$'\n'"  ⏵⏵ auto mode on · PR #514 · 1 shell, 1 monitor"
+    assert_not_contains "$PANES_OUT" "idle at prompt" \
+        "A pane parked on its own monitors is NOT pushed as idle-at-prompt (#517)"
+    assert_not_contains "$PANES_OUT" "golem-9" \
+        "An own-work-pending pane emits no golem line at all (silent, not idle)"
 }
 
 # confirm_turn_end two-consecutive-poll debounce (#447): the turn-end/idle line is
@@ -1808,10 +1947,11 @@ test_panes_snapshot_died_dispatch() {
 # silently ignored it (typo'd var name, value never reaching the sourced context)
 # would go uncaught. This pins the ${VAR:-default} wiring in BOTH directions
 # (shrink hides an in-default-window trigger; enlarge reveals an
-# out-of-default-window one) across ALL FIVE footer-keyed matchers named in the
-# issue — pane_is_gate, pane_is_fork, pane_is_plan_gate, pane_is_turn_end, and
-# pane_liveness_class — so a per-matcher hardcoded 8 (not reading the shared var)
-# is caught in any one of them, not just a single wiring point. _pane_rc sources
+# out-of-default-window one) across ALL SIX footer-keyed matchers — the five named
+# in #458 (pane_is_gate, pane_is_fork, pane_is_plan_gate, pane_is_turn_end,
+# pane_liveness_class) plus pane_pending_own_work (#517) — so a per-matcher
+# hardcoded 8 (not reading the shared var) is caught in any one of them, not just a
+# single wiring point. _pane_rc sources
 # the script in a subshell, so the GOLEM_PANE_FOOTER_LINES= prefix reaches that
 # source-time read. (pane_is_api_error, added in #446, keys its PRIMARY match off
 # $pane_error_lines and uses $pane_footer_lines only for its spinner-veto guard,
@@ -1850,6 +1990,15 @@ test_pane_footer_lines_env_overridable() {
     assert_equals "0" \
         "$(GOLEM_PANE_FOOTER_LINES=12 _pane_rc pane_is_turn_end "  ⏵⏵ auto mode on"$'\n'"$nine")" \
         "pane_is_turn_end: GOLEM_PANE_FOOTER_LINES=12 enlarges the window so the same idle footer falls inside it"
+    # pane_pending_own_work (#517) reads the same shared $pane_footer_lines, so a
+    # per-matcher hardcoded 8 would go uncaught without exercising it here too. An
+    # own-work token 10 lines up is outside the default window (no match) but inside
+    # the enlarged 12-line one (match).
+    assert_equals "1" "$(_pane_rc pane_pending_own_work "· 1 monitor"$'\n'"$nine")" \
+        "pane_pending_own_work: an own-work token 10 lines up falls outside the default 8-line window"
+    assert_equals "0" \
+        "$(GOLEM_PANE_FOOTER_LINES=12 _pane_rc pane_pending_own_work "· 1 monitor"$'\n'"$nine")" \
+        "pane_pending_own_work: GOLEM_PANE_FOOTER_LINES=12 enlarges the window so the same token falls inside it"
 
     # pane_liveness_class returns a CLASS STRING, not an rc — capture stdout via a
     # sourced subshell. The env var is set BEFORE `source` (as _pane_rc does it)
@@ -1888,6 +2037,7 @@ run_test test_liveness_pane_working_wiring "Liveness wiring: working pane -> 'al
 run_test test_liveness_pane_idle_wiring "Liveness wiring: idle pane (#229) -> 'idle at prompt' (pane wins over mtime)"
 run_test test_liveness_pane_died_wiring "Liveness wiring: died pane (#446) -> DIED label with class (pane wins over mtime)"
 run_test test_liveness_pane_indeterminate_falls_through "Liveness wiring: indeterminate pane falls through to mtime heartbeat"
+run_test test_liveness_pane_own_work_wiring "Liveness wiring: own-work-pending pane falls through to mtime heartbeat, not idle (#517)"
 run_test test_liveness_pane_blank_capture_falls_through "Liveness wiring: blank capture-pane (guard false) falls through to mtime heartbeat"
 run_test test_liveness_transcript_working_wiring "Liveness transcript (#248): turn-in-flight -> 'alive, working' (transcript wins over mtime)"
 run_test test_liveness_transcript_idle_wiring "Liveness transcript (#248): turn-ended -> 'idle at prompt' (headless #229 analog)"
@@ -1906,6 +2056,8 @@ run_test test_pane_fork_plan_precedence "pane_is_plan_gate wins over pane_is_for
 run_test test_panes_snapshot_dispatch "panes_snapshot dispatch order + labels (plan/gate/fork) end-to-end"
 run_test test_pane_is_turn_end "pane_is_turn_end matches the turn-ended/idle-at-prompt footer only (#447)"
 run_test test_pane_is_turn_end_footer_anchored "pane_is_turn_end is footer-anchored (no self-trip on scrolled text)"
+run_test test_pane_is_turn_end_pending_own_work "pane_is_turn_end excludes a golem parked on its OWN monitors/workflow; real idle preserved (#517)"
+run_test test_pane_pending_own_work "pane_pending_own_work matches own-work chrome only, not bare-word prose (#517)"
 run_test test_panes_snapshot_turn_end_dispatch "panes_snapshot emits idle-at-prompt as last-resort; overlay wins (#447)"
 run_test test_pane_footer_lines_env_overridable "pane matchers: GOLEM_PANE_FOOTER_LINES is env-overridable both directions (#458)"
 run_test test_confirm_turn_end_debounce "confirm_turn_end: two-consecutive-poll debounce on the idle line; gates immediate (#447)"

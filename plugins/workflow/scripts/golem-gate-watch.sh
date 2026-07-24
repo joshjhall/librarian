@@ -479,6 +479,56 @@ pane_is_fork() {
     return 1
 }
 
+# Own-work-pending guard for pane_is_turn_end / pane_liveness_class (issue #517). A
+# golem parked BETWEEN turns waiting on its OWN background `Monitor` tasks — e.g.
+# ship-issue's review-harness dynamic workflow plus a CI/force-push Monitor — has
+# no `esc to interrupt` run-spinner (its turn technically ended; the monitors are
+# what it awaits), so the idle-footer heuristic alone would classify it "idle at
+# prompt awaiting input" and false-fire the #447 push (and the #38 liveness idle
+# read). But it is NOT awaiting a human — it has a queued next action gated only on
+# its own monitors. This predicate returns 0 when the footer advertises that
+# pending own-work, so the caller can exclude it. The two-poll debounce
+# (confirm_turn_end) does NOT separate this from a real idle: the footer holds this
+# shape across many polls while the monitors run, confirming the false idle — the
+# matcher itself must exclude.
+#
+# Matched with `grep -E` per line (NOT a bash case-glob): case-globs can't express a
+# word boundary and match across embedded newlines, so an unanchored `*[0-9]
+# monitor*` fires on prose like "Filed 3 monitor-related bugs" and an unbounded
+# `*[0-9]/[0-9]*" agents done"*` matches a digit on one line and "agents done" on
+# another (issue #517 cycle-2 review). Each signature is anchored to a STRONG,
+# chrome-specific LEAD-IN — a footer glyph or a fixed phrase, never a lone digit or a
+# bare comma — so ordinary completion prose that merely mentions these words does NOT
+# suppress a genuine idle (that would itself be the #517 false-negative):
+#   `· N monitor(s)` OR `N shell, N monitor(s)`  the real monitor-count footer chrome
+#                               — the count must follow the `·` bullet separator or
+#                               the `N shell,` token, NOT any comma (cycle-3 review:
+#                               a bare comma matches ordinary prose like "he noted, 4
+#                               monitors flagged"). Covers `N monitor still running`
+#                               and the `N monitors` plural.
+#   `Waiting for … dynamic workflow` / `Waiting for … to finish`  the in-flight wait
+#                               lines (ship-issue's review workflow and the CI/force-
+#                               push Monitor). Anchored on the `Waiting for` prefix
+#                               (the real signal), which also rules out prose like
+#                               "the dynamic workflow finished" that has no prefix —
+#                               and covers the issue's second `*to finish*` body
+#                               pattern (e.g. "Waiting for the force-push … to finish").
+#   `N/M agents done`           the `next-issue-review … N/M agents done` harness
+#                               footer (fraction immediately before the phrase).
+# Same FOOTER anchoring as the sibling matchers (#246) — reuses the
+# $pane_footer_lines window, no wider scan. This is the shared #517 chrome list;
+# both the push matcher (pane_is_turn_end) and the pull classifier
+# (pane_liveness_class) call it so their idle reads stay consistent.
+OWN_WORK_RE='(·[[:space:]]*|[0-9]+[[:space:]]+shells?,[[:space:]]*)[0-9]+[[:space:]]+monitors?([[:space:]]|$)'
+OWN_WORK_RE="${OWN_WORK_RE}|[Ww]aiting for.*dynamic workflow"
+OWN_WORK_RE="${OWN_WORK_RE}|[Ww]aiting for.*to finish"
+OWN_WORK_RE="${OWN_WORK_RE}|[0-9]+/[0-9]+[[:space:]]+agents[[:space:]]+done"
+pane_pending_own_work() {
+    local footer
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
+    command printf '%s\n' "$footer" | "$GREP" -qE "$OWN_WORK_RE"
+}
+
 # Turn-ended / idle-at-prompt overlay (issue #447). NOT a modal overlay: a golem
 # that finished its turn and sits at an empty prompt awaiting human input — e.g.
 # commit signing halted on a locked 1Password vault, so the golem correctly
@@ -505,12 +555,25 @@ pane_is_fork() {
 # asks for — so a momentary between-turns render does not fire a false idle — is
 # layered on top in the --stream-panes drive arm via confirm_turn_end(), NOT here,
 # so --once-panes and the unit tests can assert the raw matcher in isolation.
+#
+# A second guard (issue #517) sits between the spinner check and the positive
+# footer match: pane_pending_own_work returns 0 when the golem is parked on its OWN
+# background monitors / a running dynamic workflow / the review harness — alive
+# with a queued next action, NOT awaiting a human — so that legitimate between-turns
+# park does not false-fire the idle push (the debounce cannot separate it; see
+# pane_pending_own_work). Only when the spinner is absent AND no own-work is pending
+# is the golem genuinely idle-at-prompt awaiting a human (the #447 target case).
 pane_is_turn_end() {
     local footer
     footer="$("$TAIL" -n "$pane_footer_lines" <<<"$1")"
     case "$footer" in
         *"esc to interrupt"*) return 1 ;;
     esac
+    # #517: parked on its own monitors / dynamic workflow / review harness ⇒ not a
+    # human-awaiting idle, even though the run-spinner is absent.
+    if pane_pending_own_work "$1"; then
+        return 1
+    fi
     case "$footer" in
         *"⏵⏵"*"auto mode on"*) return 0 ;;
     esac
@@ -708,6 +771,20 @@ pane_liveness_class() {
             command echo "idle"
             return 0
             ;;
+    esac
+    # #517: a golem parked on its OWN background monitors / a running dynamic
+    # workflow / the review harness paints the bare `⏵⏵ auto mode on` footer with no
+    # spinner — identical to a real idle — but is alive with a queued next action.
+    # Return "" (indeterminate) so the caller falls through to the mtime heartbeat,
+    # which reports it advancing, instead of a false `idle`. Checked before the
+    # auto-mode-on arm; the same guard the push channel (pane_is_turn_end) uses, so
+    # both idle reads stay consistent. (The `Unknown command` #229 error arm above
+    # is a genuine idle-at-error, NOT an own-work park, so it is not guarded.)
+    if pane_pending_own_work "$1"; then
+        command echo ""
+        return 0
+    fi
+    case "$footer" in
         *"⏵⏵"*"auto mode on"*)
             command echo "idle"
             return 0
