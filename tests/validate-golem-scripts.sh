@@ -4425,6 +4425,86 @@ EOF
     assert_not_contains "$RUN_OUT" "frozen 0m" "a >60s elapsed never rounds to 0m"
 }
 
+# When .started is ABSENT (a Mode-2 golem whose dispatch wrote no cache stamp),
+# ELAPSED must NOT collapse to the bare "—" that pushes the operator onto manual
+# cross-clock arithmetic. Instead it falls back to the golem worktree dir's
+# creation/index mtime — a TZ-agnostic epoch — rendered with a "~" prefix to mark
+# it approximate (issue #515). The worktree dir must exist for _mtime_epoch to
+# resolve; new_sandbox creates .worktrees/.status but not the per-issue dir.
+test_status_checkpoint_elapsed_fallback_no_started() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # No "started" field at all — the exact Mode-2 no-cache-writer gap.
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false }
+EOF
+    # A real worktree dir + a `.git` gitlink file (the stable launch anchor a
+    # linked worktree carries) so the primary mtime fallback resolves.
+    command mkdir -p "$sb/.worktrees/issue-42"
+    command printf 'gitdir: /somewhere/.git/worktrees/issue-42\n' >"$sb/.worktrees/issue-42/.git"
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "golem-status --checkpoint with no .started exits 0"
+    # The ELAPSED cell shows a "~"-prefixed approximate age (e.g. "~0s"/"~1m"),
+    # never a bare "—". Match the "~<digits><unit>" render form.
+    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+        "ELAPSED falls back to a ~-marked worktree-mtime age when .started is absent (#515)"
+}
+
+# The fallback triggers on a present-but-UNPARSABLE .started too, not just an
+# absent one: _iso_to_epoch returns empty for a garbage timestamp, ELAPSED stays
+# "—" after the .started branch, and the worktree-mtime fallback takes over
+# (#515). Mirrors test_status_frozen_iso_parse_failure_raw_render (#392) for the
+# ELAPSED path.
+test_status_checkpoint_elapsed_fallback_malformed_started() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false,
+  "started": "not-a-valid-timestamp" }
+EOF
+    command mkdir -p "$sb/.worktrees/issue-42"
+    command printf 'gitdir: /somewhere/.git/worktrees/issue-42\n' >"$sb/.worktrees/issue-42/.git"
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "golem-status --checkpoint with a malformed .started exits 0"
+    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+        "an unparsable .started still falls through to the ~-marked mtime fallback (#515)"
+}
+
+# The fallback is a fallback, not a fabrication: a started-less row whose
+# worktree dir does NOT exist (container/reaped, or a genuinely anchorless row)
+# keeps the bare "—" rather than inventing an age. new_sandbox does not create
+# .worktrees/issue-42, so the anchor cannot resolve.
+test_status_checkpoint_elapsed_no_anchor_stays_dash() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false }
+EOF
+    # Deliberately NO .worktrees/issue-42 dir → _mtime_epoch returns empty.
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    run_status_scrape "$sb" --checkpoint
+    assert_exit 0 "$RUN_RC" "golem-status --checkpoint with no anchor exits 0"
+    assert_true "! printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+        "no worktree anchor → ELAPSED stays — , never a fabricated ~age (#515)"
+}
+
 # render_checkpoint's TWO early returns: (a) empty status dir + no sessions + no
 # pool → "No active golems", exit 0 (the shared empty-state guard, before jq);
 # (b) jq absent from PATH → the "cannot render checkpoint table" guard on stderr,
@@ -5080,6 +5160,9 @@ run_test test_status_checkpoint_ci_and_shipped_markers "golem-status: --checkpoi
 run_test test_status_checkpoint_container_and_unknown_tokens "golem-status: --checkpoint renders unposted-container n/a + transcript-less — token cells (#283)"
 run_test test_status_checkpoint_container_populated_tokens "golem-status: --checkpoint folds a posted container's count into Σtokens with a (frozen) tag (#390)"
 run_test test_status_checkpoint_elapsed_from_started "golem-status: --checkpoint ELAPSED renders a real duration from .started, not — (#415)"
+run_test test_status_checkpoint_elapsed_fallback_no_started "golem-status: --checkpoint ELAPSED falls back to a ~-marked worktree-mtime age when .started is absent (#515)"
+run_test test_status_checkpoint_elapsed_fallback_malformed_started "golem-status: --checkpoint ELAPSED falls back to the mtime anchor on a malformed .started too (#515)"
+run_test test_status_checkpoint_elapsed_no_anchor_stays_dash "golem-status: --checkpoint ELAPSED stays — with no worktree anchor, never a fabricated ~age (#515)"
 run_test test_status_checkpoint_empty_and_no_jq_guards "golem-status: --checkpoint empty-state + jq-missing early returns exit 0 (#415)"
 run_test test_status_checkpoint_pool_header "golem-status: --checkpoint renders the pool.json header ahead of the table (#415)"
 run_test test_status_checkpoint_live_tail_row "golem-status: --checkpoint renders a (live) tail row for a cache-less session (#415)"
