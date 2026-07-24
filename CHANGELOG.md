@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-07-24
+
+### Changed
+
+- Default orchestrate monitor to event-driven (#485) (#504)
+- Transition-dedup golem-gate-watch --stream-liveness (#489) (#509)
+- Collapse per-domain fable verify into one barrier (#490) (#519)
+- Merge ship rescore+classify into one fable pass (#491) (#514)
+- Move code-reviewer sub-reviewer checklists into the harness (#524)
+- Split rarely-used prose to on-demand files + dedup standing-rules (#527)
+- Scope ship-issue re-review cycles to the fix delta (#492) (#528)
+- Memoize ci-fixer classify across the retry loop (#493) (#534)
+
+### Documentation
+
+- Record v0.8.0 release + semver bump-mismatch note
+- Record #489 liveness-dedup + backfill audit-cycle memories
+- Record wave-2 batch orchestration memories
+- Record wave-2 tail batch memories
+
+### Fixed
+
+- Block golem worktree edits leaking into the main checkout (#475) (#502)
+- Resolve coreutils via PATH, not hardcoded /usr/bin paths (#443) (#505)
+- Enforce worktree-guard scope in submodule + bare-repo topologies (#501) (#507)
+- Re-detect gitlink-poisoned worktree in worktree-guard (#506) (#520)
+- ELAPSED worktree-mtime fallback when .started is absent (#515) (#523)
+- Kill golem tmux session unconditionally in worktree-rm (#532)
+- Exclude own-work-pending golems from idle detection (#517) (#535)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.19.18
+
 ## [0.8.0] - 2026-07-22
 
 ### Added
@@ -431,6 +465,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.8.1]: https://github.com/joshjhall/librarian/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/joshjhall/librarian/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/joshjhall/librarian/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/joshjhall/librarian/compare/v0.6.1...v0.6.2
