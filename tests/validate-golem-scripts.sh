@@ -1916,6 +1916,109 @@ test_worktree_rm_round_trip() {
     assert_equals "" "$branches" "the feature/issue-34 branch is gone after rm"
 }
 
+# Regression (#486): the tmux-kill block must kill the session UNCONDITIONALLY,
+# not gate the kill on `tmux has-session`. That guard raced the golem's own
+# `claude … ; claude …` self-teardown and intermittently reported the session
+# absent while it lingered a beat longer, so the kill was skipped and golem-N
+# leaked into `tmux ls` / golem-status.sh. A stub `tmux` that returns NON-ZERO
+# for `has-session` (the racy false reading) but ZERO for `kill-session` (the
+# session really is there) distinguishes the two behaviors: the old guarded code
+# would skip the kill (no "killed" line), the new code kills anyway. Pins that
+# `kill-session` is invoked with the exact-name `=golem-N` target and the
+# "killed tmux session" line still prints. --unset=BASH_ENV keeps the
+# devcontainer's /etc/bash_env from resetting $PATH and shadowing the stub (see
+# run_launch_auth and the devcontainer-bash-env-path-reset note).
+test_worktree_rm_kills_session_despite_has_session_false() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 62
+    assert_exit 0 "$RUN_RC" "worktree-new seeds the worktree to reap"
+
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: log argv; report has-session FALSE (racy guard) but kill-session OK.
+printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
+case "$1" in
+    has-session) exit 1 ;;
+    kill-session) exit 0 ;;
+    *) exit 0 ;;
+esac
+EOF
+    command chmod +x "$sb/bin/tmux"
+
+    local log="$sb/tmux-stub.log"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX_STUB_LOG="$log" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 62 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" "worktree-rm exits 0 with the tmux stub"
+    assert_contains "$RUN_OUT" "killed tmux session golem-62" \
+        "kills the session even though has-session would report it absent"
+    local killlog
+    killlog="$(command cat "$log" 2>/dev/null || true)"
+    assert_contains "$killlog" "kill-session -t =golem-62" \
+        "invokes kill-session with the exact-name =golem-N target"
+}
+
+# Regression companion (#486): the OTHER branch of the unconditional kill — tmux
+# present but `kill-session` genuinely fails (no such session) — must stay a quiet
+# exit-0 no-op: NO "killed tmux session" line and removed stays 0 (so a torn-down
+# golem with nothing else to remove reports "nothing to remove", not a phantom
+# kill). Without the old `has-session` guard, kill-session's own non-zero exit is
+# the sole gate on the echo/removed=1, so pin it deterministically with a stub
+# (kill-session -> non-zero) rather than relying on the host's real tmux. Run
+# against an ABSENT issue so no worktree/branch removal masks removed=0.
+test_worktree_rm_kill_session_failure_is_quiet_noop() {
+    local sb
+    new_sandbox sb
+
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: log argv; report every subcommand as FAILED (session truly absent).
+printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
+exit 1
+EOF
+    command chmod +x "$sb/bin/tmux"
+
+    local log="$sb/tmux-stub.log"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX_STUB_LOG="$log" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 63 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" "worktree-rm exits 0 when kill-session fails (absent session)"
+    assert_not_contains "$RUN_OUT" "killed tmux session" \
+        "does not claim a kill when kill-session returned non-zero"
+    # removed stays 0: nothing else to remove for an absent issue -> "nothing to remove".
+    assert_contains "$RUN_OUT" "nothing to remove" \
+        "a failed kill does not set removed=1 (phantom removal)"
+    local killlog
+    killlog="$(command cat "$log" 2>/dev/null || true)"
+    assert_contains "$killlog" "kill-session -t =golem-63" \
+        "still attempts the exact-name kill-session before treating it as a no-op"
+}
+
 # Teardown emits a terminal `reaped` feed line (#446, Bug #2). worktree-rm.sh pipes
 # a REAPED:-prefixed Notification to golem-notify.sh after a successful teardown so
 # the torn-down golem's stale `gate` line is superseded and it does not ghost on
@@ -5075,6 +5178,8 @@ run_test test_config_git_env_scrub_vars_single_source "config.sh: GIT_ENV_SCRUB_
 run_test test_worktree_rm_non_integer_exits_2 "worktree-rm: non-integer arg exits 2"
 run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean no-op (exit 0)"
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
+run_test test_worktree_rm_kills_session_despite_has_session_false "worktree-rm: kills golem-N unconditionally despite a racy has-session false (#486)"
+run_test test_worktree_rm_kill_session_failure_is_quiet_noop "worktree-rm: a failed kill-session stays a quiet exit-0 no-op, no phantom removal (#486)"
 run_test test_worktree_rm_emits_reaped_feed_line "worktree-rm: teardown emits a reaped feed line with the right id (#446)"
 run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"
 run_test test_worktree_rm_scrubs_git_config_injection_for_mutations "worktree-rm: scrubs a GIT_CONFIG_* injection so the teardown mutation targets the right repo (#376, #328)"

@@ -102,13 +102,25 @@ fi
 
 # Kill the golem's tmux session so a finished golem does not linger in
 # `tmux ls` / golem-status.sh after merge+prune (#27). Idempotent and
-# ignore-if-absent: a missing session (or no tmux at all) is a clean no-op, and
-# the `|| true` keeps `set -e` from aborting teardown over it.
+# ignore-if-absent: a missing session (or no tmux at all) is a clean no-op.
+#
+# Kill UNCONDITIONALLY rather than has-session-then-kill (#486): the old guard
+# `tmux has-session -t "$sess"` raced the golem's own `claude … ; claude …`
+# self-teardown and intermittently reported the session absent while it lingered
+# a beat longer, so the kill was skipped and the session leaked. `kill-session`
+# is the very operation the guard protected and is already a safe no-op on a
+# missing session (non-zero, swallowed by `2>/dev/null` + the `if`), so dropping
+# the pre-check removes the race with no downside. `-t "=$sess"` forces
+# exact-name matching (the `=` prefix) instead of tmux's prefix/fnmatch target
+# matching. The echo + `removed=1` fire only when a session was actually killed
+# (kill-session exit 0), preserving the contract that the line prints on a real
+# kill.
 sess="golem-$N"
-if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$sess" 2>/dev/null; then
-    tmux kill-session -t "$sess" 2>/dev/null || true
-    command echo "  killed tmux session $sess"
-    removed=1
+if command -v tmux >/dev/null 2>&1; then
+    if tmux kill-session -t "=$sess" 2>/dev/null; then
+        command echo "  killed tmux session $sess"
+        removed=1
+    fi
 fi
 
 # Repair a polluted main-repo core.worktree (#258). An interrupted
