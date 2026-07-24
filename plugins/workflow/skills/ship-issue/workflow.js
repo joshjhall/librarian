@@ -1,7 +1,7 @@
 export const meta = {
   name: 'next-issue-review',
   description:
-    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND classifies it blocking-vs-deferrable for the skill to resolve-or-defer. One cycle per invocation — the skill owns the cycle loop and the cap.',
+    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND classifies it blocking-vs-deferrable for the skill to resolve-or-defer. On a re-review cycle (cycle > 1) with a caller-supplied fix-commit delta, narrows the delta-local dimensions to that delta while scope-drift keeps the full diff. One cycle per invocation — the skill owns the cycle loop and the cap.',
   phases: [
     { title: 'Manifest', detail: 'build + classify the changed-file manifest, decide specialists' },
     { title: 'Review', detail: 'review dimensions run as one parallel barrier under one budget' },
@@ -16,11 +16,38 @@ export const meta = {
 //     phase:      'pre-pr' | 'pr-cycle',   // default 'pre-pr'
 //     cycle:      number,                  // 1-based; the skill increments. default 1
 //     maxCycles:  number,                  // default 3 — informational; the SKILL enforces the cap
-//     files?:     string[],                // changed-file scope (skill: git diff --name-only)
-//     diff?:      string,                  // precomputed diff for context
+//     files?:     string[],                // FULL changed-file scope (skill: git diff --name-only origin/main...HEAD)
+//     diff?:      string,                  // FULL precomputed diff for context
 //     prComments?: [{ id, author, path?, line?, body, url? }],  // pr-cycle only
 //     issue?:     { number, title }        // for scope-drift + defer-issue context
+//     // --- Re-review narrowing (cycle > 1 only; #492) -------------------------
+//     deltaDiff?:  string,                 // git diff of the fix commits SINCE the last reviewed SHA
+//     deltaFiles?: string[],               // git diff --name-only of that same fix-commit delta
+//     priorBlockingDimensions?: string[],  // dimension names that BLOCKED last cycle
 //   }
+//
+// Re-review narrowing (#492): on a re-review cycle the whole diff was being
+// re-scanned by every dimension, even files/dimensions untouched by the fix
+// (worst case 3× the full review under maxCycles=3). When `cycle > 1` AND the
+// caller supplies a non-empty `deltaDiff` + `deltaFiles` (the fix-commit delta
+// it already computes each cycle — the sandbox has no git of its own), the
+// harness NARROWS: the manifest is built over the delta, and a delta-local
+// dimension (security, correctness, tests, conventions) runs only if it blocked
+// last cycle OR the delta touches a file type it reviews. The diff it reads depends
+// on WHY it was included: a dimension pulled in because the delta TOUCHES its types
+// reads only the fix delta (the saving); a dimension pulled in via the
+// PRIOR-BLOCKING carry-over reads the FULL diff, because the finding it must
+// re-confirm may live OUTSIDE the fix delta — narrowing it to the delta would blind
+// it and let a still-unresolved finding silently vanish (a false `clean`). The
+// conditional specialists (database, devops) follow the same include rule
+// (manifest.needs OR prior-blocking) and the same diff rule. `scope-drift` is the
+// deliberate exception — its acceptance-criteria-completeness check is a
+// whole-change lens, so it ALWAYS reads the FULL `diff`. Absent the delta inputs
+// (or on cycle 1) the run is
+// byte-identical to the pre-#492 full review. A dimension dropped by narrowing is
+// NOT a partial cycle: narrowing never sets `budget_exhausted` / `dimensions_skipped`
+// (those still mean a dimension that SHOULD have run didn't) — the narrowed set
+// IS the complete set for that cycle, so `clean` can still be reached.
 //
 // Returns (one cycle):
 //   { cycle, phase, scanner, blocking[], deferrable[], comments_addressed[],
@@ -60,6 +87,17 @@ const scopeFiles = args && Array.isArray(args.files) ? args.files.filter(Boolean
 const scopeDiff = args && typeof args.diff === 'string' ? args.diff : ''
 const prComments = args && Array.isArray(args.prComments) ? args.prComments.filter(Boolean) : []
 const issue = args && args.issue && typeof args.issue === 'object' ? args.issue : null
+
+// Re-review narrowing inputs (#492), all optional — absent ⇒ full review. The
+// skill computes these each re-review cycle (it owns git; this sandbox does not):
+// the fix-commit delta since the last reviewed SHA, and which dimensions blocked
+// last cycle. `narrowingActive` below decides whether they take effect.
+const deltaDiff = args && typeof args.deltaDiff === 'string' ? args.deltaDiff : ''
+const deltaFiles = args && Array.isArray(args.deltaFiles) ? args.deltaFiles.filter(Boolean) : []
+const priorBlockingDimensions =
+  args && Array.isArray(args.priorBlockingDimensions)
+    ? args.priorBlockingDimensions.filter((d) => typeof d === 'string' && d)
+    : []
 
 // Neutralize prompt-injection vectors in a short untrusted value interpolated
 // bare (not inside a data block) — here the issue title, which is
@@ -381,11 +419,15 @@ const READONLY =
 // the top of the file (above NEW_DIMENSIONS, which calls `sanitize` at module
 // load); the prompt builders below consume them.
 
-const scopeHeader = () => {
-  const fileList = scopeFiles.length
-    ? `Review scope (files): ${scopeFiles.join(', ')}\n`
+// Manifest header. On a narrowed re-review cycle (#492) the caller-supplied
+// `files`/`diff` args are replaced with the fix-commit delta (`deltaFiles`/
+// `deltaDiff`) so the manifest's file list, classifications, and `needs`
+// (specialist gating) describe what actually changed this cycle, not the whole PR.
+const scopeHeader = (files, diff) => {
+  const fileList = files.length
+    ? `Review scope (files): ${files.join(', ')}\n`
     : 'No explicit file list provided — derive scope from `git diff --name-only origin/main...HEAD`.\n'
-  const diffBlock = scopeDiff ? `\nProvided diff for context:\n${dataBlock('DIFF', scopeDiff)}\n` : ''
+  const diffBlock = diff ? `\nProvided diff for context:\n${dataBlock('DIFF', diff)}\n` : ''
   return fileList + diffBlock
 }
 
@@ -399,20 +441,36 @@ const scopeHeader = () => {
 // diffs inconsistent with the once-computed `manifest.files`/`classifications`.
 // The skill always passes `diff` here (see ci-review-protocol.md /
 // pre-ship-validation.md), so this path is a best-effort convenience only.
-const diffSection = () =>
-  scopeDiff
-    ? `Diff:\n${dataBlock('DIFF', scopeDiff)}\n\n`
+// The diff a reviewer reads — parameterized (#492) so each dimension can be
+// handed either the fix-commit delta (delta-local dimensions on a narrowed cycle)
+// or the full PR diff (scope-drift always; every dimension on a full cycle).
+// Defaults to `scopeDiff` so the manifest/comment builders and any non-narrowing
+// caller are unchanged.
+const diffSection = (diff = scopeDiff) =>
+  diff
+    ? `Diff:\n${dataBlock('DIFF', diff)}\n\n`
     : 'No diff supplied — derive it yourself with `git diff origin/main...HEAD` ' +
       'and review those changes.\n\n'
 
-const manifestPrompt = () =>
-  `Mode: manifest.\n${scopeHeader()}\n` +
-  `Follow Steps 1-2 of your instructions: build the changed-file manifest, read each ` +
-  `file for context, and classify every file's type(s). Decide which conditional ` +
-  `specialists are needed: set needs.database=true if any file is type database, and ` +
-  `needs.devops=true if any file is type ci or docker. Return the typed manifest ` +
-  `(files, per-file classifications, needs) — do NOT echo the diff back. ` +
-  READONLY
+// On a narrowed re-review cycle the manifest is built over the fix-commit delta
+// (deltaFiles/deltaDiff) so its file list, classifications, and `needs` describe
+// what actually changed this cycle — the specialist gating and the delta-relevance
+// tests then key off the real changed set. On cycle 1 / no delta it is the full
+// scope, as before.
+const manifestPrompt = () => {
+  const narrowed = narrowingActive(CYCLE, deltaDiff, deltaFiles)
+  const mFiles = narrowed ? deltaFiles : scopeFiles
+  const mDiff = narrowed ? deltaDiff : scopeDiff
+  return (
+    `Mode: manifest.\n${scopeHeader(mFiles, mDiff)}\n` +
+    `Follow Steps 1-2 of your instructions: build the changed-file manifest, read each ` +
+    `file for context, and classify every file's type(s). Decide which conditional ` +
+    `specialists are needed: set needs.database=true if any file is type database, and ` +
+    `needs.devops=true if any file is type ci or docker. Return the typed manifest ` +
+    `(files, per-file classifications, needs) — do NOT echo the diff back. ` +
+    READONLY
+  )
+}
 
 // Byte-identical shared context across every reviewer dimension in a fan-out:
 // the changed-file list, the manifest classifications (deterministically
@@ -426,27 +484,27 @@ const manifestPrompt = () =>
 // in-flight cache write, so the direct payoff is cross-cycle (a re-review whose
 // diff is unchanged) plus resume determinism; the always-free shared prefix is
 // the agent system-prompt + tool defs, identical across siblings regardless.
-const reviewerData = (manifest) =>
+const reviewerData = (manifest, diff = scopeDiff) =>
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
   `Classifications: ${stableStringify(manifest.classifications)}\n\n` +
-  diffSection()
+  diffSection(diff)
 
 // Reused dimensions (security, correctness): defer to the agent's own
 // Sub-Reviewer Definition, only overriding the surfaced category name.
-const reusedReviewerPrompt = (dim, manifest) =>
+const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n\n' +
-  reviewerData(manifest) +
+  reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.mode}. Analyze the changed files and diff above as the ` +
   `${dim.mode} sub-reviewer using the corresponding Sub-Reviewer Definition in ` +
   `your instructions. Set category=${dim.category} on every finding and return ` +
   `the typed findings array (empty if none).`
 
 // New dimensions (tests, conventions, scope-drift): instructions supplied inline.
-const newReviewerPrompt = (dim, manifest) =>
+const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n\n' +
-  reviewerData(manifest) +
+  reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.name} (custom dimension). Analyze the changed files and ` +
   `diff above.\n${dim.instructions}\n\n` +
   `Set category=${dim.category} on every finding and return the typed findings ` +
@@ -577,6 +635,165 @@ const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
 // unreachable) or, if the caller stringifies, hide an omitted triage row (#261).
 const sameCommentId = (a, b) => String(a) === String(b)
 
+// --- Re-review narrowing (#492) --------------------------------------------
+// Extracted before the orchestration body (like computeClean / applyJudgeVerdicts)
+// so the narrowing decision is pure and unit-testable in
+// tests/validate-workflow-helpers.mjs without executing the harness.
+
+// Narrowing is active only on a re-review cycle for which the caller actually
+// supplied a fix-commit delta. Cycle 1 (the initial review) and any caller that
+// omits the delta inputs fall back to the pre-#492 full review — the delta args
+// are additive and default-off. Passed `cycle` + `deltaFiles` explicitly (not the
+// module globals) so the predicate is testable in isolation.
+const narrowingActive = (cycle, deltaDiff, deltaFiles) =>
+  cycle > 1 && typeof deltaDiff === 'string' && deltaDiff.length > 0 && deltaFiles.length > 0
+
+// Which of the manifest file types a delta-local dimension reviews. A dimension
+// is "relevant to the delta" when the delta's classified types intersect this
+// set — used on a narrowed cycle to decide whether a dimension that did NOT block
+// last cycle still needs to re-run because the fix touched files it cares about
+// (AC#3: a fix that introduces a fresh security/test/etc. issue is still caught).
+// Keys are dimension NAMES (security, correctness, tests, conventions). The
+// conditional specialists (database, devops) are gated by manifest.needs (whether
+// the delta still classifies a file of their type) rather than by this type table,
+// but they ALSO honor the prior-blocking carry-over via `includeSpecialist` below
+// — a specialist that blocked last cycle re-runs even when the fix touched no file
+// of its type (AC#3). `conventions` reviews project conventions that can be
+// violated by ANY changed file, so it matches every type via the '*' wildcard.
+// `config` is in security/correctness because a fix delta that touches only a
+// config file (`.json`/`.yaml`/`.env*`) can still introduce a hardcoded secret or
+// a config-driven logic bug — so those dimensions must re-run on a config-only
+// delta, not be narrowed away (pre-PR review coverage-gap finding).
+const DIMENSION_RELEVANT_TYPES = {
+  security: ['source', 'database', 'config'],
+  correctness: ['source', 'database', 'config'],
+  tests: ['source', 'test'],
+  conventions: ['*'],
+}
+
+// True when the delta's classified file types intersect the dimension's relevant
+// set (or the dimension matches all types via '*'). `deltaTypes` is the flat set
+// of types the manifest assigned across the delta's files.
+const dimensionTouchesDelta = (dimName, deltaTypes) => {
+  const relevant = DIMENSION_RELEVANT_TYPES[dimName]
+  if (!relevant) return false
+  if (relevant.includes('*')) return true
+  return relevant.some((t) => deltaTypes.has(t))
+}
+
+// Whether a conditional specialist (database, devops) runs this cycle. On a full
+// cycle (or a non-narrowed re-review) it is gated purely by manifest.needs, as
+// before. On a narrowed cycle it ALSO re-runs when it blocked last cycle — the
+// specialist analog of `includeDeltaLocal`'s prior-blocking carry-over — so a
+// database/devops finding whose fix touches no file of its type (leaving
+// manifest.needs false on the delta-built manifest) is still re-verified (AC#3;
+// closes the specialist gap the pre-PR review flagged). `narrowed` gates the
+// carry-over so a full cycle is byte-identical to before.
+const includeSpecialist = (specialistName, manifestNeeds, priorBlockingSet, narrowed) =>
+  !!manifestNeeds || (narrowed && priorBlockingSet.has(specialistName))
+
+// The diff an INCLUDED dimension/specialist reads on a (possibly narrowed) cycle.
+// Full cycle ⇒ full diff (unchanged). Narrowed cycle:
+//   - included because the fix delta TOUCHES its file types → the small delta diff
+//     (the #492 saving: a fresh issue the fix introduced lives in the delta), UNLESS
+//   - included via the PRIOR-BLOCKING carry-over → the FULL diff. The finding it must
+//     re-confirm may live OUTSIDE the fix delta (the fix touched other files), so
+//     handing it only the delta would blind it and let the still-unresolved finding
+//     silently vanish from `blocking` — a false `clean` and a merge-safety hole (the
+//     pre-#492 code re-ran every dimension against the full diff every cycle; this
+//     preserves that safety net for exactly the re-confirm case). A dimension that is
+//     BOTH prior-blocking and touched reads the full diff too — re-confirmation wins.
+// scope-drift passes fullDiff via its own always-full path; this helper is for the
+// delta-local dimensions and the specialists.
+const diffForInclusion = (narrowed, touches, prior, fullDiff, deltaDiff) =>
+  narrowed && touches && !prior ? deltaDiff : fullDiff
+
+// Flatten the manifest classifications into the set of file types present in the
+// (narrowed) scope. On a narrowed cycle the manifest was built over the delta, so
+// this is exactly the delta's types.
+const manifestTypeSet = (manifest) => {
+  const types = new Set()
+  for (const c of (manifest && manifest.classifications) || []) {
+    for (const t of c.types || []) types.add(t)
+  }
+  return types
+}
+
+// Decide the ordered dimension entries for this cycle and the diff each one
+// reads. Returns `{ entries, budgetExhausted, dimensionsSkipped }`:
+//   - entries: [{ kind: 'reused'|'new', dim, diff }] for the parallel() barrier.
+//   - budgetExhausted / dimensionsSkipped: threaded through unchanged — the
+//     budget-floor skip of a NEW dimension or conditional specialist is a GENUINE
+//     partial-cycle signal and still flips them. Narrowing (dropping a dimension
+//     because the delta doesn't touch it and it didn't block) is NOT a partial
+//     cycle and touches neither.
+// Full cycle: exactly today's set (reused, then budget-gated new, then budget-gated
+// specialists), every entry reading `fullDiff`. Narrowed cycle: each delta-local
+// dimension is included only if it blocked last cycle OR the delta touches a type
+// it reviews, reading `deltaDiff`; scope-drift is ALWAYS included reading `fullDiff`
+// (whole-change lens); specialists stay gated on manifest.needs (built over the
+// delta) exactly as on a full cycle.
+const selectReviewDimensions = ({
+  cycle,
+  fullDiff,
+  deltaDiff,
+  deltaFiles,
+  priorBlocking,
+  manifest,
+  budget,
+  budgetFloor,
+  reusedDimensions,
+  newDimensions,
+}) => {
+  const narrowed = narrowingActive(cycle, deltaDiff, deltaFiles)
+  const entries = []
+  const dimensionsSkipped = []
+  let budgetExhausted = false
+
+  const priorSet = new Set(priorBlocking || [])
+  const deltaTypes = narrowed ? manifestTypeSet(manifest) : null
+  // On a narrowed cycle, a delta-local dimension runs iff it blocked last cycle or
+  // the delta touches a type it reviews; on a full cycle every dimension runs. The
+  // two reasons are tracked separately because they select DIFFERENT diffs (see
+  // diffForInclusion): a touched-only inclusion reads the delta (the saving), a
+  // prior-blocking inclusion reads the FULL diff (re-confirm a finding that may
+  // live outside the delta).
+  const touchesFor = (dimName) => narrowed && dimensionTouchesDelta(dimName, deltaTypes)
+  const priorFor = (dimName) => narrowed && priorSet.has(dimName)
+  const includeDeltaLocal = (dimName) => !narrowed || priorFor(dimName) || touchesFor(dimName)
+
+  // Reused dimensions (security, correctness) — cheap, no budget gate, but on a
+  // narrowed cycle still subject to the include test.
+  for (const d of reusedDimensions) {
+    if (!includeDeltaLocal(d.name)) continue
+    entries.push({
+      kind: 'reused',
+      dim: d,
+      diff: diffForInclusion(narrowed, touchesFor(d.name), priorFor(d.name), fullDiff, deltaDiff),
+    })
+  }
+
+  // NEW dimensions (tests, conventions, scope-drift). scope-drift is a
+  // whole-change lens: always included, always reading the FULL diff, never
+  // narrowing-skipped. The others are delta-local (include test + per-inclusion
+  // diff). Budget-floor gating is preserved for every new dimension that WOULD run.
+  for (const d of newDimensions) {
+    const isScopeDrift = d.name === 'scope-drift'
+    if (!isScopeDrift && !includeDeltaLocal(d.name)) continue
+    if (budget.total && budget.remaining() < budgetFloor) {
+      budgetExhausted = true
+      dimensionsSkipped.push(d.name)
+      continue
+    }
+    const diff = isScopeDrift
+      ? fullDiff
+      : diffForInclusion(narrowed, touchesFor(d.name), priorFor(d.name), fullDiff, deltaDiff)
+    entries.push({ kind: 'new', dim: d, diff })
+  }
+
+  return { entries, budgetExhausted, dimensionsSkipped, narrowed }
+}
+
 function emptyResult(budgetExhausted, note, dimensionsSkipped) {
   if (note) log(note)
   return {
@@ -625,30 +842,63 @@ if (!manifest) {
 // --- Review (dimensions as ONE barrier under one budget) --------------------
 phase('Review')
 
-let budgetExhausted = false
+// Reused + new dimensions, narrowed to the fix delta on a re-review cycle (#492):
+// selectReviewDimensions returns the entries to run (each with the diff it reads —
+// delta for delta-local dimensions, full for scope-drift), plus the budget-floor
+// skip bookkeeping. `dimensionsSkipped`/`budgetExhausted` still mean a GENUINE
+// partial cycle (a dimension that should have run hit the budget floor); a
+// dimension dropped because the delta didn't touch it is simply absent, not a
+// partial-cycle signal. The selector logs are minimal, so surface a narrowing note
+// for the operator.
+const narrowed = narrowingActive(CYCLE, deltaDiff, deltaFiles)
+if (narrowed) {
+  log(`re-review cycle ${CYCLE} narrowed to fix delta (${deltaFiles.length} file(s)); scope-drift keeps full diff`)
+}
+const selected = selectReviewDimensions({
+  cycle: CYCLE,
+  fullDiff: scopeDiff,
+  deltaDiff,
+  deltaFiles,
+  priorBlocking: priorBlockingDimensions,
+  manifest,
+  budget,
+  budgetFloor: BUDGET_FLOOR,
+  reusedDimensions: REUSED_DIMENSIONS,
+  newDimensions: NEW_DIMENSIONS,
+})
+let budgetExhausted = selected.budgetExhausted
 // Names of dimensions that never ran this cycle — skipped at build time (budget
 // floor) or nulled mid-barrier (agent threw / budget ran out). Any non-empty
 // list means the cycle is PARTIAL; it is surfaced as `dimensions_skipped` so the
 // skill can report which dimensions were missed, and it always accompanies
-// `budgetExhausted` (the flag `clean` actually gates on).
-const dimensionsSkipped = []
-const dimensions = []
-// Reused dimensions first (cheap, always run), then new dimensions, then any
-// conditional specialists the manifest asked for — each gated on the budget.
-for (const d of REUSED_DIMENSIONS) dimensions.push({ kind: 'reused', dim: d })
-for (const d of NEW_DIMENSIONS) {
-  if (budget.total && budget.remaining() < BUDGET_FLOOR) {
-    budgetExhausted = true
-    dimensionsSkipped.push(d.name)
-    log(`budget low — skipping dimension "${d.name}"`)
-    continue
-  }
-  dimensions.push({ kind: 'new', dim: d })
-}
+// `budgetExhausted` (the flag `clean` actually gates on). Narrowing does NOT add
+// to it (a delta-irrelevant dimension is complete-by-design, not missed).
+const dimensionsSkipped = selected.dimensionsSkipped.slice()
+for (const name of dimensionsSkipped) log(`budget low — skipping dimension "${name}"`)
+const dimensions = selected.entries
 // Conditional specialists from the manifest (reuse code-reviewer's own modes).
+// The manifest was built over the delta on a narrowed cycle, so `needs` already
+// reflects the fix delta. `includeSpecialist` adds the prior-blocking carry-over
+// (AC#3): on a narrowed cycle a specialist that blocked last cycle re-runs even if
+// the fix touched no file of its type (manifest.needs false). The diff it reads
+// follows the same rule as the delta-local dimensions via `diffForInclusion`: a
+// specialist pulled in by manifest.needs (the delta touches its type) reads the
+// delta; one pulled in ONLY by prior-blocking reads the FULL diff so it can
+// re-confirm a finding that may live outside the delta. On a full cycle it reduces
+// to the plain manifest.needs gate reading the full diff, unchanged. Budget-floor
+// gating is unchanged.
+const priorBlockingSet = new Set(priorBlockingDimensions)
 const conditional = []
-if (manifest.needs.database) conditional.push({ name: 'database', mode: 'database', category: 'database' })
-if (manifest.needs.devops) conditional.push({ name: 'devops', mode: 'devops', category: 'devops' })
+for (const name of ['database', 'devops']) {
+  const needs = !!manifest.needs[name]
+  if (!includeSpecialist(name, needs, priorBlockingSet, narrowed)) continue
+  const prior = narrowed && priorBlockingSet.has(name)
+  // "touches" for a specialist is manifest.needs (whether the delta still
+  // classifies a file of its type); pass it to diffForInclusion so a
+  // prior-blocking-only specialist reads the full diff.
+  const diff = diffForInclusion(narrowed, needs, prior, scopeDiff, deltaDiff)
+  conditional.push({ name, mode: name, category: name, diff })
+}
 for (const d of conditional) {
   if (budget.total && budget.remaining() < BUDGET_FLOOR) {
     budgetExhausted = true
@@ -656,15 +906,15 @@ for (const d of conditional) {
     log(`budget low — skipping conditional specialist "${d.name}"`)
     continue
   }
-  dimensions.push({ kind: 'reused', dim: d })
+  dimensions.push({ kind: 'reused', dim: d, diff: d.diff })
 }
 
 const reviewResults = await parallel(
   dimensions.map((entry) => () => {
     const prompt =
       entry.kind === 'new'
-        ? newReviewerPrompt(entry.dim, manifest)
-        : reusedReviewerPrompt(entry.dim, manifest)
+        ? newReviewerPrompt(entry.dim, manifest, entry.diff)
+        : reusedReviewerPrompt(entry.dim, manifest, entry.diff)
     return agent(prompt, {
       label: `review:${entry.dim.name}`,
       phase: 'Review',
@@ -810,7 +1060,11 @@ return {
   deferrable,
   comments_addressed: commentsAddressed,
   summary: {
-    files_scanned: manifest.files.length,
+    // Report the FULL PR scope, consistent with emptyResult's `scopeFiles.length`.
+    // On a narrowed cycle `manifest.files` is only the fix-commit delta, so keying
+    // off it would make files_scanned mean different things on the empty vs
+    // findings-present paths of the same cycle (#492 review finding).
+    files_scanned: scopeFiles.length,
     total_findings: rawFindings.length,
     by_disposition: { blocking: blocking.length, deferrable: deferrable.length },
     by_severity: bySeverity,

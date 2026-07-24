@@ -169,8 +169,8 @@ behavior is noted inline per check; environment variables referenced here
      phase: "pre-pr",
      cycle: 1,
      maxCycles: <REVIEW_MAX_CYCLES, default 3>,
-     files: [<changed files>],
-     diff: "<diff text>",
+     files: [<changed files, FULL scope>],
+     diff: "<diff text, FULL scope>",
      issue: { number: {N}, title: "{title}" }
    }
    ```
@@ -180,6 +180,38 @@ behavior is noted inline per check; environment variables referenced here
    the full diff here (#267). Omitting `diff` is supported but makes each reviewer
    derive it in-agent (`git diff origin/main...HEAD`), which costs extra tool
    calls; prefer supplying it.
+
+   **Re-review narrowing on cycle > 1 (#492).** Cycle 1 is a full review (no
+   delta args). When step (c) below re-runs the harness after a fix, pass the
+   **fix-commit delta since the last reviewed HEAD** so the harness re-reviews
+   only what changed instead of re-scanning the whole diff every cycle:
+
+   ```text
+   args: {
+     phase: "pre-pr",
+     cycle: <cycle>,
+     maxCycles: <REVIEW_MAX_CYCLES>,
+     files: [<changed files, FULL scope>],     // unchanged — scope-drift + summary
+     diff: "<diff text, FULL scope>",          // unchanged — scope-drift reads this
+     issue: { number: {N}, title: "{title}" },
+     deltaFiles: [<git diff --name-only lastReviewedSha...HEAD>],
+     deltaDiff: "<git diff lastReviewedSha...HEAD>",
+     priorBlockingDimensions: [<dimensions that blocked last cycle>]
+   }
+   ```
+
+   Capture `lastReviewedSha = git rev-parse HEAD` for the diff you just reviewed
+   **before** amending/adding the cycle's fix commit; the next cycle's delta is
+   everything committed since it. Derive `priorBlockingDimensions` from the
+   previous cycle's `blocking[]` findings' `dimension`/`category`. The full
+   `files`/`diff` stay in play on narrowed cycles — `scope-drift` reads the full
+   `diff` (whole-change AC-completeness lens), and a delta-local dimension
+   re-included via the prior-blocking carry-over also reads the full `diff` (it
+   must re-confirm a finding that may live outside the delta); only a dimension
+   pulled in because the delta *touches* its file types reads `deltaDiff` (the
+   saving). The delta args are additive and default-off: omit them (or on cycle 1)
+   for the pre-#492 full review. Narrowing never sets `budget_exhausted` /
+   `dimensions_skipped`, so a narrowed cycle can still return `clean`.
 
    The harness fans the dimensions as one parallel barrier under a single
    token budget, re-scores certainty with a fresh judge, and returns
@@ -236,7 +268,9 @@ behavior is noted inline per check; environment variables referenced here
    the fix in the working tree, then amend or add a commit. Re-run step (b)
    (incrementing `cycle`) until `clean` is true or `cycle` exceeds
    `REVIEW_MAX_CYCLES`. When `REVIEW_STRICT=true`, also treat MEDIUM-certainty
-   findings as blocking.
+   findings as blocking. On each re-run pass the fix-commit delta args
+   (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`) from step (b)'s cycle > 1
+   block so the re-review narrows to what the fix changed (#492).
 
    d. **Collect the deferrables**: keep the `deferrable` list for filing after
    delivery. **Option 1** files them **after the PR exists** so the filed issues
