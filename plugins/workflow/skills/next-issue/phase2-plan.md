@@ -84,8 +84,8 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    > dependency, not the named target — is what this autonomous run plans,
    > implements, and ships (its own PR). The run works exactly **one** queue
    > entry; the queue file persists for the next cycle to advance toward the
-   > target (see `state-format.md` § Dependency Queue → "Autonomous
-   > interaction"). Do NOT try to auto-advance the whole chain in one turn.
+   > target (see `dependency-queue.md` § Dependency Queue → "Gate-skipping
+   > (L3–L4) interaction"). Do NOT try to auto-advance the whole chain in one turn.
 
    - **L4 run (`plan_gated: false`, non-critical)** — do NOT enter plan mode.
      After exploring and forming the plan: (1) write the plan to the state file

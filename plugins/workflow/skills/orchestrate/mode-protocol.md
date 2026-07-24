@@ -199,13 +199,11 @@ earns its place.
 | **Worktree golem** | Mode 2   | `claude --permission-mode auto "/workflow:next-issue <N> --level 4" ; claude --permission-mode auto "/workflow:ship-issue"` in a worktree shell | autonomous ship → Branch + PR (plan-gated golems block at plan first — see below) |
 | **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (merge is the level-aware routine gate: auto at L3–L4 after green CI + clean review) |
 
-> **Hard constraint — golems are processes, never Workflow subagents.** The
-> Workflow tool permits one nesting level, and each golem's `/ship-issue`
-> already owns it (its review harness fans out the `code-reviewer` agent).
-> Dispatching a golem via the Workflow/Task tool with workflow nesting consumes
-> that level and makes the golem's review harness throw. Dispatch golems as OS
-> processes only — containers (`/provision-agent`) or worktree-bound shells.
-> (See `ship-issue` SKILL.md § Golem Execution Model.)
+> **Hard constraint — golems are processes, never Workflow subagents.** Each
+> golem's `/ship-issue` already owns the one permitted Workflow nesting level
+> (its review harness), so dispatch golems as OS processes only — containers
+> (`/provision-agent`) or worktree-bound shells, never via the Workflow/Task
+> tool. Full rationale: `ship-issue/ship-protocol.md` § *Golem Execution Model*.
 
 ### Supervised launch & central feed
 

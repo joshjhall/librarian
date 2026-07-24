@@ -538,7 +538,7 @@ function buildClusters(items, indexByIssue) {
 //   members. A dependency CYCLE (a back-edge leaving nodes unemittable) is
 //   reported via the returned `cycle` flag and broken by appending the remaining
 //   members in priority order — it NEVER loops (mirrors next-issue
-//   state-format.md § Dependency Queue cycle handling). Returns
+//   dependency-queue.md § Dependency Queue cycle handling). Returns
 //   { issues:number[] (issue numbers in execution order), cycle:boolean }.
 // ---------------------------------------------------------------------------
 function topoOrderCluster(cluster, items) {
