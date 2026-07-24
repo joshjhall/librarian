@@ -1,7 +1,12 @@
 # Memory index
 
 <!-- One line per memory (title + one-line hook). -->
-<!-- rumdl-disable MD013 -->
+<!-- rumdl-disable MD013 MD033 -->
+- [Gate-watch misses standing gates](gate-watch-misses-standing-gates.md) — golem-gate-watch fires only on transition INTO a gate; arm at dispatch + do a direct capture-pane sweep when armed late; backfilled `started` makes ELAPSED lie; ONE-CLOCK-UTC (tmux ls prints LOCAL); →#515
+- [Idle-detector false positive (own monitors)](idle-detector-false-positive-own-monitors.md) — #447 idle-at-prompt false-fires when a golem waits on its OWN background monitors; verify footer "N monitors"/advancing tokens = working, not stalled
+- [#506 gitlink disarm](issue-506-gitlink-disarm.md) — MERGED PR #520 (L3, human-merged 15:46Z); golem rewrites $WT/.git decoy to forge main-session gate; FIX=structural -d <a>/.git walk-up (NOT --show-toplevel, that re-poisons via core.worktree/bare); review caught 2 self-inflicted CRITICALs + slash-eq FIX B bypass; →#521 follow-up
+- [#490 verify collapse](issue-490-verify-collapse.md) — MERGED PR #519 (L3, self-merged 09:19Z overnight — self-merge classifier is NON-determ, NOT a hard wall); codebase-audit per-domain fable verify O(domains)→O(1) single barrier; review caught missing tailAgent wrap on terminal stage; →#516
+- [#491 fable-tail merge](issue-491-fable-tail-merge.md) — MERGED PR #514 (L3, human-merged 15:46Z); ship-issue rescore+classify → one fresh-judge fable pass; halves fable tail/cycle; [[auto-mode-blocks-self-merge]]
 - [#503 large-file decompose](issue-503-large-file-decompose.md) — tracking oversized files; file-length is Pass-2 LLM lens not patterns.sh; workflow.js can't split (#90/#91); after #494/#495
 - [#489 liveness dedup](issue-489-liveness-dedup.md) — MERGED PR #509 (L1): --stream-liveness transition-dedup via liveness_stabilize+emit_transitions; REVIEW caught self-inflicted set-u `$(( ))` crash on non-numeric GOLEM_HEARTBEAT_INTERVAL (hardened sibling, exposed the new one)
 - [#501 worktree-guard topology](issue-501-worktree-guard-topology.md) — MERGED PR #507 (/golem 501 L4, also closed #451 AC#1 vehicle); guard trust anchor must be NON-poisonable — review found 3 dynamic-repro config-poison bypasses (core.bare/is-bare/worktreeConfig) all fixed via PATH-structure; →#506 gitlink gap + #508 systematic re-review
