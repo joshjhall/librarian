@@ -1482,12 +1482,41 @@ for (const path of [ORCH, REBASE]) {
 // ci-fixer — defaultVerdict
 // =============================================================================
 {
-  const { defaultVerdict, transientVerdict, applyResult, wrapVerify } = extractHelpers(CIFIX, [
-    "defaultVerdict",
-    "transientVerdict",
-    "applyResult",
-    "wrapVerify",
-  ]);
+  const { defaultVerdict, transientVerdict, applyResult, wrapVerify, parsePrompt, needsClassify } =
+    extractHelpers(CIFIX, [
+      "defaultVerdict",
+      "transientVerdict",
+      "applyResult",
+      "wrapVerify",
+      "parsePrompt",
+      "needsClassify",
+    ]);
+
+  // #493 — classify is memoized OUT of the per-iteration path: it reads only the
+  // static `check.logs`, so parsePrompt is iteration-independent. Guard the
+  // contract at the arity + prompt-text level (the orchestration loop itself is
+  // not unit-testable — two-runtime engine).
+  eq(parsePrompt.length, 1, "parsePrompt: takes only `check` (no iteration arg) after the #493 hoist");
+  const pp = parsePrompt({ name: "lint", pr: 7, logs: "eslint: 3 errors in a.js" });
+  ok(
+    !/attempt/i.test(pp),
+    "parsePrompt: no per-attempt framing — classification runs once, not once per iteration",
+  );
+  ok(pp.includes("eslint: 3 errors in a.js"), "parsePrompt: embeds the failure logs");
+  ok(pp.includes("Check name: lint"), "parsePrompt: interpolates check.name");
+  ok(pp.includes("PR: #7"), "parsePrompt: interpolates check.pr");
+
+  // #493 — needsClassify is the memoization decision: classify fires only when
+  // `cls` is not already a truthy memoized result. A successful classify is
+  // reused (skips re-classify); a null/undefined is left uncached so it retries
+  // next iteration — the pre-existing transient semantics, unchanged.
+  eq(needsClassify(null), true, "needsClassify: a null cls (first iter / retried null) → classify");
+  eq(needsClassify(undefined), true, "needsClassify: an undefined cls → classify");
+  eq(
+    needsClassify({ failure_type: "lint", files: ["a.js"], summary: "3 errors" }),
+    false,
+    "needsClassify: a memoized classify result → skip re-classify (the #493 win)",
+  );
   const v = defaultVerdict({ name: "lint" });
   eq(v.fixed, false, "defaultVerdict: fixed is false until proven otherwise");
   eq(

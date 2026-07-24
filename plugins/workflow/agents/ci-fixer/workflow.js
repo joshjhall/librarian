@@ -83,9 +83,14 @@ const GUARDRAILS =
 // volatile per-check data (logs, classification) to the tail, so the stable head
 // of the prompt is byte-identical wherever the surrounding data allows and the
 // cacheable prefix is not disturbed by log text moving around (#256).
-const parsePrompt = (check, iteration) =>
+//
+// parsePrompt takes NO iteration argument: classification reads only the
+// static, unchanging `check.logs`, so it runs ONCE per check (hoisted out of the
+// retry loop — #493), not once per attempt. Only fixPrompt/verifyPrompt vary per
+// iteration.
+const parsePrompt = (check) =>
   GUARDRAILS +
-  `\n\nParse and classify this failing CI check (attempt ${iteration} of ${MAX}). ` +
+  `\n\nParse and classify this failing CI check. ` +
   `Identify the failure_type, the file(s) implicated, and a one-line summary.\n` +
   `Check name: ${check.name}\nPR: #${check.pr}\n\n` +
   `Failure logs:\n${check.logs}`
@@ -144,6 +149,17 @@ function wrapVerify(v, check, cls, fix) {
   return v ? { ...v, agentVerdict: true } : transientVerdict(check, cls, fix)
 }
 
+// The classify memoization decision (#493): classify runs only when `cls` is not
+// already a truthy, memoized result. A successful classify is cached and reused
+// across every fix/verify iteration (dropping the per-iteration re-classify);
+// a null classify is intentionally left uncached so it is re-attempted next
+// iteration, preserving the pre-existing transient-retry semantics. Extracted so
+// this decision — the crux of the #493 change — is directly unit-testable, since
+// the per-check stage closure that calls it cannot be (two-runtime model).
+function needsClassify(cls) {
+  return !cls
+}
+
 // Fold one iteration's pipeline result into the carried verdict, returning the
 // next verdict plus whether the loop should stop. This is the fix for the
 // cause-conflation bug: only an agent-RETURNED verify verdict may end the loop,
@@ -189,6 +205,21 @@ const results = await parallel(
     let iteration = 0
     let verdict = defaultVerdict(check)
 
+    // Classify at most ONCE per check (#493), memoized across iterations. The
+    // classify agent reads only `check.logs`, which never changes across
+    // attempts, so a successful classification is computed on the first iteration
+    // and REUSED for every fix/verify attempt — dropping the redundant re-classify
+    // that used to fire once per iteration (up to MAX-1 wasted classify agents).
+    // The memo is deliberately kept INSIDE the loop rather than hoisted fully
+    // out: this preserves the pre-existing transient semantics unchanged — a
+    // classify that returns null is NOT cached (an `agent()` call is not
+    // deterministic; a null can be a transient parse/schema hiccup, not proof the
+    // logs are unclassifiable), so it flows through transientVerdict/applyResult
+    // and is retried up to the cap exactly as before, and it stays gated behind
+    // the BUDGET_FLOOR check below (a near-empty budget skips the whole attempt,
+    // classify included).
+    let cls = null
+
     while (iteration < MAX && !verdict.fixed) {
       if (budget.total && budget.remaining() < BUDGET_FLOOR) {
         log(`budget low — stopping "${check.name}" after ${iteration} attempt(s)`)
@@ -196,24 +227,31 @@ const results = await parallel(
       }
       iteration++
 
-      // Sequential parse → fix → verify (not pipeline([check], ...)): N is 1 here
-      // — the real fan-out is the outer parallel(checks.map(...)). Each stage
-      // returns a typed object, never a bare null, so a transient AGENT failure
-      // surfaces as data (retryable) rather than reverting to 'not attempted'.
-      // The explicit try/catch (issue #265) keeps a thrown HARNESS bug visible:
-      // pipeline() used to swallow it to null, which applyResult() then treated as
-      // a transient and retried up to the cap — the exact conflation that enabled
-      // the #259 retry bug. A code fault won't self-heal on retry, so it STOPS the
-      // loop with an attributable summary instead.
+      // Sequential (memoized classify →) fix → verify (not pipeline([check], ...)):
+      // N is 1 here — the real fan-out is the outer parallel(checks.map(...)). Each
+      // stage returns a typed object, never a bare null, so a transient AGENT
+      // failure surfaces as data (retryable) rather than reverting to 'not
+      // attempted'. The explicit try/catch (issue #265) keeps a thrown HARNESS bug
+      // visible: pipeline() used to swallow it to null, which applyResult() then
+      // treated as a transient and retried up to the cap — the exact conflation
+      // that enabled the #259 retry bug. A code fault won't self-heal on retry, so
+      // it STOPS the loop with an attributable summary.
       let result
       let fix = null
       try {
-        const cls = await agent(parsePrompt(check, iteration), {
-          label: `parse:${check.name}#${iteration}`,
-          phase: 'Fix',
-          agentType: 'workflow:ci-fixer',
-          schema: CLASSIFY_SCHEMA,
-        })
+        // Classify only when not already memoized: a successful classify runs
+        // once and is reused for every later iteration. A retried null re-enters
+        // here on the next iteration. The `#${iteration}` label suffix stays (as on
+        // the sibling fix/verify calls) so each genuine invocation on the retry
+        // path keeps a unique journal key for resume (resumeFromRunId).
+        if (needsClassify(cls)) {
+          cls = await agent(parsePrompt(check), {
+            label: `parse:${check.name}#${iteration}`,
+            phase: 'Fix',
+            agentType: 'workflow:ci-fixer',
+            schema: CLASSIFY_SCHEMA,
+          })
+        }
         if (cls) {
           // Guard the classify result before fixPrompt dereferences it — a null
           // classify skips the fix agent.
@@ -225,7 +263,7 @@ const results = await parallel(
           })
         }
         if (!cls) {
-          // Skip verify when nothing was classified/attempted.
+          // Skip verify when nothing was classified/attempted — retried next iter.
           result = transientVerdict(check, cls, fix)
         } else {
           const v = await agent(verifyPrompt(check, iteration), {
