@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 640198ea-00a1-4592-be2a-17773ad6f0d1
-  modified: 2026-07-21T04:46:11.819Z
+  modified: 2026-07-24T20:35:06.929Z
 ---
 
 # 446 "golem-status.sh BLOCKED list unreliable" names **4 failure modes**
@@ -50,3 +50,14 @@ covered-by-construction (fixed ASCII literal, numeric $N).
 
 Follow-up **#465** = live 429 DIED flow + multi-golem BLOCKED ground-truth sweep +
 (stretch) orchestrator auto-resume of retriable deaths.
+
+**CLOSED code-complete 2026-07-24** (wave-2 golem-446 escalation, operator opt 1):
+all 4 modes' CODE is merged (#464 Bug#2/#4, #422 Bug#1, #323 Bug#3) and the golem
+verified the #464 functions are still intact in the current tree despite PRs
+(#485, #489, #501, #504, #506) all touching the same files; the only open
+work was live-verification ACs, which are #465's scope. Golem produced NO PR —
+posted a closing summary mapping modes→PRs and closed the issue. LESSON: a
+"Contributes to" issue can be fully code-done with only unreproducible-in-session
+ACs left; verify the merged PRs before re-implementing (the golem correctly
+discovered this and escalated rather than redo shipped work). A no-PR close-out
+golem frees its lane slot on issue CLOSE, not a merge.
