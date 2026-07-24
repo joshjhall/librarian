@@ -2,89 +2,95 @@
 
 <!-- One line per memory (title + one-line hook). -->
 <!-- rumdl-disable MD013 -->
-- [No --no-verify: fix the lint](no-noverify-fix-the-lint.md) — operator directive: never --no-verify memory/docs to skip rumdl/typos; FIX it (wrap prose ≤120, correct spellings); don't run `rumdl fmt` blind (mangles leading #NNN→heading); only exception = MEMORY.md index (inline rumdl-disable); correct forward, don't force-push pushed main
-- [Token-burn audit 2026-07-21](token-burn-audit-2026-07-21.md) — 4-axis burn audit → #487-#495; biggest live lever = golems have NO --model dial (all Opus, #487); #488 status no-suppression = impl half of #485; #489 liveness un-deduped; fable/prose in #490-#495
-- [#488 checkpoint suppression](issue-488-checkpoint-suppression.md) — SHIPPED PR #499 (L1, awaiting merge): render_checkpoint buffer+signature (golem|statecol, volatile fields EXCLUDED) → no-op sweeps collapse to heartbeat; empty-state/jq early returns MUST clear cp_prev_sig (vanish→reappear); review caught grep-c bug + byte-parity regressions
-- [grep -c exits 1 on zero count](grep-c-zero-count-exit-1.md) — GNU grep -c prints 0 but EXITS 1 at zero; `|| echo 0` fallback double-appends → split line; use `grep -o P | wc -l`; #488; needs an explicit zero-fixture test
-- [#487 GOLEM_MODEL launch knob](issue-487-golem-model-knob.md) — SHIPPED PR #496 (L1): GOLEM_MODEL env knob, unset=byte-identical; REUSABLE BUG = raw $VAR spliced into tmux `sh -c` cmd string → shell-injection (review HIGH, real); fix=backslash-escape `\`/`"`/backtick/`$` NOT allow-list; print-tests missed real `launch` argv; →#497
-- [#462 tracks build-order composition](issue-462-tracks-build-order.md) — SHIPPED PR #483 (L3, PARKED): composeTracks file-overlap-only → dependent dispatched as head w/ unbuilt deps; fix=two-level sort (buildClusters+topoOrderCluster, deps=PURE input, no-deps byte-identical); REUSABLE BUG = display field from RAW input not ACTUAL state → cycle-dropped edge falsely reported; →#484
-- [#432 gate-age coverage + jq-abort fix](issue-432-gate-age-coverage.md) — SHIPPED PR #482 (L3): planned test-only; review found REAL HIGH = one golem's malformed .ts aborts feed_snapshot jq → blanks WHOLE BLOCKED list; fix=try/catch true; my test FALSE PASS off feed-echo
-- [Test BLOCKED list not feed echo](test-assert-blocked-list-not-feed-echo.md) — golem-status echoes raw feed JSON at bottom; assert render-line form `golem-N — msg` not bare substring; ALWAYS revert-fix→confirm-FAIL→restore
-- [#459 tail-window boundary tests](issue-459-tail-window-boundary.md) — SHIPPED PR #480 (L3, MERGED): #452/#457 test-only; tail-window edge +7-filler=8L incl / +8=9L excl (`<<<` off-by-one); →#481
-- [#458 footer-lines env test](issue-458-footer-lines-env-test.md) — SHIPPED PR #479 (L3, PARKED): test-only; GOLEM_PANE_FOOTER_LINES env-override across 5 footer-keyed matchers; gotcha = liveness_class returns string + set-env-before-source + export for SC2034
-- [#402 precedence dedup down-scope](issue-402-precedence-dedup.md) — SHIPPED PR #477 (L3, PARKED): floor anchors frontmatter at whole-file line 1 → dup survived; same-file+CATEGORY over-corrected; correct = match PER UNDERLYING ISSUE not line/category
-- [#248 transcript liveness](issue-248-transcript-liveness.md) — SHIPPED PR #473 (L3, PARKED): golem-transcript-liveness.sh reads last assistant stop_reason (tool_use=working/end_turn=idle/error); working-had-no-staleness-bound → mtime-gate GOLEM_STALL_THRESHOLD; →#474
-- [#406 multi-sink emitter](issue-406-multi-sink-emitter.md) — SHIPPED PR #468 (L3): golem-notify.sh fans event to feed.jsonl + backgrounded curl POST per GOLEM_EVENT_SINKS URL; SSRF=trusted-operator NON-goal→#407
-- [#407 push receiver](issue-407-push-receiver.md) — SHIPPED PR #476 (L3, PARKED): receiver APPENDS #406's POST into feed.jsonl so gate-watch Monitor surfaces free (py3.11 http.server + bash-3.2 shim); CRITICAL unvalidated client ts blanking BLOCKED floor; ENV GOTCHA = sandbox KILLS socket binds (exit 144)
-- [Edits landed in main not worktree](edits-landed-in-main-not-worktree.md) — main-checkout abs paths from a worktree → edits landed in MAIN while worktree git-status clean; ALWAYS target .worktrees/issue-N/ + compare base blob hashes
-- [Dropped gate in notification flood](dropped-gate-in-notification-flood.md) — checkpoint burst buried a plan-gate approval → golems idle ~8h; frozen TOKENS(Δ)=0 can mean "blocked on an action I owe it"; after burst reconcile gh pr list + capture-pane
-- [#428 cache reset on reassignment](issue-428-cache-reassignment.md) — SHIPPED PR #466 (L3): provision-agent Mode-3 write_status resets stale host cache on reassignment; reusable = whitelist-identity beats blacklist
-- [ship review diff must be faithful](ship-review-diff-must-be-faithful.md) — the pre-PR review `diff` arg IS the bytes reviewers read (#267); never paraphrase — capture git diff origin/main...HEAD verbatim (omitting it = supported in-agent-derive fallback)
-- [#446 golem-status BLOCKED reliability](issue-446-golem-status-reliability.md) — SHIPPED PR #464 (L3): ghosts = worktree-rm reaped (golem_has_live_trace filter); silent API-death = pane_is_api_error DIED matcher; →#465
-- [Librarian runs outside containers](librarian-runs-outside-containers.md) — operator directive: installs on Mac/bare-linux/container alike — NEVER hard-depend on containers submodule/devcontainer (why py3.11→bash-3.2 + no-`just`)
-- [#400 cross-repo coordination](issue-400-cross-repo-coordination.md) — SHIPPED PR #463 (L3): agnix-pin real fix owned by containers#769, librarian coordination only; review caught Closes-vs-unmet-AC premature-closure
-- [Frozen counter = done, not wedged](frozen-counter-is-done-not-wedged.md) — golem-status TOKENS(Δ)=0 many sweeps usually = DONE-idle-at-prompt NOT wedge; check gh pr list + git log before calling a wedge
-- [Closes trailer in squash commit](closes-trailer-in-squash-commit.md) — PR body Closes→Contributes does NOT stop auto-close if squash-COMMIT body also has Closes trailer (#411); fix BOTH surfaces
-- [#399 agnix SARIF CI gate](issue-399-agnix-sarif-ci.md) — SHIPPED PR #460 (L3): code-scanning.yml agnix --format sarif → code scanning (SEPARATE workflow, security-events:write); validate SARIF (`jq -e .runs`) before upload
-- [#435 check-lifecycle scanner](issue-435-check-lifecycle.md) — SHIPPED PR #456 (L3): new review-audit check-lifecycle domain; MEDIUM-certainty pre-scan (collect by method==deterministic)
-- [#452 footer-anchor pane matchers](issue-452-footer-anchor-matchers.md) — SHIPPED PR #457 (L3): footer-anchor golem-gate-watch pane_is_plan_gate/pane_is_gate (were whole-pane → false push); 5 matchers key off $pane_footer_lines; →#458/#459
-- [#447 turn-end pane push](issue-447-turn-end-pane-push.md) — SHIPPED PR #455 (L3, PARKED): turn-end/idle stall via pane_is_turn_end + two-poll debounce; CRITICAL = confirm_turn_end in $(...) subshell discards state → global + caller-shell
-- [#411 /golem live-e2e verify](issue-411-golem-verify-scope.md) — PR #453 PARKED (docs-only): in-worktree run proves only AC#3+#5; live ACs need main-checkout+scratch → #451; #454 findings
-- [Stale-BLOCKED false positive](stale-blocked-false-positive.md) — golem-status BLOCKED pins send-keys-resolved gates full 3600s TTL → nearly miss REAL gate; trust feed/pane-FOOTER over pane-grep; #422
-- [check-docs-staleness IFS=: colon parity](check-docs-staleness-ifs-colon-parity.md) — latent bash↔python: `IFS=: read` strips trailing colon python keeps; patterns.sh bug needs follow-up fix
-- [Git index corruption → partial commit](git-index-corruption-partial-commit.md) — truncated .git/index → commit captured 1 of ~384 files NO error (#403/#238); recover read-tree last-good + reset --mixed + re-stage; verify `gh pr view --json files`
-- [#283 checkpoint table](issue-283-checkpoint-table.md) — SHIPPED PR #414: golem-status.sh --checkpoint per-track status+burn table; DURABLE FIX = run-all.sh unsets GIT_DIR at entry (kills push-hook-leak flake); #415
-- [#256 cache-stability pass](issue-256-cache-stability.md) — SHIPPED PR #404: workflow.js prompt-prefix cache stability; stableStringify via dataBlock + instructions-first/volatile-last; helpers must be module-scope
+- [#503 large-file decompose](issue-503-large-file-decompose.md) — tracking oversized files; file-length is Pass-2 LLM lens not patterns.sh; workflow.js can't split (#90/#91); after #494/#495
+- [#489 liveness dedup](issue-489-liveness-dedup.md) — MERGED PR #509 (L1): --stream-liveness transition-dedup via liveness_stabilize+emit_transitions; REVIEW caught self-inflicted set-u `$(( ))` crash on non-numeric GOLEM_HEARTBEAT_INTERVAL (hardened sibling, exposed the new one)
+- [#501 worktree-guard topology](issue-501-worktree-guard-topology.md) — MERGED PR #507 (/golem 501 L4, also closed #451 AC#1 vehicle); guard trust anchor must be NON-poisonable — review found 3 dynamic-repro config-poison bypasses (core.bare/is-bare/worktreeConfig) all fixed via PATH-structure; →#506 gitlink gap + #508 systematic re-review
+- [#443 portable command paths](issue-443-portable-command-paths.md) — SHIPPED L3: sweep ~1,500 hardcoded /usr/bin tool paths → `command`+`_bin()` resolver + CI lint; LESSON = 5 must-NOT-sweep classes
+- [#485 monitor event-driven default](issue-485-monitor-event-driven.md) — SHIPPED PR #504 (L2): orchestrate monitor default sweep→event-driven push gate-watch; HIGH = sweep was ALSO Phase-P pool-refill clock; verified #451 AC#3
+- [#475 worktree-scope guard](issue-475-worktree-guard.md) — SHIPPED PR #502 (L2): PreToolUse worktree-guard.sh DENIES golem edit leaking into main (git-dir!=common-dir); review→#501; live-verified #451 AC#2
+- [No --no-verify: fix the lint](no-noverify-fix-the-lint.md) — operator directive: never --no-verify to skip rumdl/typos, FIX it; don't `rumdl fmt` blind (mangles #NNN→heading); only MEMORY.md index exempt
+- [Token-burn audit 2026-07-21](token-burn-audit-2026-07-21.md) — 4-axis burn audit → #487-#495; biggest lever = golems had no --model dial (#487)
+- [#488 checkpoint suppression](issue-488-checkpoint-suppression.md) — SHIPPED PR #499 (L1): render_checkpoint buffer+signature → no-op sweeps collapse to heartbeat; empty-state returns MUST clear cp_prev_sig
+- [grep -c exits 1 on zero count](grep-c-zero-count-exit-1.md) — GNU grep -c prints 0 but EXITS 1 at zero; `|| echo 0` double-appends; use `grep -o P | wc -l`; #488
+- [#487 GOLEM_MODEL launch knob](issue-487-golem-model-knob.md) — SHIPPED PR #496 (L1): GOLEM_MODEL env knob; REUSABLE BUG = raw $VAR in tmux `sh -c` string → injection; fix=backslash-escape
+- [#462 tracks build-order composition](issue-462-tracks-build-order.md) — SHIPPED PR #483 (L3): composeTracks two-level sort (buildClusters+topoOrderCluster); BUG = display field from RAW input not ACTUAL state
+- [#432 gate-age coverage + jq-abort fix](issue-432-gate-age-coverage.md) — SHIPPED PR #482 (L3): one golem's malformed .ts aborts feed_snapshot jq → blanks WHOLE BLOCKED list; fix=try/catch true
+- [Test BLOCKED list not feed echo](test-assert-blocked-list-not-feed-echo.md) — golem-status echoes raw feed JSON; assert render-line `golem-N — msg` not bare substring; revert-fix→confirm-FAIL→restore
+- [#459 tail-window boundary tests](issue-459-tail-window-boundary.md) — SHIPPED PR #480 (L3, MERGED): tail-window edge +7-filler=8L incl / +8=9L excl (`<<<` off-by-one)
+- [#458 footer-lines env test](issue-458-footer-lines-env-test.md) — SHIPPED PR #479 (L3): GOLEM_PANE_FOOTER_LINES env-override; gotcha = liveness_class returns string + set-env-before-source
+- [#402 precedence dedup down-scope](issue-402-precedence-dedup.md) — SHIPPED PR #477 (L3): floor anchored frontmatter at line 1 → dup survived; correct = match PER UNDERLYING ISSUE not line/category
+- [#248 transcript liveness](issue-248-transcript-liveness.md) — SHIPPED PR #473 (L3): golem-transcript-liveness.sh reads last assistant stop_reason; working needs mtime-gate GOLEM_STALL_THRESHOLD
+- [#406 multi-sink emitter](issue-406-multi-sink-emitter.md) — SHIPPED PR #468 (L3): golem-notify.sh fans event to feed.jsonl + curl POST per GOLEM_EVENT_SINKS; SSRF non-goal→#407
+- [#407 push receiver](issue-407-push-receiver.md) — SHIPPED PR #476 (L3): receiver APPENDS POST into feed.jsonl; unvalidated client ts blanked BLOCKED floor; sandbox KILLS socket binds (exit 144)
+- [Edits landed in main not worktree](edits-landed-in-main-not-worktree.md) — main-checkout abs paths from a worktree → edits land in MAIN, worktree git-status clean; target .worktrees/issue-N/ + compare base blobs
+- [Dropped gate in notification flood](dropped-gate-in-notification-flood.md) — checkpoint burst buried a plan-gate → golems idle ~8h; frozen Δ=0 can mean blocked-on-me; reconcile gh pr list + capture-pane
+- [#428 cache reset on reassignment](issue-428-cache-reassignment.md) — SHIPPED PR #466 (L3): provision-agent Mode-3 write_status resets stale host cache; reusable = whitelist-identity beats blacklist
+- [ship review diff must be faithful](ship-review-diff-must-be-faithful.md) — the pre-PR review `diff` arg IS the bytes reviewers read (#267); capture git diff origin/main...HEAD verbatim
+- [#446 golem-status BLOCKED reliability](issue-446-golem-status-reliability.md) — PR #464 (L3) CONTRIBUTES 2 of 4 modes: ghosts=worktree-rm reaped filter; API-death=pane_is_api_error; #446 STILL OPEN
+- [Librarian runs outside containers](librarian-runs-outside-containers.md) — operator directive: installs Mac/bare-linux/container alike; NEVER hard-depend on containers submodule (why py3.11→bash-3.2)
+- [#400 cross-repo coordination](issue-400-cross-repo-coordination.md) — SHIPPED PR #463 (L3): agnix-pin real fix owned by containers#769; review caught Closes-vs-unmet-AC premature-closure
+- [Frozen counter = done, not wedged](frozen-counter-is-done-not-wedged.md) — golem-status Δ=0 many sweeps usually = DONE-idle-at-prompt not wedge; check gh pr list + git log first
+- [Closes trailer in squash commit](closes-trailer-in-squash-commit.md) — PR body Closes→Contributes does NOT stop auto-close if squash-COMMIT body has Closes trailer (#411); fix BOTH
+- [#399 agnix SARIF CI gate](issue-399-agnix-sarif-ci.md) — SHIPPED PR #460 (L3): code-scanning.yml agnix --format sarif → separate workflow, security-events:write; validate `jq -e .runs` before upload
+- [#435 check-lifecycle scanner](issue-435-check-lifecycle.md) — SHIPPED PR #456 (L3): new review-audit check-lifecycle domain; MEDIUM-certainty pre-scan
+- [#452 footer-anchor pane matchers](issue-452-footer-anchor-matchers.md) — SHIPPED PR #457 (L3): footer-anchor gate-watch matchers (were whole-pane → false push); key off $pane_footer_lines
+- [#447 turn-end pane push](issue-447-turn-end-pane-push.md) — SHIPPED PR #455 (L3): turn-end/idle stall via pane_is_turn_end + two-poll debounce; confirm_turn_end in $(...) discards state
+- [#411 /golem live-e2e verify](issue-411-golem-verify-scope.md) — PR #453 PARKED (docs): in-worktree run proves only AC#3+#5; live ACs need main-checkout+scratch → #451
+- [Stale-BLOCKED false positive](stale-blocked-false-positive.md) — golem-status BLOCKED pins send-keys-resolved gates full 3600s TTL; trust feed/pane-FOOTER over pane-grep; #422
+- [check-docs-staleness IFS=: colon parity](check-docs-staleness-ifs-colon-parity.md) — latent bash↔python: `IFS=: read` strips trailing colon, python keeps; patterns.sh needs fix
+- [Git index corruption → partial commit](git-index-corruption-partial-commit.md) — truncated .git/index → commit captured 1 of ~384 files NO error; recover read-tree last-good; verify gh pr view --json files
+- [#283 checkpoint table](issue-283-checkpoint-table.md) — SHIPPED PR #414: golem-status.sh --checkpoint per-track table; DURABLE FIX = run-all.sh unsets GIT_DIR at entry (push-hook-leak flake)
+- [#256 cache-stability pass](issue-256-cache-stability.md) — SHIPPED PR #404: workflow.js prompt-prefix cache stability; stableStringify, instructions-first/volatile-last; helpers module-scope
 - [Verify squash-merge landed](verify-squash-merge-landed.md) — after merging a PR, confirm the diff actually landed on origin/main, not just the title
 - [Auto-mode blocks self-merge](auto-mode-blocks-self-merge.md) — L3/L4 ship `gh pr merge` denied by auto-mode classifier (self-authored, no human approval); park for human merge
-- [Stale-base squash reverts merged PR](stale-base-squash-reverts-merged-pr.md) — `reset --soft origin/main` from a worktree branched before a mid-session merge silently reverts that PR's files; restore advanced files first
+- [Stale-base squash reverts merged PR](stale-base-squash-reverts-merged-pr.md) — `reset --soft origin/main` from a pre-merge worktree silently reverts that PR's files; restore advanced files first
 - [Orchestrate broker-then-send](orchestrate-broker-then-send.md) — at a plan gate, orchestrator SENDS the tmux keystroke after human approves; never hand back to operator (#280)
-- [L3 broker plan-gate (standard)](l3-broker-plan-gate.md) — L3 DEFAULT: orchestrator presents each plan in-session, human decides HERE, sends keystroke back; never route operator to a TTY
-- [Review-wedge root cause](review-wedge-root-cause.md) — golems wedge in unbounded ship-issue reviews; root cause #307 wall-bound is PROSE not code; takeover recipe + wedge diagnostic (#327)
-- [Wall-timeout decision helper](wall-timeout-decision-helper.md) — #327: TaskStop is model-only; mechanized DECISION via workflow-wall-timeout.sh (3 prose sites), model still issues TaskStop
+- [L3 broker plan-gate (standard)](l3-broker-plan-gate.md) — L3 DEFAULT: orchestrator presents each plan in-session, human decides HERE, sends keystroke back; never route to a TTY
+- [Review-wedge root cause](review-wedge-root-cause.md) — golems wedge in unbounded ship-issue reviews; root cause #307 wall-bound is PROSE not code; takeover recipe (#327)
+- [Wall-timeout decision helper](wall-timeout-decision-helper.md) — #327: TaskStop is model-only; mechanized DECISION via workflow-wall-timeout.sh; model still issues TaskStop
 - [Release process](release-process.md) — how to cut a repo-level vX.Y.Z release; what containers#608's LIBRARIAN_REF pins to
-- [golem-gate-watch host leak](golem-gate-watch-host-leak.md) — liveness test fails locally when real host golem sessions leak into its sweep; pre-existing, env-only, push --no-verify, CI passes (see also flaky-golem-gate-watch-test GIT_DIR leak PR #62)
+- [golem-gate-watch host leak](golem-gate-watch-host-leak.md) — liveness test fails locally when host golem sessions leak into its sweep; env-only, push --no-verify, CI passes
 - [Conform scope enum](conform-scope-enum.md) — fix(review): is rejected; use fix(workflow): etc. — the skill's generic scope ≠ this repo's enum
 - [Skill required_tools vocabulary](skill-required-tools-vocabulary.md) — metadata.yml required_tools are shell-command names; no SKILL.md has a frontmatter tools: field
 - [Devcontainer bash_env PATH reset](devcontainer-bash-env-path-reset.md) — /etc/bash_env resets $PATH on non-interactive bash; unset BASH_ENV for PATH-stub tests
-- [Autonomy vs plan-gate flags](autonomy-vs-plangate-flags.md) — --autonomous vs --skip-plan/--force-auto are orthogonal; 3 unrelated --auto spellings never to rename
+- [Autonomy vs plan-gate flags](autonomy-vs-plangate-flags.md) — --autonomous vs --skip-plan/--force-auto orthogonal; 3 unrelated --auto spellings never to rename
 - [Release from worktree (git-cliff)](release-from-worktree-gitcliff.md) — git-cliff scopes to cwd; release.sh needs --include-path or it silently wipes CHANGELOG from a worktree
-- [Two-runtime model](two-runtime-model.md) — workflow.js engine is sandboxed (no shell/fs); only Bash-tool subagents reach host tools; CC bundles no general-purpose runtime
+- [Two-runtime model](two-runtime-model.md) — workflow.js engine is sandboxed (no shell/fs); only Bash-tool subagents reach host tools
 - [core.bare misconfig](core-bare-misconfig.md) — "must be run in a work tree" = stray core.bare=true in .git/config; set false (also masks real git status)
-- [workflow.js no module system](workflow-js-no-module-system.md) — harnesses can't split into importable modules (no import/require/fs); remedy = entry-point fns + header banner (#90)
-- [workflow.js no clock](workflow-js-no-clock.md) — harnesses can't self-bound in wall-time (Date.now/timers absent); bound at the CALLER (background→poll→TaskStop→recover-journal-partials.sh); #224
+- [workflow.js no module system](workflow-js-no-module-system.md) — harnesses can't split into modules (no import/require/fs); remedy = entry-point fns + header banner (#90)
+- [workflow.js no clock](workflow-js-no-clock.md) — harnesses can't self-bound in wall-time (no Date.now/timers); bound at the CALLER (background→poll→TaskStop); #224
 - [git-cliff checksum is sha512](git-cliff-checksum-sha512.md) — git-cliff releases ship per-asset .tar.gz.sha512 (not .sha256) + .sig; verify against published sibling
-- [worktree-new seeds ~/.claude.json](worktree-new-seeds-home-claude-json.md) — worktree-new.sh transitively writes $HOME/.claude.json via seed-worktree-trust.sh; sandbox tests must override HOME
-- [pre-review-gates project root](pre-review-gates-project-root.md) — pre-review-gates.sh resolves _PROJECT_ROOT via git rev-parse; scan-category tests need GIT_*-scrubbed sandbox + .py/.js fixtures
-- [Test workflow.js pure helpers](test-workflow-js-pure-helpers.md) — slice harness source before first orchestration stmt + eval prefix in new Function; tests/validate-workflow-helpers.mjs
+- [worktree-new seeds ~/.claude.json](worktree-new-seeds-home-claude-json.md) — worktree-new.sh transitively writes $HOME/.claude.json via seed-worktree-trust.sh; sandbox tests override HOME
+- [pre-review-gates project root](pre-review-gates-project-root.md) — pre-review-gates.sh resolves _PROJECT_ROOT via git rev-parse; scan-category tests need GIT_*-scrubbed sandbox
+- [Test workflow.js pure helpers](test-workflow-js-pure-helpers.md) — slice harness source before first orchestration stmt + eval prefix in new Function; validate-workflow-helpers.mjs
 - [Codebase-audit prescan location](codebase-audit-prescan-location.md) — Step 2.5 patterns.sh prose in orchestration-protocol.md, checker.md owns execution; #107
-- [Workflow agentType namespacing](workflow-agenttype-namespacing.md) — Workflow tool agent() wants namespaced <plugin>:<name>, Agent tool wants bare — opposite; FIXED #126/PR #128
-- [ship-issue rename rationale](ship-issue-rename-rationale.md) — the ship skill is ship-issue on purpose (moved out of next-issue* to fix `nex` autocomplete collision); don't rename back
-- [typos gate blocks push](typos-gate-blocks-push.md) — the `typos` pre-push hook fails the whole push on any misspelling in touched files, including pre-existing ones adjacent to your edits
+- [Workflow agentType namespacing](workflow-agenttype-namespacing.md) — Workflow tool agent() wants namespaced <plugin>:<name>, Agent tool wants bare — opposite; FIXED #126
+- [ship-issue rename rationale](ship-issue-rename-rationale.md) — the ship skill is ship-issue on purpose (fixed `nex` autocomplete collision); don't rename back
+- [typos gate blocks push](typos-gate-blocks-push.md) — the `typos` pre-push hook fails the whole push on any misspelling in touched files, incl pre-existing adjacent ones
 - [cosign bundle format](cosign-bundle-format.md) — release.yml signing must use --bundle (.sigstore.json); cosign 3.x ignores --output-signature/-certificate; PR #153
-- [mjs coverage c8 excludes tests](mjs-coverage-c8-excludes-tests.md) — c8 excludes tests/ by default; covering tests/*.mjs needs --exclude override; NODE_V8_COVERAGE merges entry points (#186)
+- [mjs coverage c8 excludes tests](mjs-coverage-c8-excludes-tests.md) — c8 excludes tests/ by default; covering tests/*.mjs needs --exclude override; NODE_V8_COVERAGE merges (#186)
 - [pre-review-gates needs filelist](pre-review-gates-needs-filelist.md) — pre-review-gates.sh takes changed files as positional args; bare call errors with Usage
-- [coverage two surfaces](coverage-two-surfaces.md) — patterns.py Codecov number comes from coverage-python.sh's own corpus, not the behavioral gates; extend both to lift coverage + assert behavior (#204)
-- [autonomy-resolver script](autonomy-resolver-script.md) — autonomy-resolve.{py,sh} is the single source of truth for the L1-L4 gate-disposition table (#190); skills call it, don't re-derive
+- [coverage two surfaces](coverage-two-surfaces.md) — patterns.py Codecov number comes from coverage-python.sh's own corpus not behavioral gates; extend both (#204)
+- [autonomy-resolver script](autonomy-resolver-script.md) — autonomy-resolve.{py,sh} is the single source of truth for L1-L4 gate-disposition (#190); skills call it, don't re-derive
 - [check-ai-config bloat scan](check-ai-config-bloat-scan.md) — run the ai-file-bloat scanner locally (path-list arg); raw-line thresholds per file type (SKILL.md 300/500)
-- [Deprecated autonomy flags removed](deprecated-autonomy-flags-removed.md) — #215 killed --autonomous/--auto/--plan-gate/--force-auto/env; --level N sole dial; resolver EMITS plan_gated/perm_mode (runtime)
+- [Deprecated autonomy flags removed](deprecated-autonomy-flags-removed.md) — #215 killed --autonomous/--auto/--plan-gate/--force-auto/env; --level N sole dial; resolver EMITS plan_gated/perm_mode
 - [rumdl nested sublist under numbered](rumdl-nested-sublist-under-numbered.md) — rumdl MD077 autofix dedents a nested dash-sublist out of its numbered parent; use flat bold-prose sub-cases (#225)
-- [golem-launch version-skew guard](golem-launch-version-skew-guard.md) — golem-launch.sh refuses dispatch on plugin version skew (#230); "unknown" sentinel + unset $HOME must skip, not fire
-- [/usr/bin hardcoding in golem scripts](usr-bin-hardcoding-golem-scripts.md) — golem scripts hardcode /usr/bin/<tool> (exit 127 off-/usr/bin); fix=`command <tool>`; #241 fixed only worktree-new.sh, siblings affected
+- [golem-launch version-skew guard](golem-launch-version-skew-guard.md) — golem-launch.sh refuses dispatch on plugin version skew (#230); "unknown" sentinel + unset $HOME must skip
+- [/usr/bin hardcoding in golem scripts](usr-bin-hardcoding-golem-scripts.md) — golem scripts hardcode /usr/bin/<tool> (exit 127 off-/usr/bin); fix=`command <tool>`; #241 only fixed worktree-new.sh
 - [golem-notify feed can't classify forks](golem-notify-feed-cant-classify-forks.md) — #321: in-turn AskUserQuestion forks go via canUseTool not Notification; only ESCALATION: + pane channel
 - [repo_root submodule superproject](repo-root-submodule-superproject.md) — #324: repo_root() placed worktrees in .git/modules inside a submodule; fix probes --show-superproject-working-tree first
-- [worktree-new test coverage matrix](worktree-new-test-coverage-matrix.md) — worktree-new.sh × submodule × taint matrix in validate-golem-scripts.sh; #365 closed last cell; _make_super_with_submodule fixture
-- [Read issue comments not just body](next-issue-read-issue-comments.md) — gh issue view --json body omits comments; follow-up comments fold in requirements (missed #328); fetch --comments in Phase 2
+- [worktree-new test coverage matrix](worktree-new-test-coverage-matrix.md) — worktree-new.sh × submodule × taint matrix in validate-golem-scripts.sh; #365 closed last cell
+- [Read issue comments not just body](next-issue-read-issue-comments.md) — gh issue view --json body omits comments; follow-up comments fold in requirements; fetch --comments in Phase 2
 - [jq empty vs jq -e for JSON validity](jq-validate-empty-vs-e.md) — validity = `jq empty` (parse-only); `jq -e .` misreports valid scalars false/null as invalid; #253
 - [Umbrella issue Closes vs Contributes](umbrella-issue-closes-vs-contributes.md) — shipping one slice → "Contributes to #N" + follow-up, never "Closes #N" (auto-closes umbrella); #243
-- [golem-watch trap signal testing](golem-watch-trap-signal-testing.md) — #254: trap INT/TERM arms need STRUCTURAL grep; #359 setsid-free BEHAVIOURAL test + capability probe; #360 readiness-poll
-- [Mode 3 takeover branch naming](mode3-takeover-branch-naming.md) — Mode 2 branch=feature/issue-{N} tmux-kill vs Mode 3 branch=agent{N} docker-compose stop-rm; #370 made takeover recipe mode-aware
-- [Source-detector gate (#348 slice A)](source-detector-gate.md) — validate-source-detectors.sh + corpus drove 3 review-audit ports to 100%; fixed missing-api whole-line private-detection bug
-- [Loop-detector gate (#348 slice B)](loop-detector-gate.md) — #384: validate-loop-detectors.sh drove 6 dev-core loop-*/drift ports to 100% (#348 done); lint fails on pre-existing memory .md debt only
+- [golem-watch trap signal testing](golem-watch-trap-signal-testing.md) — #254: trap INT/TERM arms need STRUCTURAL grep; #359 setsid-free BEHAVIOURAL test; #360 readiness-poll
+- [Mode 3 takeover branch naming](mode3-takeover-branch-naming.md) — Mode 2 branch=feature/issue-{N} tmux-kill vs Mode 3 branch=agent{N} docker-compose stop-rm; #370 mode-aware
+- [Source-detector gate (#348 slice A)](source-detector-gate.md) — validate-source-detectors.sh + corpus drove 3 review-audit ports to 100%; fixed missing-api private-detection bug
+- [Loop-detector gate (#348 slice B)](loop-detector-gate.md) — #384: validate-loop-detectors.sh drove 6 dev-core loop-*/drift ports to 100% (#348 done)
 - [Token-scrape transcript dedup](token-scrape-transcript-dedup.md) — #371: golem-status TOKENS scrapes transcript; MUST dedup by message.id (naive sum ~2.7x high); Mode 2 only
-- [Broker-inbox gate resolution](broker-inbox-gate-resolution.md) — #227 slice 1: golem-inbox.sh reverse channel relays escalation/dead-end down; DATA-ONLY, plan-approval excluded; caught octal-hang + jq-torn-line
-- [#390 ship CI-hang dead-end](issue-390-ship-ci-hang-deadend.md) — #390→PR #440 DEAD-ENDED at merge on run-all.sh CI runner hang: quality-gates cancelled 3× while local passes; resume=rebase after #442
+- [Broker-inbox gate resolution](broker-inbox-gate-resolution.md) — #227 slice 1: golem-inbox.sh reverse channel relays escalation/dead-end down; DATA-ONLY, plan-approval excluded
+- [#390 ship CI-hang dead-end](issue-390-ship-ci-hang-deadend.md) — #390→PR #440 DEAD-ENDED at merge on run-all.sh CI runner hang; quality-gates cancelled 3×; resume=rebase after #442
 - [#392 token-signal coverage](issue-392-token-signal-coverage.md) — SHIPPED PR #413: 7 render-path tests for golem-status token signal; review caught HIGH tautology `grep -Evq` (use `! grep -q`)
-- [#426 harness rm -rf](issue-426-harness-rm-rf.md) — CRITICAL CLOSED (#426+#448): read-only review subagents could rm -rf LIVE tree; belt+origin-lock PR #449 THEN PreToolUse bash-guard hook PR #450 (deny=exit0+JSON, fail-open)
-- [Marketplace source = reaped worktree](marketplace-source-reaped-worktree.md) — marketplace against a golem worktree → reap → cache-miss → all plugins DOA; FIX = marketplace add /workspace/librarian (stable checkout), never worktree cwd
-- [CI hang: golem-watch group signal](ci-hang-golem-watch-group-signal.md) — multi-PR 15min CI timeout = validate-golem-watch case-4 group-signal escapes on headless x86_64 CI; NOT repro aarch64; FIX = REMOVE case 4 (#444)
+- [#426 harness rm -rf](issue-426-harness-rm-rf.md) — CRITICAL CLOSED (#426+#448): review subagents could rm -rf LIVE tree; belt+origin-lock PR #449 THEN bash-guard hook PR #450
+- [Marketplace source = reaped worktree](marketplace-source-reaped-worktree.md) — marketplace against a golem worktree → reap → cache-miss → plugins DOA; FIX = marketplace add /workspace/librarian
+- [CI hang: golem-watch group signal](ci-hang-golem-watch-group-signal.md) — multi-PR 15min CI timeout = validate-golem-watch case-4 group-signal escapes on headless x86_64; FIX = REMOVE case 4 (#444)
