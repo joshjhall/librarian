@@ -184,9 +184,28 @@ Run the loop with `cycle = 1` and `cap = REVIEW_MAX_CYCLES` (default 3):
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-git diff --name-only origin/main...HEAD   # -> files
-git diff origin/main...HEAD               # -> diff
+git diff --name-only origin/main...HEAD   # -> files (FULL PR scope)
+git diff origin/main...HEAD               # -> diff  (FULL PR scope)
 ```
+
+**Re-review narrowing (#492).** After cycle 1, also compute the **fix-commit
+delta since the last cycle** so the harness can re-review only what changed
+instead of re-scanning the whole PR every cycle (worst case 3× the full review
+at `REVIEW_MAX_CYCLES=3`). Capture the HEAD SHA the harness actually reviewed
+this cycle **at step (c) time, before step (e) commits any fixes**
+(`git rev-parse HEAD` → `lastReviewedSha`); on the next cycle the delta is
+everything committed since it — the `fix(review): …` and any `fix(ci): …` commits
+from steps (e) / the CI-monitor loop:
+
+```bash
+git diff --name-only "$lastReviewedSha"...HEAD   # -> deltaFiles
+git diff "$lastReviewedSha"...HEAD               # -> deltaDiff
+```
+
+Also derive `priorBlockingDimensions` — the distinct `dimension` (equivalently
+`category`) values of the previous cycle's `blocking[]` findings — so a dimension
+that blocked last cycle is always re-run to confirm the fix. On **cycle 1** there
+is no prior SHA and no prior blocking set: omit all three delta args (full review).
 
 b. **Gather open PR review comments** and normalize unresolved review-thread
 comments + issue-style PR comments into a `prComments` array of
@@ -211,18 +230,44 @@ args: {
   phase: "pr-cycle",
   cycle: <cycle>,
   maxCycles: <cap>,
-  files: [<changed files>],
-  diff: "<diff text>",
+  files: [<changed files, FULL PR scope>],
+  diff: "<diff text, FULL PR scope>",
   prComments: [<normalized comments>],
-  issue: { number: {N}, title: "{title}" }
+  issue: { number: {N}, title: "{title}" },
+  // Re-review narrowing (#492) — omit ALL THREE on cycle 1 (full review):
+  deltaFiles: [<changed files since lastReviewedSha>],
+  deltaDiff: "<diff since lastReviewedSha>",
+  priorBlockingDimensions: [<dimension names that blocked last cycle>]
 }
 ```
 
-`diff` is the **authoritative bytes the reviewers read** (byte-faithful
-`git diff` from step a) — the manifest step no longer transcribes it, so pass the
-full diff here (#267). Omitting `diff` is supported but makes each reviewer derive
-it in-agent (`git diff origin/main...HEAD`), which costs extra tool calls; prefer
-supplying it.
+`diff`/`files` stay the **FULL PR scope** (byte-faithful `git diff
+origin/main...HEAD` from step a) — the manifest step no longer transcribes it, so
+pass the full diff here (#267). They remain load-bearing on narrowed cycles too:
+`scope-drift` reads the full `diff` (its acceptance-criteria-completeness check is
+a whole-change lens), and `files` sizes the result summary. Omitting `diff` is
+supported but makes each reviewer derive it in-agent (`git diff
+origin/main...HEAD`), which costs extra tool calls; prefer supplying it.
+
+`deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
+delta** from step a. When present on `cycle > 1` the harness narrows the
+delta-local dimensions (security, correctness, tests, conventions) and runs each
+only if it blocked last cycle or the delta touches a file type it reviews. The
+conditional specialists (database, devops) follow the same include rule with their
+own "touches" signal — `manifest.needs.*` (whether the delta still classifies a
+file of that type) — **plus** the prior-blocking carry-over, so
+`priorBlockingDimensions` closes the AC#3 gap for specialists too. **Which diff a
+re-run reads depends on why it was included:** a dimension pulled in because the
+delta *touches* its types reads only the fix delta (the saving); a dimension
+pulled in via the *prior-blocking* carry-over reads the **full** diff, because the
+finding it must re-confirm may live outside the fix delta — handing it only the
+delta would blind it and let a still-unresolved finding silently vanish. A
+dimension that is both touched and prior-blocking reads the full diff
+(re-confirmation wins). `scope-drift` always reads the full `diff`. Omitting the
+delta args (or on the first cycle) yields the pre-#492 full review — they are
+additive and default-off. A dimension the harness drops because the delta doesn't
+touch it is **not** a partial cycle: narrowing never sets `budget_exhausted` /
+`dimensions_skipped`, so a narrowed cycle can still return `clean`.
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
 budget_exhausted, dimensions_skipped[], clean }`. `dimensions_skipped` names any
