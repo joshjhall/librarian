@@ -80,14 +80,17 @@
 #     path structure: fails open with a loud stderr diagnostic BY DESIGN; the
 #     prompt belt + human review back it up.
 #   - A golem REWRITING its own `$worktree/.git` gitlink file to point at a decoy
-#     repo defeats the git-dir==common-dir main-session gate ABOVE (making its cwd
-#     look like a primary checkout that is never blocked). That is a distinct,
-#     pre-existing #475 trust-anchor gap — the disarming write itself is a normal
-#     worktree-scoped edit this guard allows, and closing it needs a cross-cut fix
-#     spanning this gate AND bash-guard's Bash matcher — tracked as its own
-#     follow-up, out of #501's topology scope. (The RELATED `core.worktree` /
-#     `extensions.worktreeConfig` toplevel-redirect vector IS closed here — see the
-#     structural worktree_root derivation below.)
+#     repo used to defeat the git-dir==common-dir main-session gate ABOVE (making
+#     its cwd look like an un-blockable primary checkout). CLOSED in #506: the
+#     identity gate now cross-checks whether an OUTERMOST enclosing genuine primary
+#     (a structural anchor above the worktree the golem cannot forge) owns cwd, and
+#     if so re-derives scope and enforces — so the forged identity no longer
+#     disarms the guard regardless of the write vector (gitlink rewrite OR
+#     `git config`). The disarming Edit/Write to `$worktree/.git` is ALSO denied
+#     outright (defense in depth). The residual `Bash`-tool vector (a `printf` /
+#     `rm` from the golem's own MAIN loop) is neutralized by that re-derivation,
+#     not blocked — bash-guard only gates SUBAGENT commands, and the main loop must
+#     stay un-blocked. See the disguised-worktree detection below.
 #   A silent leak is the one outcome avoided everywhere.
 #
 # FAILURE MODE — fail-open, fail-LOUD on trouble (mirrors bash-guard, #448). On
@@ -139,6 +142,123 @@ CAT="$(_bin cat)"
 SED="$(_bin sed)"
 HEAD="$(_bin head)"
 TR="$(_bin tr)"
+
+# --- Disguised-worktree detection (#506) ------------------------------------
+# The main-session identity gate below trusts `git-dir == git-common-dir`. For a
+# linked worktree that identity is controlled by the plaintext gitlink FILE
+# `<cwd>/.git` (`gitdir: <path>`), which the golem can OVERWRITE to point at a
+# decoy repo it `git init`s inside its own tree — after which BOTH git-dir and
+# git-common-dir resolve to the decoy, the gate fires, and every edit is treated
+# as a main session (the guard is disarmed). The trust anchor that survives the
+# poison is STRUCTURAL and OUTSIDE the worktree: the real main checkout stays a
+# genuine primary (`git-dir==git-common-dir`, `--show-toplevel==itself`) that
+# PHYSICALLY ENCLOSES cwd — the golem cannot make it stop enclosing cwd, or stop
+# being a primary, without destroying `<main>/.git` (which breaks its own repo).
+#
+# `_find_enclosing_primary cwd` walks the strict ancestors of cwd and echoes the
+# OUTERMOST ancestor that is a standard checkout enclosing cwd, or "" if none. It is
+# the disambiguator between a genuine main session (no such ancestor → allow) and a
+# worktree disguised as one (found → enforce scope against it). OUTERMOST — not
+# nearest — defeats a nearer-ancestor decoy the golem `git init`s at a writable
+# ancestor (e.g. `<main>/.worktrees`): the real main still encloses that decoy, so
+# the outermost match is the true main_root.
+#
+# TRUST ANCHOR — the primary test is STRUCTURAL: a real `.git` DIRECTORY at the
+# ancestor. It deliberately does NOT call `git rev-parse --show-toplevel` /
+# `--is-bare-repository` on the ancestor: those READ `core.worktree` / `core.bare`
+# from the SHARED common-dir config, which a linked-worktree golem CAN rewrite
+# (those keys are not worktree-scoped) — `git config core.worktree <decoy>` /
+# `core.bare true` would then redirect/blank the ancestor's `--show-toplevel` and
+# flip this detector back to a silent allow, re-opening the exact leak (dynamic
+# repro, #506 pre-PR review CRITICAL — the same poisonable-signal class #501
+# eliminated elsewhere). A `git config` write CANNOT turn the on-disk `<a>/.git`
+# DIRECTORY into something else, so only that structure is trusted. Selecting the
+# OUTERMOST match keeps main_root as LARGE as possible, so the failure direction is
+# over-DENY (a conservative false positive), never a leak-enabling under-scope.
+# Pure ancestor walk via `${a%/*}` (no dirname/mapfile/declare -A; bash-3.2 clean).
+_find_enclosing_primary() {
+    _fep_cwd="$1"
+    _fep_a="$1"
+    _fep_out=""
+    while [ -n "$_fep_a" ] && [ "$_fep_a" != "/" ]; do
+        _fep_a="${_fep_a%/*}"
+        [ -n "$_fep_a" ] || _fep_a="/"
+        # Only an ancestor that ENCLOSES cwd can be its main checkout.
+        case "$_fep_cwd" in
+            "$_fep_a"/*) ;;
+            *) [ "$_fep_a" = "/" ] && break || continue ;;
+        esac
+        # Structural primary: a real `.git` DIRECTORY (a standard checkout's
+        # git-dir). Non-poisonable — see the TRUST ANCHOR note above.
+        if [ -d "$_fep_a/.git" ]; then
+            _fep_out="$_fep_a" # keep walking → outermost match wins
+        fi
+        [ "$_fep_a" = "/" ] && break
+    done
+    printf '%s' "$_fep_out"
+}
+
+# `_derive_wt_root_poison cwd main_root` finds this session's true worktree root on
+# the disguised path, where the gitlink/common-dir are the decoy and useless. It
+# takes the LONGEST `worktree <P>` from the real main's `worktree list` that is
+# under main_root, is not main_root itself, and encloses cwd. That registry lives
+# at `<main>/.git/worktrees/<id>/` (outside the worktree); a golem can DELETE it
+# with unguarded Bash, so this FALLS BACK to cwd when no admissible entry is found.
+# Both the fallback and any forged/registry entry are safe for scope: a leak target
+# under main_root but outside the true worktree stays outside every admissible P,
+# so the scope `case` still DENIES it. Longest-prefix avoids collapsing to main_root
+# (which `worktree list` also reports as enclosing cwd).
+_derive_wt_root_poison() {
+    _dwr_cwd="$1"
+    _dwr_main="$2"
+    _dwr_best=""
+    _dwr_list="$(git -C "$_dwr_main" worktree list --porcelain 2>/dev/null || true)"
+    # Iterate the `worktree <path>` lines (bash-3.2: here-string + read loop).
+    while IFS= read -r _dwr_line; do
+        case "$_dwr_line" in
+            "worktree "*) _dwr_p="${_dwr_line#worktree }" ;;
+            *) continue ;;
+        esac
+        [ -n "$_dwr_p" ] || continue
+        [ "$_dwr_p" != "$_dwr_main" ] || continue
+        case "$_dwr_p" in
+            "$_dwr_main"/*) ;;
+            *) continue ;;
+        esac
+        # Must enclose cwd (or equal it).
+        case "$_dwr_cwd" in
+            "$_dwr_p" | "$_dwr_p"/*) ;;
+            *) continue ;;
+        esac
+        # Keep the longest such path.
+        if [ "${#_dwr_p}" -gt "${#_dwr_best}" ]; then
+            _dwr_best="$_dwr_p"
+        fi
+    done <<EOF
+$_dwr_list
+EOF
+    printf '%s' "${_dwr_best:-$_dwr_cwd}"
+}
+
+# `_emit_deny reason` writes the PreToolUse deny envelope (jq when present, a
+# sanitized hand-roll otherwise) and exits 0 — the decision travels in the JSON,
+# not the exit code. Shared by every deny path (the standard/submodule leak reason
+# and the #506 gitlink-write reason) so the jq/no-jq emission logic lives once.
+_emit_deny() {
+    _ed_reason="$1"
+    if command -v jq >/dev/null 2>&1; then
+        jq -cn --arg reason "$_ed_reason" \
+            '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}' \
+            2>/dev/null && exit 0
+    fi
+    # No jq: hand-roll the deny envelope. Sanitize the reason (drop backslashes and
+    # control chars that can't be JSON-escaped without a real encoder, then escape
+    # double quotes) so the output stays valid JSON.
+    _ed_safe="$(printf '%s' "${_ed_reason//\\/}" | "$TR" -d '[:cntrl:]')"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
+        "${_ed_safe//\"/\\\"}"
+    exit 0
+}
 
 # --- Read stdin -------------------------------------------------------------
 payload="$("$CAT" 2>/dev/null || true)"
@@ -205,7 +325,7 @@ case "$target" in
     *) exit 0 ;;
 esac
 
-# --- Lexically normalize `.` / `..` segments --------------------------------
+# --- Lexically normalize `.` / `..` / redundant slashes ---------------------
 # Path scoping below is lexical prefix matching, so a `..` segment would defeat
 # it — and `$WT/../seed.txt` (which resolves to a MAIN-checkout path) is exactly
 # the natural leak shape #475 exists to catch, NOT an edge to wave through. So
@@ -213,8 +333,16 @@ esac
 # consistent with the guard's lexical, filesystem-free design) BEFORE scoping.
 # A `..` that would pop past the filesystem root is a malformed absolute path we
 # cannot scope — that case alone fails open loudly.
+#
+# The trigger ALSO fires on a doubled slash (`//`) or a trailing slash: the loop
+# drops empty segments, so `$WT//.git` and `$WT/.git/` canonicalize to `$WT/.git`.
+# Without this the strict gitlink-write equality below (#506 FIX B) — and every
+# other lexical comparison — would be bypassable by a filesystem-equivalent
+# `$WT//.git` / `$WT/.git/` that opens the same inode (#506 pre-PR review, HIGH,
+# dynamic-repro'd: the worktree-first-allow glob matched those variants while the
+# strict gitlink-deny did not, so the disarming write slipped through).
 case "$target" in
-    *"/./"* | *"/." | *"/../"* | *"/..")
+    *"/./"* | *"/." | *"/../"* | *"/.." | *"//"* | */)
         _norm=""
         _rest="${target#/}" # strip the leading slash; segments follow
         _bad=0
@@ -271,10 +399,34 @@ if [ -z "$git_dir_abs" ] || [ -z "$common_dir_abs" ]; then
     exit 0
 fi
 
-# Main session: git-dir == git-common-dir. NEVER block it — its edits to its own
-# working tree are legitimate no matter the path.
+# Candidate main session: git-dir == git-common-dir. Historically an unconditional
+# ALLOW ("main session, never block"), but a golem can FORGE this identity by
+# rewriting its own `<cwd>/.git` gitlink to a decoy repo — disarming the guard
+# (#506). So before trusting it, cross-check whether cwd is really enclosed by a
+# genuine primary checkout (a signal the poison cannot forge from inside the
+# worktree — see `_find_enclosing_primary`). If NONE encloses cwd it is a true main
+# session (standard top-level OR a legit `--separate-git-dir` main, whose cwd/.git
+# is also a FILE with git-dir==common) → ALLOW as before. If one DOES, cwd is a
+# worktree DISGUISED as main: adopt that primary as main_root, recover the true
+# worktree root structurally, and fall through to the SAME scope enforcement a
+# normal linked worktree gets (the decoy common-dir is skipped as useless).
+DISGUISED=0
+worktree_root=""
+main_root=""
+topology=""
 if [ "$git_dir_abs" = "$common_dir_abs" ]; then
-    exit 0
+    _enc="$(_find_enclosing_primary "$cwd")"
+    if [ -z "$_enc" ]; then
+        exit 0 # genuine main session — never blocked
+    fi
+    DISGUISED=1
+    main_root="$_enc"
+    topology="standard"
+    worktree_root="$(_derive_wt_root_poison "$cwd" "$main_root")"
+    if [ -z "$worktree_root" ]; then
+        printf '%s: could not resolve the worktree root for a disguised session (cwd %s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$cwd" >&2
+        exit 0
+    fi
 fi
 
 # Linked worktree. Resolve its own root — but NOT via `rev-parse --show-toplevel`,
@@ -294,31 +446,48 @@ fi
 # the PreToolUse JSON — Claude Code's own tmux launch, not any git-config-derived
 # value) actually lives under the resolved root; a mismatch means the derivation
 # was redirected, so fail open LOUDLY rather than trust a poisoned root.
-worktree_root=""
-if [ -f "$git_dir_abs/gitdir" ]; then
-    _gf="$("$CAT" "$git_dir_abs/gitdir" 2>/dev/null | "$HEAD" -n1)"
-    _gf="${_gf%/.git}" # `<worktree>/.git` -> `<worktree>`
-    case "$_gf" in
-        /*) worktree_root="$(cd "$_gf" 2>/dev/null && pwd || true)" ;;
+#
+# On the DISGUISED path (#506) this whole block is skipped: git_dir is the decoy,
+# so its `gitdir` pointer is untrustworthy — worktree_root was already recovered
+# from the enclosing primary's registry above.
+if [ "$DISGUISED" -eq 0 ]; then
+    worktree_root=""
+    if [ -f "$git_dir_abs/gitdir" ]; then
+        _gf="$("$CAT" "$git_dir_abs/gitdir" 2>/dev/null | "$HEAD" -n1)"
+        _gf="${_gf%/.git}" # `<worktree>/.git` -> `<worktree>`
+        case "$_gf" in
+            /*) worktree_root="$(cd "$_gf" 2>/dev/null && pwd || true)" ;;
+        esac
+    fi
+    if [ -z "$worktree_root" ]; then
+        worktree_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)"
+    fi
+    if [ -z "$worktree_root" ]; then
+        printf '%s: could not resolve the worktree root for cwd (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$cwd" >&2
+        exit 0
+    fi
+    # Cross-check against the (non-config-derived) cwd: the session's cwd must be
+    # inside its own worktree. If it is not, worktree_root was redirected (a
+    # poisoned core.worktree, or a stale/mismatched gitdir file) — do not trust it.
+    case "$cwd" in
+        "$worktree_root" | "$worktree_root"/*) ;;
+        *)
+            printf '%s: resolved worktree root (%s) does not contain cwd (%s) — worktree scope untrustworthy (possible core.worktree redirect); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$worktree_root" "$cwd" >&2
+            exit 0
+            ;;
     esac
 fi
-if [ -z "$worktree_root" ]; then
-    worktree_root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || true)"
+
+# --- Gitlink DENY (#506, before the worktree-first allow) --------------------
+# The worktree's own `.git` gitlink FILE is the disarm vector: overwriting it to
+# point at a decoy repo forges the main-session identity gate (FIX A now re-detects
+# and neutralizes that, but block the write itself too — defense in depth, AC#2).
+# It sits INSIDE the worktree, so the worktree-first allow below would otherwise
+# permit it — this deny must come FIRST. `target` is already `.`/`..`-normalized.
+if [ "$target" = "$worktree_root/.git" ]; then
+    _gl_reason="Blocked a write to this worktree's \`.git\` gitlink (#506): overwriting \`${worktree_root}/.git\` repoints the session at a decoy repo and disarms the worktree-scope guard (it makes a worktree look like an un-blockable main session). This file is managed by \`git worktree\`; do not edit it. If you meant to change tracked content, target a path UNDER \`${worktree_root}\` instead."
+    _emit_deny "$_gl_reason"
 fi
-if [ -z "$worktree_root" ]; then
-    printf '%s: could not resolve the worktree root for cwd (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$cwd" >&2
-    exit 0
-fi
-# Cross-check against the (non-config-derived) cwd: the session's cwd must be
-# inside its own worktree. If it is not, worktree_root was redirected (a poisoned
-# core.worktree, or a stale/mismatched gitdir file) — do not trust it.
-case "$cwd" in
-    "$worktree_root" | "$worktree_root"/*) ;;
-    *)
-        printf '%s: resolved worktree root (%s) does not contain cwd (%s) — worktree scope untrustworthy (possible core.worktree redirect); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$worktree_root" "$cwd" >&2
-        exit 0
-        ;;
-esac
 
 # --- Worktree-first ALLOW (topology-independent) ----------------------------
 # A target INSIDE this worktree is the correct destination in EVERY topology —
@@ -365,30 +534,35 @@ esac
 #     and that is precisely the case worth a loud diagnostic), and an exotic gitdir
 #     gets the same detectable degraded-allow it always had — with no poisonable
 #     silent-allow branch anywhere.
-main_root=""
-topology=""
-case "$common_dir_abs" in
-    */.git/modules/*)
-        main_root="${common_dir_abs%%/.git/modules/*}"
-        topology="submodule"
-        ;;
-    */.git)
-        main_root="${common_dir_abs%/*}"
-        topology="standard"
-        ;;
-    *)
-        printf '%s: git-common-dir (%s) is neither a top-level .git nor a submodule module dir; worktree-scope not derivable from the path structure, and config signals (core.bare) are worktree-poisonable — NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
+#
+# On the DISGUISED path (#506) main_root/topology were already set from the
+# enclosing primary (common_dir is the decoy, so this derivation is skipped).
+if [ "$DISGUISED" -eq 0 ]; then
+    main_root=""
+    topology=""
+    case "$common_dir_abs" in
+        */.git/modules/*)
+            main_root="${common_dir_abs%%/.git/modules/*}"
+            topology="submodule"
+            ;;
+        */.git)
+            main_root="${common_dir_abs%/*}"
+            topology="standard"
+            ;;
+        *)
+            printf '%s: git-common-dir (%s) is neither a top-level .git nor a submodule module dir; worktree-scope not derivable from the path structure, and config signals (core.bare) are worktree-poisonable — NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
+            exit 0
+            ;;
+    esac
+    # Defensive: a common-dir at the filesystem root (…=/.git or /.git/modules/<n>)
+    # would strip to the empty string, and an empty main_root turns the scope `case`
+    # below into `"" | ""/*` — which glob-matches EVERY absolute target (over-block).
+    # Not reachable in this deployment (worktrees live under /workspace/<repo>/…), but
+    # cheap to close: an empty main_root is undecidable, so fail open LOUDLY.
+    if [ -z "$main_root" ]; then
+        printf '%s: derived an empty main-checkout root from common-dir (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
         exit 0
-        ;;
-esac
-# Defensive: a common-dir at the filesystem root (…=/.git or /.git/modules/<n>)
-# would strip to the empty string, and an empty main_root turns the scope `case`
-# below into `"" | ""/*` — which glob-matches EVERY absolute target (over-block).
-# Not reachable in this deployment (worktrees live under /workspace/<repo>/…), but
-# cheap to close: an empty main_root is undecidable, so fail open LOUDLY.
-if [ -z "$main_root" ]; then
-    printf '%s: derived an empty main-checkout root from common-dir (%s); NOT enforcing (fail-open)\n' "$DIAG_TAG" "$common_dir_abs" >&2
-    exit 0
+    fi
 fi
 
 # --- Path scope: DENY a cross-tree target under the MAIN checkout root -------
@@ -419,15 +593,4 @@ else
     reason="Blocked a worktree-escaping edit (#475): this golem session runs in the worktree \`${worktree_root}\`, but the target \`${target}\` is in the MAIN checkout \`${main_root}\`. Edits here land silently in main (the worktree \`git status\` stays clean) and can revert an already-merged PR on recovery. Use the worktree path instead: \`${suggested}\`. If a file was already leaked into main, restore ONLY it there (\`git -C ${main_root} checkout -- ${rel}\`) and re-apply it fresh in the worktree on the correct base — never blind-copy from main (stale-base revert risk)."
 fi
 
-if command -v jq >/dev/null 2>&1; then
-    jq -cn --arg reason "$reason" \
-        '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}' \
-        2>/dev/null && exit 0
-fi
-# No jq: hand-roll the deny envelope. Sanitize the reason (drop backslashes and
-# control chars that can't be JSON-escaped without a real encoder, then escape
-# double quotes) so the output stays valid JSON.
-reason_safe="$(printf '%s' "${reason//\\/}" | "$TR" -d '[:cntrl:]')"
-printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
-    "${reason_safe//\"/\\\"}"
-exit 0
+_emit_deny "$reason"
