@@ -2112,8 +2112,9 @@ for (const path of [ORCH, REBASE]) {
     reusedReviewerPrompt,
     newReviewerPrompt,
     commentsPrompt,
-    rescorePrompt,
-    classifyPrompt,
+    judgePrompt,
+    JUDGE_SCHEMA,
+    applyJudgeVerdicts,
   } = extractHelpers(
     SHIP,
     [
@@ -2127,8 +2128,9 @@ for (const path of [ORCH, REBASE]) {
       "reusedReviewerPrompt",
       "newReviewerPrompt",
       "commentsPrompt",
-      "rescorePrompt",
-      "classifyPrompt",
+      "judgePrompt",
+      "JUDGE_SCHEMA",
+      "applyJudgeVerdicts",
     ],
     { cycle: 2, phase: "pr-cycle", files: ["x.js"] },
   );
@@ -2224,16 +2226,129 @@ for (const path of [ORCH, REBASE]) {
       cp.includes(dataBlock("PR_COMMENTS", [{ id: "c1", body: "COMMENT-MARKER" }])),
     "commentsPrompt (ship-issue): PR comments are wrapped in a PR_COMMENTS data block",
   );
-  const rsp = rescorePrompt(shipFindings);
+  // The two fable tail passes (rescore + classify) were merged into ONE
+  // fresh-judge agent (#491): judgePrompt does both jobs, so the untrusted
+  // findings set must still reach it only through the #260 injection fence.
+  const jp = judgePrompt(shipFindings, false);
   ok(
-    rsp.includes("<<<FINDINGS") && rsp.includes(dataBlock("FINDINGS", shipFindings)),
-    "rescorePrompt (ship-issue): findings are wrapped in a FINDINGS data block",
+    jp.includes("<<<FINDINGS") && jp.includes(dataBlock("FINDINGS", shipFindings)),
+    "judgePrompt (ship-issue): findings are wrapped in a FINDINGS data block",
   );
-  const clp = classifyPrompt(shipFindings, false);
+  // The judge carries BOTH the certainty re-score framing and the
+  // blocking/deferrable policy that the two separate prompts used to.
   ok(
-    clp.includes("<<<FINDINGS") && clp.includes(dataBlock("FINDINGS", shipFindings)),
-    "classifyPrompt (ship-issue): findings are wrapped in a FINDINGS data block",
+    /re-score/i.test(jp) && /BLOCKING/.test(jp) && /DEFERRABLE/.test(jp),
+    "judgePrompt (ship-issue): merges certainty re-scoring and blocking/deferrable policy",
   );
+  // The budgetExhausted note (bias ambiguous -> deferrable) is threaded through
+  // the merged prompt, exactly as the old classifyPrompt did.
+  ok(
+    !/budget was exhausted/.test(judgePrompt(shipFindings, false)) &&
+      /budget was exhausted/.test(judgePrompt(shipFindings, true)),
+    "judgePrompt (ship-issue): budgetExhausted note appears only when the budget is exhausted",
+  );
+
+  // JUDGE_SCHEMA is the merged rescore+classify contract (#491): each verdict must
+  // carry the re-scored certainty AND the disposition + rationale, keyed by ref,
+  // so one fresh-judge pass fully replaces the two old StructuredOutputs. Assert
+  // the shape directly — a regression that dropped `disposition` (reverting to a
+  // rescore-only schema) or loosened `additionalProperties` would pass the prompt
+  // assertions above but break the merge.
+  const verdictItem = JUDGE_SCHEMA.properties.verdicts.items;
+  eq(JUDGE_SCHEMA.required[0], "verdicts", "JUDGE_SCHEMA: top-level requires `verdicts`");
+  eq(verdictItem.additionalProperties, false, "JUDGE_SCHEMA: verdict item is closed (additionalProperties:false)");
+  for (const key of ["ref", "certainty", "disposition", "rationale"]) {
+    ok(
+      verdictItem.required.includes(key),
+      `JUDGE_SCHEMA: verdict item requires \`${key}\` (merged certainty + disposition contract)`,
+    );
+  }
+  eq(
+    JSON.stringify(verdictItem.properties.disposition.enum),
+    JSON.stringify(["blocking", "deferrable"]),
+    "JUDGE_SCHEMA: disposition enum is exactly blocking|deferrable",
+  );
+  eq(
+    JSON.stringify(verdictItem.properties.certainty.properties.level.enum),
+    JSON.stringify(["HIGH", "MEDIUM", "LOW"]),
+    "JUDGE_SCHEMA: re-scored certainty.level enum is HIGH|MEDIUM|LOW",
+  );
+
+  // applyJudgeVerdicts (#491): the merged Judge stage's apply/fallback + partition,
+  // extracted (like computeClean) so the single-pass invariant is testable against
+  // a FIXTURE finding set — issue #491 AC #4 ("Blocking/deferrable classification
+  // equivalent on a fixture finding set"). Covers the three behavioral branches the
+  // old two-stage rescore→classify flow spread across two agents.
+  const mkFinding = (ref, level = "LOW", conf = 0.4) => ({
+    ref,
+    certainty: { level, confidence: conf, support: 1, method: "producer" },
+    severity: "high",
+  });
+
+  // (a) Success: certainty AND disposition come from the SAME verdict (keyed by
+  // ref), and the findings partition per the judge's disposition.
+  {
+    const findings = [mkFinding("a#0"), mkFinding("b#1"), mkFinding("c#2")];
+    const judged = {
+      verdicts: [
+        { ref: "a#0", certainty: { level: "HIGH", confidence: 0.9 }, disposition: "blocking", rationale: "x" },
+        { ref: "b#1", certainty: { level: "LOW", confidence: 0.2 }, disposition: "deferrable", rationale: "y" },
+        { ref: "c#2", certainty: { level: "MEDIUM", confidence: 0.6 }, disposition: "blocking", rationale: "z" },
+      ],
+    };
+    const res = applyJudgeVerdicts(findings, judged, false);
+    eq(res.blocking.length, 2, "applyJudgeVerdicts: two blocking dispositions partition to blocking");
+    eq(res.deferrable.length, 1, "applyJudgeVerdicts: one deferrable disposition partitions to deferrable");
+    eq(res.budgetExhausted, false, "applyJudgeVerdicts: a complete judge does not force budgetExhausted");
+    // The re-scored certainty was applied in place from the matching verdict.
+    eq(findings[0].certainty.level, "HIGH", "applyJudgeVerdicts: certainty level re-scored from the same verdict");
+    eq(findings[0].certainty.confidence, 0.9, "applyJudgeVerdicts: certainty confidence re-scored from the same verdict");
+    // The blocking finding is the one the judge marked blocking (not merely first).
+    ok(
+      res.blocking.some((f) => f.ref === "a#0") && res.blocking.some((f) => f.ref === "c#2"),
+      "applyJudgeVerdicts: blocking set is exactly the judge-marked blocking refs",
+    );
+    ok(res.deferrable[0].ref === "b#1", "applyJudgeVerdicts: deferrable set is the judge-marked deferrable ref");
+  }
+
+  // (b) Null judge (budget-skipped / threw): certainty is left untouched, the
+  // cycle is forced partial (budgetExhausted=true), and every finding defaults to
+  // DEFERRABLE (filed, never dropped) — the "clean unforgeable by truncation"
+  // invariant (#270).
+  {
+    const findings = [mkFinding("a#0", "MEDIUM", 0.5), mkFinding("b#1")];
+    const res = applyJudgeVerdicts(findings, null, false);
+    eq(res.budgetExhausted, true, "applyJudgeVerdicts: null judge forces budgetExhausted true");
+    eq(res.blocking.length, 0, "applyJudgeVerdicts: null judge blocks nothing");
+    eq(res.deferrable.length, 2, "applyJudgeVerdicts: null-judge findings all default to deferrable");
+    eq(findings[0].certainty.level, "MEDIUM", "applyJudgeVerdicts: null judge leaves producer certainty untouched");
+  }
+
+  // (c) A finding whose ref the judge OMITTED defaults per budgetExhausted:
+  // blocking when the budget was NOT exhausted (surfaced, never silently ignored),
+  // deferrable when it was (filed).
+  {
+    const findings = [mkFinding("seen#0"), mkFinding("missing#1")];
+    const judged = {
+      verdicts: [
+        { ref: "seen#0", certainty: { level: "LOW", confidence: 0.3 }, disposition: "deferrable", rationale: "x" },
+      ],
+    };
+    const notExhausted = applyJudgeVerdicts(
+      [mkFinding("seen#0"), mkFinding("missing#1")],
+      judged,
+      false,
+    );
+    ok(
+      notExhausted.blocking.some((f) => f.ref === "missing#1"),
+      "applyJudgeVerdicts: an unmatched ref defaults to blocking when budget not exhausted",
+    );
+    const exhausted = applyJudgeVerdicts(findings, judged, true);
+    ok(
+      exhausted.deferrable.some((f) => f.ref === "missing#1"),
+      "applyJudgeVerdicts: an unmatched ref defaults to deferrable when budget exhausted",
+    );
+  }
 
   const r = emptyResult(false);
   eq(r.cycle, 2, "emptyResult: cycle reflects args");
