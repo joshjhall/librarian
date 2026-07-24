@@ -150,7 +150,7 @@ dead on arrival). The `deps` array carries that edge into the pure composer.
 **The setup flow supplies `deps`** — it already fetches each backlog issue for
 `## Affected Files`, so it parses the dependency signal in the same pass and
 attaches it as `deps: [<issue#>]` (issue numbers this issue must be **built
-after**). Reuse the blocked-by detection from `next-issue/state-format.md` §
+after**). Reuse the blocked-by detection from `next-issue/dependency-queue.md` §
 Blocked-by Exclusion: a `Depends on #N` / `Blocked by #N` body reference
 (case-insensitive) or a native GitHub `blockedBy` relationship. Only in-backlog
 references form a cluster edge; a dep pointing at a closed / out-of-backlog issue
@@ -192,7 +192,7 @@ It returns `tracks` = `{ tracks, deferred, cross_track_overlap, rationale }`:
   out-of-backlog dep refs / deferred count / overlap) for the proposal the
   operator approves. A dependency **cycle** (e.g. `#5 → #6 → #5`) is reported
   here and broken by falling back to priority order for that cluster — composition
-  never loops (mirrors `next-issue/state-format.md` § Dependency Queue cycle
+  never loops (mirrors `next-issue/dependency-queue.md` § Dependency Queue cycle
   handling).
 
 The composition persists to `.worktrees/.status/tracks.json` (schema:

@@ -68,21 +68,19 @@ the shared mint-embed-consume mechanism; `golem-attach` stays the fallback.
 **Standing rule — never time out a human gate.** Every gate this skill keeps for
 a human — the shipping-mode prompt (Step 3), the L1–L2 stop-for-human-merge gate,
 and a dead-end at any level — **waits indefinitely; never lapse-and-default
-because the operator stepped away.** Only genuine level auto-passing (routine at
-L3–L4) resolves a gate without a human; a dead-end waits even at L4. See
-`orchestrate/autonomy-levels.md` § *Standing rule: wait indefinitely at a human
-gate*.
+because the operator stepped away.** Full rule: `orchestrate/autonomy-levels.md`
+§ *Standing rule: wait indefinitely at a human gate*.
 
 ## Golem Execution Model & Environment Variables
 
 **Companion file**: `ship-protocol.md` in this skill directory carries (1) the
 **Golem Execution Model** — a golem running this skill is an OS **process**, never
-a Workflow subagent (the one permitted Workflow nesting level is reserved for this
-skill's review harness), so orchestrators MUST spawn golems as processes
-(subprocess / container / worktree); and (2) the full **Environment Variables**
-contract: `PRE_REVIEW_STRICT` / `REVIEW_STRICT` / `REVIEW_MAX_CYCLES` (review
-gating) and the `LIBRARIAN_CI_*` family (CI-wait threshold/extensions, infra-flake
-triage). Load it before relying on any of these toggles.
+a Workflow subagent, because this skill's review harness already owns the one
+permitted Workflow nesting level (§ *Golem Execution Model* there); and (2) the
+full **Environment Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_STRICT` /
+`REVIEW_MAX_CYCLES` (review gating) and the `LIBRARIAN_CI_*` / `LIBRARIAN_WORKFLOW_*`
+families (CI-wait + workflow-wall threshold/extensions, infra-flake triage). Load
+it before relying on any of these toggles.
 
 ## Step 1 — Read State
 
@@ -99,58 +97,17 @@ triage). Load it before relying on any of these toggles.
      to run `/next-issue` first.
 
    **State reconstruction (missing-state-file fallback).** The Phase 1/2 state
-   write can legitimately be absent — e.g. an older `/next-issue` run that
-   entered plan mode before the write ordering was fixed (issue #409), or a
-   `/clear` that dropped an in-context-only state. When the glob finds no
-   `next-issue-*.json`, reconstruct a minimal state from the branch + issue
-   before giving up:
-
-   1. **Parse the issue number from the branch.** Match the current branch
-      against the `next-issue/state-format.md` § Branch Naming convention
-      (`{prefix}/issue-{N}-{slug}`):
-
-      ```bash
-      CURRENT_BRANCH=$(git branch --show-current)
-      # Require the trailing `-{slug}` (or a bare `issue-{N}` branch) so a typo
-      # like `fix/issue-409extra` does not mis-parse as #409.
-      N=$(printf '%s\n' "$CURRENT_BRANCH" \
-        | command grep -oE '^(fix|feature|docs|test|refactor|chore)/issue-[0-9]+(-|$)' \
-        | command grep -oE '[0-9]+')
-      ```
-
-      No match (not an issue branch) ⇒ reconstruction is impossible; fall through
-      to the "nothing to ship" stop.
-   1. **Confirm the issue is open and in-progress.** Fetch state + labels and
-      require `OPEN` **and** a `status/in-progress` label — the marker that
-      `/next-issue` did select and start this issue:
-
-      ```bash
-      # GitHub
-      gh issue view "$N" --json number,title,state,labels \
-        --jq 'select(.state=="OPEN" and (.labels|any(.name=="status/in-progress")))'
-      # GitLab: glab issue view "$N" --output json  (check state + labels the same way)
-      ```
-
-      Not open, or not `status/in-progress` ⇒ do not reconstruct (this branch is
-      not a live ship target); fall through to the stop.
-   1. **Write the reconstructed state.** Detect the platform **now** with the
-      Step 2 rule (`git remote -v` → `github`/`gitlab`) — Step 2 has not run yet
-      and there is no state file to read it from, so resolve it inline here. Then
-      write all schema-required fields
-      (`next-issue/schemas/next-issue-state.schema.json`): `version: 2`,
-      `issue: {N}`, `title` (from the fetch above), `phase: "implement"`,
-      `started` (today's date), `platform`, plus `branch` and `autonomy_level: 1`
-      (the reconstructed path had no persisted level, so it defaults to the L1
-      disposition — every gate asks, the safe default). Write it to
-      `.claude/memory/tmp/next-issue-{N}.json` with the Write tool, then continue
-      Step 1 (and Step 2, which will now find the `platform` field) as if the file
-      had been found. **Tell the user** the state was reconstructed
-      (`Reconstructed missing state for #{N} from branch {branch}`), so the
-      recovery is visible, not silent.
-
-   This mirrors how this session's PR #408 recovered by hand; it degrades
-   gracefully (a non-issue branch or a closed/not-in-progress issue simply falls
-   through to the existing stop, never a hard error).
+   write can legitimately be absent — an older `/next-issue` run that entered plan
+   mode before the write ordering was fixed (issue #409), or a `/clear` that
+   dropped an in-context-only state. When the glob finds no `next-issue-*.json`,
+   reconstruct a minimal state from the branch + issue before giving up: parse the
+   issue number from the branch, confirm the issue is `OPEN` **and**
+   `status/in-progress`, then write the schema-required fields (defaulting
+   `autonomy_level: 1`, `phase: "implement"`) and continue as if the file had been
+   found. A non-issue branch or a closed / not-in-progress issue falls through to
+   the "nothing to ship" stop, never a hard error. Full procedure (the per-step
+   bash and the exact fields): `ship-protocol.md` § *State reconstruction
+   (missing-state-file fallback)*.
 
 1. Extract: `issue` (number), `title`, `platform` (`github` or `gitlab`),
    `branch` (if set), `autonomy_level` (integer 1–4 — the sole autonomy field;
@@ -182,7 +139,7 @@ triage). Load it before relying on any of these toggles.
    > queue file in place** — do NOT delete or mutate it here. The next
    > `/next-issue` run advances the queue on resume (it re-reads the queue,
    > drops the now-closed entry, and recomputes `active` — see
-   > `next-issue/state-format.md` § Dependency Queue). Shipping only deletes the
+   > `next-issue/dependency-queue.md` § Dependency Queue). Shipping only deletes the
    > per-issue `next-issue-{N}.json`, never the queue file.
 
    (If no state file is found, stop and tell the user: *"No in-progress issue

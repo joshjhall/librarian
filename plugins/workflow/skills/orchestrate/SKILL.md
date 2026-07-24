@@ -19,9 +19,11 @@ merge anything a golem leaves for them.
 
 - **Golems are processes, never Workflow subagents.** Each golem's
   `/ship-issue` owns the single permitted Workflow nesting level (its review
-  harness). Spawning a golem as a Workflow/Task subagent makes that harness
-  throw. Dispatch golems as containers (`/provision-agent`) or worktree-bound
-  shell processes — see `mode-protocol.md` § Golem Dispatch Modes.
+  harness), so a golem MUST be its own OS process — a container
+  (`/provision-agent`) or worktree-bound shell, never a Workflow/Task subagent
+  (which consumes that level and makes the harness throw). Full rationale:
+  `ship-issue/ship-protocol.md` § *Golem Execution Model*; dispatch mechanics:
+  `mode-protocol.md` § Golem Dispatch Modes.
 - **The orchestrator session is live/interactive, not a workflow.** It surfaces
   progress and takes commands mid-flight. It uses the Workflow harness
   (`workflow.js`) ONLY for bounded fan-out: the monitor poll and the cross-PR
@@ -32,12 +34,10 @@ merge anything a golem leaves for them.
   would extend it to container golems without replacing it) is recorded in
   [`docs/adr/0001-golem-event-bus-multi-sink-emission.md`](../../docs/adr/0001-golem-event-bus-multi-sink-emission.md).
 - **Never time out a human gate.** Every gate kept for a human — the track-setup
-  approval flow (propose → approve → choose L1–L4), a golem's plan-approval
-  checkpoint, a mid-flight command or escalation, and a dead-end at any level —
-  **waits indefinitely for the answer; never lapse-and-default because the
-  operator stepped away.** Only genuine level auto-passing (routine at L3–L4,
-  escalation at L4) resolves a gate without a human; a dead-end waits even at L4.
-  See `autonomy-levels.md` § *Standing rule: wait indefinitely at a human gate*.
+  approval flow, a golem's plan-approval checkpoint, a mid-flight command or
+  escalation, and a dead-end at any level — **waits indefinitely; never
+  lapse-and-default because the operator stepped away.** Full rule:
+  `autonomy-levels.md` § *Standing rule: wait indefinitely at a human gate*.
 
 **Companion files** (load before the matching phase):
 
@@ -190,67 +190,24 @@ dispatch is sequential and cheap — **not** workflow-driven.
    (`golem-launch.sh print {N} --level {L}` emits just the launch line if you
    want to run the bare `tmux new-session` yourself.)
 
-   **Plan gate (from the golem's autonomy level).** `--level 4` is **not** a blanket
-   plan-skip beyond its own level — whether a golem stops for plan approval is set
-   by its **level** (the rules-of-engagement chosen at setup), **not** its effort
-   labels. `/next-issue` resolves it through
-   `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190), which derives the
-   `plan_gated` disposition from the level (see `next-issue/SKILL.md` § Autonomy
-   Levels):
+   **Plan gate (from the golem's autonomy level).** Whether a golem stops for
+   plan approval is set by its **level**, not its effort labels: an **L4** golem
+   (critical cap not fired) runs fully autonomous to a PR with no plan stop; a
+   golem **below L4** (or a capped `severity/critical`) is **plan-gated** — it
+   builds the plan and BLOCKS at `ExitPlanMode` awaiting human approval (shown
+   BLOCKED in `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`), then continues
+   autonomously through implement → review → push/PR once approved. The launch
+   command is identical either way (the policy lives in `/next-issue`); dispatch
+   only needs to **expect** a below-L4 golem to block at the plan step.
 
-   - **`plan_gated == false` (an L4 golem, critical cap did not fire)** →
-     fully autonomous, no plan stop. The launch above runs unattended to a PR.
-   - **`plan_gated == true` (dispatched below L4, or a capped `severity/critical`)**
-     → **plan-gated**: the golem builds the plan and BLOCKS at
-     `ExitPlanMode` awaiting human approval (shown BLOCKED in
-     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`). The operator attaches via
-     `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines and approves the
-     plan in-session — then the SAME session continues autonomously through
-     implement → review → push/PR with the refined plan in-context.
-
-   **Plan approval is broker → human decides → orchestrator sends the
-   keystroke.** The human's role at a plan-gated golem is the *decision*, not the
-   physical keypress. The orchestrator presents the plan in-session (e.g. via
-   `AskUserQuestion`); once the operator approves, **the orchestrator itself runs
-   `tmux send-keys -t golem-{N} 1 Enter`** to select option 1 ("Yes, and use auto
-   mode") — the only option that lets the SAME session continue autonomously to a
-   PR. Never hand that keystroke back to the operator to paste after they have
-   already approved.
-
-   **Then clear the stale gate:** immediately after the send-keys, run
-   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-resolve.sh {N}`. The send-keys approval
-   fires **no** `Notification`, so nothing supersedes the golem's `gate` feed
-   line and it would keep rendering BLOCKED for the full `GOLEM_BLOCK_TTL`
-   (~1h) — training you to ignore the BLOCKED list and risk dismissing a real
-   fresh gate (#422). `golem-resolve.sh` emits a `resolved` line so the golem
-   drops out of `golem-status.sh` / `golem-gate-watch.sh` on the next sweep.
-
-   The `#29` caveat is **narrower** than "a human must physically type the key":
-   what the auto-mode classifier blocks is an agent **relaying option 1 as an
-   *undirected* send** — the send is denied when nothing authorizes it, but is
-   accepted once the operator explicitly authorizes the gate (e.g. approves it
-   in-session, or "approve all plan gates"). So the orchestrator's directed
-   `tmux send-keys` after that approval is the default path. **Fallback:** if the
-   send is still classifier-blocked, attach the real TTY
-   (`${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`) and press option 1 there.
-   After sending, verify the golem left plan mode (`⏵⏵ auto mode on`, branch in
-   the status bar). A **directed** `tmux send-keys` after operator approval **is**
-   agent-drivable — verified in a live batch (4/4 plan gates approved this way)
-   and settled in #281: the `#29` "not agent-drivable" caveat was only ever about
-   an agent relaying option 1 *through the auto-mode classifier* (the undirected
-   send above), a distinct path, never `send-keys` itself. The residual concern is
-   narrower — the classifier's **non-determinism** on these sends, tracked in #282
-   (which is what keeps the attach-and-press fallback meaningful). See
-   `mode-protocol.md` § *Plan gate by level* for the full option-1-vs-option-2
-   classifier contract.
-
-   The launch command is identical either way (the policy lives in
-   `/next-issue`); dispatch only needs to **expect** a golem dispatched below L4
-   (or a capped critical) to block at the plan step. To change a golem's behavior,
-   dispatch it at a different `--level {N}`: an L4 golem runs fully autonomous with
-   no plan stop, an L3 golem keeps the plan gate but auto-passes routine gates.
-   A `severity/critical` golem cannot exceed its plan gate — the critical cap holds
-   it at L3 regardless of the requested level.
+   Plan approval is **broker → human decides → orchestrator sends the keystroke**:
+   present the plan in-session, and once the operator approves run
+   `tmux send-keys -t golem-{N} 1 Enter` (option 1 — the SAME-session auto-mode
+   continuation), then `${CLAUDE_PLUGIN_ROOT}/scripts/golem-resolve.sh {N}` to
+   clear the now-stale BLOCKED gate. The full broker-send contract — the
+   option-1-vs-option-2 classifier divergence, the `#29`/#281/#282 non-determinism
+   and the attach-and-press fallback — lives in `mode-protocol.md` § *Plan gate by
+   level*.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem below L4); its own `/ship-issue` then merges as the

@@ -7,36 +7,24 @@ description: Issue-driven development workflow that picks the next issue by seve
 **Companion file**: See `state-format.md` in this skill directory for the state
 file schema (JSON), priority ordering commands, branch naming convention,
 checkpoint structure, and reset points. Load it at the start of every
-invocation. See `escalation-protocol.md` when a **mid-flight** architectural or
-directional decision arises during implementation (the escalation gate — human
-at L1–L3, auto at L4).
+invocation. When selection touches a **blocked** issue (an explicitly-named
+issue with open dependencies, or a `Blocked by`/`Depends on`/`status/blocked`
+candidate), load `dependency-queue.md` for the blocked-by exclusion and the
+dependency-queue algorithm. See `escalation-protocol.md` when a **mid-flight**
+architectural or directional decision arises during implementation (the
+escalation gate — human at L1–L3, auto at L4).
 
 Accepts an optional issue number argument: `/next-issue 123` skips priority
 selection and targets that specific issue.
 
 Adding the `--level {1,2,3,4}` flag — `/next-issue 123 --level 3` — sets the
-run's **autonomy level** (L1–L4) per the contract in
-`orchestrate/autonomy-levels.md`. The level is the single dial that decides how
-each gate is dispatched: routine gates (push, PR-open, merge-on-green, prune) are
-auto-passed at L3–L4 and human at L1–L2; escalation gates (plan approval, a
-mid-flight fork, a wall) are auto-passed at L4 only and human at L1–L3.
-`--level {1,2,3,4}` is the sole autonomy dial; absence of any signal is the
-interactive default (an **L1 disposition** — every gate asks). `severity/critical`
-issues are **capped at L3** (an L4 request reduces to L3), so a critical issue
-always keeps its plan gate. See `## Autonomy Levels` below.
-
-The level splits into **two** dispositions (see `## Autonomy Levels` for the full
-rule):
-
-- **Gate-skipping** — at **L3–L4**, routine gates take their documented default
-  with no `AskUserQuestion`; at L1–L2 they stay human.
-- **Plan-skipping** — the plan checkpoint (`EnterPlanMode`/`ExitPlanMode`) is an
-  **escalation gate**: auto-passed at **L4 only**, kept (human approval) at
-  L1–L3. Because `severity/critical` caps at L3, a critical issue always keeps
-  the plan gate. This is **level-driven, not effort-driven** — an L4 run skips
-  the plan even on an `effort/medium` issue. There is no override that keeps the
-  plan gate on an L4 run: "L4 but keep the plan gate" is simply **L3** (the old
-  `--plan-gate` / `--force-auto` overrides were removed in #215).
+run's **autonomy level** (L1–L4), the single dial deciding how each gate is
+dispatched. `--level` is the sole autonomy dial; absence of any signal is the
+interactive default (an **L1 disposition** — every gate asks), and
+`severity/critical` issues **cap at L3** (so they always keep the plan gate). The
+full disposition — the two-way gate/plan split, the critical cap, and the
+shipping handoff — is stated once in `## Autonomy Levels` below (deep authority:
+`autonomy.md` + `orchestrate/autonomy-levels.md`).
 
 Adding the `--ship` flag (alias `--now`) — `/next-issue 123 --ship` — is a
 fast-path for **small work**: after plan approval and implementation it invokes
@@ -53,41 +41,27 @@ Adding the `--force-target` flag (alias `--no-deps`) — `/next-issue 5
 --force-target` — changes how an **explicitly-named** issue with open
 dependencies is handled. By default, naming an issue whose declared
 dependencies are still open **queues those dependencies first** and works them
-toward the named target (see Phase 1 below and `state-format.md` §
+toward the named target (see Phase 1 below and `dependency-queue.md` §
 Dependency Queue). `--force-target` restores the legacy warn-and-proceed: it
 plans the named issue directly, ignoring its open blockers, with the plan gate
 as the only backstop. It governs dependency handling only — orthogonal to the
 `--level` autonomy dial.
 
-**IMPORTANT — Plan mode is entered in Phase 2, never Phase 0**: at **every**
-disposition, including an **L1** interactive default, `EnterPlanMode` is called
-in **Phase 2** — *after* Phase 0's resume check and *after* Phase 1 has
-selected, assigned, labeled, and **written the hand-off state file**. It is
-**not** called at the start of the invocation. This ordering is load-bearing:
-plan mode permits only edits to the plan file, so the Phase 1 mutations (`gh`
-assign/label and the `Write` of `.claude/memory/tmp/next-issue-{N}.json`) and
-the Phase 2 `phase: "plan"` state write **must complete before `EnterPlanMode`**
-— otherwise plan mode silently blocks them, the run implements without ever
-looping back, and the hand-off record `/ship-issue` reads never lands
-(issue #409). After Phase 2 plan approval, use `ExitPlanMode` to begin
-implementation.
-An **L4** run (non-critical) never calls `EnterPlanMode`/`ExitPlanMode` at all —
-the plan gate is auto-passed — while an **L1–L3** run (including any capped
-critical, and the L1 default) calls both in Phase 2 and pauses at plan approval.
-The `severity/critical` label that can cap an L4 request down to L3 is not known
-until Phase 1, a further reason the plan-mode call waits for Phase 2. See
-`## Autonomy Levels` below.
+**IMPORTANT — Plan mode is entered in Phase 2, never Phase 0.** An **L1–L3** run
+calls `EnterPlanMode` only in Phase 2: Phase 1's assign/label and the state write
+must all complete before `EnterPlanMode` is called, or plan mode silently blocks
+those mutations and the `/ship-issue` hand-off record never lands (issue #409). An
+**L4** (non-critical) run never enters plan mode at all. The full ordering
+rationale is in Phase 0 step 1 (its enforcement home).
 
 ## Autonomy Levels
 
-**Companion file**: the full rule lives in `autonomy.md` in this skill
-directory — load it to decide the run's level and apply it. It carries the level
-selection (`--level {1,2,3,4}` is the sole dial; #215 removed the old aliases and
-overrides), the per-gate disposition table, the plan-gate rule, and the shipping
-handoff. The authoritative model is `orchestrate/autonomy-levels.md` (#174),
-implemented by the resolver `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh`
-(#190) — **call it** to compute the level and per-gate disposition rather than
-re-deriving them here. The summary below is the operational gist.
+**Companion file**: the full rule lives in `autonomy.md` in this skill directory
+(deep authority `orchestrate/autonomy-levels.md`, #174) — load it to decide and
+apply the run's level. It carries level selection, the per-gate disposition
+table, the plan-gate rule, and the shipping handoff, all computed by the resolver
+`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) — **call it** rather
+than re-deriving. The summary below is the operational gist.
 
 The run's **autonomy level** (int 1–4) is set by `--level {1,2,3,4}` (the sole
 autonomy dial); or, absent any signal, defaults to an **L1 disposition** (every
@@ -117,12 +91,10 @@ ship and any post-`/clear` resume inherit the level.
 At an **L1 disposition** (no level chosen), behavior is unchanged — every
 interactive prompt and plan-mode step below runs verbatim as the default.
 
-**Standing rule — never time out a human gate.** Whenever a gate below is kept
-for a human — every `AskUserQuestion`, the plan-approval checkpoint, the
-mid-flight escalation gate, and a dead-end at any level — **wait indefinitely for
-the answer; never lapse-and-default because the operator stepped away.** The only
-thing that resolves a gate without a human is genuine level auto-passing (routine
-at L3–L4, escalation at L4); a dead-end waits at every level, L4 included. See
+**Standing rule — never time out a human gate.** Every gate this skill keeps for
+a human — each `AskUserQuestion`, the plan-approval checkpoint, the mid-flight
+escalation gate, and a dead-end at any level — **waits indefinitely; never
+lapse-and-default because the operator stepped away.** Full rule:
 `orchestrate/autonomy-levels.md` § *Standing rule: wait indefinitely at a human
 gate*.
 
@@ -180,7 +152,7 @@ Proceed with Phase 0 as normal regardless of mode.
 1. **Dependency-queue resume** — if `.claude/memory/tmp/next-issue-queue.json`
    exists AND **no** explicit issue number was passed to this invocation, resume
    the queue toward its `target` before ordinary priority selection (see
-   `state-format.md` § Dependency Queue → "Advancing / resuming the queue"):
+   `dependency-queue.md` § Dependency Queue → "Advancing / resuming the queue"):
 
    - Read the queue file. If its `active` issue is now **closed**, drop it from
      `remaining`.
@@ -253,13 +225,13 @@ or has no `files_planned` (nothing to re-present).
    - `gitlab.com` or `gitlab.` → GitLab (`glab`)
 
 1. **If a specific issue number was provided**: fetch that issue directly and
-   skip the priority query. Run the **blocked-by check** (see `state-format.md`
-   § Blocked-by Exclusion) on it:
+   skip the priority query. Run the **blocked-by check** (see
+   `dependency-queue.md` § Blocked-by Exclusion) on it:
 
    - **No open blockers** → proceed to plan the named issue as normal.
    - **Open blockers, default behavior** → do **not** plan the named issue
      against them. Build a **dependency queue** and work the blockers first,
-     toward the named target (full algorithm in `state-format.md` §
+     toward the named target (full algorithm in `dependency-queue.md` §
      Dependency Queue): resolve open blockers transitively, order them
      topologically (deepest first, target last), write
      `.claude/memory/tmp/next-issue-queue.json`, and select the **first open,
@@ -270,8 +242,8 @@ or has no `files_planned` (nothing to re-present).
      legacy warn-and-proceed: emit a one-line `WARNING:` listing the open
      blockers and plan the named issue directly (the plan gate is the backstop).
    - **Dependency cycle detected** → do not loop; emit the `ERROR:` cycle line
-     from `state-format.md` and stop, pointing at `--force-target` as the escape
-     hatch.
+     from `dependency-queue.md` and stop, pointing at `--force-target` as the
+     escape hatch.
 
    Never hard-block an explicitly-named issue — `--force-target` always plans it
    directly, and a cycle errors out with that same escape hatch.
@@ -282,7 +254,7 @@ or has no `files_planned` (nothing to re-present).
    `status/commit-pending`, `status/on-hold`, or `status/blocked` labels — see
    `state-format.md` for the exact `--search` / post-filter syntax. For each
    candidate the query returns, also apply the **blocked-by exclusion**
-   (`state-format.md` § Blocked-by Exclusion): parse `Blocked by #N` /
+   (`dependency-queue.md` § Blocked-by Exclusion): parse `Blocked by #N` /
    `Depends on #N` / native `blockedBy` references and **skip** the candidate
    when any referenced blocker is still open, surfacing a one-line skip reason
    (`#572 skipped — blocked by open #467, #563`), then continue the priority

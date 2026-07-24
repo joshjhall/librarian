@@ -19,6 +19,61 @@ Orchestrators (e.g. the master-orchestrator in #524) MUST spawn golems as
 Spawning a golem as a Workflow subagent would consume the one nesting level and
 make the review harness invocation throw.
 
+## State reconstruction (missing-state-file fallback)
+
+Loaded from SKILL.md Step 1. The Phase 1/2 state write can legitimately be
+absent — e.g. an older `/next-issue` run that entered plan mode before the write
+ordering was fixed (issue #409), or a `/clear` that dropped an in-context-only
+state. When the Step 1 glob finds no `next-issue-*.json`, reconstruct a minimal
+state from the branch + issue before giving up:
+
+1. **Parse the issue number from the branch.** Match the current branch against
+   the `next-issue/state-format.md` § Branch Naming convention
+   (`{prefix}/issue-{N}-{slug}`):
+
+   ```bash
+   CURRENT_BRANCH=$(git branch --show-current)
+   # Require the trailing `-{slug}` (or a bare `issue-{N}` branch) so a typo
+   # like `fix/issue-409extra` does not mis-parse as #409.
+   N=$(printf '%s\n' "$CURRENT_BRANCH" \
+     | command grep -oE '^(fix|feature|docs|test|refactor|chore)/issue-[0-9]+(-|$)' \
+     | command grep -oE '[0-9]+')
+   ```
+
+   No match (not an issue branch) ⇒ reconstruction is impossible; fall through
+   to the "nothing to ship" stop.
+1. **Confirm the issue is open and in-progress.** Fetch state + labels and
+   require `OPEN` **and** a `status/in-progress` label — the marker that
+   `/next-issue` did select and start this issue:
+
+   ```bash
+   # GitHub
+   gh issue view "$N" --json number,title,state,labels \
+     --jq 'select(.state=="OPEN" and (.labels|any(.name=="status/in-progress")))'
+   # GitLab: glab issue view "$N" --output json  (check state + labels the same way)
+   ```
+
+   Not open, or not `status/in-progress` ⇒ do not reconstruct (this branch is
+   not a live ship target); fall through to the stop.
+1. **Write the reconstructed state.** Detect the platform **now** with the
+   Step 2 rule (`git remote -v` → `github`/`gitlab`) — Step 2 has not run yet
+   and there is no state file to read it from, so resolve it inline here. Then
+   write all schema-required fields
+   (`next-issue/schemas/next-issue-state.schema.json`): `version: 2`,
+   `issue: {N}`, `title` (from the fetch above), `phase: "implement"`,
+   `started` (today's date), `platform`, plus `branch` and `autonomy_level: 1`
+   (the reconstructed path had no persisted level, so it defaults to the L1
+   disposition — every gate asks, the safe default). Write it to
+   `.claude/memory/tmp/next-issue-{N}.json` with the Write tool, then continue
+   Step 1 (and Step 2, which will now find the `platform` field) as if the file
+   had been found. **Tell the user** the state was reconstructed
+   (`Reconstructed missing state for #{N} from branch {branch}`), so the
+   recovery is visible, not silent.
+
+This mirrors how this session's PR #408 recovered by hand; it degrades
+gracefully (a non-issue branch or a closed/not-in-progress issue simply falls
+through to the existing stop, never a hard error).
+
 ## Environment Variables
 
 ### The merge invariant (all levels)
