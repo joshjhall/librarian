@@ -216,10 +216,12 @@ preserved, only its deterministic results are absent.
 ## Step 3: Scan Each Domain (harness Scan + Verify phases)
 
 The harness drives `checker` once per domain (`scan:<domain>`) over that
-domain's manifest from Step 2, then immediately re-runs a **fresh** `checker`
-(`verify`) on that domain's findings. The `checker` agent owns the per-domain
-work: prescan (Step 2.5) → heuristic pass → judgment pass → within-skill dedup,
-emitting the `finding-schema.md` object via StructuredOutput.
+domain's manifest from Step 2 — the scans fan out concurrently with no barrier.
+The `checker` agent owns the per-domain scan work: prescan (Step 2.5) →
+heuristic pass → judgment pass → within-skill dedup, emitting the
+`finding-schema.md` object via StructuredOutput. A **single fresh** `checker`
+(`verify`) barrier then re-scores every domain's findings at once (see below),
+before the aggregate step.
 
 The active scanner set is whatever `map` discovered, with the domain-override
 precedence (a `check-*` skill overrides the `audit-*` agent for its domain; a
@@ -228,11 +230,14 @@ code-health, security, test-gaps, architecture, docs, ai-config, lifecycle; plus
 any project agents discovered under `.claude/agents/audit-*`. The `categories`
 parameter restricts the set.
 
-The **verify** pass is adversarial: a fresh `checker` that did not produce the
-findings re-scores each one's certainty and refutes false positives (no
-producer self-grading). The harness drops a finding only on an explicit
-refutation and keeps everything else, so a verify failure or budget exhaustion
-never silently loses a real finding.
+The **verify** pass is adversarial and runs as **one barrier over the full
+cross-domain finding set** (issue #490): a single fresh `checker` that did not
+produce the findings re-scores each one's certainty and refutes false positives
+(no producer self-grading). It keys each score back to its finding by the
+globally-unique `ref` the harness stamped, so one pass judges every domain — a
+single top-tier call per audit rather than one per domain. The harness drops a
+finding only on an explicit refutation and keeps everything else, so a verify
+failure or budget exhaustion never silently loses a real finding.
 
 ## Step 4: Aggregate and Deduplicate (harness Aggregate phase)
 
