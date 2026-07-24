@@ -68,6 +68,7 @@ GREP="$(_bin grep)"
 HEAD="$(_bin head)"
 RM="$(_bin rm)"
 SLEEP="$(_bin sleep)"
+STAT="$(_bin stat)"
 TAIL="$(_bin tail)"
 TR="$(_bin tr)"
 WC="$(_bin wc)"
@@ -122,6 +123,22 @@ _fmt_dur() {
     else
         command echo "${_fd_s}s"
     fi
+}
+
+# _mtime_epoch <path> — mtime of a path in epoch seconds, or empty if it does
+# not exist / can't stat. Epoch is TZ-agnostic, so it is a UTC-safe age anchor.
+# GNU `stat -c %Y` and BSD `stat -f %m` differ; try GNU first, then BSD. All
+# failures are swallowed (advisory signal — never fail a golem over a stat).
+# Mirrors golem-gate-watch.sh's _mtime_epoch so the two scripts agree.
+_mtime_epoch() {
+    _me_path="$1"
+    _me_m=""
+    [ -e "$_me_path" ] || return 0
+    _me_m="$("$STAT" -c %Y "$_me_path" 2>/dev/null || "$STAT" -f %m "$_me_path" 2>/dev/null || true)"
+    case "$_me_m" in
+        '' | *[!0-9]*) return 0 ;;
+        *) command echo "$_me_m" ;;
+    esac
 }
 
 # _gate_age_suffix <golem> <feed> — a "  (gated Nm ago)" annotation for a golem's
@@ -616,8 +633,26 @@ emit_checkpoint_row() {
     _ecr_blocking="$(jq -r '.blocking // false' "$_ecr_f" 2>/dev/null)"
     _ecr_stage="$(derive_stage "$_ecr_f")"
 
-    # Elapsed from .started (ISO; agent-written, so often absent → "—"). Do NOT
-    # substitute .last_activity — a different semantic (last update, not launch).
+    # Elapsed from .started (ISO; agent-written, so often absent → try fallback).
+    # Do NOT substitute .last_activity — a different semantic (last update, not
+    # launch). When .started is missing/unparsable, fall back to the golem
+    # worktree's creation mtime (issue #515): a Mode-2 dispatch
+    # (worktree-new.sh + golem-launch.sh) writes no cache, so `started` never
+    # lands and ELAPSED would be a bare "—" for the golem's whole life — which
+    # pushes the operator onto eyeballing `tmux ls` (LOCAL time) vs the UTC
+    # caches, silently adding the TZ offset. The fallback anchor is an EPOCH
+    # (mtime), so it is TZ-agnostic and stays UTC-correct; it is rendered with a
+    # "~" prefix to mark it as approximate (not the real launch stamp). ELAPSED
+    # is deliberately kept OUT of cp_sig (see the signature note below), so this
+    # per-sweep-advancing value never defeats no-op suppression (#283/#488).
+    # Anchor preference is the worktree's `.git` GITLINK FILE, not the worktree
+    # DIR: `git worktree add` writes the gitlink once at creation and no later
+    # git op inside the tree rewrites it, so it is a stable launch stamp. The dir
+    # mtime, by contrast, is re-bumped whenever a top-level entry is added (a
+    # committed top-level file, a build's `node_modules/`/`dist/`, or the local
+    # files worktree-new.sh cp's in) — which would silently REWIND the reported
+    # age toward ~0. The dir is only a last-resort fallback if the gitlink is
+    # somehow absent (a non-worktree checkout), always ≥ the true launch time.
     _ecr_started="$(jq -r '.started // empty' "$_ecr_f" 2>/dev/null)"
     _ecr_elapsed="—"
     if [ -n "$_ecr_started" ]; then
@@ -629,6 +664,36 @@ emit_checkpoint_row() {
             _ecr_elapsed="$(_fmt_dur "$_ecr_d")"
         fi
     fi
+    case "$_ecr_elapsed" in
+        "—")
+            # Numeric-guard .issue before interpolating it into a filesystem path:
+            # the cache is a co-written JSON file, so a corrupted / hand-edited
+            # .issue (a `../`-bearing or non-numeric value) must not build a path
+            # that stats outside .worktrees/ and leaks an arbitrary path's
+            # existence/mtime into ELAPSED. The literal "?" default is excluded by
+            # the same guard (it is non-numeric), matching the session_gone guard
+            # below and the top_level_tokens numeric guard above (defense-in-depth
+            # for any field sourced from the cache).
+            case "$_ecr_issue" in
+                '' | *[!0-9]*) : ;; # not a real issue number → no fallback anchor
+                *)
+                    # Prefer the `.git` gitlink (stable launch stamp); fall back to
+                    # the worktree dir only if the gitlink is absent. No worktree
+                    # (container/reaped) → both empty → ELAPSED stays "—", never a
+                    # fabricated age.
+                    _ecr_wt="$root/$GOLEM_WORKTREE_DIR/issue-$_ecr_issue"
+                    _ecr_wt_epoch="$(_mtime_epoch "$_ecr_wt/.git")"
+                    [ -n "$_ecr_wt_epoch" ] || _ecr_wt_epoch="$(_mtime_epoch "$_ecr_wt")"
+                    if [ -n "$_ecr_wt_epoch" ]; then
+                        _ecr_now="$("$DATE" -u +%s)"
+                        _ecr_d=$((_ecr_now - _ecr_wt_epoch))
+                        [ "$_ecr_d" -lt 0 ] && _ecr_d=0
+                        _ecr_elapsed="~$(_fmt_dur "$_ecr_d")"
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
 
     # Tokens (Δ) via the shared scrape/persist helper (SOLE writer of the cache
     # token fields). Δ = cur - prev; only advancing/frozen have a prior reading.
