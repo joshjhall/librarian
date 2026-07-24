@@ -68,6 +68,11 @@
 #   GOLEM_HEARTBEAT_INTERVAL
 #                        Poll interval for the liveness stream (--stream-liveness),
 #                        seconds.                         Default: 60
+#   GOLEM_LIVENESS_SUMMARY_INTERVAL
+#                        Cadence of the aggregate one-line liveness summary on
+#                        --stream-liveness, seconds; 0 disables it. The per-golem
+#                        heartbeat is transition-deduped (#489), so this is the
+#                        only periodic positive signal.    Default: 900 (15 min)
 #   GOLEM_INBOX_WAIT     Per-call ceiling, seconds, of golem-inbox.sh `consume`'s
 #                        bounded-blocking read (the orchestrator-brokered gate
 #                        reverse channel, #227). Kept below the Bash tool's 600s
@@ -172,6 +177,7 @@
 # and the poll interval of the liveness stream.
 : "${GOLEM_STALL_THRESHOLD:=1200}"
 : "${GOLEM_HEARTBEAT_INTERVAL:=60}"
+: "${GOLEM_LIVENESS_SUMMARY_INTERVAL:=900}"
 
 # Orchestrator-brokered gate reverse channel (golem-inbox.sh, #227): the
 # per-call ceiling and poll interval of `consume`'s bounded-blocking read. The
@@ -183,7 +189,8 @@
 
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
-    GOLEM_HEARTBEAT_INTERVAL GOLEM_INBOX_WAIT GOLEM_INBOX_POLL \
+    GOLEM_HEARTBEAT_INTERVAL GOLEM_LIVENESS_SUMMARY_INTERVAL \
+    GOLEM_INBOX_WAIT GOLEM_INBOX_POLL \
     GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT \
     GOLEM_EVENT_LISTEN_ADDR GOLEM_EVENT_LISTEN_PORT GOLEM_EVENT_MAX_BODY
 

@@ -33,7 +33,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 GATE_WATCH="$REPO_ROOT/plugins/workflow/scripts/golem-gate-watch.sh"
 
-test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229, #248, #446, #447)"
+test_suite "golem-gate-watch feed snapshot + liveness + helpers (#24, #28, #38, #82, #229, #248, #446, #447, #489)"
 
 # _pane_rc <function-name> <text> — source the script (the main-guard makes it
 # sourceable without running the drive block) in a subshell and call one of its
@@ -1398,6 +1398,252 @@ test_emit_transitions_dedup() {
         "A cleared-then-re-gated golem is a fresh transition"
 }
 
+# --- Liveness stream dedup (#489) -------------------------------------------
+# The --stream-liveness heartbeat used to re-emit every golem's line every poll,
+# unconditionally, flooding live context. #489 routes it through liveness_stabilize
+# -> emit_transitions (the gate channels' dedup) plus a slow aggregate summary. The
+# four tests below cover the pure functions in isolation (never the infinite
+# --stream-liveness loop — the setsid-free liveness-testing discipline).
+
+# liveness_stabilize: the two mtime-heartbeat lines carry a volatile _fmt_age that
+# ticks every poll and would defeat emit_transitions' per-golem message dedup.
+# Stabilize drops the age to a stable class, so the SAME golem at the SAME class
+# with a DIFFERENT age produces a byte-identical line. Every other liveness line
+# (working / idle / died / gated) is already age-free and passes through verbatim.
+test_liveness_stabilize_strips_age() {
+    local out1 out2
+    out1="$(
+        source "$GATE_WATCH"
+        liveness_stabilize "$(command printf 'golem-7\talive (process up, last activity 3m ago)\n')"
+    )"
+    out2="$(
+        source "$GATE_WATCH"
+        liveness_stabilize "$(command printf 'golem-7\talive (process up, last activity 12m ago)\n')"
+    )"
+    assert_equals "$out1" "$out2" \
+        "Two different mtime ages stabilize to an identical line (the dedup key)"
+    assert_contains "$out1" "golem-7"$'\t'"alive (process up)" \
+        "The mtime heartbeat is canonicalized to the age-free class"
+    assert_not_contains "$out1" "last activity" \
+        "The volatile age substring is stripped"
+
+    # The 'possible stall' mtime line strips its age too.
+    local stall
+    stall="$(
+        source "$GATE_WATCH"
+        liveness_stabilize "$(command printf 'golem-7\tpossible stall — no progress for 40m\n')"
+    )"
+    assert_contains "$stall" "golem-7"$'\t'"possible stall" "Stall line is canonicalized to age-free class"
+    assert_not_contains "$stall" "40m" "The stall age is stripped"
+
+    # A non-mtime line (already age-free) passes through unchanged.
+    local passthru
+    passthru="$(
+        source "$GATE_WATCH"
+        liveness_stabilize "$(command printf 'golem-7\talive, working (esc-to-interrupt active)\n')"
+    )"
+    assert_contains "$passthru" "golem-7"$'\t'"alive, working (esc-to-interrupt active)" \
+        "An already-stable working line passes through verbatim"
+}
+
+# The transition-only contract the issue asks for (AC1, AC2, AC4): drive the real
+# chained liveness_stabilize -> emit_transitions across ticks, exactly as the
+# --stream-liveness arm wires it. One subshell because LAST_EMIT is module state.
+#   1. prime (silent)
+#   2. same class, DIFFERENT age -> suppressed (AC1: steady state emits nothing)
+#   3. alive -> possible stall -> emits (AC2: a transition surfaces promptly)
+#   4. -> alive, working -> emits (another class change)
+#   5. -> idle at prompt -> emits (AC2 names working→idle explicitly)
+#   6. -> gated -> emits (AC2 names →gated explicitly)
+#   7. steady on gated -> suppressed
+test_liveness_stream_dedup() {
+    local out
+    out="$(
+        source "$GATE_WATCH"
+        # 1. Prime a fresh, alive golem -> no output.
+        command printf '[prime]'
+        emit_transitions "$(liveness_stabilize "$(command printf 'golem-7\talive (process up, last activity 1m ago)\n')")" 1
+        # 2. Same class, the age has ticked on -> stabilized identical -> suppressed.
+        command printf '[steady]'
+        emit_transitions "$(liveness_stabilize "$(command printf 'golem-7\talive (process up, last activity 9m ago)\n')")" 0
+        # 3. Class flips to a stall -> emits.
+        command printf '[stall]'
+        emit_transitions "$(liveness_stabilize "$(command printf 'golem-7\tpossible stall — no progress for 40m\n')")" 0
+        # 4. Class flips to working -> emits.
+        command printf '[working]'
+        emit_transitions "$(liveness_stabilize "$(command printf 'golem-7\talive, working (esc-to-interrupt active)\n')")" 0
+        # 5. working -> idle at prompt -> emits (AC2 names this transition).
+        command printf '[idle]'
+        emit_transitions "$(liveness_stabilize "$(command printf 'golem-7\t⚠ idle at prompt — process up, not advancing (check pane)\n')")" 0
+        # 6. -> gated -> emits (AC2 names →gated).
+        command printf '[gated]'
+        emit_transitions "$(liveness_stabilize "$(command printf 'golem-7\tgated — awaiting decision (not a stall)\n')")" 0
+        # 7. Steady on gated -> suppressed.
+        command printf '[steady2]'
+        emit_transitions "$(liveness_stabilize "$(command printf 'golem-7\tgated — awaiting decision (not a stall)\n')")" 0
+    )"
+    # AC1: prime + both steady ticks emit nothing between their markers.
+    assert_contains "$out" "[prime][steady][stall]" \
+        "Steady state (same class, different age) emits nothing (#489 AC1)"
+    assert_contains "$out" "[stall]golem-7"$'\t'"possible stall" \
+        "A class change to possible stall emits promptly (#489 AC2)"
+    assert_contains "$out" "[working]golem-7"$'\t'"alive, working (esc-to-interrupt active)" \
+        "A class change to working emits"
+    # AC2 names working→idle and →gated explicitly — each must surface promptly.
+    assert_contains "$out" "[idle]golem-7"$'\t'"⚠ idle at prompt" \
+        "A working→idle transition emits promptly (#489 AC2)"
+    assert_contains "$out" "[gated]golem-7"$'\t'"gated — awaiting decision (not a stall)" \
+        "A →gated transition emits promptly (#489 AC2)"
+    # emit_transitions prints a trailing newline after each emitted line, so a
+    # suppressed [steady2] tick leaves the gated line immediately followed by
+    # newline + the [steady2] marker (nothing emitted between them).
+    assert_contains "$out" "gated — awaiting decision (not a stall)"$'\n'"[steady2]" \
+        "A steady gated class is suppressed on the next tick (no re-emit)"
+}
+
+# liveness_summary: the slow aggregate line that keeps the deduped stream from
+# looking dead. Counts each class over a mixed snapshot; 'alive, working' and the
+# mtime 'process up' heartbeat both count as alive. Empty snapshot -> no output.
+test_liveness_summary_counts() {
+    local out
+    out="$(
+        source "$GATE_WATCH"
+        liveness_summary "$(command printf '%s\n' \
+            'golem-1'$'\t''alive, working (esc-to-interrupt active)' \
+            'golem-2'$'\t''alive (process up, last activity 2m ago)' \
+            'golem-3'$'\t''⚠ idle at prompt — process up, not advancing (check pane)' \
+            'golem-4'$'\t''possible stall — no progress for 40m' \
+            'golem-5'$'\t''gated — awaiting decision (not a stall)' \
+            'golem-6'$'\t''⚠ died — API error: terminal (401) (check pane)')"
+    )"
+    assert_contains "$out" "liveness-summary" "Summary line carries the aggregate id"
+    assert_contains "$out" "2 alive, 1 idle, 1 stalled, 1 gated, 1 died (6 golems)" \
+        "Class counts aggregate correctly (working+process-up both count as alive)"
+
+    local empty
+    empty="$(
+        source "$GATE_WATCH"
+        liveness_summary ""
+    )"
+    assert_output_empty "$empty" "An empty snapshot produces no summary line"
+}
+
+# summary_due: the cadence gate. Due at/above the interval; not due below; a 0 or
+# non-numeric interval disables the summary (never crashes the watch on garbage
+# GOLEM_LIVENESS_SUMMARY_INTERVAL).
+test_summary_due() {
+    # Two-arg calls via a sourced subshell; map exit status to 0(due)/1(not due).
+    assert_equals "0" "$(
+        source "$GATE_WATCH"
+        summary_due 900 900 && echo 0 || echo 1
+    )" \
+        "Due when elapsed == interval"
+    assert_equals "0" "$(
+        source "$GATE_WATCH"
+        summary_due 1200 900 && echo 0 || echo 1
+    )" \
+        "Due when elapsed > interval"
+    assert_equals "1" "$(
+        source "$GATE_WATCH"
+        summary_due 300 900 && echo 0 || echo 1
+    )" \
+        "Not due when elapsed < interval"
+    assert_equals "1" "$(
+        source "$GATE_WATCH"
+        summary_due 5000 0 && echo 0 || echo 1
+    )" \
+        "Interval 0 disables the summary (never due)"
+    assert_equals "1" "$(
+        source "$GATE_WATCH"
+        summary_due 5000 abc && echo 0 || echo 1
+    )" \
+        "Non-numeric interval never crashes / is never due"
+}
+
+# summary_enabled (#489 review): gates even the ONE-TIME startup summary so
+# "0 disables it" holds literally. Enabled for a positive numeric interval;
+# disabled for 0, empty, or non-numeric.
+test_summary_enabled() {
+    assert_equals "0" "$(
+        source "$GATE_WATCH"
+        summary_enabled 900 && echo 0 || echo 1
+    )" \
+        "A positive interval enables the summary (startup line fires)"
+    assert_equals "1" "$(
+        source "$GATE_WATCH"
+        summary_enabled 0 && echo 0 || echo 1
+    )" \
+        "Interval 0 disables the summary entirely, incl. the startup line"
+    assert_equals "1" "$(
+        source "$GATE_WATCH"
+        summary_enabled "" && echo 0 || echo 1
+    )" \
+        "Empty interval disables the summary"
+    assert_equals "1" "$(
+        source "$GATE_WATCH"
+        summary_enabled 15m && echo 0 || echo 1
+    )" \
+        "Non-numeric interval disables the summary (never crashes)"
+}
+
+# GOLEM_LIVENESS_SUMMARY_INTERVAL env-overridability (#489 review), mirroring
+# test_liveness_threshold_env_overridable / test_pane_footer_lines_env_overridable:
+# set the env var before sourcing and confirm it reaches the summary_interval
+# tunable, catching a typo'd var name or broken `${VAR:-default}` wiring. The
+# script assigns `summary_interval` at top level whether sourced or executed.
+test_summary_interval_env_overridable() {
+    # summary_interval is assigned at the sourced script's top level; shellcheck
+    # cannot see across the `source`, so silence its not-assigned warning.
+    # shellcheck disable=SC2154
+    # Unset -> default 900.
+    assert_equals "900" "$(
+        unset GOLEM_LIVENESS_SUMMARY_INTERVAL
+        source "$GATE_WATCH"
+        command printf '%s' "$summary_interval"
+    )" \
+        "summary_interval defaults to 900 when the env var is unset"
+    # Set -> honored. `export` so the sourced script reads it from the environment
+    # (and so shellcheck sees the assignment as consumed, not dead — SC2034).
+    assert_equals "120" "$(
+        export GOLEM_LIVENESS_SUMMARY_INTERVAL=120
+        source "$GATE_WATCH"
+        command printf '%s' "$summary_interval"
+    )" \
+        "GOLEM_LIVENESS_SUMMARY_INTERVAL is env-overridable (reaches summary_interval)"
+}
+
+# heartbeat_interval numeric coercion (#489 review): a non-numeric
+# GOLEM_HEARTBEAT_INTERVAL (a plausible typo like "15m") would abort the whole
+# --stream-liveness watch on the `$((since_summary + heartbeat_interval))`
+# arithmetic under `set -u`. The top-level guard coerces it back to 60 so the
+# watch survives; a valid numeric value is honored unchanged.
+test_heartbeat_interval_numeric_coercion() {
+    # heartbeat_interval is assigned at the sourced script's top level (across the
+    # `source` shellcheck cannot follow), so silence the not-assigned warning.
+    # shellcheck disable=SC2154
+    assert_equals "60" "$(
+        export GOLEM_HEARTBEAT_INTERVAL=15m
+        source "$GATE_WATCH"
+        command printf '%s' "$heartbeat_interval"
+    )" \
+        "A non-numeric GOLEM_HEARTBEAT_INTERVAL is coerced to 60 (no watch crash)"
+    assert_equals "30" "$(
+        export GOLEM_HEARTBEAT_INTERVAL=30
+        source "$GATE_WATCH"
+        command printf '%s' "$heartbeat_interval"
+    )" \
+        "A valid numeric GOLEM_HEARTBEAT_INTERVAL is honored unchanged"
+    # The arithmetic that would crash must be safe now: exercise it directly.
+    assert_equals "60" "$(
+        export GOLEM_HEARTBEAT_INTERVAL=notanumber
+        source "$GATE_WATCH"
+        since=0
+        since=$((since + heartbeat_interval))
+        command printf '%s' "$since"
+    )" \
+        "The cadence arithmetic no longer aborts under set -u on garbage input"
+}
+
 # Ghost filter (#446, Bug #2 Layer B): a golem torn down WITHOUT worktree-rm.sh
 # leaves its `gate` line as its most-recent feed entry with no `reaped` line to
 # supersede it — so feed_snapshot_live cross-checks golem_has_live_trace and drops
@@ -1665,6 +1911,13 @@ run_test test_pane_footer_lines_env_overridable "pane matchers: GOLEM_PANE_FOOTE
 run_test test_confirm_turn_end_debounce "confirm_turn_end: two-consecutive-poll debounce on the idle line; gates immediate (#447)"
 run_test test_pane_liveness_class "pane_liveness_class: spinner=working, error/idle footer=idle, spinner wins"
 run_test test_emit_transitions_dedup "emit_transitions: prime/standing/new/changed/re-gate dedup"
+run_test test_liveness_stabilize_strips_age "liveness_stabilize: mtime age stripped to a stable class; other lines verbatim (#489)"
+run_test test_liveness_stream_dedup "liveness stream: steady state silent, class change emits (#489 AC1/AC2/AC4)"
+run_test test_liveness_summary_counts "liveness_summary: aggregate class counts; empty snapshot silent (#489)"
+run_test test_summary_due "summary_due: cadence gate; 0/non-numeric interval disables (#489)"
+run_test test_summary_enabled "summary_enabled: 0/empty/non-numeric disables the startup summary too (#489)"
+run_test test_summary_interval_env_overridable "GOLEM_LIVENESS_SUMMARY_INTERVAL is env-overridable (#489)"
+run_test test_heartbeat_interval_numeric_coercion "GOLEM_HEARTBEAT_INTERVAL non-numeric coerced to 60, no watch crash (#489)"
 run_test test_ghost_gate_dropped_when_no_trace "Ghost filter: gated golem with no live trace dropped from BLOCKED (#446)"
 run_test test_pane_is_api_error "pane_is_api_error: matches API-error death, spinner vetoes, classifies retriable/terminal (#446)"
 run_test test_panes_snapshot_died_dispatch "panes_snapshot: died-on-API-error emits DIED before turn-end; modal gates still win (#446)"

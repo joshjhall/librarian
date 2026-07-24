@@ -81,14 +81,20 @@
 #                            at their prompt (#447)
 #   --stream-panes           pane poll loop: emit on transition, until killed
 #   --once-liveness          liveness snapshot: per-golem heartbeat/stall, exit 0
-#   --stream-liveness        liveness poll loop: re-emit each golem's heartbeat
-#                            every GOLEM_HEARTBEAT_INTERVAL, until killed
+#   --stream-liveness        liveness poll loop: emit on a per-golem class change
+#                            (working→idle, alive→stall, →gated), deduped like the
+#                            gate channels, plus a slow aggregate "N alive …"
+#                            summary every GOLEM_LIVENESS_SUMMARY_INTERVAL; polls
+#                            every GOLEM_HEARTBEAT_INTERVAL, until killed (#489)
 #
 # Tunables (env; see config.sh for worktree/status-dir tunables):
 #   GOLEM_BLOCK_TTL          feed gate freshness window, seconds (default 3600)
 #   GOLEM_WATCH_INTERVAL     poll interval for --stream*, seconds (default 5)
 #   GOLEM_STALL_THRESHOLD    liveness stall window, seconds (default 1200)
 #   GOLEM_HEARTBEAT_INTERVAL liveness poll interval, seconds (default 60)
+#   GOLEM_LIVENESS_SUMMARY_INTERVAL
+#                            --stream-liveness aggregate-summary cadence, seconds
+#                            (default 900; 0 disables the summary) (#489)
 #   GOLEM_PANE_FOOTER_LINES  pane footer window for pane_liveness_class +
 #                            pane_is_fork, lines (default 8)
 #   GOLEM_PANE_ERROR_LINES   pane scrollback window for pane_is_api_error's #446
@@ -148,6 +154,19 @@ ttl="${GOLEM_BLOCK_TTL:-3600}"
 interval="${GOLEM_WATCH_INTERVAL:-5}"
 stall_threshold="${GOLEM_STALL_THRESHOLD:-1200}"
 heartbeat_interval="${GOLEM_HEARTBEAT_INTERVAL:-60}"
+# Coerce a non-numeric GOLEM_HEARTBEAT_INTERVAL (a plausible typo like "15m") back
+# to the default: it feeds the --stream-liveness cadence arithmetic below, and a
+# bare alphabetic token in `$(( ))` aborts the whole watch under `set -u` (#489
+# review). Fail-soft to 60, consistent with this script's "errors are swallowed,
+# never fail a golem" contract and summary_due's own numeric guard.
+case "$heartbeat_interval" in
+    '' | *[!0-9]*) heartbeat_interval=60 ;;
+esac
+# Cadence of the slow aggregate liveness summary on --stream-liveness (issue
+# #489), seconds; 0 disables it. The per-golem heartbeat is now transition-
+# deduped, so this one-line-per-fleet summary is the only periodic positive
+# "watch is alive" signal — paced far slower than the poll interval.
+summary_interval="${GOLEM_LIVENESS_SUMMARY_INTERVAL:-900}"
 pane_footer_lines="${GOLEM_PANE_FOOTER_LINES:-8}"
 # Window for the #446 API-error death read. The `API Error` line sits a few lines
 # ABOVE the prompt (the issue used `capture-pane -S -40`), outside the 8-line
@@ -472,8 +491,8 @@ pane_is_fork() {
 # liveness channel; the push channel deliberately reports only the turn-ended-at-
 # prompt footer here. So the pane push channel emits it too, letting it flow
 # through emit_transitions' dedup (fired once on the transition into the idle
-# state, re-fired only after it clears) rather than the un-deduped
-# --stream-liveness heartbeat that a Monitor push arm would drown in.
+# state, re-fired only after it clears) — the turn-ended signal belongs on the
+# edge-triggered pane push channel, not the periodic liveness heartbeat.
 #
 # Same two guards as pane_liveness_class (see #246): the match is ANCHORED to the
 # FOOTER region (last $pane_footer_lines lines) — this very script's comments carry
@@ -875,6 +894,97 @@ liveness_snapshot() {
 }
 
 # ---------------------------------------------------------------------------
+# Liveness stream dedup (issue #489)
+# ---------------------------------------------------------------------------
+# The liveness stream used to re-emit every golem's line every
+# GOLEM_HEARTBEAT_INTERVAL unconditionally — ~one line per golem per minute even
+# when nothing changed, drowning the actionable transitions (working→idle,
+# alive→stall, →gated). The gate channels (--stream/--stream-panes) never had this
+# problem: they route through emit_transitions, which suppresses a standing line
+# and emits only on a real per-golem change. #489 gives liveness the same dedup.
+#
+# emit_transitions keys on the EXACT per-golem message, so a message carrying a
+# per-tick-volatile substring would defeat it — every tick would read as a new
+# transition. Only two liveness lines are volatile: the mtime-heartbeat strings
+# carry a `_fmt_age` value (`Nm`/`Ns`) that ticks every poll. liveness_stabilize
+# canonicalizes those two to a stable CLASS (dropping the age) so a steady-state
+# golem produces a byte-identical message tick-to-tick and emit_transitions
+# suppresses it; a genuine class change (alive↔stall, →working, →idle, →gated)
+# still changes the message and emits. Every other liveness line (working / idle /
+# died / gated) is already age-free and passes through verbatim.
+#
+# The FULL-detail age is preserved on the PULL surface: --once-liveness and
+# golem-status.sh's snapshot call liveness_snapshot directly, not this. Only the
+# --stream-liveness push arm stabilizes, and only to gate the dedup.
+liveness_stabilize() {
+    local snapshot="$1" golem msg
+    while IFS=$'\t' read -r golem msg; do
+        [ -z "$golem" ] && continue
+        case "$msg" in
+            "alive (process up, last activity "*)
+                msg="alive (process up)"
+                ;;
+            "possible stall — no progress for "*)
+                msg="possible stall"
+                ;;
+        esac
+        command printf '%s\t%s\n' "$golem" "$msg"
+    done <<<"$snapshot"
+}
+
+# summary_due <elapsed_seconds> <interval_seconds> — cadence gate for the slow
+# aggregate liveness summary. Returns 0 (due) when elapsed >= interval; 1 (not
+# due) when below, OR when interval is 0 (summary disabled) or non-numeric (a
+# garbage GOLEM_LIVENESS_SUMMARY_INTERVAL must never crash the watch). Isolated
+# as a pure function so the numeric guard is unit-testable without the infinite
+# --stream-liveness loop. bash-3.2 clean (no arithmetic on unvalidated input).
+summary_due() {
+    local elapsed="$1" interval="$2"
+    case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac
+    case "$interval" in '' | *[!0-9]* | 0) return 1 ;; esac
+    [ "$elapsed" -ge "$interval" ] && return 0
+    return 1
+}
+
+# summary_enabled <interval_seconds> — true when the aggregate summary is enabled
+# at all (a positive numeric interval). A 0 or non-numeric interval disables the
+# summary ENTIRELY, so the drive arm gates even the ONE-TIME startup summary on
+# this (not just the periodic re-emission on summary_due) — otherwise interval=0
+# would still print one startup line, contradicting the documented "0 disables it"
+# (#489 review). Shares summary_due's numeric-guard shape; bash-3.2 clean.
+summary_enabled() {
+    case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
+    return 0
+}
+
+# liveness_summary <snapshot> — collapse a liveness snapshot to ONE aggregate
+# fleet line so the transition-deduped stream still carries a periodic positive
+# "the watch is alive" heartbeat without the per-golem flood (issue #489). Counts
+# each golem's class from its message; `alive, working` (pane/transcript spinner)
+# and the mtime `process up` heartbeat both count as "alive". Emits nothing on an
+# empty snapshot (no golems ⇒ nothing to summarize). One line per fleet, so at the
+# default 15-min cadence this is ~60× less volume than the old per-golem minute
+# heartbeat. Output: "liveness-summary\tA alive, I idle, S stalled, G gated, D died (N golems)".
+liveness_summary() {
+    local snapshot="$1" golem msg
+    local alive=0 idle=0 stalled=0 gated=0 died=0 total=0
+    while IFS=$'\t' read -r golem msg; do
+        [ -z "$golem" ] && continue
+        total=$((total + 1))
+        case "$msg" in
+            *"died — API error"*) died=$((died + 1)) ;;
+            *"idle at prompt"*) idle=$((idle + 1)) ;;
+            *"possible stall"*) stalled=$((stalled + 1)) ;;
+            *"gated"*) gated=$((gated + 1)) ;;
+            *"alive"*) alive=$((alive + 1)) ;;
+        esac
+    done <<<"$snapshot"
+    [ "$total" -eq 0 ] && return 0
+    command printf '%s\t%d alive, %d idle, %d stalled, %d gated, %d died (%d golems)\n' \
+        "liveness-summary" "$alive" "$idle" "$stalled" "$gated" "$died" "$total"
+}
+
+# ---------------------------------------------------------------------------
 # Drive
 # ---------------------------------------------------------------------------
 # Main-guard: only when EXECUTED (not sourced) do we parse the mode argument and
@@ -942,13 +1052,34 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             exit 0
             ;;
         --stream-liveness)
-            # A heartbeat is a POSITIVE periodic signal, so (unlike gates) it is NOT
-            # transition-deduped — each tick re-emits every golem's current liveness,
-            # confirming "still alive" even when nothing changed. The sweep is cheap
-            # (a handful of stats per golem); GOLEM_HEARTBEAT_INTERVAL paces it.
+            # Transition-deduped (issue #489). The heartbeat used to re-emit every
+            # golem's line every GOLEM_HEARTBEAT_INTERVAL unconditionally, flooding
+            # live context with "still alive" lines that said nothing changed. Now it
+            # routes each snapshot through liveness_stabilize (drops the volatile
+            # mtime age so a steady class is byte-identical tick-to-tick) then
+            # emit_transitions — the SAME per-golem dedup the gate channels use — so
+            # only a real class change (working→idle, alive→stall, →gated, →died)
+            # emits a line. A slow aggregate liveness_summary line still confirms the
+            # watch is alive without the per-golem flood: emitted once at startup and
+            # then every GOLEM_LIVENESS_SUMMARY_INTERVAL. A 0 (or non-numeric)
+            # interval disables the summary ENTIRELY — including the startup line —
+            # via summary_enabled(), so "0 disables it" holds literally (#489 review).
+            # emit_transitions mutates the module-global LAST_EMIT, so — like the
+            # --stream / --stream-panes arms — it MUST run in THIS shell, not a
+            # subshell; only the inner liveness_snapshot capture is a subshell.
+            snap="$(liveness_snapshot "$status_dir" "$feed")"
+            emit_transitions "$(liveness_stabilize "$snap")" 1
+            summary_enabled "$summary_interval" && liveness_summary "$snap"
+            since_summary=0
             while :; do
-                liveness_snapshot "$status_dir" "$feed"
                 "$SLEEP" "$heartbeat_interval"
+                snap="$(liveness_snapshot "$status_dir" "$feed")"
+                emit_transitions "$(liveness_stabilize "$snap")" 0
+                since_summary=$((since_summary + heartbeat_interval))
+                if summary_due "$since_summary" "$summary_interval"; then
+                    liveness_summary "$snap"
+                    since_summary=0
+                fi
             done
             ;;
     esac
