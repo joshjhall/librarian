@@ -376,25 +376,142 @@ const manifestPrompt = () =>
   `(files, per-file classifications, needs) — do NOT echo the diff back. ` +
   READONLY
 
+// The six sub-reviewer checklists, moved OUT of the agent's always-loaded system
+// prompt (code-reviewer.md) and pasted inline per `reviewer:<name>` call — the
+// agent invokes ~9× per review (manifest + core-4 + up-to-2 specialists + rescore
+// + merge), but any single reviewer call uses EXACTLY ONE checklist and
+// manifest/rescore/merge use none, so carrying all six in the always-loaded body
+// paid the full context load on every invocation (#494). Living here, each call
+// receives only its one checklist; the harness (not the agent's instructions) is
+// the delivery mechanism because the reviewerPrompt below appends the named one
+// AFTER the shared cache-stable prefix. Keys MUST match CORE_REVIEWERS + the
+// conditional specialists (database, devops); reviewerPrompt fails loud on a
+// missing key rather than paste an empty checklist.
+const SUBREVIEWERS = {
+  security:
+    'You are a security-focused code reviewer. Analyze the provided code changes\n' +
+    'for security vulnerabilities.\n\n' +
+    'Check for:\n\n' +
+    '- Injection vulnerabilities (SQL, command, LDAP, XPath)\n' +
+    '- Cross-site scripting (XSS) — reflected, stored, DOM-based\n' +
+    '- Authentication and authorization bypass\n' +
+    '- Credential exposure (hardcoded secrets, API keys, tokens in source)\n' +
+    '- OWASP Top 10 vulnerabilities\n' +
+    '- Input validation gaps (unsanitized user input reaching sensitive operations)\n' +
+    '- Insecure deserialization\n' +
+    '- Path traversal\n' +
+    '- SSRF (server-side request forgery)\n' +
+    '- Insecure cryptographic usage (weak algorithms, hardcoded IVs/salts)',
+  bug:
+    'You are a bug-focused code reviewer. Analyze the provided code changes for\n' +
+    'correctness issues.\n\n' +
+    'Check for:\n\n' +
+    '- Logic errors and off-by-one mistakes\n' +
+    '- Null/undefined access and type confusion\n' +
+    '- Race conditions and data races\n' +
+    '- Incorrect boolean logic or operator precedence\n' +
+    '- Missing return statements or unreachable code\n' +
+    '- Incorrect use of APIs (wrong argument order, deprecated methods)\n\n' +
+    'Error Handling Red Flags — flag every occurrence:\n\n' +
+    '- Generic base exceptions instead of specific error types\n' +
+    '- Exceptions with no structured context (just a message string)\n' +
+    '- Swallowed exceptions (empty catch blocks or catch-and-ignore)\n' +
+    '- Duplicate logging (manual log + auto-logging exception)\n' +
+    '- Retrying permanent failures (auth errors, validation errors)\n\n' +
+    'Concurrency Red Flags — flag every occurrence:\n\n' +
+    '- Async operations without timeout limits\n' +
+    '- Connections or file handles not cleaned up on error paths\n' +
+    '- Batch operations that stop entirely on first failure (should accumulate)\n' +
+    '- Missing exponential backoff or jitter on retries',
+  performance:
+    'You are a performance-focused code reviewer. Analyze the provided code\n' +
+    'changes for performance issues.\n\n' +
+    'Check for:\n\n' +
+    '- N+1 query patterns (loops that issue individual queries)\n' +
+    '- Unnecessary memory allocations (allocating in hot loops, large intermediate collections)\n' +
+    '- Missing caching opportunities (repeated expensive computations with same inputs)\n' +
+    '- Blocking operations on async/event-loop threads\n' +
+    '- Memory leaks (event listeners not removed, growing caches without eviction)\n' +
+    '- Inefficient algorithms (quadratic where linear is possible)\n' +
+    '- Unnecessary re-renders or recomputations (frontend)\n' +
+    '- Missing pagination on unbounded queries',
+  style:
+    'You are a style-focused code reviewer. Analyze the provided code changes\n' +
+    'for readability and maintainability.\n\n' +
+    'Check for:\n\n' +
+    '- Naming conventions (unclear, misleading, or inconsistent names)\n' +
+    '- Code organization (god functions, misplaced logic, poor module boundaries)\n' +
+    '- Readability issues (deeply nested conditionals, magic numbers, missing documentation on non-obvious logic)\n' +
+    '- Language-specific best practices and idioms\n' +
+    '- Dead code or commented-out code left in changes\n' +
+    '- Inconsistent patterns within the same file or module\n\n' +
+    'Only flag style issues that impact maintainability or could lead to bugs.\n' +
+    'Skip purely cosmetic preferences.',
+  database:
+    'You are a database-focused code reviewer. Analyze the provided code changes\n' +
+    'that involve database schemas, migrations, queries, and ORM models.\n\n' +
+    'Check for:\n\n' +
+    '- Missing indexes on columns used in WHERE, JOIN, or ORDER BY clauses\n' +
+    '- N+1 query patterns in ORM usage (lazy loading in loops)\n' +
+    '- Unsafe migrations (dropping columns without backfill, renaming without aliases, locking large tables)\n' +
+    '- Missing transactions around multi-step operations that should be atomic\n' +
+    '- Schema changes without corresponding migration files\n' +
+    '- Raw SQL without parameterized queries (injection risk)\n' +
+    '- Missing foreign key constraints or cascading delete risks',
+  devops:
+    'You are a DevOps-focused code reviewer. Analyze the provided code changes\n' +
+    'that involve CI/CD configs, Dockerfiles, and infrastructure definitions.\n\n' +
+    'Check for:\n\n' +
+    '- Security issues (running as root, privileged containers, exposed ports unnecessarily)\n' +
+    '- Multi-stage build opportunities (large final images with build-time dependencies)\n' +
+    '- Missing health checks in container definitions\n' +
+    '- Secret exposure (secrets in build args, ENV instructions, or CI logs)\n' +
+    '- Pinned vs unpinned base images and dependency versions\n' +
+    '- Missing resource limits (CPU/memory) in container or orchestration configs\n' +
+    '- CI pipeline inefficiencies (missing caching, unnecessary sequential steps)\n' +
+    '- Missing `.dockerignore` entries for sensitive or large files',
+}
+
+// The shared per-finding footer, stated ONCE here instead of repeated verbatim
+// under each of the six checklists in the always-loaded body (#494). `<reviewer>`
+// is interpolated per call so the category directive names the active reviewer.
+const findingsFooter = (reviewer) =>
+  `Set category=${reviewer} on every finding. For each finding, provide title, ` +
+  `description, suggestion, effort, tags, related_files, and certainty per the ` +
+  `Step 3 schema in your instructions. Return a JSON array of findings — an empty ` +
+  `array [] if no issues found.`
+
 // Every sub-reviewer in the fan-out shares this byte-identical context — the
 // changed-file list, deterministically-serialized classifications, and the diff
-// — led by the static READONLY contract, with ONLY the per-reviewer selector
-// appended at the tail. So sibling reviewers share the maximal byte-identical
-// prompt prefix and diverge only in their trailing mode/category token (#256,
-// cache-stability smells #1/#4). Leading with READONLY also anchors the safety
-// contract BEFORE the untrusted fenced diff (injection posture). The always-free
-// shared prefix is the agent system-prompt + tool defs, identical across
-// siblings regardless of this ordering.
-const reviewerPrompt = (reviewer, manifest) =>
-  READONLY +
-  '\n\n' +
-  `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
-  `Classifications: ${stableStringify(manifest.classifications)}\n\n` +
-  diffSection() +
-  `Mode: reviewer:${reviewer}. Analyze the changed files and diff above as the ` +
-  `${reviewer} sub-reviewer using the corresponding Sub-Reviewer Definition in ` +
-  `your instructions. Set category=${reviewer} on every finding and return the ` +
-  `typed findings array (empty if none).`
+// — led by the static READONLY contract, with ONLY the per-reviewer selector +
+// checklist appended at the tail. So sibling reviewers share the maximal
+// byte-identical prompt prefix and diverge only in their trailing mode/category
+// token and inline checklist (#256, cache-stability smells #1/#4). Leading with
+// READONLY also anchors the safety contract BEFORE the untrusted fenced diff
+// (injection posture). The always-free shared prefix is the agent system-prompt +
+// tool defs, identical across siblings regardless of this ordering. The checklist
+// is pasted inline (from SUBREVIEWERS, above) rather than read from the agent's
+// instructions so the always-loaded body carries none of the six (#494).
+const reviewerPrompt = (reviewer, manifest) => {
+  const checklist = SUBREVIEWERS[reviewer]
+  if (!checklist) {
+    // Fail loud: an unknown reviewer key would otherwise paste an empty checklist
+    // and silently emit a context-free review. A throw inside a barrier thunk
+    // degrades that one reviewer to null (logged, skipped) — never a silent pass.
+    throw new Error(`reviewerPrompt: no sub-reviewer checklist for "${reviewer}"`)
+  }
+  return (
+    READONLY +
+    '\n\n' +
+    `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
+    `Classifications: ${stableStringify(manifest.classifications)}\n\n` +
+    diffSection() +
+    `Mode: reviewer:${reviewer}. Analyze the changed files and diff above as the ` +
+    `${reviewer} sub-reviewer using the Sub-Reviewer Definition below.\n\n` +
+    `Sub-Reviewer Definition (${reviewer}):\n${checklist}\n\n` +
+    findingsFooter(reviewer)
+  )
+}
 
 const rescorePrompt = (findings) =>
   `Mode: rescore. You are a FRESH judge panel — you did NOT produce these findings.\n` +

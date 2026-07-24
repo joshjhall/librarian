@@ -241,7 +241,12 @@ def check_ai_file_bloat(path: str, lines: list[str]) -> None:
             _int_env("SKILL_HIGH", 500),
             "skill definition",
         )
-    elif _glob(path, "*/agents/*/*.md"):
+    elif _glob(path, "*/agents/*/*.md") or _glob(path, "*/agents/*.md"):
+        # Both agent layouts are bloat-scanned: the FLAT form agents/<name>.md
+        # (how Claude Code discovers plugin agents) AND the nested
+        # agents/<name>/<name>.md a harness-bearing agent uses. The frontmatter
+        # detector keys only off the nested glob; this bloat branch deliberately
+        # covers both so a flat agent over the line threshold is not missed (#494).
         warn, high, ftype = (
             _int_env("AGENT_WARN", 250),
             _int_env("AGENT_HIGH", 400),

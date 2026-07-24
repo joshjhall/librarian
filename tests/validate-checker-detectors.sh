@@ -247,6 +247,33 @@ test_ai_file_bloat() {
     assert_fires ai-file-bloat "$list" "skill definition exceeds high threshold" \
         "ai-file-bloat: SKILL.md over high threshold flagged" \
         SKILL_WARN=2 SKILL_HIGH=3
+
+    # Agent-definition arm — the FLAT layout agents/<name>.md (Claude Code's
+    # discovery form). The bloat glob was */agents/*/*.md only, which does not
+    # match a flat file, so a flat agent over threshold was silently missed (#494).
+    command mkdir -p "$d/agents"
+    f="$d/agents/rev.md"
+    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
+    list="$(list_of "$f")"
+    assert_fires ai-file-bloat "$list" "agent definition exceeds high threshold" \
+        "ai-file-bloat: FLAT agent md over high threshold flagged (#494)" \
+        AGENT_WARN=2 AGENT_HIGH=3
+
+    # Counter: the widened glob must not OVER-fire — a flat agent comfortably under
+    # threshold stays silent (mirrors the CLAUDE.md silent counter above).
+    assert_silent ai-file-bloat "$list" \
+        "ai-file-bloat: FLAT agent md under thresholds is silent (#494)" \
+        AGENT_WARN=50 AGENT_HIGH=99
+
+    # Agent-definition arm — the NESTED layout agents/<name>/<name>.md (a
+    # harness-bearing agent's sibling md). Must still fire after the glob widened.
+    command mkdir -p "$d/agents/nested"
+    f="$d/agents/nested/nested.md"
+    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
+    list="$(list_of "$f")"
+    assert_fires ai-file-bloat "$list" "agent definition exceeds warning threshold" \
+        "ai-file-bloat: NESTED agent md over warning threshold flagged" \
+        AGENT_WARN=3 AGENT_HIGH=99
 }
 
 # ============================================================================

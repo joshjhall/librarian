@@ -2216,9 +2216,40 @@ for (const path of [ORCH, REBASE]) {
     reviewerPrompt("bug", manifest).includes("ABC-BYTE-FAITHFUL-XYZ"),
     "reviewerPrompt (code-reviewer): splices the caller's diff bytes into the prompt",
   );
+  // Scope the stray-`undefined` guard to the prompt PREFIX before the inline
+  // sub-reviewer checklist — that prefix (READONLY + files + classifications +
+  // diff) is exactly the region a #267 `manifest.diff` revert would corrupt with
+  // `undefined`. The checklists themselves (moved into the harness in #494) carry
+  // legitimate prose like "Null/undefined access", so a whole-prompt `includes`
+  // would false-positive on the bug reviewer's own wording.
+  const bugPrompt = reviewerPrompt("bug", manifest);
+  const checklistAt = bugPrompt.indexOf("Sub-Reviewer Definition (");
   ok(
-    !reviewerPrompt("bug", manifest).includes("undefined"),
-    "reviewerPrompt (code-reviewer): no stray `undefined` from a manifest.diff regression",
+    checklistAt !== -1,
+    "reviewerPrompt (code-reviewer): inline sub-reviewer checklist is present (#494)",
+  );
+  ok(
+    !bugPrompt.slice(0, checklistAt).includes("undefined"),
+    "reviewerPrompt (code-reviewer): no stray `undefined` in the diff-region prefix (manifest.diff regression)",
+  );
+  // #494: all six relocated checklists must round-trip — each reviewer name the
+  // harness can dispatch (CORE_REVIEWERS + the two conditional specialists) has a
+  // SUBREVIEWERS entry, so reviewerPrompt succeeds and pastes THAT reviewer's
+  // definition + category directive. Guards the keys staying in sync with
+  // CORE_REVIEWERS/`specialists.push(...)`: a typo like `devOps` would throw here.
+  for (const name of ["security", "bug", "performance", "style", "database", "devops"]) {
+    const p = reviewerPrompt(name, manifest);
+    ok(
+      p.includes(`Sub-Reviewer Definition (${name})`) && p.includes(`Set category=${name}`),
+      `reviewerPrompt (code-reviewer): '${name}' pastes its own checklist + category directive (#494)`,
+    );
+  }
+  // #494 fail-loud contract: an unknown reviewer key throws (rather than paste an
+  // empty checklist and emit a context-free review). The throw is what nulls out
+  // that one reviewer inside the barrier thunk.
+  throws(
+    () => reviewerPrompt("bogus-reviewer", manifest),
+    "reviewerPrompt (code-reviewer): throws on an unknown reviewer key (#494 fail-loud)",
   );
 }
 
