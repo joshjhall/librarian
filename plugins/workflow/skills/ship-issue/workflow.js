@@ -1,13 +1,12 @@
 export const meta = {
   name: 'next-issue-review',
   description:
-    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), re-scores with a fresh judge, then classifies each finding blocking-vs-deferrable for the skill to resolve-or-defer. One cycle per invocation — the skill owns the cycle loop and the cap.',
+    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND classifies it blocking-vs-deferrable for the skill to resolve-or-defer. One cycle per invocation — the skill owns the cycle loop and the cap.',
   phases: [
     { title: 'Manifest', detail: 'build + classify the changed-file manifest, decide specialists' },
     { title: 'Review', detail: 'review dimensions run as one parallel barrier under one budget' },
     { title: 'Comments', detail: 'fold open GitHub PR review comments into the finding stream (pr-cycle only)' },
-    { title: 'Rescore', detail: 'fresh judge panel re-scores each finding certainty (no producer self-grading)' },
-    { title: 'Classify', detail: 'split findings into blocking vs deferrable; emit the resolve-or-defer plan' },
+    { title: 'Judge', detail: 'one fresh judge re-scores each finding certainty AND splits blocking vs deferrable (no producer self-grading)' },
   ],
 }
 
@@ -43,10 +42,13 @@ export const meta = {
 // nesting level and make this harness throw (see #524).
 //
 // The dimensions reuse the code-reviewer agent's discriminated modes (`manifest`,
-// `reviewer:<name>`, `rescore`) for security + correctness; the NEW dimensions
-// (tests, conventions, scope-drift) supply their instructions inline here so no
-// edit to code-reviewer.md is needed (coordinate-free with #498). Every reviewer
-// returns the identical FINDINGS_SCHEMA so rescore/classify work unchanged.
+// `reviewer:<name>`) for security + correctness; the NEW dimensions (tests,
+// conventions, scope-drift) supply their instructions inline here so no edit to
+// code-reviewer.md is needed (coordinate-free with #498). The certainty re-score
+// AND blocking/deferrable classification are a single custom `judge` mode (also
+// inline instructions, like the other custom dimensions) rather than the agent's
+// built-in `rescore` mode (#491). Every reviewer returns the identical
+// FINDINGS_SCHEMA so the judge works unchanged.
 // Review is read-only: no agent edits, commits, or pushes — the skill applies
 // fixes, commits, and files deferred findings.
 // ---------------------------------------------------------------------------
@@ -173,8 +175,8 @@ const NEW_DIMENSIONS = [
 // throwing mid-barrier. Matches the ci-fixer / code-reviewer harnesses.
 const BUDGET_FLOOR = 40_000
 
-// Reserve for the TERMINAL single-agent stages (comment-triage, rescore,
-// classify). These are bare `await agent(...)` calls, not fan-out barriers: a
+// Reserve for the TERMINAL single-agent stages (comment-triage, judge). These
+// are bare `await agent(...)` calls, not fan-out barriers: a
 // throw here is NOT caught by parallel()/pipeline() and would kill the whole
 // script, discarding every finding the cycle already paid for. `tailAgent`
 // below routes an exhausted-budget tail to the SAME null-fallback a barrier
@@ -293,19 +295,32 @@ const FINDINGS_SCHEMA = {
   },
 }
 
-// Fresh judge panel: re-scores certainty ONLY, keyed back to each finding by
-// its unique `ref` (stamped before rescore). No new findings, no other fields.
-const RESCORE_SCHEMA = {
+// Single fresh-judge pass: for each finding (keyed by its unique `ref`, stamped
+// before the judge runs) return BOTH an independently re-scored certainty AND a
+// blocking-vs-deferrable disposition. This merges what were two separate `fable`
+// tail agents — rescore + classify — into one, halving the fable tail cost per
+// cycle (#491). The judge still did NOT produce the findings, so the
+// no-producer-self-grading property is preserved.
+//
+// Independence tradeoff (deliberate): the two passes were both "fresh judge"
+// gates, not a defense-in-depth pair — classify already READ rescore's certainty,
+// so they never independently cross-checked each other. Merging them means one
+// judge call now decides both certainty and disposition over the same
+// `dataBlock`-fenced (untrusted) finding text. That fence + `sanitize` remain the
+// injection control; the cost win is the point of #491, not a security
+// regression. If a future change needs strict independent-gate redundancy for
+// security-category findings, split THOSE back out — do not silently re-merge.
+const JUDGE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['scores'],
+  required: ['verdicts'],
   properties: {
-    scores: {
+    verdicts: {
       type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['ref', 'certainty'],
+        required: ['ref', 'certainty', 'disposition', 'rationale'],
         properties: {
           ref: { type: 'string' },
           certainty: {
@@ -317,6 +332,8 @@ const RESCORE_SCHEMA = {
               confidence: { type: 'number' },
             },
           },
+          disposition: { type: 'string', enum: ['blocking', 'deferrable'] },
+          rationale: { type: 'string' },
         },
       },
     },
@@ -344,28 +361,6 @@ const COMMENTS_SCHEMA = {
           // present when disposition=blocking|deferrable and the comment maps to
           // a concrete code finding the skill should act on.
           finding: FINDING_SCHEMA,
-        },
-      },
-    },
-  },
-}
-
-// Resolve-or-defer: one disposition per finding, keyed by ref.
-const CLASSIFY_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['decisions'],
-  properties: {
-    decisions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['ref', 'disposition', 'rationale'],
-        properties: {
-          ref: { type: 'string' },
-          disposition: { type: 'string', enum: ['blocking', 'deferrable'] },
-          rationale: { type: 'string' },
         },
       },
     },
@@ -473,19 +468,22 @@ const commentsPrompt = (manifest) =>
   `Open PR review comments:\n${dataBlock('PR_COMMENTS', prComments)}\n\n` +
   READONLY
 
-const rescorePrompt = (findings) =>
-  `Mode: rescore. You are a FRESH judge panel — you did NOT produce these findings.\n` +
-  `Independently re-score the certainty (level + confidence) of each finding below ` +
-  `based solely on the evidence in its description and suggestion. Re-score certainty ` +
-  `ONLY: do not add, remove, merge, or otherwise alter any finding. Key each score ` +
-  `back to its finding by the \`ref\` field carried on that finding — copy it verbatim ` +
-  `(it is a unique id; do not reconstruct it from other fields).\n\n` +
-  `Findings to re-score:\n${dataBlock('FINDINGS', findings)}\n\n` +
-  READONLY
-
-const classifyPrompt = (findings, budgetExhausted) =>
-  `Mode: classify. You are a FRESH gatekeeper — you did NOT produce these findings.\n` +
-  `Assign each finding a disposition for a single PR, applying this policy:\n` +
+// One fresh-judge prompt that does BOTH jobs the old rescorePrompt + classifyPrompt
+// did — re-score certainty AND assign a blocking/deferrable disposition — in a
+// single pass, keyed per finding by `ref` (#491). The classification policy is
+// carried verbatim from the old classifyPrompt, and the disposition explicitly
+// keys off the certainty the SAME judge just re-scored (the old two-agent flow had
+// classify read rescore's output; here one agent owns both, so the dependency is
+// internal).
+const judgePrompt = (findings, budgetExhausted) =>
+  `Mode: judge. You are a FRESH judge — you did NOT produce these findings.\n` +
+  `For EACH finding below do BOTH of the following, and return exactly one verdict ` +
+  `per finding:\n\n` +
+  `1. Re-score its certainty (level + confidence) independently, based solely on the ` +
+  `evidence in its description and suggestion. Do not add, remove, merge, or ` +
+  `otherwise alter any finding.\n\n` +
+  `2. Assign it a disposition for a single PR, applying this policy against the ` +
+  `certainty you just re-scored:\n` +
   `BLOCKING (must be fixed on this PR before the golem stops):\n` +
   `  - severity critical or high AND certainty.level is HIGH or MEDIUM\n` +
   `  - any security finding at HIGH certainty (any severity)\n` +
@@ -505,18 +503,61 @@ const classifyPrompt = (findings, budgetExhausted) =>
     ? `NOTE: the budget was exhausted this cycle — bias any genuinely ambiguous ` +
       `finding to DEFERRABLE so it is filed, never silently dropped.\n`
     : '') +
-  `Return exactly one decision per finding, keyed by the \`ref\` field carried on ` +
-  `that finding — copy it verbatim (it is a unique id; do not reconstruct it).\n\n` +
-  `Findings to classify:\n${dataBlock('FINDINGS', findings)}\n\n` +
+  `Key each verdict back to its finding by the \`ref\` field carried on that ` +
+  `finding — copy it verbatim (it is a unique id; do not reconstruct it from other ` +
+  `fields).\n\n` +
+  `Findings to judge:\n${dataBlock('FINDINGS', findings)}\n\n` +
   READONLY
 
 // A finding's stable, UNIQUE id. file:line_start:category alone collides when
 // two findings share a file+line+category (e.g. two correctness findings on the
-// same line), which would make rescore/classify silently overwrite one
-// disposition with the other's. The trailing index disambiguates; it is stamped
-// onto each finding (as `.ref`) before rescore/classify so the judge and
-// gatekeeper key off the exact same id we read back.
+// same line), which would make the judge silently overwrite one finding's
+// certainty + disposition with the other's. The trailing index disambiguates; it
+// is stamped onto each finding (as `.ref`) before the judge runs so the judge
+// keys its verdicts off the exact same id we read back.
 const refOf = (f) => f.ref
+
+// Apply one fresh-judge result to the assembled findings and partition them into
+// blocking vs deferrable — the core of the merged Judge stage (#491), extracted
+// here (before the orchestration body, like `computeClean`) so the single-pass
+// invariant is unit-testable. It MUTATES each finding's `certainty` in place (the
+// re-scored level/confidence) and returns `{ blocking, deferrable,
+// budgetExhausted }`:
+//   - success (`judged` truthy): certainty AND disposition are read from the SAME
+//     verdict object, keyed by `ref`, so the two outputs can never come from
+//     different verdicts. A finding whose ref the judge omitted keeps producer
+//     certainty and falls to the default disposition below.
+//   - failure (`judged` null — budget-skipped or threw): certainty is left at the
+//     producer value and `budgetExhausted` is forced true, so the cycle is PARTIAL
+//     and can never read as clean (#270), matching the old two-stage fallbacks.
+//   - default disposition for any finding with no judge disposition: `deferrable`
+//     when the budget was exhausted (file it, never drop) else `blocking` (an
+//     unclassified finding is surfaced, not silently ignored).
+// `budgetExhausted` is returned (not just read) because the null-judged path flips
+// it, and the caller's `clean` computation must see that flip.
+const applyJudgeVerdicts = (rawFindings, judged, budgetExhausted) => {
+  const dispByRef = new Map()
+  if (judged) {
+    const verdictByRef = new Map(judged.verdicts.map((v) => [v.ref, v]))
+    for (const f of rawFindings) {
+      const v = verdictByRef.get(refOf(f))
+      if (v) {
+        f.certainty = { ...f.certainty, level: v.certainty.level, confidence: v.certainty.confidence }
+        dispByRef.set(refOf(f), v.disposition)
+      }
+    }
+  } else {
+    budgetExhausted = true
+  }
+  const blocking = []
+  const deferrable = []
+  for (const f of rawFindings) {
+    const disp = dispByRef.get(refOf(f)) || (budgetExhausted ? 'deferrable' : 'blocking')
+    if (disp === 'deferrable') deferrable.push(f)
+    else blocking.push(f)
+  }
+  return { blocking, deferrable, budgetExhausted }
+}
 
 // The per-cycle `clean` predicate, shared by BOTH return paths (the
 // empty-findings early return and the final classified return). A cycle is clean
@@ -708,87 +749,53 @@ if (rawFindings.length === 0) {
 
 // Stamp a UNIQUE, stable ref onto every finding now that the full set is
 // assembled (review dimensions + folded PR comments). The index guarantees
-// uniqueness even when file+line+category collide, so rescore and classify can
-// key dispositions back without one finding overwriting another's verdict.
+// uniqueness even when file+line+category collide, so the judge can key its
+// certainty + disposition verdicts back without one finding overwriting another's.
 rawFindings.forEach((f, i) => {
   f.ref = `${f.file}:${f.line_start}:${f.category}#${i}`
 })
 
-// --- Rescore (fresh judge panel; no producer self-grading) ------------------
-phase('Rescore')
+// --- Judge (one fresh pass: re-score certainty AND blocking vs deferrable) ---
+// One `fable` tail agent does what were two separate ones — rescore + classify.
+// Merging them halves the fable tail cost per cycle (#491) while keeping the
+// no-producer-self-grading property (this judge did not produce the findings)
+// and the classify-reads-certainty dependency (now internal to one agent).
+phase('Judge')
 
-const rescored = await tailAgent(
+const judged = await tailAgent(
   () =>
-    agent(rescorePrompt(rawFindings), {
-      label: 'rescore',
-      phase: 'Rescore',
+    agent(judgePrompt(rawFindings, budgetExhausted), {
+      label: 'judge',
+      phase: 'Judge',
       agentType: 'dev-core:code-reviewer',
-      // Escalate the fresh judge panel to fable: it is the last gate before a
-      // finding is surfaced, so its scoring accuracy compounds.
+      // Escalate the fresh judge to fable: it is the last gate before a finding
+      // is surfaced — its re-scored certainty and its blocking-vs-deferrable
+      // verdict both decide what stops a ship, so a wrong call is expensive
+      // either way.
       model: 'fable',
-      schema: RESCORE_SCHEMA,
+      schema: JUDGE_SCHEMA,
     }),
-  'rescore'
+  'judge'
 )
 
-if (rescored) {
-  const scoreByRef = new Map(rescored.scores.map((s) => [s.ref, s.certainty]))
-  for (const f of rawFindings) {
-    const next = scoreByRef.get(refOf(f))
-    if (next) {
-      f.certainty = { ...f.certainty, level: next.level, confidence: next.confidence }
-    }
-  }
-} else {
-  // Rescore skipped/failed: keep producer certainty, and mark the cycle partial.
-  // The tail floor (TAIL_FLOOR) is below the fan-out floor, so rescore can be
-  // budget-skipped while a later classify still runs — without this flag such a
+if (!judged) {
+  // Judge skipped/failed: applyJudgeVerdicts keeps producer certainty and forces
+  // the cycle partial (budgetExhausted) so unclassified findings default to
+  // deferrable (filed, never dropped) and `clean` stays false — a cycle that
+  // never ran its judge must not read as clean. The tail floor (TAIL_FLOOR) is
+  // below the fan-out floor, so the judge can be budget-skipped; without this the
   // truncated cycle could read as clean, breaking the "clean is unforgeable by
-  // truncation" invariant (#270). Matches the classify + comment-triage
-  // fallbacks here and the code-reviewer rescore fallback.
-  budgetExhausted = true
-  log('rescore step failed — keeping producer certainty as a fallback')
+  // truncation" invariant (#270). Matches the comment-triage fallback here and
+  // the code-reviewer rescore fallback.
+  log('judge step failed — keeping producer certainty and applying default dispositions')
 }
 
-// --- Classify (fresh gatekeeper: blocking vs deferrable) --------------------
-phase('Classify')
-
-const classified = await tailAgent(
-  () =>
-    agent(classifyPrompt(rawFindings, budgetExhausted), {
-      label: 'classify',
-      phase: 'Classify',
-      agentType: 'dev-core:code-reviewer',
-      // Escalate the fresh gatekeeper to fable: the blocking-vs-deferrable
-      // verdict decides what stops a ship, so a wrong call is expensive either
-      // way.
-      model: 'fable',
-      schema: CLASSIFY_SCHEMA,
-    }),
-  'classify'
-)
-
-// Default disposition if the classifier dropped a finding or failed entirely:
-// when the budget was exhausted, defer (file it, never drop); otherwise treat
-// an unclassified finding as blocking so it is not silently ignored.
-if (!classified) {
-  // Classify skipped/failed: the cycle is partial. Mark it so unclassified
-  // findings default to deferrable (filed, never dropped) below, and so `clean`
-  // stays false — a cycle that never ran its gatekeeper must not read as clean.
-  budgetExhausted = true
-  log('classify step failed — applying default dispositions')
-}
-const dispByRef = new Map(
-  classified ? classified.decisions.map((d) => [d.ref, d.disposition]) : []
-)
-
-const blocking = []
-const deferrable = []
-for (const f of rawFindings) {
-  const disp = dispByRef.get(refOf(f)) || (budgetExhausted ? 'deferrable' : 'blocking')
-  if (disp === 'deferrable') deferrable.push(f)
-  else blocking.push(f)
-}
+// Apply the judge's re-scored certainty + dispositions and partition the findings.
+// The helper mutates each finding's certainty in place and, on a null judge,
+// flips budgetExhausted true — so read it back for the `clean` computation below.
+const applied = applyJudgeVerdicts(rawFindings, judged, budgetExhausted)
+const { blocking, deferrable } = applied
+budgetExhausted = applied.budgetExhausted
 
 const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
 for (const f of rawFindings) {
