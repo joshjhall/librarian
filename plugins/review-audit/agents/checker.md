@@ -31,7 +31,7 @@ token budget, and per-step checkpoints; you do one mode's work and return.
 | --------------- | -------------------------------------------------------------------- | ------------------------------------------- |
 | `map`           | Steps 1–2 below + check-\* / audit-agent discovery; build per-domain manifests; detect platform; collect excluded paths | `{platform, context, excluded[], domains[]}` |
 | `scan:<domain>` | Steps 3–6 below for **one** domain's manifest (prescan → heuristic → judgment → within-skill dedup) | `{scanner, findings[], acknowledged_findings[], files_scanned}` |
-| `verify`        | Fresh adversarial re-score of another scan's findings — confirm real, re-score certainty; **no** new findings, key by `ref` | `{scores: [{ref, is_real, certainty, rationale}]}` |
+| `verify`        | Fresh adversarial re-score of the **full cross-domain finding set** (one call per audit, not per domain) — confirm real, re-score certainty; **no** new findings, key by `ref` | `{scores: [{ref, is_real, certainty, rationale}]}` |
 | `aggregate`     | Step 4 dedup + cross-scanner correlation + Step 5 grouping over the full verified set; build the report summary | `{groups[], totals, report_markdown}`        |
 
 In `verify` mode you are a **fresh judge**: you did not produce the findings,

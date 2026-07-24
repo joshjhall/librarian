@@ -109,11 +109,12 @@ The harness phases are **Map → Scan → Verify → Aggregate → File**:
 - **Map** — one `checker` call (`mode: map`) does Steps 1–2 (in
   `orchestration-protocol.md`) plus check-\* skill / audit-agent discovery,
   returning one manifest per scanner domain.
-- **Scan → Verify** — a pipeline **without a barrier**: each domain's
-  `scan:<domain>` (Steps 1–2.5 deterministic prescan + heuristic + judgment,
-  per the `checker` agent) streams straight into a **fresh** `checker`
-  `verify` that re-scores certainty and refutes false positives — domains
-  verify as soon as they finish scanning, not after all scans complete.
+- **Scan** — a fan-out **without a barrier**: each domain's `scan:<domain>`
+  (Steps 1–2.5 deterministic prescan + heuristic + judgment, per the `checker`
+  agent) runs concurrently, streaming its findings into the shared set.
+- **Verify** — a **single barrier**: one **fresh** `checker` `verify` re-scores
+  certainty and refutes false positives across the whole cross-domain finding
+  set at once — one top-tier pass per audit, not one per domain (#490).
 - **Aggregate** — a barrier `checker` step (`mode: aggregate`) applies Step 4
   dedup + cross-scanner correlation and Step 5 grouping, returning issue
   payloads keyed by finding ref plus the report summary.
@@ -186,8 +187,8 @@ aggregation are the harness's job.
   `audit-*` agents are an execution surface for a hostile repo — both run only
   when `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1` is set (see
   `orchestration-protocol.md`).
-- **Step 3 — Scan Each Domain**: harness Scan + adversarial Verify phases over
-  each manifest.
+- **Step 3 — Scan Each Domain**: harness Scan fan-out over each manifest, then
+  one adversarial Verify barrier over the full finding set.
 - **Step 4 — Aggregate & Deduplicate**: within-scanner dedup, cross-scanner
   correlation, filter, sort, group into issue payloads.
 - **Step 5 — Route Artifacts by Objective**: for `output: issues` fan one

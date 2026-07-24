@@ -1,11 +1,11 @@
 export const meta = {
   name: 'codebase-audit',
   description:
-    'Budgeted, resumable codebase audit: a map step partitions the scope into per-domain scanner manifests, then each domain runs as its own scan -> adversarial-verify pipeline (no barrier) under ONE shared token budget with a per-domain checkpoint, a fresh checker re-scores certainty (no producer self-grading), an aggregate barrier dedups + correlates + groups, and a final fan-out routes the grouped findings to the run objective — filing one issue per group via issue-writer, OR writing them to ./audit/{timestamp}/ via artifact-writer — always plus a report summary. Drives the checker + issue-writer + artifact-writer agents via agentType (NOT workflow()) so the one Workflow nesting level stays free; the harness owns orchestration only and never edits code.',
+    'Budgeted, resumable codebase audit: a map step partitions the scope into per-domain scanner manifests, then every domain scans concurrently (no barrier) under ONE shared token budget, a single fresh-checker adversarial-verify barrier re-scores certainty over the whole finding set (no producer self-grading; one top-tier pass per audit, not per domain), an aggregate barrier dedups + correlates + groups, and a final fan-out routes the grouped findings to the run objective — filing one issue per group via issue-writer, OR writing them to ./audit/{timestamp}/ via artifact-writer — always plus a report summary. Drives the checker + issue-writer + artifact-writer agents via agentType (NOT workflow()) so the one Workflow nesting level stays free; the harness owns orchestration only and never edits code.',
   phases: [
     { title: 'Map', detail: 'partition scope into per-domain scanner manifests; discover check-* skills + project audit agents' },
     { title: 'Scan', detail: 'one checker scan per domain (patterns.sh prescan + heuristic + judgment), fanned without a barrier' },
-    { title: 'Verify', detail: 'a fresh checker adversarially re-scores each domain findings as soon as its scan finishes' },
+    { title: 'Verify', detail: 'barrier: one fresh checker adversarially re-scores + refutes the full cross-domain finding set (one top-tier pass, not per domain)' },
     { title: 'Aggregate', detail: 'barrier: dedup, cross-scanner correlation, severity filter, group into issue payloads' },
     { title: 'File', detail: 'route by objective: parallel issue-writer fan-out (dedupe-before-create) OR artifact-writer file output; plus the report summary' },
   ],
@@ -581,8 +581,12 @@ const scanPrompt = (domain) => {
   )
 }
 
-const verifyPrompt = (domainName, findings) =>
-  `Mode: verify (domain: ${sanitize(domainName)}). You are a FRESH adversarial ` +
+// One adversarial verify barrier over the full cross-domain finding set (#490):
+// each finding carries a globally-unique `ref` (domain-prefixed by stampRefs) and
+// its file path, so the judge needs no per-domain scoping — it keys every score
+// back by that ref.
+const verifyPrompt = (findings) =>
+  `Mode: verify. You are a FRESH adversarial ` +
   `judge — you did NOT produce these findings.\n` +
   `For EACH finding below, independently decide:\n` +
   `- is_real: false if the evidence does not actually support the finding ` +
@@ -700,6 +704,32 @@ const artifactWriterPrompt = (outDir, reportPath, reportMarkdown, findings, grou
 const stampRefs = (domainName, findings) =>
   findings.map((f, i) => ({ ...f, ref: `${domainName}:${f.file}:${f.line_start}:${f.category}#${i}` }))
 
+// Apply a verify pass's scores to the findings it judged. A fresh adversarial
+// checker returns one score per finding keyed by the unique `ref` the harness
+// stamped; this drops the refuted ones and re-scores certainty on the rest.
+// Pure (no I/O, never mutates its inputs) so validate-workflow-helpers.mjs can
+// unit-test the refute/re-score/keep semantics offline. Rules:
+//   - Drop a finding ONLY on an explicit refutation (is_real === false); an
+//     unscored finding (no matching ref) is KEPT — a verify that omits a ref is
+//     silence, not refutation, so nothing is lost.
+//   - Return a NEW object per kept finding rather than mutating in place, so the
+//     caller's original `findings` array is never altered (keeps every fail-open
+//     path that returns the unverified findings, and any future reuse, safe).
+const applyVerifyScores = (findings, scores) => {
+  const byRef = new Map((scores || []).map((s) => [s.ref, s]))
+  const confirmed = []
+  for (const f of findings) {
+    const s = byRef.get(f.ref)
+    if (s && s.is_real === false) continue
+    confirmed.push(
+      s && s.certainty
+        ? { ...f, certainty: { ...f.certainty, level: s.certainty.level, confidence: s.certainty.confidence } }
+        : f
+    )
+  }
+  return confirmed
+}
+
 // Render the persisted report's coverage caveat. `skipped` is the list of
 // domains that never fully scanned ([{name, reason}] — budget-skipped or
 // scan-failed), so the durable artifact names the gaps instead of reading as
@@ -777,14 +807,13 @@ if (domains.length === 0) {
 }
 log(`mapped ${domains.length} domain(s): ${domains.map((d) => d.name).join(', ')}`)
 
-// --- Scan -> Verify (pipeline, NO barrier) ----------------------------------
-// Each domain streams from scan straight into its own verify the moment its scan
-// finishes — domain B can still be scanning while domain A is being verified.
-// Both phase markers are declared up front: the two stages interleave across
-// domains, so there is no single wall-clock boundary between them, but each
-// agent() call still tags its own phase for the progress grouping.
+// --- Scan (fan-out, NO barrier) ---------------------------------------------
+// Every domain scans concurrently; there is no per-domain verify stage anymore.
+// The adversarial verify is ONE fable barrier over the whole finding set below
+// (issue #490) — collapsing the old O(domains) per-domain fable passes to O(1),
+// symmetric to the aggregate barrier that already runs a single checker pass
+// over the same collected set.
 phase('Scan')
-phase('Verify')
 let budgetExhausted = false
 // Tracked separately from budgetExhausted: a null agent result is an agent
 // failure (timeout / crash / schema reject), NOT budget exhaustion. Conflating
@@ -793,14 +822,14 @@ let budgetExhausted = false
 let hadScanFailure = false
 // Domains dropped before producing findings, tracked BY NAME (not just the
 // booleans above) so the durable report can name the coverage gaps (#262). Only
-// scan-skip / scan-fail land here — a verify-stage budget skip keeps its scanned
-// findings (fail-open) and stays in scannedDomains, so it is not a gap.
+// scan-skip / scan-fail land here — the verify barrier below keeps its findings
+// on a budget skip (fail-open), so a scanned domain is never a coverage gap.
 const skippedDomains = []
 
-const verified = await pipeline(
+const scanned = await pipeline(
   domains,
-  // Stage 1: scan one domain. Budget-gated INSIDE the thunk so mid-fan-out
-  // exhaustion is seen (a synchronous pre-check during list build would not).
+  // Scan one domain. Budget-gated INSIDE the thunk so mid-fan-out exhaustion is
+  // seen (a synchronous pre-check during list build would not).
   (domain) => {
     if (budget.total && budget.remaining() < BUDGET_FLOOR) {
       budgetExhausted = true
@@ -829,64 +858,71 @@ const verified = await pipeline(
       }
     })
   },
-  // Stage 2: a fresh checker adversarially verifies this domain's findings.
-  (scanResult, domain) => {
-    if (!scanResult) return null
-    if (scanResult.findings.length === 0) return scanResult
-    if (budget.total && budget.remaining() < BUDGET_FLOOR) {
-      // No budget to verify: keep the findings rather than drop them (fail-open),
-      // and mark the audit partial so the caller knows verification was skipped.
-      budgetExhausted = true
-      log(`budget low — kept "${domain.name}" findings UNVERIFIED (re-run to adversarially verify)`)
-      return scanResult
-    }
-    return agent(verifyPrompt(domain.name, scanResult.findings), {
-      label: `verify:${domain.name}`,
-      phase: 'Verify',
-      agentType: 'review-audit:checker',
-      // Escalate the adversarial judge to fable: a false verdict here either
-      // drops a real finding or ships a false positive, so quality compounds.
-      model: 'fable',
-      schema: VERIFY_SCHEMA,
-    }).then((v) => {
-      if (!v) {
-        // Verify failed — keep findings (fail-open) so nothing is silently lost.
-        log(`verify FAILED for "${domain.name}" — keeping unverified findings`)
-        return scanResult
-      }
-      const byRef = new Map(v.scores.map((s) => [s.ref, s]))
-      const confirmed = []
-      for (const f of scanResult.findings) {
-        const s = byRef.get(f.ref)
-        // Drop ONLY on an explicit refutation; an unscored finding is kept.
-        if (s && s.is_real === false) continue
-        // Push a NEW object rather than mutating f in place, so the original
-        // scanResult.findings entries are never altered (keeps the fail-open
-        // paths that return scanResult unchanged, and any future reuse, safe).
-        confirmed.push(
-          s && s.certainty
-            ? { ...f, certainty: { ...f.certainty, level: s.certainty.level, confidence: s.certainty.confidence } }
-            : f
-        )
-      }
-      const dropped = scanResult.findings.length - confirmed.length
-      if (dropped > 0) log(`verify dropped ${dropped} refuted finding(s) in "${domain.name}"`)
-      return { ...scanResult, findings: confirmed }
-    })
-  },
 )
 
-// Assemble the confirmed set. `pipeline` nulls any item whose stage threw, and
-// our stages also return null on a budget skip / scan failure — both already
+// Assemble the scanned set. `pipeline` nulls any item whose stage threw, and the
+// scan thunk also returns null on a budget skip / scan failure — both already
 // logged above, so filtering here drops nothing silently.
 const scannedDomains = []
 const acknowledgedAll = []
-const allFindings = []
-for (const r of verified) {
+let allFindings = []
+for (const r of scanned) {
   if (!r) continue
   scannedDomains.push(r.domain)
   for (const a of r.acknowledged) acknowledgedAll.push(a)
   for (const f of r.findings) allFindings.push(f)
+}
+
+// --- Verify (ONE fable barrier over the full finding set) -------------------
+// A single fresh adversarial checker re-scores certainty and refutes false
+// positives across EVERY domain's findings at once — no producer self-grading,
+// and exactly one fable-tier call per audit regardless of domain count (#490).
+// Findings carry a globally-unique `ref` (stampRefs prefixes the domain), so one
+// verify keyed by ref maps back correctly — the same invariant aggregate relies
+// on. Skipped only when there is nothing to judge (no findings). Fail-open on a
+// budget skip or a verify failure: keep the unverified findings, never drop a
+// real one silently.
+phase('Verify')
+if (allFindings.length > 0) {
+  if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+    budgetExhausted = true
+    log('budget low — kept all findings UNVERIFIED (re-run to adversarially verify)')
+  } else {
+    // Route through tailAgent: this is a TERMINAL single-agent stage (it runs
+    // after every scan, holds the whole finding set, on the priciest tier), so a
+    // throw here is NOT caught by pipeline()/parallel() and would kill the run
+    // AFTER every scan completed — discarding every finding instead of failing
+    // open. tailAgent turns a throw / mid-tail budget overshoot into a null,
+    // which the fail-open branch below already handles (same guard the aggregate
+    // and artifact-writer tail calls use).
+    const v = await tailAgent(
+      () =>
+        agent(verifyPrompt(allFindings), {
+          label: 'verify',
+          phase: 'Verify',
+          agentType: 'review-audit:checker',
+          // Escalate the adversarial judge to fable: a false verdict here either
+          // drops a real finding or ships a false positive, so quality compounds.
+          model: 'fable',
+          schema: VERIFY_SCHEMA,
+        }),
+      'verify'
+    )
+    if (!v) {
+      // Verify failed / was budget-skipped mid-tail — keep findings (fail-open)
+      // so nothing is silently lost. Flag budget_exhausted only when the budget
+      // is genuinely the cause (a tail overshoot), mirroring the aggregate null
+      // path, so the caller isn't told "re-run with more budget" on a plain
+      // agent failure.
+      if (budgetLow()) budgetExhausted = true
+      log('verify FAILED — keeping all findings unverified')
+    } else {
+      const before = allFindings.length
+      allFindings = applyVerifyScores(allFindings, v.scores)
+      const dropped = before - allFindings.length
+      if (dropped > 0) log(`verify dropped ${dropped} refuted finding(s)`)
+    }
+  }
 }
 
 if (allFindings.length === 0) {

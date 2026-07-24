@@ -114,16 +114,27 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
 // codebase-audit — sanitize / sanitizeList / dataBlock / stampRefs / finalResult
 // =============================================================================
 {
-  const { sanitize, sanitizeList, dataBlock, stableStringify, stampRefs, finalResult, coverageSection } =
-    extractHelpers(CA, [
-      "sanitize",
-      "sanitizeList",
-      "dataBlock",
-      "stableStringify",
-      "stampRefs",
-      "finalResult",
-      "coverageSection",
-    ]);
+  const {
+    sanitize,
+    sanitizeList,
+    dataBlock,
+    stableStringify,
+    stampRefs,
+    applyVerifyScores,
+    verifyPrompt,
+    finalResult,
+    coverageSection,
+  } = extractHelpers(CA, [
+    "sanitize",
+    "sanitizeList",
+    "dataBlock",
+    "stableStringify",
+    "stampRefs",
+    "applyVerifyScores",
+    "verifyPrompt",
+    "finalResult",
+    "coverageSection",
+  ]);
 
   // sanitize: the prompt-injection control. CR/LF/TAB and other C0/C1 control
   // chars must become spaces (a smuggled newline must not start a new prompt
@@ -227,6 +238,119 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
   ok(
     stamped[0].file === "a.md" && stamped[0].category === "stale",
     "stampRefs: original finding fields are preserved alongside ref",
+  );
+
+  // applyVerifyScores: the verify barrier's refute/re-score/keep logic (#490).
+  // A single fable pass judges the full cross-domain set; this maps its scores
+  // back by `ref`, drops explicit refutations, re-scores certainty on the rest,
+  // and NEVER mutates its inputs. (Extracted so the collapse to one pass is
+  // behaviorally equivalent to the old per-domain inline block — AC#3.)
+  const avsFindings = [
+    { ref: "sec:a.js:1:xss", severity: "high", certainty: { level: "HIGH", support: 2, confidence: 0.8, method: "heuristic" } },
+    { ref: "sec:b.js:2:sqli", severity: "critical", certainty: { level: "CRITICAL", support: 3, confidence: 0.9, method: "llm" } },
+    { ref: "doc:c.md:3:stale", severity: "low", certainty: { level: "LOW", support: 1, confidence: 0.6, method: "heuristic" } },
+  ];
+  const avsScores = [
+    // Explicit refutation → dropped.
+    { ref: "sec:a.js:1:xss", is_real: false, certainty: { level: "LOW", confidence: 0.2 } },
+    // Confirmed + re-scored → kept with the judge's level/confidence.
+    { ref: "sec:b.js:2:sqli", is_real: true, certainty: { level: "HIGH", confidence: 0.5 } },
+    // (doc:c.md left UNSCORED — no matching ref)
+  ];
+  const avsResult = applyVerifyScores(avsFindings, avsScores);
+  eq(avsResult.length, 2, "applyVerifyScores: an explicit is_real:false finding is dropped");
+  ok(
+    !avsResult.some((f) => f.ref === "sec:a.js:1:xss"),
+    "applyVerifyScores: the refuted ref is absent from the result",
+  );
+  const rescored = avsResult.find((f) => f.ref === "sec:b.js:2:sqli");
+  eq(rescored.certainty.level, "HIGH", "applyVerifyScores: kept finding gets the judge's re-scored level");
+  eq(rescored.certainty.confidence, 0.5, "applyVerifyScores: kept finding gets the judge's re-scored confidence");
+  eq(
+    rescored.certainty.support,
+    3,
+    "applyVerifyScores: re-score MERGES onto certainty (non-judged fields like support survive)",
+  );
+  const kept = avsResult.find((f) => f.ref === "doc:c.md:3:stale");
+  ok(kept, "applyVerifyScores: an UNSCORED finding is kept (silence is not refutation)");
+  eq(kept.certainty.level, "LOW", "applyVerifyScores: an unscored finding keeps its original certainty");
+  // No-mutation contract: the caller's originals must be untouched (every
+  // fail-open path returns the unverified array, so mutation would corrupt it).
+  eq(avsFindings[0].ref, "sec:a.js:1:xss", "applyVerifyScores: refuted input finding not removed from the source array");
+  eq(
+    avsFindings[1].certainty.level,
+    "CRITICAL",
+    "applyVerifyScores: re-scored input finding's certainty is NOT mutated in place",
+  );
+  ok(
+    rescored !== avsFindings[1],
+    "applyVerifyScores: kept+re-scored finding is a NEW object, not the input reference",
+  );
+  // Fail-open shapes: empty/missing scores keep every finding unchanged.
+  eq(
+    applyVerifyScores(avsFindings, []).length,
+    3,
+    "applyVerifyScores: empty scores keeps ALL findings (fail-open)",
+  );
+  eq(
+    applyVerifyScores(avsFindings, undefined).length,
+    3,
+    "applyVerifyScores: undefined scores keeps ALL findings (fail-open, no throw)",
+  );
+
+  // Cross-domain fixture (#490 AC3): the collapse to ONE verify barrier over the
+  // full finding set must be behaviorally equivalent to the old per-domain pass.
+  // The harness itself can't run offline (sandboxed engine — no import, top-level
+  // await; see this file's header), so exercise the two pure helpers that make up
+  // the collapse the way the harness composes them: stampRefs per domain →
+  // concatenate into one allFindings array (as the assembly loop does) → one
+  // applyVerifyScores over the merged set. This proves the single barrier keys
+  // scores back correctly ACROSS domains and that a refutation in one domain does
+  // not touch another's findings — the equivalence the old per-domain isolation
+  // gave for free.
+  const domA = stampRefs("security", [
+    { file: "x.js", line_start: 5, category: "xss", certainty: { level: "HIGH", confidence: 0.8 } },
+    { file: "x.js", line_start: 9, category: "sqli", certainty: { level: "HIGH", confidence: 0.8 } },
+  ]);
+  const domB = stampRefs("docs", [
+    { file: "x.js", line_start: 5, category: "xss", certainty: { level: "LOW", confidence: 0.4 } },
+  ]);
+  // Colliding file+line+category across domains stay DISTINCT refs (domain prefix)
+  // — the invariant the single barrier and aggregate both rely on.
+  ok(
+    domA[0].ref !== domB[0].ref,
+    "cross-domain fixture: same file+line+category in two domains get distinct refs",
+  );
+  const merged = [...domA, ...domB]; // mirrors the allFindings assembly loop
+  const mergedResult = applyVerifyScores(merged, [
+    // Refute ONLY security's xss; leave the others (incl. docs' identical-shape xss) unscored.
+    { ref: domA[0].ref, is_real: false, certainty: { level: "LOW", confidence: 0.1 } },
+  ]);
+  eq(mergedResult.length, 2, "cross-domain fixture: one refutation drops exactly one finding across the merged set");
+  ok(
+    !mergedResult.some((f) => f.ref === domA[0].ref),
+    "cross-domain fixture: the refuted security finding is dropped",
+  );
+  ok(
+    mergedResult.some((f) => f.ref === domB[0].ref),
+    "cross-domain fixture: docs' same-shape finding is UNTOUCHED (refutation is ref-scoped, not shape-scoped)",
+  );
+
+  // verifyPrompt call-site coverage (#260 pattern): the rewritten single-arg
+  // verifyPrompt(findings) must still route the untrusted finding set through the
+  // dataBlock DATA-ONLY fence — a regression that interpolated findings directly
+  // would reopen the prompt-injection hole the fence closes. Mirrors the
+  // rescorePrompt/mergePrompt call-site tests elsewhere in this file.
+  const vpFindings = [{ ref: "security:x.js:5:xss", title: "MARKER_TITLE_9f", certainty: { level: "HIGH", confidence: 0.8 } }];
+  const vp = verifyPrompt(vpFindings);
+  ok(vp.includes("<<<FINDINGS"), "verifyPrompt: fences the finding set with the DATA-ONLY FINDINGS marker");
+  ok(
+    vp.includes(dataBlock("FINDINGS", vpFindings)),
+    "verifyPrompt: threads findings through dataBlock (injection fence intact after the single-arg refactor)",
+  );
+  ok(
+    !/Mode: verify \(domain:/.test(vp),
+    "verifyPrompt: no longer carries a per-domain scoping line (single cross-domain barrier)",
   );
 
   // finalResult: ALWAYS returns the required top-level keys + a summary carrying
