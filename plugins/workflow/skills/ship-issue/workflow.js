@@ -1006,8 +1006,8 @@ rawFindings.forEach((f, i) => {
 })
 
 // --- Judge (one fresh pass: re-score certainty AND blocking vs deferrable) ---
-// One `fable` tail agent does what were two separate ones — rescore + classify.
-// Merging them halves the fable tail cost per cycle (#491) while keeping the
+// One tail agent does what were two separate ones — rescore + classify. Merging
+// them halves the judge tail cost per cycle (#491) while keeping the
 // no-producer-self-grading property (this judge did not produce the findings)
 // and the classify-reads-certainty dependency (now internal to one agent).
 phase('Judge')
@@ -1018,11 +1018,13 @@ const judged = await tailAgent(
       label: 'judge',
       phase: 'Judge',
       agentType: 'dev-core:code-reviewer',
-      // Escalate the fresh judge to fable: it is the last gate before a finding
-      // is surfaced — its re-scored certainty and its blocking-vs-deferrable
-      // verdict both decide what stops a ship, so a wrong call is expensive
-      // either way.
-      model: 'fable',
+      // Pin the fresh judge to opus: it is the last gate before a finding is
+      // surfaced — its re-scored certainty and its blocking-vs-deferrable
+      // verdict both decide what stops a ship. The accuracy that matters here
+      // comes from judging in a fresh context that did not produce the
+      // findings, not from the tier; opus delivers it at a fraction of fable's
+      // cost on a gate that fires up to MAX_CYCLES times per issue (#526).
+      model: 'opus',
       schema: JUDGE_SCHEMA,
     }),
   'judge'

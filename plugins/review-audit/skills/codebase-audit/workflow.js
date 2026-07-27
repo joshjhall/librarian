@@ -889,8 +889,8 @@ if (allFindings.length > 0) {
     log('budget low — kept all findings UNVERIFIED (re-run to adversarially verify)')
   } else {
     // Route through tailAgent: this is a TERMINAL single-agent stage (it runs
-    // after every scan, holds the whole finding set, on the priciest tier), so a
-    // throw here is NOT caught by pipeline()/parallel() and would kill the run
+    // after every scan and holds the whole finding set), so a throw here is NOT
+    // caught by pipeline()/parallel() and would kill the run
     // AFTER every scan completed — discarding every finding instead of failing
     // open. tailAgent turns a throw / mid-tail budget overshoot into a null,
     // which the fail-open branch below already handles (same guard the aggregate
@@ -901,9 +901,12 @@ if (allFindings.length > 0) {
           label: 'verify',
           phase: 'Verify',
           agentType: 'review-audit:checker',
-          // Escalate the adversarial judge to fable: a false verdict here either
-          // drops a real finding or ships a false positive, so quality compounds.
-          model: 'fable',
+          // Pin the adversarial judge to opus: a false verdict here either drops
+          // a real finding or ships a false positive, so quality compounds. The
+          // leverage is the adversarial framing plus a context that did not
+          // produce the findings, not the tier — opus holds the bar without
+          // fable's premium on a stage that reads every finding (#526).
+          model: 'opus',
           schema: VERIFY_SCHEMA,
         }),
       'verify'

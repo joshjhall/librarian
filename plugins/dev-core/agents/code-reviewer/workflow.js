@@ -923,9 +923,11 @@ const rescored = await tailAgent(
       label: 'rescore',
       phase: 'Rescore',
       agentType: 'dev-core:code-reviewer',
-      // Escalate the fresh judge panel to fable: it is the last gate before a
-      // finding is surfaced, so its scoring accuracy compounds.
-      model: 'fable',
+      // Pin the fresh judge panel to opus: it is the last gate before a finding
+      // is surfaced, so its scoring accuracy compounds. That accuracy comes
+      // from rescoring in a fresh context that did not produce the findings,
+      // not from the tier — opus buys it without fable's premium (#526).
+      model: 'opus',
       schema: RESCORE_SCHEMA,
     }),
   'rescore'

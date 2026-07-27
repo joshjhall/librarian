@@ -241,7 +241,7 @@ const SHIP = "plugins/workflow/skills/ship-issue/workflow.js";
   );
 
   // applyVerifyScores: the verify barrier's refute/re-score/keep logic (#490).
-  // A single fable pass judges the full cross-domain set; this maps its scores
+  // A single verify pass judges the full cross-domain set; this maps its scores
   // back by `ref`, drops explicit refutations, re-scores certainty on the rest,
   // and NEVER mutates its inputs. (Extracted so the collapse to one pass is
   // behaviorally equivalent to the old per-domain inline block — AC#3.)
@@ -1757,7 +1757,7 @@ for (const path of [ORCH, REBASE]) {
   );
   // #266: the merge model returns REFS, never re-serialized findings — so the
   // prompt must forbid it from emitting the harness-supplied fields (certainty in
-  // particular, which the fable judge panel just set). A regression that re-asks
+  // particular, which the fresh judge panel just set). A regression that re-asks
   // for full finding objects would drop this instruction.
   ok(
     /Do NOT emit scanner, summary, certainty, file, or category/.test(mp),
@@ -2410,7 +2410,7 @@ for (const path of [ORCH, REBASE]) {
       cp.includes(dataBlock("PR_COMMENTS", [{ id: "c1", body: "COMMENT-MARKER" }])),
     "commentsPrompt (ship-issue): PR comments are wrapped in a PR_COMMENTS data block",
   );
-  // The two fable tail passes (rescore + classify) were merged into ONE
+  // The two judge tail passes (rescore + classify) were merged into ONE
   // fresh-judge agent (#491): judgePrompt does both jobs, so the untrusted
   // findings set must still reach it only through the #260 injection fence.
   const jp = judgePrompt(shipFindings, false);
