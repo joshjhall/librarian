@@ -2982,6 +2982,13 @@ for (const path of [ORCH, REBASE]) {
 // tier unpinned by any gate — a revert to 'fable' or a typo'd model string at
 // any of the three gates would pass `just test` and only surface as a surprise
 // on the bill. Assert against the raw source rather than an evaluated helper.
+//
+// Scope each assertion to the OPTIONS BLOCK of the labeled call, not the whole
+// file: a whole-file substring search passes only while each file happens to
+// hold exactly one `model:` literal. It would miss a real regression (this gate
+// dropped to 'sonnet' while some other call in the same file reads 'opus') and
+// would false-fail a legitimate future `fable` stage elsewhere in the file —
+// patterns.md still permits fable with a measured result.
 {
   const TIER_SITES = [
     { path: SHIP, stage: "judge" },
@@ -2990,13 +2997,26 @@ for (const path of [ORCH, REBASE]) {
   ];
   for (const { path, stage } of TIER_SITES) {
     const src = readFileSync(join(repoRoot, path), "utf8");
+    const marker = `label: '${stage}'`;
+    const start = src.indexOf(marker);
+    ok(start !== -1, `${stage} (${path}): labeled agent() call is present`);
+    if (start === -1) continue;
     ok(
-      src.includes("model: 'opus'"),
+      src.indexOf(marker, start + marker.length) === -1,
+      `${stage} (${path}): label is unique, so the slice below is unambiguous`,
+    );
+    // The options object ends at its closing brace — the first `}` at the call's
+    // indentation. `}),` is the agent({...}) close in all three harnesses.
+    const end = src.indexOf("}),", start);
+    ok(end !== -1, `${stage} (${path}): options block terminates`);
+    const optionsBlock = src.slice(start, end);
+    ok(
+      optionsBlock.includes("model: 'opus'"),
       `${stage} (${path}): judge/verify gate pins model: 'opus' (#526)`,
     );
     ok(
-      !src.includes("model: 'fable'"),
-      `${stage} (${path}): no fable-tier agent() call remains (#526)`,
+      !optionsBlock.includes("model: 'fable'"),
+      `${stage} (${path}): judge/verify gate is not on the fable tier (#526)`,
     );
   }
 }
