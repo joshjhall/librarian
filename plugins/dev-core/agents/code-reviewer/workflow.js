@@ -197,7 +197,7 @@ const RESCORE_SCHEMA = {
 // The merge agent used to return `{ scanner, summary, findings: object[] }` with
 // `findings` typed only as `items: { type: 'object' }` — the one untyped hole in
 // this file. Every review's output flowed through it, so the model could silently
-// drop a finding, mangle a field, or re-grade the certainty the fable-tier judge
+// drop a finding, mangle a field, or re-grade the certainty the fresh judge
 // panel had just set, and nothing detected it. Now the model returns only what it
 // legitimately authors (which input findings it kept/merged/suppressed, by their
 // unique `ref`, plus re-sequenced ids and dedup content) and the harness

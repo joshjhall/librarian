@@ -809,8 +809,8 @@ log(`mapped ${domains.length} domain(s): ${domains.map((d) => d.name).join(', ')
 
 // --- Scan (fan-out, NO barrier) ---------------------------------------------
 // Every domain scans concurrently; there is no per-domain verify stage anymore.
-// The adversarial verify is ONE fable barrier over the whole finding set below
-// (issue #490) — collapsing the old O(domains) per-domain fable passes to O(1),
+// The adversarial verify is ONE barrier over the whole finding set below
+// (issue #490) — collapsing the old O(domains) per-domain judge passes to O(1),
 // symmetric to the aggregate barrier that already runs a single checker pass
 // over the same collected set.
 phase('Scan')
@@ -873,10 +873,10 @@ for (const r of scanned) {
   for (const f of r.findings) allFindings.push(f)
 }
 
-// --- Verify (ONE fable barrier over the full finding set) -------------------
+// --- Verify (ONE barrier over the full finding set) -------------------------
 // A single fresh adversarial checker re-scores certainty and refutes false
 // positives across EVERY domain's findings at once — no producer self-grading,
-// and exactly one fable-tier call per audit regardless of domain count (#490).
+// and exactly one judge call per audit regardless of domain count (#490).
 // Findings carry a globally-unique `ref` (stampRefs prefixes the domain), so one
 // verify keyed by ref maps back correctly — the same invariant aggregate relies
 // on. Skipped only when there is nothing to judge (no findings). Fail-open on a

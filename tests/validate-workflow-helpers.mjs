@@ -2972,6 +2972,35 @@ for (const path of [ORCH, REBASE]) {
   );
 }
 
+// =============================================================================
+// Judge/verify model tier is pinned at the three harness call sites (#526)
+// =============================================================================
+// These `model:` literals live in the orchestration body, PAST the
+// ORCH_BOUNDARY that extractHelpers() slices at, so no pure-helper test can
+// reach them; lint-skills-agents.sh only validates the `model:` frontmatter of
+// *.md agent files, never a string literal inside a workflow.js. That left the
+// tier unpinned by any gate — a revert to 'fable' or a typo'd model string at
+// any of the three gates would pass `just test` and only surface as a surprise
+// on the bill. Assert against the raw source rather than an evaluated helper.
+{
+  const TIER_SITES = [
+    { path: SHIP, stage: "judge" },
+    { path: REVIEW, stage: "rescore" },
+    { path: CA, stage: "verify" },
+  ];
+  for (const { path, stage } of TIER_SITES) {
+    const src = readFileSync(join(repoRoot, path), "utf8");
+    ok(
+      src.includes("model: 'opus'"),
+      `${stage} (${path}): judge/verify gate pins model: 'opus' (#526)`,
+    );
+    ok(
+      !src.includes("model: 'fable'"),
+      `${stage} (${path}): no fable-tier agent() call remains (#526)`,
+    );
+  }
+}
+
 // --- Report ------------------------------------------------------------------
 
 if (failures.length > 0) {
