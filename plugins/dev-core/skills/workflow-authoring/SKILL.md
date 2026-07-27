@@ -34,21 +34,25 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
   `haiku`, a full model ID, or `inherit`). Reserve it for the **adversarial
   verify stages** — the "FRESH judge panel, you did NOT produce these findings"
   re-scorers — where a wrong verdict drops a real finding or ships a false
-  positive: those escalate to `model: 'fable'` while the base scan/review stages
-  stay on the agent's default tier. Example (the `rescore` stage in
+  positive: those pin `model: 'opus'` while the base scan/review stages stay on
+  the agent's default tier. Example (the `rescore` stage in
   `code-reviewer/workflow.js`):
 
   ```js
   const rescored = await agent(rescorePrompt(rawFindings), {
     label: 'rescore', phase: 'Rescore',
     agentType: 'dev-core:code-reviewer',
-    model: 'fable', // last gate before a finding surfaces — quality compounds
+    model: 'opus', // last gate before a finding surfaces — quality compounds
     schema: RESCORE_SCHEMA,
   })
   ```
 
-  Don't spread `fable` across every stage; it is the priciest tier, justified
-  only where the call is the final quality gate.
+  `opus` is the ceiling for these gates, not `fable`. What makes a judge stage
+  accurate is the fresh context — it did not produce the findings it is scoring
+  — plus the adversarial framing; the tier is the smaller lever. `fable` costs
+  roughly 2x opus per token and did not buy a matching gain at these gates, so
+  the three harness judge/verify passes moved down to `opus` (#526). Reach for
+  `fable` only with a measured result that justifies it.
 - **Typed schemas**: every `agent()` that returns data uses a JSON-Schema with
   `additionalProperties: false` and an explicit `required` list. Validation
   happens at the tool layer, so the model retries on mismatch.

@@ -809,8 +809,8 @@ log(`mapped ${domains.length} domain(s): ${domains.map((d) => d.name).join(', ')
 
 // --- Scan (fan-out, NO barrier) ---------------------------------------------
 // Every domain scans concurrently; there is no per-domain verify stage anymore.
-// The adversarial verify is ONE fable barrier over the whole finding set below
-// (issue #490) — collapsing the old O(domains) per-domain fable passes to O(1),
+// The adversarial verify is ONE barrier over the whole finding set below
+// (issue #490) — collapsing the old O(domains) per-domain judge passes to O(1),
 // symmetric to the aggregate barrier that already runs a single checker pass
 // over the same collected set.
 phase('Scan')
@@ -873,10 +873,10 @@ for (const r of scanned) {
   for (const f of r.findings) allFindings.push(f)
 }
 
-// --- Verify (ONE fable barrier over the full finding set) -------------------
+// --- Verify (ONE barrier over the full finding set) -------------------------
 // A single fresh adversarial checker re-scores certainty and refutes false
 // positives across EVERY domain's findings at once — no producer self-grading,
-// and exactly one fable-tier call per audit regardless of domain count (#490).
+// and exactly one judge call per audit regardless of domain count (#490).
 // Findings carry a globally-unique `ref` (stampRefs prefixes the domain), so one
 // verify keyed by ref maps back correctly — the same invariant aggregate relies
 // on. Skipped only when there is nothing to judge (no findings). Fail-open on a
@@ -889,8 +889,8 @@ if (allFindings.length > 0) {
     log('budget low — kept all findings UNVERIFIED (re-run to adversarially verify)')
   } else {
     // Route through tailAgent: this is a TERMINAL single-agent stage (it runs
-    // after every scan, holds the whole finding set, on the priciest tier), so a
-    // throw here is NOT caught by pipeline()/parallel() and would kill the run
+    // after every scan and holds the whole finding set), so a throw here is NOT
+    // caught by pipeline()/parallel() and would kill the run
     // AFTER every scan completed — discarding every finding instead of failing
     // open. tailAgent turns a throw / mid-tail budget overshoot into a null,
     // which the fail-open branch below already handles (same guard the aggregate
@@ -901,9 +901,12 @@ if (allFindings.length > 0) {
           label: 'verify',
           phase: 'Verify',
           agentType: 'review-audit:checker',
-          // Escalate the adversarial judge to fable: a false verdict here either
-          // drops a real finding or ships a false positive, so quality compounds.
-          model: 'fable',
+          // Pin the adversarial judge to opus: a false verdict here either drops
+          // a real finding or ships a false positive, so quality compounds. The
+          // leverage is the adversarial framing plus a context that did not
+          // produce the findings, not the tier — opus holds the bar without
+          // fable's premium on a stage that reads every finding (#526).
+          model: 'opus',
           schema: VERIFY_SCHEMA,
         }),
       'verify'

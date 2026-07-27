@@ -29,14 +29,15 @@ tools, naming convention violations. Valid model tokens are `fable`, `opus`,
 
 LLM adds: wrong model selection for the task complexity. Judge against the
 5-generation lineup — `haiku`=mechanical, `sonnet`=balanced default (Sonnet 5),
-`opus`=implementation/most reasoning (Opus 4.8), `fable`=deep reasoning where
-errors are expensive (Fable 5: security audits, review verification,
-orchestration). Flag genuine mismatches (e.g. `fable` on a mechanical
-template-renderer, or `haiku` on a security auditor) — but do NOT flag a
-correct new-lineup choice (e.g. `audit-security`/`audit-architecture` on
-`fable`, or a balanced agent on `sonnet`) as an error. Also flag tool lists that
-include write tools on read-only agents, and descriptions that don't match the
-agent's actual behavior.
+`opus`=implementation, most reasoning, and the judge/verify gates (Opus 5),
+`fable`=only where opus has been measured as insufficient (Fable 5, ~2x opus per
+token). `opus` is the ceiling for review-verification and orchestration gates:
+what makes those accurate is a fresh, adversarial context, not the tier (#526).
+Flag genuine mismatches (e.g. `fable` on a mechanical template-renderer, or
+`haiku` on a security auditor) — but do NOT flag a balanced agent on `sonnet`,
+nor the existing `audit-security`/`audit-architecture` on `fable` (grandfathered,
+predating #526). Also flag tool lists that include write tools on read-only
+agents, and descriptions that don't match the agent's actual behavior.
 
 ### skill-frontmatter (deterministic + heuristic)
 
