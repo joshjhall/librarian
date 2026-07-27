@@ -32,6 +32,7 @@
 #  11c4. check-* deterministic coverage tool (tests/validate-patterns-coverage.sh)
 #  11d. Shellcheck — bundled shell scripts (tests/lint-shellcheck.sh)
 #  11e. Python lint + format — ruff (tests/lint-python.sh)
+#  11f. Lint-gate integrity — runner resolution + skip reporting (tests/validate-lint-gates.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
 #  13. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
@@ -73,6 +74,10 @@ unset _gv
 
 rc=0
 
+# Reserved exit code a stage returns to mean "did NOT run" (see run_stage below).
+# Kept in sync with the same constant in tests/lint-python.sh.
+SKIP_EXIT_CODE=77
+
 # Diagnostic markers. A stage that hangs otherwise takes the whole job to the CI
 # job-level timeout (15m) with no indication of WHICH stage stalled — and GitHub
 # purges timed-out-job logs, so the culprit is unrecoverable afterward. The
@@ -87,6 +92,15 @@ rc=0
 # kill run-all itself (exit 130). Markers alone name the culprit without touching
 # signal behaviour — the robust minimal win. (A safe per-stage kill-budget is a
 # follow-up once the golem-watch group-signal path is itself made CI-robust.)
+#
+# Skip reporting (#538): a stage that could not run — its linter is absent —
+# exits with the reserved sentinel SKIP_EXIT_CODE (77, the autotools SKIP
+# convention) and is rendered `[SKIP] … did not run`, NOT `[ok]`. Before this,
+# tests/lint-python.sh's skip-if-absent branch exited 0 and the summary printed
+# `[ok] Python lint + format (ruff) (0s)` — indistinguishable from a real pass,
+# so the gate sat vacuous and unnoticed on a host with no ruff. A skip does not
+# fail the suite (rc is untouched); it just stops lying about having run. Any
+# future skip-if-absent gate gets the same treatment by returning 77.
 run_stage() {
     local label="$1"
     shift
@@ -96,12 +110,16 @@ run_stage() {
     printf '[>>] %s :: entering at %s\n' "$label" "$(date -u +%H:%M:%S 2>/dev/null || echo '?')"
     local _start _end _elapsed
     _start="$(date +%s 2>/dev/null || echo 0)"
-    local _ok=0
-    if "$@"; then _ok=1; fi
+    # Capture the exit STATUS, not just pass/fail: 77 is a third outcome and an
+    # `if "$@"; then` discards the code that distinguishes it from a failure.
+    local _rc=0
+    "$@" || _rc=$?
     _end="$(date +%s 2>/dev/null || echo 0)"
     _elapsed=$((_end - _start))
-    if [ "$_ok" = "1" ]; then
+    if [ "$_rc" -eq 0 ]; then
         printf '[ok] %s (%ss)\n' "$label" "$_elapsed"
+    elif [ "$_rc" -eq "$SKIP_EXIT_CODE" ]; then
+        printf '[SKIP] %s — did not run (%ss)\n' "$label" "$_elapsed"
     else
         printf '[FAIL] %s (%ss)\n' "$label" "$_elapsed"
         rc=1
@@ -112,8 +130,8 @@ if command -v node >/dev/null 2>&1; then
     run_stage "Manifest validation" node "$SCRIPT_DIR/validate-manifests.mjs"
     run_stage "Workflow helper unit tests" node "$SCRIPT_DIR/validate-workflow-helpers.mjs"
 else
-    printf '[skip] Manifest validation — node not available\n'
-    printf '[skip] Workflow helper unit tests — node not available\n'
+    printf '[SKIP] Manifest validation — did not run (node not available)\n'
+    printf '[SKIP] Workflow helper unit tests — did not run (node not available)\n'
 fi
 
 run_stage "Harness self-test" bash "$SCRIPT_DIR/validate-harness.sh"
@@ -144,6 +162,7 @@ run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner
 run_stage "check-* deterministic coverage tool" bash "$SCRIPT_DIR/validate-patterns-coverage.sh"
 run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck.sh"
 run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
+run_stage "Lint-gate integrity (resolution + skip reporting)" bash "$SCRIPT_DIR/validate-lint-gates.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
