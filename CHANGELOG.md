@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-07-28
+
+### Changed
+
+- Downgrade the 3 fable judge/verify passes to opus (#539)
+- Harden the agnix precedence-dedup semantics (#546)
+
+### Fixed
+
+- Make the Python lint gate fail loud instead of passing vacuously (#540)
+- Never let agnix read the audited repo's own config (#547)
+
+### Improved
+
+- Bound the review harness with a per-cycle token ceiling (#553) (#554)
+- Feed deterministic scan + lint results into the review harness (#556, #557) (#558)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.19.20
+
 ## [0.8.1] - 2026-07-24
 
 ### Changed
@@ -465,6 +486,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.8.2]: https://github.com/joshjhall/librarian/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/joshjhall/librarian/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/joshjhall/librarian/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/joshjhall/librarian/compare/v0.6.2...v0.7.0
