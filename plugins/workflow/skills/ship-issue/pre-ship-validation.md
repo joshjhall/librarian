@@ -195,9 +195,9 @@ behavior is noted inline per check; environment variables referenced here
    terminate the loop as clean) but it means the skill will `cycle++` and re-run.
    A too-low ceiling therefore does not save tokens: it spends its full budget on
    every cycle, never reaches clean, exhausts `REVIEW_MAX_CYCLES`, and **dead-ends
-   the PR** for a human. Worked example from the #471/#472 run (cycle output 367k
-   / 578k / 468k, terminated clean at 1.41M): a 250k ceiling would truncate all
-   three cycles, spend 750k, and still dead-end.
+   the PR** for a human. Worked example from the #471/#472 run (cycle output 173k
+   / 281k / 207k, terminated clean at 660k): a 150k ceiling would truncate all
+   three cycles, spend 450k, and still dead-end.
 
    So size it from **observed** data, not a guess. Every cycle returns a
    `token_report` — `{ output_tokens, ceiling, bound, dimensions_run }` — and logs

@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: b03da476-855a-4340-a1de-499a566aea26
-  modified: 2026-07-28T19:57:36.845Z
+  modified: 2026-07-28T20:24:43.419Z
 ---
 
 PR #554 (branch `perf/review-token-ceiling`) bounds the ship-issue adversarial
@@ -24,10 +24,16 @@ Corollary for any future harness: a gate written `if (budget.total && …)` is
 inert unless the caller arms it. Check whether the caller actually can.
 
 **2. Review cost is driven by in-agent repo exploration, not diff size.**
-Measured on #471/#472 (2026-07-28, 3 cycles): 67.1M cache_read / 2.96M
-cache_write / **1.41M output**. Cycle 2 cost 2.6× cycle 1 on the *same* 2-file
-diff. Per-agent cycle-2 turns: `security` 254 turns / 115 Bash, `conventions`
-139 / 63, `tests` 84 / 35, `bug` 51 / 16, `scope-drift` 18 / 8, `judge` 2 / 0.
+Cycle 2 cost 2.7× cycle 1 on the *same* 2-file diff, and `security` ranged
+13→128 turns across three cycles of nearly the same change.
+
+Full verified numbers live in [[review-cost-baseline-2026-07-28]] — use that,
+not this file, for comparisons. **The figures quoted in PR #554 and in the
+in-code comments (67.1M cache_read, 1.41M output, security 254 turns) are RAW,
+un-deduped sums and run ~2× high**; the deduped truth is 32.2M / 660k /
+security 128 turns. I hit the exact trap [[token-scrape-transcript-dedup]]
+warns about. The conclusions are unaffected (the ratios and the shape hold),
+but the absolute numbers in that PR body should not be quoted forward.
 
 This **overturned** my own prior ranking — I had assumed cycles 2-3 were silent
 full re-reviews and that #492 narrowing was the top lever. It was not; narrowing

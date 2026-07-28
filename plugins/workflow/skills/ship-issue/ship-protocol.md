@@ -109,8 +109,8 @@ These env vars toggle non-default behavior; all are opt-in:
   actually lands therefore does not save tokens** — it truncates every cycle,
   spends its full budget each time, exhausts `REVIEW_MAX_CYCLES`, and dead-ends
   the PR for a human. Worked example from the #471/#472 run (per-cycle output
-  367k / 578k / 468k, terminated clean at 1.41M total): a 250k ceiling would
-  truncate all three cycles, spend 750k, and still dead-end.
+  173k / 281k / 207k, terminated clean at 660k total): a 150k ceiling would
+  truncate all three cycles, spend 450k, and still dead-end.
 
   Size it from measurement, not a guess. Every cycle returns `token_report`
   (`{ output_tokens, ceiling, bound, dimensions_run }`) and logs

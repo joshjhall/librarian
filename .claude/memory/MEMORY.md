@@ -43,7 +43,8 @@
 
 ## Review harness & cost
 
-- [#553 review token ceiling](issue-553-review-token-ceiling.md) — PR #554: budget gates are DEAD CODE without a runtime turn directive; cost = in-agent exploration, not diff size; no turn cap on agent()
+- [Review cost BASELINE 2026-07-28](review-cost-baseline-2026-07-28.md) — frozen pre-change per-cycle/per-dimension numbers (deduped); compare "after" against THIS, not the raw figures in PR #554
+- [#553 review token ceiling](issue-553-review-token-ceiling.md) — PR #554: budget gates are DEAD CODE without a runtime turn directive; ceiling shipped OFF (a too-low one dead-ends the PR); no turn cap on agent()
 - [Token-burn audit 2026-07-21](token-burn-audit-2026-07-21.md) — 4-axis burn audit → #487-#495; biggest lever = golems had no --model dial (#487)
 - [#256 cache-stability pass](issue-256-cache-stability.md) — prompt-prefix cache stability; stableStringify, instructions-first/volatile-last; helpers module-scope
 - [Review-wedge root cause](review-wedge-root-cause.md) — golems wedge in unbounded reviews; #307 wall-bound is PROSE not code; takeover recipe (#327)

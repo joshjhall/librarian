@@ -100,9 +100,9 @@ const deltaFiles = args && Array.isArray(args.deltaFiles) ? args.deltaFiles.filt
 // user "+500k"-style turn directive. In a golem run no such directive exists, so
 // `budget.total` is null, `budget.remaining()` is Infinity, and BUDGET_FLOOR /
 // TAIL_FLOOR never fire — the graceful-degradation path is dead code exactly
-// when it is needed most. Measured consequence (#471/#472, 3 cycles): 67.1M
-// cache_read / 1.41M output, with one `security` agent alone spending 254 turns
-// and 115 Bash calls ranging over the whole repo.
+// when it is needed most. Measured consequence (#471/#472, 3 cycles, deduped by
+// message.id): 32.2M cache_read / 660k output, with one `security` agent alone
+// spending 128 turns and 115 Bash calls ranging over the whole repo.
 //
 // `budget.spent()` DOES work when `total` is null (it returns output tokens
 // spent this turn regardless), so we derive our own remaining-budget view from a
@@ -453,8 +453,8 @@ const READONLY =
 
 // Exploration bounds (#553). The diff and its classifications are supplied
 // below — reviewers do NOT need to rediscover them. Measured on the #471/#472
-// run, reviewers nonetheless ranged over the whole repo: `security` spent 254
-// turns / 115 Bash calls on a 2-file diff, `conventions` 139 turns / 63. Each
+// run, reviewers nonetheless ranged over the whole repo: `security` spent 128
+// turns / 115 Bash calls on a 2-file diff, `conventions` 63 turns / 63. Each
 // tool call re-sends the accumulated context, so an unbounded search multiplies
 // cost superlinearly in turns while adding little the diff does not already
 // show. This is guidance, not enforcement — `agent()` exposes no turn cap — so
