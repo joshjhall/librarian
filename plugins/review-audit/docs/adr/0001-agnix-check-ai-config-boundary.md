@@ -183,6 +183,36 @@ no-op-with-clear-log when the binary is absent.
   the audit path must run with an **operator-controlled** config, mirroring the
   `checker`'s existing `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS` posture for
   project-provided scripts.
+
+  > **Update (#471).** "Must run with an operator-controlled config" is now
+  > enforced as **agnix always runs with an explicit `--config`, naming a file
+  > the operator or the checker owns — never one the audited repo authored.**
+  > Two findings drove the strengthening, both reproduced against the pinned
+  > 0.40.0 and against 0.41.0 —
+  >
+  > 1. **Discovery is per-file, not repo-root.** With no `--config`, agnix walks
+  >    up from *each scanned file's own directory*, so a planted `.agnix.toml` at
+  >    any nested depth is honored and a repo-root check never sees it. An
+  >    explicit `--config` suppresses the walk entirely.
+  > 1. **Git-tracked-ness cannot vouch for a config's content.** A tracked entry
+  >    may be a **symlink** (index mode `120000`) to any path, and a tracked
+  >    regular file may use agnix's **`extend`** key to chain to an untracked,
+  >    absolute, or `../`-traversed config. Both are
+  >    `git ls-files --error-unmatch`-clean and both silently suppress findings.
+  >
+  > So under the `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1` opt-in the checker
+  > pins agnix to a **checker-controlled default config** written outside the
+  > audited tree, and does not read the repo's `.agnix.toml` at all. Trading the
+  > repo's own rule tuning for the removal of an entire attacker-input class is
+  > deliberate; an operator who wants a specific config honored sets
+  > `AGNIX_CONFIG`. Step 3a of `plugins/review-audit/agents/checker.md` carries
+  > the operative rule.
+  >
+  > Separately, both normalizers emitted `--config` *after* the `validate`
+  > subcommand. It is a **global** flag, so agnix rejects that ordering
+  > (`unexpected argument '--config' found`, exit 2) — the `AGNIX_CONFIG` branch
+  > had never actually worked. Fixed in `agnix-normalize.{py,sh}` and pinned by
+  > `tests/validate-agnix-normalize.sh`.
 - **agnix is pinned, not `@latest`.** A `@latest` bump can add rules that fail a
   previously-green tree with no code change — exactly the drift the repo's
   GitHub-Action SHA-pin + dependabot discipline prevents. Pin to a specific

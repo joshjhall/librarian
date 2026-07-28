@@ -55,6 +55,15 @@ CHECKER="$REPO_ROOT/plugins/review-audit/agents/checker.md"
 # catch an extract that ran away past its END sentinel, not to budget prose.
 STEP6_MAX_LINES=110
 
+# Mis-anchor bound for the Step 3a region, same purpose as STEP6_MAX_LINES above
+# (NOT a prose budget). Step 3a carries the enforced trust-gate branches plus
+# #471's always-pin-the-config posture (the per-file discovery rationale, both
+# opted-in sub-branches, and the truth table), so it outgrew assert_wired's
+# 90-line default. Raise this deliberately when Step 3a gains contract text —
+# Step 3a is a named extraction candidate in #503, so this bound should come
+# back DOWN when that prose moves to a companion file.
+STEP3A_MAX_LINES=135
+
 test_suite "agnix → checker wiring (#401)"
 
 # extract_between FILE START END — lines strictly between the first line
@@ -114,7 +123,7 @@ test_step3a_invocation() {
     assert_file_exists "$CHECKER" "checker.md exists"
     local region
     region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a invocation" "$region" 'agnix-normalize.sh <tempfile>'
+    assert_wired "Step 3a invocation" "$region" 'agnix-normalize.sh <tempfile>' "$STEP3A_MAX_LINES"
     assert_contains "$region" 'second' \
         "Step 3a invocation: framed as a SECOND pre-scan source"
     # Discovery log line — pinned like every other pre-scan surface in
@@ -134,7 +143,7 @@ test_step3a_invocation() {
 test_step3a_graceful_degrade() {
     local region
     region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a graceful degrade" "$region" 'skip its contribution'
+    assert_wired "Step 3a graceful degrade" "$region" 'skip its contribution' "$STEP3A_MAX_LINES"
     assert_contains "$region" 'identical to today' \
         "Step 3a graceful degrade: absent agnix => output identical to today"
     assert_contains "$region" 'do NOT drop the skill' \
@@ -147,7 +156,7 @@ test_step3a_graceful_degrade() {
 test_step3a_trust() {
     local region
     region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a trust" "$region" 'AGNIX_CONFIG'
+    assert_wired "Step 3a trust" "$region" 'AGNIX_CONFIG' "$STEP3A_MAX_LINES"
     assert_contains "$region" 'untrusted input' \
         "Step 3a trust: the audited repo .agnix.toml is untrusted input"
     assert_contains "$region" 'CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1' \
@@ -159,6 +168,135 @@ test_step3a_trust() {
         "Step 3a trust: enforces skip when no operator config and no opt-in"
     assert_contains "$region" '[prescan] agnix skipped (no operator-controlled AGNIX_CONFIG' \
         "Step 3a trust: logs the enforced-skip line"
+
+    # #472 item 2 — the two INVOKE branches, previously unpinned (only the
+    # security-critical skip branch above was asserted, so branches (1) and (3)
+    # could be garbled without this gate noticing).
+    assert_contains "$region" 'invoke the normalizer with it inherited' \
+        "Step 3a trust: branch 1 (AGNIX_CONFIG set) invokes with the operator config inherited"
+    assert_contains "$region" 'operator explicitly trusts this repo' \
+        "Step 3a trust: branch 3 (unset + opted in) invokes as the opted-in behavior"
+}
+
+# #471 — the trust hazard is NOT the config the checker reads, it is the one
+# AGNIX reads behind it. agnix's default discovery walks up from EACH scanned
+# file's own directory (verified against the pinned 0.40.0 and 0.41.0), so a
+# hostile repo can plant an .agnix.toml at any depth and a repo-root-only check
+# never sees it. The only reliable defense is to ALWAYS pass an explicit
+# --config, which suppresses the walk entirely. Pin that invariant so a future
+# edit cannot regress to "skip when the root file is untracked" — which reads as
+# safe but silently leaves every nested planted config live.
+test_step3a_config_pinning() {
+    local region
+    region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
+    # Single-line fragments throughout: the prose wraps, so anchor on the half
+    # that fits one source line.
+    assert_wired "Step 3a config pinning" "$region" \
+        'agnix ALWAYS runs with an' "$STEP3A_MAX_LINES"
+
+    # The mechanism — why a repo-root-only check is insufficient.
+    assert_contains "$region" 'walks up from each scanned' \
+        "Step 3a config pinning: states agnix discovery walks up per-file"
+    assert_contains "$region" 'any** directory near the files' \
+        "Step 3a config pinning: names the nested-plant attack a root check would miss"
+    assert_contains "$region" 'suppresses the upward walk' \
+        "Step 3a config pinning: explicit --config is what neutralizes discovery"
+
+    # The opted-in branch ALWAYS uses a checker-owned config — it never reads the
+    # repo's own .agnix.toml at all. Pin the literal required key and the
+    # out-of-tree constraint: a malformed or missing default config would make
+    # agnix fall back to its own discovery, reopening the nested-plant hole this
+    # whole posture exists to close.
+    assert_contains "$region" 'checker-controlled config' \
+        "Step 3a config pinning: the opt-in branch uses a checker-owned default config"
+    assert_contains "$region" 'tools = ["claude-code"]' \
+        "Step 3a config pinning: pins the default config's required key literally"
+    assert_contains "$region" 'never inside the audited' \
+        "Step 3a config pinning: the default config is written outside the audited tree"
+    assert_contains "$region" '[prescan] agnix pinned to default config' \
+        "Step 3a config pinning: logs the default-config pin"
+    assert_contains "$region" 'validate, or point agnix at the repo' \
+        "Step 3a config pinning: forbids reading the repo's own .agnix.toml outright"
+
+    # WHY the repo's own config is never honored, even when git-tracked. Both
+    # bypasses are reproduced (0.40.0 + 0.41.0) and both are ls-files-clean, so
+    # keep the rationale wired — a future edit that "restores" a tracked-file
+    # branch would silently reopen them.
+    assert_contains "$region" 'vouch for what a config resolves to' \
+        "Step 3a config pinning: states tracked-ness does not vouch for content"
+    assert_contains "$region" 'index mode `120000`' \
+        "Step 3a config pinning: names the tracked-symlink bypass"
+    assert_contains "$region" '`extend` key' \
+        "Step 3a config pinning: names the extend-chain bypass"
+    assert_contains "$region" 'no attacker-authored input on this path' \
+        "Step 3a config pinning: pins the principle — remove the class, don't validate it"
+
+    # The load-bearing distinction from the sibling surfaces: skipping is NOT
+    # sufficient here. Keep the rationale wired so a future reader does not
+    # "restore parity" with the other three guards and reopen the hole.
+    assert_contains "$region" 'skipping is not enough here' \
+        "Step 3a config pinning: states why skip-on-untrusted is insufficient at this surface"
+    assert_contains "$region" 'Neutralize the input rather than declining to run' \
+        "Step 3a config pinning: pins the neutralize-not-skip principle"
+}
+
+# #472 item 1 — the four-item agnix-owned category list is duplicated in Step 3a
+# (collection) and Step 6 (precedence dedup) and MUST stay in sync;
+# test_step6_precedence_dedup only asserts the literal phrase "Agnix-owned
+# categories are exactly", never the names themselves nor that the two lists
+# agree. Extract the tokens from both regions and compare the sets.
+test_owned_category_parity() {
+    local step3a step6 cats_3a cats_6 expected
+    step3a="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
+    step6="$(extract_between "$CHECKER" '### Step 6: Merge' '### Step 7:')"
+    assert_not_empty "$step3a" "owned-category parity: Step 3a region extracted"
+    assert_not_empty "$step6" "owned-category parity: Step 6 region extracted"
+
+    # ADR §3 ownership table — the canonical four.
+    expected="$(printf 'agent-frontmatter\nhook-safety\nmcp-misconfiguration\nskill-frontmatter\n')"
+
+    # Scope the extraction to each region's ENUMERATION sentence, not the whole
+    # region. Both regions mention the owned categories incidentally elsewhere
+    # (Step 6 names `hook-safety` three times: the Guard-2 rationale, the
+    # per-issue-match example, and the enumeration), so a whole-region grep +
+    # `sort -u` would still see a token whose enumeration entry was deleted —
+    # i.e. it would pass through exactly the drift this test exists to catch.
+    # Each enumeration is an anchor phrase plus the ~3 wrapped lines that follow.
+    local enum_3a enum_6
+    enum_3a="$(printf '%s\n' "$step3a" | command grep -A3 -F 'ownership table assigns to agnix')"
+    enum_6="$(printf '%s\n' "$step6" | command grep -A3 -F 'Agnix-owned categories are exactly')"
+    assert_not_empty "$enum_3a" \
+        "owned-category parity: Step 3a enumeration sentence located"
+    assert_not_empty "$enum_6" \
+        "owned-category parity: Step 6 enumeration sentence located"
+
+    cats_3a="$(printf '%s\n' "$enum_3a" |
+        command grep -oE 'agent-frontmatter|skill-frontmatter|hook-safety|mcp-misconfiguration' |
+        command sort -u)"
+    cats_6="$(printf '%s\n' "$enum_6" |
+        command grep -oE 'agent-frontmatter|skill-frontmatter|hook-safety|mcp-misconfiguration' |
+        command sort -u)"
+
+    # Plain bash comparison (NOT assert_true, which eval's its argument).
+    local match_3a="no" match_6="no" match_each="no"
+    [ "$cats_3a" = "$expected" ] && match_3a="yes"
+    [ "$cats_6" = "$expected" ] && match_6="yes"
+    [ "$cats_3a" = "$cats_6" ] && match_each="yes"
+
+    assert_equals "yes" "$match_3a" \
+        "owned-category parity: Step 3a enumerates exactly the ADR §3 four"
+    assert_equals "yes" "$match_6" \
+        "owned-category parity: Step 6 enumerates exactly the ADR §3 four"
+    assert_equals "yes" "$match_each" \
+        "owned-category parity: the Step 3a and Step 6 lists are identical (no drift)"
+
+    # The check-ai-config-exclusive pair must be named in BOTH regions as the
+    # excluded categories (ADR §1/§3) — their absence would mean the exclusion
+    # rule went missing, which the precedence dedup depends on.
+    assert_contains "$step3a" 'config-inconsistency' \
+        "owned-category parity: Step 3a names config-inconsistency as NOT agnix-owned"
+    assert_contains "$step6" 'claude-md-drift' \
+        "owned-category parity: Step 6 names claude-md-drift as NOT agnix-owned"
 }
 
 # AC — observe-only: the top-level MUST-NOT restriction list bans agnix autofix,
@@ -302,7 +440,7 @@ test_step6_within_skill_exemption() {
 test_step3a_certainty_tier() {
     local region
     region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a certainty tier" "$region" 'fixed `MEDIUM`'
+    assert_wired "Step 3a certainty tier" "$region" 'fixed `MEDIUM`' "$STEP3A_MAX_LINES"
     assert_contains "$region" '[<RULE-ID>|<SEVERITY>] <message>' \
         "Step 3a certainty tier: pins the evidence prefix carrying the severity"
     assert_contains "$region" 'auto-include fast path' \
@@ -312,6 +450,8 @@ test_step3a_certainty_tier() {
 run_test test_step3a_invocation "Step 3a invokes agnix-normalize as a second pre-scan source"
 run_test test_step3a_graceful_degrade "Step 3a skips agnix contribution when absent (graceful degrade)"
 run_test test_step3a_trust "Step 3a enforces the operator-controlled AGNIX_CONFIG skip-gate"
+run_test test_step3a_config_pinning "Step 3a always pins agnix to an explicit --config, never its own discovery (#471)"
+run_test test_owned_category_parity "Step 3a and Step 6 agnix-owned category lists agree (#472)"
 run_test test_observe_only_restriction "MUST-NOT list bans agnix autofix (observe-only, all 3 flags)"
 run_test test_step6_precedence_dedup "Step 6 precedence-dedups agnix over check-ai-config (agnix-owned categories only)"
 run_test test_step6_drop_guards "Step 6 guards the drop on operator config + agnix severity >= floor (#470)"

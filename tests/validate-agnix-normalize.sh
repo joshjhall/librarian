@@ -151,40 +151,53 @@ EMPTY_LIST="$WORKDIR/empty.txt"
 # in both impls — a divergence class the fixed-output STUB above cannot catch.
 ARGC_FILE="$WORKDIR/argc.txt"
 CONFIG_FILE="$WORKDIR/config-seen.txt"
+CONFIG_POS_FILE="$WORKDIR/config-pos-seen.txt"
 STUB_ARGC="$WORKDIR/stub-argc.sh"
 command cat >"$STUB_ARGC" <<STUBEOF
 #!/usr/bin/env bash
-# Skip the leading "--format json --target claude-code validate", record an
-# optional "--config X" (value, and that it precedes the "--" marker), then the
-# "--" end-of-options marker, then count the remaining path args. Everything
-# after "--" is a positional path regardless of shape.
+# Record an optional "--config X" (its value AND whether it precedes the
+# "validate" subcommand), the "--" end-of-options marker, then count the
+# remaining path args. Everything after "--" is a positional path regardless of
+# shape.
+#
+# --config POSITION IS LOAD-BEARING, not cosmetic: agnix (clap) treats --config
+# as a GLOBAL flag, so "validate --config X" is rejected outright with
+# "unexpected argument '--config' found" and exit 2 — verified on the pinned
+# 0.40.0 and on 0.41.0. An earlier version of this stub only began recording
+# --config AFTER it had seen "validate", so it structurally could not observe
+# the correct (pre-subcommand) placement and reported the broken order as fine.
+# Record the position unconditionally so the assertion can pin it.
 _seen_validate=0
 _after_ddash=0
 _paths=0
 _config="__NONE__"
+_config_pos="__NONE__"
 while [ \$# -gt 0 ]; do
     if [ "\$_after_ddash" = "1" ]; then
         _paths=\$((_paths + 1))
         shift
         continue
     fi
-    if [ "\$_seen_validate" = "1" ]; then
-        case "\$1" in
-            --config)
-                # Record the value; that we see it here (pre-"--") proves correct
-                # ordering — a --config placed after "--" would be counted as a path.
-                shift
-                _config="\$1"
-                ;;
-            --) _after_ddash=1 ;;
-            *) _paths=\$((_paths + 1)) ;;
-        esac
-    fi
-    case "\$1" in validate) _seen_validate=1 ;; esac
+    case "\$1" in
+        --config)
+            shift
+            _config="\$1"
+            # "pre" = correct (global position); "post" = the rejected order.
+            if [ "\$_seen_validate" = "1" ]; then
+                _config_pos="post-validate"
+            else
+                _config_pos="pre-validate"
+            fi
+            ;;
+        --) _after_ddash=1 ;;
+        validate) _seen_validate=1 ;;
+        *) [ "\$_seen_validate" = "1" ] && _paths=\$((_paths + 1)) ;;
+    esac
     shift
 done
 printf '%s' "\$_paths" >"$ARGC_FILE"
 printf '%s' "\$_config" >"$CONFIG_FILE"
+printf '%s' "\$_config_pos" >"$CONFIG_POS_FILE"
 printf '%s\n' '{"diagnostics":[]}'
 STUBEOF
 command chmod +x "$STUB_ARGC"
@@ -600,23 +613,36 @@ test_whitespace_only_line_dropped() {
 
 test_agnix_config_placement() {
     # AGNIX_CONFIG (ADR §5 trust knob) must be forwarded as `--config <value>`
-    # BEFORE the `--` marker (so it is parsed as a flag, not a path), with the
-    # value one argv element (even with a space) and the path count unaffected.
-    # The recording stub captures the value; seeing it pre-`--` proves ordering.
+    # BEFORE the `--` marker (so it is parsed as a flag, not a path) AND BEFORE
+    # the `validate` subcommand, with the value one argv element (even with a
+    # space) and the path count unaffected.
+    #
+    # The pre-`validate` half is not stylistic: agnix (clap) makes --config a
+    # GLOBAL flag, so `validate --config X` is rejected with "unexpected argument
+    # '--config' found" and exit 2 on both the pinned 0.40.0 and 0.41.0 — the
+    # whole AGNIX_CONFIG trust branch is dead on arrival in that order. Because
+    # both impls discard agnix's stderr, that surfaced only as the generic
+    # "produced no JSON output" fail-loud, so nothing pointed at the real cause.
     _cfg="a config/with space.toml"
     : >"$ARGC_FILE"
     : >"$CONFIG_FILE"
+    : >"$CONFIG_POS_FILE"
     RUN_ERR="$WORKDIR/stderr.$$"
     RUN_OUT="$(AGNIX_BIN="$STUB_ARGC" AGNIX_CONFIG="$_cfg" PATTERNS_FORCE_BASH=1 \
         "$REAL_BASH" "$SH" "$SPACE_LIST" 2>"$RUN_ERR")" && RUN_RC=0 || RUN_RC=$?
     assert_exit 0 "$RUN_RC" "bash: AGNIX_CONFIG run exits 0"
     assert_equals "$_cfg" "$(command cat "$CONFIG_FILE")" "bash: --config value forwarded intact (pre-'--', one arg)"
+    assert_equals "pre-validate" "$(command cat "$CONFIG_POS_FILE")" \
+        "bash: --config precedes the 'validate' subcommand (global flag; agnix rejects it after)"
     assert_equals "1" "$(command cat "$ARGC_FILE")" "bash: --config does not perturb the path count"
     if [ "$HAVE_PY" = "1" ]; then
         : >"$ARGC_FILE"
         : >"$CONFIG_FILE"
+        : >"$CONFIG_POS_FILE"
         AGNIX_BIN="$STUB_ARGC" AGNIX_CONFIG="$_cfg" python3 "$PY" "$SPACE_LIST" >/dev/null 2>&1 || true
         assert_equals "$_cfg" "$(command cat "$CONFIG_FILE")" "python: --config value forwarded intact (pre-'--', one arg)"
+        assert_equals "pre-validate" "$(command cat "$CONFIG_POS_FILE")" \
+            "python: --config precedes the 'validate' subcommand (global flag; agnix rejects it after)"
         assert_equals "1" "$(command cat "$ARGC_FILE")" "python: --config does not perturb the path count"
     fi
 }

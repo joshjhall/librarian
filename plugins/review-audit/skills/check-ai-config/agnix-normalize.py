@@ -168,10 +168,18 @@ def run_agnix(agnix_bin: str, paths: list[str]) -> str:
     usable output. agnix exits non-zero when it finds errors, so a non-zero exit
     is NOT itself a failure — only an empty/blank stdout is.
     """
-    cmd = [agnix_bin, "--format", "json", "--target", "claude-code", "validate"]
+    # `--config` is a GLOBAL flag and MUST precede the `validate` subcommand —
+    # agnix (clap-based) rejects `validate --config …` with "unexpected argument
+    # '--config' found" and exit 2, verified on both the pinned 0.40.0 and
+    # 0.41.0. Emitting it after `validate` made the whole AGNIX_CONFIG branch
+    # non-functional; because stderr is captured but not surfaced, that appeared
+    # only as the generic "produced no JSON output" fail-loud, never as the real
+    # cause.
+    cmd = [agnix_bin, "--format", "json", "--target", "claude-code"]
     config = os.environ.get("AGNIX_CONFIG", "")
     if config:
         cmd += ["--config", config]
+    cmd += ["validate"]
     # A `--` end-of-options marker before the paths: the manifest is built from
     # the audited repo's tree (untrusted per ADR §5), and a Unix filename may
     # legally begin with `-`/`--`. Without the terminator, agnix (clap-based)
