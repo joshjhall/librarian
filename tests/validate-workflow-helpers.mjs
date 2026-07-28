@@ -3117,6 +3117,48 @@ for (const path of [ORCH, REBASE]) {
   }
 }
 
+// =============================================================================
+// ship-issue — the ceiling is OFF by default and every cycle reports its cost
+// =============================================================================
+// A ceiling set below where output actually lands is WORSE than none: hitting it
+// forces `clean` false, which makes the skill cycle++ and re-run, so a too-low
+// ceiling spends its full budget every cycle, exhausts REVIEW_MAX_CYCLES and
+// dead-ends the PR. The default must therefore be unbounded, and the harness
+// must emit the data needed to size a ceiling from observation instead.
+{
+  const src = readFileSync(join(repoRoot, SHIP), "utf8");
+
+  // Both return paths report cost — the findings path and the empty/early path.
+  // Excluding the empty path would bias the sample an operator sizes from.
+  eq(
+    (src.match(/token_report:\s*\{/g) || []).length,
+    2,
+    "ship-issue: token_report is on BOTH the findings and empty return paths (#553)",
+  );
+  ok(
+    /output_tokens:\s*reviewBudget\.spent\(\)/.test(src),
+    "ship-issue: token_report reports actual spend via reviewBudget.spent()",
+  );
+  // The report must be emitted on unbounded runs too — that is its whole purpose.
+  ok(
+    /bound:\s*budget\.total\s*\?\s*'runtime'\s*:\s*CYCLE_TOKEN_CEILING\s*\?\s*'caller'\s*:\s*'none'/.test(src),
+    "ship-issue: token_report names the live bound, including 'none' (#553)",
+  );
+
+  // No default ceiling anywhere in the caller protocol docs: an unset
+  // REVIEW_TOKEN_CEILING must mean the arg is OMITTED, not defaulted to a number.
+  for (const doc of [
+    "plugins/workflow/skills/ship-issue/pre-ship-validation.md",
+    "plugins/workflow/skills/ship-issue/ci-review-protocol.md",
+  ]) {
+    const d = readFileSync(join(repoRoot, doc), "utf8");
+    ok(
+      !/tokenCeiling:\s*<REVIEW_TOKEN_CEILING,\s*default\s*\d/.test(d),
+      `${doc}: tokenCeiling is not documented with a numeric default (#553 — off by default)`,
+    );
+  }
+}
+
 // --- Report ------------------------------------------------------------------
 
 if (failures.length > 0) {

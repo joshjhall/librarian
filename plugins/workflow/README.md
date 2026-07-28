@@ -159,7 +159,7 @@ authoritative and documents the same vars in the same order.
 | --- | --- | --- |
 | `PRE_REVIEW_STRICT` | _unset_ | `true` blocks PR creation on HIGH-certainty pre-review findings |
 | `REVIEW_MAX_CYCLES` | `3` | Post-CI adversarial review threshold — caps review cycles (the review action's cut-short/extend lever) |
-| `REVIEW_TOKEN_CEILING` | `250000` | Output-token ceiling for **one** review cycle (`args.tokenCeiling`). The harness's internal budget gates arm only from a runtime turn budget, which a golem run never has — so without this a cycle is unbounded. Hitting it degrades the cycle like budget exhaustion (`clean` forced false), never into a false clean |
+| `REVIEW_TOKEN_CEILING` | _unset_ | Opt-in output-token ceiling for **one** review cycle (`args.tokenCeiling`); unset ⇒ unbounded (the default). Hitting it degrades the cycle like budget exhaustion (`clean` forced false) — never a false clean, but that forces another cycle, so a ceiling set **below** actual output costs more than none and can dead-end the PR. Size it from the `token_report` each cycle returns, not a guess |
 | `REVIEW_STRICT` | _unset_ | `true` treats MEDIUM-certainty review findings as blocking |
 | `LIBRARIAN_CI_WAIT_TIMEOUT` | `15 min` | CI-wait threshold; at the checkpoint, prompt cut-short/extend (at L3–L4: auto-extend up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times then stop). A machine timer for _pending CI_, not a human gate — the never-time-out rule governs human gates, not this bounded wait |
 | `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | L3–L4 only: extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals before giving up on pending CI (no hang) |

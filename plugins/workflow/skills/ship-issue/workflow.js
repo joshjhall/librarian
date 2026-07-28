@@ -857,7 +857,11 @@ const selectReviewDimensions = ({
   return { entries, budgetExhausted, dimensionsSkipped, narrowed }
 }
 
-function emptyResult(budgetExhausted, note, dimensionsSkipped) {
+// `dimensionsRun` is passed in rather than read from the module-scope
+// `dimensions`: this function is hoisted and the manifest-failure call site
+// below runs BEFORE that const is initialized, so touching it here would throw
+// a TDZ error on exactly the failure path that must degrade gracefully.
+function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
   if (note) log(note)
   return {
     cycle: CYCLE,
@@ -872,6 +876,15 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped) {
       by_disposition: { blocking: 0, deferrable: 0 },
       by_severity: { critical: 0, high: 0, medium: 0, low: 0 },
     },
+    // Cost report on the empty/early paths too — a cycle that produced no
+    // findings still spent tokens, and excluding it would bias the sample the
+    // operator sizes a ceiling from (#553).
+    token_report: {
+      output_tokens: reviewBudget.spent(),
+      ceiling: CYCLE_TOKEN_CEILING || null,
+      bound: budget.total ? 'runtime' : CYCLE_TOKEN_CEILING ? 'caller' : 'none',
+      dimensions_run: dimensionsRun || 0,
+    },
     budget_exhausted: !!budgetExhausted,
     dimensions_skipped: dimensionsSkipped || [],
     // No blocking findings produced — but a budget-truncated cycle is PARTIAL
@@ -884,14 +897,14 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped) {
 
 log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${PHASE})`)
 
-// Make the active bound observable: an unbounded run is the historical default
-// and must not look identical in the log to a bounded one (#553).
+// Make the active bound observable: an unbounded run is the DEFAULT (#553), and
+// must not look identical in the log to a bounded one.
 if (budget.total) {
   log(`token bound: runtime turn budget (${budget.remaining()} remaining)`)
 } else if (CYCLE_TOKEN_CEILING) {
   log(`token bound: caller ceiling ${CYCLE_TOKEN_CEILING} output tokens for this cycle`)
 } else {
-  log('token bound: NONE — pass args.tokenCeiling to bound this cycle')
+  log('token bound: none (default) — measuring only; pass args.tokenCeiling to bound')
 }
 
 // --- Manifest ---------------------------------------------------------------
@@ -1072,7 +1085,7 @@ if (unresolvedComments.length) {
 }
 
 if (rawFindings.length === 0) {
-  const r = emptyResult(budgetExhausted, 'no findings this cycle', dimensionsSkipped)
+  const r = emptyResult(budgetExhausted, 'no findings this cycle', dimensionsSkipped, dimensions.length)
   r.comments_addressed = commentsAddressed
   // Clean only if every comment is resolved-or-deferred AND the cycle was
   // complete: a budget-truncated cycle (some dimension never ran) is partial and
@@ -1134,6 +1147,10 @@ const applied = applyJudgeVerdicts(rawFindings, judged, budgetExhausted)
 const { blocking, deferrable } = applied
 budgetExhausted = applied.budgetExhausted
 
+// Surface the cycle's cost in the log as well as the return value, so it is
+// visible when watching a run without parsing the result JSON (#553).
+log(`cycle output: ${reviewBudget.spent()} tokens across ${dimensions.length} dimensions`)
+
 const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
 for (const f of rawFindings) {
   if (bySeverity[f.severity] !== undefined) bySeverity[f.severity] += 1
@@ -1155,6 +1172,18 @@ return {
     total_findings: rawFindings.length,
     by_disposition: { blocking: blocking.length, deferrable: deferrable.length },
     by_severity: bySeverity,
+  },
+  // What this cycle actually cost, reported ALWAYS — including (especially) on
+  // unbounded runs (#553). Sizing a ceiling from guesswork is how you get a
+  // ceiling below where output really lands, and a too-low ceiling is worse than
+  // none: it truncates every cycle, forces `clean` false, drives cycle++ to the
+  // cap, and dead-ends the PR having spent its full budget N times. So the
+  // harness measures first and the operator sets the ceiling from observed data.
+  token_report: {
+    output_tokens: reviewBudget.spent(),
+    ceiling: CYCLE_TOKEN_CEILING || null,
+    bound: budget.total ? 'runtime' : CYCLE_TOKEN_CEILING ? 'caller' : 'none',
+    dimensions_run: dimensions.length,
   },
   budget_exhausted: budgetExhausted,
   dimensions_skipped: dimensionsSkipped,

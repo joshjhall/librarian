@@ -234,8 +234,10 @@ args: {
   diff: "<diff text, FULL PR scope>",
   prComments: [<normalized comments>],
   issue: { number: {N}, title: "{title}" },
-  // Token ceiling (#553) — ALWAYS pass; without it this cycle is unbounded:
-  tokenCeiling: <REVIEW_TOKEN_CEILING, default 250000>,
+  // Token ceiling (#553) — OPT-IN, off by default. Omit unless
+  // REVIEW_TOKEN_CEILING is set; size it from observed token_report data,
+  // since a too-low ceiling truncates every cycle and dead-ends the PR:
+  tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
   // Re-review narrowing (#492) — omit ALL THREE on cycle 1 (full review):
   deltaFiles: [<changed files since lastReviewedSha>],
   deltaDiff: "<diff since lastReviewedSha>",
