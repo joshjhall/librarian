@@ -268,6 +268,12 @@ test_step6_drop_guards() {
         "Step 6 guard 2: pins the ordinal used for the comparison"
     assert_contains "$region" 'never** superseded' \
         "Step 6 guard 2: a critical floor finding is never superseded (agnix has no critical tier)"
+    # The severity parse must be ANCHORED at index 0 — the message half of
+    # evidence is attacker-influenced and may embed a second bracket tag.
+    assert_contains "$region" 'Anchor the parse at index 0' \
+        "Step 6 guard 2: anchors the severity parse at the leading bracket group"
+    assert_contains "$region" 'inert text' \
+        "Step 6 guard 2: a later bracket group in the message is inert, not a severity source"
 }
 
 # #470 finding #2 (live residue) — an agnix row must be EXEMPT from the
