@@ -171,7 +171,8 @@ behavior is noted inline per check; environment variables referenced here
      maxCycles: <REVIEW_MAX_CYCLES, default 3>,
      files: [<changed files, FULL scope>],
      diff: "<diff text, FULL scope>",
-     issue: { number: {N}, title: "{title}" }
+     issue: { number: {N}, title: "{title}" },
+     tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>
    }
    ```
 
@@ -180,6 +181,34 @@ behavior is noted inline per check; environment variables referenced here
    the full diff here (#267). Omitting `diff` is supported but makes each reviewer
    derive it in-agent (`git diff origin/main...HEAD`), which costs extra tool
    calls; prefer supplying it.
+
+   **`tokenCeiling` is OPT-IN and OFF by default (#553) — measure before you
+   arm it.** It bounds **output tokens for one cycle**, measured as a delta from
+   harness start, so each cycle of a `REVIEW_MAX_CYCLES` loop gets its own full
+   ceiling. When `REVIEW_TOKEN_CEILING` is unset (the default), omit the arg
+   entirely and the cycle is unbounded.
+
+   **A ceiling set below where output actually lands is worse than no ceiling.**
+   Hitting it degrades the cycle exactly like budget exhaustion — remaining
+   dimensions land in `dimensions_skipped`, `budget_exhausted` is set, and `clean`
+   is forced false. That is correct for safety (a truncated review can never
+   terminate the loop as clean) but it means the skill will `cycle++` and re-run.
+   A too-low ceiling therefore does not save tokens: it spends its full budget on
+   every cycle, never reaches clean, exhausts `REVIEW_MAX_CYCLES`, and **dead-ends
+   the PR** for a human. Worked example from the #471/#472 run (cycle output 173k
+   / 281k / 207k, terminated clean at 660k): a 150k ceiling would truncate all
+   three cycles, spend 450k, and still dead-end.
+
+   So size it from **observed** data, not a guess. Every cycle returns a
+   `token_report` — `{ output_tokens, ceiling, bound, dimensions_run }` — and logs
+   `cycle output: N tokens across M dimensions`, on bounded and unbounded runs
+   alike. Collect that across a handful of real issues, then set
+   `REVIEW_TOKEN_CEILING` comfortably **above** the observed p95 so it catches
+   runaways without truncating normal reviews. If a runtime turn budget *is* armed
+   it takes precedence and `tokenCeiling` is ignored.
+
+   The `token bound:` line at cycle start says which bound is live
+   (`runtime` / `caller ceiling N` / `none (default)`).
 
    **Re-review narrowing on cycle > 1 (#492).** Cycle 1 is a full review (no
    delta args). When step (c) below re-runs the harness after a fix, pass the
@@ -194,6 +223,7 @@ behavior is noted inline per check; environment variables referenced here
      files: [<changed files, FULL scope>],     // unchanged — scope-drift + summary
      diff: "<diff text, FULL scope>",          // unchanged — scope-drift reads this
      issue: { number: {N}, title: "{title}" },
+     tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
      deltaFiles: [<git diff --name-only lastReviewedSha...HEAD>],
      deltaDiff: "<git diff lastReviewedSha...HEAD>",
      priorBlockingDimensions: [<dimensions that blocked last cycle>]

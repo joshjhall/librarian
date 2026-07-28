@@ -96,6 +96,29 @@ These env vars toggle non-default behavior; all are opt-in:
 - `REVIEW_MAX_CYCLES` — integer, default `3`. Caps the post-CI multi-cycle
   adversarial review loop (Option 1). The cap lives in this skill, not in
   `workflow.js`, which runs exactly one review cycle per invocation.
+- `REVIEW_TOKEN_CEILING` — integer, **unset by default** (no ceiling). Output-token
+  ceiling for **one** review cycle, passed to `workflow.js` as `args.tokenCeiling`
+  (#553). Opt-in like its neighbors: unset ⇒ the arg is omitted and the cycle is
+  unbounded, which is the shipped default.
+
+  Hitting the ceiling degrades the cycle exactly like budget exhaustion
+  (`dimensions_skipped` populated, `budget_exhausted` set, `clean` forced false),
+  so it can never turn a truncated review into a clean one. That safety property
+  has a cost consequence worth understanding before arming it: a `clean: false`
+  cycle makes the loop `cycle++` and re-run. **A ceiling below where output
+  actually lands therefore does not save tokens** — it truncates every cycle,
+  spends its full budget each time, exhausts `REVIEW_MAX_CYCLES`, and dead-ends
+  the PR for a human. Worked example from the #471/#472 run (per-cycle output
+  173k / 281k / 207k, terminated clean at 660k total): a 150k ceiling would
+  truncate all three cycles, spend 450k, and still dead-end.
+
+  Size it from measurement, not a guess. Every cycle returns `token_report`
+  (`{ output_tokens, ceiling, bound, dimensions_run }`) and logs
+  `cycle output: N tokens across M dimensions` whether or not a ceiling is armed;
+  collect that over several real issues and set the ceiling above the observed
+  p95, so it catches runaways without truncating normal reviews. Being per-cycle,
+  it composes with `REVIEW_MAX_CYCLES`: worst case
+  `REVIEW_TOKEN_CEILING × REVIEW_MAX_CYCLES`.
 - `REVIEW_STRICT=true` — treat MEDIUM-certainty findings as blocking in the
   adversarial review (Step 3.5 item 6 and the Step 4 loop), in addition to the
   default HIGH-certainty blocking set. Parallels `PRE_REVIEW_STRICT`.

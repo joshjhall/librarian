@@ -94,6 +94,42 @@ const issue = args && args.issue && typeof args.issue === 'object' ? args.issue 
 // last cycle. `narrowingActive` below decides whether they take effect.
 const deltaDiff = args && typeof args.deltaDiff === 'string' ? args.deltaDiff : ''
 const deltaFiles = args && Array.isArray(args.deltaFiles) ? args.deltaFiles.filter(Boolean) : []
+// Caller-supplied output-token ceiling for THIS cycle (#553), optional.
+// Without it the harness is unbounded in practice: every budget gate below is
+// guarded on `budget.total`, which the Workflow runtime populates ONLY from a
+// user "+500k"-style turn directive. In a golem run no such directive exists, so
+// `budget.total` is null, `budget.remaining()` is Infinity, and BUDGET_FLOOR /
+// TAIL_FLOOR never fire — the graceful-degradation path is dead code exactly
+// when it is needed most. Measured consequence (#471/#472, 3 cycles, deduped by
+// message.id): 32.2M cache_read / 660k output, with one `security` agent alone
+// spending 128 turns and 115 Bash calls ranging over the whole repo.
+//
+// `budget.spent()` DOES work when `total` is null (it returns output tokens
+// spent this turn regardless), so we derive our own remaining-budget view from a
+// baseline captured at script start. That makes the ceiling caller-controlled
+// per invocation rather than turn-global, which is what a per-cycle bound wants.
+const CYCLE_TOKEN_CEILING =
+  args && Number.isInteger(args.tokenCeiling) && args.tokenCeiling > 0 ? args.tokenCeiling : 0
+const SPENT_AT_START = budget.spent()
+
+// The budget view every gate below consults. Prefers the runtime's own budget
+// when a turn directive armed one (`total` non-null) — that is a real hard
+// ceiling the runtime enforces by throwing, and we must not paper over it.
+// Otherwise falls back to the caller-supplied per-cycle ceiling. When neither is
+// armed this degrades to the pre-#553 unbounded behavior (total null / remaining
+// Infinity), so omitting `tokenCeiling` changes nothing.
+const reviewBudget = {
+  get total() {
+    return budget.total || (CYCLE_TOKEN_CEILING || null)
+  },
+  spent: () => budget.spent() - SPENT_AT_START,
+  remaining: () => {
+    if (budget.total) return budget.remaining()
+    if (!CYCLE_TOKEN_CEILING) return Infinity
+    return Math.max(0, CYCLE_TOKEN_CEILING - (budget.spent() - SPENT_AT_START))
+  },
+}
+
 const priorBlockingDimensions =
   args && Array.isArray(args.priorBlockingDimensions)
     ? args.priorBlockingDimensions.filter((d) => typeof d === 'string' && d)
@@ -231,7 +267,7 @@ const TAIL_FLOOR = 8_000
 // degrade to the caller's existing `if (!result)` fallback. `fn` is a thunk so
 // the agent() call is only made when we decide to spend.
 async function tailAgent(fn, label) {
-  if (budget.total && budget.remaining() < TAIL_FLOOR) {
+  if (reviewBudget.total && reviewBudget.remaining() < TAIL_FLOOR) {
     log(`budget low — skipping ${label} (degrading to fallback)`)
     return null
   }
@@ -415,6 +451,29 @@ const READONLY =
   'an unresolved `..`. ' +
   'Run at the code-reviewer agent model tier (sonnet).'
 
+// Exploration bounds (#553). The diff and its classifications are supplied
+// below — reviewers do NOT need to rediscover them. Measured on the #471/#472
+// run, reviewers nonetheless ranged over the whole repo: `security` spent 128
+// turns / 115 Bash calls on a 2-file diff, `conventions` 63 turns / 63. Each
+// tool call re-sends the accumulated context, so an unbounded search multiplies
+// cost superlinearly in turns while adding little the diff does not already
+// show. This is guidance, not enforcement — `agent()` exposes no turn cap — so
+// the caller-supplied token ceiling remains the actual backstop. Static text:
+// appended identically to every reviewer prompt, so the cacheable shared prefix
+// (#256) stays byte-identical across the fan-out.
+const SCOPE_DISCIPLINE =
+  'Scope discipline: the changed files, their classifications, and the full diff ' +
+  'are provided below — do not re-derive them. Budget yourself roughly 10 tool ' +
+  'calls; spend them only where the diff itself is genuinely ambiguous. Prefer ' +
+  'reading a changed file over grepping the repo. Open an UNCHANGED file only ' +
+  'when a specific finding depends on its contents (e.g. confirming a caller ' +
+  'signature you are about to flag), and say so in that finding. Do NOT survey ' +
+  'the repo for related patterns, audit unchanged code, or verify project-wide ' +
+  'conventions beyond the diff — findings must be anchored to a changed line. ' +
+  'If you cannot confirm something within that budget, report it at LOW ' +
+  'certainty rather than searching further: the judge re-scores certainty, and ' +
+  'a LOW-certainty finding is filed, never dropped.'
+
 // `sanitize` and `dataBlock` — the prompt-injection controls — are defined near
 // the top of the file (above NEW_DIMENSIONS, which calls `sanitize` at module
 // load); the prompt builders below consume them.
@@ -493,6 +552,8 @@ const reviewerData = (manifest, diff = scopeDiff) =>
 // Sub-Reviewer Definition, only overriding the surfaced category name.
 const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
+  '\n' +
+  SCOPE_DISCIPLINE +
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.mode}. Analyze the changed files and diff above as the ` +
@@ -503,6 +564,8 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
 // New dimensions (tests, conventions, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
+  '\n' +
+  SCOPE_DISCIPLINE +
   '\n\n' +
   reviewerData(manifest, diff) +
   `Mode: reviewer:${dim.name} (custom dimension). Analyze the changed files and ` +
@@ -794,7 +857,11 @@ const selectReviewDimensions = ({
   return { entries, budgetExhausted, dimensionsSkipped, narrowed }
 }
 
-function emptyResult(budgetExhausted, note, dimensionsSkipped) {
+// `dimensionsRun` is passed in rather than read from the module-scope
+// `dimensions`: this function is hoisted and the manifest-failure call site
+// below runs BEFORE that const is initialized, so touching it here would throw
+// a TDZ error on exactly the failure path that must degrade gracefully.
+function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
   if (note) log(note)
   return {
     cycle: CYCLE,
@@ -809,6 +876,15 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped) {
       by_disposition: { blocking: 0, deferrable: 0 },
       by_severity: { critical: 0, high: 0, medium: 0, low: 0 },
     },
+    // Cost report on the empty/early paths too — a cycle that produced no
+    // findings still spent tokens, and excluding it would bias the sample the
+    // operator sizes a ceiling from (#553).
+    token_report: {
+      output_tokens: reviewBudget.spent(),
+      ceiling: CYCLE_TOKEN_CEILING || null,
+      bound: budget.total ? 'runtime' : CYCLE_TOKEN_CEILING ? 'caller' : 'none',
+      dimensions_run: dimensionsRun || 0,
+    },
     budget_exhausted: !!budgetExhausted,
     dimensions_skipped: dimensionsSkipped || [],
     // No blocking findings produced — but a budget-truncated cycle is PARTIAL
@@ -820,6 +896,16 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped) {
 }
 
 log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${PHASE})`)
+
+// Make the active bound observable: an unbounded run is the DEFAULT (#553), and
+// must not look identical in the log to a bounded one.
+if (budget.total) {
+  log(`token bound: runtime turn budget (${budget.remaining()} remaining)`)
+} else if (CYCLE_TOKEN_CEILING) {
+  log(`token bound: caller ceiling ${CYCLE_TOKEN_CEILING} output tokens for this cycle`)
+} else {
+  log('token bound: none (default) — measuring only; pass args.tokenCeiling to bound')
+}
 
 // --- Manifest ---------------------------------------------------------------
 phase('Manifest')
@@ -861,7 +947,7 @@ const selected = selectReviewDimensions({
   deltaFiles,
   priorBlocking: priorBlockingDimensions,
   manifest,
-  budget,
+  budget: reviewBudget,
   budgetFloor: BUDGET_FLOOR,
   reusedDimensions: REUSED_DIMENSIONS,
   newDimensions: NEW_DIMENSIONS,
@@ -900,7 +986,7 @@ for (const name of ['database', 'devops']) {
   conditional.push({ name, mode: name, category: name, diff })
 }
 for (const d of conditional) {
-  if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+  if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) {
     budgetExhausted = true
     dimensionsSkipped.push(d.name)
     log(`budget low — skipping conditional specialist "${d.name}"`)
@@ -911,6 +997,15 @@ for (const d of conditional) {
 
 const reviewResults = await parallel(
   dimensions.map((entry) => () => {
+    // Re-check the ceiling INSIDE the thunk, not just at build time above.
+    // parallel() invokes thunks as slots free up, so a barrier built when the
+    // budget was healthy can still have later thunks start after it drained.
+    // With a runtime-armed budget the runtime throws and parallel() nulls the
+    // result; a caller-supplied CYCLE_TOKEN_CEILING is SOFT — nothing throws —
+    // so without this check it would bound nothing once the barrier is built.
+    // Returning null here lands in the SAME partial-cycle path as a thrown
+    // agent below (budgetExhausted + dimensionsSkipped + clean forced false).
+    if (reviewBudget.total && reviewBudget.remaining() < BUDGET_FLOOR) return null
     const prompt =
       entry.kind === 'new'
         ? newReviewerPrompt(entry.dim, manifest, entry.diff)
@@ -927,15 +1022,18 @@ const reviewResults = await parallel(
 const rawFindings = []
 reviewResults.forEach((res, i) => {
   if (!res) {
-    // A null result means the dimension's agent threw. The most common cause
-    // mid-barrier is the shared token budget running out (later agents in the
-    // barrier throw once it is exhausted), but parallel() also nulls any other
-    // terminal failure. Either way the cycle is now PARTIAL: mark it exhausted
+    // A null result means the dimension never produced findings: its agent
+    // threw (runtime budget exhausted mid-barrier, or any other terminal
+    // failure — parallel() nulls both), OR the in-thunk ceiling check above
+    // declined to spend. Either way the cycle is now PARTIAL: mark it exhausted
     // so the classifier biases ambiguous findings to deferrable and the skill
     // does not treat a half-reviewed cycle as a clean pass.
     budgetExhausted = true
     dimensionsSkipped.push(dimensions[i].dim.name)
-    log(`dimension "${dimensions[i].dim.name}" failed — continuing without its findings (cycle now partial)`)
+    log(
+      `dimension "${dimensions[i].dim.name}" did not complete (failed or budget-skipped) — ` +
+        `continuing without its findings (cycle now partial)`
+    )
     return
   }
   for (const f of res.findings) rawFindings.push({ ...f, dimension: res.dim })
@@ -987,7 +1085,7 @@ if (unresolvedComments.length) {
 }
 
 if (rawFindings.length === 0) {
-  const r = emptyResult(budgetExhausted, 'no findings this cycle', dimensionsSkipped)
+  const r = emptyResult(budgetExhausted, 'no findings this cycle', dimensionsSkipped, dimensions.length)
   r.comments_addressed = commentsAddressed
   // Clean only if every comment is resolved-or-deferred AND the cycle was
   // complete: a budget-truncated cycle (some dimension never ran) is partial and
@@ -1049,6 +1147,10 @@ const applied = applyJudgeVerdicts(rawFindings, judged, budgetExhausted)
 const { blocking, deferrable } = applied
 budgetExhausted = applied.budgetExhausted
 
+// Surface the cycle's cost in the log as well as the return value, so it is
+// visible when watching a run without parsing the result JSON (#553).
+log(`cycle output: ${reviewBudget.spent()} tokens across ${dimensions.length} dimensions`)
+
 const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
 for (const f of rawFindings) {
   if (bySeverity[f.severity] !== undefined) bySeverity[f.severity] += 1
@@ -1070,6 +1172,18 @@ return {
     total_findings: rawFindings.length,
     by_disposition: { blocking: blocking.length, deferrable: deferrable.length },
     by_severity: bySeverity,
+  },
+  // What this cycle actually cost, reported ALWAYS — including (especially) on
+  // unbounded runs (#553). Sizing a ceiling from guesswork is how you get a
+  // ceiling below where output really lands, and a too-low ceiling is worse than
+  // none: it truncates every cycle, forces `clean` false, drives cycle++ to the
+  // cap, and dead-ends the PR having spent its full budget N times. So the
+  // harness measures first and the operator sets the ceiling from observed data.
+  token_report: {
+    output_tokens: reviewBudget.spent(),
+    ceiling: CYCLE_TOKEN_CEILING || null,
+    bound: budget.total ? 'runtime' : CYCLE_TOKEN_CEILING ? 'caller' : 'none',
+    dimensions_run: dimensions.length,
   },
   budget_exhausted: budgetExhausted,
   dimensions_skipped: dimensionsSkipped,
