@@ -308,21 +308,38 @@ When `check-ai-config` survived the Step 2 integrity gate, after its
    - **`AGNIX_CONFIG` is unset but `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1`** (the
      operator explicitly trusts this repo): invoke the normalizer; agnix reading
      the now-trusted repo's `.agnix.toml` is the opted-in behavior. On this
-     branch only, first confirm that any `.agnix.toml` agnix would discover is
-     git-tracked (`git -C <repo-root> ls-files --error-unmatch .agnix.toml`) —
-     an **existence-in-index check, not an integrity check** (an attacker who
-     can commit the file makes it tracked by definition; the opt-in is the real
-     trust decision, this only filters stray local/untracked files). Branch on
-     the outcome, because a missing file and an untracked one are **not** the
-     same case here: when `.agnix.toml` is **absent entirely**, invoke the
-     normalizer as normal — agnix runs on its built-in defaults and there is no
-     untrusted config to read, so skipping would drop enrichment for no security
-     gain; when it is **present but untracked**, do NOT invoke the normalizer for
-     this run — that is a stray local file agnix would silently honor — and log
-     `[prescan] agnix skipped (untracked .agnix.toml; untrusted project source)`,
-     falling through to the `patterns.sh`-only result exactly like the enforced
-     skip above. This differs deliberately from the `SKILL.md` / `patterns.sh`
-     surfaces, where an absent artifact simply means there is nothing to run.
+     branch only, first filter a **stray untracked** `.agnix.toml`. This needs
+     **two** checks, in this order — a single `git ls-files` call is not enough,
+     because it consults only the index and so exits non-zero **identically**
+     whether the file is missing from disk or merely untracked:
+     1. **Existence** — `test -e <repo-root>/.agnix.toml`. If it does **not**
+        exist, **invoke the normalizer as normal** and skip check 2 entirely:
+        agnix runs on its built-in defaults, there is no untrusted config to
+        read, and skipping here would drop enrichment for no security gain.
+     1. **Tracked-ness** (only when check 1 says the file exists) —
+        `git -C <repo-root> ls-files --error-unmatch .agnix.toml`. Zero exit
+        (tracked) ⇒ invoke the normalizer. Non-zero (**present but untracked**)
+        ⇒ do **NOT** invoke the normalizer for this run — that is a stray local
+        file agnix would silently honor — and log
+        `[prescan] agnix skipped (untracked .agnix.toml; untrusted project source)`,
+        falling through to the `patterns.sh`-only result exactly like the
+        enforced skip above.
+
+     The tracked-ness check is an **existence-in-index check, not an integrity
+     check** (an attacker who can commit the file makes it tracked by
+     definition; the opt-in is the real trust decision, this only filters stray
+     local/untracked files). The truth table, in full:
+
+     | `.agnix.toml` on disk | in git index | action |
+     | --- | --- | --- |
+     | absent | — | **invoke** (built-in defaults; nothing untrusted to read) |
+     | present | tracked | **invoke** (opted-in behavior) |
+     | present | untracked | **skip** + log |
+
+     The absent ⇒ invoke row is why this surface needs its own two-check shape
+     rather than a copy of the `SKILL.md` / `patterns.sh` guards: for those, an
+     absent artifact means there is simply nothing to run, so a bare
+     `ls-files` suffices.
 
    This is the **same** untrusted-project-input boundary and opt-in that gate the
    project `patterns.sh` execution (Step 3), project skill discovery, and project

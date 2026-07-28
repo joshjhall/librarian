@@ -57,9 +57,11 @@ STEP6_MAX_LINES=110
 
 # Mis-anchor bound for the Step 3a region, same purpose as STEP6_MAX_LINES above
 # (NOT a prose budget). Step 3a carries the enforced trust-gate branches plus
-# #471's three-way .agnix.toml git-tracked guard, so it outgrew assert_wired's
-# 90-line default. Raise this deliberately when Step 3a gains contract text.
-STEP3A_MAX_LINES=110
+# #471's two-check .agnix.toml guard and its truth table, so it outgrew
+# assert_wired's 90-line default. Raise this deliberately when Step 3a gains
+# contract text — Step 3a is a named extraction candidate in #503, so this bound
+# should come back DOWN when that prose moves to a companion file.
+STEP3A_MAX_LINES=125
 
 test_suite "agnix → checker wiring (#401)"
 
@@ -189,22 +191,45 @@ test_step3a_git_tracked_guard() {
         'ls-files --error-unmatch .agnix.toml' "$STEP3A_MAX_LINES"
     # Same caveat wording the SKILL.md / patterns.sh surfaces carry — this is an
     # index-existence filter, NOT an integrity check.
-    assert_contains "$region" 'existence-in-index check, not an integrity check' \
+    # Single-line fragment: the full caveat wraps across a line break here (as it
+    # also does at the patterns.sh surface), so match the half that fits one line.
+    assert_contains "$region" 'existence-in-index check, not an integrity' \
         "Step 3a git-tracked guard: carries the shared existence-in-index caveat"
-    # The load-bearing three-way split.
-    assert_contains "$region" 'absent entirely' \
-        "Step 3a git-tracked guard: names the absent case explicitly"
-    # Single-line fragment: the full "invoke the normalizer as normal" phrase
-    # wraps across a line break in the source prose, so match the wrapped half
-    # that carries the operative rationale.
-    assert_contains "$region" 'normalizer as normal' \
+
+    # THE LOAD-BEARING BIT — the guard needs TWO checks, not one. `git ls-files
+    # --error-unmatch` consults only the index, so it exits non-zero with
+    # byte-identical stderr whether the file is missing from disk or merely
+    # untracked (verified in a scratch sandbox). A reader given only the git
+    # command cannot tell the invoke case from the skip case, and the
+    # less-restrictive reading ("invoke") silently defeats the whole guard. Pin
+    # the filesystem-existence probe so it can never be dropped back to one call.
+    assert_contains "$region" 'test -e <repo-root>/.agnix.toml' \
+        "Step 3a git-tracked guard: names the filesystem-existence check explicitly"
+    assert_contains "$region" 'a single `git ls-files` call is not enough' \
+        "Step 3a git-tracked guard: states WHY one command cannot carry the branch"
+    assert_contains "$region" 'consults only the index' \
+        "Step 3a git-tracked guard: pins the mechanism — index-only, so absent == untracked"
+
+    # The three outcomes, and the truth table that makes them unambiguous.
+    assert_contains "$region" 'invoke the normalizer as normal' \
         "Step 3a git-tracked guard: absent .agnix.toml still invokes (no coverage regression)"
-    assert_contains "$region" 'no security' \
+    assert_contains "$region" 'no security gain' \
         "Step 3a git-tracked guard: pins the rationale — skipping on absent buys no security"
     assert_contains "$region" 'present but untracked' \
         "Step 3a git-tracked guard: names the untracked case explicitly"
     assert_contains "$region" '[prescan] agnix skipped (untracked .agnix.toml' \
         "Step 3a git-tracked guard: logs the untracked-skip line"
+    assert_contains "$region" '| absent | — | **invoke**' \
+        "Step 3a git-tracked guard: truth table pins the absent row"
+    assert_contains "$region" '| present | untracked | **skip**' \
+        "Step 3a git-tracked guard: truth table pins the untracked-skip row"
+
+    # Scope: the guard belongs ONLY to branch 3 (unset + opted in). Branch 1
+    # (operator-supplied AGNIX_CONFIG) never reads the audited repo's config at
+    # all, so widening the guard to it would change real invocation behavior.
+    assert_contains "$region" 'On this' \
+        "Step 3a git-tracked guard: scoped to the opted-in branch only"
+
     # Why this surface deviates from its siblings — keep the rationale wired so a
     # future reader does not "restore parity" and reintroduce the regression.
     assert_contains "$region" 'nothing to run' \
