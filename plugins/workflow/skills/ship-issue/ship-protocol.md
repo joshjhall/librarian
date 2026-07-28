@@ -96,6 +96,16 @@ These env vars toggle non-default behavior; all are opt-in:
 - `REVIEW_MAX_CYCLES` — integer, default `3`. Caps the post-CI multi-cycle
   adversarial review loop (Option 1). The cap lives in this skill, not in
   `workflow.js`, which runs exactly one review cycle per invocation.
+- `REVIEW_TOKEN_CEILING` — integer, default `250000`. Output-token ceiling for
+  **one** review cycle, passed to `workflow.js` as `args.tokenCeiling` (#553).
+  Unlike the two thresholds around it this is not opt-in: the harness's internal
+  budget gates are armed only by a runtime turn budget (a `+500k`-style user
+  directive), which a golem run never has — so an unpassed ceiling leaves the
+  cycle **unbounded**. Hitting it degrades the cycle exactly like budget
+  exhaustion (`dimensions_skipped` populated, `clean` forced false), so it can
+  never turn a truncated review into a clean one. Being per-cycle, it composes
+  with `REVIEW_MAX_CYCLES`: the loop's worst case is
+  `REVIEW_TOKEN_CEILING × REVIEW_MAX_CYCLES`.
 - `REVIEW_STRICT=true` — treat MEDIUM-certainty findings as blocking in the
   adversarial review (Step 3.5 item 6 and the Step 4 loop), in addition to the
   default HIGH-certainty blocking set. Parallels `PRE_REVIEW_STRICT`.

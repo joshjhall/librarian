@@ -79,7 +79,7 @@ const ORCH_BOUNDARY =
 // allowlist from this file. Neither is runtime/untrusted input, so this is not a
 // code-injection surface; it is the only way to test helpers locked inside a
 // top-level-`await` module that cannot be imported.
-function extractHelpers(relPath, names, args = {}) {
+function extractHelpers(relPath, names, args = {}, budgetStub = null) {
   const src = readFileSync(join(repoRoot, relPath), "utf8");
   const m = src.match(ORCH_BOUNDARY);
   if (!m) throw new Error(`${relPath}: no orchestration boundary found`);
@@ -88,7 +88,10 @@ function extractHelpers(relPath, names, args = {}) {
     // `export const meta = …` is a module-only form; a `new Function` body is
     // not a module, so strip the `export` keyword (the literal is otherwise fine).
     .replace(/^export\s+const\s+meta/m, "const meta");
-  const budget = { total: null, spent: () => 0, remaining: () => Infinity };
+  // Default stub = no runtime turn budget (the golem case: `total` null, so the
+  // harness's own gates fall through to a caller ceiling if one is armed).
+  // `budgetStub` overrides it to exercise the runtime-armed path (#553).
+  const budget = budgetStub || { total: null, spent: () => 0, remaining: () => Infinity };
   const noop = () => {};
   const factory = new Function(
     "args",
@@ -3018,6 +3021,99 @@ for (const path of [ORCH, REBASE]) {
       !optionsBlock.includes("model: 'fable'"),
       `${stage} (${path}): judge/verify gate is not on the fable tier (#526)`,
     );
+  }
+}
+
+// =============================================================================
+// ship-issue — reviewBudget: the caller-supplied per-cycle token ceiling (#553)
+// =============================================================================
+// Every budget gate in the harness is guarded on `budget.total`, which the
+// Workflow runtime populates ONLY from a user "+500k"-style turn directive. In a
+// golem run there is no such directive, so `total` is null and BUDGET_FLOOR /
+// TAIL_FLOOR never fire. `reviewBudget` restores a bound by deriving one from
+// `args.tokenCeiling` and `budget.spent()` (which works even when `total` is
+// null), while deferring to a runtime-armed budget when one exists.
+{
+  const extractBudget = (args, budgetStub) =>
+    extractHelpers(SHIP, ["reviewBudget", "CYCLE_TOKEN_CEILING"], args, budgetStub).reviewBudget;
+
+  const noRuntimeBudget = (spent = 0) => ({
+    total: null,
+    spent: () => spent,
+    remaining: () => Infinity,
+  });
+
+  // No ceiling armed and no runtime budget ⇒ unbounded, exactly as before #553.
+  // This is the compatibility guarantee: omitting tokenCeiling changes nothing.
+  const unbounded = extractBudget({ cycle: 1 }, noRuntimeBudget());
+  eq(unbounded.total, null, "reviewBudget: no ceiling + no runtime budget ⇒ total null (unbounded)");
+  eq(unbounded.remaining(), Infinity, "reviewBudget: unbounded remaining() is Infinity");
+
+  // Ceiling armed, nothing spent yet ⇒ the full ceiling is available and `total`
+  // is non-null, which is what actually ARMS every `budget.total && …` gate.
+  const armed = extractBudget({ cycle: 1, tokenCeiling: 200000 }, noRuntimeBudget(0));
+  eq(armed.total, 200000, "reviewBudget: tokenCeiling sets a non-null total (arms the gates)");
+  eq(armed.remaining(), 200000, "reviewBudget: nothing spent ⇒ full ceiling remaining");
+
+  // Spend is measured as a DELTA from script start, not absolute. A cycle that
+  // begins after 500k was already spent this turn must still get its full
+  // ceiling — otherwise cycle 2 of a 3-cycle loop would start pre-exhausted.
+  const midTurn = extractBudget({ cycle: 2, tokenCeiling: 200000 }, noRuntimeBudget(500000));
+  eq(midTurn.remaining(), 200000, "reviewBudget: ceiling is per-cycle — prior turn spend does not count against it");
+  eq(midTurn.spent(), 0, "reviewBudget: spent() is a delta from script start");
+
+  // Draining the ceiling: remaining() falls, and floors below it. A drained
+  // ceiling must read 0, never negative — a negative would still compare
+  // `< BUDGET_FLOOR` correctly but would misreport in logs.
+  // NOTE: the baseline is captured at extraction time, so `live` must start at
+  // the value it holds when extractBudget runs; subsequent moves are the spend.
+  let live = 0;
+  const draining = extractBudget(
+    { cycle: 1, tokenCeiling: 200000 },
+    { total: null, spent: () => live, remaining: () => Infinity },
+  );
+  live = 1000;
+  eq(draining.remaining(), 199000, "reviewBudget: remaining() tracks spend");
+  live = 199999;
+  eq(draining.remaining(), 1, "reviewBudget: remaining() approaches zero as spend nears the ceiling");
+  live = 250000;
+  eq(draining.remaining(), 0, "reviewBudget: an overshot ceiling floors at 0, never negative");
+
+  // A runtime-armed budget WINS over the caller ceiling: the runtime enforces
+  // its own by throwing, so the harness must not paper over it with a larger
+  // caller value and spawn agents the runtime will kill.
+  const runtimeArmed = extractBudget(
+    { cycle: 1, tokenCeiling: 999999 },
+    { total: 50000, spent: () => 10000, remaining: () => 40000 },
+  );
+  eq(runtimeArmed.total, 50000, "reviewBudget: a runtime-armed budget takes precedence over the caller ceiling");
+  eq(runtimeArmed.remaining(), 40000, "reviewBudget: runtime-armed remaining() defers to the runtime");
+
+  // Malformed ceilings fail SAFE (unbounded, the historical default) rather than
+  // arming a nonsense bound that silently truncates every cycle to nothing.
+  for (const bad of [0, -1, 1.5, "200000", null, undefined, NaN]) {
+    const b = extractBudget({ cycle: 1, tokenCeiling: bad }, noRuntimeBudget());
+    eq(b.total, null, `reviewBudget: tokenCeiling=${JSON.stringify(bad)} is rejected (stays unbounded)`);
+  }
+}
+
+// =============================================================================
+// ship-issue — exploration bounds are attached to every reviewer prompt (#553)
+// =============================================================================
+// The scope-discipline text is what bounds in-agent repo exploration (measured:
+// one `security` agent spent 254 turns / 115 Bash calls on a 2-file diff). It is
+// only effective if EVERY reviewer prompt carries it — a dimension that misses it
+// is the one that will range over the repo.
+{
+  const src = readFileSync(join(repoRoot, SHIP), "utf8");
+  ok(/const SCOPE_DISCIPLINE\s*=/.test(src), "ship-issue: SCOPE_DISCIPLINE is defined");
+  for (const builder of ["reusedReviewerPrompt", "newReviewerPrompt"]) {
+    const start = src.indexOf(`const ${builder} =`);
+    ok(start !== -1, `ship-issue: ${builder} exists`);
+    // The builder body runs to the next top-level `const ` declaration.
+    const end = src.indexOf("\nconst ", start + 1);
+    const body = src.slice(start, end === -1 ? src.length : end);
+    ok(body.includes("SCOPE_DISCIPLINE"), `ship-issue: ${builder} includes SCOPE_DISCIPLINE (#553)`);
   }
 }
 

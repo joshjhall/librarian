@@ -171,7 +171,8 @@ behavior is noted inline per check; environment variables referenced here
      maxCycles: <REVIEW_MAX_CYCLES, default 3>,
      files: [<changed files, FULL scope>],
      diff: "<diff text, FULL scope>",
-     issue: { number: {N}, title: "{title}" }
+     issue: { number: {N}, title: "{title}" },
+     tokenCeiling: <REVIEW_TOKEN_CEILING, default 250000>
    }
    ```
 
@@ -180,6 +181,29 @@ behavior is noted inline per check; environment variables referenced here
    the full diff here (#267). Omitting `diff` is supported but makes each reviewer
    derive it in-agent (`git diff origin/main...HEAD`), which costs extra tool
    calls; prefer supplying it.
+
+   **`tokenCeiling` is the harness's only real bound (#553) — always pass it.**
+   Every budget gate inside the harness is guarded on the runtime's `budget.total`,
+   which is populated *only* by a user `+500k`-style turn directive. A golem run
+   issues no such directive, so without `tokenCeiling` the harness is
+   **unbounded**: `BUDGET_FLOOR`/`TAIL_FLOOR` never fire and the graceful-
+   degradation path is dead code. Measured on a 3-cycle run of a 2-to-5-file diff:
+   67.1M cache_read / 1.41M output, with a single `security` reviewer spending 254
+   turns and 115 Bash calls ranging over the whole repo.
+
+   It bounds **output tokens for one cycle**, measured as a delta from harness
+   start — so each cycle of a `REVIEW_MAX_CYCLES` loop gets its own full ceiling
+   (a 3-cycle loop at the default is bounded at ~750k output, not 250k). Read it
+   from `REVIEW_TOKEN_CEILING` (default `250000`); scale it down for small diffs
+   and up for large refactors. A run that hits the ceiling **degrades exactly like
+   a budget-exhausted cycle** — remaining dimensions are skipped into
+   `dimensions_skipped`, `budget_exhausted` is set, and `clean` is forced false —
+   so a truncated cycle can never terminate the review loop as clean. If a runtime
+   turn budget *is* armed, it takes precedence and `tokenCeiling` is ignored.
+
+   Confirm the bound engaged: the harness logs `token bound: caller ceiling …` at
+   cycle start. A `token bound: NONE` line means the ceiling did not arrive and
+   this cycle is unbounded.
 
    **Re-review narrowing on cycle > 1 (#492).** Cycle 1 is a full review (no
    delta args). When step (c) below re-runs the harness after a fix, pass the
@@ -194,6 +218,7 @@ behavior is noted inline per check; environment variables referenced here
      files: [<changed files, FULL scope>],     // unchanged — scope-drift + summary
      diff: "<diff text, FULL scope>",          // unchanged — scope-drift reads this
      issue: { number: {N}, title: "{title}" },
+     tokenCeiling: <REVIEW_TOKEN_CEILING, default 250000>,
      deltaFiles: [<git diff --name-only lastReviewedSha...HEAD>],
      deltaDiff: "<git diff lastReviewedSha...HEAD>",
      priorBlockingDimensions: [<dimensions that blocked last cycle>]
