@@ -83,6 +83,22 @@ sibling agnix did not report is retained). When agnix is **absent**, the
 check-ai-config finding stands. (Down-scoped to precedence-only dedup in
 follow-up 4, issue #402 — never deletion of the floor's checks.)
 
+> **Update (#470).** The drop described above is no longer unconditional — it is
+> now gated by two guards in `checker.md` Step 6, and agnix rows are exempt from
+> the within-skill line-range merge. (1) The drop applies **only** when agnix ran
+> against an operator-controlled `AGNIX_CONFIG`; under the
+> `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1` opt-in agnix reads the audited repo's
+> own `.agnix.toml`, so the run falls back to **keep-both** rather than letting a
+> repo delete floor coverage by shipping a config file. (2) Where the drop is
+> allowed, agnix's `rule_severity` must be **≥** the check-ai-config finding's
+> severity (case-folded, `critical > high > medium > low`; agnix has no
+> `critical` tier, so a `critical` floor finding is never superseded). An agnix
+> row is also **exempt from the within-skill overlapping-line merge** — a
+> near-miss the precedence rule declined to drop must not be silently *blended*
+> instead. Relatedly, the TSV `certainty` column is now a fixed `MEDIUM` and
+> agnix's `rule_severity` rides in the `evidence` prefix; see
+> `check-ai-config/contract.md` § Emitted columns.
+
 The dedup is keyed on **actual agnix output present in this run** — never on
 "agnix is the designated owner." So it is a strict **no-op when agnix did not
 run**. Same displayed coverage on both paths; no double-report on the happy path;

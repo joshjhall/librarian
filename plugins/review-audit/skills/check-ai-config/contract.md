@@ -102,6 +102,15 @@ only non-bloat memory rules (import-path drift, etc.) arrive here.
 
 ### Emitted columns
 
+**Every emitted field is scrubbed of the TSV framing characters** (tab, newline,
+CR → space) before the row is written. agnix diagnostics are computed over the
+audited repo's own files (untrusted, ADR §5) and many rule messages quote the
+matched source line, so unsanitized text could otherwise forge extra **columns**
+(tab) or an entire extra **row** (newline) carrying an attacker-chosen
+`file`/`line`/`category` and a spoofed `[<RULE-ID>|<SEVERITY>]` prefix — which
+Step 6 Guard 2 reads to decide whether to drop a floor finding. The payload
+survives as inert text inside `evidence`; only its framing is neutralized.
+
 - `file` / `line` — passed through from the agnix diagnostic (agnix echoes the
   path as supplied, so downstream location-keyed dedup works).
 - `category` — the mapped check-ai-config slug (never an agnix category string).

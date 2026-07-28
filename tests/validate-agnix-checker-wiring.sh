@@ -259,6 +259,15 @@ test_step6_drop_guards() {
         "Step 6 guard 2: keeps both when the severity cannot be compared"
     assert_contains "$region" 'is **not** a severity — never compare it' \
         "Step 6 guard 2: forbids comparing the fixed-MEDIUM certainty as a severity"
+    # The two sides use different scales (agnix 3-tier UPPERCASE vs the schema's
+    # 4-tier lowercase) — an unreconciled string compare is undefined behavior in
+    # LLM-followed prose, so the ordinal and the case-fold must be stated.
+    assert_contains "$region" 'case-fold before comparing' \
+        "Step 6 guard 2: reconciles the two severity scales explicitly"
+    assert_contains "$region" 'critical > high > medium > low' \
+        "Step 6 guard 2: pins the ordinal used for the comparison"
+    assert_contains "$region" 'never** superseded' \
+        "Step 6 guard 2: a critical floor finding is never superseded (agnix has no critical tier)"
 }
 
 # #470 finding #2 (live residue) — an agnix row must be EXEMPT from the

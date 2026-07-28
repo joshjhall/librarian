@@ -130,6 +130,13 @@ fi
 # (mapped to exit 2 below) rather than silently no-op'ing or emitting a partial
 # stream. `select(type=="object")`-style asserts via `error` keep it explicit.
 JQ_PROG='
+# Replace the TSV framing characters with a space, mirroring _scrub() in the
+# Python primary — applied to the five FINAL fields (after the [0:80] slice) so
+# both impls scrub at the same point and stay byte-identical. Untrusted agnix
+# message/file text would otherwise forge extra columns (tab) or a whole extra
+# row (newline) carrying a spoofed [<RULE-ID>|<SEVERITY>] prefix that Step 6
+# Guard 2 reads to decide whether to drop a floor finding.
+def scrub: gsub("[\t\n\r]"; " ");
 def cat:
   if   startswith("CC-AG-")  then "agent-frontmatter"
   elif startswith("CC-SK-")  then "skill-frontmatter"
@@ -149,11 +156,11 @@ if type != "object" then error("not an object") else . end
 | select($category != null)
 | ((.file // "") | tostring) as $file
 | select($file != "")
-| [ $file,
-    ((.line // "") | tostring),
+| [ ($file | scrub),
+    (((.line // "") | tostring) | scrub),
     $category,
-    (("[" + $rule + "|" + ((.rule_severity // "") | tostring) + "] "
-      + ((.message // "") | tostring))[0:80]),
+    ((("[" + $rule + "|" + ((.rule_severity // "") | tostring) + "] "
+       + ((.message // "") | tostring))[0:80]) | scrub),
     "MEDIUM"
   ]
 | join("\t")

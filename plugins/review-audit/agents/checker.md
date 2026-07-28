@@ -422,9 +422,16 @@ If no ambiguous cases exist, skip this pass.
    or equal to** the check-ai-config finding's severity; if it is lower, **or
    empty/unparseable**, keep both. Otherwise a repo that lowers e.g. `CC-HK-009` to
    `low` would still report at the hook's `file:line` and delete the `hook-safety`
-   finding the floor surfaces at its correct `high` severity. Note `certainty` is a
-   fixed `MEDIUM` on every agnix row and is **not** a severity — never compare it
-   here.
+   finding the floor surfaces at its correct `high` severity.
+   **The two sides use different scales — case-fold before comparing.** agnix's
+   `rule_severity` is a 3-tier UPPERCASE scale (`HIGH`/`MEDIUM`/`LOW`); a
+   check-ai-config finding's `severity` is the 4-tier lowercase schema scale
+   (`critical`/`high`/`medium`/`low`). Compare case-insensitively on the ordinal
+   `critical > high > medium > low`, where agnix `HIGH`→`high`, `MEDIUM`→`medium`,
+   `LOW`→`low`. agnix has **no** `critical` tier, so a `critical`-severity floor
+   finding is **never** superseded — deliberate, not an artifact: the floor's most
+   serious findings always survive. Note `certainty` is a fixed `MEDIUM` on every
+   agnix row and is **not** a severity — never compare it here.
    **Match per underlying issue on same-`file` + same-category —
    NOT on `file:line`, and NOT on the whole category at once.** The floor anchors
    its whole-file schema findings at the sentinel line `1` — every `agent-frontmatter`

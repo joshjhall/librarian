@@ -94,8 +94,28 @@ def map_rule(rule: str) -> str | None:
     return None
 
 
+def _scrub(value: str) -> str:
+    """Replace the TSV framing characters (tab, newline, CR) with a space.
+
+    agnix diagnostics are computed over the AUDITED repo's own files (untrusted
+    per ADR §5), and many rule messages quote the matched source line — so an
+    unsanitized `message` (or `file`) can smuggle literal tabs/newlines into the
+    row. A tab forges extra COLUMNS; a newline forges an entire extra ROW with an
+    attacker-chosen file, line, category, and `[<RULE-ID>|<SEVERITY>]` prefix.
+    That is not cosmetic: checker.md Step 6 Guard 2 parses that severity prefix to
+    decide whether to DROP a real check-ai-config floor finding, and the whole TSV
+    stream is fed to the checker as LLM context. The floor's own patterns.* are
+    structurally immune (grep is line-based, so a match can never contain a
+    newline); this path has no such guarantee, so scrub explicitly. The
+    EVIDENCE_CAP truncation does NOT help — an injected tab fits well inside 80
+    codepoints.
+    """
+    return value.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+
 def emit(path: str, line_no: str, category: str, evidence: str, certainty: str) -> None:
-    sys.stdout.write("\t".join((path, line_no, category, evidence, certainty)) + "\n")
+    row = (path, line_no, category, evidence, certainty)
+    sys.stdout.write("\t".join(_scrub(field) for field in row) + "\n")
 
 
 def _field(diag: dict, key: str) -> str:
