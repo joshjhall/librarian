@@ -218,6 +218,34 @@ test_step3a_config_pinning() {
     assert_contains "$region" 'validate, or point agnix at the repo' \
         "Step 3a config pinning: forbids reading the repo's own .agnix.toml outright"
 
+    # #548 — the ban is UNCONDITIONAL, and that is the load-bearing half. The
+    # assertion above stops one line short of the qualifier that says so, so an
+    # edit re-narrowing the ban to a trigger condition (the repo config being
+    # absent / untracked / unreadable) would pass every other assertion here.
+    # #547 replaced exactly such a conditional fallback with this unconditional
+    # posture; pin both halves so it cannot drift back.
+    assert_contains "$region" 'tracked or not' \
+        "Step 3a config pinning: the do-not-read ban is unconditional (tracked or not)"
+
+    # Negative half of the same guard: the positive pin above still admits an
+    # edit that ADDS a precondition alongside it. Scope to the opted-in branch
+    # and assert no absence/trackedness/readability trigger appears there. The
+    # sub-region deliberately ENDS before "Why not honor a tracked" — that
+    # rationale paragraph legitimately discusses trackedness, as does the
+    # graceful-degrade text later in the region, so a whole-region check would
+    # be vacuous. assert_not_empty guards the narrowing itself: a renamed anchor
+    # fails loudly instead of passing against an empty extract.
+    local opted_in
+    opted_in="$(printf '%s\n' "$region" |
+        command awk '/operator explicitly trusts this repo/{g=1} g&&/Why not honor a tracked/{exit} g')"
+    assert_not_empty "$opted_in" \
+        "Step 3a config pinning: opted-in branch sub-region extracted"
+    local trigger
+    for trigger in absent untracked unreadable readable; do
+        assert_not_contains "$opted_in" "$trigger" \
+            "Step 3a config pinning: the opted-in ban is not re-conditioned on '$trigger'"
+    done
+
     # WHY the repo's own config is never honored, even when git-tracked. Both
     # bypasses are reproduced (0.40.0 + 0.41.0) and both are ls-files-clean, so
     # keep the rationale wired — a future edit that "restores" a tracked-file
