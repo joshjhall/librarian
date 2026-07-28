@@ -11,6 +11,8 @@
 #
 # Input:  $1 = file containing paths to scan (one per line)
 # Output: TSV to stdout: file\tline\tcategory\tevidence\tcertainty
+#         evidence is `[<RULE-ID>|<agnix rule_severity>] <message>`; certainty is
+#         a fixed MEDIUM (rationale at the jq program below; #470).
 #
 # Environment:
 #   AGNIX_BIN     agnix executable (default: `agnix`)
@@ -116,12 +118,25 @@ fi
 # .[0:80] slices by codepoint (matches Python str[:80]); join("\t") avoids @tsv's
 # escaping so the row is byte-identical to the Python primary. Unmapped rules and
 # empty-`file` diagnostics (project-level advisories) are dropped.
+# Certainty is a fixed "MEDIUM" and agnix's own rule_severity rides in the
+# evidence column instead (#470; mirrors AGNIX_CERTAINTY in the Python primary).
+# rule_severity is issue SEVERITY, not detection CONFIDENCE, and agnix marks
+# nearly the whole CC-* surface HIGH — passing it through would send every agnix
+# row down the checker's certainty=HIGH auto-include fast path with no Pass-2 LLM
+# confirmation, on a value the audited repo's own .agnix.toml can rewrite.
 # The leading guards fail loud on a malformed top-level shape BEFORE emitting any
 # row, matching the Python primary: a non-object top level (e.g. a bare array),
 # or a `diagnostics` array holding a non-object element, `error`s out of jq
 # (mapped to exit 2 below) rather than silently no-op'ing or emitting a partial
 # stream. `select(type=="object")`-style asserts via `error` keep it explicit.
 JQ_PROG='
+# Replace the TSV framing characters with a space, mirroring _scrub() in the
+# Python primary — applied to the five FINAL fields (after the [0:80] slice) so
+# both impls scrub at the same point and stay byte-identical. Untrusted agnix
+# message/file text would otherwise forge extra columns (tab) or a whole extra
+# row (newline) carrying a spoofed [<RULE-ID>|<SEVERITY>] prefix that Step 6
+# Guard 2 reads to decide whether to drop a floor finding.
+def scrub: gsub("[\t\n\r]"; " ");
 def cat:
   if   startswith("CC-AG-")  then "agent-frontmatter"
   elif startswith("CC-SK-")  then "skill-frontmatter"
@@ -141,11 +156,12 @@ if type != "object" then error("not an object") else . end
 | select($category != null)
 | ((.file // "") | tostring) as $file
 | select($file != "")
-| [ $file,
-    ((.line // "") | tostring),
+| [ ($file | scrub),
+    (((.line // "") | tostring) | scrub),
     $category,
-    (("[" + $rule + "] " + ((.message // "") | tostring))[0:80]),
-    ((.rule_severity // "") | tostring)
+    ((("[" + $rule + "|" + ((.rule_severity // "") | tostring) + "] "
+       + ((.message // "") | tostring))[0:80]) | scrub),
+    "MEDIUM"
   ]
 | join("\t")
 '

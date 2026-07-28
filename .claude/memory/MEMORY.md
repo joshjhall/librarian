@@ -2,6 +2,8 @@
 
 <!-- One line per memory (title + one-line hook). -->
 <!-- rumdl-disable MD013 MD033 -->
+
+- [#470 agnix dedup hardening](issue-470-agnix-dedup-hardening.md) — SHIPPED PR #546 (L3): rule_severity→certainty passthrough sent EVERY agnix row down the HIGH auto-include fast path (no LLM confirm); filed finding #2 was already-stale (#402 fixed it); review found live TSV injection the new `[RULE|SEVERITY]` prefix made load-bearing; assert_wired's 90 was a MIS-ANCHOR detector not a prose budget
 - [#494 checklist relocation](issue-494-checklist-relocation.md) — moved 6 code-reviewer sub-reviewer checklists .md→workflow.js SUBREVIEWERS (424→249L); issue PREMISE WRONG (harness sandboxed, pasted no section); fixed bloat-glob missing FLAT agents (patterns.py+.sh) + scoped a whole-prompt undefined-guard false positive
 - [Gate-watch misses standing gates](gate-watch-misses-standing-gates.md) — golem-gate-watch fires only on transition INTO a gate; arm at dispatch + do a direct capture-pane sweep when armed late; backfilled `started` makes ELAPSED lie; ONE-CLOCK-UTC (tmux ls prints LOCAL); →#515
 - [Idle-detector false positive (own monitors)](idle-detector-false-positive-own-monitors.md) — #447 idle-at-prompt false-fires when a golem waits on its OWN background monitors; verify footer "N monitors"/advancing tokens = working, not stalled; →#517
