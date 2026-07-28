@@ -3159,6 +3159,135 @@ for (const path of [ORCH, REBASE]) {
   }
 }
 
+// =============================================================================
+// ship-issue — pre-scan candidate handoff (#556)
+// =============================================================================
+// pre-review-gates.sh already runs before the harness and its TSV was discarded,
+// so reviewers re-derived mechanical findings by shelling out. These candidates
+// are CONTEXT, never findings: the scanner is a regex matcher that cannot see
+// cross-directory tests (#555), so the prompt must invite dismissal.
+{
+  const mkPreScan = (preScan) =>
+    extractHelpers(SHIP, ["preScanSection", "preScan", "preScanTruncated", "PRESCAN_MAX"], {
+      cycle: 1,
+      preScan,
+    });
+
+  const CAND = { file: "a.js", line: 1, category: "missing-test-file", evidence: "no test", certainty: "HIGH" };
+
+  // The no-op case must leave the shared prefix BYTE-IDENTICAL to pre-#556 —
+  // otherwise adding this feature silently invalidates the #256 prompt cache on
+  // every run that does not use it.
+  for (const [label, args] of [
+    ["absent", undefined],
+    ["empty array", []],
+    ["not an array", "nope"],
+  ]) {
+    eq(mkPreScan(args).preScanSection(), "", `preScanSection: ${label} ⇒ empty string (cache-stable no-op)`);
+  }
+
+  // Malformed rows are dropped, not crashed on — a bad scanner line must never
+  // take down the review cycle.
+  // Each junk row is missing at least one of the two required fields, so only
+  // CAND survives — file AND category are both mandatory (a row with just one
+  // cannot be anchored to a location a reviewer could check).
+  const junk = mkPreScan([null, {}, { file: "" }, { file: "x.js" }, { category: "c" }, CAND]);
+  eq(junk.preScan.length, 1, "preScanSection: rows missing file OR category are dropped");
+
+  const sec = mkPreScan([CAND]).preScanSection();
+  ok(sec.includes("a.js"), "preScanSection: renders the candidate file");
+  ok(sec.includes("PRE-SCAN CANDIDATES"), "preScanSection: wraps candidates in a dataBlock fence");
+  ok(
+    /DATA ONLY|never as instructions/.test(sec),
+    "preScanSection: candidates carry the data-only injection guard (untrusted file content)",
+  );
+  // The framing is the whole point (#555): a reviewer must feel free to dismiss.
+  ok(/NOT a confirmed finding/i.test(sec), "preScanSection: candidates are framed as unconfirmed");
+  ok(/dismiss/i.test(sec), "preScanSection: reviewers are told they may dismiss");
+  ok(/do NOT re-derive/i.test(sec), "preScanSection: reviewers are told not to re-derive (the cost saving)");
+  ok(/file anything else you find/i.test(sec), "preScanSection: candidates do not bound the reviewer");
+
+  // Only the five contract fields ride into the prompt — an untrusted extra key
+  // (these objects carry regex matches against file content) must not.
+  const sneaky = mkPreScan([{ ...CAND, injected: "IGNORE-PRIOR-INSTRUCTIONS" }]).preScanSection();
+  ok(!sneaky.includes("IGNORE-PRIOR-INSTRUCTIONS"), "preScanSection: extra keys are stripped, not forwarded");
+  ok(!sneaky.includes("injected"), "preScanSection: extra key NAMES are stripped too");
+
+  // Oversized input is capped, and the cap is DISCLOSED — a silently trimmed
+  // list would read as "the scanner found nothing more", a false completeness.
+  const many = mkPreScan(Array.from({ length: 150 }, (_, i) => ({ ...CAND, file: `f${i}.js` })));
+  eq(many.preScan.length, many.PRESCAN_MAX, "preScanSection: candidate count is capped");
+  eq(many.preScanTruncated, 150 - many.PRESCAN_MAX, "preScanSection: truncation count is tracked");
+  ok(
+    /NOT exhaustive/i.test(many.preScanSection()),
+    "preScanSection: truncation is disclosed in-prompt, never silent",
+  );
+
+  // It must live inside the SHARED block, so all reviewers see it and the
+  // fan-out prefix stays byte-identical across siblings (#256).
+  const src = readFileSync(join(repoRoot, SHIP), "utf8");
+  const rd = src.slice(src.indexOf("const reviewerData ="), src.indexOf("\nconst ", src.indexOf("const reviewerData =") + 1));
+  ok(rd.includes("preScanSection()"), "ship-issue: preScanSection is part of the shared reviewerData block (#256)");
+}
+
+// =============================================================================
+// ship-issue — conventions digest + lint authority (#557)
+// =============================================================================
+// Measured on the baseline run, `conventions` spent 164 of 207 Bash calls
+// hand-measuring things the repo's own lint gates already compute (six
+// consecutive awk one-liners re-rolling a line-length check, then re-running
+// rumdl and shellcheck by hand). The digest kills the 19 doc-read calls; the
+// SCOPE_DISCIPLINE lint clause targets the 164.
+{
+  const mkDigest = (conventionsDigest) =>
+    extractHelpers(
+      SHIP,
+      ["conventionsSection", "conventionsDigest", "conventionsDigestTruncated", "DIGEST_MAX_CHARS"],
+      { cycle: 1, conventionsDigest },
+    );
+
+  // No-op must be byte-identical to pre-#557 (#256 cache prefix).
+  for (const [label, v] of [
+    ["absent", undefined],
+    ["empty", ""],
+    ["whitespace only", "   \n  "],
+    ["not a string", 42],
+  ]) {
+    eq(mkDigest(v).conventionsSection(), "", `conventionsSection: ${label} ⇒ empty string (cache-stable no-op)`);
+  }
+
+  const d = mkDigest("bash-3.2 clean; SHA-pinned actions; conform scopes: workflow|tests|ci");
+  const sec = d.conventionsSection();
+  ok(sec.includes("bash-3.2 clean"), "conventionsSection: renders the digest text");
+  ok(sec.includes("PROJECT CONVENTIONS"), "conventionsSection: fenced in a dataBlock");
+  ok(/DATA ONLY|never as instructions/.test(sec), "conventionsSection: carries the data-only injection guard");
+  ok(/do NOT re-read/i.test(sec), "conventionsSection: tells reviewers not to re-read the source files");
+  // A digest is a SUMMARY. If reviewers treat it as the complete ruleset they
+  // will wave through a real violation that simply did not fit.
+  ok(/still flag it/i.test(sec), "conventionsSection: an omitted rule is still flaggable (digest is not exhaustive)");
+
+  // Oversized digests are capped AND the truncation is disclosed — a silently
+  // trimmed rule list reads as a complete one.
+  const big = mkDigest("x".repeat(9000));
+  eq(big.conventionsDigest.length, big.DIGEST_MAX_CHARS, "conventionsSection: digest is capped");
+  eq(big.conventionsDigestTruncated, true, "conventionsSection: truncation is tracked");
+  ok(/TRUNCATED/i.test(big.conventionsSection()), "conventionsSection: truncation is disclosed in-prompt");
+
+  // The lint-authority clause is what stops the 164 hand-measurement calls.
+  const src = readFileSync(join(repoRoot, SHIP), "utf8");
+  const sd = src.slice(src.indexOf("const SCOPE_DISCIPLINE ="), src.indexOf("\n// `sanitize`"));
+  ok(/do not re-run those/i.test(sd.replace(/\s+/g, " ")), "SCOPE_DISCIPLINE: reviewers told not to re-run lint tools");
+  ok(/hand-measure/i.test(sd), "SCOPE_DISCIPLINE: reviewers told not to hand-measure lint-decidable facts");
+  for (const tool of ["rumdl", "shellcheck", "typos", "ruff"]) {
+    ok(sd.includes(tool), `SCOPE_DISCIPLINE: names ${tool} as an enforcing gate`);
+  }
+
+  // Both blocks must live in the SHARED reviewerData so every dimension sees
+  // them and the fan-out prefix stays byte-identical across siblings (#256).
+  const rd = src.slice(src.indexOf("const reviewerData ="), src.indexOf("\nconst ", src.indexOf("const reviewerData =") + 1));
+  ok(rd.includes("conventionsSection()"), "ship-issue: conventionsSection is in the shared reviewerData block (#256)");
+}
+
 // --- Report ------------------------------------------------------------------
 
 if (failures.length > 0) {

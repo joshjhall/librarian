@@ -20,6 +20,14 @@ export const meta = {
 //     diff?:      string,                  // FULL precomputed diff for context
 //     prComments?: [{ id, author, path?, line?, body, url? }],  // pr-cycle only
 //     issue?:     { number, title }        // for scope-drift + defer-issue context
+//     tokenCeiling?: number,               // opt-in per-cycle output-token ceiling (#553)
+//     preScan?:   [{ file, line, category, evidence, certainty }],  // pre-review-gates.sh
+//                                          // rows + lint-gate rows (#556/#557) —
+//                                          // CANDIDATES to confirm or dismiss,
+//                                          // never pre-filed findings
+//     conventionsDigest?: string,          // distilled CLAUDE.md/AGENTS.md/memory
+//                                          // rules (#557), so reviewers stop each
+//                                          // re-reading those files
 //     // --- Re-review narrowing (cycle > 1 only; #492) -------------------------
 //     deltaDiff?:  string,                 // git diff of the fix commits SINCE the last reviewed SHA
 //     deltaFiles?: string[],               // git diff --name-only of that same fix-commit delta
@@ -94,6 +102,51 @@ const issue = args && args.issue && typeof args.issue === 'object' ? args.issue 
 // last cycle. `narrowingActive` below decides whether they take effect.
 const deltaDiff = args && typeof args.deltaDiff === 'string' ? args.deltaDiff : ''
 const deltaFiles = args && Array.isArray(args.deltaFiles) ? args.deltaFiles.filter(Boolean) : []
+
+// Deterministic pre-scan candidates from pre-review-gates.sh (#556), optional.
+// That scanner already runs at Step 3.5 item 5 and its TSV was discarded before
+// item 6, so five reviewers re-derived the same ground by shelling out (measured:
+// the `tests` dimension spends 9-42 turns per cycle rediscovering roughly what
+// scan_missing_tests / scan_untested_public_api already computed; reviewers make
+// no Grep calls at all, exploring via Bash at ~50-80k cache_read each).
+//
+// These are CANDIDATES, never findings. The scanner is a regex matcher: it
+// cannot see cross-directory tests, project conventions, or intent. #555 is the
+// standing proof — run against PR #554's own diff it emitted two HIGH-certainty
+// missing-test-file / untested-public-api hits for a file covered by 28 test
+// references. So they enter the prompt as things to confirm or dismiss, and a
+// reviewer that dismisses one is doing its job.
+//
+// Cap the count so a pathological scan (thousands of hits on a large diff)
+// cannot displace the diff itself from the prompt. Truncation is logged, never
+// silent — a silently trimmed candidate list would read as "the scanner found
+// nothing else", which is exactly the false-completeness this repo guards
+// against elsewhere.
+const PRESCAN_MAX = 100
+const preScanAll =
+  args && Array.isArray(args.preScan)
+    ? args.preScan.filter(
+        (c) => c && typeof c === 'object' && typeof c.file === 'string' && c.file && typeof c.category === 'string' && c.category
+      )
+    : []
+const preScan = preScanAll.slice(0, PRESCAN_MAX)
+const preScanTruncated = preScanAll.length - preScan.length
+
+// Distilled project-conventions digest (#557), optional. The caller reads
+// CLAUDE.md / AGENTS.md / directory-level CLAUDE.md / .claude/memory/*.md ONCE
+// and passes a short rule summary, instead of every reviewer in the fan-out
+// re-reading those files (measured: 19 doc-read Bash calls across three cycles,
+// on top of the 164 hand-measurement calls the lint clause above targets).
+//
+// Capped: a digest is a summary, and an oversized one would displace the diff
+// it is meant to contextualize. Truncation is disclosed in-prompt for the same
+// reason as preScan's — a silently trimmed rule list reads as a complete one,
+// which would invite a reviewer to conclude a real convention does not exist.
+const DIGEST_MAX_CHARS = 4000
+const conventionsDigestRaw =
+  args && typeof args.conventionsDigest === 'string' ? args.conventionsDigest.trim() : ''
+const conventionsDigest = conventionsDigestRaw.slice(0, DIGEST_MAX_CHARS)
+const conventionsDigestTruncated = conventionsDigestRaw.length > conventionsDigest.length
 // Caller-supplied output-token ceiling for THIS cycle (#553), optional.
 // Without it the harness is unbounded in practice: every budget gate below is
 // guarded on `budget.total`, which the Workflow runtime populates ONLY from a
@@ -472,7 +525,20 @@ const SCOPE_DISCIPLINE =
   'conventions beyond the diff — findings must be anchored to a changed line. ' +
   'If you cannot confirm something within that budget, report it at LOW ' +
   'certainty rather than searching further: the judge re-scores certainty, and ' +
-  'a LOW-certainty finding is filed, never dropped.'
+  'a LOW-certainty finding is filed, never dropped. ' +
+  // #557: the measured worst case was a reviewer spending six consecutive Bash
+  // calls re-rolling an awk one-liner to count over-long lines, then hunting for
+  // the rumdl config, then re-running rumdl and shellcheck by hand — all of it
+  // recomputing what CI already enforces. Mechanical, tool-decidable facts are
+  // exactly what the reviewer should NOT be spending context on.
+  'Formatting, linting, spelling, and style rules are enforced by the repo\'s ' +
+  'own gates in CI (this repo: rumdl, shellcheck, typos, ruff, and the ' +
+  'tests/lint-*.sh gates), which block merge on their own. Do NOT re-run those ' +
+  'tools, hunt for their config, or hand-measure what they check (line length, ' +
+  'quoting, spelling, import order, formatting) — a merged PR has already ' +
+  'passed them. Any such results supplied below are authoritative; treat them ' +
+  'as settled and spend your budget on what a linter CANNOT decide: logic, ' +
+  'security, missing tests, and violations of documented project conventions.'
 
 // `sanitize` and `dataBlock` — the prompt-injection controls — are defined near
 // the top of the file (above NEW_DIMENSIONS, which calls `sanitize` at module
@@ -543,9 +609,65 @@ const manifestPrompt = () => {
 // in-flight cache write, so the direct payoff is cross-cycle (a re-review whose
 // diff is unchanged) plus resume determinism; the always-free shared prefix is
 // the agent system-prompt + tool defs, identical across siblings regardless.
+// Pre-scan candidates block (#556). Empty string when none were supplied, so an
+// absent `preScan` leaves the shared prefix byte-identical to pre-#556 — the
+// no-op case must not perturb the cache (#256).
+//
+// Only the five contract fields are forwarded, rebuilt in fixed order: the
+// caller's objects are untrusted (they carry regex matches against file
+// content), so an unexpected extra key must not ride into the prompt. dataBlock
+// then fences the whole thing as data-only, matching how the diff and findings
+// are handled everywhere else.
+const preScanSection = () => {
+  if (preScan.length === 0) return ''
+  const rows = preScan.map((c) => ({
+    file: c.file,
+    line: c.line,
+    category: c.category,
+    evidence: typeof c.evidence === 'string' ? c.evidence : '',
+    certainty: typeof c.certainty === 'string' ? c.certainty : '',
+  }))
+  return (
+    'Deterministic pre-scan candidates, already computed by the repo scanner — ' +
+    'do NOT re-derive them. Each is a regex match, NOT a confirmed finding: the ' +
+    'scanner cannot see cross-directory tests, project conventions, or intent. ' +
+    'Confirm the ones that are real (file them as your own findings, with your ' +
+    'own certainty) and dismiss the rest — a dismissed candidate costs nothing, ' +
+    'a re-derived one costs a repo search. They do not bound you: file anything ' +
+    'else you find.' +
+    (preScanTruncated > 0
+      ? ` NOTE: ${preScanTruncated} further candidate(s) were omitted for size — this list is NOT exhaustive.`
+      : '') +
+    '\n' +
+    dataBlock('PRE-SCAN CANDIDATES', rows) +
+    '\n\n'
+  )
+}
+
+// Conventions digest block (#557). Empty when not supplied, so the no-op case
+// stays byte-identical to pre-#557 (#256). Fenced as data-only like every other
+// caller-supplied block: the digest is distilled from repo files, which are
+// themselves untrusted content in the injection model.
+const conventionsSection = () => {
+  if (!conventionsDigest) return ''
+  return (
+    'Project conventions, already distilled from this repo\'s CLAUDE.md / ' +
+    'AGENTS.md / .claude/memory — do NOT re-read those files to rediscover ' +
+    'them. Cite the specific rule when you flag a violation. This digest is a ' +
+    'summary, not the whole ruleset' +
+    (conventionsDigestTruncated ? ' AND IT WAS TRUNCATED for size' : '') +
+    ': if the diff plainly violates a documented convention that is absent ' +
+    'here, still flag it.\n' +
+    dataBlock('PROJECT CONVENTIONS', conventionsDigest) +
+    '\n\n'
+  )
+}
+
 const reviewerData = (manifest, diff = scopeDiff) =>
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
   `Classifications: ${stableStringify(manifest.classifications)}\n\n` +
+  conventionsSection() +
+  preScanSection() +
   diffSection(diff)
 
 // Reused dimensions (security, correctness): defer to the agent's own
@@ -905,6 +1027,23 @@ if (budget.total) {
   log(`token bound: caller ceiling ${CYCLE_TOKEN_CEILING} output tokens for this cycle`)
 } else {
   log('token bound: none (default) — measuring only; pass args.tokenCeiling to bound')
+}
+
+// Pre-scan handoff (#556): say when it did NOT arrive. The scanner runs at
+// Step 3.5 item 5 regardless, so a missing handoff means its output was
+// computed and thrown away — silent, and indistinguishable from a clean scan.
+if (preScan.length > 0) {
+  log(
+    `pre-scan: ${preScan.length} candidate(s) supplied` +
+      (preScanTruncated > 0 ? ` (${preScanTruncated} omitted for size)` : '')
+  )
+} else {
+  log('pre-scan: none supplied — reviewers will re-derive mechanical findings (pass args.preScan)')
+}
+if (conventionsDigest) {
+  log(`conventions digest: ${conventionsDigest.length} chars${conventionsDigestTruncated ? ' (truncated)' : ''}`)
+} else {
+  log('conventions digest: none supplied — reviewers will re-read CLAUDE.md/memory (pass args.conventionsDigest)')
 }
 
 // --- Manifest ---------------------------------------------------------------

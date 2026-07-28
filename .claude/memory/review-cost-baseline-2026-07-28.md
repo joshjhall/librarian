@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: b03da476-855a-4340-a1de-499a566aea26
-  modified: 2026-07-28T20:24:34.087Z
+  modified: 2026-07-28T20:52:03.822Z
 ---
 
 Frozen baseline of the ship-issue adversarial review harness **before** any
@@ -82,6 +82,15 @@ scope-drift 7/1.8k/180k/6 · manifest 2/2.9k/24k/0
 The "100-200M tokens per run" figure is **cache_read**, billed at ~0.1× base.
 Real output for a full 3-cycle review is **660k**. Both matter, but the lever is
 cache_read, and cache_read is a function of tool calls.
+
+## The "after" measurement is tracked in #559
+
+Issue #559 holds the full question list, the collection recipe, and the
+pass/fail criteria. Record results in a sibling `review-cost-after-<date>.md`
+and link it here. **First check on any post-change run:** the harness logs
+`pre-scan: none supplied` / `conventions digest: none supplied` when the caller
+did not pass the new args — such a run is a re-run of THIS baseline, not a test
+of #556/#557.
 
 ## What to compare after the changes land
 

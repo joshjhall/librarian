@@ -124,6 +124,46 @@ behavior is noted inline per check; environment variables referenced here
    to execute, skip this check with a note: "Pre-review gates skipped
    (scanner not available)." Never block shipping due to scanner errors.
 
+   **Keep the parsed TSV for item 6 (#556).** Retain the rows as
+   `[{file, line, category, evidence, certainty}]` and pass them to the review
+   harness as `args.preScan` — including any auto-fixed ones, which the reviewer
+   can then confirm as resolved. Without this the scan runs, its output is
+   discarded, and five reviewers re-derive the same mechanical findings by
+   shelling out (the single largest source of duplicated work in the fan-out).
+   The harness logs `pre-scan: none supplied` when the handoff is missing.
+
+   They are passed as **candidates, not findings** — the harness prompts
+   reviewers to confirm or dismiss each one. That framing is deliberate: the
+   scanner is a regex matcher and cannot see cross-directory tests or project
+   conventions, so it produces real false positives (#555). Never pre-file a
+   pre-scan row as a confirmed review finding.
+
+   **Also harvest the repo's lint gates into the same list (#557).** Run
+   whichever of the project's own linters are available on the changed files and
+   append their output as `preScan` rows with a `lint:<tool>` category:
+
+   ```bash
+   rumdl check <changed .md>            # -> lint:rumdl
+   shellcheck --severity=warning <.sh>  # -> lint:shellcheck
+   typos <changed files>                # -> lint:typos
+   ruff check <changed .py>             # -> lint:ruff
+   ```
+
+   Measured on the baseline run, the `conventions` reviewer spent **164 of its
+   207 Bash calls** hand-measuring what these tools compute — including six
+   consecutive `awk` one-liners re-deriving a line-length check, then re-running
+   `rumdl` and `shellcheck` itself. Supplying the results turns that into a read.
+   Each tool is **optional**: if it is not installed, skip its rows silently and
+   pass the rest. Never fail the ship because a linter is missing.
+
+   **Distill a conventions digest (#557).** Read the repo-root `CLAUDE.md` /
+   `AGENTS.md`, any directory-level `CLAUDE.md` covering the changed paths, and
+   `.claude/memory/*.md` **once**, and pass a short rule summary (~4000 chars
+   max, the harness caps it) as `args.conventionsDigest`. Without it every
+   reviewer in the fan-out re-reads those files. Keep it to rules a reviewer
+   could actually violate in a diff — banned/required patterns, naming, scopes,
+   version pinning — not prose.
+
 1. **Adversarial pre-PR review** (all shipping modes) — run a multi-dimension
    adversarial review of the changes **before** they are pushed/merged, so the
    delivered code is review-clean regardless of how it ships. This complements the
@@ -172,7 +212,9 @@ behavior is noted inline per check; environment variables referenced here
      files: [<changed files, FULL scope>],
      diff: "<diff text, FULL scope>",
      issue: { number: {N}, title: "{title}" },
-     tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>
+     tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
+     preScan: [<pre-review-gates.sh TSV rows + lint-gate rows from item 5>],
+     conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>"
    }
    ```
 
@@ -224,6 +266,8 @@ behavior is noted inline per check; environment variables referenced here
      diff: "<diff text, FULL scope>",          // unchanged — scope-drift reads this
      issue: { number: {N}, title: "{title}" },
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
+     preScan: [<pre-review-gates.sh TSV rows + lint-gate rows from item 5>],
+     conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
      deltaFiles: [<git diff --name-only lastReviewedSha...HEAD>],
      deltaDiff: "<git diff lastReviewedSha...HEAD>",
      priorBlockingDimensions: [<dimensions that blocked last cycle>]
