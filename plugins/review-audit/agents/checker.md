@@ -288,12 +288,22 @@ When `check-ai-config` survived the Step 2 integrity gate, after its
    `severity`), which a hostile repo can ship to silence findings (e.g. disable
    `CC-HK-009` to hide a malicious hook). Critically, when `AGNIX_CONFIG` is
    **unset** the normalizer passes **no** `--config` flag, so agnix falls through
-   to its own default discovery — which, because every manifest path lives inside
-   the audited tree, is that repo's own `.agnix.toml`. Running agnix with an
-   operator-controlled config is therefore a **precondition you must enforce
-   before invoking the normalizer**, mirroring the skip-branch of the other three
+   to its own default discovery — and that discovery **walks up from each scanned
+   file's own directory**, not from the repo root. A hostile repo can therefore
+   plant an `.agnix.toml` in **any** directory near the files it wants to hide;
+   agnix honors it silently, and a check of the repo-root file alone would never
+   see it. (Verified against agnix 0.40.0 and 0.41.0: a nested `.agnix.toml`
+   disabling a rule suppressed that rule's findings, while an `.agnix.toml` in a
+   *parent* of the repo was not consulted.)
+
+   **The enforced precondition is therefore that agnix ALWAYS runs with an
+   explicit `--config`** — never on its own discovery. An explicit `--config`
+   suppresses the upward walk entirely (verified on both versions), which is the
+   only reliable defense: enumerating every ancestor `.agnix.toml` would have to
+   model agnix's search order exactly and would still race a file created after
+   the check. Branch as follows, mirroring the skip-branch of the other three
    surfaces (Step 2 skill discovery, Step 2 `audit-*` dispatch, Step 3
-   `patterns.sh` execution). Branch on it exactly like them:
+   `patterns.sh` execution):
    - **`AGNIX_CONFIG` is already set in the environment** (an operator-controlled
      config): invoke the normalizer with it inherited — agnix uses `--config
      "$AGNIX_CONFIG"`, never the audited tree's own file.
@@ -306,40 +316,37 @@ When `check-ai-config` survived the Step 2 integrity gate, after its
      graceful-degrade path below (the floor stands alone; no agnix contribution
      this run).
    - **`AGNIX_CONFIG` is unset but `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1`** (the
-     operator explicitly trusts this repo): invoke the normalizer; agnix reading
-     the now-trusted repo's `.agnix.toml` is the opted-in behavior. On this
-     branch only, first filter a **stray untracked** `.agnix.toml`. This needs
-     **two** checks, in this order — a single `git ls-files` call is not enough,
-     because it consults only the index and so exits non-zero **identically**
-     whether the file is missing from disk or merely untracked:
-     1. **Existence** — `test -e <repo-root>/.agnix.toml`. If it does **not**
-        exist, **invoke the normalizer as normal** and skip check 2 entirely:
-        agnix runs on its built-in defaults, there is no untrusted config to
-        read, and skipping here would drop enrichment for no security gain.
-     1. **Tracked-ness** (only when check 1 says the file exists) —
-        `git -C <repo-root> ls-files --error-unmatch .agnix.toml`. Zero exit
-        (tracked) ⇒ invoke the normalizer. Non-zero (**present but untracked**)
-        ⇒ do **NOT** invoke the normalizer for this run — that is a stray local
-        file agnix would silently honor — and log
-        `[prescan] agnix skipped (untracked .agnix.toml; untrusted project source)`,
-        falling through to the `patterns.sh`-only result exactly like the
-        enforced skip above.
+     operator explicitly trusts this repo): invoke the normalizer, but **still
+     never let agnix discover its own config**. Set `AGNIX_CONFIG` for the
+     invocation to a config **you** choose, then invoke:
+     1. If `<repo-root>/.agnix.toml` exists **and** is git-tracked
+        (`git -C <repo-root> ls-files --error-unmatch .agnix.toml`), point
+        `AGNIX_CONFIG` at it — honoring the trusted repo's committed config is
+        the opted-in behavior. This is an **existence-in-index check, not an
+        integrity check** (an attacker who can commit the file makes it tracked
+        by definition; the opt-in is the real trust decision, this only filters
+        stray local/untracked files).
+     1. Otherwise — the root file is **absent**, **untracked**, or unreadable —
+        point `AGNIX_CONFIG` at a **checker-controlled config carrying agnix's
+        defaults** (a minimal file whose only required key is
+        `tools = ["claude-code"]`; write it to a temporary path you own, never
+        inside the audited tree). Log
+        `[prescan] agnix pinned to default config (no tracked .agnix.toml; untrusted project source)`.
 
-     The tracked-ness check is an **existence-in-index check, not an integrity
-     check** (an attacker who can commit the file makes it tracked by
-     definition; the opt-in is the real trust decision, this only filters stray
-     local/untracked files). The truth table, in full:
+     Because `AGNIX_CONFIG` is set on **every** path here, agnix's per-file
+     upward walk never runs and a planted nested `.agnix.toml` — at the root or
+     any depth — is inert. The truth table:
 
-     | `.agnix.toml` on disk | in git index | action |
+     | `<repo-root>/.agnix.toml` | agnix runs with | nested planted config |
      | --- | --- | --- |
-     | absent | — | **invoke** (built-in defaults; nothing untrusted to read) |
-     | present | tracked | **invoke** (opted-in behavior) |
-     | present | untracked | **skip** + log |
+     | tracked | that file | inert |
+     | untracked | checker default | inert |
+     | absent | checker default | inert |
 
-     The absent ⇒ invoke row is why this surface needs its own two-check shape
-     rather than a copy of the `SKILL.md` / `patterns.sh` guards: for those, an
-     absent artifact means there is simply nothing to run, so a bare
-     `ls-files` suffices.
+     This differs from the `SKILL.md` / `patterns.sh` guards, which can simply
+     **skip** an untrusted artifact: skipping is not enough here, because the
+     danger is not the artifact the checker reads but the one **agnix** reads
+     behind it. Neutralize the input rather than declining to run.
 
    This is the **same** untrusted-project-input boundary and opt-in that gate the
    project `patterns.sh` execution (Step 3), project skill discovery, and project

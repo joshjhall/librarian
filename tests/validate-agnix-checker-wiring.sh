@@ -57,11 +57,12 @@ STEP6_MAX_LINES=110
 
 # Mis-anchor bound for the Step 3a region, same purpose as STEP6_MAX_LINES above
 # (NOT a prose budget). Step 3a carries the enforced trust-gate branches plus
-# #471's two-check .agnix.toml guard and its truth table, so it outgrew
-# assert_wired's 90-line default. Raise this deliberately when Step 3a gains
-# contract text — Step 3a is a named extraction candidate in #503, so this bound
-# should come back DOWN when that prose moves to a companion file.
-STEP3A_MAX_LINES=125
+# #471's always-pin-the-config posture (the per-file discovery rationale, both
+# opted-in sub-branches, and the truth table), so it outgrew assert_wired's
+# 90-line default. Raise this deliberately when Step 3a gains contract text —
+# Step 3a is a named extraction candidate in #503, so this bound should come
+# back DOWN when that prose moves to a companion file.
+STEP3A_MAX_LINES=135
 
 test_suite "agnix → checker wiring (#401)"
 
@@ -173,67 +174,63 @@ test_step3a_trust() {
     # could be garbled without this gate noticing).
     assert_contains "$region" 'invoke the normalizer with it inherited' \
         "Step 3a trust: branch 1 (AGNIX_CONFIG set) invokes with the operator config inherited"
-    assert_contains "$region" 'the now-trusted repo' \
+    assert_contains "$region" 'operator explicitly trusts this repo' \
         "Step 3a trust: branch 3 (unset + opted in) invokes as the opted-in behavior"
 }
 
-# #471 — under the opt-in (branch 3) the checker must apply the same
-# existence-in-index filter as the other three trust surfaces, but .agnix.toml is
-# OPTIONAL where SKILL.md / patterns.sh are not: `git ls-files --error-unmatch`
-# fails for both "absent" and "untracked", and only the latter is the hazard.
-# Absent => agnix runs on built-in defaults (no untrusted config exists), so
-# skipping there would drop enrichment for no security gain. Pin the three-way
-# split so a later "simplification" back to a two-way mirror is caught.
-test_step3a_git_tracked_guard() {
+# #471 — the trust hazard is NOT the config the checker reads, it is the one
+# AGNIX reads behind it. agnix's default discovery walks up from EACH scanned
+# file's own directory (verified against the pinned 0.40.0 and 0.41.0), so a
+# hostile repo can plant an .agnix.toml at any depth and a repo-root-only check
+# never sees it. The only reliable defense is to ALWAYS pass an explicit
+# --config, which suppresses the walk entirely. Pin that invariant so a future
+# edit cannot regress to "skip when the root file is untracked" — which reads as
+# safe but silently leaves every nested planted config live.
+test_step3a_config_pinning() {
     local region
     region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a git-tracked guard" "$region" \
-        'ls-files --error-unmatch .agnix.toml' "$STEP3A_MAX_LINES"
-    # Same caveat wording the SKILL.md / patterns.sh surfaces carry — this is an
-    # index-existence filter, NOT an integrity check.
-    # Single-line fragment: the full caveat wraps across a line break here (as it
-    # also does at the patterns.sh surface), so match the half that fits one line.
-    assert_contains "$region" 'existence-in-index check, not an integrity' \
-        "Step 3a git-tracked guard: carries the shared existence-in-index caveat"
+    # Single-line fragments throughout: the prose wraps, so anchor on the half
+    # that fits one source line.
+    assert_wired "Step 3a config pinning" "$region" \
+        'agnix ALWAYS runs with an' "$STEP3A_MAX_LINES"
 
-    # THE LOAD-BEARING BIT — the guard needs TWO checks, not one. `git ls-files
-    # --error-unmatch` consults only the index, so it exits non-zero with
-    # byte-identical stderr whether the file is missing from disk or merely
-    # untracked (verified in a scratch sandbox). A reader given only the git
-    # command cannot tell the invoke case from the skip case, and the
-    # less-restrictive reading ("invoke") silently defeats the whole guard. Pin
-    # the filesystem-existence probe so it can never be dropped back to one call.
-    assert_contains "$region" 'test -e <repo-root>/.agnix.toml' \
-        "Step 3a git-tracked guard: names the filesystem-existence check explicitly"
-    assert_contains "$region" 'a single `git ls-files` call is not enough' \
-        "Step 3a git-tracked guard: states WHY one command cannot carry the branch"
-    assert_contains "$region" 'consults only the index' \
-        "Step 3a git-tracked guard: pins the mechanism — index-only, so absent == untracked"
+    # The mechanism — why a repo-root-only check is insufficient.
+    assert_contains "$region" 'walks up from each scanned' \
+        "Step 3a config pinning: states agnix discovery walks up per-file"
+    assert_contains "$region" 'any** directory near the files' \
+        "Step 3a config pinning: names the nested-plant attack a root check would miss"
+    assert_contains "$region" 'suppresses the upward walk' \
+        "Step 3a config pinning: explicit --config is what neutralizes discovery"
 
-    # The three outcomes, and the truth table that makes them unambiguous.
-    assert_contains "$region" 'invoke the normalizer as normal' \
-        "Step 3a git-tracked guard: absent .agnix.toml still invokes (no coverage regression)"
-    assert_contains "$region" 'no security gain' \
-        "Step 3a git-tracked guard: pins the rationale — skipping on absent buys no security"
-    assert_contains "$region" 'present but untracked' \
-        "Step 3a git-tracked guard: names the untracked case explicitly"
-    assert_contains "$region" '[prescan] agnix skipped (untracked .agnix.toml' \
-        "Step 3a git-tracked guard: logs the untracked-skip line"
-    assert_contains "$region" '| absent | — | **invoke**' \
-        "Step 3a git-tracked guard: truth table pins the absent row"
-    assert_contains "$region" '| present | untracked | **skip**' \
-        "Step 3a git-tracked guard: truth table pins the untracked-skip row"
+    # Both opted-in sub-branches must end with AGNIX_CONFIG set — the tracked
+    # root file, or a checker-controlled default. Neither may fall through to
+    # agnix's own discovery.
+    assert_contains "$region" 'ls-files --error-unmatch .agnix.toml' \
+        "Step 3a config pinning: tracked-ness decides WHICH config, via ls-files"
+    assert_contains "$region" 'existence-in-index check, not an' \
+        "Step 3a config pinning: carries the shared existence-in-index caveat"
+    assert_contains "$region" 'checker-controlled config' \
+        "Step 3a config pinning: untracked/absent falls back to a checker-owned default"
+    assert_contains "$region" 'inside the audited tree' \
+        "Step 3a config pinning: the default config is written outside the audited tree"
+    assert_contains "$region" '[prescan] agnix pinned to default config' \
+        "Step 3a config pinning: logs the default-config fallback"
 
-    # Scope: the guard belongs ONLY to branch 3 (unset + opted in). Branch 1
-    # (operator-supplied AGNIX_CONFIG) never reads the audited repo's config at
-    # all, so widening the guard to it would change real invocation behavior.
-    assert_contains "$region" 'On this' \
-        "Step 3a git-tracked guard: scoped to the opted-in branch only"
+    # Truth table — every row must end in an inert nested config.
+    assert_contains "$region" '| tracked | that file | inert |' \
+        "Step 3a config pinning: truth table pins the tracked row"
+    assert_contains "$region" '| untracked | checker default | inert |' \
+        "Step 3a config pinning: truth table pins the untracked row"
+    assert_contains "$region" '| absent | checker default | inert |' \
+        "Step 3a config pinning: truth table pins the absent row"
 
-    # Why this surface deviates from its siblings — keep the rationale wired so a
-    # future reader does not "restore parity" and reintroduce the regression.
-    assert_contains "$region" 'nothing to run' \
-        "Step 3a git-tracked guard: states why absent differs from the sibling surfaces"
+    # The load-bearing distinction from the sibling surfaces: skipping is NOT
+    # sufficient here. Keep the rationale wired so a future reader does not
+    # "restore parity" with the other three guards and reopen the hole.
+    assert_contains "$region" 'skipping is not enough here' \
+        "Step 3a config pinning: states why skip-on-untrusted is insufficient at this surface"
+    assert_contains "$region" 'Neutralize the input rather than declining to run' \
+        "Step 3a config pinning: pins the neutralize-not-skip principle"
 }
 
 # #472 item 1 — the four-item agnix-owned category list is duplicated in Step 3a
@@ -446,7 +443,7 @@ test_step3a_certainty_tier() {
 run_test test_step3a_invocation "Step 3a invokes agnix-normalize as a second pre-scan source"
 run_test test_step3a_graceful_degrade "Step 3a skips agnix contribution when absent (graceful degrade)"
 run_test test_step3a_trust "Step 3a enforces the operator-controlled AGNIX_CONFIG skip-gate"
-run_test test_step3a_git_tracked_guard "Step 3a filters an untracked .agnix.toml under the opt-in (#471)"
+run_test test_step3a_config_pinning "Step 3a always pins agnix to an explicit --config, never its own discovery (#471)"
 run_test test_owned_category_parity "Step 3a and Step 6 agnix-owned category lists agree (#472)"
 run_test test_observe_only_restriction "MUST-NOT list bans agnix autofix (observe-only, all 3 flags)"
 run_test test_step6_precedence_dedup "Step 6 precedence-dedups agnix over check-ai-config (agnix-owned categories only)"

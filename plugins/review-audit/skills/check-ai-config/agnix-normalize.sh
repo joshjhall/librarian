@@ -98,10 +98,16 @@ fi
 # legally begins with `-`/`--` (the audited tree is untrusted per ADR §5) is
 # parsed by agnix as a positional path, never a flag — this is what fences off
 # `--fix-unsafe`/`--config` injection. Mirrors the Python primary.
+# `--config` is a GLOBAL flag and MUST precede the `validate` subcommand — agnix
+# (clap-based) rejects `validate --config …` with "unexpected argument
+# '--config' found" and exit 2, verified on both the pinned 0.40.0 and 0.41.0.
+# Emitting it after `validate` made the whole AGNIX_CONFIG branch non-functional;
+# because stderr is discarded below, that surfaced only as the generic
+# "produced no JSON output" fail-loud, never as the real cause.
 AGNIX_OUT=""
 if [ -n "${AGNIX_CONFIG:-}" ]; then
-    AGNIX_OUT="$("$AGNIX_BIN" --format json --target claude-code validate \
-        --config "$AGNIX_CONFIG" -- "${PATHS[@]}" 2>/dev/null || true)"
+    AGNIX_OUT="$("$AGNIX_BIN" --format json --target claude-code \
+        --config "$AGNIX_CONFIG" validate -- "${PATHS[@]}" 2>/dev/null || true)"
 else
     AGNIX_OUT="$("$AGNIX_BIN" --format json --target claude-code validate \
         -- "${PATHS[@]}" 2>/dev/null || true)"
