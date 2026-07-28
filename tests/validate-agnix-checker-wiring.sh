@@ -202,27 +202,34 @@ test_step3a_config_pinning() {
     assert_contains "$region" 'suppresses the upward walk' \
         "Step 3a config pinning: explicit --config is what neutralizes discovery"
 
-    # Both opted-in sub-branches must end with AGNIX_CONFIG set — the tracked
-    # root file, or a checker-controlled default. Neither may fall through to
-    # agnix's own discovery.
-    assert_contains "$region" 'ls-files --error-unmatch .agnix.toml' \
-        "Step 3a config pinning: tracked-ness decides WHICH config, via ls-files"
-    assert_contains "$region" 'existence-in-index check, not an' \
-        "Step 3a config pinning: carries the shared existence-in-index caveat"
+    # The opted-in branch ALWAYS uses a checker-owned config — it never reads the
+    # repo's own .agnix.toml at all. Pin the literal required key and the
+    # out-of-tree constraint: a malformed or missing default config would make
+    # agnix fall back to its own discovery, reopening the nested-plant hole this
+    # whole posture exists to close.
     assert_contains "$region" 'checker-controlled config' \
-        "Step 3a config pinning: untracked/absent falls back to a checker-owned default"
-    assert_contains "$region" 'inside the audited tree' \
+        "Step 3a config pinning: the opt-in branch uses a checker-owned default config"
+    assert_contains "$region" 'tools = ["claude-code"]' \
+        "Step 3a config pinning: pins the default config's required key literally"
+    assert_contains "$region" 'never inside the audited' \
         "Step 3a config pinning: the default config is written outside the audited tree"
     assert_contains "$region" '[prescan] agnix pinned to default config' \
-        "Step 3a config pinning: logs the default-config fallback"
+        "Step 3a config pinning: logs the default-config pin"
+    assert_contains "$region" 'validate, or point agnix at the repo' \
+        "Step 3a config pinning: forbids reading the repo's own .agnix.toml outright"
 
-    # Truth table — every row must end in an inert nested config.
-    assert_contains "$region" '| tracked | that file | inert |' \
-        "Step 3a config pinning: truth table pins the tracked row"
-    assert_contains "$region" '| untracked | checker default | inert |' \
-        "Step 3a config pinning: truth table pins the untracked row"
-    assert_contains "$region" '| absent | checker default | inert |' \
-        "Step 3a config pinning: truth table pins the absent row"
+    # WHY the repo's own config is never honored, even when git-tracked. Both
+    # bypasses are reproduced (0.40.0 + 0.41.0) and both are ls-files-clean, so
+    # keep the rationale wired — a future edit that "restores" a tracked-file
+    # branch would silently reopen them.
+    assert_contains "$region" 'vouch for what a config resolves to' \
+        "Step 3a config pinning: states tracked-ness does not vouch for content"
+    assert_contains "$region" 'index mode `120000`' \
+        "Step 3a config pinning: names the tracked-symlink bypass"
+    assert_contains "$region" '`extend` key' \
+        "Step 3a config pinning: names the extend-chain bypass"
+    assert_contains "$region" 'no attacker-authored input on this path' \
+        "Step 3a config pinning: pins the principle — remove the class, don't validate it"
 
     # The load-bearing distinction from the sibling surfaces: skipping is NOT
     # sufficient here. Keep the rationale wired so a future reader does not
