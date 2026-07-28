@@ -240,7 +240,10 @@ args: {
   tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
   // Pre-scan candidates (#556) — reviewers confirm-or-dismiss instead of
   // re-deriving them. Re-run pre-review-gates.sh on the current scope:
-  preScan: [<parsed pre-review-gates.sh TSV rows>],
+  preScan: [<pre-review-gates.sh TSV rows + lint-gate rows>],
+  // Conventions digest (#557) — distilled ONCE by the caller so five reviewers
+  // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
+  conventionsDigest: "<distilled project-convention rules>",
   // Re-review narrowing (#492) — omit ALL THREE on cycle 1 (full review):
   deltaFiles: [<changed files since lastReviewedSha>],
   deltaDiff: "<diff since lastReviewedSha>",

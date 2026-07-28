@@ -22,8 +22,12 @@ export const meta = {
 //     issue?:     { number, title }        // for scope-drift + defer-issue context
 //     tokenCeiling?: number,               // opt-in per-cycle output-token ceiling (#553)
 //     preScan?:   [{ file, line, category, evidence, certainty }],  // pre-review-gates.sh
-//                                          // rows (#556) — CANDIDATES to confirm or
-//                                          // dismiss, never pre-filed findings
+//                                          // rows + lint-gate rows (#556/#557) —
+//                                          // CANDIDATES to confirm or dismiss,
+//                                          // never pre-filed findings
+//     conventionsDigest?: string,          // distilled CLAUDE.md/AGENTS.md/memory
+//                                          // rules (#557), so reviewers stop each
+//                                          // re-reading those files
 //     // --- Re-review narrowing (cycle > 1 only; #492) -------------------------
 //     deltaDiff?:  string,                 // git diff of the fix commits SINCE the last reviewed SHA
 //     deltaFiles?: string[],               // git diff --name-only of that same fix-commit delta
@@ -127,6 +131,22 @@ const preScanAll =
     : []
 const preScan = preScanAll.slice(0, PRESCAN_MAX)
 const preScanTruncated = preScanAll.length - preScan.length
+
+// Distilled project-conventions digest (#557), optional. The caller reads
+// CLAUDE.md / AGENTS.md / directory-level CLAUDE.md / .claude/memory/*.md ONCE
+// and passes a short rule summary, instead of every reviewer in the fan-out
+// re-reading those files (measured: 19 doc-read Bash calls across three cycles,
+// on top of the 164 hand-measurement calls the lint clause above targets).
+//
+// Capped: a digest is a summary, and an oversized one would displace the diff
+// it is meant to contextualize. Truncation is disclosed in-prompt for the same
+// reason as preScan's — a silently trimmed rule list reads as a complete one,
+// which would invite a reviewer to conclude a real convention does not exist.
+const DIGEST_MAX_CHARS = 4000
+const conventionsDigestRaw =
+  args && typeof args.conventionsDigest === 'string' ? args.conventionsDigest.trim() : ''
+const conventionsDigest = conventionsDigestRaw.slice(0, DIGEST_MAX_CHARS)
+const conventionsDigestTruncated = conventionsDigestRaw.length > conventionsDigest.length
 // Caller-supplied output-token ceiling for THIS cycle (#553), optional.
 // Without it the harness is unbounded in practice: every budget gate below is
 // guarded on `budget.total`, which the Workflow runtime populates ONLY from a
@@ -505,7 +525,20 @@ const SCOPE_DISCIPLINE =
   'conventions beyond the diff — findings must be anchored to a changed line. ' +
   'If you cannot confirm something within that budget, report it at LOW ' +
   'certainty rather than searching further: the judge re-scores certainty, and ' +
-  'a LOW-certainty finding is filed, never dropped.'
+  'a LOW-certainty finding is filed, never dropped. ' +
+  // #557: the measured worst case was a reviewer spending six consecutive Bash
+  // calls re-rolling an awk one-liner to count over-long lines, then hunting for
+  // the rumdl config, then re-running rumdl and shellcheck by hand — all of it
+  // recomputing what CI already enforces. Mechanical, tool-decidable facts are
+  // exactly what the reviewer should NOT be spending context on.
+  'Formatting, linting, spelling, and style rules are enforced by the repo\'s ' +
+  'own gates in CI (this repo: rumdl, shellcheck, typos, ruff, and the ' +
+  'tests/lint-*.sh gates), which block merge on their own. Do NOT re-run those ' +
+  'tools, hunt for their config, or hand-measure what they check (line length, ' +
+  'quoting, spelling, import order, formatting) — a merged PR has already ' +
+  'passed them. Any such results supplied below are authoritative; treat them ' +
+  'as settled and spend your budget on what a linter CANNOT decide: logic, ' +
+  'security, missing tests, and violations of documented project conventions.'
 
 // `sanitize` and `dataBlock` — the prompt-injection controls — are defined near
 // the top of the file (above NEW_DIMENSIONS, which calls `sanitize` at module
@@ -611,9 +644,29 @@ const preScanSection = () => {
   )
 }
 
+// Conventions digest block (#557). Empty when not supplied, so the no-op case
+// stays byte-identical to pre-#557 (#256). Fenced as data-only like every other
+// caller-supplied block: the digest is distilled from repo files, which are
+// themselves untrusted content in the injection model.
+const conventionsSection = () => {
+  if (!conventionsDigest) return ''
+  return (
+    'Project conventions, already distilled from this repo\'s CLAUDE.md / ' +
+    'AGENTS.md / .claude/memory — do NOT re-read those files to rediscover ' +
+    'them. Cite the specific rule when you flag a violation. This digest is a ' +
+    'summary, not the whole ruleset' +
+    (conventionsDigestTruncated ? ' AND IT WAS TRUNCATED for size' : '') +
+    ': if the diff plainly violates a documented convention that is absent ' +
+    'here, still flag it.\n' +
+    dataBlock('PROJECT CONVENTIONS', conventionsDigest) +
+    '\n\n'
+  )
+}
+
 const reviewerData = (manifest, diff = scopeDiff) =>
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
   `Classifications: ${stableStringify(manifest.classifications)}\n\n` +
+  conventionsSection() +
   preScanSection() +
   diffSection(diff)
 
@@ -986,6 +1039,11 @@ if (preScan.length > 0) {
   )
 } else {
   log('pre-scan: none supplied — reviewers will re-derive mechanical findings (pass args.preScan)')
+}
+if (conventionsDigest) {
+  log(`conventions digest: ${conventionsDigest.length} chars${conventionsDigestTruncated ? ' (truncated)' : ''}`)
+} else {
+  log('conventions digest: none supplied — reviewers will re-read CLAUDE.md/memory (pass args.conventionsDigest)')
 }
 
 // --- Manifest ---------------------------------------------------------------

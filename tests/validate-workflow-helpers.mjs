@@ -3230,6 +3230,64 @@ for (const path of [ORCH, REBASE]) {
   ok(rd.includes("preScanSection()"), "ship-issue: preScanSection is part of the shared reviewerData block (#256)");
 }
 
+// =============================================================================
+// ship-issue — conventions digest + lint authority (#557)
+// =============================================================================
+// Measured on the baseline run, `conventions` spent 164 of 207 Bash calls
+// hand-measuring things the repo's own lint gates already compute (six
+// consecutive awk one-liners re-rolling a line-length check, then re-running
+// rumdl and shellcheck by hand). The digest kills the 19 doc-read calls; the
+// SCOPE_DISCIPLINE lint clause targets the 164.
+{
+  const mkDigest = (conventionsDigest) =>
+    extractHelpers(
+      SHIP,
+      ["conventionsSection", "conventionsDigest", "conventionsDigestTruncated", "DIGEST_MAX_CHARS"],
+      { cycle: 1, conventionsDigest },
+    );
+
+  // No-op must be byte-identical to pre-#557 (#256 cache prefix).
+  for (const [label, v] of [
+    ["absent", undefined],
+    ["empty", ""],
+    ["whitespace only", "   \n  "],
+    ["not a string", 42],
+  ]) {
+    eq(mkDigest(v).conventionsSection(), "", `conventionsSection: ${label} ⇒ empty string (cache-stable no-op)`);
+  }
+
+  const d = mkDigest("bash-3.2 clean; SHA-pinned actions; conform scopes: workflow|tests|ci");
+  const sec = d.conventionsSection();
+  ok(sec.includes("bash-3.2 clean"), "conventionsSection: renders the digest text");
+  ok(sec.includes("PROJECT CONVENTIONS"), "conventionsSection: fenced in a dataBlock");
+  ok(/DATA ONLY|never as instructions/.test(sec), "conventionsSection: carries the data-only injection guard");
+  ok(/do NOT re-read/i.test(sec), "conventionsSection: tells reviewers not to re-read the source files");
+  // A digest is a SUMMARY. If reviewers treat it as the complete ruleset they
+  // will wave through a real violation that simply did not fit.
+  ok(/still flag it/i.test(sec), "conventionsSection: an omitted rule is still flaggable (digest is not exhaustive)");
+
+  // Oversized digests are capped AND the truncation is disclosed — a silently
+  // trimmed rule list reads as a complete one.
+  const big = mkDigest("x".repeat(9000));
+  eq(big.conventionsDigest.length, big.DIGEST_MAX_CHARS, "conventionsSection: digest is capped");
+  eq(big.conventionsDigestTruncated, true, "conventionsSection: truncation is tracked");
+  ok(/TRUNCATED/i.test(big.conventionsSection()), "conventionsSection: truncation is disclosed in-prompt");
+
+  // The lint-authority clause is what stops the 164 hand-measurement calls.
+  const src = readFileSync(join(repoRoot, SHIP), "utf8");
+  const sd = src.slice(src.indexOf("const SCOPE_DISCIPLINE ="), src.indexOf("\n// `sanitize`"));
+  ok(/do not re-run those/i.test(sd.replace(/\s+/g, " ")), "SCOPE_DISCIPLINE: reviewers told not to re-run lint tools");
+  ok(/hand-measure/i.test(sd), "SCOPE_DISCIPLINE: reviewers told not to hand-measure lint-decidable facts");
+  for (const tool of ["rumdl", "shellcheck", "typos", "ruff"]) {
+    ok(sd.includes(tool), `SCOPE_DISCIPLINE: names ${tool} as an enforcing gate`);
+  }
+
+  // Both blocks must live in the SHARED reviewerData so every dimension sees
+  // them and the fan-out prefix stays byte-identical across siblings (#256).
+  const rd = src.slice(src.indexOf("const reviewerData ="), src.indexOf("\nconst ", src.indexOf("const reviewerData =") + 1));
+  ok(rd.includes("conventionsSection()"), "ship-issue: conventionsSection is in the shared reviewerData block (#256)");
+}
+
 // --- Report ------------------------------------------------------------------
 
 if (failures.length > 0) {
