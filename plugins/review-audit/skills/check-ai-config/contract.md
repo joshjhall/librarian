@@ -105,7 +105,21 @@ only non-bloat memory rules (import-path drift, etc.) arrive here.
 - `file` / `line` — passed through from the agnix diagnostic (agnix echoes the
   path as supplied, so downstream location-keyed dedup works).
 - `category` — the mapped check-ai-config slug (never an agnix category string).
-- `evidence` — `[<RULE-ID>] <message>` truncated to 80 codepoints (matching the
-  pre-scan `EVIDENCE_CAP`); the rule ID is preserved inside the evidence since
-  the TSV has no dedicated rule-ID column.
-- `certainty` — the agnix `rule_severity` (`HIGH`/`MEDIUM`/`LOW`) passed through.
+- `evidence` — `[<RULE-ID>|<SEVERITY>] <message>` truncated to 80 codepoints
+  (matching the pre-scan `EVIDENCE_CAP`); the rule ID and agnix's own
+  `rule_severity` are both preserved inside the evidence since the TSV has no
+  dedicated column for either. A null/absent `rule_severity` renders empty
+  (`[CC-AG-001|] <message>`). The Step 6 precedence dedup reads the severity from
+  here to compare it against the floor finding's severity before dropping
+  anything (#470).
+- `certainty` — a **fixed `MEDIUM`** for every agnix row (#470), never the agnix
+  `rule_severity`. Two reasons. (1) `rule_severity` is issue *severity*, not
+  detection *confidence*, and agnix marks essentially its whole `CC-*` schema
+  surface `HIGH` — passing it through sent every agnix row down the checker's
+  `certainty=HIGH` **auto-include fast path**, landing it in the report with no
+  Pass-2 LLM confirmation, heuristic rules included. (2) That value is read from
+  the audited repo's own `.agnix.toml`, which a hostile repo controls under the
+  `CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1` opt-in. `MEDIUM` is this repo's
+  established "candidate needing LLM confirmation" tier (`check-lifecycle` emits
+  it deliberately), so every agnix row now earns a confirmation pass and no
+  repo-controlled value can decide otherwise.

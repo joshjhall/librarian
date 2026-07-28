@@ -11,6 +11,8 @@
 #
 # Input:  $1 = file containing paths to scan (one per line)
 # Output: TSV to stdout: file\tline\tcategory\tevidence\tcertainty
+#         evidence is `[<RULE-ID>|<agnix rule_severity>] <message>`; certainty is
+#         a fixed MEDIUM (rationale at the jq program below; #470).
 #
 # Environment:
 #   AGNIX_BIN     agnix executable (default: `agnix`)
@@ -116,6 +118,12 @@ fi
 # .[0:80] slices by codepoint (matches Python str[:80]); join("\t") avoids @tsv's
 # escaping so the row is byte-identical to the Python primary. Unmapped rules and
 # empty-`file` diagnostics (project-level advisories) are dropped.
+# Certainty is a fixed "MEDIUM" and agnix's own rule_severity rides in the
+# evidence column instead (#470; mirrors AGNIX_CERTAINTY in the Python primary).
+# rule_severity is issue SEVERITY, not detection CONFIDENCE, and agnix marks
+# nearly the whole CC-* surface HIGH — passing it through would send every agnix
+# row down the checker's certainty=HIGH auto-include fast path with no Pass-2 LLM
+# confirmation, on a value the audited repo's own .agnix.toml can rewrite.
 # The leading guards fail loud on a malformed top-level shape BEFORE emitting any
 # row, matching the Python primary: a non-object top level (e.g. a bare array),
 # or a `diagnostics` array holding a non-object element, `error`s out of jq
@@ -144,8 +152,9 @@ if type != "object" then error("not an object") else . end
 | [ $file,
     ((.line // "") | tostring),
     $category,
-    (("[" + $rule + "] " + ((.message // "") | tostring))[0:80]),
-    ((.rule_severity // "") | tostring)
+    (("[" + $rule + "|" + ((.rule_severity // "") | tostring) + "] "
+      + ((.message // "") | tostring))[0:80]),
+    "MEDIUM"
   ]
 | join("\t")
 '

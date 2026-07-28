@@ -17,6 +17,8 @@ is pinned by tests/validate-agnix-normalize.sh. See CLAUDE.md § Key conventions
 
 Input:  argv[1] = file containing paths to scan (one per line)
 Output: TSV to stdout: file<TAB>line<TAB>category<TAB>evidence<TAB>certainty
+        evidence is `[<RULE-ID>|<agnix rule_severity>] <message>`; certainty is a
+        fixed MEDIUM (see AGNIX_CERTAINTY below for why).
 
 Environment:
   AGNIX_BIN     agnix executable to run (default: `agnix`)
@@ -43,6 +45,20 @@ import subprocess
 import sys
 
 EVIDENCE_CAP = 80  # match patterns.py: evidence truncated to 80 codepoints
+
+# Every agnix row is emitted at a fixed MEDIUM certainty (issue #470). agnix's
+# `rule_severity` is issue *severity*, not detection *confidence*, and it marks
+# essentially the whole CC-* schema surface HIGH — the checker's certainty=HIGH
+# auto-include fast path (checker.md § Step 3) would therefore land agnix rows in
+# the report with no Pass-2 LLM confirmation, including its heuristic and
+# false-positive-prone rules. MEDIUM is this repo's established "candidate that
+# needs LLM confirmation" tier (check-lifecycle emits it deliberately), so a flat
+# MEDIUM routes every agnix row through that pass. It also closes the escalation
+# path in the same issue's finding #1 structurally: under the
+# CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1 opt-in agnix reads the audited repo's own
+# .agnix.toml, whose [[overrides]] severity a hostile repo controls — with a fixed
+# tier that value can no longer decide which findings skip confirmation.
+AGNIX_CERTAINTY = "MEDIUM"
 
 # CC-* rule-ID prefix -> check-ai-config category slug. Keyed on the rule-ID
 # prefix (stable across agnix's per-rule additions), NOT agnix's own `category`
@@ -113,11 +129,16 @@ def normalize(diagnostics: list[dict]) -> None:
             continue
         line_no = _field(diag, "line")
         message = _field(diag, "message")
-        # Preserve the rule ID inside the evidence column (there is no dedicated
-        # rule-ID field in the TSV contract); truncate to match patterns.py.
-        evidence = ("[" + rule + "] " + message)[:EVIDENCE_CAP]
-        certainty = _field(diag, "rule_severity")
-        emit(path, line_no, category, evidence, certainty)
+        # Preserve the rule ID AND agnix's own rule_severity inside the evidence
+        # column (the TSV has no dedicated field for either); truncate to match
+        # patterns.py. The severity rides here rather than in `certainty` so the
+        # Step 6 precedence dedup can still compare it against the floor finding's
+        # severity before dropping anything (#470 finding #1) while `certainty`
+        # stays a fixed confirmation tier. A null/absent rule_severity coalesces
+        # to "" via _field, rendering as "[CC-AG-001|] message".
+        severity = _field(diag, "rule_severity")
+        evidence = ("[" + rule + "|" + severity + "] " + message)[:EVIDENCE_CAP]
+        emit(path, line_no, category, evidence, AGNIX_CERTAINTY)
 
 
 def run_agnix(agnix_bin: str, paths: list[str]) -> str:

@@ -9,9 +9,12 @@
 #
 #   1. Byte-correct TSV — a captured agnix JSON fixture (mix of CC-AG/CC-SK/CC-HK/
 #      MCP/CC-PL/CC-MEM rows + a VER-001 project row + an unmapped AS-* row)
-#      maps to exactly the expected rows: mapped category, `[RULE] message`
-#      evidence truncated to 80 codepoints, passed-through certainty. Unmapped
-#      rules and empty-`file` diagnostics are dropped. (Acceptance criterion 1.)
+#      maps to exactly the expected rows: mapped category, `[RULE|SEVERITY]
+#      message` evidence truncated to 80 codepoints, and a FIXED MEDIUM certainty
+#      (#470 — agnix's rule_severity rides in the evidence prefix, never in the
+#      certainty column, so no agnix row takes the checker's certainty=HIGH
+#      auto-include fast path). Unmapped rules and empty-`file` diagnostics are
+#      dropped. (Acceptance criterion 1.)
 #   2. Absent-binary no-op — AGNIX_BIN=/nonexistent -> empty stdout, exit 0, a
 #      clear skip line on stderr. (Acceptance criterion 2.)
 #   3. Fail-loud — missing arg -> exit 1 + Usage; malformed/empty agnix output ->
@@ -206,16 +209,33 @@ command printf '%s\n' '{"diagnostics":[{"rule":"CC-AG-001","file":null,"line":1,
 STUBEOF
 command chmod +x "$STUB_NULL"
 
+# #470 — a stub whose rows carry DIFFERENT rule_severity values (HIGH/MEDIUM/LOW)
+# so the certainty column can be proven decoupled from severity: all three must
+# emit certainty MEDIUM while their own severity is preserved in the evidence
+# prefix. A LOW row is the load-bearing case — under the old passthrough it
+# emitted certainty LOW, and under a naive "map severity to tier" fix it would
+# again differ from its siblings.
+STUB_SEV="$WORKDIR/stub-sev.sh"
+command cat >"$STUB_SEV" <<'STUBEOF'
+#!/usr/bin/env bash
+command printf '%s\n' '{"diagnostics":[{"rule":"CC-AG-001","file":"a.md","line":1,"message":"high sev","rule_severity":"HIGH"},{"rule":"CC-SK-001","file":"b.md","line":2,"message":"med sev","rule_severity":"MEDIUM"},{"rule":"CC-HK-009","file":"c.sh","line":3,"message":"low sev","rule_severity":"LOW"}]}'
+STUBEOF
+command chmod +x "$STUB_SEV"
+
 # Expected byte-correct TSV for the full fixture (mapped rows only, insertion
 # order). Tabs are literal via printf's \t. This is acceptance criterion 1.
+# Every row's certainty column is a FIXED "MEDIUM" (#470) — agnix's own
+# rule_severity now rides in the evidence prefix as `[<RULE-ID>|<SEVERITY>]`
+# instead. Note the MCP-008 row: rule_severity MEDIUM and certainty MEDIUM are
+# independent values that merely coincide here.
 EXPECTED_TSV="$(command printf '%s\n' \
-    "agents/a.md	1	agent-frontmatter	[CC-AG-001] Agent frontmatter is missing required 'name' field	HIGH" \
-    "skills/s/SKILL.md	3	skill-frontmatter	[CC-SK-001] Invalid model value	HIGH" \
-    "hooks/h.sh	7	hook-safety	[CC-HK-009] Dangerous command pattern detected	HIGH" \
-    "mcp.json	2	mcp-misconfiguration	[MCP-008] Protocol version mismatch	MEDIUM" \
-    "cc-mcp.json	4	mcp-misconfiguration	[CC-MCP-001] CC MCP rule	HIGH" \
-    ".claude-plugin/x.json	1	config-inconsistency	[CC-PL-001] Plugin manifest not in .claude-plugin/	HIGH" \
-    "CLAUDE.md	5	claude-md-drift	[CC-MEM-001] Invalid import path	HIGH")"
+    "agents/a.md	1	agent-frontmatter	[CC-AG-001|HIGH] Agent frontmatter is missing required 'name' field	MEDIUM" \
+    "skills/s/SKILL.md	3	skill-frontmatter	[CC-SK-001|HIGH] Invalid model value	MEDIUM" \
+    "hooks/h.sh	7	hook-safety	[CC-HK-009|HIGH] Dangerous command pattern detected	MEDIUM" \
+    "mcp.json	2	mcp-misconfiguration	[MCP-008|MEDIUM] Protocol version mismatch	MEDIUM" \
+    "cc-mcp.json	4	mcp-misconfiguration	[CC-MCP-001|HIGH] CC MCP rule	MEDIUM" \
+    ".claude-plugin/x.json	1	config-inconsistency	[CC-PL-001|HIGH] Plugin manifest not in .claude-plugin/	MEDIUM" \
+    "CLAUDE.md	5	claude-md-drift	[CC-MEM-001|HIGH] Invalid import path	MEDIUM")"
 
 # run_bash <env-assignments...> -- <args...> — run the bash fallback with the
 # given AGNIX_BIN env, capturing stdout (only) into RUN_OUT, stderr into RUN_ERR,
@@ -270,6 +290,60 @@ test_evidence_truncated_to_80() {
     if [ "$HAVE_PY" = "1" ]; then
         run_py "$STUB_LONG" "$FILE_LIST"
         assert_equals "$RUN_OUT" "$PY_OUT" "parity: truncation identical bash == python"
+    fi
+}
+
+# --- 1b. #470 certainty tier is fixed, severity moves to evidence ------------
+
+test_certainty_is_fixed_medium() {
+    # #470: certainty is a FIXED "MEDIUM" for every agnix row, decoupled from
+    # agnix's rule_severity. Passing rule_severity through sent agnix rows down
+    # the checker's certainty=HIGH auto-include fast path with no Pass-2 LLM
+    # confirmation — on a value the audited repo's own .agnix.toml controls.
+    run_bash "$STUB_SEV" "$FILE_LIST"
+    assert_exit 0 "$RUN_RC" "bash: mixed-severity fixture exits 0"
+
+    # Every certainty cell (column 5) is MEDIUM, across HIGH/MEDIUM/LOW severities.
+    _cert="$(command printf '%s\n' "$RUN_OUT" | command awk -F'\t' 'NF{print $5}' | command sort -u)"
+    assert_equals "MEDIUM" "$_cert" \
+        "bash: certainty is a fixed MEDIUM for every row regardless of rule_severity"
+
+    # The LOW-severity row is the regression anchor: under the old passthrough it
+    # emitted certainty LOW, so a revert flips this cell back and fails here.
+    _low_cert="$(command printf '%s\n' "$RUN_OUT" | command awk -F'\t' '$1=="c.sh"{print $5}')"
+    assert_equals "MEDIUM" "$_low_cert" \
+        "bash: a LOW-severity agnix rule still emits certainty MEDIUM (no passthrough)"
+
+    # Severity is not lost — it rides in the evidence prefix so the Step 6
+    # precedence dedup can still compare it against the floor finding's severity.
+    assert_contains "$RUN_OUT" "[CC-HK-009|LOW] low sev" \
+        "bash: rule_severity preserved in the evidence prefix"
+    assert_contains "$RUN_OUT" "[CC-AG-001|HIGH] high sev" \
+        "bash: HIGH severity preserved in the evidence prefix"
+
+    if [ "$HAVE_PY" = "1" ]; then
+        run_py "$STUB_SEV" "$FILE_LIST"
+        assert_equals "$RUN_OUT" "$PY_OUT" \
+            "parity: fixed-MEDIUM certainty identical bash == python"
+    fi
+}
+
+test_null_severity_renders_empty() {
+    # A null/absent rule_severity coalesces to "" (the same // "" the other null
+    # fields use), rendering `[CC-SK-001|] ` — never the literal "None", and
+    # never a missing separator. certainty stays MEDIUM.
+    run_bash "$STUB_NULL" "$FILE_LIST"
+    assert_contains "$RUN_OUT" "[CC-SK-001|]" \
+        "bash: null rule_severity renders as an empty severity slot"
+    assert_not_contains "$RUN_OUT" "|None]" \
+        "bash: a null rule_severity never leaks the literal 'None'"
+    _ncert="$(command printf '%s\n' "$RUN_OUT" | command awk -F'\t' 'NF{print $5}' | command sort -u)"
+    assert_equals "MEDIUM" "$_ncert" \
+        "bash: certainty is MEDIUM even when rule_severity is null"
+    if [ "$HAVE_PY" = "1" ]; then
+        run_py "$STUB_NULL" "$FILE_LIST"
+        assert_equals "$RUN_OUT" "$PY_OUT" \
+            "parity: null-severity rendering identical bash == python"
     fi
 }
 
@@ -484,6 +558,8 @@ run_test test_agnix_config_placement "AGNIX_CONFIG forwarded as --config before 
 run_test test_null_fields_parity "JSON null fields dropped/coalesced + parity"
 run_test test_unmapped_and_project_rows_dropped "unmapped + project rows dropped"
 run_test test_evidence_truncated_to_80 "evidence truncated to 80 codepoints + parity"
+run_test test_certainty_is_fixed_medium "certainty is a fixed MEDIUM, severity moves to evidence (#470) + parity"
+run_test test_null_severity_renders_empty "null rule_severity renders an empty severity slot (#470) + parity"
 run_test test_absent_binary_noop "absent-binary no-op (acceptance 2) + parity"
 run_test test_missing_arg_usage "missing arg -> exit 1 + Usage + parity"
 run_test test_missing_filelist "absent file list -> exit 1"
