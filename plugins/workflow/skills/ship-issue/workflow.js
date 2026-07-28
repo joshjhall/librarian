@@ -20,6 +20,10 @@ export const meta = {
 //     diff?:      string,                  // FULL precomputed diff for context
 //     prComments?: [{ id, author, path?, line?, body, url? }],  // pr-cycle only
 //     issue?:     { number, title }        // for scope-drift + defer-issue context
+//     tokenCeiling?: number,               // opt-in per-cycle output-token ceiling (#553)
+//     preScan?:   [{ file, line, category, evidence, certainty }],  // pre-review-gates.sh
+//                                          // rows (#556) — CANDIDATES to confirm or
+//                                          // dismiss, never pre-filed findings
 //     // --- Re-review narrowing (cycle > 1 only; #492) -------------------------
 //     deltaDiff?:  string,                 // git diff of the fix commits SINCE the last reviewed SHA
 //     deltaFiles?: string[],               // git diff --name-only of that same fix-commit delta
@@ -94,6 +98,35 @@ const issue = args && args.issue && typeof args.issue === 'object' ? args.issue 
 // last cycle. `narrowingActive` below decides whether they take effect.
 const deltaDiff = args && typeof args.deltaDiff === 'string' ? args.deltaDiff : ''
 const deltaFiles = args && Array.isArray(args.deltaFiles) ? args.deltaFiles.filter(Boolean) : []
+
+// Deterministic pre-scan candidates from pre-review-gates.sh (#556), optional.
+// That scanner already runs at Step 3.5 item 5 and its TSV was discarded before
+// item 6, so five reviewers re-derived the same ground by shelling out (measured:
+// the `tests` dimension spends 9-42 turns per cycle rediscovering roughly what
+// scan_missing_tests / scan_untested_public_api already computed; reviewers make
+// no Grep calls at all, exploring via Bash at ~50-80k cache_read each).
+//
+// These are CANDIDATES, never findings. The scanner is a regex matcher: it
+// cannot see cross-directory tests, project conventions, or intent. #555 is the
+// standing proof — run against PR #554's own diff it emitted two HIGH-certainty
+// missing-test-file / untested-public-api hits for a file covered by 28 test
+// references. So they enter the prompt as things to confirm or dismiss, and a
+// reviewer that dismisses one is doing its job.
+//
+// Cap the count so a pathological scan (thousands of hits on a large diff)
+// cannot displace the diff itself from the prompt. Truncation is logged, never
+// silent — a silently trimmed candidate list would read as "the scanner found
+// nothing else", which is exactly the false-completeness this repo guards
+// against elsewhere.
+const PRESCAN_MAX = 100
+const preScanAll =
+  args && Array.isArray(args.preScan)
+    ? args.preScan.filter(
+        (c) => c && typeof c === 'object' && typeof c.file === 'string' && c.file && typeof c.category === 'string' && c.category
+      )
+    : []
+const preScan = preScanAll.slice(0, PRESCAN_MAX)
+const preScanTruncated = preScanAll.length - preScan.length
 // Caller-supplied output-token ceiling for THIS cycle (#553), optional.
 // Without it the harness is unbounded in practice: every budget gate below is
 // guarded on `budget.total`, which the Workflow runtime populates ONLY from a
@@ -543,9 +576,45 @@ const manifestPrompt = () => {
 // in-flight cache write, so the direct payoff is cross-cycle (a re-review whose
 // diff is unchanged) plus resume determinism; the always-free shared prefix is
 // the agent system-prompt + tool defs, identical across siblings regardless.
+// Pre-scan candidates block (#556). Empty string when none were supplied, so an
+// absent `preScan` leaves the shared prefix byte-identical to pre-#556 — the
+// no-op case must not perturb the cache (#256).
+//
+// Only the five contract fields are forwarded, rebuilt in fixed order: the
+// caller's objects are untrusted (they carry regex matches against file
+// content), so an unexpected extra key must not ride into the prompt. dataBlock
+// then fences the whole thing as data-only, matching how the diff and findings
+// are handled everywhere else.
+const preScanSection = () => {
+  if (preScan.length === 0) return ''
+  const rows = preScan.map((c) => ({
+    file: c.file,
+    line: c.line,
+    category: c.category,
+    evidence: typeof c.evidence === 'string' ? c.evidence : '',
+    certainty: typeof c.certainty === 'string' ? c.certainty : '',
+  }))
+  return (
+    'Deterministic pre-scan candidates, already computed by the repo scanner — ' +
+    'do NOT re-derive them. Each is a regex match, NOT a confirmed finding: the ' +
+    'scanner cannot see cross-directory tests, project conventions, or intent. ' +
+    'Confirm the ones that are real (file them as your own findings, with your ' +
+    'own certainty) and dismiss the rest — a dismissed candidate costs nothing, ' +
+    'a re-derived one costs a repo search. They do not bound you: file anything ' +
+    'else you find.' +
+    (preScanTruncated > 0
+      ? ` NOTE: ${preScanTruncated} further candidate(s) were omitted for size — this list is NOT exhaustive.`
+      : '') +
+    '\n' +
+    dataBlock('PRE-SCAN CANDIDATES', rows) +
+    '\n\n'
+  )
+}
+
 const reviewerData = (manifest, diff = scopeDiff) =>
   `Changed files: ${manifest.files.join(', ') || '(see diff)'}\n` +
   `Classifications: ${stableStringify(manifest.classifications)}\n\n` +
+  preScanSection() +
   diffSection(diff)
 
 // Reused dimensions (security, correctness): defer to the agent's own
@@ -905,6 +974,18 @@ if (budget.total) {
   log(`token bound: caller ceiling ${CYCLE_TOKEN_CEILING} output tokens for this cycle`)
 } else {
   log('token bound: none (default) — measuring only; pass args.tokenCeiling to bound')
+}
+
+// Pre-scan handoff (#556): say when it did NOT arrive. The scanner runs at
+// Step 3.5 item 5 regardless, so a missing handoff means its output was
+// computed and thrown away — silent, and indistinguishable from a clean scan.
+if (preScan.length > 0) {
+  log(
+    `pre-scan: ${preScan.length} candidate(s) supplied` +
+      (preScanTruncated > 0 ? ` (${preScanTruncated} omitted for size)` : '')
+  )
+} else {
+  log('pre-scan: none supplied — reviewers will re-derive mechanical findings (pass args.preScan)')
 }
 
 // --- Manifest ---------------------------------------------------------------

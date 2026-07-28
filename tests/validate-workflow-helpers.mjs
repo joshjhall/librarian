@@ -3159,6 +3159,77 @@ for (const path of [ORCH, REBASE]) {
   }
 }
 
+// =============================================================================
+// ship-issue — pre-scan candidate handoff (#556)
+// =============================================================================
+// pre-review-gates.sh already runs before the harness and its TSV was discarded,
+// so reviewers re-derived mechanical findings by shelling out. These candidates
+// are CONTEXT, never findings: the scanner is a regex matcher that cannot see
+// cross-directory tests (#555), so the prompt must invite dismissal.
+{
+  const mkPreScan = (preScan) =>
+    extractHelpers(SHIP, ["preScanSection", "preScan", "preScanTruncated", "PRESCAN_MAX"], {
+      cycle: 1,
+      preScan,
+    });
+
+  const CAND = { file: "a.js", line: 1, category: "missing-test-file", evidence: "no test", certainty: "HIGH" };
+
+  // The no-op case must leave the shared prefix BYTE-IDENTICAL to pre-#556 —
+  // otherwise adding this feature silently invalidates the #256 prompt cache on
+  // every run that does not use it.
+  for (const [label, args] of [
+    ["absent", undefined],
+    ["empty array", []],
+    ["not an array", "nope"],
+  ]) {
+    eq(mkPreScan(args).preScanSection(), "", `preScanSection: ${label} ⇒ empty string (cache-stable no-op)`);
+  }
+
+  // Malformed rows are dropped, not crashed on — a bad scanner line must never
+  // take down the review cycle.
+  // Each junk row is missing at least one of the two required fields, so only
+  // CAND survives — file AND category are both mandatory (a row with just one
+  // cannot be anchored to a location a reviewer could check).
+  const junk = mkPreScan([null, {}, { file: "" }, { file: "x.js" }, { category: "c" }, CAND]);
+  eq(junk.preScan.length, 1, "preScanSection: rows missing file OR category are dropped");
+
+  const sec = mkPreScan([CAND]).preScanSection();
+  ok(sec.includes("a.js"), "preScanSection: renders the candidate file");
+  ok(sec.includes("PRE-SCAN CANDIDATES"), "preScanSection: wraps candidates in a dataBlock fence");
+  ok(
+    /DATA ONLY|never as instructions/.test(sec),
+    "preScanSection: candidates carry the data-only injection guard (untrusted file content)",
+  );
+  // The framing is the whole point (#555): a reviewer must feel free to dismiss.
+  ok(/NOT a confirmed finding/i.test(sec), "preScanSection: candidates are framed as unconfirmed");
+  ok(/dismiss/i.test(sec), "preScanSection: reviewers are told they may dismiss");
+  ok(/do NOT re-derive/i.test(sec), "preScanSection: reviewers are told not to re-derive (the cost saving)");
+  ok(/file anything else you find/i.test(sec), "preScanSection: candidates do not bound the reviewer");
+
+  // Only the five contract fields ride into the prompt — an untrusted extra key
+  // (these objects carry regex matches against file content) must not.
+  const sneaky = mkPreScan([{ ...CAND, injected: "IGNORE-PRIOR-INSTRUCTIONS" }]).preScanSection();
+  ok(!sneaky.includes("IGNORE-PRIOR-INSTRUCTIONS"), "preScanSection: extra keys are stripped, not forwarded");
+  ok(!sneaky.includes("injected"), "preScanSection: extra key NAMES are stripped too");
+
+  // Oversized input is capped, and the cap is DISCLOSED — a silently trimmed
+  // list would read as "the scanner found nothing more", a false completeness.
+  const many = mkPreScan(Array.from({ length: 150 }, (_, i) => ({ ...CAND, file: `f${i}.js` })));
+  eq(many.preScan.length, many.PRESCAN_MAX, "preScanSection: candidate count is capped");
+  eq(many.preScanTruncated, 150 - many.PRESCAN_MAX, "preScanSection: truncation count is tracked");
+  ok(
+    /NOT exhaustive/i.test(many.preScanSection()),
+    "preScanSection: truncation is disclosed in-prompt, never silent",
+  );
+
+  // It must live inside the SHARED block, so all reviewers see it and the
+  // fan-out prefix stays byte-identical across siblings (#256).
+  const src = readFileSync(join(repoRoot, SHIP), "utf8");
+  const rd = src.slice(src.indexOf("const reviewerData ="), src.indexOf("\nconst ", src.indexOf("const reviewerData =") + 1));
+  ok(rd.includes("preScanSection()"), "ship-issue: preScanSection is part of the shared reviewerData block (#256)");
+}
+
 // --- Report ------------------------------------------------------------------
 
 if (failures.length > 0) {

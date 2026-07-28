@@ -124,6 +124,20 @@ behavior is noted inline per check; environment variables referenced here
    to execute, skip this check with a note: "Pre-review gates skipped
    (scanner not available)." Never block shipping due to scanner errors.
 
+   **Keep the parsed TSV for item 6 (#556).** Retain the rows as
+   `[{file, line, category, evidence, certainty}]` and pass them to the review
+   harness as `args.preScan` — including any auto-fixed ones, which the reviewer
+   can then confirm as resolved. Without this the scan runs, its output is
+   discarded, and five reviewers re-derive the same mechanical findings by
+   shelling out (the single largest source of duplicated work in the fan-out).
+   The harness logs `pre-scan: none supplied` when the handoff is missing.
+
+   They are passed as **candidates, not findings** — the harness prompts
+   reviewers to confirm or dismiss each one. That framing is deliberate: the
+   scanner is a regex matcher and cannot see cross-directory tests or project
+   conventions, so it produces real false positives (#555). Never pre-file a
+   pre-scan row as a confirmed review finding.
+
 1. **Adversarial pre-PR review** (all shipping modes) — run a multi-dimension
    adversarial review of the changes **before** they are pushed/merged, so the
    delivered code is review-clean regardless of how it ships. This complements the
@@ -172,7 +186,8 @@ behavior is noted inline per check; environment variables referenced here
      files: [<changed files, FULL scope>],
      diff: "<diff text, FULL scope>",
      issue: { number: {N}, title: "{title}" },
-     tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>
+     tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
+     preScan: [<parsed pre-review-gates.sh TSV rows from item 5>]
    }
    ```
 
@@ -224,6 +239,7 @@ behavior is noted inline per check; environment variables referenced here
      diff: "<diff text, FULL scope>",          // unchanged — scope-drift reads this
      issue: { number: {N}, title: "{title}" },
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
+     preScan: [<parsed pre-review-gates.sh TSV rows from item 5>],
      deltaFiles: [<git diff --name-only lastReviewedSha...HEAD>],
      deltaDiff: "<git diff lastReviewedSha...HEAD>",
      priorBlockingDimensions: [<dimensions that blocked last cycle>]
