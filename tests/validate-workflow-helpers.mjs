@@ -2633,6 +2633,19 @@ for (const path of [ORCH, REBASE]) {
   eq(dimensionTouchesDelta("security", new Set(["test"])), false, "dimensionTouchesDelta: security ignores a test-only delta");
   eq(dimensionTouchesDelta("tests", new Set(["test"])), true, "dimensionTouchesDelta: tests touches test files");
   eq(dimensionTouchesDelta("tests", new Set(["config"])), false, "dimensionTouchesDelta: tests ignores a config-only delta");
+  // #529: ci/docker are relevant to the GENERIC security + correctness dimensions.
+  // The devops specialist also runs on such a delta (gated on manifest.needs), but
+  // its checklist is infrastructure-shaped — no OWASP lens, no correctness lens —
+  // so these entries are the only thing keeping a docker/CI-only fix delta from
+  // dropping both generic dimensions.
+  eq(dimensionTouchesDelta("security", new Set(["docker"])), true, "dimensionTouchesDelta: security touches docker (#529 — devops does not carry the OWASP lens)");
+  eq(dimensionTouchesDelta("security", new Set(["ci"])), true, "dimensionTouchesDelta: security touches ci (#529 — credential handling in CI scripts)");
+  eq(dimensionTouchesDelta("correctness", new Set(["docker"])), true, "dimensionTouchesDelta: correctness touches docker (#529 — devops has no correctness lens)");
+  eq(dimensionTouchesDelta("correctness", new Set(["ci"])), true, "dimensionTouchesDelta: correctness touches ci (#529 — logic bugs in CI conditionals)");
+  // tests stays deliberately narrow — pins the scope of #529 so a future
+  // widen-everything edit trips here rather than silently inflating every cycle.
+  eq(dimensionTouchesDelta("tests", new Set(["docker"])), false, "dimensionTouchesDelta: tests ignores a docker-only delta (#529 scope is security/correctness only)");
+  eq(dimensionTouchesDelta("tests", new Set(["ci"])), false, "dimensionTouchesDelta: tests ignores a ci-only delta (#529 scope is security/correctness only)");
   eq(dimensionTouchesDelta("scope-drift", new Set(["source"])), false, "dimensionTouchesDelta: scope-drift is not delta-gated (handled separately)");
   eq(dimensionTouchesDelta("nonexistent", new Set(["source"])), false, "dimensionTouchesDelta: an unrecognized dimension name fails closed (never relevant)");
 
@@ -2723,6 +2736,45 @@ for (const path of [ORCH, REBASE]) {
   );
   eq(cfg.dimensionsSkipped.length, 0, "selectReviewDimensions: a narrowing DROP is not a partial-cycle signal");
   eq(cfg.budgetExhausted, false, "selectReviewDimensions: a narrowing DROP does not force budget_exhausted");
+
+  // #529 — narrowed, docker-only delta: before the fix, security + correctness both
+  // dropped here (neither listed `docker`), leaving coverage solely to the `devops`
+  // specialist, whose checklist carries no OWASP and no correctness lens. Now both
+  // run — and CRUCIALLY against the DELTA diff, i.e. via the `touched` path, not the
+  // full-diff prior-blocking carry-over (priorBlocking is empty here), so the #492
+  // saving keeps its shape. `tests` still drops (docker is not in its row).
+  const dockerOnly = call({
+    deltaFiles: ["Dockerfile"],
+    manifest: { classifications: [{ file: "Dockerfile", types: ["docker"] }] },
+  });
+  eq(
+    JSON.stringify(dockerOnly.entries.map((e) => e.dim.name).sort()),
+    JSON.stringify(["conventions", "correctness", "scope-drift", "security"]),
+    "selectReviewDimensions: docker-only delta keeps generic security/correctness (#529), drops tests",
+  );
+  // `?.diff` (not a bare `.diff`): if the entry is missing — exactly the #529
+  // regression — the lookup must RECORD a failure, not throw a TypeError that
+  // aborts the whole collect-all run before the remaining assertions execute.
+  const dockerByName = Object.fromEntries(dockerOnly.entries.map((e) => [e.dim.name, e]));
+  eq(dockerByName["security"]?.diff, deltaDiff, "selectReviewDimensions: docker-only security reads the DELTA diff (touched path, not the prior-blocking full-diff path)");
+  eq(dockerByName["correctness"]?.diff, deltaDiff, "selectReviewDimensions: docker-only correctness reads the DELTA diff (touched path)");
+  eq(dockerOnly.dimensionsSkipped.length, 0, "selectReviewDimensions: docker-only delta is not a partial cycle");
+
+  // Same for a CI-only delta (workflow files, Jenkinsfile).
+  const ciOnly = call({
+    deltaFiles: [".github/workflows/ci.yml"],
+    manifest: { classifications: [{ file: ".github/workflows/ci.yml", types: ["ci"] }] },
+  });
+  eq(
+    JSON.stringify(ciOnly.entries.map((e) => e.dim.name).sort()),
+    JSON.stringify(["conventions", "correctness", "scope-drift", "security"]),
+    "selectReviewDimensions: ci-only delta keeps generic security/correctness (#529), drops tests",
+  );
+  eq(
+    ciOnly.entries.find((e) => e.dim.name === "security")?.diff,
+    deltaDiff,
+    "selectReviewDimensions: ci-only security reads the DELTA diff (touched path)",
+  );
 
   // A genuinely irrelevant delta (test-only) drops security + correctness (neither
   // touches `test`) — the actual saving — while tests + conventions + scope-drift run.

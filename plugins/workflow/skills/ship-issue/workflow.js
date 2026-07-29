@@ -849,9 +849,21 @@ const narrowingActive = (cycle, deltaDiff, deltaFiles) =>
 // config file (`.json`/`.yaml`/`.env*`) can still introduce a hardcoded secret or
 // a config-driven logic bug — so those dimensions must re-run on a config-only
 // delta, not be narrowed away (pre-PR review coverage-gap finding).
+// `ci`/`docker` are in security/correctness for the same reason, and NOT because
+// the `devops` specialist is absent — it still runs (gated on manifest.needs, see
+// above), the two are complementary rather than redundant. Its checklist is
+// infrastructure-shaped (root containers, exposed ports, secret-in-ENV, pinned
+// images, health checks, resource limits) and carries neither the generic OWASP
+// lens (command injection via unsanitized `RUN`/`ARG`, curl-pipe-to-shell, path
+// traversal, credential handling inside CI shell scripts) nor any correctness
+// lens at all — so without these entries a docker/CI-only fix delta (a bare
+// `Dockerfile`, `docker-compose.yml`, `Jenkinsfile`, a workflow file) would drop
+// both generic dimensions unless one of them blocked the previous cycle (#529).
+// `tests` is deliberately NOT widened: a ci/docker-only delta needs no
+// test-coverage lens.
 const DIMENSION_RELEVANT_TYPES = {
-  security: ['source', 'database', 'config'],
-  correctness: ['source', 'database', 'config'],
+  security: ['source', 'database', 'config', 'ci', 'docker'],
+  correctness: ['source', 'database', 'config', 'ci', 'docker'],
   tests: ['source', 'test'],
   conventions: ['*'],
 }
