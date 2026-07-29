@@ -1,20 +1,21 @@
 ---
 name: review-cost-after-2026-07-28
-description: "AFTER measurement for #559 — review harness cost/recall once #553/#556/#557 shipped in v0.8.2; cost fell ~6-20x, recall unproven at n=2"
+description: "AFTER measurement for #559 — review harness cost/recall once #553/#556/#557 shipped in v0.8.2; per-cycle output fell 5-31x, recall unproven at n=2"
 metadata: 
   node_type: memory
   type: project
   originSessionId: ea401363-2ee0-40ee-95f3-eac14055d50b
-  modified: 2026-07-29T03:02:27.376Z
+  modified: 2026-07-29T03:11:56.710Z
 ---
 
 The "after" arm for [[review-cost-baseline-2026-07-28]], answering #559. Written
 2026-07-28. The baseline numbers are frozen; these are the post-v0.8.2 numbers
 measured against them.
 
-**Headline: cost fell hard and the #557 targets were all hit. Recall is NOT
-proven — only two post-change cycles exist, and the fuller of the two returned
-zero findings, which n=2 cannot separate from "the reviewers stopped looking."**
+**Headline: per-cycle output fell from 173k/281k/207k to 34k/9k and the #557
+targets were all hit. Recall is NOT proven — only two post-change cycles exist,
+and the fuller of the two returned zero findings, which n=2 cannot separate from
+"the reviewers stopped looking."**
 
 ## The before/after cut is in UTC — this is easy to get wrong
 
@@ -58,8 +59,10 @@ of the win comes from the scope-discipline prose, not from the payloads.
 
 ## Q1 — did the hand-measurement stop? Yes, decisively
 
-Per-reviewer averages across 41 before-reviewers vs 10 after-agents (`manifest`
-and `judge` excluded from the reviewer averages):
+Per-reviewer averages across 41 before-reviewers vs 10 after-reviewers
+(`manifest` and `judge` are excluded from these averages). The after arm is 5
+reviewers per run, not 13 agents minus 4: `wf_32c23d63` ran **no** `judge`
+agent, so the 13 agents in the table above net out to 10 reviewers, not 9.
 
 | metric | before (per reviewer) | after (per reviewer) |
 | --- | --- | --- |
@@ -79,10 +82,15 @@ both arms.** They explore by shelling out or not at all. "Prefer reading a
 changed file over grepping the repo" was followed by dropping the exploration,
 not by switching tools.
 
-## Q2 — did total cost fall? Yes, ~6-20x
+## Q2 — did total cost fall? Yes
 
 Per-cycle output: baseline **173k / 281k / 207k** → **34k** and **9k**.
 Per-cycle cache_read: baseline **6.2M / 16.9M / 9.0M** → **885k** and **443k**.
+
+Quote the numbers, not a single ratio: pairwise, output ratios span **5.1x**
+(173k→34k) to **31x** (281k→9k), and mean-to-mean is ~**10x**. Any one "Nx"
+headline hides that spread, which is itself part of the finding — before-cycle
+cost varied 1.7x on nearly the same change.
 
 The mechanism is the one the baseline predicted: cache_read tracks Bash calls at
 ~50-80k each, so collapsing Bash collapses cache_read. `security` went 115 → 0
