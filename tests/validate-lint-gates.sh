@@ -764,18 +764,33 @@ test_post_create_install_decision() {
 # script. Asserted structurally: every outcome name the helper can echo must
 # appear as its own case label.
 test_post_create_dispatch_handles_every_outcome() {
-    local pc="$REPO_ROOT/.devcontainer/post-create.sh" outcome
+    local pc="$REPO_ROOT/.devcontainer/post-create.sh" outcome outcomes
     # Read the outcome names out of the HELPER rather than hardcoding them, so a
     # newly added outcome is picked up here automatically instead of silently
     # falling through to the wildcard.
-    for outcome in $(command awk '
+    #
+    # Unquoted on purpose below: the awk output is a newline-separated list of
+    # `[a-z-]+` tokens (the regex admits nothing else), and word-splitting it into
+    # the loop is the intent.
+    outcomes="$(command awk '
         /^ruff_install_action\(\) \{/ { grab = 1; next }
         grab && /^\}/ { exit }
         grab && match($0, /echo "[a-z-]+"/) {
             s = substr($0, RSTART + 6, RLENGTH - 7)
             print s
         }
-    ' "$pc"); do
+    ' "$pc")"
+
+    # NON-VACUITY FLOOR. If the helper is renamed, or its body reshaped so the
+    # awk anchor stops matching, the extraction yields NOTHING — and a for-loop
+    # over nothing asserts nothing while still reporting PASS. That failure mode
+    # is the whole reason this case exists, so pin the count: 5 documented
+    # outcomes today, and a 6th must arrive with a deliberate bump here.
+    assert_equals "5" "$(command printf '%s\n' "$outcomes" | command grep -c '[a-z]')" \
+        "all 5 helper outcomes were extracted (a broken anchor would silently assert nothing)"
+
+    # shellcheck disable=SC2086 # deliberate word-split, see comment above
+    for outcome in $outcomes; do
         assert_file_contains "$pc" "    $outcome)" \
             "the dispatch handles '$outcome' explicitly, not via the wildcard"
     done
