@@ -41,8 +41,11 @@ jobs:
       - name: Install jq + shellcheck
         run: sudo apt-get update && sudo apt-get install -y jq shellcheck
 
+      # PINNED (#542) from ruff.toml's required-version via bin/ruff-version.sh,
+      # same as ci.yml — a release must not be gated by a different ruff than the
+      # PR was.
       - name: Install ruff
-        run: pipx install ruff
+        run: pipx install "ruff==$(bash bin/ruff-version.sh)"
 
       # Single entry point — tests/run-all.sh owns the full gate list (manifest
       # validation, structural lint, contract + behavioral gates, action-pin

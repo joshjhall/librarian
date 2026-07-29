@@ -105,8 +105,13 @@ jobs:
       # ruff powers tests/lint-python.sh (lint + format check of the Python
       # pre-scan tools). pipx is pre-installed on ubuntu-latest and puts ruff on
       # PATH, so the gate actually runs here rather than silently skipping.
+      #
+      # PINNED (#542) from ruff.toml's required-version via bin/ruff-version.sh —
+      # unpinned, a new ruff release could fail `ruff format --check` here with no
+      # code change behind it, and CI would disagree with a contributor's local
+      # ruff for no visible reason.
       - name: Install ruff
-        run: pipx install ruff
+        run: pipx install "ruff==$(bash bin/ruff-version.sh)"
 
       # Fail loudly if a required linter did not land on PATH — otherwise the
       # skip-if-absent gates would quietly no-op in CI, defeating their purpose.

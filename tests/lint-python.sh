@@ -43,6 +43,17 @@ SKIP_EXIT_CODE=77
 # Wall-clock bound for the uvx probe below, seconds. Override for a slow link.
 UVX_PROBE_TIMEOUT="${UVX_PROBE_TIMEOUT:-60}"
 
+# The pinned ruff version (#542), from ruff.toml's required-version. The uvx
+# fallback resolves `ruff@$RUFF_PIN` rather than a floating `ruff`, so a host with
+# no ruff binary gets the same release as CI and the devcontainer. The `ruff` ON
+# PATH branch needs no pin here — ruff enforces required-version itself, refusing
+# to run when the binary disagrees.
+#
+# NOT bounded by the skip branch: an unreadable pin is a repo defect, not an
+# absent-tooling condition, so it fails the gate loudly instead of degrading to a
+# skip that would read as "no runner available".
+RUFF_PIN="$(bash "$REPO_ROOT/bin/ruff-version.sh")"
+
 # probe_uvx — true when `uvx ruff` is actually usable.
 #
 # BOUNDED on purpose. uvx may need the network to resolve ruff, and a STALLED
@@ -59,9 +70,9 @@ UVX_PROBE_TIMEOUT="${UVX_PROBE_TIMEOUT:-60}"
 # no worse than not probing at all).
 probe_uvx() {
     if command -v timeout >/dev/null 2>&1; then
-        command timeout "$UVX_PROBE_TIMEOUT" uvx ruff --version >/dev/null 2>&1
+        command timeout "$UVX_PROBE_TIMEOUT" uvx "ruff@$RUFF_PIN" --version >/dev/null 2>&1
     else
-        command uvx ruff --version >/dev/null 2>&1
+        command uvx "ruff@$RUFF_PIN" --version >/dev/null 2>&1
     fi
 }
 
@@ -88,7 +99,7 @@ fi
 # indistinguishable in the log, and "which ruff actually ran" is the first
 # question when the gate disagrees with `just lint`.
 printf 'Runner: %s\n\n' "$(if [ "$RUFF_RUNNER" = "uvx" ]; then
-    printf 'uvx ruff (no ruff binary on PATH)'
+    printf 'uvx ruff@%s (no ruff binary on PATH)' "$RUFF_PIN"
 else
     printf 'ruff on PATH'
 fi)"
@@ -99,7 +110,7 @@ fi)"
 # invocation carries an argument.
 run_ruff() {
     if [ "$RUFF_RUNNER" = "uvx" ]; then
-        command uvx ruff "$@"
+        command uvx "ruff@$RUFF_PIN" "$@"
     else
         command ruff "$@"
     fi

@@ -24,15 +24,46 @@ command -v node >/dev/null || {
 # what let the Python gate sit vacuous (#538). The gate itself now falls back to
 # `uvx ruff`, so this install is the belt to that suspenders: a fresh container
 # gets a real ruff binary instead of paying uvx resolution on every run.
+#
+# The version is PINNED (#542) and read from ruff.toml's required-version via
+# bin/ruff-version.sh, so this container, CI, the release gate, and both uvx
+# fallbacks all land on one release. That pin is enforced by ruff itself — a
+# mismatched binary refuses to run — which is why the already-on-PATH branch
+# below re-installs on a version mismatch instead of accepting whatever is there:
+# accepting it would leave the container with a ruff that hard-fails every lint.
 echo "==> Ensuring ruff (Python lint + format)..."
-if command -v ruff >/dev/null; then
-    echo "    Already on PATH — skipping install."
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUFF_VERSION="$(bash "$PROJECT_ROOT/bin/ruff-version.sh")"
+echo "    Pinned version: $RUFF_VERSION"
+
+installed_ruff_version() {
+    command -v ruff >/dev/null || return 1
+    ruff --version 2>/dev/null | awk '{print $2}'
+}
+
+current_ruff="$(installed_ruff_version || true)"
+
+if [ "$current_ruff" = "$RUFF_VERSION" ]; then
+    echo "    Already on PATH at the pinned version — skipping install."
 elif command -v uv >/dev/null; then
-    echo "    Installing via uv tool install..."
-    uv tool install ruff
+    if [ -n "$current_ruff" ]; then
+        echo "    On PATH at $current_ruff, want $RUFF_VERSION — reinstalling via uv..."
+    else
+        echo "    Installing via uv tool install..."
+    fi
+    uv tool install --force "ruff==$RUFF_VERSION"
 elif command -v pipx >/dev/null; then
-    echo "    Installing via pipx..."
-    pipx install ruff
+    if [ -n "$current_ruff" ]; then
+        echo "    On PATH at $current_ruff, want $RUFF_VERSION — reinstalling via pipx..."
+    else
+        echo "    Installing via pipx..."
+    fi
+    pipx install --force "ruff==$RUFF_VERSION"
+elif [ -n "$current_ruff" ]; then
+    echo "ERROR: ruff on PATH is $current_ruff but ruff.toml pins $RUFF_VERSION,"
+    echo "       and neither uv nor pipx is available to correct it."
+    echo "       ruff refuses to run on a version mismatch, so every lint would fail."
+    exit 1
 else
     echo "ERROR: cannot install ruff — no uv or pipx on PATH."
     echo "       ruff lints the Python pre-scan tools (tests/lint-python.sh)."
@@ -42,6 +73,17 @@ fi
 
 command -v ruff >/dev/null || {
     echo "ERROR: ruff still not on PATH after install (is the tool bin dir on PATH?)"
+    exit 1
+}
+
+# Verify the PIN landed, not merely that some ruff did. An install that resolved
+# a different version leaves a container whose every lint invocation hard-fails
+# on ruff's required-version check — better to say so here, once, than to have it
+# surface as a confusing lint error later.
+resolved_ruff="$(installed_ruff_version || true)"
+[ "$resolved_ruff" = "$RUFF_VERSION" ] || {
+    echo "ERROR: ruff on PATH is '$resolved_ruff' but ruff.toml pins $RUFF_VERSION."
+    echo "       ruff refuses to run on a mismatch, so lint would fail everywhere."
     exit 1
 }
 
