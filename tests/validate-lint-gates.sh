@@ -73,7 +73,12 @@ stub_dir() {
     # `bash` is load-bearing: the stubs' `#!/usr/bin/env bash` shebang resolves
     # through this PATH, and with the stub dir as the ENTIRE PATH an absent bash
     # makes every stub silently unexecutable (the gate then reports "no runner").
-    for tool in bash env find sort cat printf locale grep mktemp rm dirname basename tr; do
+    # `awk` is load-bearing for the #542 pin: both entry points resolve the
+    # version by running bin/ruff-version.sh, which parses ruff.toml with awk.
+    # Absent, the reader dies inside the stub PATH and every case below would
+    # fail for a reason that has nothing to do with what it tests — the same trap
+    # class as the `timeout` symlink #544's review caught.
+    for tool in bash env find sort cat printf locale grep mktemp rm dirname basename tr awk; do
         src="$(command -v "$tool" 2>/dev/null)" || continue
         command ln -sf "$src" "$dir/bin/$tool" 2>/dev/null || true
     done
@@ -152,16 +157,20 @@ test_ruff_violation_fails_the_gate() {
 # --- Resolution: probed uvx fallback ----------------------------------------
 
 test_falls_back_to_uvx_when_ruff_absent() {
-    local sb
+    local sb pin
     stub_dir sb || return 1
     plant_runner "$sb" uvx 0 0 # probe succeeds, lint clean; no ruff planted
     run_gate "$sb"
+    # The fallback resolves the PINNED ruff (#542), so every expectation below
+    # carries the version. Read it rather than hardcoding it, or bumping the pin
+    # would mean editing this file too.
+    pin="$(command bash "$REPO_ROOT/bin/ruff-version.sh")"
 
     assert_equals "0" "$GATE_RC" "gate runs (not skips) via uvx when ruff is absent"
-    assert_contains "$GATE_LOG" "uvx ruff --version" "the uvx availability probe runs"
-    assert_contains "$GATE_LOG" "uvx ruff check plugins" "check is dispatched through uvx"
-    assert_contains "$GATE_LOG" "uvx ruff format --check plugins" "format is dispatched through uvx"
-    assert_contains "$GATE_OUT" "Runner: uvx ruff" "the uvx runner is announced"
+    assert_contains "$GATE_LOG" "uvx ruff@$pin --version" "the uvx availability probe runs, pinned"
+    assert_contains "$GATE_LOG" "uvx ruff@$pin check plugins" "check is dispatched through the pinned uvx"
+    assert_contains "$GATE_LOG" "uvx ruff@$pin format --check plugins" "format is dispatched through the pinned uvx"
+    assert_contains "$GATE_OUT" "Runner: uvx ruff@$pin" "the uvx runner is announced with its pin"
 }
 
 test_uvx_violation_fails_the_gate() {
@@ -183,7 +192,8 @@ test_unusable_uvx_skips_rather_than_fails() {
     run_gate "$sb"
 
     assert_equals "$SKIP_SENTINEL" "$GATE_RC" "a failing uvx probe yields the skip sentinel"
-    assert_contains "$GATE_LOG" "uvx ruff --version" "the probe was actually attempted"
+    assert_contains "$GATE_LOG" "uvx ruff@$(command bash "$REPO_ROOT/bin/ruff-version.sh") --version" \
+        "the probe was actually attempted"
     assert_true "! printf '%s' \"$GATE_LOG\" | command grep -q 'check plugins'" \
         "no lint is attempted through an unusable uvx"
 }
@@ -318,8 +328,11 @@ test_sentinel_constant_agreed_by_both_scripts() {
 test_post_create_ensures_ruff() {
     local pc="$REPO_ROOT/.devcontainer/post-create.sh"
     assert_file_exists "$pc" "post-create.sh exists"
-    assert_file_contains "$pc" "uv tool install ruff" "installs ruff via uv when available"
-    assert_file_contains "$pc" "pipx install ruff" "falls back to pipx"
+    # The version is pinned (#542) — test_every_install_path_reads_the_pin owns
+    # the exact pinned spelling; here the point is only that both installers are
+    # still wired up.
+    assert_file_contains "$pc" "uv tool install" "installs ruff via uv when available"
+    assert_file_contains "$pc" "pipx install" "falls back to pipx"
     assert_file_contains "$pc" "ERROR: ruff still not on PATH" "verifies ruff landed on PATH"
 }
 
@@ -341,10 +354,10 @@ test_justfile_shares_ruff_resolution() {
     assert_file_exists "$jf" "justfile exists"
     assert_file_contains "$jf" 'command -v ruff' \
         "just lint prefers a ruff binary on PATH"
-    assert_file_contains "$jf" 'uvx ruff --version' \
+    assert_file_contains "$jf" 'uvx "ruff@$RUFF_PIN" --version' \
         "just lint PROBES uvx before selecting it (an unprobed uvx hard-fails when offline)"
-    assert_file_contains "$jf" 'RUFF="uvx ruff"' \
-        "just lint falls back to uvx ruff"
+    assert_file_contains "$jf" 'RUFF="uvx ruff@$RUFF_PIN"' \
+        "just lint falls back to the pinned uvx ruff"
     assert_file_contains "$jf" '$RUFF check plugins' \
         "just lint invokes check through the resolved runner, not a bare ruff"
     assert_file_contains "$jf" '$RUFF format --check plugins' \
@@ -360,29 +373,27 @@ test_justfile_shares_ruff_resolution() {
         "just lint bounds the uvx probe so a stalled network cannot wedge it"
 }
 
-# Behavioural half of the pair: extract the recipe's ruff-resolution body from
-# the justfile and RUN it under a stub PATH. Needs neither `just` installed nor
-# the recipe's dprint/taplo/rumdl/node steps.
+# extract_lint_recipe_body — the justfile `lint` recipe's ruff-resolution
+# command, as ONE logical line, exactly as just would assemble it.
 #
 # It must replicate just's LINE MODEL, not just concatenate the text. just feeds
 # each recipe line to its own shell, and a trailing `\` is what makes several
-# source lines one logical command. So the extraction JOINS ONLY ON `\`: a line
-# without one ends the command, exactly as just would treat it. Getting this
-# wrong makes the test vacuous — an earlier revision emitted the raw lines and
-# let `sh` re-join them, which still ran fine with a backslash deleted and so
-# passed against a justfile that `just` itself would have broken on.
+# source lines one logical command. So this JOINS ONLY ON `\`: a line without one
+# ends the command, exactly as just would treat it. Getting this wrong makes the
+# callers vacuous — an earlier revision emitted the raw lines and let `sh` re-join
+# them, which still ran fine with a backslash deleted and so passed against a
+# justfile that `just` itself would have broken on.
+#
+# The anchor is the recipe's FIRST line (`@RUFF_PIN=`, since #542 put the pin
+# resolution ahead of the resolution chain). Shared by both behavioural cases so
+# the anchor lives in one place: duplicated, a future edit that moves it would be
+# fixed in one copy and silently blind the other.
 #
 # Extracting rather than duplicating the snippet is the point: a hand-copied
 # expectation would drift from the justfile and pass while the real recipe broke.
-test_justfile_recipe_body_executes() {
-    local jf="$REPO_ROOT/justfile" body
-    # From the `@if command -v ruff` opener to the first line NOT ending in `\`.
-    # Strip just's `@` prefix and indentation, drop the trailing backslash, and
-    # join with a space — the result is the single logical command just builds.
-    # A missing backslash therefore TRUNCATES the command here, the same way it
-    # would strand `$RUFF check plugins` in a fresh shell under just.
-    body="$(command awk '
-        /^[[:space:]]*@if command -v ruff/ { grab = 1 }
+extract_lint_recipe_body() {
+    command awk '
+        /^[[:space:]]*@RUFF_PIN=/ { grab = 1 }
         grab {
             line = $0
             sub(/^[[:space:]]*@?/, "", line)
@@ -391,7 +402,14 @@ test_justfile_recipe_body_executes() {
             out = (out == "" ? line : out " " line)
             if (!cont) { print out; exit }
         }
-    ' "$jf")"
+    ' "$REPO_ROOT/justfile"
+}
+
+# Behavioural half of the pair: run the extracted recipe body under a stub PATH.
+# Needs neither `just` installed nor the recipe's dprint/taplo/rumdl/node steps.
+test_justfile_recipe_body_executes() {
+    local body
+    body="$(extract_lint_recipe_body)"
     assert_not_empty "$body" "recipe body extracted (the anchors still match)"
     # The extraction must have reached the invocation. If a backslash went
     # missing upstream the command truncates before this, and asserting on it
@@ -417,23 +435,36 @@ test_justfile_recipe_body_executes() {
     command ln -sf "$(command -v timeout)" "$sb/bin/timeout" 2>/dev/null || true
     command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
 
-    # ruff absent, uvx present and probing OK -> must resolve to "uvx ruff".
+    # The recipe reads the pin with a path RELATIVE to the justfile
+    # (`bash bin/ruff-version.sh`), which is correct under just — it runs recipes
+    # from the justfile's directory. Reproduce that by running from REPO_ROOT, or
+    # the reader would not resolve and every case below would fail for the wrong
+    # reason.
+    local pin
+    pin="$(command bash "$REPO_ROOT/bin/ruff-version.sh")"
+
+    # ruff absent, uvx present and probing OK -> must resolve to the PINNED uvx.
     plant_runner "$sb" uvx 0 0
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
         HOME="$sb" PATH="$sb/bin" "$REAL_SH" -c "$probe" 2>&1 || true)"
-    assert_contains "$out" 'RESOLVED=uvx ruff' \
-        "the real recipe body parses and resolves to uvx when ruff is absent"
+    assert_contains "$out" "RESOLVED=uvx ruff@$pin" \
+        "the real recipe body parses and resolves to the PINNED uvx when ruff is absent (#542)"
+    # The probe must ask uvx for the pinned ruff too — probing a floating `ruff`
+    # and then dispatching `ruff@<v>` would validate a different package than the
+    # one it goes on to run.
+    assert_contains "$(command cat "$sb/calls.log" 2>/dev/null)" "uvx ruff@$pin --version" \
+        "the uvx probe itself is pinned, not just the dispatch (#542)"
 
     # ruff present -> must win over uvx.
     plant_runner "$sb" ruff 0 0
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
         HOME="$sb" PATH="$sb/bin" "$REAL_SH" -c "$probe" 2>&1 || true)"
     assert_contains "$out" 'RESOLVED=ruff' \
         "the real recipe body prefers a ruff binary over uvx"
 
     # Neither runner -> must take the skip branch and say so.
     command rm -f "$sb/bin/ruff" "$sb/bin/uvx"
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
         HOME="$sb" PATH="$sb/bin" "$REAL_SH" -c "$probe" 2>&1 || true)"
     assert_contains "$out" 'did NOT run' \
         "the real recipe body takes the skip branch when no runner resolves"
@@ -451,18 +482,8 @@ test_justfile_hanging_uvx_is_bounded() {
         return 0
     fi
 
-    local jf="$REPO_ROOT/justfile" body
-    body="$(command awk '
-        /^[[:space:]]*@if command -v ruff/ { grab = 1 }
-        grab {
-            line = $0
-            sub(/^[[:space:]]*@?/, "", line)
-            cont = (line ~ /\\$/)
-            sub(/[[:space:]]*\\$/, "", line)
-            out = (out == "" ? line : out " " line)
-            if (!cont) { print out; exit }
-        }
-    ' "$jf")"
+    local body
+    body="$(extract_lint_recipe_body)"
     assert_not_empty "$body" "recipe body extracted for the hang case"
     local probe="${body//\$RUFF check plugins \&\& \$RUFF format --check plugins/echo \"RESOLVED=\$RUFF\"}"
 
@@ -484,8 +505,11 @@ test_justfile_hanging_uvx_is_bounded() {
     # Outer bound well above the inner one: if the recipe honors
     # UVX_PROBE_TIMEOUT it returns on its own and the outer never fires. Exit
     # 124 = outer fired = the recipe wedged, which is the regression.
+    # cd to REPO_ROOT for the same reason as the case above: the recipe reads the
+    # pin via a justfile-relative `bash bin/ruff-version.sh`, and just runs
+    # recipes from the justfile's directory.
     local rc=0 out
-    out="$(command timeout 30 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    out="$(cd "$REPO_ROOT" && command timeout 30 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
         --unset=BASH_ENV HOME="$sb" PATH="$sb/bin" UVX_PROBE_TIMEOUT=2 \
         "$REAL_SH" -c "$probe" 2>&1)" || rc=$?
 
@@ -493,6 +517,433 @@ test_justfile_hanging_uvx_is_bounded() {
         "a hanging uvx does not wedge the recipe (outer timeout did not fire)"
     assert_contains "$out" 'did NOT run' \
         "a hanging uvx degrades to the skip branch rather than blocking forever"
+}
+
+# --- #542: one pinned ruff version, threaded through every install path -------
+#
+# Before this, five paths each resolved ruff independently and unpinned
+# (post-create, ci.yml, release.yml, lint-python.sh's uvx fallback, the justfile's
+# uvx fallback), so a new ruff release could fail `ruff format --check` with no
+# code change behind it. ruff.toml's top-level `required-version` is now the
+# single source; bin/ruff-version.sh is the single reader.
+#
+# The pin is only real while ALL of them read it: `required-version` makes ruff
+# refuse to run on a mismatch, so one path left floating does not drift quietly —
+# it hard-fails the first time ruff publishes a new release. Hence one assertion
+# per path below, so dropping any single one fails this gate.
+
+# is_bare_semver <string> — echoes "yes" when the argument is exactly X.Y.Z.
+#
+# A helper rather than an inline `grep -qE` inside assert_true, because that
+# assertion EVALS the command string it is handed: interpolating a captured value
+# into it turns quotes and newlines in that value into shell syntax. In the worst
+# case the mangled command loses its input and blocks on stdin, which hangs the
+# whole suite instead of failing one case.
+is_bare_semver() {
+    case "$1" in
+        *[!0-9.]* | '' | *..* | .* | *.) command printf 'no' ;;
+        *.*.*.*) command printf 'no' ;;
+        *.*.*) command printf 'yes' ;;
+        *) command printf 'no' ;;
+    esac
+}
+
+# The pin must be TOP-LEVEL. Under [format] ruff rejects it as an unknown field —
+# a placement regression would leave the file *looking* pinned while ruff ignored
+# it. Asserted by parsing scope, not by grepping the whole file.
+test_ruff_toml_pins_version_at_top_level() {
+    local rt="$REPO_ROOT/ruff.toml" hits
+    assert_file_exists "$rt" "ruff.toml exists"
+    # Count exact pins in the top-level scope only — everything before the first
+    # [table] header. Counted into a scalar rather than piped inside assert_true:
+    # that assertion EVALS its argument, so interpolating file content (multi-line,
+    # full of quotes) into it mangles the command and hangs on stdin.
+    hits="$(command awk '
+        /^[[:space:]]*\[/ { exit }
+        /^required-version[[:space:]]*=[[:space:]]*"==[0-9]+\.[0-9]+\.[0-9]+"/ { n++ }
+        END { print n + 0 }
+    ' "$rt")"
+    assert_equals "1" "$hits" \
+        "ruff.toml pins exactly one ==X.Y.Z required-version at the TOP level (under [format] ruff ignores it)"
+}
+
+# The reader is what keeps the five consumers from each growing their own parse.
+# Behavioural, not a grep: it must print the version the file actually carries.
+test_ruff_version_reader_prints_the_pin() {
+    local reader="$REPO_ROOT/bin/ruff-version.sh" out declared
+    assert_file_exists "$reader" "bin/ruff-version.sh exists"
+
+    out="$(command bash "$reader" 2>&1)"
+    declared="$(command awk '
+        /^[[:space:]]*\[/ { exit }
+        /^required-version/ { gsub(/^[^"]*"==|".*$/, "", $0); print; exit }
+    ' "$REPO_ROOT/ruff.toml")"
+    assert_equals "$declared" "$out" "the reader prints exactly the version ruff.toml declares"
+    # Shape checks go through a computed yes/no rather than an interpolated
+    # pipeline: assert_true EVALS its argument, so any value with quotes or
+    # newlines in it would mangle the command instead of failing the assertion.
+    assert_equals "yes" "$(is_bare_semver "$out")" \
+        "the reader prints a BARE version (no '==' prefix) — the shape pipx/uvx want"
+}
+
+# Fail-loud, per CLAUDE.md's runtime policy. A reader that printed nothing on a
+# missing pin would silently degrade every caller back to installing a floating
+# ruff — reintroducing the exact bug, while every consumer's grep still passed.
+test_ruff_version_reader_fails_loud_on_a_bad_pin() {
+    local reader="$REPO_ROOT/bin/ruff-version.sh" fixture rc out
+
+    # No pin at all.
+    fixture="$WORKDIR/nopin.toml"
+    command printf 'target-version = "py311"\n' >"$fixture"
+    rc=0
+    out="$(command bash "$reader" "$fixture" 2>&1)" || rc=$?
+    assert_true "[ \"$rc\" -ne 0 ]" "a ruff.toml with no pin exits non-zero"
+    assert_contains "$out" "required-version" "the error names what is missing"
+    assert_equals "no" "$(is_bare_semver "$out")" \
+        "nothing version-shaped is printed for a missing pin"
+
+    # A RANGE, not an exact pin — accepting it would let the paths drift again.
+    fixture="$WORKDIR/range.toml"
+    command printf 'required-version = ">=0.16.0"\n' >"$fixture"
+    rc=0
+    command bash "$reader" "$fixture" >/dev/null 2>&1 || rc=$?
+    assert_true "[ \"$rc\" -ne 0 ]" "a range instead of an exact ==X.Y.Z pin exits non-zero"
+
+    # Pinned, but nested under a [table] — ruff ignores it there, so the reader
+    # must NOT report it as the effective pin.
+    fixture="$WORKDIR/nested.toml"
+    command printf '[format]\nrequired-version = "==1.2.3"\n' >"$fixture"
+    rc=0
+    out="$(command bash "$reader" "$fixture" 2>&1)" || rc=$?
+    assert_true "[ \"$rc\" -ne 0 ]" "a pin nested under a [table] is not accepted (ruff ignores it there)"
+    assert_not_contains "$out" "1.2.3" \
+        "the nested version is not reported as the effective pin"
+}
+
+# One assertion per install path. These are content assertions on purpose: the
+# workflows and post-create only run in CI / on container create, so there is no
+# way to execute them here — what IS checkable is that none of them still names a
+# floating `ruff`.
+test_every_install_path_reads_the_pin() {
+    local pc="$REPO_ROOT/.devcontainer/post-create.sh"
+    local ci="$REPO_ROOT/.github/workflows/ci.yml"
+    local rel="$REPO_ROOT/.github/workflows/release.yml"
+    local lp="$SCRIPT_DIR/lint-python.sh"
+    local jf="$REPO_ROOT/justfile"
+
+    assert_file_contains "$pc" "bin/ruff-version.sh" \
+        "post-create.sh resolves the pin through the shared reader"
+    assert_file_contains "$pc" 'uv tool install --force "ruff==$RUFF_VERSION"' \
+        "post-create.sh's uv install is pinned"
+    assert_file_contains "$pc" 'pipx install --force "ruff==$RUFF_VERSION"' \
+        "post-create.sh's pipx install is pinned"
+
+    # Both workflows resolve the pin on its own line with an explicit `|| exit 1`
+    # rather than inline as `pipx install "ruff==$(...)"`. That is load-bearing:
+    # a failing command substitution inside a larger command does NOT abort under
+    # `set -e`, so the inline form would degrade to `ruff==` and fail as a pipx
+    # argument error instead of surfacing ruff-version.sh's own diagnostic.
+    local w
+    for w in "$ci" "$rel"; do
+        assert_file_contains "$w" 'ruff_version="$(bash bin/ruff-version.sh)" || exit 1' \
+            "$(command basename "$w") resolves the pin with an explicit failure check"
+        assert_file_contains "$w" 'pipx install "ruff==$ruff_version"' \
+            "$(command basename "$w") installs the resolved pin"
+    done
+
+    assert_file_contains "$lp" 'bin/ruff-version.sh' \
+        "lint-python.sh resolves the pin through the shared reader"
+    assert_file_contains "$lp" 'uvx "ruff@$RUFF_PIN"' \
+        "lint-python.sh's uvx fallback is pinned"
+
+    assert_file_contains "$jf" 'bash bin/ruff-version.sh' \
+        "the justfile resolves the pin through the shared reader"
+    assert_file_contains "$jf" 'uvx "ruff@$RUFF_PIN"' \
+        "the justfile's uvx probe is pinned"
+
+    # The inverse: no path may still install a FLOATING ruff. Every grep above
+    # would still pass if a pinned line were ADDED beside an unpinned one, so
+    # match install lines whose ruff argument carries no version and count them.
+    local f floating
+    for f in "$pc" "$ci" "$rel"; do
+        floating="$(command grep -cE '(pipx|uv tool) install ([^ ]+ )*"?ruff"?[[:space:]]*$' "$f" || true)"
+        # grep -c prints 0 but EXITS 1 on a zero count; the `|| true` above keeps
+        # set -e from taking that as a failure, and the count is still on stdout.
+        assert_equals "0" "$floating" \
+            "$(command basename "$f") has no leftover unpinned ruff install"
+    done
+}
+
+# The pin's ENFORCEMENT leg, exercised against the real binary. required-version
+# is not merely a declaration: ruff refuses to run when the running version
+# disagrees, which is what covers the paths with no install step to pin
+# (lefthook.yml's bare `ruff format`/`ruff check` on staged files, and anyone
+# running ruff by hand). If a future ruff dropped or softened that behaviour, the
+# pin would silently become documentation — this is what would catch it.
+test_required_version_mismatch_actually_blocks_ruff() {
+    if ! command -v ruff >/dev/null 2>&1; then
+        skip_test "no ruff binary on PATH — cannot exercise the enforcement leg"
+        return 0
+    fi
+
+    local fixture="$WORKDIR/mismatch.toml" py="$WORKDIR/sample.py" rc out
+    # A version ruff will never be running.
+    command printf 'required-version = "==0.0.1"\n' >"$fixture"
+    command printf 'x = 1\n' >"$py"
+
+    rc=0
+    out="$(command ruff check --config "$fixture" "$py" 2>&1)" || rc=$?
+    assert_true "[ \"$rc\" -ne 0 ]" "ruff check REFUSES to run against a mismatched required-version"
+    assert_contains "$out" "Required version" "the refusal names the version mismatch"
+
+    rc=0
+    command ruff format --check --config "$fixture" "$py" >/dev/null 2>&1 || rc=$?
+    assert_true "[ \"$rc\" -ne 0 ]" "ruff format --check is blocked by the same mismatch"
+}
+
+# post-create.sh's install DECISION, driven behaviourally.
+#
+# Every other assertion about post-create.sh in this file is a substring grep,
+# because the script itself only runs on a real container create. That left its
+# actual branching — already-pinned skip, reinstall-on-mismatch via uv vs pipx,
+# the mismatch-with-no-installer error, and the no-installer error — with no
+# coverage at all: a broken comparison or a typo in the version substitution
+# would first surface inside a devcontainer build. The decision is now a pure
+# function (`ruff_install_action`), so it can be sliced out and driven directly,
+# the same way render_stage slices run-all.sh's run_stage.
+#
+# Slicing rather than reimplementing is the point: a hand-copied version of the
+# branching would drift from the script and keep passing while the real one broke.
+# run_install_action <current> <pinned> <has_uv> <has_pipx>
+run_install_action() {
+    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+        eval "$(command sed -n "/^ruff_install_action() {/,/^}/p" "$1")"
+        ruff_install_action "$2" "$3" "$4" "$5"
+    ' _ "$REPO_ROOT/.devcontainer/post-create.sh" "$1" "$2" "$3" "$4" 2>&1
+}
+
+test_post_create_install_decision() {
+    local pin="0.16.0"
+
+    # Already at the pin: no install, regardless of what is available.
+    assert_equals "skip" "$(run_install_action "$pin" "$pin" yes yes)" \
+        "an on-PATH ruff at the pinned version installs nothing"
+    assert_equals "skip" "$(run_install_action "$pin" "$pin" no no)" \
+        "…and still skips when no installer is present (nothing to correct)"
+
+    # THE bug this branch exists to fix: a ruff already on PATH at the WRONG
+    # version must be REINSTALLED, not accepted. Accepting it would leave the
+    # container with a ruff that hard-fails every lint on required-version.
+    assert_equals "uv" "$(run_install_action "0.9.9" "$pin" yes yes)" \
+        "a MISMATCHED on-PATH ruff is reinstalled, not accepted (uv preferred)"
+    assert_equals "pipx" "$(run_install_action "0.9.9" "$pin" no yes)" \
+        "…falling back to pipx when uv is absent"
+
+    # Absent ruff: install by whichever manager exists, uv first.
+    assert_equals "uv" "$(run_install_action "" "$pin" yes yes)" \
+        "an absent ruff installs via uv when available"
+    assert_equals "pipx" "$(run_install_action "" "$pin" no yes)" \
+        "…and via pipx when uv is absent"
+
+    # The two error arms are DISTINCT on purpose — one says "cannot install",
+    # the other "ruff exists but is unusable against this pin". Collapsing them
+    # would send an operator to the wrong fix.
+    assert_equals "error-mismatch" "$(run_install_action "0.9.9" "$pin" no no)" \
+        "a mismatched ruff with no installer is its own error, not 'cannot install'"
+    assert_equals "error-no-installer" "$(run_install_action "" "$pin" no no)" \
+        "no ruff and no installer is the cannot-install error"
+}
+
+# The dispatch must handle each of the five outcomes EXPLICITLY, with the
+# wildcard reserved for an internal-contract violation.
+#
+# A `*)` that doubles as the error-no-installer arm looks harmless — the helper
+# only ever echoes five strings today — but it converts a future misspelling of
+# an outcome name in the helper into the "install uv or pipx" message, which is
+# actively wrong advice when uv is present and the real fault is a bug in the
+# script. Asserted structurally: every outcome name the helper can echo must
+# appear as its own case label.
+#
+# (The illustrative misspelling that was here is gone on purpose: `typos` gates
+# the pre-push hook and flags it inside a comment, which is the gate working
+# correctly — describe the mistake, don't spell it.)
+test_post_create_dispatch_handles_every_outcome() {
+    local pc="$REPO_ROOT/.devcontainer/post-create.sh" outcome outcomes
+    # Read the outcome names out of the HELPER rather than hardcoding them, so a
+    # newly added outcome is picked up here automatically instead of silently
+    # falling through to the wildcard.
+    #
+    # Unquoted on purpose below: the awk output is a newline-separated list of
+    # `[a-z-]+` tokens (the regex admits nothing else), and word-splitting it into
+    # the loop is the intent.
+    outcomes="$(command awk '
+        /^ruff_install_action\(\) \{/ { grab = 1; next }
+        grab && /^\}/ { exit }
+        grab && match($0, /echo "[a-z-]+"/) {
+            s = substr($0, RSTART + 6, RLENGTH - 7)
+            print s
+        }
+    ' "$pc")"
+
+    # NON-VACUITY FLOOR. If the helper is renamed, or its body reshaped so the
+    # awk anchor stops matching, the extraction yields NOTHING — and a for-loop
+    # over nothing asserts nothing while still reporting PASS. That failure mode
+    # is the whole reason this case exists, so pin the count: 5 documented
+    # outcomes today, and a 6th must arrive with a deliberate bump here.
+    assert_equals "5" "$(command printf '%s\n' "$outcomes" | command grep -c '[a-z]')" \
+        "all 5 helper outcomes were extracted (a broken anchor would silently assert nothing)"
+
+    # shellcheck disable=SC2086 # deliberate word-split, see comment above
+    for outcome in $outcomes; do
+        assert_file_contains "$pc" "    $outcome)" \
+            "the dispatch handles '$outcome' explicitly, not via the wildcard"
+    done
+    # And the wildcard must be an internal-error arm, not a duplicate of a real
+    # outcome's message.
+    assert_file_contains "$pc" "ERROR: internal — ruff_install_action returned" \
+        "the wildcard reports an internal-contract violation"
+}
+
+# The dispatch's ARM BODIES, executed for real.
+#
+# The two cases above cover the pure helper's verdicts and the presence of each
+# case LABEL, but both are blind to what an arm actually does: swap the `uv)` and
+# `pipx)` bodies and every label is still present, in order, so they both pass —
+# while the script installs through the wrong manager. That is the same
+# wrong-tool-for-the-condition class #542 exists to close, so the arms get driven
+# for real: slice out the `ruff_action=…` + `case … esac` block, stub `uv`/`pipx`
+# to log their argv, and assert on WHICH installer ran and with what.
+#
+# `ruff_install_action` is sliced in alongside it — the block calls it, and the
+# point is to exercise the real dispatch against the real helper rather than a
+# stand-in that could disagree with either.
+run_dispatch() {
+    local sb="$1" cur="$2" pin="$3" uv="$4" pipx="$5"
+    command rm -f "$sb/install.log"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        HOME="$sb" PATH="$sb/bin" \
+        current_ruff="$cur" RUFF_VERSION="$pin" have_uv="$uv" have_pipx="$pipx" \
+        "$REAL_BASH" -c '
+        eval "$(command awk "/^ruff_install_action\\(\\) \\{/,/^\\}/" "$1")"
+        eval "$(command awk "/^ruff_action=/,/^esac/" "$1")"
+    ' _ "$REPO_ROOT/.devcontainer/post-create.sh" 2>&1
+}
+
+test_post_create_dispatch_arms_run_the_right_installer() {
+    local sb out pin="0.16.0"
+    stub_dir sb || return 1
+    # Stubs that record their own argv. `--force` and the pinned spec are part of
+    # what is asserted: a reinstall that dropped --force would silently no-op
+    # against an existing wrong-version install.
+    local t
+    for t in uv pipx; do
+        {
+            command printf '#!/usr/bin/env bash\n'
+            command printf 'command printf "%s %%s\\n" "$*" >>"%s/install.log"\n' "$t" "$sb"
+        } >"$sb/bin/$t"
+        command chmod +x "$sb/bin/$t"
+    done
+
+    # uv available -> uv, with --force and the pinned spec.
+    run_dispatch "$sb" "" "$pin" yes yes >/dev/null
+    out="$(command cat "$sb/install.log" 2>/dev/null || true)"
+    assert_equals "uv tool install --force ruff==$pin" "$out" \
+        "the uv arm installs through uv, pinned and forced (not pipx)"
+
+    # uv absent -> pipx. This is the pair a body-swap would break.
+    run_dispatch "$sb" "" "$pin" no yes >/dev/null
+    out="$(command cat "$sb/install.log" 2>/dev/null || true)"
+    assert_equals "pipx install --force ruff==$pin" "$out" \
+        "the pipx arm installs through pipx, pinned and forced (not uv)"
+
+    # A mismatched on-PATH ruff must still REINSTALL, not skip.
+    run_dispatch "$sb" "0.9.9" "$pin" yes yes >/dev/null
+    out="$(command cat "$sb/install.log" 2>/dev/null || true)"
+    assert_equals "uv tool install --force ruff==$pin" "$out" \
+        "a mismatched ruff is reinstalled at the pin, not accepted"
+
+    # Already pinned -> NOTHING runs. An arm that installed anyway would be a
+    # silent waste on every container create, invisible to a label check.
+    run_dispatch "$sb" "$pin" "$pin" yes yes >/dev/null
+    assert_equals "" "$(command cat "$sb/install.log" 2>/dev/null || true)" \
+        "the skip arm runs no installer at all"
+
+    # Both error arms: no install attempted, and the message must match the
+    # CONDITION — the mismatch arm must not tell an operator to install a tool.
+    out="$(run_dispatch "$sb" "0.9.9" "$pin" no no)"
+    assert_equals "" "$(command cat "$sb/install.log" 2>/dev/null || true)" \
+        "the mismatch error arm attempts no install"
+    assert_contains "$out" "neither uv nor pipx is available to correct it" \
+        "the mismatch error names the real problem"
+
+    out="$(run_dispatch "$sb" "" "$pin" no no)"
+    assert_contains "$out" "cannot install ruff" \
+        "the no-installer error arm says what is missing"
+}
+
+# installed_ruff_version must VALIDATE the shape it parses, not just take field
+# two. It feeds both the reinstall decision above and the post-install
+# verification, so a malformed read that silently compared equal to itself would
+# report the pin as landed when it had not.
+test_post_create_version_parse_is_validated() {
+    local sb out
+    stub_dir sb || return 1
+
+    plant_version_stub() {
+        {
+            command printf '#!/usr/bin/env bash\n'
+            command printf 'command cat <<'"'"'VEOF'"'"'\n%s\nVEOF\n' "$1"
+        } >"$sb/bin/ruff"
+        command chmod +x "$sb/bin/ruff"
+    }
+
+    # Sliced with awk, not sed: this runs with the stub dir as the ENTIRE PATH,
+    # and that list carries only what the code under test genuinely needs (awk,
+    # for bin/ruff-version.sh). Reaching for sed here would mean adding it to the
+    # stub list purely for the test's own convenience, which is how that list
+    # grew an inaccurate "load-bearing" claim in the first place.
+    run_parse() {
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" PATH="$sb/bin" "$REAL_BASH" -c '
+            eval "$(command awk "/^installed_ruff_version\\(\\) \\{/,/^\\}/" "$1")"
+            installed_ruff_version || true
+        ' _ "$REPO_ROOT/.devcontainer/post-create.sh" 2>&1
+    }
+
+    plant_version_stub 'ruff 0.16.0'
+    assert_equals "0.16.0" "$(run_parse)" "the normal 'ruff X.Y.Z' output parses"
+
+    # A leading warning line: field two of line ONE is not the version.
+    plant_version_stub 'warning: something
+ruff 0.16.0'
+    assert_equals "0.16.0" "$(run_parse)" \
+        "a preceding warning line does not derail the parse"
+
+    # Shapes that must yield NOTHING rather than a wrong string.
+    plant_version_stub 'ruff 0.16.0+build7'
+    assert_equals "" "$(run_parse)" "build metadata is rejected, not silently truncated"
+    plant_version_stub 'someothertool 1.2.3'
+    assert_equals "" "$(run_parse)" "a different tool's output is rejected"
+    plant_version_stub 'ruff'
+    assert_equals "" "$(run_parse)" "a missing version field yields nothing"
+
+    command rm -f "$sb/bin/ruff"
+    assert_equals "" "$(run_parse)" "an absent ruff yields nothing"
+}
+
+# The pinned version must be the one actually in use here, or the local suite is
+# green against a ruff that CI would reject before it ran a single rule.
+test_installed_ruff_matches_the_pin() {
+    if ! command -v ruff >/dev/null 2>&1; then
+        skip_test "no ruff binary on PATH — nothing to compare against the pin"
+        return 0
+    fi
+
+    local pin running
+    pin="$(command bash "$REPO_ROOT/bin/ruff-version.sh")"
+    running="$(command ruff --version 2>/dev/null | command awk '{print $2}')"
+    assert_equals "$pin" "$running" \
+        "the ruff on PATH is the pinned version (a mismatch makes every lint hard-fail)"
 }
 
 run_test test_prefers_ruff_binary_when_present "ruff on PATH is preferred and actually invoked"
@@ -511,5 +962,15 @@ run_test test_post_create_ensures_ruff "post-create.sh installs and verifies ruf
 run_test test_justfile_shares_ruff_resolution "just lint shares the ruff→uvx runner resolution (#544)"
 run_test test_justfile_recipe_body_executes "the just lint recipe body actually parses and resolves (#544)"
 run_test test_justfile_hanging_uvx_is_bounded "a hanging uvx does not wedge just lint (#544)"
+run_test test_ruff_toml_pins_version_at_top_level "ruff.toml pins an exact ruff version at the top level (#542)"
+run_test test_ruff_version_reader_prints_the_pin "bin/ruff-version.sh prints the declared pin (#542)"
+run_test test_ruff_version_reader_fails_loud_on_a_bad_pin "the pin reader fails loud on a missing/ranged/nested pin (#542)"
+run_test test_every_install_path_reads_the_pin "all five ruff install paths read the pin (#542)"
+run_test test_required_version_mismatch_actually_blocks_ruff "required-version actually blocks a mismatched ruff (#542)"
+run_test test_post_create_install_decision "post-create's install decision covers all five outcomes (#542)"
+run_test test_post_create_dispatch_handles_every_outcome "post-create's dispatch handles every outcome explicitly (#542)"
+run_test test_post_create_dispatch_arms_run_the_right_installer "post-create's dispatch arms run the right installer (#542)"
+run_test test_post_create_version_parse_is_validated "post-create validates the ruff --version shape it parses (#542)"
+run_test test_installed_ruff_matches_the_pin "the ruff on PATH matches the pin (#542)"
 
 generate_report

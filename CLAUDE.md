@@ -133,6 +133,18 @@ agree on a uvx-only host. `tests/validate-lint-gates.sh` is the meta-gate pinnin
 all of this — runner resolution, the skip sentinel, the justfile fallback, and
 that a hanging `uvx` probe cannot wedge either entry point.
 
+**The ruff version is pinned in exactly one place** (#542): `required-version`
+at the **top level** of `ruff.toml` (under a `[table]` ruff rejects it as an
+unknown field). Every path that installs or resolves ruff —
+`.devcontainer/post-create.sh`, `ci.yml`, `release.yml`, `lint-python.sh`'s uvx
+fallback, and the justfile's — reads it through `bin/ruff-version.sh`; never
+hardcode a version in a consumer. The pin is self-enforcing: ruff **refuses to
+run** (exit 2) when the binary disagrees, which is what covers the callers with
+no install step to pin (lefthook's bare `ruff` on staged files, and running it by
+hand) — but it also means a path left unpinned hard-fails on ruff's next release
+rather than drifting quietly. Bumping is a deliberate one-line edit followed by
+`just test` + `just fmt`; no dependabot ecosystem covers it.
+
 ## Commits
 
 Conventional Commits enforced by `conform` (`.conform.yaml`). Scopes are the

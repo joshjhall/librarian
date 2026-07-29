@@ -5,6 +5,23 @@
 # format/lint tools (dprint, taplo, rumdl). Enforced by tests/lint-python.sh,
 # which gates CI and pre-push.
 
+# THE single source of the pinned ruff version (#542). Every path that installs
+# or resolves ruff — .devcontainer/post-create.sh, .github/workflows/{ci,release}.yml,
+# tests/lint-python.sh's uvx fallback, and the justfile's `lint` recipe — derives
+# its version from here by way of `bin/ruff-version.sh`, so they cannot drift onto
+# different releases and disagree about formatting with no code change behind it.
+#
+# It is also ENFORCEMENT, not just a declaration: ruff refuses to run at all
+# (exit 2) when the binary's version does not match, which covers the paths that
+# have no install step to pin — lefthook.yml's bare `ruff format`/`ruff check` on
+# staged files, and anyone running `ruff` by hand.
+#
+# Bumping it is a deliberate manual step: change this line, then re-run
+# `just test` (validate-lint-gates.sh pins the consumers) and `just fmt` in case
+# the new release formats differently. No dependabot ecosystem covers it.
+# Must stay TOP-LEVEL — under [format] ruff rejects it as an unknown field.
+required-version = "==0.16.0"
+
 target-version = "py311"
 line-length = 88
 

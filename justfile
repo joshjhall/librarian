@@ -31,6 +31,13 @@ validate:
 # absent on base macOS, so it is used only when present (same conditional as
 # lint-python.sh's probe_uvx).
 #
+# The uvx branch resolves the PINNED ruff (#542) — `uvx ruff@<v>`, version from
+# ruff.toml's required-version via bin/ruff-version.sh — so a uvx-only host lints
+# with the same release as CI. The `ruff`-on-PATH branch needs no pin: ruff
+# enforces required-version itself and refuses to run on a mismatch. An
+# unreadable pin aborts the recipe rather than falling through to a floating
+# ruff, which is the drift this closed.
+#
 # One logical line on purpose: just runs each recipe LINE in its own shell, so a
 # RUFF assigned on one line is unset on the next. Recipes here are POSIX sh (this
 # justfile sets no `shell` directive) — no [[ ]], no local, no arrays.
@@ -38,8 +45,9 @@ lint:
     dprint check '**/*.{json,yml,yaml}'
     taplo fmt --check
     rumdl check .
-    @if command -v ruff >/dev/null 2>&1; then RUFF="ruff"; \
-    elif command -v uvx >/dev/null 2>&1 && { if command -v timeout >/dev/null 2>&1; then timeout "${UVX_PROBE_TIMEOUT:-60}" uvx ruff --version; else uvx ruff --version; fi; } >/dev/null 2>&1; then RUFF="uvx ruff"; \
+    @RUFF_PIN="$(bash bin/ruff-version.sh)" || exit 1; \
+    if command -v ruff >/dev/null 2>&1; then RUFF="ruff"; \
+    elif command -v uvx >/dev/null 2>&1 && { if command -v timeout >/dev/null 2>&1; then timeout "${UVX_PROBE_TIMEOUT:-60}" uvx "ruff@$RUFF_PIN" --version; else uvx "ruff@$RUFF_PIN" --version; fi; } >/dev/null 2>&1; then RUFF="uvx ruff@$RUFF_PIN"; \
     else echo "[skip] Python lint did NOT run — no ruff runner (install ruff, or uv for 'uvx ruff')"; exit 0; fi; \
     $RUFF check plugins && $RUFF format --check plugins
     node tests/validate-manifests.mjs
