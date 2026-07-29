@@ -297,7 +297,7 @@ check_claude_md_drift() {
     # char class [A-Za-z0-9_.-] excludes `$ { } * :`, so `${VAR}` templates,
     # globs, and `scheme://` URLs cannot match — the skip is built into the regex.
     command grep -noE '`[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+\.(sh|py|js|mjs|ts|json|ya?ml|md|toml)`' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             match=${raw#*:}
             target="${match#\`}"
@@ -375,7 +375,7 @@ check_mcp_config() {
     # Check for http:// URLs (except localhost exceptions)
     command grep -nE '"http://' "$file" 2>/dev/null |
         command grep -vE '(localhost|127\.0\.0\.1|host\.docker\.internal)' |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -401,7 +401,7 @@ check_hook_safety() {
 
     # Destructive commands without guards
     command grep -nE '(rm\s+-rf\s|git\s+reset\s+--hard|git\s+clean\s+-fd|docker\s+system\s+prune)' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -412,7 +412,7 @@ check_hook_safety() {
 
     # Secret leaks — echoing env vars with secret-like names
     command grep -nE '(echo|printf).*\$(ANTHROPIC_|GITHUB_TOKEN|GITLAB_TOKEN|API_KEY|SECRET|PASSWORD|OP_.*_REF)' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -444,7 +444,7 @@ check_harness_logic() {
     # file+line+category. A fixed ref carries a trailing #${i}.
     command grep -nE '`\$\{[^}]+\}:\$\{[^}]+\}:\$\{[^}]+\}`' "$file" 2>/dev/null |
         command grep -vE '#\$\{' |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -460,7 +460,7 @@ check_harness_logic() {
     # any agentType literal lacking a colon. Cannot confirm the <plugin> half
     # resolves without this repo's layout, so MEDIUM for the LLM pass to confirm.
     command grep -nE "agentType:[[:space:]]*['\"][^'\":]+['\"]" "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -471,7 +471,7 @@ check_harness_logic() {
 
     # Unsafe interpolation into an auto-approving command.
     command grep -nE 'dangerously-skip-permissions.*\$\{' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -483,7 +483,7 @@ check_harness_logic() {
     # Supply-chain regen: full install form without a lockfile-only/no-scripts flag.
     command grep -nE '(npm install|pnpm install|composer update|yarn install)' "$file" 2>/dev/null |
         command grep -vE 'package-lock-only|ignore-scripts|no-scripts|lockfile-only|update-lockfile' |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")

@@ -72,7 +72,7 @@ while IFS= read -r file; do
         *.py)
             # Find module-level function/class definitions
             command grep -nE '^(def |class )[A-Za-z_]' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Skip private definitions — anchor on the NAME (token after
@@ -101,7 +101,7 @@ while IFS= read -r file; do
         *.js | *.ts | *.jsx | *.tsx)
             # Find exported functions, classes, types
             command grep -nE '^export (function|class|const|type|interface|enum) ' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Check for JSDoc comment (/**) in preceding lines
@@ -119,7 +119,7 @@ while IFS= read -r file; do
             # Find exported functions (capitalized, not in test files)
             case "$file" in *_test.go) continue ;; esac
             command grep -nE '^func [A-Z]' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Go convention: comment line immediately before with function name
@@ -140,7 +140,7 @@ while IFS= read -r file; do
         *.rs)
             # Find pub fn and pub struct
             command grep -nE '^pub (fn|struct|enum|trait|type) ' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Check for /// doc comment
@@ -157,7 +157,7 @@ while IFS= read -r file; do
         *.sh | *.bash)
             # Find function definitions
             command grep -nE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Skip private functions — anchor on the NAME, not a
@@ -180,7 +180,7 @@ while IFS= read -r file; do
         # --- Ruby ---
         *.rb)
             command grep -nE '^\s*def [a-z]' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
@@ -195,7 +195,7 @@ while IFS= read -r file; do
         # --- Java/Kotlin ---
         *.java | *.kt)
             command grep -nE '^\s*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     if ! check_prev_lines "$file" "$line_num" '/\*\*'; then

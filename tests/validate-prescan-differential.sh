@@ -217,10 +217,14 @@ EOF
 # literal keeps the source clean while the file ON DISK is byte-identical, so
 # the detectors still fire. Do not re-inline it.
 AKIA_FIXTURE="AKIA""ABCDEFGHIJKLMNOP"
+# The third line carries TRAILING SPACES on purpose — see test_trailing_ws_
+# preserved below. It is written via printf rather than a heredoc so the
+# whitespace survives editors and lint that would strip it from a repo file.
 {
     printf 'AWS_KEY = %s:\n' "$AKIA_FIXTURE"
     printf '%s\n' 'x = 1  # TODO refactor:'
     printf '%s\n' 'def undocumented_trailing():'
+    printf '%s\n' 'y = 2  # TODO keep-my-spaces   '
 } >"$FIXDIR/src/trailing_colon.py"
 
 FIX_CORPUS="$WORKDIR/fixture-corpus.txt"
@@ -354,10 +358,53 @@ test_trailing_colon_preserved() {
         "fixtures still trigger at least 6 tools (got $TRAILING_TOOLS)"
 }
 
+# Trailing WHITESPACE survives into evidence too (#549 review catch).
+#
+# The colon fix replaced `while IFS=: read -r n content` with a bare
+# `while read -r raw` + prefix strip. A bare `read` splits on the DEFAULT IFS,
+# so it eats trailing spaces/tabs the old `IFS=:` form kept — a second,
+# narrower evidence-mangling bug introduced by the fix for the first. The
+# correct idiom is `IFS= read -r raw`, which suppresses all field splitting.
+#
+# Leading whitespace is NOT at risk and is deliberately not asserted: every line
+# is `grep -n` output, so it begins with a line number, and `${raw#*:}` keeps
+# everything after the first colon verbatim.
+#
+# The repo-tree corpus cannot catch this — real repo files are trailing-space
+# stripped by lint, so only a purpose-built fixture exercises it.
+trailing_ws_evidence() {
+    command awk -F'\t' '$4 ~ /keep-my-spaces[ \t]+$/ { print }'
+}
+
+WS_TOOLS=0
+test_trailing_ws_preserved() {
+    local sh py n b p
+    while IFS= read -r sh; do
+        [ -n "$sh" ] || continue
+        py="${sh%patterns.sh}patterns.py"
+        n="$(command basename "$(command dirname "$sh")")"
+        b="$(PATTERNS_FORCE_BASH=1 bash "$sh" "$FIX_CORPUS" 2>/dev/null |
+            command grep 'keep-my-spaces' || true)"
+        p="$(python3 "$py" "$FIX_CORPUS" 2>/dev/null |
+            command grep 'keep-my-spaces' || true)"
+        [ -n "$p" ] || continue
+        WS_TOOLS=$((WS_TOOLS + 1))
+        # Python is the reference impl: it slices the line verbatim, so its
+        # evidence keeps the spaces. Bash must match it.
+        assert_true "[ -n \"\$(printf '%s\n' \"\$p\" | trailing_ws_evidence)\" ]" \
+            "$n [python]: evidence keeps trailing whitespace"
+        assert_true "[ -n \"\$(printf '%s\n' \"\$b\" | trailing_ws_evidence)\" ]" \
+            "$n [bash]: evidence keeps trailing whitespace"
+    done < <(single_arg_tools)
+    assert_true "[ $WS_TOOLS -ge 1 ]" \
+        "trailing-whitespace fixture still triggers a tool (got $WS_TOOLS)"
+}
+
 run_test test_corpora_non_empty "Differential corpora are non-empty (gate is not a no-op)"
 run_test test_repo_corpus "Every tool: bash==python over the whole repo tree"
 run_test test_fixture_corpus "Every tool: bash==python over the per-category fixtures"
 run_test test_drift_detect "drift-detect: bash==python over actual/planned fixtures"
 run_test test_trailing_colon_preserved "Trailing colons survive into evidence in both impls (#549)"
+run_test test_trailing_ws_preserved "Trailing whitespace survives into evidence in both impls (#549)"
 
 generate_report

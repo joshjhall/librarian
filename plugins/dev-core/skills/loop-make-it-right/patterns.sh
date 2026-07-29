@@ -72,7 +72,7 @@ while IFS= read -r file; do
         *.py)
             # Python: count lines from def to next def/class or dedent
             command grep -n '^\s*def \w\+' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Count lines until next function/class at same or lower indent
@@ -97,7 +97,7 @@ while IFS= read -r file; do
         *.ts | *.js | *.tsx | *.jsx | *.go | *.rs)
             # Brace-delimited languages: count from opening { to closing }
             command grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     _content=${raw#*:}
                     # Simple heuristic: count lines from definition to next function
@@ -156,7 +156,7 @@ while IFS= read -r file; do
         *.py)
             command grep -nE '^\s+[a-zA-Z]\s*=' "$file" 2>/dev/null |
                 command grep -vE '^\s*(for|with)\s+[a-zA-Z]\s+in\b|_\s*=' |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Extract the variable name

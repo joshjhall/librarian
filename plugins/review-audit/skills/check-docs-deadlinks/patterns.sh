@@ -59,7 +59,7 @@ while IFS= read -r file; do
     # --- Category: broken-relative-link ---
     # Match markdown links: [text](relative/path) — exclude URLs, anchors-only, and images
     command grep -nE '\[([^]]*)\]\(([^)]+)\)' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             # Extract the link target
@@ -88,7 +88,7 @@ while IFS= read -r file; do
     # --- Category: broken-anchor ---
     # Match same-file anchor links: [text](#heading)
     command grep -nE '\[([^]]*)\]\(#([^)]+)\)' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             anchor=$(command echo "$content" | command grep -oE '\]\(#[^)]+\)' | command head -1 | command sed 's/^](#//' | command sed 's/)$//')
@@ -110,7 +110,7 @@ while IFS= read -r file; do
     # URLs with deprecation/sunset indicators
     command grep -noE 'https?://[^ )>"]+' "$file" 2>/dev/null |
         command grep -iE '(deprecated|sunset|eol|end-of-life|removed|legacy)' |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             url=${raw#*:}
             evidence=$(truncate_chars 80 "Suspicious URL: ${url}")

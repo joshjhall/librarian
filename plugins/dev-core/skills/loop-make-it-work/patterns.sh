@@ -65,7 +65,7 @@ while IFS= read -r file; do
     # --- Category: stub-detected ---
     # Match TODO, FIXME, STUB, PLACEHOLDER, NotImplementedError, unimplemented!
     command grep -niE '\b(TODO|FIXME|STUB|PLACEHOLDER)\b|NotImplementedError|raise NotImplementedError|unimplemented!\(\)|todo!\(\)|panic\("not implemented"\)' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -79,7 +79,7 @@ while IFS= read -r file; do
     case "$file" in
         *.py)
             command grep -nE '^\s*def\s+\w+' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Check if next non-blank line is pass or ... . NOTE: grep -m1
@@ -102,7 +102,7 @@ while IFS= read -r file; do
             # class of literal backslash/'s', not whitespace, so `{ }` (a real
             # space) was missed (#183).
             command grep -nE '(function\s+\w+|=>\s*)\{[[:space:]]*\}' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
@@ -114,7 +114,7 @@ while IFS= read -r file; do
         *.go)
             # Go: function with empty braces ([[:space:]]* not [\s]*, see #183).
             command grep -nE '^func\s+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")

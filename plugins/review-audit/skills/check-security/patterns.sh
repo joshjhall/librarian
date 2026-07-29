@@ -81,7 +81,7 @@ while IFS= read -r file; do
 
     # AWS access keys (AKIA followed by 16 uppercase alphanumeric chars)
     command grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -92,7 +92,7 @@ while IFS= read -r file; do
 
     # GitHub tokens (ghp_, gho_, ghs_, ghr_, github_pat_)
     command grep -nE '(ghp_|gho_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -103,7 +103,7 @@ while IFS= read -r file; do
 
     # Stripe keys (sk_live_, rk_live_, pk_live_)
     command grep -nE '(sk_live_|rk_live_|pk_live_)[A-Za-z0-9]{20,}' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -114,7 +114,7 @@ while IFS= read -r file; do
 
     # Private key headers
     command grep -nE 'BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -132,7 +132,7 @@ while IFS= read -r file; do
     # class, so any value containing x/2/7 was silently missed. Fixed in #168.)
     command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)\s*[=:]\s*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
         command grep -viE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_|#|//|/\*)' |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -151,7 +151,7 @@ while IFS= read -r file; do
             # ["\x27] never matched f'SELECT because \x27 is not expanded in a
             # bracket expression).
             command grep -nE 'f["'\''](SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
@@ -162,7 +162,7 @@ while IFS= read -r file; do
             ;;
         *.js | *.ts | *.jsx | *.tsx)
             command grep -nE '`(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\$\{' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
@@ -173,7 +173,7 @@ while IFS= read -r file; do
             ;;
         *.rb)
             command grep -nE '"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*#\{' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
@@ -186,7 +186,7 @@ while IFS= read -r file; do
 
     # String concatenation with SQL keywords (all languages)
     command grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*' "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -199,7 +199,7 @@ while IFS= read -r file; do
 
     # React: raw HTML rendering
     command grep -n "$XSS_REACT_PATTERN" "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -210,7 +210,7 @@ while IFS= read -r file; do
 
     # Vue: v-html directive
     command grep -n "$XSS_VUE_PATTERN" "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -221,7 +221,7 @@ while IFS= read -r file; do
 
     # Django/Jinja: |safe filter, mark_safe()
     command grep -nE "$XSS_SAFE_PATTERN" "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -232,7 +232,7 @@ while IFS= read -r file; do
 
     # Blade: unescaped output
     command grep -n "$XSS_BLADE_PATTERN" "$file" 2>/dev/null |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -250,7 +250,7 @@ while IFS= read -r file; do
     # a comment. (Fixed in #168.)
     command grep -nEi '\b(md5|sha1)\s*\(' "$file" 2>/dev/null |
         command grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
@@ -263,7 +263,7 @@ while IFS= read -r file; do
     # the weak-hash probe above; see #168).
     command grep -nEi '\bECB\b|MODE_ECB|mode.*ecb' "$file" 2>/dev/null |
         command grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
-        while read -r raw; do
+        while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")

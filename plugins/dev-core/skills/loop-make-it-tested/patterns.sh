@@ -129,7 +129,7 @@ while IFS= read -r file; do
         py)
             # Public functions (not starting with _)
             command grep -nE '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
@@ -145,7 +145,7 @@ while IFS= read -r file; do
         go)
             # Exported functions (capitalized)
             command grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
-                while read -r raw; do
+                while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
