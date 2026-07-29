@@ -94,7 +94,8 @@ have_pipx=no
 command -v uv >/dev/null && have_uv=yes
 command -v pipx >/dev/null && have_pipx=yes
 
-case "$(ruff_install_action "$current_ruff" "$RUFF_VERSION" "$have_uv" "$have_pipx")" in
+ruff_action="$(ruff_install_action "$current_ruff" "$RUFF_VERSION" "$have_uv" "$have_pipx")"
+case "$ruff_action" in
     skip)
         echo "    Already on PATH at the pinned version — skipping install."
         ;;
@@ -120,10 +121,22 @@ case "$(ruff_install_action "$current_ruff" "$RUFF_VERSION" "$have_uv" "$have_pi
         echo "       ruff refuses to run on a version mismatch, so every lint would fail."
         exit 1
         ;;
-    *)
+    error-no-installer)
         echo "ERROR: cannot install ruff — no uv or pipx on PATH."
         echo "       ruff lints the Python pre-scan tools (tests/lint-python.sh)."
         echo "       Install uv (https://docs.astral.sh/uv/) or pipx, or install ruff directly."
+        exit 1
+        ;;
+    *)
+        # Every one of ruff_install_action's five documented outcomes is handled
+        # above, so reaching here means the helper and this dispatch have drifted
+        # apart — a typo'd echo or a new branch nobody wired up. Say THAT, rather
+        # than folding it into the no-installer arm: that arm's message tells the
+        # operator to install uv or pipx, which would be actively wrong advice
+        # when uv is sitting right there and the real problem is a bug in here.
+        echo "ERROR: internal — ruff_install_action returned '$ruff_action',"
+        echo "       which this dispatch does not handle. This is a bug in"
+        echo "       .devcontainer/post-create.sh, not a problem with your machine."
         exit 1
         ;;
 esac

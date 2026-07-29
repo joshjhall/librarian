@@ -754,6 +754,37 @@ test_post_create_install_decision() {
         "no ruff and no installer is the cannot-install error"
 }
 
+# The dispatch must handle each of the five outcomes EXPLICITLY, with the
+# wildcard reserved for an internal-contract violation.
+#
+# A `*)` that doubles as the error-no-installer arm looks harmless — the helper
+# only ever echoes five strings today — but it converts a future typo in the
+# helper (`eror-mismatch`) into the "install uv or pipx" message, which is
+# actively wrong advice when uv is present and the real fault is a bug in the
+# script. Asserted structurally: every outcome name the helper can echo must
+# appear as its own case label.
+test_post_create_dispatch_handles_every_outcome() {
+    local pc="$REPO_ROOT/.devcontainer/post-create.sh" outcome
+    # Read the outcome names out of the HELPER rather than hardcoding them, so a
+    # newly added outcome is picked up here automatically instead of silently
+    # falling through to the wildcard.
+    for outcome in $(command awk '
+        /^ruff_install_action\(\) \{/ { grab = 1; next }
+        grab && /^\}/ { exit }
+        grab && match($0, /echo "[a-z-]+"/) {
+            s = substr($0, RSTART + 6, RLENGTH - 7)
+            print s
+        }
+    ' "$pc"); do
+        assert_file_contains "$pc" "    $outcome)" \
+            "the dispatch handles '$outcome' explicitly, not via the wildcard"
+    done
+    # And the wildcard must be an internal-error arm, not a duplicate of a real
+    # outcome's message.
+    assert_file_contains "$pc" "ERROR: internal — ruff_install_action returned" \
+        "the wildcard reports an internal-contract violation"
+}
+
 # installed_ruff_version must VALIDATE the shape it parses, not just take field
 # two. It feeds both the reinstall decision above and the post-install
 # verification, so a malformed read that silently compared equal to itself would
@@ -841,6 +872,7 @@ run_test test_ruff_version_reader_fails_loud_on_a_bad_pin "the pin reader fails 
 run_test test_every_install_path_reads_the_pin "all five ruff install paths read the pin (#542)"
 run_test test_required_version_mismatch_actually_blocks_ruff "required-version actually blocks a mismatched ruff (#542)"
 run_test test_post_create_install_decision "post-create's install decision covers all five outcomes (#542)"
+run_test test_post_create_dispatch_handles_every_outcome "post-create's dispatch handles every outcome explicitly (#542)"
 run_test test_post_create_version_parse_is_validated "post-create validates the ruff --version shape it parses (#542)"
 run_test test_installed_ruff_matches_the_pin "the ruff on PATH matches the pin (#542)"
 
