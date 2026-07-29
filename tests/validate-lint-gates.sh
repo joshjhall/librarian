@@ -318,6 +318,37 @@ test_post_create_ensures_ruff() {
     assert_file_contains "$pc" "ERROR: ruff still not on PATH" "verifies ruff landed on PATH"
 }
 
+# #544 — `just lint` must share lint-python.sh's runner resolution. It did NOT,
+# and nothing caught that: every case above drives lint-python.sh, so the
+# justfile could keep calling bare `ruff` while the gate's own resolution grew a
+# uvx branch. On a uvx-only host that made `just test` pass and `just lint`
+# hard-fail "command not found" — two documented entry points for one lint pass,
+# disagreeing. Pin the justfile side so the pair cannot drift apart again.
+#
+# File-content assertions (the test_post_create_ensures_ruff idiom) rather than
+# executing the recipe: driving `just lint` here would need `just` present, and
+# would re-run dprint/taplo/rumdl/node as a side effect. The resolution's
+# BEHAVIOUR is already proven by the stub-PATH cases above; what is unpinned is
+# whether the justfile still carries it.
+test_justfile_shares_ruff_resolution() {
+    local jf="$REPO_ROOT/justfile"
+    assert_file_exists "$jf" "justfile exists"
+    assert_file_contains "$jf" 'command -v ruff' \
+        "just lint prefers a ruff binary on PATH"
+    assert_file_contains "$jf" 'uvx ruff --version' \
+        "just lint PROBES uvx before selecting it (an unprobed uvx hard-fails when offline)"
+    assert_file_contains "$jf" 'RUFF="uvx ruff"' \
+        "just lint falls back to uvx ruff"
+    assert_file_contains "$jf" '$RUFF check plugins' \
+        "just lint invokes check through the resolved runner, not a bare ruff"
+    assert_file_contains "$jf" '$RUFF format --check plugins' \
+        "just lint invokes format --check through the resolved runner"
+    # The skip branch must SAY it did not run, for the same reason the gate's
+    # sentinel exists: a silent no-op reads as a pass.
+    assert_file_contains "$jf" 'did NOT run' \
+        "just lint's no-runner branch announces that Python lint was skipped"
+}
+
 run_test test_prefers_ruff_binary_when_present "ruff on PATH is preferred and actually invoked"
 run_test test_ruff_violation_fails_the_gate "a violation via the ruff binary fails the gate"
 run_test test_falls_back_to_uvx_when_ruff_absent "falls back to probed uvx when ruff is absent"
@@ -331,5 +362,6 @@ run_test test_run_stage_skip_does_not_fail_suite "a skipped stage does not fail 
 run_test test_run_stage_still_renders_pass_and_fail "pass/fail rendering is undisturbed"
 run_test test_sentinel_constant_agreed_by_both_scripts "the skip sentinel agrees across both scripts"
 run_test test_post_create_ensures_ruff "post-create.sh installs and verifies ruff"
+run_test test_justfile_shares_ruff_resolution "just lint shares the ruff→uvx runner resolution (#544)"
 
 generate_report

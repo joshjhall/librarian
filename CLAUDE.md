@@ -114,10 +114,23 @@ in-repo languages each have a `tests/run-all.sh` gate: **shell** →
 `tests/lint-shellcheck.sh` (`shellcheck --severity=warning` over `plugins/ tests/
 bin/`) plus `tests/lint-shell-portability.sh` (bans bash-4 constructs, macOS
 bash-3.2 target); **Python** → `tests/lint-python.sh` (`ruff check` +
-`ruff format --check`, config in `ruff.toml`, py311 target). All three
-skip-if-absent locally but CI installs `shellcheck`/`ruff` (and asserts they are
-on PATH) so they actually run there — see `.github/workflows/ci.yml`. `ruff`,
-`shellcheck`, and `shfmt` also run in the lefthook pre-commit hook.
+`ruff format --check`, config in `ruff.toml`, py311 target). CI installs
+`shellcheck`/`ruff` (and asserts they are on PATH) so they genuinely run there —
+see `.github/workflows/ci.yml`. `ruff`, `shellcheck`, and `shfmt` also run in the
+lefthook pre-commit hook.
+
+**The gates degrade differently when a tool is absent — do not read "skip" as
+one behavior.** The Python gate resolves a runner `ruff` on PATH → **probed**
+`uvx ruff` → skip (#538); the probe matters because `uvx` can be installed but
+offline/uncached, where an unprobed call would hard-fail instead of skipping.
+When neither resolves it exits the reserved sentinel **77**, which `run-all.sh`
+renders `[SKIP] … did not run` rather than `[ok]` — a silent skip is
+indistinguishable from a pass, which is how that gate once sat inert unnoticed.
+The shell gate still exits 0 on a missing `shellcheck`, so it renders `[ok]`.
+`just lint` shares the Python gate's ruff→uvx resolution (#544), so the two
+documented entry points agree on a uvx-only host. `tests/validate-lint-gates.sh`
+is the meta-gate pinning all of this — runner resolution, the skip sentinel, and
+the justfile fallback.
 
 ## Commits
 
