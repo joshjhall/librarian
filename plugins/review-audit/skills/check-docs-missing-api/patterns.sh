@@ -72,7 +72,9 @@ while IFS= read -r file; do
         *.py)
             # Find module-level function/class definitions
             command grep -nE '^(def |class )[A-Za-z_]' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Skip private definitions — anchor on the NAME (token after
                     # def/class), NOT a whole-line substring, so a public def
                     # whose trailing comment mentions `def _x` is still flagged
@@ -99,7 +101,9 @@ while IFS= read -r file; do
         *.js | *.ts | *.jsx | *.tsx)
             # Find exported functions, classes, types
             command grep -nE '^export (function|class|const|type|interface|enum) ' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Check for JSDoc comment (/**) in preceding lines
                     if ! check_prev_lines "$file" "$line_num" '/\*\*'; then
                         evidence=$(truncate_chars 80 "$content")
@@ -115,7 +119,9 @@ while IFS= read -r file; do
             # Find exported functions (capitalized, not in test files)
             case "$file" in *_test.go) continue ;; esac
             command grep -nE '^func [A-Z]' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Go convention: comment line immediately before with function name
                     func_name=$(command echo "$content" | command grep -oE 'func [A-Z][A-Za-z0-9]*' | command awk '{print $2}')
                     if [ -n "$func_name" ]; then
@@ -134,7 +140,9 @@ while IFS= read -r file; do
         *.rs)
             # Find pub fn and pub struct
             command grep -nE '^pub (fn|struct|enum|trait|type) ' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Check for /// doc comment
                     if ! check_prev_lines "$file" "$line_num" '^\s*///'; then
                         evidence=$(truncate_chars 80 "$content")
@@ -149,7 +157,9 @@ while IFS= read -r file; do
         *.sh | *.bash)
             # Find function definitions
             command grep -nE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Skip private functions — anchor on the NAME, not a
                     # whole-line substring (#348): `_helper()` and
                     # `function _helper` are private, but a public function whose
@@ -170,7 +180,9 @@ while IFS= read -r file; do
         # --- Ruby ---
         *.rb)
             command grep -nE '^\s*def [a-z]' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -183,7 +195,9 @@ while IFS= read -r file; do
         # --- Java/Kotlin ---
         *.java | *.kt)
             command grep -nE '^\s*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     if ! check_prev_lines "$file" "$line_num" '/\*\*'; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \

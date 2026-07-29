@@ -65,7 +65,9 @@ while IFS= read -r file; do
     # --- Category: stub-detected ---
     # Match TODO, FIXME, STUB, PLACEHOLDER, NotImplementedError, unimplemented!
     command grep -niE '\b(TODO|FIXME|STUB|PLACEHOLDER)\b|NotImplementedError|raise NotImplementedError|unimplemented!\(\)|todo!\(\)|panic\("not implemented"\)' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "stub-detected" \
@@ -77,7 +79,9 @@ while IFS= read -r file; do
     case "$file" in
         *.py)
             command grep -nE '^\s*def\s+\w+' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Check if next non-blank line is pass or ... . NOTE: grep -m1
                     # (NOT -nm1): a stray -n prefixed "<lineno>:" to next_line, so
                     # the `^\s*(pass|...)` check never matched and this arm was
@@ -98,7 +102,9 @@ while IFS= read -r file; do
             # class of literal backslash/'s', not whitespace, so `{ }` (a real
             # space) was missed (#183).
             command grep -nE '(function\s+\w+|=>\s*)\{[[:space:]]*\}' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-body" \
@@ -108,7 +114,9 @@ while IFS= read -r file; do
         *.go)
             # Go: function with empty braces ([[:space:]]* not [\s]*, see #183).
             command grep -nE '^func\s+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-body" \

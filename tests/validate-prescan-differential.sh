@@ -183,6 +183,46 @@ digest = hashlib.md5(x)
 # md5( in a comment
 EOF
 
+# Trailing-colon fixtures (#549) — the regression corpus for the `IFS=:` defect.
+#
+# `grep -n | while IFS=: read -r line_num content` strips ONE trailing IFS
+# delimiter, so evidence for a line ending in a bare colon lost that colon.
+# Seven ports papered over it with a `_bash_read_content` shim that reproduced
+# the strip in Python, which is why this gate stayed green through two live
+# occurrences (#397, PR #547) — both "fixed" by rewording the offending doc line.
+#
+# Two properties make these fixtures actually bite, and both are easy to lose:
+#
+#   1. EXACTLY ONE COLON, AT THE END. `read` strips one trailing delimiter, not
+#      all of them: `x:` loses it, but `x::` and `a:b:c:` come back intact. A
+#      probe line with an interior colon makes the defect look nonexistent.
+#   2. THE LINE MUST MATCH THE TOOL'S OWN REGEX. Fixtures are shared across all
+#      tools, but a tool only reads lines its grep selects — a generic markdown
+#      line exercises exactly one of the twelve. Each line below is shaped to a
+#      specific detector; keep them that way when editing.
+#
+# Verified non-vacuous against a pre-fix plugins tree: the differential fails for
+# check-docs-staleness and check-security (`…v1.2.3` vs `…v1.2.3:`), and
+# test_trailing_colon_preserved below fails for six more — check-code-health,
+# check-docs-missing-api, loop-make-it-work and loop-make-it-tested on BOTH the
+# bash and python side, which is the shimmed class the differential is
+# structurally blind to.
+command cat >"$FIXDIR/docs/trailing-colon.md" <<'EOF'
+Install release v1.2.3:
+EOF
+# The AWS-key fixture is assembled from two halves rather than written as a
+# literal. `AKIA[0-9A-Z]{16}` is exactly what check-security and
+# loop-make-it-secure detect — and also what the gitleaks pre-commit hook
+# detects, which would block every commit touching this file. Splitting the
+# literal keeps the source clean while the file ON DISK is byte-identical, so
+# the detectors still fire. Do not re-inline it.
+AKIA_FIXTURE="AKIA""ABCDEFGHIJKLMNOP"
+{
+    printf 'AWS_KEY = %s:\n' "$AKIA_FIXTURE"
+    printf '%s\n' 'x = 1  # TODO refactor:'
+    printf '%s\n' 'def undocumented_trailing():'
+} >"$FIXDIR/src/trailing_colon.py"
+
 FIX_CORPUS="$WORKDIR/fixture-corpus.txt"
 command find "$FIXDIR" -type f 2>/dev/null | command sort >"$FIX_CORPUS"
 
@@ -267,9 +307,57 @@ test_corpora_non_empty() {
     assert_true "[ -s '$FIX_CORPUS' ]" "fixture corpus is non-empty"
 }
 
+# Trailing colons survive into evidence, in BOTH impls (#549).
+#
+# The differential above cannot see this class of defect for the seven tools
+# whose patterns.py carried `_bash_read_content`: that shim reproduced the bash
+# strip in Python, so both sides agreed on mangled evidence and the diff was
+# empty. Parity is necessary, not sufficient — this asserts the evidence is also
+# CORRECT, which is the property #397 and PR #547 were each worked around
+# instead of fixed.
+# Evidence field (TSV column 4) that ends in one of these lost its colon. Only
+# findings that QUOTE a fixture line are checked — `loop-make-it-tested` also
+# emits "No test file found for trailing_colon.py", which correctly has no
+# colon, so a blanket "every evidence ends in ':'" would be wrong.
+truncated_evidence() {
+    command awk -F'\t' -v akia="$AKIA_FIXTURE" '
+        $4 ~ /v1\.2\.3$/ ||
+        (index($4, akia) > 0 && index($4, akia) == length($4) - length(akia) + 1) ||
+        $4 ~ /# TODO refactor$/ ||
+        $4 ~ /undocumented_trailing\(\)$/ { print }
+    '
+}
+
+TRAILING_TOOLS=0
+test_trailing_colon_preserved() {
+    local sh py n b p
+    while IFS= read -r sh; do
+        [ -n "$sh" ] || continue
+        py="${sh%patterns.sh}patterns.py"
+        n="$(command basename "$(command dirname "$sh")")"
+        b="$(PATTERNS_FORCE_BASH=1 bash "$sh" "$FIX_CORPUS" 2>/dev/null |
+            command grep 'trailing.colon' || true)"
+        p="$(python3 "$py" "$FIX_CORPUS" 2>/dev/null |
+            command grep 'trailing.colon' || true)"
+        # Only tools whose detectors actually select a fixture line can speak to
+        # this; the rest emit nothing and are covered by the differential alone.
+        [ -n "$b" ] || continue
+        TRAILING_TOOLS=$((TRAILING_TOOLS + 1))
+        assert_equals "" "$(printf '%s\n' "$b" | truncated_evidence)" \
+            "$n [bash]: evidence keeps the trailing colon"
+        assert_equals "" "$(printf '%s\n' "$p" | truncated_evidence)" \
+            "$n [python]: evidence keeps the trailing colon"
+    done < <(single_arg_tools)
+    # Guard: if the fixtures stop matching any detector's regex (an easy thing to
+    # break while editing them) this test would pass by asserting nothing.
+    assert_true "[ $TRAILING_TOOLS -ge 6 ]" \
+        "fixtures still trigger at least 6 tools (got $TRAILING_TOOLS)"
+}
+
 run_test test_corpora_non_empty "Differential corpora are non-empty (gate is not a no-op)"
 run_test test_repo_corpus "Every tool: bash==python over the whole repo tree"
 run_test test_fixture_corpus "Every tool: bash==python over the per-category fixtures"
 run_test test_drift_detect "drift-detect: bash==python over actual/planned fixtures"
+run_test test_trailing_colon_preserved "Trailing colons survive into evidence in both impls (#549)"
 
 generate_report

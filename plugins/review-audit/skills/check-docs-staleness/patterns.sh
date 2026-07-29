@@ -88,7 +88,9 @@ while IFS= read -r file; do
     # --- Category: expired-date ---
     # Match YYYY-MM-DD and YYYY/MM/DD patterns
     command grep -nE '\b(20[0-9]{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12][0-9]|3[01])\b' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             # Extract year and month from the match
             year=$(command echo "$content" | command grep -oE '20[0-9]{2}' | command head -1)
             month=$(command echo "$content" | command grep -oE '20[0-9]{2}[-/](0[1-9]|1[0-2])' | command head -1 | command grep -oE '(0[1-9]|1[0-2])$')
@@ -108,7 +110,9 @@ while IFS= read -r file; do
     # --- Category: outdated-reference ---
     # Version references (vN.N.N or N.N.N patterns in doc context)
     command grep -nE '\bv?[0-9]+\.[0-9]+\.[0-9]+\b' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             # Skip lines that are clearly changelog entries or release notes
             case "$content" in
                 *"### ["*) continue ;;
@@ -124,7 +128,9 @@ while IFS= read -r file; do
     # --- Category: stale-comment ---
     # Staleness markers: TODO/FIXME/HACK combined with staleness keywords
     command grep -niE '(TODO|FIXME|XXX|HACK|WORKAROUND).*(updat|outdat|stale|obsolete|deprecat|remov|old |was )' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "stale-comment" \
@@ -135,7 +141,9 @@ while IFS= read -r file; do
     # Broken-looking URLs (common patterns for dead links in docs)
     command grep -nE 'https?://[^ )>"]+' "$file" 2>/dev/null |
         command grep -iE '(deprecated|removed|old|legacy|archive|sunset)' |
-        while IFS=: read -r line_num content; do
+        while read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "outdated-reference" \

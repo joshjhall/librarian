@@ -50,12 +50,6 @@ JS_ASSERT_RE = re.compile(r"\b(expect|assert|should)\b")
 GO_ASSERT_RE = re.compile(r"\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)\b")
 
 
-def _bash_read_content(line: str) -> str:
-    if line.count(":") == 1 and line.endswith(":"):
-        return line[:-1]
-    return line
-
-
 def emit(path: str, line_no: str, category: str, evidence: str) -> None:
     sys.stdout.write("\t".join((path, line_no, category, evidence, "HIGH")) + "\n")
 
@@ -79,7 +73,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                 path,
                 str(idx),
                 "stub-detected",
-                "Stub/placeholder: " + _bash_read_content(content)[:EVIDENCE_CAP],
+                "Stub/placeholder: " + content[:EVIDENCE_CAP],
             )
 
         # --- Category: empty-body (per language) ---
@@ -93,8 +87,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                         path,
                         str(idx),
                         "empty-body",
-                        "Empty function body: "
-                        + _bash_read_content(content)[:EVIDENCE_CAP],
+                        "Empty function body: " + content[:EVIDENCE_CAP],
                     )
         elif ext in ("ts", "js", "tsx", "jsx"):
             if JS_EMPTY_BODY_RE.search(content):
@@ -102,8 +95,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                     path,
                     str(idx),
                     "empty-body",
-                    "Empty function body: "
-                    + _bash_read_content(content)[:EVIDENCE_CAP],
+                    "Empty function body: " + content[:EVIDENCE_CAP],
                 )
         elif ext == "go":
             if GO_EMPTY_BODY_RE.search(content):
@@ -111,8 +103,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                     path,
                     str(idx),
                     "empty-body",
-                    "Empty function body: "
-                    + _bash_read_content(content)[:EVIDENCE_CAP],
+                    "Empty function body: " + content[:EVIDENCE_CAP],
                 )
 
     # --- Category: no-assertions (whole-file, test files only) ---

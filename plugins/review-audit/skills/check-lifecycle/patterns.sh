@@ -88,7 +88,9 @@ is_test_file() {
 # evidence = "LABEL: <first 80 chars of the line>". Mirrors patterns.py emit().
 emit_rows() {
     command grep -nE -- "$1" "$4" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$4" "$line_num" "$2" "$3: ${evidence}" "MEDIUM"

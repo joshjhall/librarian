@@ -119,7 +119,7 @@
 - [#435 check-lifecycle scanner](issue-435-check-lifecycle.md) — PR #456: new check-lifecycle domain; MEDIUM-certainty pre-scan
 - [Source-detector gate (#348 slice A)](source-detector-gate.md) — corpus drove 3 review-audit ports to 100%; fixed a missing-api private-detection bug
 - [Loop-detector gate (#348 slice B)](loop-detector-gate.md) — #384: drove 6 dev-core loop-*/drift ports to 100% (#348 done)
-- [check-docs-staleness IFS=: colon parity](check-docs-staleness-ifs-colon-parity.md) — latent bash↔python: `IFS=: read` strips a trailing colon, python keeps it
+- [check-docs-staleness IFS=: colon parity](check-docs-staleness-ifs-colon-parity.md) — FIXED #549; 7 patterns.py cloned the bug via a shim, so the parity gate was green on wrong output
 - [check-ai-config bloat scan](check-ai-config-bloat-scan.md) — run the ai-file-bloat scanner locally (path-list arg); raw-line thresholds per file type
 - [Codebase-audit prescan location](codebase-audit-prescan-location.md) — Step 2.5 prose in orchestration-protocol.md, checker.md owns execution (#107)
 - [pre-review-gates needs filelist](pre-review-gates-needs-filelist.md) — takes changed files as positional args; a bare call errors with Usage

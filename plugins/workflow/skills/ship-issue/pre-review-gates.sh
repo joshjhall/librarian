@@ -223,7 +223,9 @@ scan_debug_statements() {
             # Python: print() used as debug (not in logging context)
             command grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
                 command grep -vE '(logging|logger|log\.)' |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -231,7 +233,9 @@ scan_debug_statements() {
                 done || true
             # Python: breakpoint(), pdb
             command grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -241,7 +245,9 @@ scan_debug_statements() {
         *.js | *.ts | *.jsx | *.tsx)
             # JavaScript/TypeScript: console.log, console.debug, console.warn
             command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -249,7 +255,9 @@ scan_debug_statements() {
                 done || true
             # debugger keyword
             command grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -259,7 +267,9 @@ scan_debug_statements() {
         *.rb)
             # Ruby: binding.pry, puts used as debug
             command grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -269,7 +279,9 @@ scan_debug_statements() {
         *.go)
             # Go: fmt.Println used as debug (not in main or test)
             command grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -279,7 +291,9 @@ scan_debug_statements() {
         *.java | *.kt)
             # Java/Kotlin: System.out.println, System.err.println
             command grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \

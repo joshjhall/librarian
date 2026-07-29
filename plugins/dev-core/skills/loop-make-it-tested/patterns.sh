@@ -129,7 +129,9 @@ while IFS= read -r file; do
         py)
             # Public functions (not starting with _)
             command grep -nE '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
                     # Check if this function appears in any test file nearby
                     if ! command grep -rql "\b${func_name}\b" "${dirname}"/test_*.py "${dirname}"/tests/test_*.py 2>/dev/null; then
@@ -143,7 +145,9 @@ while IFS= read -r file; do
         go)
             # Exported functions (capitalized)
             command grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     test_file="${dirname}/${name_no_ext}_test.go"
                     if [ -f "$test_file" ] && ! command grep -q "\b${func_name}\b" "$test_file" 2>/dev/null; then

@@ -1,11 +1,11 @@
 ---
 name: check-docs-staleness-ifs-colon-parity
-description: "Latent bash↔python parity bug in check-docs-staleness — `while IFS=: read` strips a trailing colon from evidence that python keeps"
+description: "FIXED in #549 — `while IFS=: read` ate trailing colons from pre-scan evidence; 7 patterns.py cloned the bug via a shim, so the differential gate was green on wrong output"
 metadata: 
   node_type: memory
   type: project
   originSessionId: 4f0940df-8211-4fd0-8e89-61fc71776f18
-  modified: 2026-07-28T19:18:21.499Z
+  modified: 2026-07-29T14:02:02.258Z
 ---
 
 Found while shipping #397 (agnix normalizer). `check-docs-staleness/patterns.sh`
@@ -29,12 +29,51 @@ author, who has no way to know a doc line must not end in `:`.
 
 **NOW FILED as #549** (`type/bug`, `effort/small`) with both reproductions.
 
-**Why:** genuine latent defect — a repo doc that legitimately ends a version-ref
-line in `:` will silently desync bash vs python evidence.
-**How to apply:** if you hit it a third time, the unblock is still "reword the
-line" — but prefer picking up #549. Fix = stop splitting on `:`: `read -r raw`
-then strip the `NN:` prefix explicitly (`${raw%%:*}` / `${raw#*:}`, or a
-get_frontmatter-style sed), and audit the sibling `IFS=:` readers in the same
-file. Add a fixture line ending in `:` to the differential corpus so the gate
-covers it without waiting for a real repo file. Related:
+**Scope is far wider than this one file (measured 2026-07-28).** `IFS=:` appears
+**86 times across `plugins/`**, and **72 of those are in 12 `patterns.sh` files
+that have a `patterns.py` sibling** — i.e. every one carries the same parity
+risk, not just check-docs-staleness's 4. Worst offenders: `check-security` (15),
+`check-code-health` (13), `check-ai-config` (9), `loop-make-it-secure` (8),
+`check-docs-missing-api` (7). `pre-review-gates.sh` has 14 more (no python port,
+so no parity break — but the same evidence-mangling bug).
+
+**Reproduce it with a SINGLE trailing colon, and no interior colon.** This is the
+trap when confirming the bug: `1:ends in colon:` → content `ends in colon`
+(stripped), but `1:two colons::` and `1:a:b:c:` come back **intact**, because
+`read` strips one trailing IFS delimiter, not all of them. A first probe using a
+line with interior colons makes the defect look like it does not exist. Verified
+identical in bash 5.2 and `sh`.
+
+Fix, verified across all shapes (`1:one:`, `1:two::`, `1:plain`, `1:a:b:c:`,
+`12:Version to verify: 0.41.0:`):
+`read -r raw; line_num=${raw%%:*}; content=${raw#*:}` — trailing colons survive,
+interior colons preserved, line numbers correct, bash-3.2 clean.
+
+**FIXED 2026-07-29 (#549).** All 71 bash sites across the 12 `patterns.sh` now
+use `read -r raw` + `${raw%%:*}` / `${raw#*:}`. Two discoveries worth keeping:
+
+**Seven `patterns.py` carried a `_bash_read_content` shim that deliberately
+reproduced the bash strip in Python** — its docstring documented the rule
+explicitly. So `validate-prescan-differential.sh` passing was never evidence of
+correctness for those tools; it was evidence the bug had been cloned faithfully.
+Only 5 of 12 tools could ever have diverged. Shims deleted.
+
+**A parity gate cannot see a bug both impls share.** The regression test that
+actually bites is `test_trailing_colon_preserved`, which asserts the evidence
+*content* keeps its colon rather than that the two impls agree. Non-vacuity was
+proven by running the new gate against a pre-fix tree: the differential fails for
+2 tools, the content assertion for 4 more on **both** the bash and python side.
+
+**`validate-shared-scanner-sync.sh` forced scope.** 7 of `pre-review-gates.sh`'s
+14 sites live in the `shared:debug-statement-scan` region pinned byte-identical
+against `check-code-health/patterns.sh`, so they had to move together. The other
+7 are deferred to **#573** (no python port ⇒ no parity break, and that file is
+the #567 measurement instrument).
+
+**Why:** a doc line ending in `:` silently produced wrong evidence, and the gate
+that should have caught it was neutralized by a shim.
+**How to apply:** when a differential/parity gate is the only coverage for a
+behavior, ask whether both sides could be wrong together — if a helper exists
+whose job is to make impl B match impl A's quirk, the gate is measuring
+agreement, not correctness. Pin the output value, not just the delta. Related:
 [[codebase-audit-prescan-location]], [[issue-471-472-agnix-config-trust]].

@@ -54,15 +54,6 @@ SH_FUNC_RE = re.compile(r"^\w+\(\)")
 COMMENT_RE = re.compile(r"^\s*#")
 
 
-def _bash_read_content(line: str) -> str:
-    """`grep -n | while IFS=: read -r line_num content` colon-strip artifact: a
-    single trailing colon dropped IFF the line has exactly one colon and ends with
-    it. Applies to the grep-driven JS/Go/Shell paths (Python uses awk, no strip)."""
-    if line.count(":") == 1 and line.endswith(":"):
-        return line[:-1]
-    return line
-
-
 def emit(path: str, line_no: int, category: str, evidence: str) -> None:
     sys.stdout.write("\t".join((path, str(line_no), category, evidence, "HIGH")) + "\n")
 
@@ -120,7 +111,7 @@ def scan_js(path: str, lines: list[str]) -> None:
         if prev > 0:
             prev_content = lines[prev - 1]
             if not JSDOC_END_RE.search(prev_content):
-                ev = _bash_read_content(content)[:EVIDENCE_CAP]
+                ev = content[:EVIDENCE_CAP]
                 category = "undocumented-export"
                 if "class" in content:
                     category = "undocumented-public-class"
@@ -140,7 +131,7 @@ def scan_go(path: str, lines: list[str]) -> None:
         if prev > 0:
             prev_content = lines[prev - 1]
             if not re.search(r"^// " + re.escape(func_name), prev_content):
-                ev = _bash_read_content(content)[:EVIDENCE_CAP]
+                ev = content[:EVIDENCE_CAP]
                 emit(
                     path,
                     idx,
@@ -157,7 +148,7 @@ def scan_shell(path: str, lines: list[str]) -> None:
         if prev > 0:
             prev_content = lines[prev - 1]
             if not COMMENT_RE.search(prev_content):
-                ev = _bash_read_content(content)[:EVIDENCE_CAP]
+                ev = content[:EVIDENCE_CAP]
                 emit(
                     path,
                     idx,
