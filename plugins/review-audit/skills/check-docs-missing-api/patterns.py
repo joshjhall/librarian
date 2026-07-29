@@ -28,26 +28,9 @@ CERTAINTY = "HIGH"
 EVIDENCE_CAP = 80  # matches printf '%.80s' in patterns.sh
 
 
-def _bash_read_content(line: str) -> str:
-    """Reproduce the `grep -n | while IFS=: read -r line_num content` splitting
-    the bash impl feeds into its evidence, so this port is byte-identical.
-
-    `grep -n` prefixes `<lineno>:`; the loop reads with `IFS=:` into two vars, so
-    `content` is the remainder after the first colon with the last (empty) field
-    dropped when the line ends in a lone extra colon. Concretely, the only
-    observable effect on real def/decl lines is: a single trailing colon is
-    stripped IFF the line contains exactly one colon and ends with it (e.g.
-    Python `def f():` → `def f()`, `class C:` → `class C`). Lines with an
-    interior colon (`def f(a: int):`) or none are returned unchanged — matching
-    `IFS=: read` exactly (verified against bash across a corpus)."""
-    if line.count(":") == 1 and line.endswith(":"):
-        return line[:-1]
-    return line
-
-
 def emit(path: str, line_no: int, label: str, content: str) -> None:
     """Write one TSV finding row: '<lang>: <first 80 chars of the def line>'."""
-    evidence = label + ": " + _bash_read_content(content)[:EVIDENCE_CAP]
+    evidence = label + ": " + content[:EVIDENCE_CAP]
     sys.stdout.write(
         "\t".join((path, str(line_no), CATEGORY, evidence, CERTAINTY)) + "\n"
     )

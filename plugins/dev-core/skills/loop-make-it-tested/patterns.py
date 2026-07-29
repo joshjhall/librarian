@@ -44,12 +44,6 @@ PY_PUBLIC_FUNC_RE = re.compile(r"^def [a-zA-Z][a-zA-Z0-9_]*\(")
 GO_EXPORTED_FUNC_RE = re.compile(r"^func [A-Z][a-zA-Z0-9]*\(")
 
 
-def _bash_read_content(line: str) -> str:
-    if line.count(":") == 1 and line.endswith(":"):
-        return line[:-1]
-    return line
-
-
 def emit(path: str, line_no: str, category: str, evidence: str) -> None:
     sys.stdout.write("\t".join((path, line_no, category, evidence, "HIGH")) + "\n")
 
@@ -135,7 +129,7 @@ def scan_file(path: str, lines: list[str]) -> None:
             if not _word_in_any(
                 [f"{dirname}/test_*.py", f"{dirname}/tests/test_*.py"], func_name
             ):
-                ev = _bash_read_content(content)[:60]
+                ev = content[:60]
                 emit(
                     path,
                     str(idx),
@@ -150,7 +144,7 @@ def scan_file(path: str, lines: list[str]) -> None:
             func_name = m.group(1) if m else ""
             test_file = f"{dirname}/{name_no_ext}_test.go"
             if os.path.isfile(test_file) and not _word_in_file(test_file, func_name):
-                ev = _bash_read_content(content)[:60]
+                ev = content[:60]
                 emit(
                     path,
                     str(idx),

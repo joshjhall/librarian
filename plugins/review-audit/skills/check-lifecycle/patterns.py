@@ -76,20 +76,9 @@ def is_test_file(path: str) -> bool:
     return False
 
 
-def _bash_read_content(line: str) -> str:
-    """Reproduce the `grep -n | while IFS=: read -r line_num content` splitting so
-    evidence is byte-identical to the bash impl. `content` is the remainder after
-    the first colon with the last (empty) field dropped — observable only as: a
-    single trailing colon is stripped IFF the line has exactly one colon and ends
-    with it. Verified against bash across a corpus."""
-    if line.count(":") == 1 and line.endswith(":"):
-        return line[:-1]
-    return line
-
-
 def emit(path: str, line_no: int, category: str, label: str, content: str) -> None:
     """Write one TSV finding row: '<label>: <first 80 chars of the code line>'."""
-    evidence = label + ": " + _bash_read_content(content)[:EVIDENCE_CAP]
+    evidence = label + ": " + content[:EVIDENCE_CAP]
     sys.stdout.write(
         "\t".join((path, str(line_no), category, evidence, CERTAINTY)) + "\n"
     )

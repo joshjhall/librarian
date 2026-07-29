@@ -74,7 +74,9 @@ while IFS= read -r file; do
     # matched a single-quoted value because grep does not expand \x27 in a
     # bracket expression).
     command grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)\s*[=:]\s*["'\''][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
@@ -83,7 +85,9 @@ while IFS= read -r file; do
 
     # AWS-style access keys (AKIA...)
     command grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "hardcoded-secret" \
@@ -99,7 +103,9 @@ while IFS= read -r file; do
             # the old ["\x27] missed f'... because \x27 is not expanded in a
             # bracket expression).
             command grep -nE '(execute|cursor)\s*\(\s*f["'\'']' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
@@ -109,7 +115,9 @@ while IFS= read -r file; do
         *.ts | *.js | *.tsx | *.jsx)
             # Template literal SQL
             command grep -nE '(query|execute)\s*\(\s*`[^`]*(SELECT|INSERT|UPDATE|DELETE)' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
@@ -119,7 +127,9 @@ while IFS= read -r file; do
         *.go)
             # fmt.Sprintf with SQL
             command grep -nE '(Exec|Query|QueryRow)\s*\(\s*fmt\.Sprintf' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "string-interpolation-query" \
@@ -132,7 +142,9 @@ while IFS= read -r file; do
     # Functions that enable code injection or unsafe deserialization
     # Note: this script DETECTS these patterns for remediation, it does not use them
     command grep -nE '\b(subprocess\.call\s*\(.*shell\s*=\s*True|child_process\.exec\s*\()' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "dangerous-function" \
@@ -147,7 +159,9 @@ while IFS= read -r file; do
     # yaml.load detection entirely (#183).
     command grep -nE '\b(yaml\.load\s*\(|marshal\.loads?\s*\()' "$file" 2>/dev/null |
         command grep -vE 'Loader\s*=' |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "dangerous-function" \
@@ -157,7 +171,9 @@ while IFS= read -r file; do
     # --- Category: denylist-validation ---
     # Input validation patterns using denylists (!=, not in [bad values])
     command grep -niE '(blacklist|blocklist|denylist|banned|forbidden)\s*=\s*\[' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "denylist-validation" \

@@ -47,6 +47,7 @@
 - [Classify tool calls before optimizing](classify-tool-calls-before-optimizing.md) — aggregate tokens say WHICH agent; only the call log says WHY; my predicted hot spot was <10% of burn twice in one session
 - [Review cost BASELINE 2026-07-28](review-cost-baseline-2026-07-28.md) — frozen pre-change per-cycle/per-dimension numbers (deduped); compare "after" against THIS, not the raw figures in PR #554
 - [Review cost AFTER 2026-07-28](review-cost-after-2026-07-28.md) — #559: per-cycle output 173k/281k/207k → 34k/9k (#557 did it), recall UNPROVEN at n=2; arm the runs by UTC, not local mtime
+- [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice running (#544, #549); a fix commit invalidates the cycle before it
 - [#553 review token ceiling](issue-553-review-token-ceiling.md) — PR #554: budget gates are DEAD CODE without a runtime turn directive; ceiling shipped OFF (a too-low one dead-ends the PR); no turn cap on agent()
 - [Token-burn audit 2026-07-21](token-burn-audit-2026-07-21.md) — 4-axis burn audit → #487-#495; biggest lever = golems had no --model dial (#487)
 - [#256 cache-stability pass](issue-256-cache-stability.md) — prompt-prefix cache stability; stableStringify, instructions-first/volatile-last; helpers module-scope
@@ -119,7 +120,7 @@
 - [#435 check-lifecycle scanner](issue-435-check-lifecycle.md) — PR #456: new check-lifecycle domain; MEDIUM-certainty pre-scan
 - [Source-detector gate (#348 slice A)](source-detector-gate.md) — corpus drove 3 review-audit ports to 100%; fixed a missing-api private-detection bug
 - [Loop-detector gate (#348 slice B)](loop-detector-gate.md) — #384: drove 6 dev-core loop-*/drift ports to 100% (#348 done)
-- [check-docs-staleness IFS=: colon parity](check-docs-staleness-ifs-colon-parity.md) — latent bash↔python: `IFS=: read` strips a trailing colon, python keeps it
+- [check-docs-staleness IFS=: colon parity](check-docs-staleness-ifs-colon-parity.md) — FIXED #549; 7 patterns.py cloned the bug via a shim, so the parity gate was green on wrong output
 - [check-ai-config bloat scan](check-ai-config-bloat-scan.md) — run the ai-file-bloat scanner locally (path-list arg); raw-line thresholds per file type
 - [Codebase-audit prescan location](codebase-audit-prescan-location.md) — Step 2.5 prose in orchestration-protocol.md, checker.md owns execution (#107)
 - [pre-review-gates needs filelist](pre-review-gates-needs-filelist.md) — takes changed files as positional args; a bare call errors with Usage

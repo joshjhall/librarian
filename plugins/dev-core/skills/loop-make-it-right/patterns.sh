@@ -72,7 +72,9 @@ while IFS= read -r file; do
         *.py)
             # Python: count lines from def to next def/class or dedent
             command grep -n '^\s*def \w\+' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Count lines until next function/class at same or lower indent
                     indent=$(command printf '%s' "$content" | command sed 's/[^ ].*//' | command wc -c)
                     end_line=$(command sed -n "$((line_num + 1)),\$p" "$file" |
@@ -95,7 +97,9 @@ while IFS= read -r file; do
         *.ts | *.js | *.tsx | *.jsx | *.go | *.rs)
             # Brace-delimited languages: count from opening { to closing }
             command grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' "$file" 2>/dev/null |
-                while IFS=: read -r line_num _content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    _content=${raw#*:}
                     # Simple heuristic: count lines from definition to next function
                     next_func=$(command sed -n "$((line_num + 1)),\$p" "$file" |
                         command grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' |
@@ -152,7 +156,9 @@ while IFS= read -r file; do
         *.py)
             command grep -nE '^\s+[a-zA-Z]\s*=' "$file" 2>/dev/null |
                 command grep -vE '^\s*(for|with)\s+[a-zA-Z]\s+in\b|_\s*=' |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Extract the variable name
                     varname=$(command printf '%s' "$content" | command sed 's/^[[:space:]]*\([a-zA-Z]\)[[:space:]]*=.*/\1/')
                     # Skip common loop vars and conventional single-char names

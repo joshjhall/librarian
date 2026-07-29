@@ -56,18 +56,6 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def _bash_read_content(line: str) -> str:
-    """Reproduce the `grep -n | while IFS=: read -r line_num content` splitting so
-    evidence matches the bash impl: a single trailing colon is stripped IFF the
-    line has exactly one colon and ends with it (Python `def f():` → `def f()`).
-    Applies to the long-function and single-char-name paths (both read via
-    `IFS=:`); deep-nesting emits via awk and is NOT colon-stripped. Verified
-    against bash across a corpus (see #166 for the same artifact)."""
-    if line.count(":") == 1 and line.endswith(":"):
-        return line[:-1]
-    return line
-
-
 def emit(path: str, line_no: int, category: str, evidence: str) -> None:
     sys.stdout.write(
         "\t".join((path, str(line_no), category, evidence, CERTAINTY)) + "\n"
@@ -101,7 +89,7 @@ def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -
                     break
             func_lines = end_off if end_off is not None else (total - idx)
             if func_lines > max_lines:
-                ev = _bash_read_content(content)[:EVIDENCE_CAP]
+                ev = content[:EVIDENCE_CAP]
                 emit(
                     path,
                     idx,
@@ -120,7 +108,7 @@ def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -
                     break
             func_lines = next_off if next_off is not None else (total - idx)
             if func_lines > max_lines:
-                ev = _bash_read_content(content)[:EVIDENCE_CAP]
+                ev = content[:EVIDENCE_CAP]
                 emit(
                     path,
                     idx,
@@ -169,7 +157,7 @@ def scan_single_char_names(path: str, lines: list[str], ext: str) -> None:
         varname = m.group(1)
         if varname in SKIP_VARNAMES:
             continue
-        ev = _bash_read_content(content)[:EVIDENCE_CAP]
+        ev = content[:EVIDENCE_CAP]
         emit(
             path,
             idx,

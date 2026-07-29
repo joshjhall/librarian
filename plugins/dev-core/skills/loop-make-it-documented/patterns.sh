@@ -107,7 +107,9 @@ while IFS= read -r file; do
         ts | js | tsx | jsx)
             # --- TypeScript/JavaScript: exported functions without JSDoc ---
             command grep -n '^export\s\+\(async\s\+\)\?function\s\+\w\+\|^export\s\+\(default\s\+\)\?class\s\+\w\+' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     # Check if preceded by JSDoc comment (/** ... */)
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
@@ -131,7 +133,9 @@ while IFS= read -r file; do
             # paren, which in a BASIC regex opens an unclosed group (grep errors,
             # matches nothing). With -E the arm actually runs (#183; it was dead).
             command grep -nE '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
@@ -148,7 +152,9 @@ while IFS= read -r file; do
         sh | bash)
             # --- Shell: functions without usage comment ---
             command grep -n '^\w\+()' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
                         prev_content=$(command sed -n "${prev_line}p" "$file")

@@ -98,7 +98,9 @@ while IFS= read -r file; do
     # --- Category: tech-debt-marker ---
     # TODO, FIXME, HACK, XXX, WORKAROUND comments
     command grep -niE -- '\b(TODO|FIXME|HACK|XXX|WORKAROUND)\b' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "tech-debt-marker" \
@@ -117,7 +119,9 @@ while IFS= read -r file; do
                 # Python: print() used as debug (not in logging context)
                 command grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
                     command grep -vE '(logging|logger|log\.)' |
-                    while IFS=: read -r line_num content; do
+                    while IFS= read -r raw; do
+                        line_num=${raw%%:*}
+                        content=${raw#*:}
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -125,7 +129,9 @@ while IFS= read -r file; do
                     done || true
                 # Python: breakpoint(), pdb
                 command grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
-                    while IFS=: read -r line_num content; do
+                    while IFS= read -r raw; do
+                        line_num=${raw%%:*}
+                        content=${raw#*:}
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -135,7 +141,9 @@ while IFS= read -r file; do
             *.js | *.ts | *.jsx | *.tsx)
                 # JavaScript/TypeScript: console.log, console.debug, console.warn
                 command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
-                    while IFS=: read -r line_num content; do
+                    while IFS= read -r raw; do
+                        line_num=${raw%%:*}
+                        content=${raw#*:}
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -143,7 +151,9 @@ while IFS= read -r file; do
                     done || true
                 # debugger keyword
                 command grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
-                    while IFS=: read -r line_num content; do
+                    while IFS= read -r raw; do
+                        line_num=${raw%%:*}
+                        content=${raw#*:}
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -153,7 +163,9 @@ while IFS= read -r file; do
             *.rb)
                 # Ruby: binding.pry, puts used as debug
                 command grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
-                    while IFS=: read -r line_num content; do
+                    while IFS= read -r raw; do
+                        line_num=${raw%%:*}
+                        content=${raw#*:}
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -163,7 +175,9 @@ while IFS= read -r file; do
             *.go)
                 # Go: fmt.Println used as debug (not in main or test)
                 command grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
-                    while IFS=: read -r line_num content; do
+                    while IFS= read -r raw; do
+                        line_num=${raw%%:*}
+                        content=${raw#*:}
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -173,7 +187,9 @@ while IFS= read -r file; do
             *.java | *.kt)
                 # Java/Kotlin: System.out.println, System.err.println
                 command grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
-                    while IFS=: read -r line_num content; do
+                    while IFS= read -r raw; do
+                        line_num=${raw%%:*}
+                        content=${raw#*:}
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -190,7 +206,9 @@ while IFS= read -r file; do
         *.py)
             # Python: except with only pass
             command grep -nE -- '^\s*except' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     next_line=$(command sed -n -- "$((line_num + 1)),\$p" "$file" |
                         command grep -m1 -E '\S' | command head -1)
                     if command printf '%s\n' "$next_line" | command grep -qE '^\s*pass\s*$' 2>/dev/null; then
@@ -204,7 +222,9 @@ while IFS= read -r file; do
         *.js | *.ts | *.jsx | *.tsx)
             # JS/TS: catch with empty body
             command grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
@@ -214,7 +234,9 @@ while IFS= read -r file; do
         *.java | *.kt)
             # Java/Kotlin: catch with empty body
             command grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
@@ -224,7 +246,9 @@ while IFS= read -r file; do
         *.rb)
             # Ruby: rescue with no body
             command grep -nE -- '^\s*rescue\b' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     next_line=$(command sed -n -- "$((line_num + 1)),\$p" "$file" |
                         command grep -m1 -E '\S' | command head -1)
                     if command printf '%s\n' "$next_line" | command grep -qE '^\s*(end|rescue)\s*$' 2>/dev/null; then
@@ -238,7 +262,9 @@ while IFS= read -r file; do
         *.go)
             # Go: if err != nil with empty body
             command grep -nE -- 'if err != nil\s*\{\s*\}' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \

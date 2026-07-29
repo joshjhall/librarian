@@ -644,8 +644,11 @@ printf '%s\n' '# notes' >"$TSTDIR/notes.md"
     printf '%s\n' '    """Class doc after a blank."""'
 } >"$LOOPDIR/doc.py"
 printf '%s\n' 'const x = 1;' 'export function doThing() {}' 'export class Thing {}' >"$LOOPDIR/doc.js"
-# A TS export whose signature ends in a lone `:` (return-type on the next line)
-# drives _bash_read_content's single-trailing-colon strip on the JS/Go/Shell path.
+# A TS export drives the JS/Go/Shell export arm. Its signature ends in a lone
+# `:` on purpose: that shape used to be eaten by the `IFS=:` read and by the
+# `_bash_read_content` shim that cloned the strip into Python (#549, both now
+# gone). Keep the trailing colon so the arm stays exercised on the shape that
+# regressed twice.
 printf '%s\n' 'const z = 1;' 'export function parse():' >"$LOOPDIR/doc.ts"
 printf '%s\n' 'package p' 'func Bare() {}' '// Named does it.' 'func Named() {}' >"$LOOPDIR/doc.go"
 printf '%s\n' 'x=1' 'bare() {' '  true' '}' '# commented' 'named() {' '  true' '}' >"$LOOPDIR/doc.sh"
