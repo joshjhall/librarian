@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 4f0940df-8211-4fd0-8e89-61fc71776f18
-  modified: 2026-07-29T14:02:02.258Z
+  modified: 2026-07-29T14:33:15.212Z
 ---
 
 Found while shipping #397 (agnix normalizer). `check-docs-staleness/patterns.sh`
@@ -69,6 +69,28 @@ proven by running the new gate against a pre-fix tree: the differential fails fo
 against `check-code-health/patterns.sh`, so they had to move together. The other
 7 are deferred to **#573** (no python port ⇒ no parity break, and that file is
 the #567 measurement instrument).
+
+**THE FIX'S OWN FIRST FIX — use `IFS= read -r raw`, never bare `read -r raw`.**
+The first cut used a bare `while read -r raw`, which splits on the **default**
+IFS and therefore strips leading/trailing **whitespace** from the whole record
+before `${raw%%:*}` / `${raw#*:}` ever run. That traded the trailing-colon strip
+for a trailing-whitespace strip — the same bash↔python divergence class, since
+the python ports slice the line verbatim. Caught by the adversarial pre-PR
+review at HIGH/0.92 and fixed at all 78 sites:
+
+```bash
+while IFS= read -r raw; do line_num=${raw%%:*}; content=${raw#*:}
+```
+
+Empty `IFS=` suppresses field splitting AND whitespace trimming; the prefix
+strips still split on the first colon. Leading whitespace was never actually at
+risk (the record starts with `grep -n`'s line number), so only the trailing case
+is asserted.
+
+**The repo-tree corpus structurally cannot catch this** — repo files are
+whitespace-clean by lint, so the triggering shape never occurs there. The
+fixture in `test_trailing_ws_preserved` is written via `printf` precisely so
+editors and lint cannot strip the spaces out of it.
 
 **Why:** a doc line ending in `:` silently produced wrong evidence, and the gate
 that should have caught it was neutralized by a shim.

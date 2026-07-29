@@ -47,6 +47,7 @@
 - [Classify tool calls before optimizing](classify-tool-calls-before-optimizing.md) — aggregate tokens say WHICH agent; only the call log says WHY; my predicted hot spot was <10% of burn twice in one session
 - [Review cost BASELINE 2026-07-28](review-cost-baseline-2026-07-28.md) — frozen pre-change per-cycle/per-dimension numbers (deduped); compare "after" against THIS, not the raw figures in PR #554
 - [Review cost AFTER 2026-07-28](review-cost-after-2026-07-28.md) — #559: per-cycle output 173k/281k/207k → 34k/9k (#557 did it), recall UNPROVEN at n=2; arm the runs by UTC, not local mtime
+- [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice running (#544, #549); a fix commit invalidates the cycle before it
 - [#553 review token ceiling](issue-553-review-token-ceiling.md) — PR #554: budget gates are DEAD CODE without a runtime turn directive; ceiling shipped OFF (a too-low one dead-ends the PR); no turn cap on agent()
 - [Token-burn audit 2026-07-21](token-burn-audit-2026-07-21.md) — 4-axis burn audit → #487-#495; biggest lever = golems had no --model dial (#487)
 - [#256 cache-stability pass](issue-256-cache-stability.md) — prompt-prefix cache stability; stableStringify, instructions-first/volatile-last; helpers module-scope

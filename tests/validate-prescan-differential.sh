@@ -372,6 +372,11 @@ test_trailing_colon_preserved() {
 #
 # The repo-tree corpus cannot catch this — real repo files are trailing-space
 # stripped by lint, so only a purpose-built fixture exercises it.
+#
+# The fixture uses trailing SPACES only, and that is sufficient: the default IFS
+# is space/tab/newline, and `read` trims any run of them identically, so a
+# trailing tab is not a separate code path. The matcher below accepts `[ \t]+`
+# so a future fixture may add tabs without needing to change it.
 trailing_ws_evidence() {
     command awk -F'\t' '$4 ~ /keep-my-spaces[ \t]+$/ { print }'
 }
@@ -396,8 +401,11 @@ test_trailing_ws_preserved() {
         assert_true "[ -n \"\$(printf '%s\n' \"\$b\" | trailing_ws_evidence)\" ]" \
             "$n [bash]: evidence keeps trailing whitespace"
     done < <(single_arg_tools)
-    assert_true "[ $WS_TOOLS -ge 1 ]" \
-        "trailing-whitespace fixture still triggers a tool (got $WS_TOOLS)"
+    # Same guard as test_trailing_colon_preserved: pinned just at the observed
+    # count so an edit that narrows fixture matching fails rather than silently
+    # shrinking coverage to a single tool.
+    assert_true "[ $WS_TOOLS -ge 2 ]" \
+        "trailing-whitespace fixture still triggers 2+ tools (got $WS_TOOLS)"
 }
 
 run_test test_corpora_non_empty "Differential corpora are non-empty (gate is not a no-op)"
