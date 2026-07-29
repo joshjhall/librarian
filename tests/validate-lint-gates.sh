@@ -714,42 +714,43 @@ test_required_version_mismatch_actually_blocks_ruff() {
 #
 # Slicing rather than reimplementing is the point: a hand-copied version of the
 # branching would drift from the script and keep passing while the real one broke.
+# run_install_action <current> <pinned> <has_uv> <has_pipx>
 run_install_action() {
     /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
         eval "$(command sed -n "/^ruff_install_action() {/,/^}/p" "$1")"
         ruff_install_action "$2" "$3" "$4" "$5"
-    ' _ "$REPO_ROOT/.devcontainer/post-create.sh" "$2" "$3" "$4" "$5" 2>&1
+    ' _ "$REPO_ROOT/.devcontainer/post-create.sh" "$1" "$2" "$3" "$4" 2>&1
 }
 
 test_post_create_install_decision() {
     local pin="0.16.0"
 
     # Already at the pin: no install, regardless of what is available.
-    assert_equals "skip" "$(run_install_action _ "$pin" "$pin" yes yes)" \
+    assert_equals "skip" "$(run_install_action "$pin" "$pin" yes yes)" \
         "an on-PATH ruff at the pinned version installs nothing"
-    assert_equals "skip" "$(run_install_action _ "$pin" "$pin" no no)" \
+    assert_equals "skip" "$(run_install_action "$pin" "$pin" no no)" \
         "…and still skips when no installer is present (nothing to correct)"
 
     # THE bug this branch exists to fix: a ruff already on PATH at the WRONG
     # version must be REINSTALLED, not accepted. Accepting it would leave the
     # container with a ruff that hard-fails every lint on required-version.
-    assert_equals "uv" "$(run_install_action _ "0.9.9" "$pin" yes yes)" \
+    assert_equals "uv" "$(run_install_action "0.9.9" "$pin" yes yes)" \
         "a MISMATCHED on-PATH ruff is reinstalled, not accepted (uv preferred)"
-    assert_equals "pipx" "$(run_install_action _ "0.9.9" "$pin" no yes)" \
+    assert_equals "pipx" "$(run_install_action "0.9.9" "$pin" no yes)" \
         "…falling back to pipx when uv is absent"
 
     # Absent ruff: install by whichever manager exists, uv first.
-    assert_equals "uv" "$(run_install_action _ "" "$pin" yes yes)" \
+    assert_equals "uv" "$(run_install_action "" "$pin" yes yes)" \
         "an absent ruff installs via uv when available"
-    assert_equals "pipx" "$(run_install_action _ "" "$pin" no yes)" \
+    assert_equals "pipx" "$(run_install_action "" "$pin" no yes)" \
         "…and via pipx when uv is absent"
 
     # The two error arms are DISTINCT on purpose — one says "cannot install",
     # the other "ruff exists but is unusable against this pin". Collapsing them
     # would send an operator to the wrong fix.
-    assert_equals "error-mismatch" "$(run_install_action _ "0.9.9" "$pin" no no)" \
+    assert_equals "error-mismatch" "$(run_install_action "0.9.9" "$pin" no no)" \
         "a mismatched ruff with no installer is its own error, not 'cannot install'"
-    assert_equals "error-no-installer" "$(run_install_action _ "" "$pin" no no)" \
+    assert_equals "error-no-installer" "$(run_install_action "" "$pin" no no)" \
         "no ruff and no installer is the cannot-install error"
 }
 
