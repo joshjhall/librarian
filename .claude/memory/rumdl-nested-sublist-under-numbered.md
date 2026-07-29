@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 7ac30f9d-985d-4e42-94ed-884a2a0b715e
+  modified: 2026-07-29T19:34:00.777Z
 ---
 
 In this repo's SKILL companion markdown, putting a nested `-` sub-list (with its
@@ -21,8 +22,7 @@ indent, not the child's.
 **How to apply:** inside a numbered/lettered ship-issue-style bullet, express
 sub-cases as **flat prose** (bold lead-ins like `**Primary checkout** — …`) with
 code fences at the bullet's own indent, NOT as a nested `-` list. Ran into it
-editing `plugins/workflow/skills/ship-issue/execute-protocol.md` for #225 (PR
+editing `plugins/workflow/skills/ship-issue/execute-protocol.md` for #225
+(PR #235); reverting and rewriting with flat prose passed `rumdl check` clean.
 
-# 235); reverting and rewriting with flat prose passed `rumdl check` clean
-
-Related: [[typos-gate-blocks-push]].
+Related: [[typos-gate-blocks-push]], [[rumdl-issue-ref-line-start]].
