@@ -804,6 +804,83 @@ test_post_create_dispatch_handles_every_outcome() {
         "the wildcard reports an internal-contract violation"
 }
 
+# The dispatch's ARM BODIES, executed for real.
+#
+# The two cases above cover the pure helper's verdicts and the presence of each
+# case LABEL, but both are blind to what an arm actually does: swap the `uv)` and
+# `pipx)` bodies and every label is still present, in order, so they both pass —
+# while the script installs through the wrong manager. That is the same
+# wrong-tool-for-the-condition class #542 exists to close, so the arms get driven
+# for real: slice out the `ruff_action=…` + `case … esac` block, stub `uv`/`pipx`
+# to log their argv, and assert on WHICH installer ran and with what.
+#
+# `ruff_install_action` is sliced in alongside it — the block calls it, and the
+# point is to exercise the real dispatch against the real helper rather than a
+# stand-in that could disagree with either.
+run_dispatch() {
+    local sb="$1" cur="$2" pin="$3" uv="$4" pipx="$5"
+    command rm -f "$sb/install.log"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        HOME="$sb" PATH="$sb/bin" \
+        current_ruff="$cur" RUFF_VERSION="$pin" have_uv="$uv" have_pipx="$pipx" \
+        "$REAL_BASH" -c '
+        eval "$(command awk "/^ruff_install_action\\(\\) \\{/,/^\\}/" "$1")"
+        eval "$(command awk "/^ruff_action=/,/^esac/" "$1")"
+    ' _ "$REPO_ROOT/.devcontainer/post-create.sh" 2>&1
+}
+
+test_post_create_dispatch_arms_run_the_right_installer() {
+    local sb out pin="0.16.0"
+    stub_dir sb || return 1
+    # Stubs that record their own argv. `--force` and the pinned spec are part of
+    # what is asserted: a reinstall that dropped --force would silently no-op
+    # against an existing wrong-version install.
+    local t
+    for t in uv pipx; do
+        {
+            command printf '#!/usr/bin/env bash\n'
+            command printf 'command printf "%s %%s\\n" "$*" >>"%s/install.log"\n' "$t" "$sb"
+        } >"$sb/bin/$t"
+        command chmod +x "$sb/bin/$t"
+    done
+
+    # uv available -> uv, with --force and the pinned spec.
+    run_dispatch "$sb" "" "$pin" yes yes >/dev/null
+    out="$(command cat "$sb/install.log" 2>/dev/null || true)"
+    assert_equals "uv tool install --force ruff==$pin" "$out" \
+        "the uv arm installs through uv, pinned and forced (not pipx)"
+
+    # uv absent -> pipx. This is the pair a body-swap would break.
+    run_dispatch "$sb" "" "$pin" no yes >/dev/null
+    out="$(command cat "$sb/install.log" 2>/dev/null || true)"
+    assert_equals "pipx install --force ruff==$pin" "$out" \
+        "the pipx arm installs through pipx, pinned and forced (not uv)"
+
+    # A mismatched on-PATH ruff must still REINSTALL, not skip.
+    run_dispatch "$sb" "0.9.9" "$pin" yes yes >/dev/null
+    out="$(command cat "$sb/install.log" 2>/dev/null || true)"
+    assert_equals "uv tool install --force ruff==$pin" "$out" \
+        "a mismatched ruff is reinstalled at the pin, not accepted"
+
+    # Already pinned -> NOTHING runs. An arm that installed anyway would be a
+    # silent waste on every container create, invisible to a label check.
+    run_dispatch "$sb" "$pin" "$pin" yes yes >/dev/null
+    assert_equals "" "$(command cat "$sb/install.log" 2>/dev/null || true)" \
+        "the skip arm runs no installer at all"
+
+    # Both error arms: no install attempted, and the message must match the
+    # CONDITION — the mismatch arm must not tell an operator to install a tool.
+    out="$(run_dispatch "$sb" "0.9.9" "$pin" no no)"
+    assert_equals "" "$(command cat "$sb/install.log" 2>/dev/null || true)" \
+        "the mismatch error arm attempts no install"
+    assert_contains "$out" "neither uv nor pipx is available to correct it" \
+        "the mismatch error names the real problem"
+
+    out="$(run_dispatch "$sb" "" "$pin" no no)"
+    assert_contains "$out" "cannot install ruff" \
+        "the no-installer error arm says what is missing"
+}
+
 # installed_ruff_version must VALIDATE the shape it parses, not just take field
 # two. It feeds both the reinstall decision above and the post-install
 # verification, so a malformed read that silently compared equal to itself would
@@ -892,6 +969,7 @@ run_test test_every_install_path_reads_the_pin "all five ruff install paths read
 run_test test_required_version_mismatch_actually_blocks_ruff "required-version actually blocks a mismatched ruff (#542)"
 run_test test_post_create_install_decision "post-create's install decision covers all five outcomes (#542)"
 run_test test_post_create_dispatch_handles_every_outcome "post-create's dispatch handles every outcome explicitly (#542)"
+run_test test_post_create_dispatch_arms_run_the_right_installer "post-create's dispatch arms run the right installer (#542)"
 run_test test_post_create_version_parse_is_validated "post-create validates the ruff --version shape it parses (#542)"
 run_test test_installed_ruff_matches_the_pin "the ruff on PATH matches the pin (#542)"
 
