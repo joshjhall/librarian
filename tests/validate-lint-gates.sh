@@ -758,11 +758,15 @@ test_post_create_install_decision() {
 # wildcard reserved for an internal-contract violation.
 #
 # A `*)` that doubles as the error-no-installer arm looks harmless — the helper
-# only ever echoes five strings today — but it converts a future typo in the
-# helper (`eror-mismatch`) into the "install uv or pipx" message, which is
+# only ever echoes five strings today — but it converts a future misspelling of
+# an outcome name in the helper into the "install uv or pipx" message, which is
 # actively wrong advice when uv is present and the real fault is a bug in the
 # script. Asserted structurally: every outcome name the helper can echo must
 # appear as its own case label.
+#
+# (The illustrative misspelling that was here is gone on purpose: `typos` gates
+# the pre-push hook and flags it inside a comment, which is the gate working
+# correctly — describe the mistake, don't spell it.)
 test_post_create_dispatch_handles_every_outcome() {
     local pc="$REPO_ROOT/.devcontainer/post-create.sh" outcome outcomes
     # Read the outcome names out of the HELPER rather than hardcoding them, so a
