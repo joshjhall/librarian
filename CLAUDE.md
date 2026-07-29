@@ -126,11 +126,12 @@ offline/uncached, where an unprobed call would hard-fail instead of skipping.
 When neither resolves it exits the reserved sentinel **77**, which `run-all.sh`
 renders `[SKIP] … did not run` rather than `[ok]` — a silent skip is
 indistinguishable from a pass, which is how that gate once sat inert unnoticed.
-The shell gate still exits 0 on a missing `shellcheck`, so it renders `[ok]`.
-`just lint` shares the Python gate's ruff→uvx resolution (#544), so the two
-documented entry points agree on a uvx-only host. `tests/validate-lint-gates.sh`
-is the meta-gate pinning all of this — runner resolution, the skip sentinel, and
-the justfile fallback.
+The shell gate still exits 0 on a missing `shellcheck`, so it renders `[ok]` —
+tracked as #571, and not pinned by a test until that lands. `just lint` shares
+the Python gate's ruff→uvx resolution (#544), so the two documented entry points
+agree on a uvx-only host. `tests/validate-lint-gates.sh` is the meta-gate pinning
+all of this — runner resolution, the skip sentinel, the justfile fallback, and
+that a hanging `uvx` probe cannot wedge either entry point.
 
 ## Commits
 

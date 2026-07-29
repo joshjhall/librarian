@@ -409,6 +409,14 @@ test_justfile_recipe_body_executes() {
     local sb out
     stub_dir sb || return 1
 
+    # `timeout` and `sleep` are NOT in stub_dir's symlink list, and without them
+    # the recipe's `command -v timeout` fails and every case below silently takes
+    # the UNBOUNDED else-branch — the bounded path this test exists to cover
+    # would never execute. Plant them, as test_hanging_uvx_is_bounded_not_wedged
+    # already does for the same reason.
+    command ln -sf "$(command -v timeout)" "$sb/bin/timeout" 2>/dev/null || true
+    command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
+
     # ruff absent, uvx present and probing OK -> must resolve to "uvx ruff".
     plant_runner "$sb" uvx 0 0
     out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
@@ -431,6 +439,62 @@ test_justfile_recipe_body_executes() {
         "the real recipe body takes the skip branch when no runner resolves"
 }
 
+# The bound's whole purpose, exercised end to end. The presence grep for
+# UVX_PROBE_TIMEOUT proves only that the token appears somewhere in the file — a
+# regression that dropped the `timeout "${UVX_PROBE_TIMEOUT:-60}" ` wrapper while
+# leaving the name in a comment would still pass it. This drives a uvx that never
+# returns and asserts the recipe body gives up and degrades to the skip branch,
+# mirroring test_hanging_uvx_is_bounded_not_wedged's coverage of lint-python.sh.
+test_justfile_hanging_uvx_is_bounded() {
+    if ! command -v timeout >/dev/null 2>&1; then
+        skip_test "timeout(1) unavailable — cannot bound the hang case"
+        return 0
+    fi
+
+    local jf="$REPO_ROOT/justfile" body
+    body="$(command awk '
+        /^[[:space:]]*@if command -v ruff/ { grab = 1 }
+        grab {
+            line = $0
+            sub(/^[[:space:]]*@?/, "", line)
+            cont = (line ~ /\\$/)
+            sub(/[[:space:]]*\\$/, "", line)
+            out = (out == "" ? line : out " " line)
+            if (!cont) { print out; exit }
+        }
+    ' "$jf")"
+    assert_not_empty "$body" "recipe body extracted for the hang case"
+    local probe="${body//\$RUFF check plugins \&\& \$RUFF format --check plugins/echo \"RESOLVED=\$RUFF\"}"
+
+    local sb
+    stub_dir sb || return 1
+    command ln -sf "$(command -v timeout)" "$sb/bin/timeout" 2>/dev/null || true
+    command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
+
+    # A uvx whose --version probe never returns.
+    {
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'for a in "$@"; do\n'
+        command printf '    if [ "$a" = "--version" ]; then sleep 3600; fi\n'
+        command printf 'done\n'
+        command printf 'exit 0\n'
+    } >"$sb/bin/uvx"
+    command chmod +x "$sb/bin/uvx"
+
+    # Outer bound well above the inner one: if the recipe honors
+    # UVX_PROBE_TIMEOUT it returns on its own and the outer never fires. Exit
+    # 124 = outer fired = the recipe wedged, which is the regression.
+    local rc=0 out
+    out="$(command timeout 30 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        --unset=BASH_ENV HOME="$sb" PATH="$sb/bin" UVX_PROBE_TIMEOUT=2 \
+        "$REAL_SH" -c "$probe" 2>&1)" || rc=$?
+
+    assert_true "[ \"$rc\" -ne 124 ]" \
+        "a hanging uvx does not wedge the recipe (outer timeout did not fire)"
+    assert_contains "$out" 'did NOT run' \
+        "a hanging uvx degrades to the skip branch rather than blocking forever"
+}
+
 run_test test_prefers_ruff_binary_when_present "ruff on PATH is preferred and actually invoked"
 run_test test_ruff_violation_fails_the_gate "a violation via the ruff binary fails the gate"
 run_test test_falls_back_to_uvx_when_ruff_absent "falls back to probed uvx when ruff is absent"
@@ -446,5 +510,6 @@ run_test test_sentinel_constant_agreed_by_both_scripts "the skip sentinel agrees
 run_test test_post_create_ensures_ruff "post-create.sh installs and verifies ruff"
 run_test test_justfile_shares_ruff_resolution "just lint shares the ruff→uvx runner resolution (#544)"
 run_test test_justfile_recipe_body_executes "the just lint recipe body actually parses and resolves (#544)"
+run_test test_justfile_hanging_uvx_is_bounded "a hanging uvx does not wedge just lint (#544)"
 
 generate_report
