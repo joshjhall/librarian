@@ -37,6 +37,7 @@
 - [cosign bundle format](cosign-bundle-format.md) — release.yml must use --bundle (.sigstore.json); cosign 3.x ignores --output-signature (#153)
 - [git-cliff checksum is sha512](git-cliff-checksum-sha512.md) — per-asset .tar.gz.sha512 (not .sha256) + .sig; verify against published sibling
 - [Verify squash-merge landed](verify-squash-merge-landed.md) — confirm the diff landed on origin/main, not just the title
+- [Never tail a git push](never-tail-a-git-push.md) — `tail -2` hides the hook rejection; compare remote SHA to HEAD, not the pipe's exit code
 - [Stale-base squash reverts merged PR](stale-base-squash-reverts-merged-pr.md) — `reset --soft origin/main` from a pre-merge worktree silently reverts that PR's files
 - [Git index corruption → partial commit](git-index-corruption-partial-commit.md) — truncated .git/index committed 1 of ~384 files with NO error; verify `gh pr view --json files`
 - [Edits landed in main not worktree](edits-landed-in-main-not-worktree.md) — main-checkout abs paths from a worktree land edits in MAIN; target .worktrees/issue-N/
