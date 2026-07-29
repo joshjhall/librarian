@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: b03da476-855a-4340-a1de-499a566aea26
-  modified: 2026-07-28T20:52:03.822Z
+  modified: 2026-07-29T03:02:10.161Z
 ---
 
 Frozen baseline of the ship-issue adversarial review harness **before** any
@@ -106,6 +106,17 @@ need transcript archaeology. Compare:
    things, the loop runs more cycles and the change is cost-negative.
 4. **Findings count and severity mix** — the recall check. Cheaper reviews that
    find less are not a win.
+
+## The "after" measurement
+
+Done 2026-07-28 in [[review-cost-after-2026-07-28]] (#559). Summary: per-cycle
+output fell from 173k/281k/207k to 34k and 9k, and per-reviewer Bash calls from
+31.5 to 2.2 — but only **two** post-change cycles exist, and the fuller of them
+returned zero findings, so **recall is not proven**. #557 is responsible for
+essentially all of the drop; #556 saw exactly one run; the token ceiling stays
+off for want of a distribution. **Note the UTC trap recorded there:** these
+directory mtimes are local, the release merge times are UTC, and comparing them
+directly misfiles a 5-hour band of runs into the wrong arm.
 
 Related: [[issue-553-review-token-ceiling]], [[token-burn-audit-2026-07-21]],
 [[token-scrape-transcript-dedup]], [[issue-256-cache-stability]]
