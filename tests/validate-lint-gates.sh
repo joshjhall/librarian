@@ -73,12 +73,12 @@ stub_dir() {
     # `bash` is load-bearing: the stubs' `#!/usr/bin/env bash` shebang resolves
     # through this PATH, and with the stub dir as the ENTIRE PATH an absent bash
     # makes every stub silently unexecutable (the gate then reports "no runner").
-    # sed/awk/head are load-bearing for the #542 pin: both entry points resolve
-    # the version by running bin/ruff-version.sh, which parses ruff.toml with
-    # awk. Absent, the reader dies inside the stub PATH and every case below
-    # would fail for a reason that has nothing to do with what it tests — the
-    # same trap class as the `timeout` symlink #544's review caught.
-    for tool in bash env find sort cat printf locale grep mktemp rm dirname basename tr sed awk head; do
+    # `awk` is load-bearing for the #542 pin: both entry points resolve the
+    # version by running bin/ruff-version.sh, which parses ruff.toml with awk.
+    # Absent, the reader dies inside the stub PATH and every case below would
+    # fail for a reason that has nothing to do with what it tests — the same trap
+    # class as the `timeout` symlink #544's review caught.
+    for tool in bash env find sort cat printf locale grep mktemp rm dirname basename tr awk; do
         src="$(command -v "$tool" 2>/dev/null)" || continue
         command ln -sf "$src" "$dir/bin/$tool" 2>/dev/null || true
     done
@@ -638,10 +638,18 @@ test_every_install_path_reads_the_pin() {
     assert_file_contains "$pc" 'pipx install --force "ruff==$RUFF_VERSION"' \
         "post-create.sh's pipx install is pinned"
 
-    assert_file_contains "$ci" 'pipx install "ruff==$(bash bin/ruff-version.sh)"' \
-        "ci.yml installs the pinned ruff"
-    assert_file_contains "$rel" 'pipx install "ruff==$(bash bin/ruff-version.sh)"' \
-        "release.yml installs the pinned ruff (the release gate must match the PR gate)"
+    # Both workflows resolve the pin on its own line with an explicit `|| exit 1`
+    # rather than inline as `pipx install "ruff==$(...)"`. That is load-bearing:
+    # a failing command substitution inside a larger command does NOT abort under
+    # `set -e`, so the inline form would degrade to `ruff==` and fail as a pipx
+    # argument error instead of surfacing ruff-version.sh's own diagnostic.
+    local w
+    for w in "$ci" "$rel"; do
+        assert_file_contains "$w" 'ruff_version="$(bash bin/ruff-version.sh)" || exit 1' \
+            "$(command basename "$w") resolves the pin with an explicit failure check"
+        assert_file_contains "$w" 'pipx install "ruff==$ruff_version"' \
+            "$(command basename "$w") installs the resolved pin"
+    done
 
     assert_file_contains "$lp" 'bin/ruff-version.sh' \
         "lint-python.sh resolves the pin through the shared reader"
@@ -693,6 +701,108 @@ test_required_version_mismatch_actually_blocks_ruff() {
     assert_true "[ \"$rc\" -ne 0 ]" "ruff format --check is blocked by the same mismatch"
 }
 
+# post-create.sh's install DECISION, driven behaviourally.
+#
+# Every other assertion about post-create.sh in this file is a substring grep,
+# because the script itself only runs on a real container create. That left its
+# actual branching — already-pinned skip, reinstall-on-mismatch via uv vs pipx,
+# the mismatch-with-no-installer error, and the no-installer error — with no
+# coverage at all: a broken comparison or a typo in the version substitution
+# would first surface inside a devcontainer build. The decision is now a pure
+# function (`ruff_install_action`), so it can be sliced out and driven directly,
+# the same way render_stage slices run-all.sh's run_stage.
+#
+# Slicing rather than reimplementing is the point: a hand-copied version of the
+# branching would drift from the script and keep passing while the real one broke.
+run_install_action() {
+    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+        eval "$(command sed -n "/^ruff_install_action() {/,/^}/p" "$1")"
+        ruff_install_action "$2" "$3" "$4" "$5"
+    ' _ "$REPO_ROOT/.devcontainer/post-create.sh" "$2" "$3" "$4" "$5" 2>&1
+}
+
+test_post_create_install_decision() {
+    local pin="0.16.0"
+
+    # Already at the pin: no install, regardless of what is available.
+    assert_equals "skip" "$(run_install_action _ "$pin" "$pin" yes yes)" \
+        "an on-PATH ruff at the pinned version installs nothing"
+    assert_equals "skip" "$(run_install_action _ "$pin" "$pin" no no)" \
+        "…and still skips when no installer is present (nothing to correct)"
+
+    # THE bug this branch exists to fix: a ruff already on PATH at the WRONG
+    # version must be REINSTALLED, not accepted. Accepting it would leave the
+    # container with a ruff that hard-fails every lint on required-version.
+    assert_equals "uv" "$(run_install_action _ "0.9.9" "$pin" yes yes)" \
+        "a MISMATCHED on-PATH ruff is reinstalled, not accepted (uv preferred)"
+    assert_equals "pipx" "$(run_install_action _ "0.9.9" "$pin" no yes)" \
+        "…falling back to pipx when uv is absent"
+
+    # Absent ruff: install by whichever manager exists, uv first.
+    assert_equals "uv" "$(run_install_action _ "" "$pin" yes yes)" \
+        "an absent ruff installs via uv when available"
+    assert_equals "pipx" "$(run_install_action _ "" "$pin" no yes)" \
+        "…and via pipx when uv is absent"
+
+    # The two error arms are DISTINCT on purpose — one says "cannot install",
+    # the other "ruff exists but is unusable against this pin". Collapsing them
+    # would send an operator to the wrong fix.
+    assert_equals "error-mismatch" "$(run_install_action _ "0.9.9" "$pin" no no)" \
+        "a mismatched ruff with no installer is its own error, not 'cannot install'"
+    assert_equals "error-no-installer" "$(run_install_action _ "" "$pin" no no)" \
+        "no ruff and no installer is the cannot-install error"
+}
+
+# installed_ruff_version must VALIDATE the shape it parses, not just take field
+# two. It feeds both the reinstall decision above and the post-install
+# verification, so a malformed read that silently compared equal to itself would
+# report the pin as landed when it had not.
+test_post_create_version_parse_is_validated() {
+    local sb out
+    stub_dir sb || return 1
+
+    plant_version_stub() {
+        {
+            command printf '#!/usr/bin/env bash\n'
+            command printf 'command cat <<'"'"'VEOF'"'"'\n%s\nVEOF\n' "$1"
+        } >"$sb/bin/ruff"
+        command chmod +x "$sb/bin/ruff"
+    }
+
+    # Sliced with awk, not sed: this runs with the stub dir as the ENTIRE PATH,
+    # and that list carries only what the code under test genuinely needs (awk,
+    # for bin/ruff-version.sh). Reaching for sed here would mean adding it to the
+    # stub list purely for the test's own convenience, which is how that list
+    # grew an inaccurate "load-bearing" claim in the first place.
+    run_parse() {
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" PATH="$sb/bin" "$REAL_BASH" -c '
+            eval "$(command awk "/^installed_ruff_version\\(\\) \\{/,/^\\}/" "$1")"
+            installed_ruff_version || true
+        ' _ "$REPO_ROOT/.devcontainer/post-create.sh" 2>&1
+    }
+
+    plant_version_stub 'ruff 0.16.0'
+    assert_equals "0.16.0" "$(run_parse)" "the normal 'ruff X.Y.Z' output parses"
+
+    # A leading warning line: field two of line ONE is not the version.
+    plant_version_stub 'warning: something
+ruff 0.16.0'
+    assert_equals "0.16.0" "$(run_parse)" \
+        "a preceding warning line does not derail the parse"
+
+    # Shapes that must yield NOTHING rather than a wrong string.
+    plant_version_stub 'ruff 0.16.0+build7'
+    assert_equals "" "$(run_parse)" "build metadata is rejected, not silently truncated"
+    plant_version_stub 'someothertool 1.2.3'
+    assert_equals "" "$(run_parse)" "a different tool's output is rejected"
+    plant_version_stub 'ruff'
+    assert_equals "" "$(run_parse)" "a missing version field yields nothing"
+
+    command rm -f "$sb/bin/ruff"
+    assert_equals "" "$(run_parse)" "an absent ruff yields nothing"
+}
+
 # The pinned version must be the one actually in use here, or the local suite is
 # green against a ruff that CI would reject before it ran a single rule.
 test_installed_ruff_matches_the_pin() {
@@ -729,6 +839,8 @@ run_test test_ruff_version_reader_prints_the_pin "bin/ruff-version.sh prints the
 run_test test_ruff_version_reader_fails_loud_on_a_bad_pin "the pin reader fails loud on a missing/ranged/nested pin (#542)"
 run_test test_every_install_path_reads_the_pin "all five ruff install paths read the pin (#542)"
 run_test test_required_version_mismatch_actually_blocks_ruff "required-version actually blocks a mismatched ruff (#542)"
+run_test test_post_create_install_decision "post-create's install decision covers all five outcomes (#542)"
+run_test test_post_create_version_parse_is_validated "post-create validates the ruff --version shape it parses (#542)"
 run_test test_installed_ruff_matches_the_pin "the ruff on PATH matches the pin (#542)"
 
 generate_report

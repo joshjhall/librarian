@@ -110,8 +110,18 @@ jobs:
       # unpinned, a new ruff release could fail `ruff format --check` here with no
       # code change behind it, and CI would disagree with a contributor's local
       # ruff for no visible reason.
+      #
+      # The pin is resolved on its own line with an explicit failure check, not
+      # inline as `pipx install "ruff==$(...)"`. A failing command substitution
+      # embedded in a larger command does NOT abort under `set -e` — only the
+      # outer command's status counts — so a broken pin would degrade to
+      # `pipx install "ruff=="` and surface as an incidental pipx argument error
+      # instead of ruff-version.sh's own diagnostic. Mirrors the justfile's
+      # `|| exit 1` guard.
       - name: Install ruff
-        run: pipx install "ruff==$(bash bin/ruff-version.sh)"
+        run: |
+          ruff_version="$(bash bin/ruff-version.sh)" || exit 1
+          pipx install "ruff==$ruff_version"
 
       # Fail loudly if a required linter did not land on PATH — otherwise the
       # skip-if-absent gates would quietly no-op in CI, defeating their purpose.

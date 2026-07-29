@@ -44,8 +44,12 @@ jobs:
       # PINNED (#542) from ruff.toml's required-version via bin/ruff-version.sh,
       # same as ci.yml — a release must not be gated by a different ruff than the
       # PR was.
+      # Resolved on its own line with an explicit `|| exit 1` for the same reason
+      # as ci.yml's: an inline `$(...)` failure does not abort under `set -e`.
       - name: Install ruff
-        run: pipx install "ruff==$(bash bin/ruff-version.sh)"
+        run: |
+          ruff_version="$(bash bin/ruff-version.sh)" || exit 1
+          pipx install "ruff==$ruff_version"
 
       # Single entry point — tests/run-all.sh owns the full gate list (manifest
       # validation, structural lint, contract + behavioral gates, action-pin
