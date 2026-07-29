@@ -224,6 +224,18 @@ test_step3a_config_pinning() {
     # absent / untracked / unreadable) would pass every other assertion here.
     # #547 replaced exactly such a conditional fallback with this unconditional
     # posture; pin both halves so it cannot drift back.
+    #
+    # Traceability for #548's literal wording (#563): #548 asked to pin the
+    # `unreadable` DISJUNCT, but that word has never existed in checker.md --
+    # `git log --all -S unreadable -- plugins/review-audit/agents/checker.md`
+    # returns no commits, and the current file contains it zero times. #547 had
+    # already collapsed the conditional fallback, so there was no disjunct left
+    # to pin verbatim. #548 is therefore satisfied by the two assertions that
+    # follow: the positive pin on the SURVIVING unconditional qualifier
+    # (`, tracked or not.`), plus the negative guard below. Note the word does
+    # appear in this function -- in the trigger loop -- but only as a BANNED
+    # word asserted absent from the opted-in branch, never as the pinned
+    # subject. Do not read that loop entry as #548's disjunct.
     assert_contains "$region" 'tracked or not' \
         "Step 3a config pinning: the do-not-read ban is unconditional (tracked or not)"
 
