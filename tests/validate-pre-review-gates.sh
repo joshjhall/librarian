@@ -184,6 +184,226 @@ test_missing_test_file_fires() {
     assert_equals "HIGH" "$(field "$row" 5)" "missing test for a source file is HIGH"
 }
 
+# --- missing-test-file: repo-rooted tests/ for js/ts (#555) -----------------
+
+# The headline #555 case. A .js source whose ONLY test lives under a repo-rooted
+# tests/ tree, with a DIFFERENT extension (.mjs), must not emit
+# missing-test-file. Before the fix the js/ts arm probed only three colocated
+# paths and interpolated the source's own extension into each, so this file was
+# reported HIGH despite being tested.
+#
+# A control source in the same run — same tree, same run, no matching test —
+# must still fire, so a pass cannot come from the scanner going silent.
+test_repo_rooted_js_test_detected() {
+    local sb list tested control
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const thing = 1;" >"$sb/src/thing.js"
+    command printf '%s\n' "// exercises thing.js" >"$sb/tests/validate-thing-helpers.mjs"
+    command printf '%s\n' "const lonely = 1;" >"$sb/src/lonely.js"
+
+    list="$sb/files.txt"
+    command printf '%s\n' "$sb/src/thing.js" "$sb/src/lonely.js" >"$list"
+
+    run_gate_in "$sb" "$list"
+
+    tested="$(category_rows "$GATE_OUT" "missing-test-file" |
+        command grep -c 'thing\.js' || true)"
+    control="$(category_rows "$GATE_OUT" "missing-test-file" |
+        command grep -c 'lonely\.js' || true)"
+
+    assert_equals "0" "$tested" \
+        "a .js source tested by tests/validate-<name>-*.mjs emits no missing-test-file"
+    assert_equals "1" "$control" \
+        "an untested .js source in the same run still emits missing-test-file"
+}
+
+# EVERY (stem x suffix-form) alternative the repo-rooted probe builds, so a
+# typo isolated to any single `find_args` entry has a test that fails.
+#
+# has_repo_rooted_js_test emits three `-name` alternatives per stem per
+# extension: `<stem>.<ext>`, `<stem>-*.<ext>`, `<stem>_*.<ext>`, over 6 stems.
+# Sampling one exemplar per stem (the first version of this case) left the two
+# WILDCARD alternatives of five stems unexercised — the comment claimed
+# exhaustiveness the coverage did not have. This walks all 6 x 3 = 18
+# alternatives explicitly.
+#
+# The extension is ROTATED across the js/mjs/cjs/ts/tsx/jsx family as the walk
+# proceeds rather than pinned, so every extension in the allowlist is exercised
+# too, and every row is a cross-extension case (source is always .js except the
+# reverse-direction row below).
+#
+# Each row runs in its own sandbox holding exactly ONE test file, so a match can
+# only come from the alternative under test.
+test_repo_rooted_stem_forms_all_match() {
+    local sb rows stem form fname ext i=0
+    local exts="js mjs cjs ts tsx jsx"
+    local stems="thing.test thing.spec test-thing test_thing spec-thing validate-thing"
+
+    for stem in $stems; do
+        for form in exact hyphen underscore; do
+            # Rotate the extension so the allowlist is covered as we go.
+            ext="$(command printf '%s' "$exts" | command cut -d' ' -f$(((i % 6) + 1)))"
+            i=$((i + 1))
+            case "$form" in
+                exact) fname="${stem}.${ext}" ;;
+                hyphen) fname="${stem}-helpers.${ext}" ;;
+                underscore) fname="${stem}_helpers.${ext}" ;;
+            esac
+
+            new_git_sandbox sb
+            command mkdir -p "$sb/src" "$sb/tests"
+            command printf '%s\n' "const x = 1;" >"$sb/src/thing.js"
+            command printf '%s\n' "// covers thing.js" >"$sb/tests/${fname}"
+            command printf '%s\n' "$sb/src/thing.js" >"$sb/files.txt"
+
+            run_gate_in "$sb" "$sb/files.txt"
+
+            rows="$(category_rows "$GATE_OUT" "missing-test-file" || true)"
+            assert_output_empty "$rows" \
+                "tests/${fname} covers thing.js (${stem}, ${form} form)"
+        done
+    done
+
+    # Reverse cross-extension direction: a .ts source found by a .js test. Every
+    # row above is a .js source, so without this the fix's claim that the search
+    # is independent of the SOURCE's extension is only half proven.
+    new_git_sandbox sb
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const c = 1;" >"$sb/src/comp.ts"
+    command printf '%s\n' "// covers comp.ts" >"$sb/tests/validate-comp-helpers.js"
+    command printf '%s\n' "$sb/src/comp.ts" >"$sb/files.txt"
+    run_gate_in "$sb" "$sb/files.txt"
+    rows="$(category_rows "$GATE_OUT" "missing-test-file" || true)"
+    assert_output_empty "$rows" \
+        "reverse cross-extension: .ts source covered by a .js test"
+}
+
+# The extension allowlist must be a REAL filter, not documented intent. A test
+# file with a correct stem but an out-of-family extension (.py) must NOT satisfy
+# the probe — otherwise `find`'s matching could be succeeding for some reason
+# other than the explicit per-extension `-name` patterns, and every positive
+# case above would pass for the wrong reason.
+test_repo_rooted_probe_rejects_foreign_extensions() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const thing = 1;" >"$sb/src/thing.js"
+    # Right stem, wrong family — a python test does not cover a js source here.
+    command printf '%s\n' "# not a js test" >"$sb/tests/thing.test.py"
+    command printf '%s\n' "$sb/src/thing.js" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_not_empty "$rows" \
+        "a same-stem .py file does not satisfy the js/ts extension allowlist"
+}
+
+# A DIRECTORY whose name matches a test stem must NOT satisfy the probe.
+# `find` matches directories too, so without `-type f` a snapshot/fixture dir
+# like `tests/validate-thing-snapshots.js/` suppresses a genuine
+# missing-test-file row — a false negative that hides the very bug this
+# scanner reports. Raised by review cycle 1 (correctness) and confirmed by
+# direct probe before fixing.
+test_repo_rooted_probe_ignores_directories() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const thing = 1;" >"$sb/src/thing.js"
+    # A directory, not a file — named exactly like a matching test would be.
+    command mkdir -p "$sb/tests/validate-thing-snapshots.js"
+    command printf '%s\n' "$sb/src/thing.js" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_not_empty "$rows" \
+        "a directory named like a test does not suppress missing-test-file"
+}
+
+# Regression guard for the pre-existing colocated path (#555 AC#4). The
+# repo-rooted fallback is additive; the <name>.test.<ext> sibling convention
+# must keep resolving on its own, in a tree with no tests/ dir at all.
+test_colocated_js_test_still_detected() {
+    local d rows
+    d="$(fresh_dir)"
+    command printf '%s\n' "const widget = 1;" >"$d/widget.js"
+    command printf '%s\n' "// tests widget" >"$d/widget.test.js"
+    run_gate "$(make_list "$d" widget.js)"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file" |
+        command grep 'widget\.js' || true)"
+    assert_output_empty "$rows" \
+        "colocated widget.test.js still suppresses missing-test-file"
+}
+
+# True negative: the repo-rooted probe must stay ANCHORED to the source name.
+# A tests/ tree full of unrelated tests must not satisfy an untested source —
+# this is the case that fails if the find expression is widened into a rubber
+# stamp that matches any test file in the tree.
+test_repo_rooted_probe_is_name_anchored() {
+    local sb list rows row
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const orphan = 1;" >"$sb/src/orphan.js"
+    # Populated tests/ tree — none of these names derive from "orphan".
+    command printf '%s\n' "// unrelated" >"$sb/tests/validate-something-else.mjs"
+    command printf '%s\n' "// unrelated" >"$sb/tests/other.test.js"
+
+    list="$sb/files.txt"
+    command printf '%s\n' "$sb/src/orphan.js" >"$list"
+
+    run_gate_in "$sb" "$list"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_not_empty "$rows" \
+        "a non-empty tests/ tree with no name-matching test still emits missing-test-file"
+    row="$(command printf '%s\n' "$rows" | command head -1)"
+    assert_equals "HIGH" "$(field "$row" 5)" \
+        "an genuinely untested js source stays HIGH"
+}
+
+# #555 AC#3, asserted against THIS repo rather than a fixture: the real
+# ship-issue workflow.js is covered by tests/validate-workflow-helpers.mjs and
+# must emit no missing-test-file row.
+#
+# The second assertion pins the #555/#568 BOUNDARY. untested-public-api is
+# explicitly out of scope for #555 (it is #568's third gap), so that row is
+# still expected here. If #568 later silences it, this assertion is the
+# reminder to update the boundary deliberately rather than by accident.
+#
+# MAINTAINER NOTE: this is the one case in the suite that reads the LIVE repo
+# rather than a fixture — AC#3 asks for exactly that, so the coupling is
+# deliberate. It does not hardcode a test filename (any of the six stems
+# satisfies it), but renaming or relocating the helper module that covers
+# ship-issue/workflow.js out of tests/ WILL turn this red for a reason
+# unrelated to a scanner regression. Fix the layout or the assertion — do not
+# delete the case.
+test_real_repo_workflow_js_not_flagged() {
+    local d list missing api
+    d="$(fresh_dir)"
+    list="$d/files.txt"
+    command printf '%s\n' \
+        "$REPO_ROOT/plugins/workflow/skills/ship-issue/workflow.js" >"$list"
+
+    run_gate_in "$REPO_ROOT" "$list"
+
+    missing="$(category_rows "$GATE_OUT" "missing-test-file" |
+        command grep -c 'workflow\.js' || true)"
+    api="$(category_rows "$GATE_OUT" "untested-public-api" |
+        command grep -c 'workflow\.js' || true)"
+
+    assert_equals "0" "$missing" \
+        "this repo's ship-issue/workflow.js emits no missing-test-file (AC#3)"
+    assert_true "[ $api -ge 1 ]" \
+        "untested-public-api still fires — that gap is #568's, not #555's"
+}
+
 # --- Category: untested-public-api ------------------------------------------
 
 # A public def with no referencing test_*.py must produce an untested-public-api
@@ -256,6 +476,13 @@ test_skip_policy_override_honored() {
 run_test test_ai_slop_fires "ai-slop detector fires on a hedging phrase with a 5-column HIGH row"
 run_test test_debug_statement_fires "debug-statement detector fires on a top-level console.log"
 run_test test_missing_test_file_fires "missing-test-file detector fires (line 1, HIGH) for an orphan source"
+run_test test_repo_rooted_js_test_detected "repo-rooted tests/ + cross-extension test suppresses missing-test-file (#555)"
+run_test test_repo_rooted_stem_forms_all_match "all 18 stem x suffix alternatives + every extension + reverse cross-extension match (#555)"
+run_test test_repo_rooted_probe_rejects_foreign_extensions "the js/ts extension allowlist is a real filter — a same-stem .py does not match (#555)"
+run_test test_repo_rooted_probe_ignores_directories "a directory named like a test does not suppress missing-test-file (#555)"
+run_test test_colocated_js_test_still_detected "colocated <name>.test.js still suppresses missing-test-file (#555 regression)"
+run_test test_repo_rooted_probe_is_name_anchored "repo-rooted probe stays name-anchored — unrelated tests/ files don't count (#555)"
+run_test test_real_repo_workflow_js_not_flagged "this repo's ship-issue/workflow.js: no missing-test-file, untested-public-api still fires (#555 AC#3)"
 run_test test_untested_public_api_fires "untested-public-api detector fires and names the function"
 run_test test_clean_source_silent "a clean, tested, private-only source emits no findings"
 run_test test_skip_policy_override_honored "project pre-review.yml override suppresses a skipped path, not a control"
