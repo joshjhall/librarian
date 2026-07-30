@@ -219,6 +219,47 @@ test_repo_rooted_js_test_detected() {
         "an untested .js source in the same run still emits missing-test-file"
 }
 
+# Every stem form the repo-rooted probe claims to support, one per case, plus
+# both wildcard suffixes and the REVERSE cross-extension direction (a .ts source
+# found by a .js test — the headline case only proves .js found by .mjs).
+#
+# has_repo_rooted_js_test builds a 6-stem x 6-extension x 3-suffix find
+# expression. Without this, five of the six stems and the `_*` suffix have no
+# test at all: a typo in any one `find_args` entry silently reintroduces the
+# HIGH false positives this issue exists to remove, and every other case here
+# would still pass because they all happen to exercise `validate-<name>-*`.
+#
+# Each row runs in its own sandbox with exactly ONE test file present, so a
+# match can only come from the stem under test.
+test_repo_rooted_stem_forms_all_match() {
+    local sb rows case_desc test_file source_name
+    # "<test-file-to-create> <source-name> <what-it-covers>"
+    while read -r test_file source_name case_desc; do
+        [ -n "$test_file" ] || continue
+        new_git_sandbox sb
+
+        command mkdir -p "$sb/src" "$sb/tests"
+        command printf '%s\n' "const x = 1;" >"$sb/src/${source_name}"
+        command printf '%s\n' "// covers ${source_name}" >"$sb/tests/${test_file}"
+        command printf '%s\n' "$sb/src/${source_name}" >"$sb/files.txt"
+
+        run_gate_in "$sb" "$sb/files.txt"
+
+        rows="$(category_rows "$GATE_OUT" "missing-test-file" || true)"
+        assert_output_empty "$rows" \
+            "tests/${test_file} covers ${source_name} (${case_desc})"
+    done <<'CASES'
+thing.test.ts thing.js <name>.test stem, .ts test for a .js source
+thing.spec.js thing.js <name>.spec stem
+test-thing.mjs thing.js test-<name> stem
+test_thing.cjs thing.js test_<name> stem
+spec-thing.jsx thing.js spec-<name> stem
+validate-thing.tsx thing.js validate-<name> stem, exact form
+validate-thing_extra.js thing.js the _* wildcard suffix
+validate-comp-helpers.js comp.ts REVERSE cross-extension: .ts source, .js test
+CASES
+}
+
 # Regression guard for the pre-existing colocated path (#555 AC#4). The
 # repo-rooted fallback is additive; the <name>.test.<ext> sibling convention
 # must keep resolving on its own, in a tree with no tests/ dir at all.
@@ -363,6 +404,7 @@ run_test test_ai_slop_fires "ai-slop detector fires on a hedging phrase with a 5
 run_test test_debug_statement_fires "debug-statement detector fires on a top-level console.log"
 run_test test_missing_test_file_fires "missing-test-file detector fires (line 1, HIGH) for an orphan source"
 run_test test_repo_rooted_js_test_detected "repo-rooted tests/ + cross-extension test suppresses missing-test-file (#555)"
+run_test test_repo_rooted_stem_forms_all_match "every repo-rooted stem form + both wildcards + reverse cross-extension match (#555)"
 run_test test_colocated_js_test_still_detected "colocated <name>.test.js still suppresses missing-test-file (#555 regression)"
 run_test test_repo_rooted_probe_is_name_anchored "repo-rooted probe stays name-anchored — unrelated tests/ files don't count (#555)"
 run_test test_real_repo_workflow_js_not_flagged "this repo's ship-issue/workflow.js: no missing-test-file, untested-public-api still fires (#555 AC#3)"
