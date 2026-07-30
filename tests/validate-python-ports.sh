@@ -84,6 +84,10 @@ loaded = yaml.load(payload)
 safe_loaded = yaml.load(payload, Loader=SafeLoader)
 def empty_impl():
     pass
+print(re.search(r"^\s*console\.(log|debug)\(", line))
+print("command grep -niE -- 'it.s worth noting that'")
+print("a genuine debug print")
+print("grep -vE no end-of-options marker here")
 EOF
 command printf 'gh = "%s"\n' "$GH_TOK" >>"$FIXDIR/app.py"
 

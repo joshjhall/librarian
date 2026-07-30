@@ -253,6 +253,41 @@ is_test_file() {
 }
 # <<< shared:is-test-file
 
+# >>> shared:scanner-pattern-line (kept in sync with check-code-health/patterns.sh by tests/validate-shared-scanner-sync.sh)
+# is_scanner_pattern_line LINE — return 0 (true) when LINE is a detector's own
+# regex SOURCE rather than prose (#599).
+#
+# The ai-slop and debug-statement patterns are written as literals inside the
+# scanners' own `grep`/`re.search` calls, so pointing the pre-scan at a diff
+# that touches a scanner file makes every one of those literals match itself.
+# Measured over the #567 batch, that was every ai-slop row emitted for a scanner
+# file — HIGH certainty, and handed to five reviewers as candidates to
+# adjudicate (#556). Systematic, not incidental: it recurs on every PR that
+# touches a scanner, which is exactly where reviewer attention is worth most.
+#
+# LINE-scoped on purpose, NOT path-scoped. Exempting patterns.sh /
+# pre-review-gates.sh wholesale is simpler but wrong: a genuine hedging phrase
+# in a scanner file's prose comment must still fire. Only the invocation line
+# carrying the quoted pattern is suppressed, so the comment two lines above it
+# is still scanned normally.
+#
+# Two arms, one per scanner runtime — a pattern literal reads differently in
+# each, and the python primary self-matches just as the bash fallback does:
+#   bash    `command grep -niE -- '<pattern>' "$file"`
+#   python  `re.search(r"<pattern>", line)` (also re.match / re.compile)
+# The flag arm is deliberately `-[a-zA-Z]*` (any short-flag cluster) and
+# requires the `--` end-of-options marker plus an opening quote, so an ordinary
+# filtering grep with no pattern literal (e.g. `grep -vE '(logging|logger)'`,
+# which has no `--`) is NOT suppressed.
+is_scanner_pattern_line() {
+    case "$1" in
+        *grep\ -[a-zA-Z]*\ --\ [\'\"]*) return 0 ;;
+        *re.search\(r[\'\"]* | *re.match\(r[\'\"]* | *re.compile\(r[\'\"]*) return 0 ;;
+    esac
+    return 1
+}
+# <<< shared:scanner-pattern-line
+
 # =============================================================================
 # Category: ai-slop
 # Detects AI-generated artifacts: hedging phrases, buzzword inflation,
@@ -266,10 +301,18 @@ scan_ai_slop() {
     case "$file" in
         *.lock | *lock.json | *go.sum | *.md | *.txt | *.json | *.yaml | *.yml | *.toml | *.ini | *.cfg | *.conf) return ;;
     esac
+    # ...and test files, which scan_debug_statements has always skipped but this
+    # scanner did not (#599). A test fixture GENERATES slop on purpose — the
+    # heredocs and `printf` lines that build a corpus case are the detector's
+    # own inputs, not unedited AI output. Measured over the #567 batch these
+    # fixture-generator lines were the majority of surviving ai-slop rows.
+    is_test_file "$file" && return
+    matches_declared_test_pattern "$file" && return
 
     # Hedging phrases — strong indicators of unedited AI output
     command grep -niE -- '\b(it.s worth noting that|it is worth noting that|importantly,|notably,|broadly speaking|in essence,|at its core,|fundamentally,)\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
+            is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
@@ -279,6 +322,7 @@ scan_ai_slop() {
     # Buzzword inflation
     command grep -niE -- '\b(enterprise[- ]grade|robust and scalable|seamlessly integrat|leverage the power of|cutting[- ]edge|state[- ]of[- ]the[- ]art|world[- ]class)\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
+            is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
@@ -288,6 +332,7 @@ scan_ai_slop() {
     # Filler phrases in comments/docstrings
     command grep -niE -- '\b(this (function|method|class) (is responsible for|handles|takes care of|provides|ensures that)|as (mentioned|discussed|noted) (above|earlier|previously|before))\b' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
+            is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
@@ -297,6 +342,7 @@ scan_ai_slop() {
     # Placeholder/stub text left behind
     command grep -niE -- '(# TODO: implement|// TODO: implement|raise NotImplementedError|throw new Error\(.not implemented)' "$file" 2>/dev/null |
         while IFS=: read -r line_num content; do
+            is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$file" "$line_num" "ai-slop" \
@@ -337,6 +383,7 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
+                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -347,6 +394,7 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
+                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -359,6 +407,7 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
+                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -369,6 +418,7 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
+                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -381,6 +431,7 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
+                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -393,6 +444,7 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
+                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -405,6 +457,7 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
+                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \

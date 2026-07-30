@@ -47,7 +47,7 @@ DUPLICATE="$REPO_ROOT/plugins/workflow/skills/ship-issue/pre-review-gates.sh"
 
 # The shared regions pinned by this gate. Add a region name here when a new
 # `# >>> shared:<name>` block is introduced in both scripts.
-SHARED_REGIONS=(debug-statement-scan is-test-file)
+SHARED_REGIONS=(debug-statement-scan is-test-file scanner-pattern-line)
 
 test_suite "shared scanner sync (#89/#132/#133)"
 
