@@ -368,19 +368,23 @@ test_repo_rooted_probe_is_name_anchored() {
         "an genuinely untested js source stays HIGH"
 }
 
-# #555 AC#3, asserted against THIS repo rather than a fixture: the real
-# ship-issue workflow.js is covered by tests/validate-workflow-helpers.mjs and
-# must emit no missing-test-file row.
+# #555 AC#3 + #568, asserted against THIS repo rather than a fixture: the real
+# ship-issue workflow.js is covered by tests/workflow-helpers/ship-issue.mjs and
+# tests/validate-workflow-helpers.mjs, so it must emit NO rows at all.
 #
-# The second assertion pins the #555/#568 BOUNDARY. untested-public-api is
-# explicitly out of scope for #555 (it is #568's third gap), so that row is
-# still expected here. If #568 later silences it, this assertion is the
-# reminder to update the boundary deliberately rather than by accident.
+# BOUNDARY HISTORY — this case is the ratchet, read it before editing.
+# Under #555 only `missing-test-file` was fixed, and this case deliberately
+# asserted `untested-public-api` was STILL present, with a note saying that if
+# #568 later silenced it, the assertion should be updated deliberately rather
+# than by accident. #568 did exactly that — the cross-directory fallback in
+# scan_untested_public_api now finds `meta` referenced from the repo-rooted
+# helpers — so the assertion is now "no rows in EITHER category". The ratchet
+# worked as designed: the change announced itself as a failing test.
 #
 # MAINTAINER NOTE: this is the one case in the suite that reads the LIVE repo
 # rather than a fixture — AC#3 asks for exactly that, so the coupling is
 # deliberate. It does not hardcode a test filename (any of the six stems
-# satisfies it), but renaming or relocating the helper module that covers
+# satisfies it), but renaming or relocating the helper modules that cover
 # ship-issue/workflow.js out of tests/ WILL turn this red for a reason
 # unrelated to a scanner regression. Fix the layout or the assertion — do not
 # delete the case.
@@ -399,9 +403,162 @@ test_real_repo_workflow_js_not_flagged() {
         command grep -c 'workflow\.js' || true)"
 
     assert_equals "0" "$missing" \
-        "this repo's ship-issue/workflow.js emits no missing-test-file (AC#3)"
-    assert_true "[ $api -ge 1 ]" \
-        "untested-public-api still fires — that gap is #568's, not #555's"
+        "this repo's ship-issue/workflow.js emits no missing-test-file (#555 AC#3)"
+    assert_equals "0" "$api" \
+        "and no untested-public-api either — the cross-dir fallback sees the helpers (#568)"
+}
+
+# --- #568: is_test_file basename anchoring ----------------------------------
+
+# A bash `case` glob's `*` crosses `/`, so the old path arm `*/test_*.*` also
+# matched a DIRECTORY named `test_helpers/` — silencing EVERY scanner for real
+# production source inside it. The name arms now match the basename, so only a
+# genuine `tests/`-style DIRECTORY segment skips a file.
+#
+# This is the case that fails against the pre-#568 scanner. It also pins the
+# other side: a real test dir and a real test_-prefixed FILE must still skip.
+test_is_test_file_anchors_on_basename() {
+    local d rows
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src/test_helpers" "$d/tests"
+
+    # Production source living under a test_-PREFIXED DIRECTORY: must be scanned.
+    command printf '%s\n' "def public_thing(a):" "    return a" \
+        >"$d/src/test_helpers/production.py"
+    # A real test FILE and a real tests/ DIRECTORY: must still be skipped.
+    command printf '%s\n' "def test_x():" "    assert True" >"$d/test_util.py"
+    command printf '%s\n' "def helper():" "    pass" >"$d/tests/helper.py"
+
+    run_gate "$(make_list "$d" src/test_helpers/production.py test_util.py tests/helper.py)"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_contains "$rows" "production.py" \
+        "source under a test_-prefixed DIRECTORY is scanned, not skipped (#568)"
+    assert_not_contains "$rows" "test_util.py" \
+        "a genuine test_-prefixed FILE is still skipped"
+    assert_not_contains "$rows" "helper.py" \
+        "a file under a real tests/ directory is still skipped"
+}
+
+# --- #568: declared conventions from .claude/pre-review.yml -----------------
+
+# `test_patterns` declares files that ARE tests; `test_discovery` declares how
+# to find the test FOR a source. Together they are the supported escape hatch
+# for a convention the built-in heuristics cannot infer — deliberately chosen
+# over widening the heuristics, because a wrongly-inferred test is a SILENT
+# false negative.
+#
+# Mirrors the issue's real repro: tests named scripts/smoke-<name>.ts.
+test_declared_test_conventions_honored() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' \
+        "test_patterns:" \
+        "  - 'scripts/smoke-*.ts'" \
+        "test_discovery:" \
+        "  - 'scripts/smoke-{name}.ts'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' "export function buildReport() {}" >"$sb/scripts/token-report.ts"
+    command printf '%s\n' "import {buildReport} from './token-report';" \
+        >"$sb/scripts/smoke-token-report.ts"
+    # A source with NO declared test resolving: must still fire (the control).
+    command printf '%s\n' "export function orphaned() {}" >"$sb/scripts/lonely.ts"
+
+    command printf '%s\n' \
+        "$sb/scripts/token-report.ts" \
+        "$sb/scripts/smoke-token-report.ts" \
+        "$sb/scripts/lonely.ts" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$GATE_OUT"
+    assert_not_contains "$rows" "token-report.ts	1	missing-test-file" \
+        "test_discovery template resolves the source to its declared test"
+    assert_not_contains "$rows" "smoke-token-report.ts" \
+        "test_patterns marks the smoke file itself as a test, not a source"
+    assert_contains "$rows" "lonely.ts" \
+        "a source with no resolving declared test still fires (control)"
+}
+
+# Absent any config the declared-convention code must be inert — no repo
+# without a pre-review.yml may change behaviour. Guards against the new
+# lookups accidentally matching (e.g. an empty pattern list matching all).
+test_no_config_means_no_declared_behavior() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/scripts"
+    command printf '%s\n' "export function buildReport() {}" >"$sb/scripts/token-report.ts"
+    command printf '%s\n' "import x from './token-report';" \
+        >"$sb/scripts/smoke-token-report.ts"
+    command printf '%s\n' \
+        "$sb/scripts/token-report.ts" "$sb/scripts/smoke-token-report.ts" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_contains "$rows" "token-report.ts" \
+        "with no config, the smoke- convention is NOT inferred — source still fires"
+    assert_contains "$rows" "smoke-token-report.ts" \
+        "with no config, a smoke- file is treated as source, not a test"
+}
+
+# --- #568: .mjs/.cjs are source extensions ----------------------------------
+
+# .mjs/.cjs used to fall through to the `*)` arm and emit a MEDIUM "Unknown
+# file type" row. They are ordinary js sources and must route through the js/ts
+# arm: HIGH missing-test-file when untested, silent when a test resolves.
+test_mjs_recognized_as_source() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "export const x = 1;" >"$sb/src/tooling.mjs"
+    command printf '%s\n' "export const y = 1;" >"$sb/src/covered.cjs"
+    command printf '%s\n' "// covers covered.cjs" >"$sb/tests/validate-covered.mjs"
+    command printf '%s\n' "$sb/src/tooling.mjs" "$sb/src/covered.cjs" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_contains "$rows" "tooling.mjs	1	missing-test-file	No test file found" \
+        "an untested .mjs is a HIGH missing-test-file, not a MEDIUM unknown type"
+    assert_not_contains "$rows" "Unknown file type" \
+        "no unknown-file-type row for a .mjs/.cjs source"
+    assert_not_contains "$rows" "covered.cjs" \
+        "a .cjs source with a repo-rooted test is silent"
+}
+
+# --- #568: cross-directory untested-public-api ------------------------------
+
+# scan_untested_public_api probed only two COLOCATED paths, so an export
+# genuinely exercised from a repo-rooted tests/ tree reported HIGH "no tests
+# reference". It now searches the same candidate set scan_missing_tests uses.
+#
+# The control export in the SAME file is the important half: the fallback must
+# find the symbol, not merely find the file.
+test_cross_directory_untested_public_api() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' \
+        "export function referenced() {}" \
+        "export function neverMentioned() {}" >"$sb/src/api.ts"
+    command printf '%s\n' \
+        "import {referenced} from '../src/api';" \
+        "referenced();" >"$sb/tests/validate-api-helpers.mjs"
+    command printf '%s\n' "$sb/src/api.ts" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_not_contains "$rows" "referenced:" \
+        "an export referenced from a repo-rooted test emits no finding (#568)"
+    assert_contains "$rows" "neverMentioned" \
+        "an unreferenced export in the same file still fires — the symbol is checked, not just the file"
 }
 
 # --- Category: untested-public-api ------------------------------------------
@@ -483,6 +640,11 @@ run_test test_repo_rooted_probe_ignores_directories "a directory named like a te
 run_test test_colocated_js_test_still_detected "colocated <name>.test.js still suppresses missing-test-file (#555 regression)"
 run_test test_repo_rooted_probe_is_name_anchored "repo-rooted probe stays name-anchored — unrelated tests/ files don't count (#555)"
 run_test test_real_repo_workflow_js_not_flagged "this repo's ship-issue/workflow.js: no missing-test-file, untested-public-api still fires (#555 AC#3)"
+run_test test_is_test_file_anchors_on_basename "is_test_file anchors name arms on the BASENAME — a test_-prefixed DIRECTORY does not skip source (#568)"
+run_test test_declared_test_conventions_honored "declared test_patterns/test_discovery are honored, control still fires (#568)"
+run_test test_no_config_means_no_declared_behavior "with no pre-review.yml the declared-convention path is inert (#568)"
+run_test test_mjs_recognized_as_source ".mjs/.cjs route through the js/ts arm, not the unknown-type arm (#568)"
+run_test test_cross_directory_untested_public_api "untested-public-api sees a repo-rooted test, and still checks the SYMBOL (#568)"
 run_test test_untested_public_api_fires "untested-public-api detector fires and names the function"
 run_test test_clean_source_silent "a clean, tested, private-only source emits no findings"
 run_test test_skip_policy_override_honored "project pre-review.yml override suppresses a skipped path, not a control"

@@ -53,8 +53,16 @@ trap 'command rm -rf "$WORKDIR"' EXIT
 
 # scan SCRIPT LIST — run a scanner with the git env scrubbed, echo only the
 # debug-statement rows (3rd tab-column == debug-statement).
+#
+# PATTERNS_FORCE_BASH is passed THROUGH `env` explicitly rather than relying on
+# a `VAR=x scan ...` prefix: the child is launched via `/usr/bin/env --unset=`,
+# and a caller-side prefix on a shell function does not survive into it in a way
+# the shim can read. Empty by default, so the normal cases keep exercising
+# whichever impl the host resolves.
 scan() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$1" "$2" 2>/dev/null |
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "PATTERNS_FORCE_BASH=${PATTERNS_FORCE_BASH:-0}" \
+        "$REAL_BASH" "$1" "$2" 2>/dev/null |
         command awk -F '\t' '$3 == "debug-statement"'
 }
 
@@ -92,9 +100,16 @@ fresh_dir() { command mktemp -d "$WORKDIR/case.XXXXXX"; }
 # it, which is exactly what we assert.
 setup_fixtures() {
     local d="$1"
-    command mkdir -p "$d/src" "$d/tests" "$d/spec" "$d/x/__tests__"
+    command mkdir -p "$d/src" "$d/tests" "$d/spec" "$d/x/__tests__" "$d/src/test_helpers"
     command printf '%s\n' "console.log('real source');" >"$d/src/mod.js"
     command printf '%s\n' "console.log('contest is NOT a test');" >"$d/contest.js"
+    # #568: a test_-prefixed DIRECTORY must not skip real source inside it. A
+    # bash `case` glob's `*` crosses `/`, so the old `*/test_*.*` path arm
+    # matched this and silenced BOTH scanners. Lives here, not only in
+    # validate-pre-review-gates.sh, because the region is duplicated into
+    # patterns.sh and only a shared-corpus case pins both copies.
+    command printf '%s\n' "console.log('production code, NOT a test');" \
+        >"$d/src/test_helpers/production.js"
     command printf '%s\n' "console.log('tests/ dir, skip');" >"$d/tests/helper.js"
     command printf '%s\n' "binding.pry" >"$d/spec/widget.rb"
     command printf '%s\n' "console.log('__tests__ dir, skip');" >"$d/x/__tests__/a.ts"
@@ -103,7 +118,8 @@ setup_fixtures() {
     command printf '%s\n' "console.log('.spec suffix, skip');" >"$d/api.spec.js"
     command printf '%s\n' "console.log('.test suffix, skip');" >"$d/mod.test.ts"
     command printf '%s\n' \
-        "$d/src/mod.js" "$d/contest.js" "$d/tests/helper.js" "$d/spec/widget.rb" \
+        "$d/src/mod.js" "$d/contest.js" "$d/src/test_helpers/production.js" \
+        "$d/tests/helper.js" "$d/spec/widget.rb" \
         "$d/x/__tests__/a.ts" "$d/test_util.py" "$d/widget_test.go" \
         "$d/api.spec.js" "$d/mod.test.ts" >"$d/list.txt"
 }
@@ -111,7 +127,8 @@ setup_fixtures() {
 # Source files that MUST be flagged, and test files that MUST be skipped (one
 # per is_test_file arm). Kept as newline lists so the assertion loops are simple.
 SOURCE_FILES="src/mod.js
-contest.js"
+contest.js
+src/test_helpers/production.js"
 TEST_FILES="tests/helper.js
 spec/widget.rb
 x/__tests__/a.ts
@@ -148,6 +165,19 @@ test_patterns_classifies() {
     d="$(fresh_dir)"
     setup_fixtures "$d"
     assert_scanner_classifies "$PATTERNS" "patterns.sh" "$d"
+}
+
+# patterns.sh is a SHIM: it exec's patterns.py whenever a python3>=3.11 exists,
+# so every case above silently exercises the PYTHON impl and cannot see a defect
+# in the bash body. That is not hypothetical — #568's is_test_file fix lives in
+# the bash body, and this suite passed against a deliberately reverted copy of
+# it until this case existed. PATTERNS_FORCE_BASH=1 pins the fallback that base
+# macOS (bash 3.2, no usable python3) actually runs.
+test_patterns_classifies_bash_fallback() {
+    local d
+    d="$(fresh_dir)"
+    setup_fixtures "$d"
+    PATTERNS_FORCE_BASH=1 assert_scanner_classifies "$PATTERNS" "patterns.sh (forced bash)" "$d"
 }
 
 test_gates_classifies() {
@@ -288,6 +318,7 @@ test_patterns_empty_handler_multilang_fires() {
 }
 
 run_test test_patterns_classifies "patterns.sh flags source, skips test files by path"
+run_test test_patterns_classifies_bash_fallback "patterns.sh BASH FALLBACK classifies identically (the shim hides bash defects otherwise)"
 run_test test_gates_classifies "pre-review-gates.sh flags source, skips test files by path"
 run_test test_scanners_agree "both scanners classify every fixture identically"
 run_test test_patterns_tech_debt_fires "patterns.sh fires tech-debt-marker on all 5 keywords, not on clean file"

@@ -58,7 +58,13 @@ def is_test_file(path: str) -> bool:
     """Return True if PATH is a test file by path/name convention. Mirrors the
     `>>> shared:is-test-file` block in patterns.sh exactly (segment-anchored so
     contest.py / latest.js are NOT matched, while tests/helper.py IS). PATH-only:
-    content-colocated tests are not this function's concern."""
+    content-colocated tests are not this function's concern.
+
+    The name arms match on the BASENAME, which is the semantics the bash copies
+    adopted in #568: a bash `case` glob's `*` crosses `/`, so their old
+    `*/test_*.*` arm also matched a DIRECTORY named `test_helpers/`. This impl
+    was already basename-anchored and so was already correct — the bash side
+    moved to match it, not the reverse."""
     # Directory-segment arms: a `tests`/`test`/`__tests__`/`spec`/`__pycache__`
     # segment anywhere in the path (leading or after a slash).
     for seg in ("tests", "test", "__tests__", "spec", "__pycache__"):
