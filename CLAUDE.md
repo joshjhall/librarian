@@ -27,6 +27,8 @@ plugins/
     scripts/                      # bundled shell scripts, called via ${CLAUDE_PLUGIN_ROOT}
     hooks/                        # e.g. golem-notify.sh
 tests/validate-manifests.mjs      # zero-dep manifest validator (CI + pre-commit/pre-push)
+tests/lib/                        # shared harness, assertions, per-suite sandboxes
+tests/<suite>/                    # per-area fragments of a split suite (see below)
 docs/verification/                # end-to-end verification reports for issues that
                                   #   can't be fully exercised in-session; one file
                                   #   per issue, named <skill>-e2e-<issue>.md
@@ -102,6 +104,31 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   (`file\tline\tcategory\tevidence\tcertainty`) is the language boundary — a port
   is a drop-in as long as its output matches. See `dev-core`'s `shell-scripting`
   skill for the portable idioms and the fail-loud version-gate template.
+- **The big test suites are SPLIT: thin entry point + sourced fragments** (#564).
+  Six suites (`validate-golem-scripts`, `golem-gate-watch`, `validate-release`,
+  `validate-golem-notify`, `validate-worktree-guard`, plus the `coverage-python`
+  corpus, and `validate-workflow-helpers.mjs` on the node side) keep only a
+  header, path consts and the dispatch list; the cases live in
+  `tests/<suite>/NN-<area>.sh` and the shared plumbing in
+  `tests/lib/<suite>-sandbox.sh`. **Add a case to the fragment that owns the
+  area, never to the entry point.** Four rules that are easy to get wrong:
+  (1) fragments are **sourced, not executed** — no shebang, a `# shellcheck
+  shell=bash` directive instead (without it shellcheck errors SC2148);
+  (2) a const in the entry point that only the fragments read needs a
+  `# shellcheck disable=SC2034` — block-scope it with `{ ... }` when it covers
+  several, since a bare directive only covers the next statement;
+  (3) the entry point declares an **explicit ordered** fragment list —
+  `run_test` order is not fragment order, and in `validate-golem-scripts` not
+  even definition order — dispatched via `source_fragments`
+  (`tests/lib/fragments.sh`), which **fails the suite** if a `*.sh` on disk is
+  unlisted or a listed one is missing; (4) dispatch with `run_fragment_test` so
+  a failure names its fragment. A helper used by exactly one area stays in that
+  area's file — the shared library must not accrete single-use code.
+  `.mjs` areas follow the same shape with `run()` exports, one shared
+  collect-all `failures` array (`tests/lib/mjs-assert.mjs`), and a `try/catch`
+  per area so a throw outside an assertion cannot mask its siblings. When adding
+  a new `.mjs` module directory, add it to `tests/coverage-mjs.sh`'s `--include`
+  list or its lines silently vanish from Codecov.
 - **The `containers` submodule is pinned** (`update = none`). It exists only to
   build the devcontainer (`build.context: ../containers`). Bump it deliberately.
 - **GitHub Actions are SHA-pinned with a version comment.** Every `uses:` in

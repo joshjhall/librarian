@@ -946,6 +946,90 @@ test_installed_ruff_matches_the_pin() {
         "the ruff on PATH is the pinned version (a mismatch makes every lint hard-fail)"
 }
 
+# --- coverage-python.sh's coverage.py probe (#564) ---------------------------
+#
+# Same subject as the ruff gates above: a tool-absent gate must SKIP cleanly
+# rather than misbehave. coverage-python.sh gated on a bare `import coverage`,
+# which is not evidence coverage.py is installed — the script runs from the repo
+# root, where `./coverage/` is the output directory coverage-mjs.sh writes
+# lcov.info into, and PEP 420 makes any directory on sys.path an implicit
+# NAMESPACE PACKAGE. So `import coverage` bound an empty build-output dir and
+# succeeded with the library absent, the skip was bypassed, and the run hard-
+# failed at `coverage xml` with a misleading message.
+#
+# Driven against a REPLACED sys.path, not merely a prepended PYTHONPATH. A real
+# installed package always outranks a namespace package regardless of path order,
+# so on a host that HAS coverage.py (CI does, and any host that ran
+# `just coverage`) a PYTHONPATH-only fixture silently resolves the real library
+# and the case tests nothing. Assigning `sys.path[:]` to the fixture dir alone
+# makes the empty directory the ONLY candidate, so the case behaves identically
+# whether or not coverage.py is installed. Verified both ways.
+test_coverage_probe_rejects_a_namespace_package() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip_test "python3 not available — cannot exercise the import probe"
+        return 0
+    fi
+
+    local sb rc_bare=0 rc_attr=0 path_stmt
+    sb="$(command mktemp -d "$WORKDIR/nspkg.XXXXXX")" || return 1
+    # An EMPTY directory named `coverage` — exactly what ./coverage/ is before
+    # coverage-mjs.sh has written into it, and enough for PEP 420.
+    command mkdir -p "$sb/coverage"
+    path_stmt="import sys; sys.path[:] = ['$sb']; "
+
+    # The OLD probe: importability alone. Against this path it SUCCEEDS, which is
+    # precisely the bug — assert that, so the test states the hazard it guards.
+    (command python3 -c "${path_stmt}import coverage" 2>/dev/null) || rc_bare=$?
+    assert_equals "0" "$rc_bare" \
+        "a bare 'import coverage' SUCCEEDS against an empty ./coverage/ dir (PEP 420 namespace package) — why importability is not a valid probe"
+
+    # The NEW probe: touch a real attribute. A namespace package has none, so this
+    # must fail and the gate skips as designed.
+    (command python3 -c "${path_stmt}import coverage; coverage.Coverage" 2>/dev/null) || rc_attr=$?
+    assert_true "[ \"$rc_attr\" -ne 0 ]" \
+        "the attribute probe REJECTS the namespace package, so coverage-python.sh skips instead of failing at 'coverage xml'"
+
+    # And the script itself must carry the attribute form, not the bare import —
+    # otherwise the two assertions above pass while the real gate stays broken.
+    assert_file_contains "$REPO_ROOT/tests/coverage-python.sh" \
+        "import coverage; coverage.Coverage" \
+        "coverage-python.sh probes a real attribute, not mere importability (#564)"
+    assert_file_not_contains "$REPO_ROOT/tests/coverage-python.sh" \
+        "python3 -c 'import coverage'" \
+        "coverage-python.sh no longer gates on the bare import that the ./coverage/ dir satisfies"
+}
+
+# The script must also SKIP (exit 0, no report) rather than hard-fail when
+# coverage.py is genuinely absent — the end-to-end behaviour the probe exists to
+# produce. Run it with a stub PATH holding a python3 that reports 3.11 and fails
+# every import, so the case is independent of the host's real python.
+test_coverage_python_skips_when_coverage_absent() {
+    local sb rc=0 out
+    stub_dir sb || return 1
+
+    command cat >"$sb/bin/python3" <<'STUB'
+#!/usr/bin/env bash
+# Version gate: report 3.11 so the script proceeds past it. Any other -c program
+# (both the old bare import and the new attribute probe) fails, standing in for
+# a host with no coverage.py.
+case "$2" in
+    *version_info*) exit 0 ;;
+    *) exit 1 ;;
+esac
+STUB
+    command chmod +x "$sb/bin/python3"
+
+    out="$(cd "$REPO_ROOT" && command env --unset=BASH_ENV PATH="$sb/bin" \
+        bash "$REPO_ROOT/tests/coverage-python.sh" 2>&1)" || rc=$?
+
+    assert_equals "0" "$rc" \
+        "coverage-python.sh EXITS 0 when coverage.py is absent (a skip, not a failure)"
+    assert_contains "$out" "[skip] python-coverage" \
+        "coverage-python.sh says it skipped, naming the missing dependency"
+    assert_not_contains "$out" "coverage xml failed" \
+        "coverage-python.sh never reaches the xml step when the probe correctly skips (#564)"
+}
+
 run_test test_prefers_ruff_binary_when_present "ruff on PATH is preferred and actually invoked"
 run_test test_ruff_violation_fails_the_gate "a violation via the ruff binary fails the gate"
 run_test test_falls_back_to_uvx_when_ruff_absent "falls back to probed uvx when ruff is absent"
@@ -972,5 +1056,7 @@ run_test test_post_create_dispatch_handles_every_outcome "post-create's dispatch
 run_test test_post_create_dispatch_arms_run_the_right_installer "post-create's dispatch arms run the right installer (#542)"
 run_test test_post_create_version_parse_is_validated "post-create validates the ruff --version shape it parses (#542)"
 run_test test_installed_ruff_matches_the_pin "the ruff on PATH matches the pin (#542)"
+run_test test_coverage_probe_rejects_a_namespace_package "coverage-python.sh's probe rejects the ./coverage/ namespace package (#564)"
+run_test test_coverage_python_skips_when_coverage_absent "coverage-python.sh skips (exit 0) when coverage.py is absent (#564)"
 
 generate_report

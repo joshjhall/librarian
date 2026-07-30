@@ -15,7 +15,16 @@
 #
 # Note on c8's default excludes: c8 excludes test/ and tests/ dirs by default,
 # but our instrumented sources ARE the tests/*.mjs validators, so we override
-# --exclude to just node_modules and --include exactly the two validators.
+# --exclude to just node_modules and --include the validators plus the modules
+# they import.
+#
+# The --include list MUST track the module layout (#564). validate-workflow-
+# helpers.mjs is now a thin entry point: the ~3,300 lines of assertions live in
+# tests/workflow-helpers/*.mjs and the extraction machinery in tests/lib/*.mjs.
+# An --include pinned to the entry point alone would report a green 2-file lcov
+# while silently dropping every line that does the work — a coverage cliff that
+# looks exactly like a passing report. Add new .mjs module dirs here when they
+# appear.
 #
 # Skips gracefully (exit 0, no report) when node or npx is unavailable — the
 # same skip-if-absent posture as the sibling gates. NOT wired into
@@ -72,6 +81,8 @@ if ! npx --yes c8 report \
     --reports-dir="$OUT_DIR" \
     --include='tests/validate-manifests.mjs' \
     --include='tests/validate-workflow-helpers.mjs' \
+    --include='tests/workflow-helpers/*.mjs' \
+    --include='tests/lib/*.mjs' \
     --exclude='node_modules/**' \
     --all=false >/dev/null 2>&1; then
     printf '[FAIL] mjs-coverage — c8 report failed\n' >&2
