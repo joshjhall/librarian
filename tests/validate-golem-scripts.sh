@@ -2114,16 +2114,31 @@ test_worktree_rm_kill_session_classifier() {
         "the benign match is case-insensitive"
 
     # `error connecting to` is only benign for ENOENT. tmux formats the message as
-    # `error connecting to <sock> (<strerror>)`, and the same prefix carries
-    # Permission denied / Connection refused for a LOCKED or WEDGED socket whose
-    # session is still running — verified against tmux 3.5a by chmod 000 on a live
-    # socket, which yields exactly this message and leaves the session alive.
-    # Treating those as absent would re-create the swallowed-failure bug #533
-    # closes, so pin all three variants of the one prefix.
+    # `error connecting to <sock> (<strerror>)`, and the SAME prefix carries
+    # Permission denied for a LOCKED socket whose session is still running —
+    # verified against tmux 3.5a by chmod 000 on a live socket, which yields
+    # exactly this message and leaves the session alive. Treating that as absent
+    # would re-create the swallowed-failure bug #533 closes.
     assert_equals "failed" "$(run_kill_outcome 1 "error connecting to /tmp/s (Permission denied)")" \
         "a locked socket is a real failure, not an absent server"
+    # Any OTHER strerror on the same prefix is unrecognized, so it warns rather
+    # than being assumed benign. (ECONNREFUSED is NOT the stale-socket case: a
+    # bound, non-listening socket reports `no server running`, matched above.
+    # Verified against tmux 3.5a.)
     assert_equals "failed" "$(run_kill_outcome 1 "error connecting to /tmp/s (Connection refused)")" \
-        "a refused connection is a real failure, not an absent server"
+        "an unrecognized connect strerror warns rather than passing as absent"
+
+    # The ENOENT parenthetical is libc's strerror, which IS translated via
+    # LC_MESSAGES (glibc: "Aucun fichier ou dossier de ce nom"), unlike the three
+    # tmux-authored literals. The classifier matches only the English text, so the
+    # dispatch pins LC_ALL=C; this asserts the untranslated form is what reaches
+    # the benign arm, and the translated form does not silently pass.
+    assert_equals "absent" \
+        "$(run_kill_outcome 1 "error connecting to /tmp/s (No such file or directory)")" \
+        "the C-locale ENOENT wording is the benign no-server case"
+    assert_equals "failed" \
+        "$(run_kill_outcome 1 "error connecting to /tmp/s (Aucun fichier ou dossier de ce nom)")" \
+        "a TRANSLATED ENOENT is not silently benign — the caller must pin LC_ALL=C"
 
     # The non-numeric rc fail-safe the helper's comment claims. `[ "$rc" = "0" ]`
     # compares as a STRING on purpose; a future refactor to arithmetic
@@ -2237,6 +2252,55 @@ EOF
         "tmux's own EACCES text reaches the operator"
     assert_not_contains "$RUN_OUT" "killed tmux session" \
         "does not claim a kill against an unreachable socket"
+}
+
+# The dispatch must invoke tmux under LC_ALL=C (#533).
+#
+# The benign ENOENT match keys off libc's strerror text, which is TRANSLATED via
+# LC_MESSAGES — glibc really does ship "Aucun fichier ou dossier de ce nom" for
+# ENOENT. On a host with such a locale generated, an unpinned call would miss the
+# match and warn on every ordinary server-less teardown: the exact noise the
+# narrowing exists to prevent. Asserted BEHAVIOURALLY — the stub reports the
+# LC_ALL it was actually run with — because a grep for the string would pass even
+# if the assignment were on the wrong command.
+test_worktree_rm_pins_c_locale_for_tmux() {
+    local sb
+    new_sandbox sb
+
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: record the locale tmux was invoked under, then act as absent.
+printf 'LC_ALL=%s\n' "${LC_ALL-unset}" >>"$TMUX_STUB_LOG"
+printf 'error connecting to /tmp/tmux-501/default (No such file or directory)\n' >&2
+exit 1
+EOF
+    command chmod +x "$sb/bin/tmux"
+
+    local log="$sb/tmux-stub.log"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            LC_ALL=fr_FR.UTF-8 \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX_STUB_LOG="$log" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 67 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" "teardown exits 0 under a non-English ambient locale"
+    local loclog
+    loclog="$(command cat "$log" 2>/dev/null || true)"
+    # The ambient fr_FR must NOT reach tmux — the call overrides it.
+    assert_contains "$loclog" "LC_ALL=C" \
+        "tmux is invoked under LC_ALL=C so strerror text stays English"
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "a server-less teardown stays silent even under a non-English ambient locale"
 }
 
 # Every outcome the classifier can echo must have its own `case` label in the
@@ -5442,6 +5506,7 @@ run_test test_worktree_rm_no_tmux_server_is_quiet_noop "worktree-rm: a host with
 run_test test_worktree_rm_kill_session_classifier "worktree-rm: tmux_kill_outcome separates an absent session from a real failure (#533)"
 run_test test_worktree_rm_warns_on_unexpected_kill_failure "worktree-rm: an unexpected kill-session error warns instead of reporting a clean no-op (#533)"
 run_test test_worktree_rm_warns_on_locked_socket "worktree-rm: a locked/wedged socket warns instead of passing as an absent server (#533)"
+run_test test_worktree_rm_pins_c_locale_for_tmux "worktree-rm: tmux runs under LC_ALL=C so a translated strerror cannot cause spurious warnings (#533)"
 run_test test_worktree_rm_kill_dispatch_handles_every_outcome "worktree-rm: the kill dispatch handles every classifier outcome explicitly (#533)"
 run_test test_worktree_rm_emits_reaped_feed_line "worktree-rm: teardown emits a reaped feed line with the right id (#446)"
 run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"

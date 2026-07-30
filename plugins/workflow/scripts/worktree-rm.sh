@@ -121,12 +121,23 @@ fi
 #
 # But `error connecting to` alone is TOO wide, and dangerously so: tmux formats
 # it as `error connecting to <sock> (<strerror>)`, and only the ENOENT variant
-# means "no server". The same prefix carries `(Permission denied)` and
-# `(Connection refused)` — a locked or wedged socket where the session is very
-# much STILL RUNNING (verified: chmod 000 on a live socket yields exactly that
-# message, and the session survives). Swallowing those would re-create this
-# script's original bug under a new message, so the socket arm must ALSO see the
-# no-such-file wording; anything else about connecting falls through to `failed`.
+# means "no server". The same prefix carries `(Permission denied)` for a LOCKED
+# socket whose session is very much STILL RUNNING (verified: chmod 000 on a live
+# socket yields exactly that message, and the session survives). Swallowing that
+# would re-create this script's original bug under a new message, so the socket
+# arm must ALSO see the no-such-file wording; anything else about connecting
+# falls through to `failed`.
+#
+# That parenthetical is libc's `strerror`, which — unlike the three tmux-authored
+# literals above — is TRANSLATED via LC_MESSAGES (glibc ships e.g. "Aucun fichier
+# ou dossier de ce nom" for ENOENT). Under a non-English locale the substring
+# would miss and every teardown on a server-less host would warn: exactly the
+# noise this arm exists to prevent. The caller therefore pins LC_ALL=C on the
+# tmux invocation so the text is guaranteed English; see the dispatch below.
+#
+# A crashed server leaving a STALE socket does NOT reach this arm at all —
+# verified against tmux 3.5a with a bound, non-listening socket, which reports
+# `no server running on <sock>` (already benign above) rather than ECONNREFUSED.
 #
 # Anything else, INCLUDING an empty stderr, is `failed`. A tmux that fails
 # without saying why is exactly the unexplained case an operator needs to see;
@@ -182,8 +193,12 @@ tmux_kill_outcome() {
 # future typo in the helper cannot masquerade as one (#542).
 sess="golem-$N"
 if command -v tmux >/dev/null 2>&1; then
+    # LC_ALL=C so the `(<strerror>)` parenthetical tmux appends to a connect
+    # failure is guaranteed English — it is libc-translated, and the classifier's
+    # no-such-file match would miss under a non-English locale, warning on every
+    # server-less teardown. Scoped to this one call, not exported.
     tmux_rc=0
-    tmux_err="$(tmux kill-session -t "=$sess" 2>&1)" || tmux_rc=$?
+    tmux_err="$(LC_ALL=C tmux kill-session -t "=$sess" 2>&1)" || tmux_rc=$?
     case "$(tmux_kill_outcome "$tmux_rc" "$tmux_err")" in
         killed)
             command echo "  killed tmux session $sess"
