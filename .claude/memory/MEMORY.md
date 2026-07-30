@@ -20,7 +20,6 @@
 - [Workflow agentType namespacing](workflow-agenttype-namespacing.md) — Workflow agent() wants `<plugin>:<name>`, Agent tool wants bare — opposite; fixed #126
 - [Test workflow.js pure helpers](test-workflow-js-pure-helpers.md) — slice source before first orchestration stmt + eval in new Function; validate-workflow-helpers.mjs
 - [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry aborts the run + masks later assertions; use `?.`
-- [set -e aborts are untestable in run_test](set-e-abort-untestable-in-run-test.md) — harness calls bodies as `if "$fn"`, suspending set -e; SLICE the real fn + run at top level (#498)
 - [grep -c exits 1 on zero count](grep-c-zero-count-exit-1.md) — prints 0 but EXITS 1; `|| echo 0` double-appends; use `grep -o P | wc -l`
 - [jq empty vs jq -e for JSON validity](jq-validate-empty-vs-e.md) — validity = `jq empty`; `jq -e .` misreports valid scalars false/null as invalid (#253)
 - [core.bare misconfig](core-bare-misconfig.md) — "must be run in a work tree" = stray core.bare=true; set false (also masks real git status)
