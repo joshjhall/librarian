@@ -118,10 +118,25 @@ EOF
 # Skip-glob coverage: an .env.example holding a secret must be ignored.
 command printf 'key = "%s"\n' "$STRIPE_TOK" >"$FIXDIR/secrets.env.example"
 
+# ESM/CJS extension coverage (#568). Both impls route .mjs/.cjs through their
+# js/ts arms; without a fixture carrying these extensions the parity assertion
+# passes VACUOUSLY with respect to that branch — it never runs. A top-level
+# console.log is the cheapest input that reaches the arm in every ported tool.
+command cat >"$FIXDIR/tool.mjs" <<'EOF'
+console.log('left in by accident');
+export function undocumented() {}
+EOF
+
+command cat >"$FIXDIR/tool.cjs" <<'EOF'
+console.log('left in by accident');
+module.exports.thing = function () {};
+EOF
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
-    "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example"; do
+    "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
+    "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs"; do
     command printf '%s\n' "$f" >>"$FILE_LIST"
 done
 

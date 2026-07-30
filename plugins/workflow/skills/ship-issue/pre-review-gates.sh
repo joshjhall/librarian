@@ -59,6 +59,28 @@ SCRIPT_DIR="$(command dirname "$(command readlink -f "${BASH_SOURCE[0]}")")"
 _SKIP_POLICY_REPO=""
 _SKIP_POLICY_LOADED=false
 _PROJECT_ROOT=""
+# Declared conventions from .claude/pre-review.yml (#568). Both are newline-
+# delimited and EMPTY unless the project declares them, which is what keeps the
+# built-in heuristics the only behaviour for a repo with no config.
+#   _TEST_PATTERNS   — gitignore-style globs of files that ARE tests
+#   _TEST_DISCOVERY  — {name}-templated paths locating the test FOR a source
+_TEST_PATTERNS=""
+_TEST_DISCOVERY=""
+# Second temp repo, created only when test_patterns are declared. MUST be
+# initialized here: the script runs under `set -u`, so a bare reference before
+# assignment would abort the whole scan.
+_TEST_PATTERN_REPO=""
+
+# read_yaml_list KEY FILE — the list items under top-level KEY, one per line.
+# Extracts the lines between `KEY:` and the next top-level key (or EOF), then
+# strips the YAML list prefix and surrounding quotes. Shared by all three keys
+# so they cannot drift in how they parse (#568).
+read_yaml_list() {
+    command sed -n "/^$1:/,/^[a-zA-Z_]/{/^$1:/d;/^[a-zA-Z_]/d;p}" "$2" 2>/dev/null |
+        command sed 's/^[[:space:]]*-[[:space:]]*//' |
+        command sed 's/^["'\'']//' | command sed 's/["'\'']\s*$//' |
+        command sed '/^$/d'
+}
 
 # load_test_skip_policy — Merge default + project patterns into a temp git repo.
 # Called once lazily on first is_test_skipped() call.
@@ -84,20 +106,95 @@ load_test_skip_policy() {
     local project_config="${project_root}/.claude/pre-review.yml"
 
     if [ -f "$project_config" ]; then
-        # Extract lines between "test_skip_patterns:" and the next top-level
-        # key (or EOF). Strip YAML list prefix ("  - ") and quotes.
-        command sed -n '/^test_skip_patterns:/,/^[a-zA-Z_]/{/^test_skip_patterns:/d;/^[a-zA-Z_]/d;p}' \
-            "$project_config" 2>/dev/null |
-            command sed 's/^[[:space:]]*-[[:space:]]*//' |
-            command sed 's/^["'\'']//' | command sed 's/["'\'']\s*$//' |
-            command sed '/^$/d' >>"$merged"
+        read_yaml_list test_skip_patterns "$project_config" >>"$merged"
         command printf '\n' >>"$merged"
+
+        # Declared test conventions (#568). A repo whose tests the built-in
+        # heuristics cannot infer declares them here rather than hoping a
+        # widened heuristic guesses right — a wrongly-inferred test is a SILENT
+        # false negative, so the built-ins stay conservative and this is the
+        # supported escape hatch.
+        _TEST_PATTERNS="$(read_yaml_list test_patterns "$project_config")"
+        _TEST_DISCOVERY="$(read_yaml_list test_discovery "$project_config")"
+
+        # test_patterns are matched by the same git check-ignore engine as the
+        # skip patterns, in their OWN exclude file so the two sets cannot
+        # contaminate each other.
+        if [ -n "$_TEST_PATTERNS" ]; then
+            _TEST_PATTERN_REPO=$(command mktemp -d)
+            command git init -q "$_TEST_PATTERN_REPO" 2>/dev/null
+            command printf '%s\n' "$_TEST_PATTERNS" \
+                >"${_TEST_PATTERN_REPO}/.git/info/exclude"
+        fi
     fi
 
     # Symlink as .git/info/exclude so git check-ignore uses our patterns
     command ln -sf "$merged" "${_SKIP_POLICY_REPO}/.git/info/exclude"
 
     _SKIP_POLICY_LOADED=true
+}
+
+# matches_declared_test_pattern FILE — 0 when the project declared this file as
+# a test via `test_patterns` (#568). Always false when nothing was declared.
+matches_declared_test_pattern() {
+    load_test_skip_policy
+    [ -n "$_TEST_PATTERN_REPO" ] || return 1
+
+    local relpath="$1"
+    if [ -n "$_PROJECT_ROOT" ] && [ "$_PROJECT_ROOT" != "." ]; then
+        relpath="${relpath#"${_PROJECT_ROOT}/"}"
+    fi
+    case "$relpath" in
+        /*) relpath="${relpath#/}" ;;
+    esac
+    command git -C "$_TEST_PATTERN_REPO" check-ignore -q --no-index "$relpath" 2>/dev/null
+}
+
+# declared_test_paths FILE — existing files that the project's `test_discovery`
+# templates resolve to for this source, one per line (#568). Each template
+# carries `{name}`, the source basename with its extension stripped; templates
+# are repo-relative unless absolute. Empty when nothing is declared or nothing
+# resolves.
+#
+# TRUST MODEL: templates are NOT sanitized, and a relative template is joined to
+# _PROJECT_ROOT without normalizing `..`, so `../../../etc/{name}` resolves
+# outside the repo and can suppress a finding. That is accepted, not overlooked:
+# .claude/pre-review.yml is the audited repo's OWN file, and the pre-existing
+# `test_skip_patterns` key already suppresses any finding with a single line
+# (`src/**`), so this grants no capability a hostile config did not already
+# have. It is a footgun to document, not a privilege boundary to enforce —
+# a template that points outside the repo is a config bug worth noticing.
+# The `{name}` expansion itself is a pure bash substitution (no eval, no sed),
+# so a source name carrying shell or regex metacharacters cannot alter the
+# template or escape the `[ -f ]` test.
+declared_test_paths() {
+    load_test_skip_policy
+    [ -n "$_TEST_DISCOVERY" ] || return 0
+
+    local base name_no_ext template resolved
+    base="${1##*/}"
+    name_no_ext="${base%.*}"
+
+    while IFS= read -r template; do
+        [ -n "$template" ] || continue
+        # Pure bash substitution — no sed, so a name containing regex or sed
+        # metacharacters cannot alter the template.
+        resolved="${template//\{name\}/$name_no_ext}"
+        case "$resolved" in
+            /*) ;;
+            *) resolved="${_PROJECT_ROOT}/${resolved}" ;;
+        esac
+        [ -f "$resolved" ] && command printf '%s\n' "$resolved"
+    done <<EOF
+$_TEST_DISCOVERY
+EOF
+}
+
+# has_declared_test FILE — 0 when at least one declared template resolves.
+has_declared_test() {
+    local hit
+    hit="$(declared_test_paths "$1")"
+    [ -n "$hit" ]
 }
 
 # is_test_skipped FILE — returns 0 if the file matches skip patterns
@@ -118,10 +215,13 @@ is_test_skipped() {
     command git -C "$_SKIP_POLICY_REPO" check-ignore -q --no-index "$relpath" 2>/dev/null
 }
 
-# Cleanup temp repo on exit
+# Cleanup temp repos on exit
 cleanup_skip_policy() {
     if [ -n "$_SKIP_POLICY_REPO" ]; then
         command rm -rf "$_SKIP_POLICY_REPO"
+    fi
+    if [ -n "$_TEST_PATTERN_REPO" ]; then
+        command rm -rf "$_TEST_PATTERN_REPO"
     fi
 }
 trap cleanup_skip_policy EXIT
@@ -133,12 +233,20 @@ trap cleanup_skip_policy EXIT
 # contest.py / latest.js / attestation.go (which a bare *test* glob wrongly
 # matches) are NOT skipped, while tests/helper.py (which a suffix-only set
 # wrongly scans) IS. Handles both repo-relative and absolute path forms.
+#
+# The two arm groups anchor DIFFERENTLY, and the split is load-bearing (#568):
+# in a bash `case` glob, `*` crosses `/`, so a path arm like `*/test_*.*` also
+# matches a DIRECTORY named `test_helpers/` — silencing every scanner for real
+# source at `src/test_helpers/production.py`. Directory arms are meant to cross
+# slashes; the name arms are matched against the BASENAME so they cannot.
 is_test_file() {
     case "$1" in
         tests/* | */tests/* | test/* | */test/* | \
             __tests__/* | */__tests__/* | spec/* | */spec/* | \
             __pycache__/* | */__pycache__/*) return 0 ;;
-        test_*.* | */test_*.*) return 0 ;;
+    esac
+    case "${1##*/}" in
+        test_*.*) return 0 ;;
         *_test.* | *_spec.* | *.test.* | *.spec.*) return 0 ;;
     esac
     return 1
@@ -213,6 +321,9 @@ scan_debug_statements() {
         *.lock | *lock.json | *go.sum | *.md | *.txt | *.json | *.yaml | *.yml | *.toml | *.ini | *.cfg | *.conf) return ;;
     esac
     is_test_file "$file" && return
+    # ...including any the project DECLARED as tests (#568): a debug statement
+    # in a declared test is as intentional as one in tests/.
+    matches_declared_test_pattern "$file" && return
 
     # >>> shared:debug-statement-scan (kept in sync with check-code-health/patterns.sh by tests/validate-shared-scanner-sync.sh)
     # This case is a DELIBERATE cross-plugin duplicate: review-audit and
@@ -242,7 +353,7 @@ scan_debug_statements() {
                         "Debugger statement: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.js | *.ts | *.jsx | *.tsx)
+        *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
             # JavaScript/TypeScript: console.log, console.debug, console.warn
             command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -309,8 +420,8 @@ scan_debug_statements() {
 # Source files with no corresponding test file.
 # =============================================================================
 
-# has_repo_rooted_js_test <name-no-ext> — 0 when a test for this source name
-# exists anywhere under <_PROJECT_ROOT>/tests (#555).
+# js_test_find_args <name-no-ext> — echo the `find` OR-chain matching any test
+# named after this source, one shell-quoted token per line (#555, #568).
 #
 # Widened over the `py` arm's single-pattern find in two ways, because the
 # js/ts ecosystem has no single convention:
@@ -326,38 +437,61 @@ scan_debug_statements() {
 # in the tree: `report.js` must not be satisfied by an unrelated
 # `validate-workflow-helpers.mjs`.
 #
-# The caller has already checked that <_PROJECT_ROOT>/tests exists.
-has_repo_rooted_js_test() {
+# Emitted one token per line so callers rebuild an array with a `while read`
+# (bash-3.2 has no mapfile). Tokens are never whitespace-bearing: they are
+# literal `-name`/`-o` flags and globs built from a basename with its extension
+# stripped.
+js_test_find_args() {
     local name_no_ext="$1"
-    local stem ext hit
-    # Indexed array (bash-3.2 clean — only declare -A/namerefs/mapfile are
-    # banned) built as an OR-chain for a single find pass. `first` tracks
-    # whether an `-o` separator is needed; the array is never empty, so
-    # "${find_args[@]}" is safe under set -u.
-    local find_args=() first=1
+    local stem ext first=1
     for stem in \
         "${name_no_ext}.test" "${name_no_ext}.spec" \
         "test-${name_no_ext}" "test_${name_no_ext}" \
         "spec-${name_no_ext}" "validate-${name_no_ext}"; do
         for ext in js mjs cjs ts tsx jsx; do
-            if [ "$first" -eq 1 ]; then first=0; else find_args+=(-o); fi
-            find_args+=(-name "${stem}.${ext}")
-            find_args+=(-o -name "${stem}-*.${ext}")
-            find_args+=(-o -name "${stem}_*.${ext}")
+            if [ "$first" -eq 1 ]; then first=0; else command printf '%s\n' "-o"; fi
+            command printf '%s\n' "-name" "${stem}.${ext}"
+            command printf '%s\n' "-o" "-name" "${stem}-*.${ext}"
+            command printf '%s\n' "-o" "-name" "${stem}_*.${ext}"
         done
     done
+}
 
-    # `-type f` is load-bearing, not decoration: without it a DIRECTORY whose
-    # name matches a stem (a `tests/validate-thing-snapshots.js/` fixture or
-    # snapshot dir) satisfies the probe and silently suppresses a real
-    # missing-test-file finding. A false negative here hides exactly the bug
-    # this scanner exists to report.
-    #
-    # Command substitution, not a pipe into `grep -q`: under `set -o pipefail`
-    # a find|head-shaped probe exits 141 (SIGPIPE) when find outruns the
-    # reader, which would read as a scan failure.
-    hit="$(command find "${_PROJECT_ROOT}/tests" -type f \
-        \( "${find_args[@]}" \) -print -quit 2>/dev/null)"
+# find_repo_rooted_js_tests <name-no-ext> [max] — paths of tests under
+# <_PROJECT_ROOT>/tests named after this source, one per line (empty if none).
+#
+# `-type f` is load-bearing, not decoration: without it a DIRECTORY whose name
+# matches a stem (a `tests/validate-thing-snapshots.js/` fixture or snapshot
+# dir) satisfies the probe and silently suppresses a real finding. A false
+# negative here hides exactly the bug this scanner exists to report.
+#
+# Command substitution, not a pipe into `grep -q`/`head`: under `set -o
+# pipefail` a find|head-shaped probe exits 141 (SIGPIPE) when find outruns the
+# reader, which would read as a scan failure.
+#
+# The caller has already checked that <_PROJECT_ROOT>/tests exists.
+find_repo_rooted_js_tests() {
+    local name_no_ext="$1" max="${2:-0}"
+    local find_args=() tok
+    while IFS= read -r tok; do
+        find_args+=("$tok")
+    done <<EOF
+$(js_test_find_args "$name_no_ext")
+EOF
+
+    if [ "$max" = "1" ]; then
+        command find "${_PROJECT_ROOT}/tests" -type f \
+            \( "${find_args[@]}" \) -print -quit 2>/dev/null
+    else
+        command find "${_PROJECT_ROOT}/tests" -type f \
+            \( "${find_args[@]}" \) -print 2>/dev/null
+    fi
+}
+
+# has_repo_rooted_js_test <name-no-ext> — 0 when at least one such test exists.
+has_repo_rooted_js_test() {
+    local hit
+    hit="$(find_repo_rooted_js_tests "$1" 1)"
     [ -n "$hit" ]
 }
 
@@ -366,11 +500,18 @@ scan_missing_tests() {
 
     # Skip test files themselves
     is_test_file "$file" && return
+    # ...including any the project DECLARED as tests (#568).
+    matches_declared_test_pattern "$file" && return
 
     # Check against configurable skip policy (gitignore-style patterns)
     if is_test_skipped "$file"; then
         return
     fi
+
+    # A DECLARED discovery template that resolves wins over every built-in
+    # probe below (#568) — it is the project stating its convention outright,
+    # which is strictly better evidence than any heuristic this scanner infers.
+    has_declared_test "$file" && return
 
     local basename dirname name_no_ext ext
     basename=$(command basename "$file")
@@ -397,7 +538,7 @@ scan_missing_tests() {
                     -print -quit 2>/dev/null | command grep -q . && return
             fi
             ;;
-        ts | js | tsx | jsx)
+        ts | js | tsx | jsx | mjs | cjs)
             for suffix in "test" "spec"; do
                 for test_path in \
                     "${dirname}/${name_no_ext}.${suffix}.${ext}" \
@@ -463,13 +604,15 @@ scan_untested_public_api() {
 
     # Skip test files
     is_test_file "$file" && return
+    # ...including any the project DECLARED as tests (#568).
+    matches_declared_test_pattern "$file" && return
 
     # Check against configurable skip policy
     if is_test_skipped "$file"; then
         return
     fi
 
-    local basename dirname name_no_ext ext
+    local basename dirname name_no_ext ext repo_rooted_tests declared
     basename=$(command basename "$file")
     dirname=$(command dirname "$file")
     name_no_ext="${basename%.*}"
@@ -509,7 +652,33 @@ scan_untested_public_api() {
                     fi
                 done || true
             ;;
-        ts | js | tsx | jsx)
+        ts | js | tsx | jsx | mjs | cjs)
+            # KNOWN LIMIT: the export grep below is ESM-only (`^export
+            # function|const|class`). Idiomatic CommonJS — `module.exports.x =`
+            # / `exports.x =` — is NOT detected, so this category is close to a
+            # no-op for a genuinely CJS-style `.cjs` file. That is a deliberate
+            # boundary, not an oversight: routing .cjs here (#568) is about not
+            # mis-filing it as an "unknown file type", and widening the export
+            # grammar is new DETECTION work beyond this issue. The failure mode
+            # is under-reporting, never a wrong flag, so it cannot produce a
+            # false positive on a real repo.
+            #
+            # The repo-rooted candidates are resolved ONCE per file, not once
+            # per export: the find is the expensive part and it does not depend
+            # on the symbol. Only the greps below are per-export.
+            repo_rooted_tests=""
+            if [ -n "$_PROJECT_ROOT" ] && [ -d "${_PROJECT_ROOT}/tests" ]; then
+                repo_rooted_tests="$(find_repo_rooted_js_tests "$name_no_ext")"
+            fi
+            # Declared discovery templates join the SAME candidate list rather
+            # than short-circuiting (#568): unlike missing-test-file, the
+            # question here is whether a specific symbol is referenced, so the
+            # declared file still has to be grepped for it.
+            declared="$(declared_test_paths "$file")"
+            if [ -n "$declared" ]; then
+                repo_rooted_tests="${repo_rooted_tests:+${repo_rooted_tests}
+}${declared}"
+            fi
             command grep -nE -- '^export (function|const|class) [a-zA-Z]' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     func_name=$(command printf '%s' "$content" | command sed 's/^export \(function\|const\|class\) \([a-zA-Z][a-zA-Z0-9_]*\).*/\2/')
@@ -524,6 +693,21 @@ scan_untested_public_api() {
                             fi
                         done
                     done
+                    # Cross-directory fallback (#568): the colocated probes above
+                    # cannot see a test in a repo-rooted tests/ tree, so a
+                    # genuinely exercised export reported HIGH "no tests
+                    # reference". Same candidate set scan_missing_tests uses.
+                    if [ "$found" = "false" ] && [ -n "$repo_rooted_tests" ]; then
+                        while IFS= read -r test_path; do
+                            [ -n "$test_path" ] || continue
+                            if command grep -q -- "\b${func_name}\b" "$test_path" 2>/dev/null; then
+                                found=true
+                                break
+                            fi
+                        done <<EOF
+$repo_rooted_tests
+EOF
+                    fi
                     if [ "$found" = "false" ]; then
                         evidence=$(truncate_chars 60 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \

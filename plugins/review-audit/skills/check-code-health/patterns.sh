@@ -70,12 +70,20 @@ truncate_chars() {
 # contest.py / latest.js / attestation.go (which a bare *test* glob wrongly
 # matches) are NOT skipped, while tests/helper.py (which a suffix-only set
 # wrongly scans) IS. Handles both repo-relative and absolute path forms.
+#
+# The two arm groups anchor DIFFERENTLY, and the split is load-bearing (#568):
+# in a bash `case` glob, `*` crosses `/`, so a path arm like `*/test_*.*` also
+# matches a DIRECTORY named `test_helpers/` — silencing every scanner for real
+# source at `src/test_helpers/production.py`. Directory arms are meant to cross
+# slashes; the name arms are matched against the BASENAME so they cannot.
 is_test_file() {
     case "$1" in
         tests/* | */tests/* | test/* | */test/* | \
             __tests__/* | */__tests__/* | spec/* | */spec/* | \
             __pycache__/* | */__pycache__/*) return 0 ;;
-        test_*.* | */test_*.*) return 0 ;;
+    esac
+    case "${1##*/}" in
+        test_*.*) return 0 ;;
         *_test.* | *_spec.* | *.test.* | *.spec.*) return 0 ;;
     esac
     return 1
@@ -138,7 +146,7 @@ while IFS= read -r file; do
                             "Debugger statement: ${evidence}" "HIGH"
                     done || true
                 ;;
-            *.js | *.ts | *.jsx | *.tsx)
+            *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
                 # JavaScript/TypeScript: console.log, console.debug, console.warn
                 command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                     while IFS= read -r raw; do
