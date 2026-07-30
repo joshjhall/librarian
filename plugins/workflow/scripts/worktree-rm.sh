@@ -119,6 +119,15 @@ fi
 # Matching only the first would warn on every ordinary teardown on a host with
 # no tmux server — noise operators would learn to ignore, defeating the warning.
 #
+# But `error connecting to` alone is TOO wide, and dangerously so: tmux formats
+# it as `error connecting to <sock> (<strerror>)`, and only the ENOENT variant
+# means "no server". The same prefix carries `(Permission denied)` and
+# `(Connection refused)` — a locked or wedged socket where the session is very
+# much STILL RUNNING (verified: chmod 000 on a live socket yields exactly that
+# message, and the session survives). Swallowing those would re-create this
+# script's original bug under a new message, so the socket arm must ALSO see the
+# no-such-file wording; anything else about connecting falls through to `failed`.
+#
 # Anything else, INCLUDING an empty stderr, is `failed`. A tmux that fails
 # without saying why is exactly the unexplained case an operator needs to see;
 # defaulting the unknown to benign would re-create the swallowed-error bug.
@@ -137,7 +146,8 @@ tmux_kill_outcome() {
     low="$(command printf '%s' "$err" | command tr '[:upper:]' '[:lower:]')"
     case "$low" in
         *"can't find session"* | *"session not found"* | \
-            *"no server running"* | *"error connecting to"*)
+            *"no server running"* | \
+            *"error connecting to"*"no such file"*)
             command echo "absent"
             ;;
         *)

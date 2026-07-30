@@ -2113,6 +2113,26 @@ test_worktree_rm_kill_session_classifier() {
     assert_equals "absent" "$(run_kill_outcome 1 "SESSION NOT FOUND")" \
         "the benign match is case-insensitive"
 
+    # `error connecting to` is only benign for ENOENT. tmux formats the message as
+    # `error connecting to <sock> (<strerror>)`, and the same prefix carries
+    # Permission denied / Connection refused for a LOCKED or WEDGED socket whose
+    # session is still running — verified against tmux 3.5a by chmod 000 on a live
+    # socket, which yields exactly this message and leaves the session alive.
+    # Treating those as absent would re-create the swallowed-failure bug #533
+    # closes, so pin all three variants of the one prefix.
+    assert_equals "failed" "$(run_kill_outcome 1 "error connecting to /tmp/s (Permission denied)")" \
+        "a locked socket is a real failure, not an absent server"
+    assert_equals "failed" "$(run_kill_outcome 1 "error connecting to /tmp/s (Connection refused)")" \
+        "a refused connection is a real failure, not an absent server"
+
+    # The non-numeric rc fail-safe the helper's comment claims. `[ "$rc" = "0" ]`
+    # compares as a STRING on purpose; a future refactor to arithmetic
+    # `(( rc == 0 ))` would abort under set -e on a non-numeric rc instead of
+    # degrading to `failed`. Pin the documented property so the claim is not just
+    # a comment.
+    assert_equals "failed" "$(run_kill_outcome "abc" "")" \
+        "a non-numeric rc degrades to failed, never an arithmetic abort"
+
     # The whole point of the issue: anything unrecognized means the session may
     # still be alive.
     assert_equals "failed" "$(run_kill_outcome 1 "server exited unexpectedly")" \
@@ -2172,6 +2192,51 @@ EOF
     # removed stays 0 -> no phantom reaped event for a still-live session.
     assert_contains "$RUN_OUT" "nothing to remove" \
         "a failed kill does not set removed=1 (would fire a false reaped event, #446)"
+}
+
+# The locked-socket case, end to end (#533). Its stderr shares the `error
+# connecting to` prefix with the benign no-server shape, so an over-wide socket
+# matcher swallows it — silently, on a session that is STILL RUNNING. That is
+# this script's original bug wearing a different message, so it gets whole-script
+# coverage and not just a classifier verdict: the dispatch, not the helper,
+# decides whether the operator is told.
+test_worktree_rm_warns_on_locked_socket() {
+    local sb
+    new_sandbox sb
+
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: log argv; emit tmux's real EACCES wording — same `error connecting
+# to` prefix as the benign no-server case, different parenthetical (#533).
+printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
+printf 'error connecting to /tmp/tmux-501/default (Permission denied)\n' >&2
+exit 1
+EOF
+    command chmod +x "$sb/bin/tmux"
+
+    local log="$sb/tmux-stub.log"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX_STUB_LOG="$log" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 66 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" "a locked socket still exits 0 (teardown already happened)"
+    assert_contains "$RUN_OUT" "WARNING: tmux kill-session failed for golem-66" \
+        "a locked socket warns — the session may still be running"
+    assert_contains "$RUN_OUT" "Permission denied" \
+        "tmux's own EACCES text reaches the operator"
+    assert_not_contains "$RUN_OUT" "killed tmux session" \
+        "does not claim a kill against an unreachable socket"
 }
 
 # Every outcome the classifier can echo must have its own `case` label in the
@@ -5376,6 +5441,7 @@ run_test test_worktree_rm_kill_session_failure_is_quiet_noop "worktree-rm: a fai
 run_test test_worktree_rm_no_tmux_server_is_quiet_noop "worktree-rm: a host with no tmux server stays a silent exit-0 no-op (#533)"
 run_test test_worktree_rm_kill_session_classifier "worktree-rm: tmux_kill_outcome separates an absent session from a real failure (#533)"
 run_test test_worktree_rm_warns_on_unexpected_kill_failure "worktree-rm: an unexpected kill-session error warns instead of reporting a clean no-op (#533)"
+run_test test_worktree_rm_warns_on_locked_socket "worktree-rm: a locked/wedged socket warns instead of passing as an absent server (#533)"
 run_test test_worktree_rm_kill_dispatch_handles_every_outcome "worktree-rm: the kill dispatch handles every classifier outcome explicitly (#533)"
 run_test test_worktree_rm_emits_reaped_feed_line "worktree-rm: teardown emits a reaped feed line with the right id (#446)"
 run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"
