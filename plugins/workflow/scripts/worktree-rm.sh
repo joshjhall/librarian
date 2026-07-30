@@ -206,8 +206,19 @@ if command -v tmux >/dev/null 2>&1; then
             ;;
         absent) ;;
         failed)
+            # `${tmux_err:-…}` because an EMPTY stderr is itself a `failed` case
+            # (an unexplained non-zero is the one an operator most needs to see);
+            # interpolating it raw ended the line at a dangling `): `. Control
+            # characters are stripped: this text is now echoed to a terminal
+            # rather than discarded, and it embeds the socket path, so a crafted
+            # path or a spoofed tmux earlier on PATH could otherwise smuggle ANSI
+            # escapes into the operator's session. `tr -d` keeps it printable;
+            # the newline class is kept so a genuine multi-line tmux error is
+            # still legible.
+            tmux_err_safe="$(command printf '%s' "${tmux_err:-(no stderr from tmux)}" |
+                command tr -d '\000-\010\013\014\016-\037')"
             command echo "worktree-rm: WARNING: tmux kill-session failed for $sess" \
-                "(session may still be running): $tmux_err" >&2
+                "(session may still be running): $tmux_err_safe" >&2
             ;;
         *)
             command echo "worktree-rm: ERROR: internal — tmux_kill_outcome returned an unknown outcome" >&2
