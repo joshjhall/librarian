@@ -2345,6 +2345,35 @@ EOF
     assert_contains "$RUN_OUT" "%s" \
         "a literal %s in tmux stderr is data, never a printf conversion"
 
+    # Case 2b: an ALL-control payload sanitizes to nothing. That must NOT read as
+    # "tmux said nothing" — it is the more suspicious, more actionable state
+    # (a crafted payload, or tooling that cannot render it), so the operator has
+    # to be able to tell the two apart.
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '\033\007\001\n' >&2
+exit 1
+EOF
+    command chmod +x "$sb/bin/tmux"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 71 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" "an all-control payload still exits 0"
+    assert_contains "$RUN_OUT" "(stderr present but unprintable)" \
+        "an all-control payload is reported distinctly, not as 'no stderr'"
+    assert_not_contains "$RUN_OUT" "(no stderr from tmux)" \
+        "…and is NOT conflated with tmux having said nothing"
+
     # Case 3: `tr` itself is unavailable — the script's ONLY external dependency
     # in this path, used both by the classifier (lowercasing) and the sanitizer.
     #

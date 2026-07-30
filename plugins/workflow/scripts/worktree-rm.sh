@@ -236,6 +236,15 @@ if command -v tmux >/dev/null 2>&1; then
             # something else entirely. That is line-overwrite spoofing, the same
             # class as the ANSI escapes this strip exists to stop, so the range
             # is kept contiguous rather than spelled out byte by byte.
+            #
+            # The C1 range (\200-\237, 8-bit CSI/OSC) is deliberately NOT stripped.
+            # Those byte values are also UTF-8 CONTINUATION bytes, so deleting
+            # them corrupts any multibyte character in a socket path — U+011B is
+            # `c4 9b`, and stripping the `9b` leaves an invalid lone `c4` that
+            # renders as mojibake. That would break legitimate non-ASCII paths in
+            # exchange for defending a form most terminals ignore by default.
+            # Residual risk accepted, and stated here so it is a decision rather
+            # than an oversight.
             # `|| true` because a bare assignment from a command substitution IS
             # subject to `set -e`: were `tr` unavailable, the script would abort
             # at 127 here — AFTER the destructive git mutations, stranding a
@@ -243,10 +252,20 @@ if command -v tmux >/dev/null 2>&1; then
             # best-effort diagnostics and must never be the thing that fails
             # teardown, the same reasoning as the `|| true` on the reaped hook
             # below. The `:-` fallback then covers the empty result.
-            tmux_err_safe="$(command printf '%s' "${tmux_err:-(no stderr from tmux)}" |
-                command tr -d '\000-\010\013-\037\177' || true)"
+            # Three distinguishable states, not two: tmux said nothing; tmux said
+            # something printable; or tmux said something that survived sanitizing
+            # as nothing (an all-control payload, or a `tr` that could not run).
+            # The third is the most suspicious and most actionable, so it gets its
+            # own wording rather than being folded into the boring default.
+            if [ -z "$tmux_err" ]; then
+                tmux_err_safe="(no stderr from tmux)"
+            else
+                tmux_err_safe="$(command printf '%s' "$tmux_err" |
+                    command tr -d '\000-\010\013-\037\177' || true)"
+                tmux_err_safe="${tmux_err_safe:-(stderr present but unprintable)}"
+            fi
             command echo "worktree-rm: WARNING: tmux kill-session failed for $sess" \
-                "(session may still be running): ${tmux_err_safe:-(no stderr from tmux)}" >&2
+                "(session may still be running): $tmux_err_safe" >&2
             ;;
         *)
             command echo "worktree-rm: ERROR: internal — tmux_kill_outcome returned an unknown outcome" >&2
