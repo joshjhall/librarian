@@ -1979,6 +1979,13 @@ EOF
 # the sole gate on the echo/removed=1, so pin it deterministically with a stub
 # (kill-session -> non-zero) rather than relying on the host's real tmux. Run
 # against an ABSENT issue so no worktree/branch removal masks removed=0.
+#
+# The stub emits tmux's REAL absent-session message (#533). A bare non-zero with
+# empty stderr now classifies as `failed`, not `absent` — deliberately, since an
+# unexplained failure is the case an operator must see — so this case has to
+# speak tmux's actual language to keep exercising the quiet path. The added
+# no-WARNING assertion is what fails if the classifier ever over-warns on an
+# ORDINARY teardown, which would make the warning noise operators tune out.
 test_worktree_rm_kill_session_failure_is_quiet_noop() {
     local sb
     new_sandbox sb
@@ -1986,8 +1993,10 @@ test_worktree_rm_kill_session_failure_is_quiet_noop() {
     command mkdir -p "$sb/bin"
     command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
-# Test stub: log argv; report every subcommand as FAILED (session truly absent).
+# Test stub: log argv; report every subcommand as FAILED (session truly absent),
+# using tmux's real wording so worktree-rm classifies it as `absent` (#533).
 printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
+printf "can't find session: %s\n" "${3:-}" >&2
 exit 1
 EOF
     command chmod +x "$sb/bin/tmux"
@@ -2013,10 +2022,194 @@ EOF
     # removed stays 0: nothing else to remove for an absent issue -> "nothing to remove".
     assert_contains "$RUN_OUT" "nothing to remove" \
         "a failed kill does not set removed=1 (phantom removal)"
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "an ordinary absent-session teardown warns about nothing (#533)"
     local killlog
     killlog="$(command cat "$log" 2>/dev/null || true)"
     assert_contains "$killlog" "kill-session -t =golem-63" \
         "still attempts the exact-name kill-session before treating it as a no-op"
+}
+
+# The other benign shape, end to end (#533): NO TMUX SERVER AT ALL.
+#
+# This is the common teardown case on a host that never started tmux, and its
+# stderr never mentions a session — so a matcher written only against the
+# issue's suggested "can't find session" wording would warn here, on the most
+# routine teardown there is. The classifier case covers the verdict; this covers
+# the whole script, because the two can disagree (the dispatch, not the helper,
+# decides what gets printed). Same absent contract as the case above: silent,
+# exit 0, no phantom removal.
+test_worktree_rm_no_tmux_server_is_quiet_noop() {
+    local sb
+    new_sandbox sb
+
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: log argv; emit tmux's real "no server" wording (#533).
+printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
+printf 'no server running on /tmp/tmux-501/default\n' >&2
+exit 1
+EOF
+    command chmod +x "$sb/bin/tmux"
+
+    local log="$sb/tmux-stub.log"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX_STUB_LOG="$log" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 65 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" "a server-less host is a clean exit-0 teardown"
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "no server running is NOT a failure — warning here would be noise on every teardown"
+    assert_not_contains "$RUN_OUT" "killed tmux session" \
+        "does not claim a kill when there was no server"
+    assert_contains "$RUN_OUT" "nothing to remove" \
+        "removed stays 0 when there was nothing to kill"
+}
+
+# --- #533: a real kill-session failure is not a session-absent no-op ----------
+
+# The pure classifier, driven directly.
+#
+# `tmux kill-session` returns the same non-zero exit for "no such session" (an
+# expected no-op) and for a real fault leaving the session ALIVE; only stderr
+# separates them. That decision is a pure function, so slice it out and drive
+# every branch — the same idiom validate-lint-gates.sh uses for
+# `ruff_install_action`, and for the same reason: a hand-reimplemented matcher
+# here would drift from the script and keep passing while the real one broke.
+#
+# run_kill_outcome <rc> <stderr>
+run_kill_outcome() {
+    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+        eval "$(command sed -n "/^tmux_kill_outcome() {/,/^}/p" "$1")"
+        tmux_kill_outcome "$2" "$3"
+    ' _ "$WT_RM" "$1" "$2" 2>&1
+}
+
+test_worktree_rm_kill_session_classifier() {
+    assert_equals "killed" "$(run_kill_outcome 0 "")" \
+        "exit 0 is a real kill"
+
+    # All three shapes tmux 3.5a actually emits for "nothing to kill". Two never
+    # mention a session, so a matcher keyed only on the issue's suggested
+    # "can't find session" text would warn on every teardown on a server-less host.
+    assert_equals "absent" "$(run_kill_outcome 1 "can't find session: golem-9")" \
+        "server up but session gone is absent"
+    assert_equals "absent" \
+        "$(run_kill_outcome 1 "error connecting to /tmp/tmux-501/default (No such file or directory)")" \
+        "no server ever started is absent"
+    assert_equals "absent" "$(run_kill_outcome 1 "no server running on /tmp/tmux-501/default")" \
+        "a server that started then exited is absent"
+    assert_equals "absent" "$(run_kill_outcome 1 "SESSION NOT FOUND")" \
+        "the benign match is case-insensitive"
+
+    # The whole point of the issue: anything unrecognized means the session may
+    # still be alive.
+    assert_equals "failed" "$(run_kill_outcome 1 "server exited unexpectedly")" \
+        "an unrecognized tmux error is a real failure"
+
+    # An EMPTY stderr is `failed`, not `absent`. Defaulting the unknown to benign
+    # is precisely the swallowed-error bug #533 exists to close, so pin it.
+    assert_equals "failed" "$(run_kill_outcome 1 "")" \
+        "a non-zero exit with no explanation is a real failure, not a no-op"
+}
+
+# End to end: the case the issue actually asks for. A stub `tmux` fails with an
+# unexpected error, so the operator must SEE it — but teardown still exits 0 and
+# must not claim a kill that did not happen.
+#
+# The removed=0 half is the load-bearing assertion: setting removed=1 here would
+# fire the terminal `reaped` feed event (#446) for a golem whose session is still
+# running, telling golem-status.sh the opposite of the truth. Run against an
+# ABSENT issue so no worktree/branch removal masks it.
+test_worktree_rm_warns_on_unexpected_kill_failure() {
+    local sb
+    new_sandbox sb
+
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: log argv; fail with an error that is NOT a missing session.
+printf '%s\n' "$*" >>"$TMUX_STUB_LOG"
+printf 'server exited unexpectedly\n' >&2
+exit 1
+EOF
+    command chmod +x "$sb/bin/tmux"
+
+    local log="$sb/tmux-stub.log"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX_STUB_LOG="$log" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 64 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" \
+        "teardown still exits 0 after a failed kill (worktree removal already happened)"
+    assert_contains "$RUN_OUT" "WARNING: tmux kill-session failed for golem-64" \
+        "the operator is told the session was NOT killed"
+    assert_contains "$RUN_OUT" "server exited unexpectedly" \
+        "tmux's own error text is carried through, not swallowed"
+    assert_not_contains "$RUN_OUT" "killed tmux session" \
+        "does not claim a kill that did not happen"
+    # removed stays 0 -> no phantom reaped event for a still-live session.
+    assert_contains "$RUN_OUT" "nothing to remove" \
+        "a failed kill does not set removed=1 (would fire a false reaped event, #446)"
+}
+
+# Every outcome the classifier can echo must have its own `case` label in the
+# dispatch, with the wildcard reserved for an internal-contract violation.
+#
+# A `*)` doubling as a real arm looks harmless while the helper echoes only three
+# strings, but it turns a future typo in an outcome name into silently taking the
+# wrong branch — the #542 lesson, applied here. The names are read OUT OF THE
+# HELPER rather than hardcoded, so a fourth outcome is picked up automatically
+# instead of falling through.
+test_worktree_rm_kill_dispatch_handles_every_outcome() {
+    local outcome outcomes
+    # Unquoted in the loop on purpose: the awk output is a newline-separated list
+    # of `[a-z-]+` tokens (the regex admits nothing else) and word-splitting it
+    # into the loop is the intent.
+    outcomes="$(command awk '
+        /^tmux_kill_outcome\(\) \{/ { grab = 1; next }
+        grab && /^\}/ { exit }
+        grab && match($0, /echo "[a-z-]+"/) {
+            print substr($0, RSTART + 6, RLENGTH - 7)
+        }
+    ' "$WT_RM")"
+
+    # NON-VACUITY FLOOR. If the helper is renamed or reshaped so the awk anchor
+    # stops matching, the extraction yields NOTHING — and a for-loop over nothing
+    # asserts nothing while still reporting PASS. That failure mode is the reason
+    # this case exists, so pin the count: 3 outcomes today, a 4th arrives with a
+    # deliberate bump here.
+    assert_equals "3" "$(command printf '%s\n' "$outcomes" | command grep -c '[a-z]')" \
+        "all 3 classifier outcomes were extracted (a broken anchor would assert nothing)"
+
+    # shellcheck disable=SC2086 # deliberate word-split, see comment above
+    for outcome in $outcomes; do
+        assert_file_contains "$WT_RM" "        $outcome)" \
+            "the dispatch handles '$outcome' explicitly, not via the wildcard"
+    done
+    assert_file_contains "$WT_RM" "ERROR: internal — tmux_kill_outcome returned" \
+        "the wildcard reports an internal-contract violation"
 }
 
 # Teardown emits a terminal `reaped` feed line (#446, Bug #2). worktree-rm.sh pipes
@@ -5180,6 +5373,10 @@ run_test test_worktree_rm_absent_is_noop "worktree-rm: absent issue is a clean n
 run_test test_worktree_rm_round_trip "worktree-rm: round-trip removes worktree + branch"
 run_test test_worktree_rm_kills_session_despite_has_session_false "worktree-rm: kills golem-N unconditionally despite a racy has-session false (#486)"
 run_test test_worktree_rm_kill_session_failure_is_quiet_noop "worktree-rm: a failed kill-session stays a quiet exit-0 no-op, no phantom removal (#486)"
+run_test test_worktree_rm_no_tmux_server_is_quiet_noop "worktree-rm: a host with no tmux server stays a silent exit-0 no-op (#533)"
+run_test test_worktree_rm_kill_session_classifier "worktree-rm: tmux_kill_outcome separates an absent session from a real failure (#533)"
+run_test test_worktree_rm_warns_on_unexpected_kill_failure "worktree-rm: an unexpected kill-session error warns instead of reporting a clean no-op (#533)"
+run_test test_worktree_rm_kill_dispatch_handles_every_outcome "worktree-rm: the kill dispatch handles every classifier outcome explicitly (#533)"
 run_test test_worktree_rm_emits_reaped_feed_line "worktree-rm: teardown emits a reaped feed line with the right id (#446)"
 run_test test_worktree_rm_scrubs_tainted_git_env_for_mutations "worktree-rm: scrubs a tainted GIT_DIR so deletions target the right repo (#328)"
 run_test test_worktree_rm_scrubs_git_config_injection_for_mutations "worktree-rm: scrubs a GIT_CONFIG_* injection so the teardown mutation targets the right repo (#376, #328)"

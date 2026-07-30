@@ -100,6 +100,52 @@ if [ -n "$(command git branch --list "$br")" ]; then
     removed=1
 fi
 
+# tmux_kill_outcome <rc> <stderr> — classify one `tmux kill-session` attempt as
+# exactly one of `killed` / `absent` / `failed` (#533).
+#
+# `kill-session` returns the SAME non-zero exit for "there was no such session"
+# (an expected no-op) and for a real fault — a wedged or unreachable server, a
+# permission error — where the session is STILL ALIVE and the kill did not
+# happen. Only the stderr text separates them, so it is classified rather than
+# discarded.
+#
+# The benign set is wider than "session not found": tmux 3.5a emits three
+# distinct shapes for "nothing to kill", and two never mention a session at all.
+#
+#   server up, session absent   can't find session: golem-N
+#   no server ever started      error connecting to <sock> (No such file …)
+#   server started then exited  no server running on <sock>
+#
+# Matching only the first would warn on every ordinary teardown on a host with
+# no tmux server — noise operators would learn to ignore, defeating the warning.
+#
+# Anything else, INCLUDING an empty stderr, is `failed`. A tmux that fails
+# without saying why is exactly the unexplained case an operator needs to see;
+# defaulting the unknown to benign would re-create the swallowed-error bug.
+#
+# Pure: no I/O beyond the verdict, no globals, no side effects — so the tests
+# can slice it out and drive every branch directly. `rc` is compared as a
+# STRING so a non-numeric argument yields `failed` rather than aborting on an
+# arithmetic error. Lowercased with `tr`, not `${v,,}` (bash-4, banned by
+# tests/lint-shell-portability.sh).
+tmux_kill_outcome() {
+    local rc="$1" err="$2" low
+    if [ "$rc" = "0" ]; then
+        command echo "killed"
+        return 0
+    fi
+    low="$(command printf '%s' "$err" | command tr '[:upper:]' '[:lower:]')"
+    case "$low" in
+        *"can't find session"* | *"session not found"* | \
+            *"no server running"* | *"error connecting to"*)
+            command echo "absent"
+            ;;
+        *)
+            command echo "failed"
+            ;;
+    esac
+}
+
 # Kill the golem's tmux session so a finished golem does not linger in
 # `tmux ls` / golem-status.sh after merge+prune (#27). Idempotent and
 # ignore-if-absent: a missing session (or no tmux at all) is a clean no-op.
@@ -109,18 +155,39 @@ fi
 # self-teardown and intermittently reported the session absent while it lingered
 # a beat longer, so the kill was skipped and the session leaked. `kill-session`
 # is the very operation the guard protected and is already a safe no-op on a
-# missing session (non-zero, swallowed by `2>/dev/null` + the `if`), so dropping
-# the pre-check removes the race with no downside. `-t "=$sess"` forces
-# exact-name matching (the `=` prefix) instead of tmux's prefix/fnmatch target
-# matching. The echo + `removed=1` fire only when a session was actually killed
-# (kill-session exit 0), preserving the contract that the line prints on a real
+# missing session, so dropping the pre-check removes the race with no downside.
+# `-t "=$sess"` forces exact-name matching (the `=` prefix) instead of tmux's
+# prefix/fnmatch target matching. The echo + `removed=1` fire only when a session
+# was actually killed, preserving the contract that the line prints on a real
 # kill.
+#
+# stderr is CAPTURED rather than sent to /dev/null (#533) so tmux_kill_outcome
+# can tell an absent session from a real failure. On `failed` we warn and carry
+# on: `removed` deliberately stays 0 — nothing was removed, and setting it would
+# fire the terminal `reaped` feed event (#446) for a golem whose session is still
+# alive, telling golem-status.sh the opposite of the truth. Nor does it abort:
+# teardown is already past the destructive git mutations, so failing here would
+# strand a removed worktree behind a non-zero exit. The `*)` arm is reserved for
+# an internal-contract violation — never a duplicate of a real outcome, so a
+# future typo in the helper cannot masquerade as one (#542).
 sess="golem-$N"
 if command -v tmux >/dev/null 2>&1; then
-    if tmux kill-session -t "=$sess" 2>/dev/null; then
-        command echo "  killed tmux session $sess"
-        removed=1
-    fi
+    tmux_rc=0
+    tmux_err="$(tmux kill-session -t "=$sess" 2>&1)" || tmux_rc=$?
+    case "$(tmux_kill_outcome "$tmux_rc" "$tmux_err")" in
+        killed)
+            command echo "  killed tmux session $sess"
+            removed=1
+            ;;
+        absent) ;;
+        failed)
+            command echo "worktree-rm: WARNING: tmux kill-session failed for $sess" \
+                "(session may still be running): $tmux_err" >&2
+            ;;
+        *)
+            command echo "worktree-rm: ERROR: internal — tmux_kill_outcome returned an unknown outcome" >&2
+            ;;
+    esac
 fi
 
 # Repair a polluted main-repo core.worktree (#258). An interrupted
