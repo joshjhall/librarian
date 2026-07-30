@@ -116,7 +116,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                     emit(path, idx, "debug-statement", "Debug print statement", line)
                 if re.search(r"^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)", line):
                     emit(path, idx, "debug-statement", "Debugger statement", line)
-            elif ext in ("js", "ts", "jsx", "tsx"):
+            elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
                 if re.search(r"^\s*console\.(log|debug|warn|info|trace)\(", line):
                     emit(path, idx, "debug-statement", "Console debug statement", line)
                 if re.search(r"^\s*debugger\s*;?\s*$", line):

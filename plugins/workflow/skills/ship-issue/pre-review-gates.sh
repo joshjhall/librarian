@@ -353,7 +353,7 @@ scan_debug_statements() {
                         "Debugger statement: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.js | *.ts | *.jsx | *.tsx)
+        *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
             # JavaScript/TypeScript: console.log, console.debug, console.warn
             command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -653,6 +653,16 @@ scan_untested_public_api() {
                 done || true
             ;;
         ts | js | tsx | jsx | mjs | cjs)
+            # KNOWN LIMIT: the export grep below is ESM-only (`^export
+            # function|const|class`). Idiomatic CommonJS — `module.exports.x =`
+            # / `exports.x =` — is NOT detected, so this category is close to a
+            # no-op for a genuinely CJS-style `.cjs` file. That is a deliberate
+            # boundary, not an oversight: routing .cjs here (#568) is about not
+            # mis-filing it as an "unknown file type", and widening the export
+            # grammar is new DETECTION work beyond this issue. The failure mode
+            # is under-reporting, never a wrong flag, so it cannot produce a
+            # false positive on a real repo.
+            #
             # The repo-rooted candidates are resolved ONCE per file, not once
             # per export: the find is the expensive part and it does not depend
             # on the symbol. Only the greps below are per-export.

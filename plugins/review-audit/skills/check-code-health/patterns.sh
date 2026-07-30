@@ -146,7 +146,7 @@ while IFS= read -r file; do
                             "Debugger statement: ${evidence}" "HIGH"
                     done || true
                 ;;
-            *.js | *.ts | *.jsx | *.tsx)
+            *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
                 # JavaScript/TypeScript: console.log, console.debug, console.warn
                 command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                     while IFS= read -r raw; do

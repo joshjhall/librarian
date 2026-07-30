@@ -621,6 +621,33 @@ test_mjs_recognized_as_source() {
         "a .cjs source with a repo-rooted test is silent"
 }
 
+# Routing .mjs/.cjs into the js/ts arms must be CONSISTENT across categories.
+# Cycle 1's correctness dimension caught the asymmetry this pins: the first cut
+# added mjs|cjs to scan_missing_tests and scan_untested_public_api but left
+# scan_debug_statements matching only *.js|*.ts|*.jsx|*.tsx — so a console.log
+# in a .mjs was silent while the identical line in a .js was HIGH. A file
+# treated as first-class JS by two categories and invisible to a third is the
+# silent-false-negative shape this scanner exists to avoid.
+#
+# The debug arm lives in the `>>> shared:debug-statement-scan` region, so the
+# fix spans pre-review-gates.sh, check-code-health/patterns.sh AND patterns.py.
+test_mjs_debug_statement_parity() {
+    local d rows
+    d="$(fresh_dir)"
+    command printf '%s\n' "console.log('left in by accident');" >"$d/tool.mjs"
+    command printf '%s\n' "console.log('left in by accident');" >"$d/tool.cjs"
+    command printf '%s\n' "console.log('left in by accident');" >"$d/tool.js"
+
+    run_gate "$(make_list "$d" tool.mjs tool.cjs tool.js)"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_contains "$rows" "tool.js" "control: a .js console.log is flagged"
+    assert_contains "$rows" "tool.mjs" \
+        "a .mjs console.log is flagged too — same treatment as .js (#568)"
+    assert_contains "$rows" "tool.cjs" \
+        "a .cjs console.log is flagged too — same treatment as .js (#568)"
+}
+
 # --- #568: cross-directory untested-public-api ------------------------------
 
 # scan_untested_public_api probed only two COLOCATED paths, so an export
@@ -737,6 +764,7 @@ run_test test_test_discovery_works_without_patterns "test_discovery works ALONE 
 run_test test_hostile_basename_does_not_break_scan "a whitespace/glob-bearing basename degrades cleanly, no abort (#568)"
 run_test test_no_config_means_no_declared_behavior "with no pre-review.yml the declared-convention path is inert (#568)"
 run_test test_mjs_recognized_as_source ".mjs/.cjs route through the js/ts arm, not the unknown-type arm (#568)"
+run_test test_mjs_debug_statement_parity "a .mjs/.cjs console.log is flagged like a .js one — no silent category gap (#568)"
 run_test test_cross_directory_untested_public_api "untested-public-api sees a repo-rooted test, and still checks the SYMBOL (#568)"
 run_test test_untested_public_api_fires "untested-public-api detector fires and names the function"
 run_test test_clean_source_silent "a clean, tested, private-only source emits no findings"
