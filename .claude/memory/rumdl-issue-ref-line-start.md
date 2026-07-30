@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 33c5bf10-08a5-4c5a-8d5b-ce6c36897448
-  modified: 2026-07-29T19:34:13.893Z
+  modified: 2026-07-30T04:18:45.423Z
 ---
 
 Never let a line **begin** with `#NNN`. Markdown reads a leading `#` as a
@@ -29,6 +29,15 @@ this bug into a memory file *about* rumdl.
 Do not wave these away as "pre-existing." In a multi-issue batch the
 pre-existing ones are usually mine from an earlier session; check `git log` /
 the batch notes before classifying a finding as someone else's.
+
+**Why this kept recurring, and why the note alone will not stop it:** no gate can
+see the files where it happens. `rumdl check .` **skips gitignored paths**, and
+lefthook's rumdl hook lints only `{staged_files}` — so anything under
+`.claude/memory/tmp/` (gitignored, never staged) is linted by nothing. Naming the
+parent is NOT enough — `rumdl check .claude/memory/` still returns clean because
+the ignore rule prunes `tmp/` during the walk. The **ignored directory itself**
+must be the argument: `rumdl check .claude/memory/tmp/`. Run that after editing a
+scratch note, until **#578** lands.
 
 Related: [[rumdl-nested-sublist-under-numbered]], [[no-noverify-fix-the-lint]],
 [[typos-gate-blocks-push]].
