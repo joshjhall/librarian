@@ -80,6 +80,29 @@ def is_test_file(path: str) -> bool:
     return False
 
 
+def is_scanner_pattern_line(line: str) -> bool:
+    """Return True when LINE is a detector's own regex SOURCE rather than code
+    (#599). Mirrors the `>>> shared:scanner-pattern-line` block in patterns.sh.
+
+    The debug-statement patterns are written as literals inside the scanners'
+    own `grep`/`re.search` calls, so scanning a diff that touches a scanner file
+    makes those literals match themselves and emit HIGH-certainty rows for a
+    guaranteed non-problem.
+
+    LINE-scoped, not path-scoped: a real `console.log` or `print(` left in a
+    scanner file must still fire, so only the invocation line carrying the
+    quoted pattern is suppressed."""
+    # bash form: `command grep -niE -- '<pattern>' "$file"` — any short-flag
+    # cluster, but the `--` end-of-options marker and an opening quote are
+    # required, so a plain filtering grep with no pattern literal still scans.
+    if re.search(r"grep -[a-zA-Z]* -- ['\"]", line):
+        return True
+    # python form: re.search(r"..."), re.match(r'...'), re.compile(r"...")
+    if re.search(r"re\.(search|match|compile)\(r['\"]", line):
+        return True
+    return False
+
+
 def emit(path: str, line_no: int, category: str, label: str, content: str) -> None:
     """Write one TSV finding row: '<label>: <first 80 chars of the code line>'."""
     evidence = label + ": " + content[:EVIDENCE_CAP]
@@ -108,7 +131,9 @@ def scan_file(path: str, lines: list[str]) -> None:
 
         # --- Category: debug-statement (non-test files only) ---
         # Mirrors the `>>> shared:debug-statement-scan` block, per-language.
-        if not test_file:
+        # Scanner pattern literals are skipped first, matching the bash copies'
+        # `is_scanner_pattern_line "$content" && continue` in every arm (#599).
+        if not test_file and not is_scanner_pattern_line(line):
             if ext == "py":
                 if re.search(r"^\s*print\(", line) and not re.search(
                     r"(logging|logger|log\.)", line

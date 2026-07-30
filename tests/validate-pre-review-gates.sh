@@ -166,6 +166,89 @@ test_debug_statement_fires() {
     assert_contains "$rows" "debug.js" "debug-statement row names the fixture"
 }
 
+# --- Scanner self-scan suppression (#599) -----------------------------------
+
+# The detectors' patterns are regex literals inside their own grep/re.search
+# calls, so scanning a diff that touches a scanner file made every literal match
+# ITSELF — HIGH-certainty rows for a guaranteed non-problem, on exactly the PRs
+# where reviewer attention is worth most.
+#
+# The fix is LINE-scoped, and this case pins BOTH halves of that from a SINGLE
+# fixture, which is the whole point: the suppressed pattern-source line and a
+# genuine hedging comment live in the same file. A path-based exemption (the
+# rejected option 2) would silence both and still pass a test that only checked
+# the first half — so asserting the negative alone would be a green light on the
+# wrong implementation.
+test_ai_slop_skips_scanner_pattern_literals() {
+    local d rows
+    d="$(fresh_dir)"
+    {
+        command printf '%s\n' "#!/usr/bin/env bash"
+        command printf '%s\n' "# It's worth noting that this parser is fragile."
+        command printf '%s\n' "scan() {"
+        command printf '%s\n' "    command grep -niE -- '\\b(it.s worth noting that|importantly,)\\b' \"\$1\""
+        command printf '%s\n' "}"
+    } >"$d/scanner.sh"
+    run_gate "$(make_list "$d" scanner.sh)"
+
+    rows="$(category_rows "$GATE_OUT" "ai-slop")"
+    # The grep-invocation line (4) is pattern SOURCE — must not be flagged.
+    assert_not_contains "$rows" "	4	" \
+        "a scanner pattern-literal invocation emits no ai-slop row (#599 AC#1)"
+    # ...while the prose comment (2) in the SAME file still fires. This is the
+    # anti-blanket-exemption assertion (#599 AC#2).
+    assert_contains "$rows" "	2	" \
+        "a genuine hedging comment in a scanner file still fires (#599 AC#2)"
+}
+
+# The same shape for debug-statement, whose patterns self-match too (#599).
+#
+# The reachable form here is NOT the bash `command grep -nE ...` invocation the
+# ai-slop case uses: the debug arms are anchored `^\s*console\.` / `^\s*print\(`,
+# so an indented grep line never matched them and a fixture built that way would
+# assert nothing — it passes with or without the fix. The line that genuinely
+# self-matches is one that EMITS a pattern literal, i.e. a `console.log(` /
+# `print(` at line start whose argument is the regex. Verified to fire on the
+# pre-fix scanner before being pinned here.
+test_debug_statement_skips_scanner_pattern_literals() {
+    local d rows
+    d="$(fresh_dir)"
+    {
+        command printf '%s\n' "console.log(\"grep -nE -- '^\\\\s*console\\\\.(log)\\\\('\");"
+        command printf '%s\n' "console.log('genuine debug left behind');"
+    } >"$d/scan.js"
+    run_gate "$(make_list "$d" scan.js)"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_not_contains "$rows" "	1	" \
+        "a line emitting a scanner pattern literal emits no debug-statement row (#599)"
+    assert_contains "$rows" "	2	" \
+        "a genuine console.log in the same file still fires (#599)"
+}
+
+# ai-slop never called is_test_file, unlike debug-statement which always has
+# (#599). A corpus fixture GENERATES slop on purpose — the heredoc and `printf`
+# lines that build a detector's input are not unedited AI output. Measured over
+# the #567 batch these fixture-generator lines were the majority of surviving
+# ai-slop rows.
+test_ai_slop_skips_test_files() {
+    local d rows control
+    d="$(fresh_dir)"
+    command mkdir -p "$d/tests"
+    command printf '%s\n' "# It's worth noting that this fixture is deliberate." >"$d/tests/fixture.py"
+    command printf '%s\n' "# It's worth noting that this is unedited output." >"$d/src.py"
+    run_gate "$(make_list "$d" tests/fixture.py src.py)"
+
+    rows="$(category_rows "$GATE_OUT" "ai-slop")"
+    assert_not_contains "$rows" "fixture.py" \
+        "a hedging phrase under tests/ emits no ai-slop row (#599)"
+    # Control: the same phrase in real source still fires, so the suppression is
+    # scoped to test paths rather than having disabled the detector outright.
+    control="$(command printf '%s\n' "$rows" | command grep -c 'src\.py' || true)"
+    assert_equals "1" "$control" \
+        "...while the same phrase in a non-test source still fires (#599)"
+}
+
 # --- Category: missing-test-file --------------------------------------------
 
 # A .py source with no sibling/tests/ test file must produce a missing-test-file
@@ -1126,6 +1209,9 @@ test_real_repo_sh_sources_not_flagged() {
 
 run_test test_ai_slop_fires "ai-slop detector fires on a hedging phrase with a 5-column HIGH row"
 run_test test_debug_statement_fires "debug-statement detector fires on a top-level console.log"
+run_test test_ai_slop_skips_scanner_pattern_literals "ai-slop skips a scanner's own pattern literal, but not prose in the same file (#599)"
+run_test test_debug_statement_skips_scanner_pattern_literals "debug-statement skips a scanner's own pattern literal, but not a real console.log (#599)"
+run_test test_ai_slop_skips_test_files "ai-slop skips test files (fixture generators), control in real source still fires (#599)"
 run_test test_missing_test_file_fires "missing-test-file detector fires (line 1, HIGH) for an orphan source"
 run_test test_repo_rooted_js_test_detected "repo-rooted tests/ + cross-extension test suppresses missing-test-file (#555)"
 run_test test_repo_rooted_stem_forms_all_match "all 18 stem x suffix alternatives + every extension + reverse cross-extension match (#555)"
