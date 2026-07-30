@@ -474,12 +474,102 @@ test_declared_test_conventions_honored() {
     run_gate_in "$sb" "$sb/files.txt"
 
     rows="$GATE_OUT"
-    assert_not_contains "$rows" "token-report.ts	1	missing-test-file" \
+    # Leading `/` anchors on the path separator: "token-report.ts" is a
+    # SUBSTRING of "smoke-token-report.ts", so an unanchored assertion here
+    # passes or fails on the wrong row (see the isolation cases below).
+    assert_not_contains "$rows" "/token-report.ts	1	missing-test-file" \
         "test_discovery template resolves the source to its declared test"
     assert_not_contains "$rows" "smoke-token-report.ts" \
         "test_patterns marks the smoke file itself as a test, not a source"
     assert_contains "$rows" "lonely.ts" \
         "a source with no resolving declared test still fires (control)"
+}
+
+# The two keys must each work ALONE. Declared together (the case above), a bug
+# that made either one a no-op would be masked by the other: test_patterns
+# silences the smoke file, and test_discovery silences the source, so either
+# alone still produces "fewer rows". These two cases isolate them.
+test_test_patterns_works_without_discovery() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' \
+        "test_patterns:" \
+        "  - 'scripts/smoke-*.ts'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' "export function buildReport() {}" >"$sb/scripts/token-report.ts"
+    command printf '%s\n' "import x from './token-report';" >"$sb/scripts/smoke-token-report.ts"
+    command printf '%s\n' \
+        "$sb/scripts/token-report.ts" "$sb/scripts/smoke-token-report.ts" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_not_contains "$rows" "smoke-token-report.ts" \
+        "test_patterns ALONE marks the smoke file as a test"
+    # Without test_discovery nothing tells the scanner this smoke file covers
+    # token-report.ts, so the source must STILL fire — proving test_patterns is
+    # doing its own distinct job and not standing in for discovery.
+    # Leading `/` again: without it this POSITIVE assertion would be satisfied
+    # by the smoke-token-report.ts row and pass vacuously.
+    assert_contains "$rows" "/token-report.ts	1	missing-test-file" \
+        "test_patterns alone does NOT resolve a source to its test — that is test_discovery's job"
+}
+
+test_test_discovery_works_without_patterns() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' \
+        "test_discovery:" \
+        "  - 'scripts/smoke-{name}.ts'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' "export function buildReport() {}" >"$sb/scripts/token-report.ts"
+    command printf '%s\n' "import x from './token-report';" >"$sb/scripts/smoke-token-report.ts"
+    command printf '%s\n' \
+        "$sb/scripts/token-report.ts" "$sb/scripts/smoke-token-report.ts" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    # NOTE the leading `/`: "token-report.ts" is a SUBSTRING of
+    # "smoke-token-report.ts", which this same case expects to fire, so a bare
+    # negative assertion would match the wrong row and fail for the wrong
+    # reason. Anchor on the path separator to name the source file exactly.
+    assert_not_contains "$rows" "/token-report.ts	1	missing-test-file" \
+        "test_discovery ALONE resolves the source to its declared test"
+    # Without test_patterns the smoke file is still scanned AS a source, and it
+    # has no test of its own — so it must fire.
+    assert_contains "$rows" "smoke-token-report.ts" \
+        "test_discovery alone does NOT classify the smoke file as a test — that is test_patterns' job"
+}
+
+# A source basename carrying whitespace and glob metacharacters must not break
+# the find OR-chain that js_test_find_args builds, nor abort the scan. The
+# scanner runs under `set -euo pipefail` over arbitrary repo paths, so a crash
+# here would take down the whole pre-scan rather than one file.
+#
+# `[` is a genuine `find -name` metacharacter, so such a source is NOT expected
+# to MATCH its test — the assertion is that the run survives and still reports,
+# which is the correct degradation.
+test_hostile_basename_does_not_break_scan() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "export const x = 1;" >"$sb/src/my report[1].ts"
+    command printf '%s\n' "covers it" >"$sb/tests/validate-plain.mjs"
+    command printf '%s\n' "$sb/src/my report[1].ts" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_exit 0 "$GATE_RC" \
+        "a basename with whitespace and glob chars does not abort the scan"
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_contains "$rows" "my report[1].ts" \
+        "and the file is still reported rather than silently dropped"
 }
 
 # Absent any config the declared-convention code must be inert — no repo
@@ -642,6 +732,9 @@ run_test test_repo_rooted_probe_is_name_anchored "repo-rooted probe stays name-a
 run_test test_real_repo_workflow_js_not_flagged "this repo's ship-issue/workflow.js: no missing-test-file, untested-public-api still fires (#555 AC#3)"
 run_test test_is_test_file_anchors_on_basename "is_test_file anchors name arms on the BASENAME — a test_-prefixed DIRECTORY does not skip source (#568)"
 run_test test_declared_test_conventions_honored "declared test_patterns/test_discovery are honored, control still fires (#568)"
+run_test test_test_patterns_works_without_discovery "test_patterns works ALONE and does not stand in for discovery (#568)"
+run_test test_test_discovery_works_without_patterns "test_discovery works ALONE and does not classify the test file (#568)"
+run_test test_hostile_basename_does_not_break_scan "a whitespace/glob-bearing basename degrades cleanly, no abort (#568)"
 run_test test_no_config_means_no_declared_behavior "with no pre-review.yml the declared-convention path is inert (#568)"
 run_test test_mjs_recognized_as_source ".mjs/.cjs route through the js/ts arm, not the unknown-type arm (#568)"
 run_test test_cross_directory_untested_public_api "untested-public-api sees a repo-rooted test, and still checks the SYMBOL (#568)"

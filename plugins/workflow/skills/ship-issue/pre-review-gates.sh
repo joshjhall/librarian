@@ -155,6 +155,18 @@ matches_declared_test_pattern() {
 # carries `{name}`, the source basename with its extension stripped; templates
 # are repo-relative unless absolute. Empty when nothing is declared or nothing
 # resolves.
+#
+# TRUST MODEL: templates are NOT sanitized, and a relative template is joined to
+# _PROJECT_ROOT without normalizing `..`, so `../../../etc/{name}` resolves
+# outside the repo and can suppress a finding. That is accepted, not overlooked:
+# .claude/pre-review.yml is the audited repo's OWN file, and the pre-existing
+# `test_skip_patterns` key already suppresses any finding with a single line
+# (`src/**`), so this grants no capability a hostile config did not already
+# have. It is a footgun to document, not a privilege boundary to enforce —
+# a template that points outside the repo is a config bug worth noticing.
+# The `{name}` expansion itself is a pure bash substitution (no eval, no sed),
+# so a source name carrying shell or regex metacharacters cannot alter the
+# template or escape the `[ -f ]` test.
 declared_test_paths() {
     load_test_skip_policy
     [ -n "$_TEST_DISCOVERY" ] || return 0
