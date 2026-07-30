@@ -219,45 +219,87 @@ test_repo_rooted_js_test_detected() {
         "an untested .js source in the same run still emits missing-test-file"
 }
 
-# Every stem form the repo-rooted probe claims to support, one per case, plus
-# both wildcard suffixes and the REVERSE cross-extension direction (a .ts source
-# found by a .js test — the headline case only proves .js found by .mjs).
+# EVERY (stem x suffix-form) alternative the repo-rooted probe builds, so a
+# typo isolated to any single `find_args` entry has a test that fails.
 #
-# has_repo_rooted_js_test builds a 6-stem x 6-extension x 3-suffix find
-# expression. Without this, five of the six stems and the `_*` suffix have no
-# test at all: a typo in any one `find_args` entry silently reintroduces the
-# HIGH false positives this issue exists to remove, and every other case here
-# would still pass because they all happen to exercise `validate-<name>-*`.
+# has_repo_rooted_js_test emits three `-name` alternatives per stem per
+# extension: `<stem>.<ext>`, `<stem>-*.<ext>`, `<stem>_*.<ext>`, over 6 stems.
+# Sampling one exemplar per stem (the first version of this case) left the two
+# WILDCARD alternatives of five stems unexercised — the comment claimed
+# exhaustiveness the coverage did not have. This walks all 6 x 3 = 18
+# alternatives explicitly.
 #
-# Each row runs in its own sandbox with exactly ONE test file present, so a
-# match can only come from the stem under test.
+# The extension is ROTATED across the js/mjs/cjs/ts/tsx/jsx family as the walk
+# proceeds rather than pinned, so every extension in the allowlist is exercised
+# too, and every row is a cross-extension case (source is always .js except the
+# reverse-direction row below).
+#
+# Each row runs in its own sandbox holding exactly ONE test file, so a match can
+# only come from the alternative under test.
 test_repo_rooted_stem_forms_all_match() {
-    local sb rows case_desc test_file source_name
-    # "<test-file-to-create> <source-name> <what-it-covers>"
-    while read -r test_file source_name case_desc; do
-        [ -n "$test_file" ] || continue
-        new_git_sandbox sb
+    local sb rows stem form fname ext i=0
+    local exts="js mjs cjs ts tsx jsx"
+    local stems="thing.test thing.spec test-thing test_thing spec-thing validate-thing"
 
-        command mkdir -p "$sb/src" "$sb/tests"
-        command printf '%s\n' "const x = 1;" >"$sb/src/${source_name}"
-        command printf '%s\n' "// covers ${source_name}" >"$sb/tests/${test_file}"
-        command printf '%s\n' "$sb/src/${source_name}" >"$sb/files.txt"
+    for stem in $stems; do
+        for form in exact hyphen underscore; do
+            # Rotate the extension so the allowlist is covered as we go.
+            ext="$(command printf '%s' "$exts" | command cut -d' ' -f$(((i % 6) + 1)))"
+            i=$((i + 1))
+            case "$form" in
+                exact) fname="${stem}.${ext}" ;;
+                hyphen) fname="${stem}-helpers.${ext}" ;;
+                underscore) fname="${stem}_helpers.${ext}" ;;
+            esac
 
-        run_gate_in "$sb" "$sb/files.txt"
+            new_git_sandbox sb
+            command mkdir -p "$sb/src" "$sb/tests"
+            command printf '%s\n' "const x = 1;" >"$sb/src/thing.js"
+            command printf '%s\n' "// covers thing.js" >"$sb/tests/${fname}"
+            command printf '%s\n' "$sb/src/thing.js" >"$sb/files.txt"
 
-        rows="$(category_rows "$GATE_OUT" "missing-test-file" || true)"
-        assert_output_empty "$rows" \
-            "tests/${test_file} covers ${source_name} (${case_desc})"
-    done <<'CASES'
-thing.test.ts thing.js <name>.test stem, .ts test for a .js source
-thing.spec.js thing.js <name>.spec stem
-test-thing.mjs thing.js test-<name> stem
-test_thing.cjs thing.js test_<name> stem
-spec-thing.jsx thing.js spec-<name> stem
-validate-thing.tsx thing.js validate-<name> stem, exact form
-validate-thing_extra.js thing.js the _* wildcard suffix
-validate-comp-helpers.js comp.ts REVERSE cross-extension: .ts source, .js test
-CASES
+            run_gate_in "$sb" "$sb/files.txt"
+
+            rows="$(category_rows "$GATE_OUT" "missing-test-file" || true)"
+            assert_output_empty "$rows" \
+                "tests/${fname} covers thing.js (${stem}, ${form} form)"
+        done
+    done
+
+    # Reverse cross-extension direction: a .ts source found by a .js test. Every
+    # row above is a .js source, so without this the fix's claim that the search
+    # is independent of the SOURCE's extension is only half proven.
+    new_git_sandbox sb
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const c = 1;" >"$sb/src/comp.ts"
+    command printf '%s\n' "// covers comp.ts" >"$sb/tests/validate-comp-helpers.js"
+    command printf '%s\n' "$sb/src/comp.ts" >"$sb/files.txt"
+    run_gate_in "$sb" "$sb/files.txt"
+    rows="$(category_rows "$GATE_OUT" "missing-test-file" || true)"
+    assert_output_empty "$rows" \
+        "reverse cross-extension: .ts source covered by a .js test"
+}
+
+# The extension allowlist must be a REAL filter, not documented intent. A test
+# file with a correct stem but an out-of-family extension (.py) must NOT satisfy
+# the probe — otherwise `find`'s matching could be succeeding for some reason
+# other than the explicit per-extension `-name` patterns, and every positive
+# case above would pass for the wrong reason.
+test_repo_rooted_probe_rejects_foreign_extensions() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const thing = 1;" >"$sb/src/thing.js"
+    # Right stem, wrong family — a python test does not cover a js source here.
+    command printf '%s\n' "# not a js test" >"$sb/tests/thing.test.py"
+    command printf '%s\n' "$sb/src/thing.js" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_not_empty "$rows" \
+        "a same-stem .py file does not satisfy the js/ts extension allowlist"
 }
 
 # A DIRECTORY whose name matches a test stem must NOT satisfy the probe.
@@ -435,7 +477,8 @@ run_test test_ai_slop_fires "ai-slop detector fires on a hedging phrase with a 5
 run_test test_debug_statement_fires "debug-statement detector fires on a top-level console.log"
 run_test test_missing_test_file_fires "missing-test-file detector fires (line 1, HIGH) for an orphan source"
 run_test test_repo_rooted_js_test_detected "repo-rooted tests/ + cross-extension test suppresses missing-test-file (#555)"
-run_test test_repo_rooted_stem_forms_all_match "every repo-rooted stem form + both wildcards + reverse cross-extension match (#555)"
+run_test test_repo_rooted_stem_forms_all_match "all 18 stem x suffix alternatives + every extension + reverse cross-extension match (#555)"
+run_test test_repo_rooted_probe_rejects_foreign_extensions "the js/ts extension allowlist is a real filter — a same-stem .py does not match (#555)"
 run_test test_repo_rooted_probe_ignores_directories "a directory named like a test does not suppress missing-test-file (#555)"
 run_test test_colocated_js_test_still_detected "colocated <name>.test.js still suppresses missing-test-file (#555 regression)"
 run_test test_repo_rooted_probe_is_name_anchored "repo-rooted probe stays name-anchored — unrelated tests/ files don't count (#555)"
