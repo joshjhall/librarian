@@ -58,8 +58,13 @@
 *-lock.yaml
 
 # --- Shell scripts ---
-*.sh
-*.bash
+# *.sh and *.bash are deliberately NOT skipped (#598). They were, on the premise
+# that shell scripts have no tests — false in any repo whose test suites are
+# themselves shell, and it made the scanner silent on the bulk of every diff.
+# scan_missing_tests has an sh|bash discovery arm; see pre-review-gates.sh.
+#
+# *.zsh stays skipped because it has NO such arm: un-skipping it would route zsh
+# to the unknown-extension MEDIUM branch, which is noise, not a finding.
 *.zsh
 
 # --- Build and project files ---

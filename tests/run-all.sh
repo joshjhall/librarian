@@ -34,7 +34,7 @@
 #  11e. Python lint + format — ruff (tests/lint-python.sh)
 #  11f. Lint-gate integrity — runner resolution + skip reporting (tests/validate-lint-gates.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
-#  13. seed-worktree-trust path validation (tests/validate-seed-trust.sh)
+#  13. seed-worktree-trust path validation (tests/validate-seed-worktree-trust.sh)
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #  14a2. journal partial-recovery helper (tests/validate-recover-journal-partials.sh)
 #  14a3. workflow wall-time stop decision (tests/validate-workflow-wall-timeout.sh)
@@ -165,7 +165,7 @@ run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck
 run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
 run_stage "Lint-gate integrity (resolution + skip reporting)" bash "$SCRIPT_DIR/validate-lint-gates.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
-run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-trust.sh"
+run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-worktree-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
 run_stage "journal partial-recovery helper" bash "$SCRIPT_DIR/validate-recover-journal-partials.sh"
 run_stage "workflow wall-time stop decision" bash "$SCRIPT_DIR/validate-workflow-wall-timeout.sh"

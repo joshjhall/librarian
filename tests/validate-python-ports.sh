@@ -132,11 +132,28 @@ console.log('left in by accident');
 module.exports.thing = function () {};
 EOF
 
+# Shell coverage (#598). The fixture tree carried NO .sh at all, so every
+# shell-handling branch in every port was asserted vacuously — the same trap the
+# .mjs/.cjs comment above records, and the reason #568's lesson was "a fixture
+# lacking the extension asserts nothing". This is the language most of this
+# repo's own tooling is written in.
+#
+# Content is chosen to reach several arms at once: a TODO marker, a swallowed
+# error (`|| true`), and a function definition.
+command cat >"$FIXDIR/tool.sh" <<'EOF'
+#!/usr/bin/env bash
+# TODO: implement
+run_thing() {
+    do_work || true
+}
+run_thing
+EOF
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
-    "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs"; do
+    "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh"; do
     command printf '%s\n' "$f" >>"$FILE_LIST"
 done
 
