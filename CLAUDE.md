@@ -69,9 +69,9 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   free, and `agents/` names (never slash commands) are never flagged. Two
   deliberate exclusions: `CHANGELOG.md` (git-cliff-generated) and
   `docs/verification/**` (dated e2e transcripts whose value is fidelity to what
-  was observed). State-file paths (`/next-issue-queue.json`,
-  `/next-issue-{N}.json`) must NEVER be namespaced; the gate's trailing-`-`
-  boundary exempts them.
+  was observed). State-file paths stay bare — write `/next-issue-queue.json` and
+  `/next-issue-{N}.json` exactly as-is, since they are filenames rather than
+  commands; the gate's trailing-`-` boundary exempts them automatically.
 - **Bundled scripts, never `just`.** The `workflow` plugin's skills call their
   shell scripts via `${CLAUDE_PLUGIN_ROOT}/scripts/...`, NOT via `just`, so they
   run on host / bare-linux / container identically. Env-overridable config
