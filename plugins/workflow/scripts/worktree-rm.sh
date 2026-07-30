@@ -154,7 +154,16 @@ tmux_kill_outcome() {
         command echo "killed"
         return 0
     fi
-    low="$(command printf '%s' "$err" | command tr '[:upper:]' '[:lower:]')"
+    # Fall back to the RAW text if `tr` is unavailable: an empty `low` would send
+    # every message — including the benign ones — down the `failed` arm, warning
+    # on ordinary teardowns. tmux's own wording is already lowercase so those
+    # still match; what degrades is case-insensitivity, which costs only the
+    # ENOENT variant (libc capitalizes "No such file or directory"). That lands
+    # on `failed` — a spurious warning rather than a swallowed failure, i.e. the
+    # safe direction. `|| true` keeps set -e from aborting teardown here (same
+    # guard as the sanitizer below).
+    low="$(command printf '%s' "$err" | command tr '[:upper:]' '[:lower:]' || true)"
+    low="${low:-$err}"
     case "$low" in
         *"can't find session"* | *"session not found"* | \
             *"no server running"* | \

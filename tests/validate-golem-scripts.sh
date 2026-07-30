@@ -2345,16 +2345,24 @@ EOF
     assert_contains "$RUN_OUT" "%s" \
         "a literal %s in tmux stderr is data, never a printf conversion"
 
-    # Case 3: the sanitizer's own tooling is missing. A bare assignment from a
-    # command substitution IS subject to set -e, so an unavailable `tr` would
-    # abort at 127 — right AFTER the destructive git mutations, stranding a
-    # removed worktree behind a non-zero exit. The warning is best-effort
-    # diagnostics and must never be what fails teardown. Simulated by shadowing
-    # `tr` with a stub that exits 127; `command tr` resolves through PATH, so the
-    # stub wins.
+    # Case 3: `tr` itself is unavailable — the script's ONLY external dependency
+    # in this path, used both by the classifier (lowercasing) and the sanitizer.
+    #
+    # Two distinct hazards, and the message below is chosen to separate them.
+    # (a) set -e: a bare assignment from a command substitution aborts the script,
+    #     so an unavailable `tr` would exit 127 AFTER the destructive git
+    #     mutations, stranding a removed worktree.
+    # (b) misclassification: if the lowercase step yields nothing, EVERY message
+    #     — including the benign ones — falls to the `failed` arm and warns on an
+    #     ordinary teardown.
+    #
+    # The stub tmux emits a BENIGN message on purpose. A test using an
+    # already-failing message would reach the warning either way and so could not
+    # tell (b) from correct behaviour — it would pass while the classifier was
+    # broken. Here, ANY warning means the fallback failed.
     command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
-printf 'plain failure\n' >&2
+printf "can't find session: golem-70\n" >&2
 exit 1
 EOF
     command chmod +x "$sb/bin/tmux"
@@ -2377,11 +2385,11 @@ EOF
             "$REAL_BASH" "$WT_RM" 70 2>&1)" || RUN_RC=$?
 
     assert_exit 0 "$RUN_RC" \
-        "a broken sanitizer does NOT abort teardown (set -e on the substitution)"
-    assert_contains "$RUN_OUT" "WARNING: tmux kill-session failed for golem-70" \
-        "the warning still fires when the sanitizer cannot run"
-    assert_contains "$RUN_OUT" "(no stderr from tmux)" \
-        "an empty sanitize result falls back rather than trailing a bare colon"
+        "a missing tr does NOT abort teardown (set -e on the substitution)"
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "a benign message still classifies absent when tr is gone — no spurious warning"
+    assert_not_contains "$RUN_OUT" "killed tmux session" \
+        "…and still does not claim a kill"
     command rm -f "$sb/bin/tr"
 }
 
