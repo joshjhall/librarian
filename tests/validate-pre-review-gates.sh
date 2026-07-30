@@ -260,6 +260,29 @@ validate-comp-helpers.js comp.ts REVERSE cross-extension: .ts source, .js test
 CASES
 }
 
+# A DIRECTORY whose name matches a test stem must NOT satisfy the probe.
+# `find` matches directories too, so without `-type f` a snapshot/fixture dir
+# like `tests/validate-thing-snapshots.js/` suppresses a genuine
+# missing-test-file row — a false negative that hides the very bug this
+# scanner reports. Raised by review cycle 1 (correctness) and confirmed by
+# direct probe before fixing.
+test_repo_rooted_probe_ignores_directories() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "const thing = 1;" >"$sb/src/thing.js"
+    # A directory, not a file — named exactly like a matching test would be.
+    command mkdir -p "$sb/tests/validate-thing-snapshots.js"
+    command printf '%s\n' "$sb/src/thing.js" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_not_empty "$rows" \
+        "a directory named like a test does not suppress missing-test-file"
+}
+
 # Regression guard for the pre-existing colocated path (#555 AC#4). The
 # repo-rooted fallback is additive; the <name>.test.<ext> sibling convention
 # must keep resolving on its own, in a tree with no tests/ dir at all.
@@ -311,6 +334,14 @@ test_repo_rooted_probe_is_name_anchored() {
 # explicitly out of scope for #555 (it is #568's third gap), so that row is
 # still expected here. If #568 later silences it, this assertion is the
 # reminder to update the boundary deliberately rather than by accident.
+#
+# MAINTAINER NOTE: this is the one case in the suite that reads the LIVE repo
+# rather than a fixture — AC#3 asks for exactly that, so the coupling is
+# deliberate. It does not hardcode a test filename (any of the six stems
+# satisfies it), but renaming or relocating the helper module that covers
+# ship-issue/workflow.js out of tests/ WILL turn this red for a reason
+# unrelated to a scanner regression. Fix the layout or the assertion — do not
+# delete the case.
 test_real_repo_workflow_js_not_flagged() {
     local d list missing api
     d="$(fresh_dir)"
@@ -405,6 +436,7 @@ run_test test_debug_statement_fires "debug-statement detector fires on a top-lev
 run_test test_missing_test_file_fires "missing-test-file detector fires (line 1, HIGH) for an orphan source"
 run_test test_repo_rooted_js_test_detected "repo-rooted tests/ + cross-extension test suppresses missing-test-file (#555)"
 run_test test_repo_rooted_stem_forms_all_match "every repo-rooted stem form + both wildcards + reverse cross-extension match (#555)"
+run_test test_repo_rooted_probe_ignores_directories "a directory named like a test does not suppress missing-test-file (#555)"
 run_test test_colocated_js_test_still_detected "colocated <name>.test.js still suppresses missing-test-file (#555 regression)"
 run_test test_repo_rooted_probe_is_name_anchored "repo-rooted probe stays name-anchored — unrelated tests/ files don't count (#555)"
 run_test test_real_repo_workflow_js_not_flagged "this repo's ship-issue/workflow.js: no missing-test-file, untested-public-api still fires (#555 AC#3)"

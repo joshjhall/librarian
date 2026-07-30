@@ -347,10 +347,16 @@ has_repo_rooted_js_test() {
         done
     done
 
+    # `-type f` is load-bearing, not decoration: without it a DIRECTORY whose
+    # name matches a stem (a `tests/validate-thing-snapshots.js/` fixture or
+    # snapshot dir) satisfies the probe and silently suppresses a real
+    # missing-test-file finding. A false negative here hides exactly the bug
+    # this scanner exists to report.
+    #
     # Command substitution, not a pipe into `grep -q`: under `set -o pipefail`
     # a find|head-shaped probe exits 141 (SIGPIPE) when find outruns the
     # reader, which would read as a scan failure.
-    hit="$(command find "${_PROJECT_ROOT}/tests" \
+    hit="$(command find "${_PROJECT_ROOT}/tests" -type f \
         \( "${find_args[@]}" \) -print -quit 2>/dev/null)"
     [ -n "$hit" ]
 }
