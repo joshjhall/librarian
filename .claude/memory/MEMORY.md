@@ -27,6 +27,7 @@
 - [typos gate blocks push](typos-gate-blocks-push.md) — fails the whole push on any misspelling in touched files, incl pre-existing adjacent ones
 - [rumdl nested sublist under numbered](rumdl-nested-sublist-under-numbered.md) — MD077 autofix dedents nested sublists out of numbered parents; use flat bold prose (#225)
 - [rumdl: never start a line with #NNN](rumdl-issue-ref-line-start.md) — a wrapped line beginning with an issue ref = MD018 malformed heading; reword, don't re-wrap
+- [rumdl scope is invocation-dependent](rumdl-scope-depends-on-invocation.md) — over-reports on an explicit .sh (4,426 phantom rows), under-reports on a walk; filter to *.md first
 - [Conform scope enum](conform-scope-enum.md) — `fix(review):` is rejected; the skill's generic scopes ≠ this repo's enum
 - [Skill required_tools vocabulary](skill-required-tools-vocabulary.md) — metadata.yml required_tools are shell-command names; no SKILL.md has a frontmatter tools: field
 
