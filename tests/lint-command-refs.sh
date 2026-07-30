@@ -48,8 +48,12 @@
 # vanishes. That collapse looks like a harmless optimization, so
 # test_negative_case_fires plants a line specifically to catch it.
 #
-# Corpus: plugins/**/*.md plus the top-level README.md. Two exclusions, each
-# asserted below rather than left to the `find` root:
+# Corpus: plugins/**/*.md plus the top-level README.md — and nothing else. Note
+# what that means for the two paths below: they are out of scope BY CONSTRUCTION
+# (outside the walked root), NOT by an active filter. There is no `grep -v` to
+# regress. What `test_exclusions_are_deliberate` pins is the narrowness of the
+# root itself, since widening it to $REPO_ROOT is the plausible regression that
+# would sweep them in:
 #   CHANGELOG.md         — generated from conventional commits by git-cliff; its
 #                          bare refs are historical release notes.
 #   docs/verification/** — dated end-to-end transcripts. Gating them would force
@@ -296,6 +300,73 @@ test_missing_readme_fails_loudly() {
     assert_contains "$out2" "README.md" "The README is part of the corpus it returns"
 }
 
+# Pins scan_file's ERE-metacharacter guard
+# (`case "$name" in *[!a-z0-9-]*) continue`). Skill names come from directory
+# names, so a stray one could otherwise reach the pattern: `foo.*bar` matches
+# GREEDILY across a line (verified), and an unbalanced `a(b` makes grep abort with
+# "Unmatched ( or \(". Either corrupts the whole gate's output. Every existing
+# caller passes well-formed names, so without this the guard is untested.
+test_malformed_name_is_skipped() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    command printf 'Text /foo.*bar and a real /ship-issue ref.\n' >"$tmp/meta.md"
+
+    # Malformed names FIRST, so a crash would prevent the valid one being scanned.
+    scan_file "$tmp/meta.md" "foo.*bar
+a(b
+UPPER
+ship-issue"
+
+    assert_not_contains "$CUR_VIOLATIONS" "foo.*bar" \
+        "A name with ERE metacharacters is skipped, not compiled into the pattern"
+    assert_not_contains "$CUR_VIOLATIONS" "a(b" \
+        "An unbalanced-paren name is skipped (would otherwise abort grep)"
+    assert_not_contains "$CUR_VIOLATIONS" "UPPER" \
+        "A name outside [a-z0-9-] is skipped"
+    # The valid name AFTER the malformed ones must still be scanned — proof the
+    # guard `continue`s rather than crashing or breaking out of the loop.
+    assert_contains "$CUR_VIOLATIONS" "/ship-issue -> /workflow:ship-issue" \
+        "A well-formed name after the malformed ones is still scanned"
+}
+
+# Pins collect_skills' `[ -f SKILL.md ]` requirement. Against the real tree the
+# guard is dead code (all 40 skills have one), so an inverted or dropped condition
+# would count non-skill directories as skills — corrupting the whitelist the whole
+# gate is built on — and nothing would catch it until the tree grew such a dir.
+test_collect_skills_requires_skill_md() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    command mkdir -p "$tmp/p1/skills/real" "$tmp/p1/skills/bogus" "$tmp/p2/skills/also-real"
+    command printf -- '---\ndescription: x\n---\n' >"$tmp/p1/skills/real/SKILL.md"
+    command printf -- '---\ndescription: y\n---\n' >"$tmp/p2/skills/also-real/SKILL.md"
+    # bogus/ deliberately has a file that is NOT SKILL.md.
+    command printf 'notes\n' >"$tmp/p1/skills/bogus/README.md"
+
+    local out
+    out="$(collect_skills "$tmp")"
+
+    assert_contains "$out" "p1	real" "A skills dir WITH a SKILL.md is indexed"
+    assert_contains "$out" "p2	also-real" "Discovery spans multiple plugins"
+    assert_not_contains "$out" "bogus" \
+        "A skills dir WITHOUT a SKILL.md is excluded from the index"
+    # Exactly two entries — guards against a widened walk picking up extra dirs.
+    local n
+    n="$(command printf '%s\n' "$out" | command grep -c . || true)"
+    assert_equals "2" "$n" "Exactly the two real skills are indexed (found $n)"
+}
+
 # Drives build_detail's truncation branch, which no fixture reaches otherwise
 # (the negative fixture plants 16 lines against a MAX_DETAIL of 40).
 test_detail_truncation() {
@@ -445,6 +516,26 @@ test_exclusions_are_deliberate() {
         "docs/verification/** is out of scope (dated e2e transcripts)"
     assert_not_contains "$CORPUS" "/CHANGELOG.md" \
         "CHANGELOG.md is out of scope (git-cliff-generated release notes)"
+
+    # The two assertions above are true BY CONSTRUCTION — both paths sit outside
+    # the walked root, so they would pass even if every filter were deleted. That
+    # makes them a statement of intent, not a live guard. What actually needs
+    # pinning is the property they depend on: the corpus root stays narrow. If a
+    # future edit widens it to $REPO_ROOT (the plausible regression), CHANGELOG.md
+    # and docs/verification/** get swept in and THESE assertions start failing for
+    # real — so assert the narrowness explicitly rather than leaving it implicit.
+    local outside=""
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        case "$f" in
+            "$PLUGINS_DIR"/*) continue ;;
+            "$REPO_ROOT/README.md") continue ;;
+            *) outside="${outside}${f}"$'\n' ;;
+        esac
+    done <<<"$CORPUS"
+    assert_equals "" "$outside" \
+        "The corpus is exactly plugins/**/*.md + README.md (root has not widened)"
 }
 
 # Positive control. Every per-file test goes green on an EMPTY corpus, and would
@@ -479,8 +570,17 @@ scan_namespaced() {
     NS_DANGLING=""
     NS_CHECKED=0
     local ref plugin skill file alt
+    # `grep -v '^$'` drops blank index lines before they reach `tr`. Without it a
+    # blank line becomes an EMPTY alternative (`/(|a|b):…`). GNU grep accepts that
+    # — verified, it is valid POSIX ERE — and real refs still match, so this is NOT
+    # a false-green; the concrete effect is that `/:some-skill` (empty plugin name)
+    # starts matching and would be reported as a dangling ref that no author
+    # wrote. Some other ERE engines reject an empty sub-expression outright, which
+    # WOULD blank the check, so the filter also keeps this portable.
+    # collect_skills cannot emit a blank line today, but scan_namespaced takes a
+    # caller-supplied SKILL_INDEX in tests, so it should not trust its input.
     alt="$(command printf '%s\n' "$SKILL_INDEX" | command cut -f1 |
-        command sort -u | command tr '\n' '|')"
+        command grep -v '^$' | command sort -u | command tr '\n' '|')"
     alt="${alt%|}"
     # No discovered plugins means no refs to check; bail rather than build a
     # pattern like `/():…` that would match nothing while looking like it worked.
@@ -579,6 +679,25 @@ test_namespaced_alternation_is_derived() {
         "A ref for a newly-discovered plugin is examined (alternation is derived, not hardcoded)"
     assert_contains "$NS_DANGLING" "/brand-new:some-skill" \
         "The new plugin's unresolvable ref is flagged"
+
+    # A blank line in the index must not widen the alternation. Without the
+    # `grep -v '^$'` filter it becomes an empty alternative (`/(|workflow):…`),
+    # which GNU grep happily accepts — so real refs keep matching, but `/:x`
+    # (empty plugin name) ALSO starts matching and gets reported as a dangling ref
+    # nobody wrote. Plant exactly that shape next to a valid ref: the valid one
+    # must resolve, the `/:` one must never be reported at all.
+    command printf 'Valid: /workflow:ship-issue. Not a ref: /:ship-issue here.\n' \
+        >"$tmp/blank.md"
+    SKILL_INDEX="$(command printf 'workflow\tship-issue\n\nworkflow\tgolem\n')"
+    scan_namespaced "$tmp/blank.md"
+    SKILL_INDEX="$saved_index"
+
+    assert_equals "1" "$NS_CHECKED" \
+        "Only the real ref is examined with a blank index line (found $NS_CHECKED)"
+    assert_not_contains "$NS_DANGLING" "/:ship-issue" \
+        "An empty plugin name is NOT matched (blank index line did not widen the pattern)"
+    assert_equals "" "$NS_DANGLING" \
+        "The correctly-attributed ref still resolves with a blank index line"
 }
 
 # Negative case: the violation branch must fire on every bare form, and every
@@ -665,6 +784,8 @@ run_test test_namespaced_alternation_is_derived "The plugin alternation is deriv
 run_test test_unknown_name_degrades_not_aborts "An unknown skill name degrades the suggestion, never aborts the gate"
 run_test test_detail_truncation "Violation detail truncates at MAX_DETAIL with an accurate remainder"
 run_test test_missing_readme_fails_loudly "A missing README.md aborts the gate instead of narrowing the corpus"
+run_test test_malformed_name_is_skipped "A skill name with ERE metacharacters is skipped, not compiled in"
+run_test test_collect_skills_requires_skill_md "Discovery indexes only skills dirs that carry a SKILL.md"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
