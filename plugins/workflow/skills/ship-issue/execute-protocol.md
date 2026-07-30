@@ -30,7 +30,7 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      harness (`phase: "pr-cycle"`) folding in open PR comments, resolve `blocking`
      / file `deferrable`, commit + push + re-check CI each cycle, terminate when
      clean + green + every comment resolved-or-deferred (cap `REVIEW_MAX_CYCLES`).
-   - **File deferred review findings** — file each via `/file-issue` (autonomous
+   - **File deferred review findings** — file each via `/workflow:file-issue` (autonomous
      fallback: `gh issue create --body-file`, never interpolating LLM text into a
      shell arg), link them on the PR, and append a "Review findings" section to
      the PR body. Nothing is silently dropped.
@@ -126,7 +126,7 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      today's default behavior. Continue to the labeling + comment steps below,
      then Step 5.
 
-   **Squash-by-default rationale**: `/next-issue` PRs are single-issue,
+   **Squash-by-default rationale**: `/workflow:next-issue` PRs are single-issue,
    single-deliverable units; squash keeps history linear and the merged commit
    still references the issue.
 

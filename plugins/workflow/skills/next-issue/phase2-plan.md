@@ -2,7 +2,7 @@
 
 Companion to `next-issue/SKILL.md`. Load this when a run reaches the planning
 phase (after Phase 1 selection). It carries the full Phase 2 step sequence:
-scope assessment, the mandatory `/ship-issue` final step, the state-file write,
+scope assessment, the mandatory `/workflow:ship-issue` final step, the state-file write,
 the plan-gate branch (L4 comment-only vs L1–L3 `EnterPlanMode`/`ExitPlanMode`),
 the implement step with its mid-flight escalation gate, and the hand-off /
 `--ship` fast-path. The authoritative level model is
@@ -26,12 +26,12 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
 1. **MANDATORY final step** — always append this verbatim as the last step
    of the plan:
 
-   > **After all implementation and testing is complete**, invoke `/ship-issue`
+   > **After all implementation and testing is complete**, invoke `/workflow:ship-issue`
    > to commit, deliver, and close the issue.
 
    If in agent worktree mode, also append:
 
-   > Agent worktree mode: `/ship-issue` will auto-select commit-only
+   > Agent worktree mode: `/workflow:ship-issue` will auto-select commit-only
    > (Option 3). The orchestrator handles PR creation and delivery.
 
 1. **Update state file** — write the full JSON with `phase: "plan"`, a
@@ -39,7 +39,7 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    complete **before** the `EnterPlanMode` call in the autonomous-planning path
    below: an L1–L3 run enters plan mode next, and plan mode permits only edits to
    the plan file, so a state write attempted after `EnterPlanMode` is silently
-   blocked and the `/ship-issue` hand-off record never lands (issue #409). Do the
+   blocked and the `/workflow:ship-issue` hand-off record never lands (issue #409). Do the
    write here, then enter plan mode.
 
    ```json
@@ -110,7 +110,7 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, refines the plan in-session, and approves.
      **After approval**, the run continues at its level: at **L3** skip the
      "Suggest context reset" step, proceed directly through implementation and
-     testing, then invoke `/ship-issue` in-turn exactly as the shipping handoff
+     testing, then invoke `/workflow:ship-issue` in-turn exactly as the shipping handoff
      below; at **L1–L2** the routine gates (shipping mode, push, PR) remain
      human, so follow the normal non-autonomous hand-off. Posting a plan issue
      comment is optional here (the plan is already visible in the approval
@@ -119,16 +119,16 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    **Then, once implementation and testing are complete — for an L1–L3 run that
    kept the plan gate, that means only after the `ExitPlanMode` approval below
    AND the subsequent "Implement" step both finish — an L3–L4 run invokes the
-   `/ship-issue` skill in this same turn** (call the `Skill` tool with
+   `/workflow:ship-issue` skill in this same turn** (call the `Skill` tool with
    `ship-issue`). Do NOT invoke ship before `ExitPlanMode` approval (when the
    gate was kept) or before the work exists. Do NOT stop after implementation to
-   *suggest* shipping, and do NOT merely print a "next step: /ship-issue" line —
+   *suggest* shipping, and do NOT merely print a "next step: /workflow:ship-issue" line —
    actually invoke it. This is the whole point of L3–L4: a single
-   `claude '/next-issue <N> --level 4'` prompt must reach a pushed PR + labeled
-   issue without a second manual command. Ending the turn after `/next-issue`
+   `claude '/workflow:next-issue <N> --level 4'` prompt must reach a pushed PR + labeled
+   issue without a second manual command. Ending the turn after `/workflow:next-issue`
    leaves the work uncommitted with no PR. (As a belt-and-suspenders for a
    premature turn-exit, the orchestrate golem launch also chains a second
-   `; claude '/ship-issue'` prompt — see the orchestrate skill — but the in-turn
+   `; claude '/workflow:ship-issue'` prompt — see the orchestrate skill — but the in-turn
    invocation here is the primary path and must not be skipped.) An **L1–L2** run instead stops for the human at the
    routine ship gates — follow the default hand-off below.
 
@@ -142,7 +142,7 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
 
 1. **Implement** — after plan approval, carry out the plan: make the changes
    and run the tests. The two steps below fire only **once implementation and
-   testing are complete** — do NOT invoke `/ship-issue` or suggest a
+   testing are complete** — do NOT invoke `/workflow:ship-issue` or suggest a
    `/clear` before the work exists.
 
    **Mid-flight escalation gate.** If, while implementing or testing, you reach a
@@ -152,7 +152,7 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    Load `escalation-protocol.md` and follow it: assemble the payload (decision,
    options + tradeoffs, recommendation), then dispatch by level — **L1–L3 block
    and wait indefinitely** for a human (surfaced as an `escalation` on the feed +
-   an issue comment; inline for a lone `/next-issue`), **L4 auto-selects the
+   an issue comment; inline for a lone `/workflow:next-issue`), **L4 auto-selects the
    recommendation** and continues, **unless it is a dead-end** (no safe option /
    would violate the merge invariant), which blocks at every level including L4.
    Err toward escalating when unsure. This is distinct from the plan gate above,
@@ -164,7 +164,7 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    planning path above, never via a `/clear`.) Choose by flag + effort:
 
    - **`--ship` (or `--now`) set AND effort is `trivial`/`small`**: do NOT
-     suggest a `/clear`. Invoke `/ship-issue` directly to deliver in this
+     suggest a `/clear`. Invoke `/workflow:ship-issue` directly to deliver in this
      same context. The plan was still approved interactively above, so the
      human remains in the loop; only the reset ceremony is skipped. The run stays
      at its chosen level (an L1–L3 answer; `--ship` never selects L4) — the ship
@@ -183,17 +183,17 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
      - **Primary checkout** (`--git-dir` == `--git-common-dir`) — tell the user:
 
        > Planning phase complete. Context can be safely cleared — state saved to
-       > `.claude/memory/tmp/next-issue-{N}.json`. Run `/clear` then `/next-issue`
+       > `.claude/memory/tmp/next-issue-{N}.json`. Run `/clear` then `/workflow:next-issue`
        > to resume from implementation.
 
-     - **Linked worktree** (`--git-dir` != `--git-common-dir` — e.g. a `/golem`
+     - **Linked worktree** (`--git-dir` != `--git-common-dir` — e.g. a `/workflow:golem`
        run) — a bare `/clear` may return the session to the **main checkout** and
        drop the worktree cwd, so the resume note carries the re-entry step:
 
        > Planning phase complete. Context can be safely cleared — state saved to
        > `.claude/memory/tmp/next-issue-{N}.json`. `/clear` may return you to the
        > main checkout, so after it re-enter this worktree with
-       > `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/next-issue`
+       > `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/workflow:next-issue`
        > to resume from implementation.
 
      This is advisory — continue normally if the user declines.

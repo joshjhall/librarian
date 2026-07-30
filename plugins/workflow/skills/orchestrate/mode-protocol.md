@@ -62,7 +62,7 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh {N}
 cd .worktrees/issue-{N}
 # ... make changes, commit ...
 
-# Merge (via /orchestrate merge)
+# Merge (via /workflow:orchestrate merge)
 git checkout main
 git merge feature/issue-{N}
 
@@ -90,15 +90,15 @@ directly:
 docker exec -it project-agent01-1 tmux attach -t claude
 ```
 
-**Lifecycle**: See `/provision-agent` skill for create/teardown.
+**Lifecycle**: See `/workflow:provision-agent` skill for create/teardown.
 
 ---
 
 ## Golem Dispatch Modes
 
 A **golem** is a per-issue sub-orchestrator: a PROCESS that owns one issue →
-branch → worktree → PR and runs the autonomous pipeline (`/next-issue <N>
---level 4`, which invokes `/ship-issue` in-turn → Branch + PR) unattended to
+branch → worktree → PR and runs the autonomous pipeline (`/workflow:next-issue <N>
+--level 4`, which invokes `/workflow:ship-issue` in-turn → Branch + PR) unattended to
 a green, review-clean PR. Golems are not a new isolation mechanism — they are
 the **existing Mode 2 or Mode 3** with an autonomous payload and a PR exit.
 
@@ -108,16 +108,16 @@ The launch is **interactive** in tmux with `--permission-mode auto` passed
 issues #570, #585). The explicit flag is required because a fresh worktree is untrusted,
 so Claude Code does not load its copied `settings.local.json` `defaultMode: auto`
 and would otherwise fall back to `default`. The harness `--permission-mode auto`
-is distinct from the `/next-issue` `--level {N}` skill flag (the autonomy dial) —
+is distinct from the `/workflow:next-issue` `--level {N}` skill flag (the autonomy dial) —
 both are needed.
-An L4 `/next-issue` invokes `/ship-issue` in-turn, so the single prompt
+An L4 `/workflow:next-issue` invokes `/workflow:ship-issue` in-turn, so the single prompt
 reaches a PR on its own. A `;`-chained second prompt is the resume backstop:
 
 ```bash
 claude --permission-mode auto "/workflow:next-issue <N> --level 4" ; claude --permission-mode auto "/workflow:ship-issue"
 ```
 
-— so that a premature turn-exit after `/next-issue` still ships: the second
+— so that a premature turn-exit after `/workflow:next-issue` still ships: the second
 prompt re-reads the state file and delivers (a near no-op if the first already
 pushed a PR). Use `;`, NOT `&&`: the backstop must run even when the first prompt
 exits non-zero before shipping, which is exactly the case `&&` would skip.
@@ -127,7 +127,7 @@ exits non-zero before shipping, which is exactly the case `&&` would skip.
 Whether a golem skips the plan checkpoint is decided by its **autonomy level**,
 **not** its effort labels (the level model, #174/#175, replaced the old
 effort-based rule — an L4 golem on an `effort/medium` issue now skips the plan,
-which under the binary model it would not have). `/next-issue` resolves this via
+which under the binary model it would not have). `/workflow:next-issue` resolves this via
 `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190), which derives the
 `plan_gated` disposition from the level; dispatch does not recompute it:
 
@@ -143,7 +143,7 @@ plan_gated == true (level 1-3, incl. a capped severity/critical):
     AND the antagonistic pre-PR review, not just the first edit.
 ```
 
-The launch command does not change — the policy lives in `/next-issue`; dispatch
+The launch command does not change — the policy lives in `/workflow:next-issue`; dispatch
 just **expects** a golem dispatched below L4 (or a capped critical) to block at
 the plan step. To change a golem's behavior, dispatch it at a different
 `--level {N}`: L4 runs fully autonomous with no plan stop, L3 keeps the plan gate
@@ -200,9 +200,9 @@ earns its place.
 | **Container golem** | Mode 3  | same chained pipeline in the container's tmux Claude | same → PR (merge is the level-aware routine gate: auto at L3–L4 after green CI + clean review) |
 
 > **Hard constraint — golems are processes, never Workflow subagents.** Each
-> golem's `/ship-issue` already owns the one permitted Workflow nesting level
+> golem's `/workflow:ship-issue` already owns the one permitted Workflow nesting level
 > (its review harness), so dispatch golems as OS processes only — containers
-> (`/provision-agent`) or worktree-bound shells, never via the Workflow/Task
+> (`/workflow:provision-agent`) or worktree-bound shells, never via the Workflow/Task
 > tool. Full rationale: `ship-issue/ship-protocol.md` § *Golem Execution Model*.
 
 ### Supervised launch & central feed
@@ -470,7 +470,7 @@ orchestrator arms it on entering `monitor`/`watch` and acts on the transitions i
 emits. Its **pull** complement is the periodic **status sweep**:
 `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --watch`, a rolling at-a-glance
 re-render of every golem's row on a fixed interval. That rolling sweep is **no
-longer auto-armed** — it is **opt-in** (a one-shot `/orchestrate status`, or a
+longer auto-armed** — it is **opt-in** (a one-shot `/workflow:orchestrate status`, or a
 `CronCreate` render that writes out-of-band so its cost is not paid in live
 tokens), which **supersedes** the #304 "arm the sweep by default at every level"
 decision (event-driven is cheaper and the push gate-watch already catches every
@@ -511,7 +511,7 @@ the per-sweep Δ, and shows `n/a` only until that POST lands.
 
 ### Slow-review takeover contract
 
-A golem's `/ship-issue` pre-PR `next-issue-review` sometimes runs long. The
+A golem's `/workflow:ship-issue` pre-PR `next-issue-review` sometimes runs long. The
 question the monitor must answer is **not** "is this review slow?" but "is this
 golem **unrecoverably wedged**, warranting an orchestrator takeover kill?" — and
 the answer is **almost always no**. The default is **surface-and-wait**, not
@@ -617,16 +617,16 @@ outside.
 
 ```text
 IF batch_size >= 2 OR session at capacity (>= 3 worktrees):
-  → Container golems (Mode 3) via /provision-agent — primary for parallel work
+  → Container golems (Mode 3) via /workflow:provision-agent — primary for parallel work
 ELIF batch_size in 1..2 AND session has capacity:
   → Worktree golems (Mode 2)
 ELSE (single issue):
-  → Run /next-issue directly, no orchestration
+  → Run /workflow:next-issue directly, no orchestration
 ```
 
 The master orchestrator (a live interactive session) dispatches golems, then
 monitors PR + issue-label state and rebases across PRs. It NEVER merges a
-golem's branch into its own — a golem's own `/ship-issue` merges its PR as the
+golem's branch into its own — a golem's own `/workflow:ship-issue` merges its PR as the
 **level-aware routine gate** (auto at L3–L4, human at L1–L2, always subject to the
 green-CI + clean-review merge invariant); humans merge whatever a golem leaves for
 them. See `SKILL.md` Phases D / M / R.
@@ -670,7 +670,7 @@ The pool advances on each Phase M monitor sweep — there is **no background
 daemon**; the sweep cadence is the clock. Post-#485 the rolling sweep is opt-in
 (gate-watch is the event-driven default and does not fire on "slot freed"), so a
 live pool **must arm** that periodic cadence (the `--watch` sweep or a
-`CronCreate` `/orchestrate status`) for refill to advance — see
+`CronCreate` `/workflow:orchestrate status`) for refill to advance — see
 `pool-train-protocol.md` § Refill loop and `monitor-protocol.md` § Loop.
 
 ---
@@ -681,7 +681,7 @@ When a golem's PR CI fails, classify the failure **before** surfacing it as a
 regression or escalating to the human. This is a triage/classification step plus
 cascade-collapse — **not** a new retry layer (the `ci-fixer` harness already
 caps code-fix attempts; the CI-wait loop already never blocks shipping). It runs
-inside each golem's `/ship-issue` CI-wait (Step 4 Option 1, "If checks fail
+inside each golem's `/workflow:ship-issue` CI-wait (Step 4 Option 1, "If checks fail
 — triage"); the orchestrator's Phase M monitor mirrors the result when it
 surfaces a failing PR.
 

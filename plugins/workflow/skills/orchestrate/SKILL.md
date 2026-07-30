@@ -6,11 +6,11 @@ description: Master orchestrator for PR-per-golem parallel work. Dispatch golems
 
 The default topology is **PR-per-golem**: the orchestrator is a **live
 interactive session** that dispatches **golems** (each a PROCESS owning one
-issue → branch → worktree → PR, running the `/next-issue` → `/ship-issue`
+issue → branch → worktree → PR, running the `/workflow:next-issue` → `/workflow:ship-issue`
 pipeline at a chosen **autonomy level** — L1–L4, per
 `autonomy-levels.md`; passed as `--level {N}`),
 then monitors, surfaces, and rebases across their PRs. **The orchestrator never
-merges golem branches into its own** — a golem's own `/ship-issue` merges its PR
+merges golem branches into its own** — a golem's own `/workflow:ship-issue` merges its PR
 as the **level-aware routine gate** (auto at L3–L4, human at L1–L2, always
 subject to the green-CI + clean-review merge invariant); the humans in the loop
 merge anything a golem leaves for them.
@@ -18,9 +18,9 @@ merge anything a golem leaves for them.
 **Hard constraints** (architecture — do not violate):
 
 - **Golems are processes, never Workflow subagents.** Each golem's
-  `/ship-issue` owns the single permitted Workflow nesting level (its review
+  `/workflow:ship-issue` owns the single permitted Workflow nesting level (its review
   harness), so a golem MUST be its own OS process — a container
-  (`/provision-agent`) or worktree-bound shell, never a Workflow/Task subagent
+  (`/workflow:provision-agent`) or worktree-bound shell, never a Workflow/Task subagent
   (which consumes that level and makes the harness throw). Full rationale:
   `ship-issue/ship-protocol.md` § *Golem Execution Model*; dispatch mechanics:
   `mode-protocol.md` § Golem Dispatch Modes.
@@ -57,31 +57,31 @@ merge anything a golem leaves for them.
 
 | Invocation | Phase |
 | ---------- | ----- |
-| `/orchestrate dispatch <N…>` or `dispatch <count>` | Phase D — Dispatch golems |
-| `/orchestrate pool <N>` | Phase P — Worker pool (set size, refill from backlog) |
-| `/orchestrate tracks [N]` | Phase P — Compose 2–4 ordered, low-collision tracks, then run the setup flow (propose → approve → choose L1–L4 → dispatch) |
-| `/orchestrate drain` / `pause` / `resume` | Phase P — Pool refill controls |
-| `/orchestrate` or `/orchestrate status` | Phase M — Monitor (one-shot status sweep, on demand) |
-| `/orchestrate monitor` / `watch` | Phase M — Monitor loop (event-driven push gate-watch by default; rolling sweep opt-in) |
-| `/orchestrate rebase` or `rebase <N>` | Phase R — Cross-PR rebase |
-| `/orchestrate train` or `train <N…>` | Phase T — Integration train (land a batch) |
-| `/orchestrate mode` | Phase 0 — Mode selection |
-| `/orchestrate spawn <N>` / `teardown <agent>` | Phase 5 — Container mgmt |
-| `/orchestrate merge <N>` / `merge all` / `sync` | Local-merge (OPT-IN, legacy) |
-| `/orchestrate review` | Local-merge review (OPT-IN, legacy) |
+| `/workflow:orchestrate dispatch <N…>` or `dispatch <count>` | Phase D — Dispatch golems |
+| `/workflow:orchestrate pool <N>` | Phase P — Worker pool (set size, refill from backlog) |
+| `/workflow:orchestrate tracks [N]` | Phase P — Compose 2–4 ordered, low-collision tracks, then run the setup flow (propose → approve → choose L1–L4 → dispatch) |
+| `/workflow:orchestrate drain` / `pause` / `resume` | Phase P — Pool refill controls |
+| `/workflow:orchestrate` or `/workflow:orchestrate status` | Phase M — Monitor (one-shot status sweep, on demand) |
+| `/workflow:orchestrate monitor` / `watch` | Phase M — Monitor loop (event-driven push gate-watch by default; rolling sweep opt-in) |
+| `/workflow:orchestrate rebase` or `rebase <N>` | Phase R — Cross-PR rebase |
+| `/workflow:orchestrate train` or `train <N…>` | Phase T — Integration train (land a batch) |
+| `/workflow:orchestrate mode` | Phase 0 — Mode selection |
+| `/workflow:orchestrate spawn <N>` / `teardown <agent>` | Phase 5 — Container mgmt |
+| `/workflow:orchestrate merge <N>` / `merge all` / `sync` | Local-merge (OPT-IN, legacy) |
+| `/workflow:orchestrate review` | Local-merge review (OPT-IN, legacy) |
 
 ## Phase D — Dispatch
 
 Spin up N golems, each owning one issue end-to-end. Golems are **processes**;
 dispatch is sequential and cheap — **not** workflow-driven.
 
-> **Track setup flow feeds dispatch.** When dispatch follows a `/orchestrate
+> **Track setup flow feeds dispatch.** When dispatch follows a `/workflow:orchestrate
 > tracks` composition, the issues and their **autonomy level** come from the
 > approved setup flow (`pool-train-protocol.md` § *The setup flow*) — the
 > operator has already approved the lanes and chosen L1–L4 (offered as L1–L3 for
 > a track holding a `severity/critical` issue). Dispatch one golem per **track
-> head** and pass the level in as `--level {N}` on its `/next-issue` prompt so
-> the run's state file records it. A plain `/orchestrate dispatch <N…>` without a
+> head** and pass the level in as `--level {N}` on its `/workflow:next-issue` prompt so
+> the run's state file records it. A plain `/workflow:orchestrate dispatch <N…>` without a
 > composition selects by priority as below and asks the L1–L4 question itself.
 
 1. **Select issues** by priority using the ordering in
@@ -97,7 +97,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
 1. **Choose the dispatch mode** per issue from `mode-protocol.md`:
 
    - **Container golem** (Mode 3, primary) — `batch_size ≥ 2` or session at
-     capacity. Invoke `/provision-agent` (Phase 5 Spawn).
+     capacity. Invoke `/workflow:provision-agent` (Phase 5 Spawn).
    - **Worktree golem** (Mode 2) — 1–2 issues with session capacity.
      `git worktree add .worktrees/issue-{N} -b feat/issue-{N}` and launch the
      pipeline in a worktree-bound shell process.
@@ -106,7 +106,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
    documented worktree-golem launch is a bare `tmux new-session …`, which the
    auto-mode classifier **denies** (`[Create Unsafe Agents]`) unless the host
    has authorized the launch rules — a hard, opaque wall on the very first
-   `/orchestrate dispatch`. Because the launch shape is fixed, detect this in
+   `/workflow:orchestrate dispatch`. Because the launch shape is fixed, detect this in
    advance instead of failing opaquely:
 
    ```bash
@@ -148,9 +148,9 @@ dispatch is sequential and cheap — **not** workflow-driven.
    # The explicit flag is required: a fresh worktree is untrusted, so Claude Code
    # does NOT load its copied settings.local.json `defaultMode: auto` and would
    # fall back to `default` and prompt-storm (#585). The harness
-   # `--permission-mode auto` is distinct from the `/next-issue` `--level {N}`
+   # `--permission-mode auto` is distinct from the `/workflow:next-issue` `--level {N}`
    # skill flag (the autonomy dial) — both are needed.
-   # An L4 /next-issue invokes /ship-issue in-turn, so the first prompt
+   # An L4 /workflow:next-issue invokes /workflow:ship-issue in-turn, so the first prompt
    # reaches Branch + PR on its own. The `;`-chained second prompt is a resume
    # backstop, NOT `&&`: it must run even if the first exits non-zero before
    # shipping. If the first already shipped (state file deleted), the second is a
@@ -197,7 +197,7 @@ dispatch is sequential and cheap — **not** workflow-driven.
    builds the plan and BLOCKS at `ExitPlanMode` awaiting human approval (shown
    BLOCKED in `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`), then continues
    autonomously through implement → review → push/PR once approved. The launch
-   command is identical either way (the policy lives in `/next-issue`); dispatch
+   command is identical either way (the policy lives in `/workflow:next-issue`); dispatch
    only needs to **expect** a below-L4 golem to block at the plan step.
 
    Plan approval is **broker → human decides → orchestrator sends the keystroke**:
@@ -210,12 +210,12 @@ dispatch is sequential and cheap — **not** workflow-driven.
    level*.
 
    The pipeline runs unattended to a green, review-clean PR (after plan approval
-   for a plan-gated golem below L4); its own `/ship-issue` then merges as the
+   for a plan-gated golem below L4); its own `/workflow:ship-issue` then merges as the
    level-aware routine gate — **auto at L3–L4**, **human at L1–L2** — always
    subject to the green-CI + clean-review merge invariant.
 
 1. **Label + cache**: ensure each dispatched issue is `status/in-progress`
-   (the autonomous `/next-issue` does this) and write the initial golem cache
+   (the autonomous `/workflow:next-issue` does this) and write the initial golem cache
    entry to `.worktrees/.status/{golem}.json` (schema:
    `schemas/golem-status.schema.json`). **Stamp `started`** (ISO-8601 Z, e.g.
    `date -u +%FT%TZ`) in that initial write — it is the ELAPSED source for the
@@ -240,7 +240,7 @@ lives in `.worktrees/.status/pool.json` (schema `schemas/pool-status.schema.json
 refill loop advances on each Phase M sweep (no daemon) via `workflow.js`
 (`mode: "pool"`); live controls (`pool <N>`/`drain`/`pause`/`resume`) flip
 `pool.json` for the next sweep. When **tracks** are active (composed via
-`/orchestrate tracks`), refill is **lane-aware**: a freed slot pulls its own
+`/workflow:orchestrate tracks`), refill is **lane-aware**: a freed slot pulls its own
 track's next queued issue and only falls back to the global collision-aware pick
 once that track is exhausted — see `pool-train-protocol.md` § Lane-aware serial
 refill.
@@ -387,15 +387,15 @@ Load `mode-protocol.md` before starting.
    (including § Golem Dispatch Modes for parallel work), and present the
    tradeoff via `AskUserQuestion`.
 
-1. **Execute**: Mode 1a/1b → run `/next-issue` directly; Mode 2 → worktree
-   golem (Phase D); Mode 3 → container golem via `/provision-agent`.
+1. **Execute**: Mode 1a/1b → run `/workflow:next-issue` directly; Mode 2 → worktree
+   golem (Phase D); Mode 3 → container golem via `/workflow:provision-agent`.
 
 ## Phase 5 — Container Management
 
 **Companion file**: the container/worktree golem lifecycle lives in
 `container-protocol.md` in this skill directory — load it only for
-`/orchestrate spawn <N>` (prerequisites → `/provision-agent` → assign issues →
-report access commands) or `/orchestrate teardown <agent>` (Mode 2 worktree golem
+`/workflow:orchestrate spawn <N>` (prerequisites → `/workflow:provision-agent` → assign issues →
+report access commands) or `/workflow:orchestrate teardown <agent>` (Mode 2 worktree golem
 via `worktree-rm.sh`, which removes worktree + branch + tmux session in one step;
 Mode 3 container golem via `docker compose stop`/`rm` + worktree removal + cache
 clean). Tear down only after the golem's PR is merged or abandoned.
@@ -404,7 +404,7 @@ clean). Tear down only after the golem's PR is merged or abandoned.
 
 **Companion file**: the full local-merge protocol lives in `merge-protocol.md` §
 *Local-Merge (OPT-IN, Legacy)*. Load it only when explicitly requested
-(`/orchestrate merge`, `review`, `sync`).
+(`/workflow:orchestrate merge`, `review`, `sync`).
 
 > **OPT-IN LEGACY MODE.** The default topology is PR-per-golem (Phases D/M/R).
 > Use local-merge ONLY for tightly-coupled work where golems push to no remote.
@@ -416,21 +416,21 @@ step-by-step in `merge-protocol.md` § *Local-Merge (OPT-IN, Legacy)*.
 
 ## When to Use
 
-- Running 2+ independent issues in parallel as golems (`/orchestrate dispatch`)
-- Watching golem PRs through CI + review to green (`/orchestrate monitor`)
-- Rebasing later PRs after an earlier PR merges (`/orchestrate rebase`)
+- Running 2+ independent issues in parallel as golems (`/workflow:orchestrate dispatch`)
+- Watching golem PRs through CI + review to green (`/workflow:orchestrate monitor`)
+- Rebasing later PRs after an earlier PR merges (`/workflow:orchestrate rebase`)
 - Landing a batch of green, approved PRs end-to-end with one approval
-  (`/orchestrate train`)
+  (`/workflow:orchestrate train`)
 - Running a fixed-size worker pool that daisy-chains a backlog and drains on
-  command (`/orchestrate pool <N>`, `drain`/`pause`/`resume`)
+  command (`/workflow:orchestrate pool <N>`, `drain`/`pause`/`resume`)
 - Composing the backlog into 2–4 ordered, low-collision tracks before dispatch
-  (`/orchestrate tracks [N]`)
-- Selecting an execution mode for a new task (`/orchestrate mode`)
-- Spawning / tearing down container golems (`/orchestrate spawn`, `teardown`)
+  (`/workflow:orchestrate tracks [N]`)
+- Selecting an execution mode for a new task (`/workflow:orchestrate mode`)
+- Spawning / tearing down container golems (`/workflow:orchestrate spawn`, `teardown`)
 - Tightly-coupled worktree work with no PRs (opt-in local-merge)
 
 ## When NOT to Use
 
-- Single-issue work — run `/next-issue` directly, no orchestration needed
+- Single-issue work — run `/workflow:next-issue` directly, no orchestration needed
 - Cross-repository coordination (handle manually)
 - When golems are still actively working — monitor first, merge when green

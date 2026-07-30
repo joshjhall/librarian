@@ -1,7 +1,7 @@
 # Next Issue — State & Reference
 
 Reference companion for `SKILL.md`. Load this at the start of every
-`/next-issue` invocation for the state file schema, priority query commands,
+`/workflow:next-issue` invocation for the state file schema, priority query commands,
 and branch naming rules.
 
 ---
@@ -161,18 +161,18 @@ safely cleared. The state file (with checkpoint) preserves continuity.
 | After review        | Suggest    | Implementation context is stale; shipping needs only the result  |
 | After ship          | Required   | Everything is stale; clean slate for next issue                  |
 
-\* **`--ship` fast-path exception**: when `/next-issue` is invoked with `--ship`
+\* **`--ship` fast-path exception**: when `/workflow:next-issue` is invoked with `--ship`
 (or `--now`) on an `effort/trivial`/`small` issue, the "After plan approval"
-reset is **skipped** — the run chains straight into `/ship-issue` in the
+reset is **skipped** — the run chains straight into `/workflow:ship-issue` in the
 same context (the small planning footprint does not justify a reset). The
 plan-approval gate itself is preserved, and the run never selects L4. For
 `effort/medium`/`large` the reset point is unaffected.
 
-\* **L3–L4 exception**: when `/next-issue` runs at **L3 or L4** (`--level 3`/`4`)
-— **every** reset point above is bypassed: the run invokes `/ship-issue` in the
+\* **L3–L4 exception**: when `/workflow:next-issue` runs at **L3 or L4** (`--level 3`/`4`)
+— **every** reset point above is bypassed: the run invokes `/workflow:ship-issue` in the
 same turn (via the `Skill` tool) and never reaches the "After plan approval",
 "After review", or "After ship" boundaries as distinct resets. The orchestrate
-golem launch's `;`-chained `/ship-issue` is the only resume path if
+golem launch's `;`-chained `/workflow:ship-issue` is the only resume path if
 the turn exits early. Such a run sets `autonomy_level`. Whether it removes the
 **plan-approval gate** is level-driven (see `SKILL.md` § Autonomy Levels): an
 **L4** run
@@ -182,7 +182,7 @@ before continuing. (An **L1–L2** run stops at the routine ship gates too, so i
 does not reach this in-turn ship handoff.)
 
 \* **Linked-worktree adaptation**: the reset points above are **Suggest** mode
-(not skipped) inside a linked worktree — e.g. a `/golem` run — but the suggestion
+(not skipped) inside a linked worktree — e.g. a `/workflow:golem` run — but the suggestion
 is **worktree-aware**. This matters for **any plan-gate-kept L1–L2 run** that
 reaches the "After plan approval" reset inside a worktree — most commonly
 `effort/medium`/`large` issues (never `--ship`-eligible), but also an
@@ -190,7 +190,7 @@ reaches the "After plan approval" reset inside a worktree — most commonly
 fast-path is the only thing that skips this reset, and it is opt-in). A bare
 `/clear` may return the session
 to the **main checkout** and drop the worktree cwd, so the resume instruction
-carries an `EnterWorktree` re-entry step before `/next-issue` (see the Reset
+carries an `EnterWorktree` re-entry step before `/workflow:next-issue` (see the Reset
 Suggestion Template below). Detect the worktree with the repo-standard idiom
 (`git rev-parse --git-dir` != `git rev-parse --git-common-dir`; the same check the
 golem nesting guard and `ship-issue/execute-protocol.md` use). The L3–L4 exception
@@ -208,7 +208,7 @@ plan-gate-kept L1–L2 run.
 | ------------- | --------------------------------------------------------------------- |
 | **Suggest**   | Suggest `/clear` with reason; continue if user declines               |
 | **Automatic** | Sub-agent/Task boundary = natural context boundary (no action needed) |
-| **Required**  | Write checkpoint, stop, require `/clear` + `/next-issue` to resume    |
+| **Required**  | Write checkpoint, stop, require `/clear` + `/workflow:next-issue` to resume    |
 
 ### Reset Suggestion Template
 
@@ -216,7 +216,7 @@ When suggesting a reset from the **primary checkout**, use this format:
 
 > Exploration/planning phase complete. Context can be safely cleared — state
 > saved to `.claude/memory/tmp/next-issue-{N}.json`. Run `/clear` then
-> `/next-issue` to resume from {next_phase}.
+> `/workflow:next-issue` to resume from {next_phase}.
 
 When suggesting a reset from a **linked worktree** (`git rev-parse --git-dir` !=
 `git rev-parse --git-common-dir`), a bare `/clear` may drop the worktree cwd, so
@@ -225,7 +225,7 @@ use the worktree-aware variant:
 > Exploration/planning phase complete. Context can be safely cleared — state
 > saved to `.claude/memory/tmp/next-issue-{N}.json`. `/clear` may return you to
 > the main checkout, so after it re-enter this worktree with
-> `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/next-issue` to
+> `EnterWorktree({ path: ".worktrees/issue-{N}" })`, then run `/workflow:next-issue` to
 > resume from {next_phase}.
 
 If the user declines, continue normally — the suggestion is advisory.
@@ -239,9 +239,9 @@ picked up:
 
 | Label                   | Set by                        | Meaning                                               |
 | ----------------------- | ----------------------------- | ----------------------------------------------------- |
-| `status/in-progress`    | `/next-issue` (Phase 1)       | An agent has selected this issue and is working on it |
-| `status/pr-pending`     | `/ship-issue` (Option 1) | A PR has been created; awaiting review/merge          |
-| `status/commit-pending` | `/ship-issue` (Option 3) | Fix committed locally but not yet pushed              |
+| `status/in-progress`    | `/workflow:next-issue` (Phase 1)       | An agent has selected this issue and is working on it |
+| `status/pr-pending`     | `/workflow:ship-issue` (Option 1) | A PR has been created; awaiting review/merge          |
+| `status/commit-pending` | `/workflow:ship-issue` (Option 3) | Fix committed locally but not yet pushed              |
 | `status/on-hold`        | Manual                        | Issue intentionally deferred; not ready to work on    |
 | `status/blocked`        | Manual                        | Issue has an unresolved dependency; not ready to work |
 
@@ -266,7 +266,7 @@ In brief: a candidate is **blocked** when a `status/blocked` label, a
 `Blocked by #N` / `Depends on #N` body reference, or a GitHub native `blockedBy`
 relationship points at an **open** issue. **Priority** selection **skips** a
 blocked candidate (`#572 skipped — blocked by open #467`) and walks on;
-**explicit** selection (`/next-issue 572`) instead **queues the open
+**explicit** selection (`/workflow:next-issue 572`) instead **queues the open
 dependencies first** and works them toward the named target (§ Dependency
 Queue). `--force-target` / `--no-deps` restores warn-and-proceed.
 
@@ -280,11 +280,11 @@ Queue). `--force-target` / `--no-deps` restores warn-and-proceed.
 ## Dependency Queue
 
 When an operator explicitly names an issue that has **open** declared
-dependencies (`/next-issue 5` where #5 declares `Depends on #2, #4`),
-`/next-issue` resolves the dependencies and works them first, driving toward the
+dependencies (`/workflow:next-issue 5` where #5 declares `Depends on #2, #4`),
+`/workflow:next-issue` resolves the dependencies and works them first, driving toward the
 named **target** across successive runs. The queue lives in a **singleton** file
 separate from the per-issue state (it survives each dependency landing, which
-`/ship-issue` deleting a per-issue state file would not):
+`/workflow:ship-issue` deleting a per-issue state file would not):
 
 Path: `.claude/memory/tmp/next-issue-queue.json` (schema:
 `schemas/next-issue-queue.schema.json`).
@@ -292,7 +292,7 @@ Path: `.claude/memory/tmp/next-issue-queue.json` (schema:
 In brief: resolve the target's open blockers transitively (cycle-safe,
 diamond-safe), order them topologically deepest-first with the target last,
 persist the queue, and work the **first open, unblocked** entry each cycle. A
-plain `/next-issue` advances the queue (dropping closed entries, recomputing
+plain `/workflow:next-issue` advances the queue (dropping closed entries, recomputing
 `active`, deleting the file once only the target remains); a detected cycle stops
 with an `ERROR:` and points at `--force-target`.
 
@@ -388,7 +388,7 @@ it has a PR). The rule:
 
 The actual consumer is `orchestrate/workflow.js` `mode: "pool"` (pure
 computation); this section documents the shared heuristic where the priority
-logic lives. A plain `/next-issue` run (no pool) ignores the collision check —
+logic lives. A plain `/workflow:next-issue` run (no pool) ignores the collision check —
 it selects strictly by priority.
 
 ### Fallback
@@ -475,7 +475,7 @@ For `effort/trivial` and `effort/small` issues, a brief inline plan suffices.
 ### codebase-audit
 
 The priority labels (`severity/*`, `effort/*`) are created by the
-`/codebase-audit` command's issue-writer agents. This skill is designed to
+`/review-audit:codebase-audit` command's issue-writer agents. This skill is designed to
 consume those labels directly — no label mapping needed.
 
 ### Commit Message for Issue Closure

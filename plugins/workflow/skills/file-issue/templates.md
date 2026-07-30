@@ -185,7 +185,7 @@ can prioritize correctly.
 
 ## Agent Parsing Notes
 
-Agents consuming these issues (e.g., `/next-issue` Phase 2) can rely on:
+Agents consuming these issues (e.g., `/workflow:next-issue` Phase 2) can rely on:
 
 - **Summary** is always the first H2 — read for quick context
 - **Acceptance Criteria** uses `- [ ]` checkbox format — count for done signal

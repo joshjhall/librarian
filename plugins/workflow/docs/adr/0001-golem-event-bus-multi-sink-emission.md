@@ -17,7 +17,7 @@
 
 ## Context
 
-A golem (a `/next-issue --level N` session running under `auto` mode in a tmux
+A golem (a `/workflow:next-issue --level N` session running under `auto` mode in a tmux
 worktree or a container) reaches human-decision points — a permission `gate`, a
 plan-gate `ExitPlanMode`, a mid-flight `escalation`, a `dead-end`. The
 orchestrator learns of these two ways today, each imperfect for the "a golem

@@ -58,6 +58,23 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
 
 ## Key conventions
 
+- **Slash-command cross-refs are namespaced: `/<plugin>:<skill>`.** Because these
+  install as a marketplace, the invocable name is always
+  `/workflow:ship-issue` — a bare `/ship-issue` does not resolve. An agent
+  reading a skill body echoes the form it saw, so a bare ref tells the reader to
+  type a command that does not exist (#498). `tests/lint-command-refs.sh` (run by
+  `tests/run-all.sh`, so it gates CI and pre-push) enforces this across
+  `plugins/**/*.md` + `README.md`, keyed off a **whitelist** of skill names
+  discovered from the filesystem — so `/clear` and prose slashes are exempt for
+  free, and `agents/` names (never slash commands) are never flagged. Two
+  deliberate exclusions: `CHANGELOG.md` (git-cliff-generated) and
+  `docs/verification/**` — exempt because enforcement would force a transcript to
+  contradict its own session log, since a `VERIFIED — live` block records the
+  text a command actually printed. Exempt is not frozen: keep a `DEFERRED` AC's
+  recipe current (someone will run it), and leave live evidence exactly as
+  observed. State-file paths stay bare — write `/next-issue-queue.json` and
+  `/next-issue-{N}.json` exactly as-is, since they are filenames rather than
+  commands; the gate's trailing-`-` boundary exempts them automatically.
 - **Bundled scripts, never `just`.** The `workflow` plugin's skills call their
   shell scripts via `${CLAUDE_PLUGIN_ROOT}/scripts/...`, NOT via `just`, so they
   run on host / bare-linux / container identically. Env-overridable config

@@ -86,7 +86,7 @@ the body references (`Blocked by #N` / `Depends on #N`) and the
   List the open blocker numbers (and `status/blocked` if that label was the
   trigger). A candidate gated only by the `status/blocked` label notes
   `blocked by status/blocked label`.
-- **Explicit single-issue selection** (`/next-issue 572`): the operator named
+- **Explicit single-issue selection** (`/workflow:next-issue 572`): the operator named
   the issue, so do **not** hard-block — but do **not** plan the named issue
   against its open blockers either. Naming an issue is a **target objective**,
   not an override of its dependency requirements. Instead **queue the open
@@ -95,7 +95,7 @@ the body references (`Blocked by #N` / `Depends on #N`) and the
   blockers transitively, build a topological work queue with the named target
   last, write `next-issue-queue.json`, and select the **first open, unblocked**
   entry (a dependency, usually) to plan **this** run instead of the target. A
-  subsequent `/next-issue` advances the queue toward the target.
+  subsequent `/workflow:next-issue` advances the queue toward the target.
 
   The `--force-target` flag (alias `--no-deps`) restores today's
   warn-and-proceed for "I really do mean #572 now":
@@ -119,8 +119,8 @@ the body references (`Blocked by #N` / `Depends on #N`) and the
 ## Dependency Queue
 
 When an operator explicitly names an issue that has **open** declared
-dependencies (`/next-issue 5` where #5 declares `Depends on #2, #4`),
-`/next-issue` resolves the dependencies and works them first, driving toward the
+dependencies (`/workflow:next-issue 5` where #5 declares `Depends on #2, #4`),
+`/workflow:next-issue` resolves the dependencies and works them first, driving toward the
 named **target** across successive runs. The queue lives in a **singleton** file
 separate from the per-issue state:
 
@@ -128,7 +128,7 @@ Path: `.claude/memory/tmp/next-issue-queue.json` (schema:
 `schemas/next-issue-queue.schema.json`).
 
 It is deliberately **not** a field inside a `next-issue-{N}.json` state file:
-`/ship-issue` deletes the per-issue state file when a dependency ships, which
+`/workflow:ship-issue` deletes the per-issue state file when a dependency ships, which
 would take a queue stored there with it. The separate file survives each
 dependency landing, and every worked dependency still gets its own normal
 `next-issue-{dep}.json` while in flight.
@@ -204,7 +204,7 @@ If `#T` has **no** open blockers, no queue is created — proceed normally to pl
 
 ### Advancing / resuming the queue
 
-A plain `/next-issue` (no issue number) checks for `next-issue-queue.json` in
+A plain `/workflow:next-issue` (no issue number) checks for `next-issue-queue.json` in
 Phase 0 **before** priority selection:
 
 - **Target-closed self-heal (check first).** If `target` (`#T`) is itself now
@@ -225,14 +225,14 @@ Phase 0 **before** priority selection:
 - If every `remaining` entry is still blocked (nothing actionable), surface a
   one-line status (`queue toward #5 blocked — #4 still open`) and stop.
 
-An explicit `/next-issue {other}` while a queue exists starts fresh for
+An explicit `/workflow:next-issue {other}` while a queue exists starts fresh for
 `{other}` and leaves the queue file untouched — the queue is target-keyed, not a
 global priority override. (If `{other}` itself has open blockers, it builds its
 own queue, replacing the file.)
 
 ### Gate-skipping (L3–L4) interaction
 
-A gate-skipping explicit run (`/next-issue 5 --level 4`, as `orchestrate` always
+A gate-skipping explicit run (`/workflow:next-issue 5 --level 4`, as `orchestrate` always
 dispatches) **queues and works the first unblocked dependency** this turn —
 planning it, implementing it, and shipping its own PR — then leaves the queue
 file for the next cycle. It does **not** auto-advance the whole chain within one
@@ -240,7 +240,7 @@ turn: each dependency is one golem / one PR (the natural PR-per-golem
 granularity). Because `orchestrate`'s priority walk already **skips** blocked
 issues, once a dependency PR merges the next dependency becomes unblocked and is
 re-selected by ordinary priority selection — the queue file is primarily a
-resume aid for a plain interactive `/next-issue` walking toward the target.
+resume aid for a plain interactive `/workflow:next-issue` walking toward the target.
 `--force-target` on such a run restores warn-and-proceed and plans the named
 target directly.
 
@@ -258,9 +258,9 @@ redirects:
   first and the target only once they close — no explicit-dispatch redirect, no
   desync.
 - **Force-dispatch — pass `--force-target`.** An operator force-dispatching a
-  specific blocked issue passes `/next-issue 5 --force-target --level 4` so the
+  specific blocked issue passes `/workflow:next-issue 5 --force-target --level 4` so the
   golem works exactly the cached issue (the plan gate is the backstop).
 
 Teaching the golem-status cache to record a queue redirect is an orchestrate
-follow-up, out of scope here. A plain (non-orchestrate) explicit `/next-issue 5`
+follow-up, out of scope here. A plain (non-orchestrate) explicit `/workflow:next-issue 5`
 has no golem cache to desync.

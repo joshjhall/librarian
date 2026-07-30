@@ -23,7 +23,7 @@ categories, the four levels, the merge invariant, the dead-end rule, and the
 > `autonomy-resolve.py` + bash fallback), the **authoritative implementation**
 > the skills call. When this prose and the resolver ever disagree, the resolver's
 > `tests/validate-autonomy-resolve.sh` decision table is the tiebreak — update
-> the prose, not the test. `/next-issue`, `/ship-issue`, and `/orchestrate` all
+> the prose, not the test. `/workflow:next-issue`, `/workflow:ship-issue`, and `/workflow:orchestrate` all
 > call the resolver instead of re-deriving these rules.
 
 ---
@@ -39,7 +39,7 @@ one corner. It was a switch, not a dial.
 Real sessions want a **dial**: *decide the obvious, stop for the real choices.*
 This spec replaces the switch with a **4-level model** (an SAE-driving analogy —
 L1 hands-on through L4 hands-off) chosen **once at setup** and applied uniformly
-to `/orchestrate` (many issues, many tracks) and a lone `/next-issue` (one
+to `/workflow:orchestrate` (many issues, many tracks) and a lone `/workflow:next-issue` (one
 issue, treated as a one-issue "track").
 
 ---
@@ -231,7 +231,7 @@ This **replaced** the scattered critical special-casing the binary model carried
 ## The setup flow (all levels)
 
 The same ceremony runs whether orchestrating twenty issues or planning one via
-`/next-issue`:
+`/workflow:next-issue`:
 
 1. **Propose** tracks + issue ordering (for a lone issue: the single issue is a
    one-issue track).

@@ -9,7 +9,7 @@ skills: []
 # Rebase Agent
 
 You resolve trivial merge conflicts automatically during cross-PR rebase
-(`/orchestrate rebase`) and legacy `/orchestrate merge` / `/orchestrate sync`
+(`/workflow:orchestrate rebase`) and legacy `/workflow:orchestrate merge` / `/workflow:orchestrate sync`
 operations. You handle the mechanical conflicts that don't require human
 judgment.
 
@@ -32,7 +32,7 @@ You are dispatched in **one of two ways** — read the prompt to tell which:
    Resolve only the single file named in the prompt; the harness assembles the
    per-file results into the aggregate report below.
 
-2. **Direct single-agent mode** (e.g. `/orchestrate` Phase R dispatches you via
+2. **Direct single-agent mode** (e.g. `/workflow:orchestrate` Phase R dispatches you via
    the `Agent` tool with the full conflicted-file list) — no harness wraps you.
    In this mode you handle **all** the listed files yourself: classify each,
    apply the mechanical strategy where safe, escalate the rest, and return the
@@ -45,7 +45,7 @@ the whole list).
 
 ## Execution Context
 
-When `/orchestrate` Phase R dispatches you (direct mode), the prompt names an
+When `/workflow:orchestrate` Phase R dispatches you (direct mode), the prompt names an
 explicit `<worktree>` directory — the PR branch's own checkout. **`cd` into it
 before any git command** and run the entire rebase there. **Never** run
 `git checkout`, `git rebase`, or any other mutation in the repository **root**
@@ -136,7 +136,7 @@ from both sides. Do not drop, reorder, or rewrite either side's content beyond
 what is needed to combine them.
 
 **Example** — three golems each edited the same `worktree-new` launch line:
-one added `--permission-mode auto` + a `/ship-issue` chain, another added
+one added `--permission-mode auto` + a `/workflow:ship-issue` chain, another added
 `-e GOLEM_ID=golem-{N}`. The union keeps all of them:
 
 ```text
@@ -272,7 +272,7 @@ do not emit a `json` fence):
 ## Output Format
 
 The harness assembles the per-file results into the aggregate report callers
-(e.g. `/orchestrate`) consume:
+(e.g. `/workflow:orchestrate`) consume:
 
 ```json
 {

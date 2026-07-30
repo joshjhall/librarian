@@ -78,7 +78,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
 
 1. **Write `.worktrees/agent-entrypoint.sh`** — a wrapper script that verifies
    git-host auth, then launches the **autonomous golem pipeline**
-   (`/next-issue --level 4` → `/ship-issue`) in a named tmux session. A
+   (`/workflow:next-issue --level 4` → `/workflow:ship-issue`) in a named tmux session. A
    background poller mirrors live PR state into the golem status cache. The
    human can still attach to watch via
    `docker exec -it <container> tmux attach -t claude`.
@@ -93,7 +93,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    ISSUE="${AGENT_ISSUE:-}"
    STATUS_FILE="/workspace/.worktrees/.status/${AGENT_ID}.json"
 
-   # Autonomy is set on the /next-issue launch line via --level 4 (below).
+   # Autonomy is set on the /workflow:next-issue launch line via --level 4 (below).
    export REVIEW_MAX_CYCLES="${REVIEW_MAX_CYCLES:-3}"
    # Optional pass-throughs (inherited from the environment if set):
    #   PRE_REVIEW_STRICT, REVIEW_STRICT
@@ -160,7 +160,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    }
 
    # No (or invalid) issue assigned → plain interactive session. ISSUE is
-   # interpolated into a `claude '/next-issue ${ISSUE} …'` command below, so it
+   # interpolated into a `claude '/workflow:next-issue ${ISSUE} …'` command below, so it
    # MUST be a bare integer — a non-numeric value could break out of the
    # single-quoted argument into the container shell. Reject anything that is
    # not all digits. (The guard is independent of permission mode: golems run
@@ -255,8 +255,8 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    # Run the autonomous pipeline in tmux: select+plan, then ship to a green,
    # review-clean PR awaiting human merge. Write a terminal state on exit.
    #
-   # Chain the two prompts with ';', NOT '&&': autonomous /next-issue invokes
-   # /ship-issue in-turn, so the second prompt is only a resume backstop for
+   # Chain the two prompts with ';', NOT '&&': autonomous /workflow:next-issue invokes
+   # /workflow:ship-issue in-turn, so the second prompt is only a resume backstop for
    # a premature turn-exit — and it is needed most when the first prompt exits
    # non-zero, exactly the case '&&' would skip. If the first already shipped,
    # the second is a near no-op ("No in-progress issue found" → stop).
@@ -267,7 +267,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    # nothing. The flag is explicit because a fresh worktree is untrusted, so its
    # copied settings.local.json `defaultMode: auto` is not loaded on its own and
    # the session would fall back to `default` (#585). The harness
-   # `--permission-mode auto` is distinct from the `/next-issue` `--level {N}`
+   # `--permission-mode auto` is distinct from the `/workflow:next-issue` `--level {N}`
    # skill flag (the autonomy dial) — both are needed. When a golem hits
    # a genuinely risky prompt, the
    # Notification hook flags it and a human attaches via `tmux attach -t claude`.

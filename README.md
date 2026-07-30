@@ -73,23 +73,23 @@ clone-by-tag consumers that don't verify keep working unchanged.
 |---|---|---|
 | **[dev-core](plugins/dev-core/README.md)** | 20 skills · 6 agents | General development + authoring: code review, debugging, refactoring, testing, git/error/doc workflow skills, and the skill/agent/workflow authoring guides. |
 | **[review-audit](plugins/review-audit/README.md)** | 9 skills · 9 agents | The `codebase-audit` / `check-*` / `audit-*` suite plus the issue writer. |
-| **[workflow](plugins/workflow/README.md)** | 10 skills · 3 agents · 1 hook | Issue-driven and parallel automation: the user-directed `/file-issue`, `/golem`, and `/orchestrate` entry points, the `next-issue` → `ship-issue` pipeline they drive, `provision-agent`, the `rebase-*` resolvers, and the bundled shell scripts they call. |
+| **[workflow](plugins/workflow/README.md)** | 10 skills · 3 agents · 1 hook | Issue-driven and parallel automation: the user-directed `/workflow:file-issue`, `/workflow:golem`, and `/workflow:orchestrate` entry points, the `next-issue` → `ship-issue` pipeline they drive, `provision-agent`, the `rebase-*` resolvers, and the bundled shell scripts they call. |
 
 ### Start here — what to invoke
 
 Most of the components above run **automatically** or as sub-steps of something
 else. Three workflow skills are the ones a human actually types:
 
-- **`/file-issue`** — the front door. Turn a bug, idea, or note into a
+- **`/workflow:file-issue`** — the front door. Turn a bug, idea, or note into a
   well-formed, auto-labeled issue ready for the pipeline below.
-- **`/golem <issue>`** — work **one** issue end-to-end, solo, in the current
+- **`/workflow:golem <issue>`** — work **one** issue end-to-end, solo, in the current
   session: an isolated worktree, the full `next-issue` → `ship-issue` pipeline,
   and the adversarial pre-PR review. No orchestrator, `tmux`, or containers.
-- **`/orchestrate`** — work **2+** issues in parallel, one golem (worktree +
+- **`/workflow:orchestrate`** — work **2+** issues in parallel, one golem (worktree +
   branch + PR) each, then land the batch with a single integration train.
 
-**Golem vs orchestrate:** reach for `/golem` when you have *one* issue and want
-it worked with full rigor in-session; reach for `/orchestrate` when you have
+**Golem vs orchestrate:** reach for `/workflow:golem` when you have *one* issue and want
+it worked with full rigor in-session; reach for `/workflow:orchestrate` when you have
 *several* independent issues to run at once and integrate together.
 
 ### Common workflows
@@ -98,20 +98,20 @@ it worked with full rigor in-session; reach for `/orchestrate` when you have
 
 ```bash
 # In a Claude Code session, at the repo root:
-/file-issue        # (optional) capture the work as a labeled issue first
-/golem 512         # worktree + next-issue → ship-issue + adversarial review → PR
+/workflow:file-issue        # (optional) capture the work as a labeled issue first
+/workflow:golem 512         # worktree + next-issue → ship-issue + adversarial review → PR
 ```
 
-`/golem` creates the worktree, plans and implements the fix, runs the pre-PR
+`/workflow:golem` creates the worktree, plans and implements the fix, runs the pre-PR
 review, opens the PR, and tears the worktree down — pausing only at the gates
 your chosen autonomy level (L1–L4) keeps.
 
 **Run several issues in parallel, then integrate:**
 
 ```bash
-/orchestrate dispatch 512 517 device-auth   # one golem per issue
-/orchestrate status                         # watch PR + issue-label state
-/orchestrate integrate                      # merge→rebase→merge the green PRs
+/workflow:orchestrate dispatch 512 517 device-auth   # one golem per issue
+/workflow:orchestrate status                         # watch PR + issue-label state
+/workflow:orchestrate integrate                      # merge→rebase→merge the green PRs
 ```
 
 Each golem owns its own branch, worktree, and PR; the integration train lands

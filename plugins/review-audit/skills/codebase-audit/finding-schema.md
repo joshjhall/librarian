@@ -119,7 +119,7 @@ skills and audit-\* agents — assign certainty based on detection method.
 ### Auto-Fix Eligibility
 
 Findings with certainty `CRITICAL` or `HIGH` and effort `trivial` or `small`
-are eligible for auto-fix when `/codebase-audit --auto-fix` is enabled. See
+are eligible for auto-fix when `/review-audit:codebase-audit --auto-fix` is enabled. See
 the Auto-Fix section in `SKILL.md`.
 
 ## Check Run Audit Trail

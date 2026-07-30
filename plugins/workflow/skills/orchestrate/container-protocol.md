@@ -1,18 +1,18 @@
 # Phase 5 — Container Management
 
-Companion to `orchestrate/SKILL.md`. Load this only for `/orchestrate spawn <N>`
-or `/orchestrate teardown <agent>` — the container/worktree golem lifecycle. It
+Companion to `orchestrate/SKILL.md`. Load this only for `/workflow:orchestrate spawn <N>`
+or `/workflow:orchestrate teardown <agent>` — the container/worktree golem lifecycle. It
 is the least-frequently-needed orchestrate section; the default PR-per-golem
 topology (Phases D/M/R) does not touch it.
 
 ## Spawn
 
-Invoked via `/orchestrate spawn <N>` (and by Phase D for container golems).
+Invoked via `/workflow:orchestrate spawn <N>` (and by Phase D for container golems).
 
 1. **Check prerequisites**: `docker info > /dev/null 2>&1`,
    `git rev-parse --show-toplevel`.
 
-1. **Invoke `/provision-agent`** to read the devcontainer config, generate the
+1. **Invoke `/workflow:provision-agent`** to read the devcontainer config, generate the
    agent docker-compose, build the image, create worktrees, and start containers.
    Each agent runs Claude Code in a tmux session.
 
@@ -43,7 +43,7 @@ Invoked via `/orchestrate spawn <N>` (and by Phase D for container golems).
 
 ## Teardown
 
-Invoked via `/orchestrate teardown <agent>` or `teardown all`. Tear down only
+Invoked via `/workflow:orchestrate teardown <agent>` or `teardown all`. Tear down only
 after the golem's PR is merged or abandoned.
 
 **Worktree golem (Mode 2).** Removing the worktree, deleting its branch, **and

@@ -12,9 +12,9 @@ actual implementation to identify divergence before shipping.
 
 ## When to Use
 
-- Before running `/ship-issue` to verify implementation matches the plan
+- Before running `/workflow:ship-issue` to verify implementation matches the plan
 - After completing implementation to check for scope drift
-- As part of pre-ship validation (auto-invoked by `/ship-issue`)
+- As part of pre-ship validation (auto-invoked by `/workflow:ship-issue`)
 
 ## Workflow
 
@@ -151,7 +151,7 @@ content. **Severity: LOW** — informational.
 
 Generate a drift report following the format in `contract.md`.
 
-**If called standalone** (`/drift-detect`):
+**If called standalone** (`/dev-core:drift-detect`):
 
 - Display the report as a formatted table
 - Summarize: "N findings (X high, Y medium, Z low)"
@@ -176,7 +176,7 @@ Merge any TSV findings into the report alongside the LLM-judged findings.
 
 ## Integration with ship-issue
 
-This skill is invoked automatically by `/ship-issue` in Step 3.5
+This skill is invoked automatically by `/workflow:ship-issue` in Step 3.5
 (Pre-Ship Validation) as the 4th check. The integration is optional — if the
 issue body has no "Affected Files" or "Acceptance Criteria" sections, the check
 is skipped silently.

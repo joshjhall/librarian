@@ -39,7 +39,7 @@ sweep cadence is the clock). Since #485 made the rolling sweep **opt-in** (the
 default monitor surface is the event-driven push gate-watch, which fires only on
 gate transitions — never on "PR merged / slot freed"), a live pool **must arm a
 periodic cadence** for refill to advance: the opt-in `golem-status.sh --watch`
-sweep, or an equivalent `CronCreate` `/orchestrate status` render (see
+sweep, or an equivalent `CronCreate` `/workflow:orchestrate status` render (see
 `monitor-protocol.md` § Loop → the Worker-Pool exception). Without it the pool
 never detects a freed slot:
 
@@ -98,7 +98,7 @@ never detects a freed slot:
 ### Controls (mid-flight Surface commands)
 
 These flip `pool.json` policy; the next sweep's refill honors it. They are also
-exposed as `/orchestrate` invocations (see the table in SKILL.md):
+exposed as `/workflow:orchestrate` invocations (see the table in SKILL.md):
 
 - **`pool <N>`** — set the pool size live. **Grow** → free slots appear and the
   next sweep fills them. **Shrink** → the now-`excess` golems are left to
@@ -228,8 +228,8 @@ cleanly: lane-serial while a track has work, global-priority once it is drained.
 composition into running golems is the four-step **setup flow** from
 `autonomy-levels.md` § "The setup flow" — two of the steps are human gates that
 **wait indefinitely** (never lapse-and-default; see `autonomy-levels.md` §
-*Standing rule*). Run it whenever the operator invokes `/orchestrate tracks` (or
-`/orchestrate dispatch` with a track composition):
+*Standing rule*). Run it whenever the operator invokes `/workflow:orchestrate tracks` (or
+`/workflow:orchestrate dispatch` with a track composition):
 
 1. **Propose.** Render the composed lanes for the operator: for each lane, its
    ordered issue list (head first) with titles; the `deferred` issues; the
@@ -258,7 +258,7 @@ composition into running golems is the four-step **setup flow** from
    level (Phase D — `scripts/worktree-new.sh {head}` + `scripts/golem-launch.sh
    launch {head}`, one bare `tmux new-session` per head); the rest of each track
    **queues** behind its head for lane-aware serial refill. Pass the level into
-   the golem as `--level {N}` on its `/next-issue` prompt so the run's state file
+   the golem as `--level {N}` on its `/workflow:next-issue` prompt so the run's state file
    records it (see `next-issue/autonomy.md` § *Level selection*).
 
 **Autonomous orchestrator.** When the orchestrator itself runs unattended, the

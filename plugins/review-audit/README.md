@@ -3,7 +3,7 @@
 Part of the [librarian](../../README.md) Claude Code plugin marketplace.
 
 Codebase audit and diff review: a periodic whole-codebase sweep
-(`/codebase-audit`) and a shared `check-*` suite that runs both in audit mode
+(`/review-audit:codebase-audit`) and a shared `check-*` suite that runs both in audit mode
 (over the whole tree) and review mode (over a diff). Findings are grouped by
 category and routed to a chosen **objective** — filed as actionable
 GitHub/GitLab issues, or written as structured files under `./audit/{timestamp}/`
@@ -14,7 +14,7 @@ run yields durable artifacts.
 
 - `codebase-audit` — periodic full-codebase sweep (tech debt, security, test
   gaps, architecture, docs); creates grouped issues. Invoke with
-  `/codebase-audit`.
+  `/review-audit:codebase-audit`.
 
 The `check-*` suite is discovered by the `checker` agent; each skill pairs a
 deterministic `patterns.sh` pre-scan with LLM analysis:
@@ -56,7 +56,7 @@ routes grouped findings to the objective writer — `issue-writer` (tracker) or
 
 ### Audit output objectives
 
-`/codebase-audit` asks (or you specify) where findings go:
+`/review-audit:codebase-audit` asks (or you specify) where findings go:
 
 - **`issues`** — file grouped findings as GitHub/GitLab issues (needs a
   detected tracker platform). This is the classic behavior.

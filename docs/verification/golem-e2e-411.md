@@ -24,6 +24,15 @@ re-scoped #411 asks AC#5 only to confirm the review is *wired* to fire on
 Options 2/3 (which the static trace establishes); observing it *fire* live is the
 AC#5 spot-check carried into #451.
 
+> **Note on command names (#498).** Slash commands are invoked in their
+> namespaced form, `/workflow:golem`. The **DEFERRED** ACs below are recipes
+> someone will run in the future, so their command blocks use that form and are
+> meant to stay current. The **VERIFIED — live** evidence for AC#3 is left
+> exactly as observed (bare `/golem`, the form the guard printed at the time):
+> updating it would falsify a record of what actually ran. This is also why
+> `docs/verification/**` is exempt from `tests/lint-command-refs.sh` — the gate
+> must not force a transcript to disagree with its own session log.
+
 ### Why the split
 
 The `/next-issue` run that produced this report executed **inside**
@@ -121,7 +130,7 @@ gh issue create \
 ### AC#1 — L4 happy path
 
 ```text
-/golem S --level 4
+/workflow:golem S --level 4
 ```
 
 Checklist (all must hold):
@@ -129,7 +138,7 @@ Checklist (all must hold):
 - [ ] `.worktrees/issue-S` created on branch `feature/issue-S`
 - [ ] `EnterWorktree` relocates the session into `.worktrees/issue-S`
 - [ ] plan runs **auto** (no plan gate at L4), then implement
-- [ ] `/ship-issue` chains in-turn; **adversarial pre-PR review runs** (Step 3.5
+- [ ] `/workflow:ship-issue` chains in-turn; **adversarial pre-PR review runs** (Step 3.5
       check #6 fires — watch for the `Workflow` review invocation)
 - [ ] Branch + PR opened → CI waited on → **auto-merge on green + clean**
 - [ ] Phase D auto-runs `worktree-rm.sh S` + `ExitWorktree(remove)`
@@ -139,21 +148,21 @@ Checklist (all must hold):
 ### AC#2 — L2 human-merge path
 
 ```text
-/golem S2 --level 2      # use a second scratch issue S2
+/workflow:golem S2 --level 2      # use a second scratch issue S2
 ```
 
 Checklist:
 
 - [ ] run **stops for a human merge** (routine ship gate kept at L2)
 - [ ] worktree is **kept**; `ExitWorktree(keep)`; the `--teardown` hint is printed
-- [ ] after a manual `gh pr merge`, `/golem --teardown S2` verifies the PR/branch
+- [ ] after a manual `gh pr merge`, `/workflow:golem --teardown S2` verifies the PR/branch
       is **MERGED** and prunes the worktree + branch (keys off the merged PR, not
       a state file)
 
 ### AC#4 — Bare invocation
 
 ```text
-/golem
+/workflow:golem
 ```
 
 Checklist:

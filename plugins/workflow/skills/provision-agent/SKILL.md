@@ -38,9 +38,9 @@ directly via `docker exec -it <container> tmux attach -t claude`.
 
 **Invocation patterns:**
 
-- `/provision-agent` or `/provision-agent setup` → provision new agents
-- `/provision-agent teardown <agent>` → stop and remove an agent
-- `/provision-agent teardown all` → stop and remove all agents
+- `/workflow:provision-agent` or `/workflow:provision-agent setup` → provision new agents
+- `/workflow:provision-agent teardown <agent>` → stop and remove an agent
+- `/workflow:provision-agent teardown all` → stop and remove all agents
 
 ## Step 1 — Discover Project Config
 
@@ -91,8 +91,8 @@ with a background PR poller, autonomous pipeline in tmux) — lives in
    `deploy.resources.limits` (4 CPU / 8 GB defaults via
    `AGENT_CPUS`/`AGENT_MEMORY`), `init: true`, and `command: sleep infinity`.
 1. **Write `.worktrees/agent-entrypoint.sh`** — verifies git-host auth, then
-   launches the autonomous golem pipeline (`/next-issue --level 4` →
-   `/ship-issue`) in a named tmux session with a background PR-state poller.
+   launches the autonomous golem pipeline (`/workflow:next-issue --level 4` →
+   `/workflow:ship-issue`) in a named tmux session with a background PR-state poller.
 
 See `provision-protocol.md` for the verbatim YAML and entrypoint script.
 
@@ -153,7 +153,7 @@ For each agent to provision (e.g., agent01 through agent{N}):
    ```
 
    The container's `agent-entrypoint.sh` owns pipeline startup (auth check →
-   `/next-issue --level 4` → `/ship-issue` in the `claude` tmux session), so
+   `/workflow:next-issue --level 4` → `/workflow:ship-issue` in the `claude` tmux session), so
    no separate `docker exec ... tmux new-session` is needed here.
 
 ## Step 5 — Report
@@ -169,16 +169,16 @@ Show a summary table with access commands:
 | 2 | agent02  | project-agent02-1  | agent02  | docker exec -it project-agent02-1 tmux attach -t claude  |
 | 3 | agent03  | project-agent03-1  | agent03  | docker exec -it project-agent03-1 tmux attach -t claude  |
 
-To assign issues, use: /orchestrate spawn (assigns from priority queue)
+To assign issues, use: /workflow:orchestrate spawn (assigns from priority queue)
 To interact directly: docker exec -it <container> tmux attach -t claude
-To check status: /orchestrate status
+To check status: /workflow:orchestrate status
 ```
 
 ## Teardown
 
 ### Single Agent
 
-`/provision-agent teardown agent01`:
+`/workflow:provision-agent teardown agent01`:
 
 1. **Stop and remove container**:
 
@@ -216,7 +216,7 @@ To check status: /orchestrate status
 
 ### All Agents
 
-`/provision-agent teardown all`:
+`/workflow:provision-agent teardown all`:
 
 Iterate over all agent status files in `.worktrees/.status/` and tear down
 each one. Using the same PR-existence check as the single-agent path, warn
@@ -236,7 +236,7 @@ rmdir .worktrees/.status 2>/dev/null
 ## When to Use
 
 - Spinning up parallel agents for batch issue processing
-- `/orchestrate spawn` delegates here for container creation
+- `/workflow:orchestrate spawn` delegates here for container creation
 - Setting up a container agent environment for the first time
 - Tearing down agents after work is complete
 

@@ -368,12 +368,12 @@ shipping due to harness errors.
 For each deferrable finding collected in the pre-PR pass (Step 3.5 item 6) and
 every loop cycle above:
 
-- Preferred: invoke **`/file-issue`** with the finding's title, severity,
+- Preferred: invoke **`/workflow:file-issue`** with the finding's title, severity,
   category, and description as the seed (its auto-labeling and scope checks
-  apply). In autonomous mode, pre-answer `/file-issue`'s questions from the
+  apply). In autonomous mode, pre-answer `/workflow:file-issue`'s questions from the
   finding fields so it does not prompt.
 - Autonomous fallback (to avoid a nested interactive skill): create the
-  issue directly with the same label taxonomy `/file-issue` uses. Pass the
+  issue directly with the same label taxonomy `/workflow:file-issue` uses. Pass the
   body via `--body-file`, **never** by interpolating `{finding.description}`
   into a `--body "..."` argument: the description is LLM-generated and may
   contain backticks, `$(...)`, quotes, or newlines that would break out of

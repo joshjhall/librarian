@@ -1,5 +1,5 @@
 ---
-description: Issue-driven development workflow that picks the next issue by severity/effort priority and creates an implementation plan. Use when working through a backlog, picking up the next issue, or resuming in-progress work. After implementation, use /ship-issue to deliver.
+description: Issue-driven development workflow that picks the next issue by severity/effort priority and creates an implementation plan. Use when working through a backlog, picking up the next issue, or resuming in-progress work. After implementation, use /workflow:ship-issue to deliver.
 ---
 
 # Next Issue
@@ -14,10 +14,10 @@ dependency-queue algorithm. See `escalation-protocol.md` when a **mid-flight**
 architectural or directional decision arises during implementation (the
 escalation gate — human at L1–L3, auto at L4).
 
-Accepts an optional issue number argument: `/next-issue 123` skips priority
+Accepts an optional issue number argument: `/workflow:next-issue 123` skips priority
 selection and targets that specific issue.
 
-Adding the `--level {1,2,3,4}` flag — `/next-issue 123 --level 3` — sets the
+Adding the `--level {1,2,3,4}` flag — `/workflow:next-issue 123 --level 3` — sets the
 run's **autonomy level** (L1–L4), the single dial deciding how each gate is
 dispatched. `--level` is the sole autonomy dial; absence of any signal is the
 interactive default (an **L1 disposition** — every gate asks), and
@@ -26,9 +26,9 @@ full disposition — the two-way gate/plan split, the critical cap, and the
 shipping handoff — is stated once in `## Autonomy Levels` below (deep authority:
 `autonomy.md` + `orchestrate/autonomy-levels.md`).
 
-Adding the `--ship` flag (alias `--now`) — `/next-issue 123 --ship` — is a
+Adding the `--ship` flag (alias `--now`) — `/workflow:next-issue 123 --ship` — is a
 fast-path for **small work**: after plan approval and implementation it invokes
-`/ship-issue` directly instead of suggesting a `/clear` + manual resume.
+`/workflow:ship-issue` directly instead of suggesting a `/clear` + manual resume.
 `--ship` is **not** autonomy — it keeps the interactive plan-approval gate
 (`EnterPlanMode`/`ExitPlanMode`) and never selects L4; it only removes the
 context-reset ceremony between implement and ship. It is honored **only for
@@ -37,7 +37,7 @@ no effort label) it is ignored with a one-line note, preserving the `/clear`
 boundary that keeps planning context out of the longer implement/review budget.
 See `## Pipeline` and the conditional final step of Phase 2.
 
-Adding the `--force-target` flag (alias `--no-deps`) — `/next-issue 5
+Adding the `--force-target` flag (alias `--no-deps`) — `/workflow:next-issue 5
 --force-target` — changes how an **explicitly-named** issue with open
 dependencies is handled. By default, naming an issue whose declared
 dependencies are still open **queues those dependencies first** and works them
@@ -50,7 +50,7 @@ as the only backstop. It governs dependency handling only — orthogonal to the
 **IMPORTANT — Plan mode is entered in Phase 2, never Phase 0.** An **L1–L3** run
 calls `EnterPlanMode` only in Phase 2: Phase 1's assign/label and the state write
 must all complete before `EnterPlanMode` is called, or plan mode silently blocks
-those mutations and the `/ship-issue` hand-off record never lands (issue #409). An
+those mutations and the `/workflow:ship-issue` hand-off record never lands (issue #409). An
 **L4** (non-critical) run never enters plan mode at all. The full ordering
 rationale is in Phase 0 step 1 (its enforcement home).
 
@@ -84,7 +84,7 @@ stored. The level splits into **two dispositions**:
   `--plan-gate`/`--force-auto` overrides were removed).
 
 After implementation and testing complete, an **L3–L4** run **invokes
-`/ship-issue` in the same turn** (call the `Skill` tool) — never end the turn
+`/workflow:ship-issue` in the same turn** (call the `Skill` tool) — never end the turn
 with only a "next step" note. Persist `"autonomy_level"` to the state file so
 ship and any post-`/clear` resume inherit the level.
 
@@ -110,7 +110,7 @@ If `$CURRENT_BRANCH` matches `^agent` (e.g., `agent01`, `agent02`):
 
 - Inform the user: "Running in agent worktree mode on branch `{branch}`.
   Commits will stay local — the orchestrator handles delivery."
-- Note that `/ship-issue` will auto-select commit-only mode (Option 3)
+- Note that `/workflow:ship-issue` will auto-select commit-only mode (Option 3)
 
 **Note on state isolation**: In agent worktree mode, each worktree has its own
 working directory, so per-issue state files are naturally isolated per agent.
@@ -130,7 +130,7 @@ Proceed with Phase 0 as normal regardless of mode.
    only edits to the plan file, so an `EnterPlanMode` at Phase 0 silently blocks
    the Phase 1 assign/label and the `Write` of
    `.claude/memory/tmp/next-issue-{N}.json` — the run then implements without
-   looping back and the hand-off record `/ship-issue` reads is never created
+   looping back and the hand-off record `/workflow:ship-issue` reads is never created
    (issue #409). An **L4** run is doubly trapped: it never calls `ExitPlanMode`,
    so its write/edit tools would stay blocked for the whole run. The plan-mode
    call is therefore **deferred to Phase 2** for every disposition, once the
@@ -163,7 +163,7 @@ Proceed with Phase 0 as normal regardless of mode.
      **delete** the queue file, and plan the target normally.
    - If nothing in `remaining` is actionable, surface a one-line status
      (`queue toward #{target} blocked — #{N} still open`) and stop.
-   - An explicit `/next-issue {N}` **ignores** an existing queue (it is
+   - An explicit `/workflow:next-issue {N}` **ignores** an existing queue (it is
      target-keyed, not a global override) — leave the queue file untouched and
      let Phase 1 handle `{N}` (which may build its own queue). If `{N}` equals
      the queue's `target`, Phase 1's dependency check will rebuild/refresh it.
@@ -213,7 +213,7 @@ jump straight to **re-presenting the stored plan for approval**: reconstruct the
 plan from the checkpoint (`plan` one-liner + `files_planned` + `key_decisions` +
 `warnings`), call `EnterPlanMode` then `ExitPlanMode` with that reconstructed
 plan, and wait for approval. After approval, continue autonomously through
-implement → test → `/ship-issue` exactly as the Phase 2 plan-gated path
+implement → test → `/workflow:ship-issue` exactly as the Phase 2 plan-gated path
 does. Only fall back to a fresh Phase 2 exploration if the checkpoint is missing
 or has no `files_planned` (nothing to re-present).
 
@@ -237,7 +237,7 @@ or has no `files_planned` (nothing to re-present).
      `.claude/memory/tmp/next-issue-queue.json`, and select the **first open,
      unblocked** entry (usually a dependency) to plan **this** run instead of
      the named issue. Continue Phase 1's assign/label/state-write steps for that
-     selected issue. A subsequent `/next-issue` advances the queue.
+     selected issue. A subsequent `/workflow:next-issue` advances the queue.
    - **Open blockers, `--force-target` (alias `--no-deps`)** → restore the
      legacy warn-and-proceed: emit a one-line `WARNING:` listing the open
      blockers and plan the named issue directly (the plan gate is the backstop).
@@ -266,11 +266,11 @@ or has no `files_planned` (nothing to re-present).
    the same per-candidate blocked-by exclusion)
 
    > **Pool refill (orchestrate Phase P):** when selection is driven by the
-   > orchestrate worker pool rather than a plain `/next-issue`, layer the
+   > orchestrate worker pool rather than a plain `/workflow:next-issue`, layer the
    > **in-flight collision check** over this priority order — prefer the first
    > priority issue predicted disjoint from in-flight golems' files, holding the
    > slot if only colliding candidates remain. See `state-format.md` §
-   > Collision-aware selection. A standalone `/next-issue` ignores this and picks
+   > Collision-aware selection. A standalone `/workflow:next-issue` ignores this and picks
    > strictly by priority. The **blocked-by exclusion** is applied first in both
    > cases (it lives in the shared priority walk), so a blocked candidate is
    > skipped before the collision check ever sees it — dispatch and pool refill
@@ -285,7 +285,7 @@ or has no `files_planned` (nothing to re-present).
    prompt).
 
 1. **Choose the rules of engagement (autonomy level)** — for a **lone
-   interactive `/next-issue`** whose level was NOT already fixed by a flag or an
+   interactive `/workflow:next-issue`** whose level was NOT already fixed by a flag or an
    orchestrator, ask the operator now: an `AskUserQuestion` offering **L1–L4**,
    each with its one-line description (`orchestrate/autonomy-levels.md` § "The
    four levels"). The issue's `effort/*`/`severity/*` labels are known here, so
@@ -307,7 +307,7 @@ or has no `files_planned` (nothing to re-present).
 
 1. **Write state file** to `.claude/memory/tmp/next-issue-{N}.json`. This write —
    and the assign/label mutations above it — happen **now, in Phase 1, before
-   Phase 2 enters plan mode**. It is the hand-off record `/ship-issue` reads
+   Phase 2 enters plan mode**. It is the hand-off record `/workflow:ship-issue` reads
    (`phase` + `checkpoint`); if it were deferred into plan mode it would be
    silently blocked and never land (issue #409), so it MUST be on disk before
    `EnterPlanMode` is ever called.
@@ -351,7 +351,7 @@ this skill directory — **load it now** once a run reaches planning. It carries
 in order: read the issue body → explore the code → **assess scope** from effort
 labels (trivial/small = inline plan + `--ship`-eligible; medium/large = load
 `development-workflow` phase-details.md, not `--ship`-eligible) → append the
-**MANDATORY** `/ship-issue` final step → **write the state file** with
+**MANDATORY** `/workflow:ship-issue` final step → **write the state file** with
 `phase: "plan"` + `checkpoint` → the **autonomous planning path** that branches
 on the plan gate (`plan_gated`, from Phase 1's resolver call): an **L4**
 (`plan_gated: false`, non-critical) run posts the plan as an issue comment,
@@ -360,7 +360,7 @@ approval gate; an **L1–L3** run (`plan_gated: true`, incl. a capped critical)
 calls `EnterPlanMode` (deferred from Phase 0) then `ExitPlanMode` and **waits
 indefinitely** for human approval → **implement** and test (with the mid-flight
 escalation gate — load `escalation-protocol.md`) → then an **L3–L4** run invokes
-`/ship-issue` **in this same turn**, while an **L1–L2** run hands off at the
+`/workflow:ship-issue` **in this same turn**, while an **L1–L2** run hands off at the
 routine ship gates. The final **hand-off** step chooses the `--ship` fast-path
 (trivial/small only) vs the default `/clear` suggestion. Carry `autonomy_level`
 forward unchanged from Phase 1; `--ship`/`--now` is not autonomy and never
@@ -379,19 +379,19 @@ If neither matches, ask the user which platform to use.
 
 ## Pipeline
 
-`/next-issue` and `/ship-issue` are two halves of one issue-driven
+`/workflow:next-issue` and `/workflow:ship-issue` are two halves of one issue-driven
 pipeline, deliberately kept as **separate** skills:
 
 ```text
-/next-issue        →  (implement + test)  →  /ship-issue
-  select + plan          your work             commit · PR/push · CI · review · label
-       └──────────────── next-issue-{N}.json ────────────────┘
-              (phase / checkpoint carry state across the gap)
+/workflow:next-issue  →  (implement + test)  →  /workflow:ship-issue
+  select + plan            your work              commit · PR/push · CI · review · label
+       └───────────────── next-issue-{N}.json ─────────────────┘
+           (phase / checkpoint carry state across the gap)
 ```
 
 The hand-off is the state file `.claude/memory/tmp/next-issue-{N}.json` (schema
-in `state-format.md`): `/next-issue` writes `phase` + a `checkpoint` block;
-`/ship-issue` reads them. This lets the implement step happen later, in a
+in `state-format.md`): `/workflow:next-issue` writes `phase` + a `checkpoint` block;
+`/workflow:ship-issue` reads them. This lets the implement step happen later, in a
 fresh context, or across a `/clear` — the planning context does not have to
 stay resident through implementation, review, and CI.
 
@@ -400,7 +400,7 @@ planning tokens out of the longer implement/review/CI budget; plan is
 read-only/plan-mode while ship is all side effects (commit/push/PR), which are
 easier to gate as distinct runs; and a failure stays attributable to one phase.
 
-For genuinely small work that boundary is pure overhead — `/next-issue --ship`
+For genuinely small work that boundary is pure overhead — `/workflow:next-issue --ship`
 (alias `--now`; see the flag docs above) collapses the hand-off in-context for
 `effort/trivial`/`small` issues while still keeping the plan-approval gate.
 

@@ -22,7 +22,7 @@ make the review harness invocation throw.
 ## State reconstruction (missing-state-file fallback)
 
 Loaded from SKILL.md Step 1. The Phase 1/2 state write can legitimately be
-absent — e.g. an older `/next-issue` run that entered plan mode before the write
+absent — e.g. an older `/workflow:next-issue` run that entered plan mode before the write
 ordering was fixed (issue #409), or a `/clear` that dropped an in-context-only
 state. When the Step 1 glob finds no `next-issue-*.json`, reconstruct a minimal
 state from the branch + issue before giving up:
@@ -44,7 +44,7 @@ state from the branch + issue before giving up:
    to the "nothing to ship" stop.
 1. **Confirm the issue is open and in-progress.** Fetch state + labels and
    require `OPEN` **and** a `status/in-progress` label — the marker that
-   `/next-issue` did select and start this issue:
+   `/workflow:next-issue` did select and start this issue:
 
    ```bash
    # GitHub
@@ -199,14 +199,14 @@ Only an **L1** interactive run reaches the prompt below.
 
 After shipping, tell the user:
 
-> Issue #{N} shipped. Run `/clear` to start fresh, then `/next-issue` to
+> Issue #{N} shipped. Run `/clear` to start fresh, then `/workflow:next-issue` to
 > pick up the next issue.
 
 Then ask with `AskUserQuestion`:
 
-- **Pick next issue** — invoke `/next-issue` to select and plan the next one
+- **Pick next issue** — invoke `/workflow:next-issue` to select and plan the next one
 - **Stop** — end the session
 
 **Agent worktree mode**: When running on an agent branch (`^agent`), this
-behavior persists across invocations — `/ship-issue` will always
+behavior persists across invocations — `/workflow:ship-issue` will always
 auto-select commit-only mode (Option 3) without prompting.
