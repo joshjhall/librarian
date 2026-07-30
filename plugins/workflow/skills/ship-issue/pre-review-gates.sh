@@ -495,6 +495,142 @@ has_repo_rooted_js_test() {
     [ -n "$hit" ]
 }
 
+# sh_test_find_args <name-no-ext> — echo the `find` OR-chain matching any shell
+# test named after this source, one token per line (#598). Same shape as
+# js_test_find_args; the arms differ because shell test naming here is a
+# different convention, not the js/ts one.
+#
+# Three arm groups, each earning its place against a measured false negative:
+#
+#   exact    — `tests/<name>.sh`, for a suite whose file simply IS the name
+#              (tests/golem-gate-watch.sh covers scripts/golem-gate-watch.sh).
+#   stems    — the #568 stem set, as <stem>.<ext>, <stem>-*.<ext>,
+#              <stem>_*.<ext>, so `tests/validate-golem-scripts.sh` and
+#              `tests/validate-release-notes.sh` both count.
+#   fragment — `NN-<name>.sh` / `NN-<name>-*.sh`, the split-suite layout (#564)
+#              where cases live in tests/<suite>/NN-<area>.sh.
+#
+# Tokens are never whitespace-bearing: literal find flags plus globs built from
+# a basename with its extension stripped.
+sh_test_find_args() {
+    local name="$1"
+    local stem ext glob first=1
+
+    for glob in \
+        "${name}.sh" "${name}.bash" \
+        "[0-9][0-9]-${name}.sh" "[0-9][0-9]-${name}-*.sh"; do
+        if [ "$first" -eq 1 ]; then first=0; else command printf '%s\n' "-o"; fi
+        command printf '%s\n' "-name" "$glob"
+    done
+    for stem in \
+        "validate-${name}" "test-${name}" "test_${name}" \
+        "${name}_test" "${name}.test" "${name}-test"; do
+        for ext in sh bash; do
+            for glob in "${stem}.${ext}" "${stem}-*.${ext}" "${stem}_*.${ext}"; do
+                command printf '%s\n' "-o" "-name" "$glob"
+            done
+        done
+    done
+}
+
+# sh_test_find_args_exact <candidate> — the RESTRICTED arm set used for a
+# hyphen-stripped candidate (#598). Exact filenames only: no `-*`/`_*` wildcard
+# forms.
+#
+# The restriction is the whole point and must not be "simplified" away by
+# reusing sh_test_find_args here. Stripping `golem-` off `golem-status` is what
+# lets `tests/golem-scripts/60-status.sh` count, but the stripped token is a
+# short generic word, and allowing wildcards on it was MEASURED to match
+# `bin/ruff-version.sh` against `tests/release/10-version-utils.sh` via a bare
+# `version` — a silent false negative on a file with no test of its own, which
+# is strictly worse than the finding it suppresses.
+#
+# The trailing fragment glob is `.sh`-ONLY by design, unlike the stem arms above
+# it. Split-suite fragments (#564) are a convention of this repo's own tests/
+# tree, and every one of them is `.sh` — there is no `NN-<area>.bash` anywhere,
+# nor any `.bash` file at all. Adding a `.bash` fragment arm would widen the
+# match surface of the already-restricted stripped candidate to buy nothing.
+sh_test_find_args_exact() {
+    local cand="$1"
+    local ext glob first=1
+
+    for ext in sh bash; do
+        for glob in \
+            "${cand}.${ext}" "validate-${cand}.${ext}" \
+            "test-${cand}.${ext}" "test_${cand}.${ext}"; do
+            if [ "$first" -eq 1 ]; then first=0; else command printf '%s\n' "-o"; fi
+            command printf '%s\n' "-name" "$glob"
+        done
+    done
+    command printf '%s\n' "-o" "-name" "[0-9][0-9]-${cand}.sh"
+}
+
+# find_repo_rooted_sh_tests <name-no-ext> [max] — paths of shell tests under
+# <_PROJECT_ROOT>/tests named after this source, one per line (#598).
+#
+# `-type f` and the command-substitution shape carry over from
+# find_repo_rooted_js_tests for the reasons documented there: a DIRECTORY named
+# like a test would otherwise suppress a real finding, and a `find | head` probe
+# exits 141 under `set -o pipefail` when find outruns the reader.
+#
+# `-not -path '*/fixtures/*'` is load-bearing and specific to the shell arm: the
+# repo keeps scanner FIXTURES at tests/fixtures/category-parity/match/patterns.sh,
+# and without this every plugins/**/patterns.sh matched that one file — 14 real
+# scanners silently "covered" by a fixture. A fixture is an input to a test, not
+# a test for the source it happens to be named after.
+#
+# The caller has already checked that <_PROJECT_ROOT>/tests exists.
+find_repo_rooted_sh_tests() {
+    local name="$1" max="${2:-0}"
+    local find_args=() tok
+    while IFS= read -r tok; do
+        find_args+=("$tok")
+    done <<EOF
+$(sh_test_find_args "$name")
+EOF
+
+    if [ "$max" = "1" ]; then
+        command find "${_PROJECT_ROOT}/tests" -type f -not -path '*/fixtures/*' \
+            \( "${find_args[@]}" \) -print -quit 2>/dev/null
+    else
+        command find "${_PROJECT_ROOT}/tests" -type f -not -path '*/fixtures/*' \
+            \( "${find_args[@]}" \) -print 2>/dev/null
+    fi
+}
+
+# find_repo_rooted_sh_tests_stripped <name-no-ext> — as above but for the
+# candidate with ONE leading hyphen segment removed, using the exact-only arms.
+# Prints nothing when the name carries no hyphen.
+find_repo_rooted_sh_tests_stripped() {
+    local name="$1"
+    case "$name" in
+        *-*) ;;
+        *) return 0 ;;
+    esac
+    local cand="${name#*-}"
+    [ -n "$cand" ] || return 0
+
+    local find_args=() tok
+    while IFS= read -r tok; do
+        find_args+=("$tok")
+    done <<EOF
+$(sh_test_find_args_exact "$cand")
+EOF
+
+    command find "${_PROJECT_ROOT}/tests" -type f -not -path '*/fixtures/*' \
+        \( "${find_args[@]}" \) -print -quit 2>/dev/null
+}
+
+# has_repo_rooted_sh_test <name-no-ext> — 0 when at least one such test exists,
+# by the full-name arms or the restricted stripped-candidate arm.
+has_repo_rooted_sh_test() {
+    local hit
+    hit="$(find_repo_rooted_sh_tests "$1" 1)"
+    [ -n "$hit" ] && return 0
+    hit="$(find_repo_rooted_sh_tests_stripped "$1")"
+    [ -n "$hit" ]
+}
+
 scan_missing_tests() {
     local file="$1"
 
@@ -513,7 +649,7 @@ scan_missing_tests() {
     # which is strictly better evidence than any heuristic this scanner infers.
     has_declared_test "$file" && return
 
-    local basename dirname name_no_ext ext
+    local basename dirname name_no_ext ext colo_ext
     basename=$(command basename "$file")
     dirname=$(command dirname "$file")
     name_no_ext="${basename%.*}"
@@ -554,6 +690,33 @@ scan_missing_tests() {
             # both restrictions.
             if [ -n "$_PROJECT_ROOT" ] && [ -d "${_PROJECT_ROOT}/tests" ]; then
                 has_repo_rooted_js_test "$name_no_ext" && return
+            fi
+            ;;
+        sh | bash)
+            # Shell (#598). `*.sh` used to sit in test-skip-patterns.default on
+            # the premise that shell scripts have no tests. In a repo whose
+            # tests ARE shell suites that premise is false, and the skip made
+            # the scanner silent on the bulk of every diff — indistinguishable
+            # in the handoff from a clean one.
+            #
+            # Colocated first (cheap, no find), then the repo-rooted tree.
+            # Both extensions on every form: the `sh | bash)` label above claims
+            # .bash sources are handled, so a .sh-only colocated list would make
+            # that claim false for a colocated .bash test.
+            for colo_ext in sh bash; do
+                for test_path in \
+                    "${dirname}/test_${name_no_ext}.${colo_ext}" \
+                    "${dirname}/test-${name_no_ext}.${colo_ext}" \
+                    "${dirname}/tests/test_${name_no_ext}.${colo_ext}" \
+                    "${dirname}/tests/test-${name_no_ext}.${colo_ext}" \
+                    "${dirname}/tests/validate-${name_no_ext}.${colo_ext}" \
+                    "${dirname}/../tests/validate-${name_no_ext}.${colo_ext}" \
+                    "${dirname}/${name_no_ext}_test.${colo_ext}"; do
+                    [ -f "$test_path" ] && return
+                done
+            done
+            if [ -n "$_PROJECT_ROOT" ] && [ -d "${_PROJECT_ROOT}/tests" ]; then
+                has_repo_rooted_sh_test "$name_no_ext" && return
             fi
             ;;
         go)

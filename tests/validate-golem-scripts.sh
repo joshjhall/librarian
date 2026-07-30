@@ -19,7 +19,7 @@
 # owns that script; the explicit FRAGMENTS list below fixes the source order and
 # is guarded so an unwired fragment cannot silently contribute zero tests.
 #
-# Test shape mirrors tests/validate-seed-trust.sh: each case runs the REAL
+# Test shape mirrors tests/validate-seed-worktree-trust.sh: each case runs the REAL
 # script inside a fresh `git init` sandbox under a module-level `mktemp -d`, so
 # the script's repo_root resolves the sandbox (never the librarian checkout).
 # Every git call and script invocation is wrapped in
@@ -71,7 +71,7 @@ SCRIPTS="$REPO_ROOT/plugins/workflow/scripts"
     REAL_BASH="$(command -v bash)"
 
     # Git's hook-exported environment — scrub per invocation so each sandbox is
-    # hermetic even under a pre-push hook (see validate-seed-trust.sh).
+    # hermetic even under a pre-push hook (see validate-seed-worktree-trust.sh).
     GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 }

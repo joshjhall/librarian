@@ -111,6 +111,27 @@ func handle() {
 }
 EOF
 
+# Shell (#598) — TODO marker, swallowed error (`|| true`), function def, and a
+# nested tests/ sibling so the missing-test-file discovery arms are exercised in
+# both directions (one source covered by convention, one orphan) rather than
+# only the flagged one. The fixture library previously had no .sh at all.
+command cat >"$FIXDIR/src/tool.sh" <<'EOF'
+#!/usr/bin/env bash
+# TODO: implement
+run_thing() {
+    do_work || true
+}
+run_thing
+EOF
+command cat >"$FIXDIR/src/orphan.sh" <<'EOF'
+#!/usr/bin/env bash
+echo orphaned
+EOF
+command cat >"$FIXDIR/tests/validate-tool.sh" <<'EOF'
+#!/usr/bin/env bash
+# exercises tool.sh
+EOF
+
 # jsx/tsx — arrow empty body, console debug, export const.
 command cat >"$FIXDIR/src/comp.jsx" <<'EOF'
 export const X = () => {}
