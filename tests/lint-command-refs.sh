@@ -246,6 +246,56 @@ test_file_refs() {
     fi
 }
 
+# Pins collect_corpus's fail-loud README branch. Same reasoning — and the same
+# technique — as test_unknown_name_degrades_not_aborts: the behavior under test is
+# "the gate ABORTS", which run_test's `if "$test_func"` suspends `set -e` for and
+# therefore cannot observe. So SLICE the real collect_corpus out of this file and
+# drive it at top level against a REPO_ROOT with no README.md.
+#
+# Slicing rather than restating is the point: a hand-copied body would keep
+# passing after the real function regained a `|| true`.
+test_missing_readme_fails_loudly() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    command mkdir -p "$tmp/root/plugins"
+    local sliced="$tmp/sliced.sh"
+    {
+        command printf 'set -euo pipefail\n'
+        command printf 'REPO_ROOT=%s\n' "$tmp/root"
+        command printf 'PLUGINS_DIR=%s\n' "$tmp/root/plugins"
+        command sed -n '/^collect_corpus() {$/,/^}$/p' "$SELF_PATH"
+        # Mirror the real call site: a bare command substitution, where set -e is
+        # NOT suspended and a non-zero return must abort.
+        command printf 'CORPUS="$(collect_corpus)"\n'
+        command printf 'command printf "REACHED_AFTER:[%%s]\\n" "$CORPUS"\n'
+    } >"$sliced"
+
+    # Guard the slice: a broken sed would make the probe fail for the wrong reason.
+    assert_contains "$(command cat "$sliced")" "collect_corpus() {" \
+        "The real collect_corpus was sliced out (probe is not vacuous)"
+
+    local out rc=0
+    out="$(command bash "$sliced" 2>"$tmp/err")" || rc=$?
+    assert_equals "1" "$rc" "A missing README.md makes the gate exit non-zero"
+    assert_contains "$(command cat "$tmp/err")" "README.md not found" \
+        "The failure names the missing file (actionable, not silent)"
+    assert_not_contains "$out" "REACHED_AFTER" \
+        "Execution does NOT continue past the corpus build with a narrowed corpus"
+
+    # And the positive side: with a README present it succeeds and includes it.
+    command printf '# root\n' >"$tmp/root/README.md"
+    local out2 rc2=0
+    out2="$(command bash "$sliced" 2>/dev/null)" || rc2=$?
+    assert_equals "0" "$rc2" "With README.md present, collect_corpus succeeds"
+    assert_contains "$out2" "README.md" "The README is part of the corpus it returns"
+}
+
 # Drives build_detail's truncation branch, which no fixture reaches otherwise
 # (the negative fixture plants 16 lines against a MAX_DETAIL of 40).
 test_detail_truncation() {
@@ -417,13 +467,24 @@ test_namespaced_form_present() {
 # run against the real (clean) corpus, and a regression in the grep pattern or
 # the plugin/skill split would keep the suite green while detecting nothing.
 # Sets NS_DANGLING (one line per mismatch) and NS_CHECKED (refs examined).
+#
+# The plugin alternation is DERIVED from SKILL_INDEX, not hardcoded. Hardcoding
+# `(dev-core|review-audit|workflow)` would leave this check asymmetric with
+# collect_skills, which walks the filesystem: a fourth plugin would silently drop
+# out of the wrong-plugin detection while the suite still reported green.
 NS_DANGLING=""
 NS_CHECKED=0
 scan_namespaced() {
     local files="$1"
     NS_DANGLING=""
     NS_CHECKED=0
-    local ref plugin skill file
+    local ref plugin skill file alt
+    alt="$(command printf '%s\n' "$SKILL_INDEX" | command cut -f1 |
+        command sort -u | command tr '\n' '|')"
+    alt="${alt%|}"
+    # No discovered plugins means no refs to check; bail rather than build a
+    # pattern like `/():…` that would match nothing while looking like it worked.
+    [ -n "$alt" ] || return 0
     while IFS= read -r ref; do
         [ -n "$ref" ] || continue
         plugin="${ref%%:*}"
@@ -434,7 +495,7 @@ scan_namespaced() {
         NS_DANGLING="${NS_DANGLING}${ref} -> no plugins/${plugin}/skills/${skill}/"$'\n'
     done < <(while IFS= read -r file; do
         [ -n "$file" ] || continue
-        command grep -ohE '/(dev-core|review-audit|workflow):[a-z0-9-]+' "$file" 2>/dev/null || true
+        command grep -ohE "/($alt):[a-z0-9-]+" "$file" 2>/dev/null || true
     done <<<"$files" | command sort -u)
 }
 
@@ -485,6 +546,39 @@ EOF
     local saw=0
     [ "$NS_CHECKED" -ge 3 ] && saw=1
     assert_equals "1" "$saw" "All three planted refs were examined (found $NS_CHECKED)"
+}
+
+# Pins the DERIVED plugin alternation. A hardcoded `(dev-core|review-audit|
+# workflow)` passes every other test in this file, so without this case the
+# asymmetry with collect_skills' filesystem walk could silently return: a
+# newly-added plugin would drop out of the wrong-plugin detection while the suite
+# stayed green. Drives scan_namespaced with a SKILL_INDEX naming a plugin that is
+# NOT one of the three real ones and asserts its refs are still examined.
+test_namespaced_alternation_is_derived() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    command printf 'A ref for a future plugin: /brand-new:some-skill here.\n' \
+        >"$tmp/future.md"
+
+    # Temporarily present a SKILL_INDEX carrying a plugin name absent from the
+    # hardcoded trio. `brand-new` owns no directory, so the ref must come back
+    # DANGLING — which can only happen if the alternation was built from this
+    # index rather than a literal.
+    local saved_index="$SKILL_INDEX"
+    SKILL_INDEX="$(command printf 'brand-new\tsome-skill\n')"
+    scan_namespaced "$tmp/future.md"
+    SKILL_INDEX="$saved_index"
+
+    assert_equals "1" "$NS_CHECKED" \
+        "A ref for a newly-discovered plugin is examined (alternation is derived, not hardcoded)"
+    assert_contains "$NS_DANGLING" "/brand-new:some-skill" \
+        "The new plugin's unresolvable ref is flagged"
 }
 
 # Negative case: the violation branch must fire on every bare form, and every
@@ -567,8 +661,10 @@ run_test test_negative_case_fires "scan_file flags bare refs and honors every ex
 run_test test_namespaced_form_present "The namespaced form is present in the real corpus"
 run_test test_namespaced_refs_resolve "Every namespaced ref names the plugin that owns the skill"
 run_test test_namespaced_mismatch_fires "scan_namespaced flags a ref naming the wrong plugin (mismatch path)"
+run_test test_namespaced_alternation_is_derived "The plugin alternation is derived from discovery, not hardcoded"
 run_test test_unknown_name_degrades_not_aborts "An unknown skill name degrades the suggestion, never aborts the gate"
 run_test test_detail_truncation "Violation detail truncates at MAX_DETAIL with an accurate remainder"
+run_test test_missing_readme_fails_loudly "A missing README.md aborts the gate instead of narrowing the corpus"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
