@@ -212,13 +212,32 @@ if command -v tmux >/dev/null 2>&1; then
             # characters are stripped: this text is now echoed to a terminal
             # rather than discarded, and it embeds the socket path, so a crafted
             # path or a spoofed tmux earlier on PATH could otherwise smuggle ANSI
-            # escapes into the operator's session. `tr -d` keeps it printable;
-            # the newline class is kept so a genuine multi-line tmux error is
-            # still legible.
+            # escapes into the operator's session. The class drops every C0
+            # control plus DEL (\177), deliberately KEEPING only tab (\011) and
+            # newline (\012) so a genuine multi-line tmux error stays legible —
+            # which is why this is not simply `[:cntrl:]`, a class that would eat
+            # both. Octal ranges rather than named classes so GNU and BSD `tr`
+            # agree. `printf '%s'` keeps the format string fixed, so stderr
+            # containing a literal `%s` or a backslash is data, never format.
+            #
+            # `\013-\037` is ONE range on purpose. Enumerating it as
+            # `\013\014\016-\037` silently skipped \015 (CR), which a terminal
+            # renders by returning the cursor to column 0 — letting crafted
+            # stderr overwrite the WARNING text and make the line read as
+            # something else entirely. That is line-overwrite spoofing, the same
+            # class as the ANSI escapes this strip exists to stop, so the range
+            # is kept contiguous rather than spelled out byte by byte.
+            # `|| true` because a bare assignment from a command substitution IS
+            # subject to `set -e`: were `tr` unavailable, the script would abort
+            # at 127 here — AFTER the destructive git mutations, stranding a
+            # removed worktree behind a non-zero exit. This warning is
+            # best-effort diagnostics and must never be the thing that fails
+            # teardown, the same reasoning as the `|| true` on the reaped hook
+            # below. The `:-` fallback then covers the empty result.
             tmux_err_safe="$(command printf '%s' "${tmux_err:-(no stderr from tmux)}" |
-                command tr -d '\000-\010\013\014\016-\037')"
+                command tr -d '\000-\010\013-\037\177' || true)"
             command echo "worktree-rm: WARNING: tmux kill-session failed for $sess" \
-                "(session may still be running): $tmux_err_safe" >&2
+                "(session may still be running): ${tmux_err_safe:-(no stderr from tmux)}" >&2
             ;;
         *)
             command echo "worktree-rm: ERROR: internal — tmux_kill_outcome returned an unknown outcome" >&2

@@ -2291,15 +2291,22 @@ EOF
     assert_exit 0 "$RUN_RC" "an unexplained kill failure still exits 0"
     assert_contains "$RUN_OUT" "WARNING: tmux kill-session failed for golem-68" \
         "an empty-stderr failure still warns"
-    assert_contains "$RUN_OUT" "(no stderr from tmux)" \
+    # Assert the CONCRETE expected suffix. An earlier version of this used
+    # assert_not_contains with a needle ending in `$`, intending an end-of-string
+    # anchor — but assert_not_contains does a plain glob substring test, so the
+    # `$` was a literal character present in neither the buggy nor the fixed
+    # output, and the assertion could never fail. Pin the text that must be
+    # there instead of the shape that must not.
+    assert_contains "$RUN_OUT" "may still be running): (no stderr from tmux)" \
         "the empty case names itself instead of trailing a bare colon"
-    assert_not_contains "$RUN_OUT" "may still be running): $" \
-        "the warning never ends at a dangling colon"
 
-    # Case 2: stderr carrying terminal escape sequences.
+    # Case 2: stderr carrying terminal escape sequences. Includes a literal `%s`
+    # and a backslash to prove the text is passed as printf DATA, not format, and
+    # a DEL byte (\177) — a control character outside the C0 range that an
+    # incomplete strip class would leave behind.
     command cat >"$sb/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
-printf 'boom\033[31mRED\033[0m\007\n' >&2
+printf 'boom%%s\\x\033[31mRED\033[0m\007\177\rOVERWRITE\n' >&2
 exit 1
 EOF
     command chmod +x "$sb/bin/tmux"
@@ -2325,6 +2332,57 @@ EOF
         "ESC is stripped — tmux stderr cannot inject ANSI into the operator's terminal"
     assert_not_contains "$RUN_OUT" "$(command printf '\007')" \
         "BEL is stripped"
+    assert_not_contains "$RUN_OUT" "$(command printf '\177')" \
+        "DEL is stripped too — it is a control character outside the C0 range"
+    # CR is its own spoofing primitive: a terminal returns the cursor to column 0,
+    # so an embedded \r lets crafted stderr overwrite the WARNING text and make the
+    # line read as something else. An enumerated strip class skipped it once
+    # already (\013\014 then \016-\037, jumping \015), so pin it.
+    assert_not_contains "$RUN_OUT" "$(command printf '\r')" \
+        "CR is stripped — crafted stderr cannot overwrite the warning line"
+    # The format string is fixed, so a literal %s in tmux's stderr must survive
+    # verbatim rather than being consumed as a conversion.
+    assert_contains "$RUN_OUT" "%s" \
+        "a literal %s in tmux stderr is data, never a printf conversion"
+
+    # Case 3: the sanitizer's own tooling is missing. A bare assignment from a
+    # command substitution IS subject to set -e, so an unavailable `tr` would
+    # abort at 127 — right AFTER the destructive git mutations, stranding a
+    # removed worktree behind a non-zero exit. The warning is best-effort
+    # diagnostics and must never be what fails teardown. Simulated by shadowing
+    # `tr` with a stub that exits 127; `command tr` resolves through PATH, so the
+    # stub wins.
+    command cat >"$sb/bin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf 'plain failure\n' >&2
+exit 1
+EOF
+    command chmod +x "$sb/bin/tmux"
+    command cat >"$sb/bin/tr" <<'EOF'
+#!/usr/bin/env bash
+exit 127
+EOF
+    command chmod +x "$sb/bin/tr"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 70 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" \
+        "a broken sanitizer does NOT abort teardown (set -e on the substitution)"
+    assert_contains "$RUN_OUT" "WARNING: tmux kill-session failed for golem-70" \
+        "the warning still fires when the sanitizer cannot run"
+    assert_contains "$RUN_OUT" "(no stderr from tmux)" \
+        "an empty sanitize result falls back rather than trailing a bare colon"
+    command rm -f "$sb/bin/tr"
 }
 
 # The dispatch must invoke tmux under LC_ALL=C (#533).
