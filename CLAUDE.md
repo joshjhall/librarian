@@ -68,8 +68,11 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   discovered from the filesystem — so `/clear` and prose slashes are exempt for
   free, and `agents/` names (never slash commands) are never flagged. Two
   deliberate exclusions: `CHANGELOG.md` (git-cliff-generated) and
-  `docs/verification/**` (dated e2e transcripts whose value is fidelity to what
-  was observed). State-file paths stay bare — write `/next-issue-queue.json` and
+  `docs/verification/**` — exempt because enforcement would force a transcript to
+  contradict its own session log, since a `VERIFIED — live` block records the
+  text a command actually printed. Exempt is not frozen: keep a `DEFERRED` AC's
+  recipe current (someone will run it), and leave live evidence exactly as
+  observed. State-file paths stay bare — write `/next-issue-queue.json` and
   `/next-issue-{N}.json` exactly as-is, since they are filenames rather than
   commands; the gate's trailing-`-` boundary exempts them automatically.
 - **Bundled scripts, never `just`.** The `workflow` plugin's skills call their

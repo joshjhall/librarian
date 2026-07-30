@@ -24,6 +24,15 @@ re-scoped #411 asks AC#5 only to confirm the review is *wired* to fire on
 Options 2/3 (which the static trace establishes); observing it *fire* live is the
 AC#5 spot-check carried into #451.
 
+> **Note on command names (#498).** Slash commands are invoked in their
+> namespaced form, `/workflow:golem`. The **DEFERRED** ACs below are recipes
+> someone will run in the future, so their command blocks use that form and are
+> meant to stay current. The **VERIFIED — live** evidence for AC#3 is left
+> exactly as observed (bare `/golem`, the form the guard printed at the time):
+> updating it would falsify a record of what actually ran. This is also why
+> `docs/verification/**` is exempt from `tests/lint-command-refs.sh` — the gate
+> must not force a transcript to disagree with its own session log.
+
 ### Why the split
 
 The `/next-issue` run that produced this report executed **inside**
@@ -55,7 +64,7 @@ is already in a linked worktree:
 
 ```bash
 [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] \
-  && echo "Already in a linked worktree — run /workflow:golem from the main checkout." && exit
+  && echo "Already in a linked worktree — run /golem from the main checkout." && exit
 ```
 
 Observed in this session (inside `.worktrees/issue-411`):
@@ -63,8 +72,8 @@ Observed in this session (inside `.worktrees/issue-411`):
 ```text
 git-dir:  /workspace/librarian/.git/worktrees/issue-411
 common:   /workspace/librarian/.git
-→ the two differ → the guard condition is true → /workflow:golem prints
-  "Already in a linked worktree — run /workflow:golem from the main checkout." and exits.
+→ the two differ → the guard condition is true → /golem prints
+  "Already in a linked worktree — run /golem from the main checkout." and exits.
 ```
 
 The guard uses the same primary-vs-linked idiom as

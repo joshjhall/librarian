@@ -52,9 +52,15 @@
 # asserted below rather than left to the `find` root:
 #   CHANGELOG.md         — generated from conventional commits by git-cliff; its
 #                          bare refs are historical release notes.
-#   docs/verification/** — dated end-to-end transcripts whose value is fidelity
-#                          to what was observed. Gating them would tax every
-#                          future report that quotes a pre-#498 session log.
+#   docs/verification/** — dated end-to-end transcripts. Gating them would force
+#                          a report to disagree with its own session log: a
+#                          VERIFIED-live block records the exact text a command
+#                          printed at the time, and rewriting that falsifies the
+#                          evidence. Exempt rather than enforced — which does NOT
+#                          mean frozen: a DEFERRED AC's recipe is a command
+#                          someone will run in the future and is kept current by
+#                          hand. Enforcement can't tell those apart, which is
+#                          precisely why this is a human call, not a gate.
 #
 # Judgment calls worth knowing about:
 #   - Fenced code blocks are NOT exempt. The pipeline diagram and the `/golem`
@@ -177,10 +183,17 @@ EOF
 
 # Every markdown file under plugins/, plus the top-level README. CHANGELOG.md and
 # docs/verification/** are excluded on purpose (see the header).
+# README.md is REQUIRED, not best-effort. The issue's AC covers README prose, so
+# silently skipping a missing one would narrow the gate's corpus without saying
+# so — the same false-green class as a discovery typo. Fail loudly instead.
 collect_corpus() {
     command find "$PLUGINS_DIR" -type f -name '*.md' | command sort
-    [ -f "$REPO_ROOT/README.md" ] && command printf '%s\n' "$REPO_ROOT/README.md"
-    return 0
+    if [ ! -f "$REPO_ROOT/README.md" ]; then
+        command printf 'lint-command-refs: README.md not found at %s\n' \
+            "$REPO_ROOT/README.md" >&2
+        return 1
+    fi
+    command printf '%s\n' "$REPO_ROOT/README.md"
 }
 
 CORPUS="$(collect_corpus)"
@@ -195,24 +208,81 @@ skill_count() {
 
 # --- Tests ------------------------------------------------------------------
 
+# build_detail <violations> — cap the reported lines at MAX_DETAIL and append a
+# "… and N more" summary when truncating. Populates DETAIL_LINES (the array
+# handed to _fail) and DETAIL_TOTAL.
+#
+# Split out of test_file_refs so the truncation branch can be driven directly. It
+# fires on the real corpus today (one swept file carries 44 refs), so leaving the
+# arithmetic untested would mean the number a reader sees has never been checked.
+DETAIL_LINES=()
+DETAIL_TOTAL=0
+build_detail() {
+    local violations="$1" line shown=0
+    DETAIL_LINES=()
+    DETAIL_TOTAL=0
+    [ -n "$violations" ] || return 0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        DETAIL_TOTAL=$((DETAIL_TOTAL + 1))
+        if [ "$shown" -lt "$MAX_DETAIL" ]; then
+            DETAIL_LINES+=("$line")
+            shown=$((shown + 1))
+        fi
+    done <<<"$violations"
+    [ "$DETAIL_TOTAL" -gt "$shown" ] &&
+        DETAIL_LINES+=("… and $((DETAIL_TOTAL - shown)) more")
+    return 0
+}
+
 # Per-file body (reads CUR_FILE). One run_test per file keeps a failure
 # attributable to the file that caused it.
 test_file_refs() {
     scan_file "$CUR_FILE"
-    local detail=() shown=0 total=0 line
     if [ -n "$CUR_VIOLATIONS" ]; then
-        while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            total=$((total + 1))
-            if [ "$shown" -lt "$MAX_DETAIL" ]; then
-                detail+=("$line")
-                shown=$((shown + 1))
-            fi
-        done <<<"$CUR_VIOLATIONS"
-        [ "$total" -gt "$shown" ] && detail+=("… and $((total - shown)) more")
+        build_detail "$CUR_VIOLATIONS"
         _fail "Bare slash-command ref(s) in $(command basename "$CUR_FILE") — use the /<plugin>:<skill> form" \
-            "${detail[@]}"
+            "${DETAIL_LINES[@]}"
     fi
+}
+
+# Drives build_detail's truncation branch, which no fixture reaches otherwise
+# (the negative fixture plants 16 lines against a MAX_DETAIL of 40).
+test_detail_truncation() {
+    local many="" i=1
+    while [ "$i" -le 45 ]; do
+        many="${many}f.md:${i}: /next-issue -> /workflow:next-issue"$'\n'
+        i=$((i + 1))
+    done
+
+    build_detail "$many"
+    assert_equals "45" "$DETAIL_TOTAL" "All 45 violations are counted"
+    # MAX_DETAIL capped lines + 1 summary line.
+    assert_equals "$((MAX_DETAIL + 1))" "${#DETAIL_LINES[@]}" \
+        "Detail is capped at MAX_DETAIL plus one summary line"
+    assert_equals "… and $((45 - MAX_DETAIL)) more" "${DETAIL_LINES[$MAX_DETAIL]}" \
+        "The summary line reports the correct remainder"
+    # The kept lines must be the FIRST MAX_DETAIL, in order.
+    assert_equals "f.md:1: /next-issue -> /workflow:next-issue" "${DETAIL_LINES[0]}" \
+        "Truncation keeps the first violation"
+    assert_equals "f.md:${MAX_DETAIL}: /next-issue -> /workflow:next-issue" \
+        "${DETAIL_LINES[$((MAX_DETAIL - 1))]}" \
+        "Truncation keeps through the MAX_DETAIL'th violation"
+
+    # Boundary: exactly MAX_DETAIL violations must NOT append a summary line.
+    local exact="" j=1
+    while [ "$j" -le "$MAX_DETAIL" ]; do
+        exact="${exact}f.md:${j}: /golem -> /workflow:golem"$'\n'
+        j=$((j + 1))
+    done
+    build_detail "$exact"
+    assert_equals "$MAX_DETAIL" "${#DETAIL_LINES[@]}" \
+        "Exactly MAX_DETAIL violations produce no summary line (off-by-one guard)"
+
+    # And the empty case yields nothing at all.
+    build_detail ""
+    assert_equals "0" "${#DETAIL_LINES[@]}" "No violations produce no detail lines"
+    assert_equals "0" "$DETAIL_TOTAL" "No violations produce a zero total"
 }
 
 # Pins plugin_for_skill's `|| true`. `scan_file` deliberately accepts an
@@ -498,6 +568,7 @@ run_test test_namespaced_form_present "The namespaced form is present in the rea
 run_test test_namespaced_refs_resolve "Every namespaced ref names the plugin that owns the skill"
 run_test test_namespaced_mismatch_fires "scan_namespaced flags a ref naming the wrong plugin (mismatch path)"
 run_test test_unknown_name_degrades_not_aborts "An unknown skill name degrades the suggestion, never aborts the gate"
+run_test test_detail_truncation "Violation detail truncates at MAX_DETAIL with an accurate remainder"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
