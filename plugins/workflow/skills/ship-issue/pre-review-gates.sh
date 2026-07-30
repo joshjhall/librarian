@@ -309,6 +309,52 @@ scan_debug_statements() {
 # Source files with no corresponding test file.
 # =============================================================================
 
+# has_repo_rooted_js_test <name-no-ext> — 0 when a test for this source name
+# exists anywhere under <_PROJECT_ROOT>/tests (#555).
+#
+# Widened over the `py` arm's single-pattern find in two ways, because the
+# js/ts ecosystem has no single convention:
+#
+#   stems — <name>.test, <name>.spec, test-<name>, test_<name>, spec-<name>,
+#           validate-<name>; each matched as <stem>.<ext>, <stem>-*.<ext> and
+#           <stem>_*.<ext>, so `validate-workflow-helpers.mjs` covers
+#           `workflow.js`.
+#   exts  — the whole js/ts family, NOT the source's own extension, which is
+#           the cross-extension half of the bug.
+#
+# The stem list stays anchored to the source name rather than matching any test
+# in the tree: `report.js` must not be satisfied by an unrelated
+# `validate-workflow-helpers.mjs`.
+#
+# The caller has already checked that <_PROJECT_ROOT>/tests exists.
+has_repo_rooted_js_test() {
+    local name_no_ext="$1"
+    local stem ext hit
+    # Indexed array (bash-3.2 clean — only declare -A/namerefs/mapfile are
+    # banned) built as an OR-chain for a single find pass. `first` tracks
+    # whether an `-o` separator is needed; the array is never empty, so
+    # "${find_args[@]}" is safe under set -u.
+    local find_args=() first=1
+    for stem in \
+        "${name_no_ext}.test" "${name_no_ext}.spec" \
+        "test-${name_no_ext}" "test_${name_no_ext}" \
+        "spec-${name_no_ext}" "validate-${name_no_ext}"; do
+        for ext in js mjs cjs ts tsx jsx; do
+            if [ "$first" -eq 1 ]; then first=0; else find_args+=(-o); fi
+            find_args+=(-name "${stem}.${ext}")
+            find_args+=(-o -name "${stem}-*.${ext}")
+            find_args+=(-o -name "${stem}_*.${ext}")
+        done
+    done
+
+    # Command substitution, not a pipe into `grep -q`: under `set -o pipefail`
+    # a find|head-shaped probe exits 141 (SIGPIPE) when find outruns the
+    # reader, which would read as a scan failure.
+    hit="$(command find "${_PROJECT_ROOT}/tests" \
+        \( "${find_args[@]}" \) -print -quit 2>/dev/null)"
+    [ -n "$hit" ]
+}
+
 scan_missing_tests() {
     local file="$1"
 
@@ -354,6 +400,14 @@ scan_missing_tests() {
                     [ -f "$test_path" ] && return
                 done
             done
+            # Repo-rooted tests/ tree (#555). The colocated probes above miss a
+            # test that lives under <root>/tests/ rather than beside the source
+            # — and, because they interpolate the SOURCE's own ${ext}, they also
+            # miss a .js source tested from a .mjs file. This fallback drops
+            # both restrictions.
+            if [ -n "$_PROJECT_ROOT" ] && [ -d "${_PROJECT_ROOT}/tests" ]; then
+                has_repo_rooted_js_test "$name_no_ext" && return
+            fi
             ;;
         go)
             [ -f "${dirname}/${name_no_ext}_test.go" ] && return
