@@ -21,7 +21,7 @@ Authoritative status comes from **PR + issue-label state**. The
    glab mr list --json   # or: glab mr list
    ```
 
-   Map each PR to its issue via the `Closes #N` line that `/ship-issue`
+   Map each PR to its issue via the `Closes #N` line that `/workflow:ship-issue`
    writes into the PR body.
 
 1. **Invoke the Workflow tool** on `~/.claude/skills/orchestrate/workflow.js`
@@ -61,7 +61,7 @@ Authoritative status comes from **PR + issue-label state**. The
    `review: approved`/`none`, `blocking: false`) — it is awaiting merge.
 
 1. **On a `ci: failing` PR, triage infra-flake vs real before surfacing it as a
-   regression.** Each golem's own `/ship-issue` CI-wait already runs this
+   regression.** Each golem's own `/workflow:ship-issue` CI-wait already runs this
    triage (classify by failing-step name vs the PR's changed files; auto-retry a
    known infra/setup flake once via `gh run rerun --failed`; collapse a cascade
    aggregation failure to its upstream root cause — see `ship-issue`
@@ -96,7 +96,7 @@ Authoritative status comes from **PR + issue-label state**. The
    **The rolling status table is opt-in, not auto-armed.** Two ways to get it
    without paying for it every interval in live context:
 
-   - **One-shot, on demand** — `/orchestrate status` runs a single
+   - **One-shot, on demand** — `/workflow:orchestrate status` runs a single
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh --checkpoint` (no `--watch`)
      and renders once. Use it when you actually want the burn/velocity read.
    - **Periodic, out-of-band via `CronCreate`** — schedule that same one-shot at a
@@ -117,7 +117,7 @@ Authoritative status comes from **PR + issue-label state**. The
    green / slot freed," so with **no** periodic cadence a pool would never refill.
    Therefore, when `pool.queue == "accepting"` (a live worker pool), **do** arm a
    periodic cadence — the opt-in sweep below, or an equivalent `CronCreate`
-   `/orchestrate status` render — as the refill clock. A plain fixed-batch
+   `/workflow:orchestrate status` render — as the refill clock. A plain fixed-batch
    dispatch does not need it.
 
    If you *do* want the sweep armed inside the session (a running Worker Pool, or
@@ -225,7 +225,7 @@ checkpoint, not a stall. Attach with `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach
 the plan, and detach; the golem then proceeds autonomously to a PR.
 
 **Slow pre-PR reviews — surface, don't kill (default never-kill).** A golem's
-`/ship-issue` pre-PR review can legitimately run **25–30+ min**; the default
+`/workflow:ship-issue` pre-PR review can legitimately run **25–30+ min**; the default
 posture is **surface-and-wait**, not decide-and-kill. **Do NOT auto-kill** on
 the old signal (a frozen `N/6 agents` sub-workflow counter + ~15 min): it
 conflated three benign states with a real wedge (~75%+ false positives; batch-7,

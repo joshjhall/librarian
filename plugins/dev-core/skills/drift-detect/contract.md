@@ -1,7 +1,7 @@
 # drift-detect — Output Contract
 
 Reference companion for `SKILL.md`. Defines the drift detection report format.
-The `/ship-issue` skill reads this when drift-detect is invoked as a
+The `/workflow:ship-issue` skill reads this when drift-detect is invoked as a
 pre-ship validation step.
 
 ## Contract Version

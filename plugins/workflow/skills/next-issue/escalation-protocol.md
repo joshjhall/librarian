@@ -97,13 +97,13 @@ Read the run's level from `autonomy_level` in the state file (see
      comment** for traceability, prefixing it with the `$GATE_ID` so a human
      reading the issue can match it to the feed line (`gh issue comment {N}
      --body …` / `glab issue note {N} --message …`).
-  4. For a **lone `/next-issue`** with no orchestrator, also surface the payload
+  4. For a **lone `/workflow:next-issue`** with no orchestrator, also surface the payload
      **inline** and block the interactive session (there is no orchestrator to
      write the inbox, so this path stays the interactive in-session block —
      brokering augments the orchestrated case, it does not replace the lone
      one).
   5. **Under an orchestrator only — wait indefinitely by polling the inbox.**
-     (In the lone `/next-issue` case of step 4 you have already blocked inline;
+     (In the lone `/workflow:next-issue` case of step 4 you have already blocked inline;
      do **not** also enter this loop — there is no orchestrator to write the
      inbox, so it would poll `NO-DECISION` forever.) With an orchestrator, it has
      surfaced this escalation at the top-most session, collected the operator's

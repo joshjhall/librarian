@@ -3,7 +3,7 @@
 Part of the [librarian](../../README.md) Claude Code plugin marketplace.
 
 Issue-driven and parallel-automation workflow: pick the next issue, run the
-`/next-issue` → `/ship-issue` pipeline at a chosen **autonomy level** (L1–L4),
+`/workflow:next-issue` → `/workflow:ship-issue` pipeline at a chosen **autonomy level** (L1–L4),
 and fan work out across per-issue golems (one issue/branch/worktree/PR each) — on
 a host, on bare Linux, or inside a devcontainer.
 
@@ -19,7 +19,7 @@ for the authoritative model.
 
 ## First-run setup: authorize golem launch permissions
 
-`/orchestrate dispatch` launches each worktree golem with a bare
+`/workflow:orchestrate dispatch` launches each worktree golem with a bare
 `tmux new-session`. The Claude Code auto-mode classifier **denies** that shape
 (`[Create Unsafe Agents]`) until the launch rules are authorized — so on a fresh
 host the _first_ dispatch fails at an opaque wall before you ever see the

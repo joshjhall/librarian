@@ -4,7 +4,7 @@ Companion to `next-issue/SKILL.md`. Load this to decide the run's **autonomy
 level** and how each gate is dispatched. The authoritative contract for the
 level model — the two gate categories, the L1–L4 table, the merge invariant, the
 dead-end rule, and the `severity/critical` cap — is
-`orchestrate/autonomy-levels.md` (#174); this file is how `/next-issue` **applies**
+`orchestrate/autonomy-levels.md` (#174); this file is how `/workflow:next-issue` **applies**
 it. It carries the level selection, the per-gate disposition, the plan-gate rule,
 and the shipping handoff. The old alias flags and back-compat surface were
 hard-removed in #215 — `--level {1,2,3,4}` is the sole dial.
@@ -39,7 +39,7 @@ resolver applies this precedence:
 - an explicit **`--level {1,2,3,4}`** flag; else
 - a level **already chosen at setup by an orchestrator** (the track's
   `autonomy_level`, passed as `--level {N}` at dispatch); else
-- for a **lone interactive `/next-issue`** (no flag, no orchestrator), **ask the
+- for a **lone interactive `/workflow:next-issue`** (no flag, no orchestrator), **ask the
   operator** — the setup-flow "rules of engagement" question, scaled to one
   issue: an `AskUserQuestion` offering **L1–L4**, each with its one-line
   description (`orchestrate/autonomy-levels.md` § "The four levels"). A
@@ -63,7 +63,7 @@ carve-out in `orchestrate/autonomy-levels.md`; the override-removal cleanup is
 issue #179.)
 
 **State file.** `autonomy_level` (1–4) is the only autonomy field written.
-`/ship-issue` reads it back via `autonomy-resolve.sh read --state-level`; there is
+`/workflow:ship-issue` reads it back via `autonomy-resolve.sh read --state-level`; there is
 no `autonomous`/`plan_gated` mirror and no legacy-boolean fallback (both removed
 in #215).
 
@@ -89,13 +89,13 @@ level, L4 included.
 
 The harness-perm-mode row (L1 `acceptEdits` vs L2–L4 `auto`) is surfaced in the
 **golem launch command**, not forced mid-session by a plain interactive
-`/next-issue`.
+`/workflow:next-issue`.
 
 > **Flag note.** `--level {1,2,3,4}` is the only autonomy-level signal. It is
 > distinct from the Claude Code harness flag `--permission-mode auto` (which the
 > launch command sets separately) — that is not an autonomy-level input.
 
-## Applying the level in `/next-issue`
+## Applying the level in `/workflow:next-issue`
 
 - **Gate-skipping (L3–L4).** At L3 and L4, do NOT call `AskUserQuestion` for a
   routine gate — issue acceptance, branch-freshness, drift, shipping mode, CI
@@ -137,12 +137,12 @@ The harness-perm-mode row (L1 `acceptEdits` vs L2–L4 `auto`) is surfaced in th
   human at every routine gate — L3 or L4 — must not stop before delivery. Once
   implementation and testing are complete — for a plan-gate-kept run, that means
   *after* the human approves the plan and implementation finishes — **invoke the
-  `/ship-issue` skill in the same turn** (call the `Skill` tool with
+  `/workflow:ship-issue` skill in the same turn** (call the `Skill` tool with
   `ship-issue`). Do NOT end the turn after merely printing a "next step". The
   handoff is an actual in-turn skill invocation, not narrative: a single
-  `claude '/next-issue <N> --level 4'` prompt must reach a pushed PR on its own,
-  because the model ending its turn after `/next-issue` does not start a second
-  skill. `/ship-issue` then detects the level independently (from the persisted
+  `claude '/workflow:next-issue <N> --level 4'` prompt must reach a pushed PR on its own,
+  because the model ending its turn after `/workflow:next-issue` does not start a second
+  skill. `/workflow:ship-issue` then detects the level independently (from the persisted
   `autonomy_level`) and continues to Branch + PR. See the autonomous planning
   path in Phase 2 for the exact point at which the invocation happens.
 - **Mid-flight escalation gate (all levels).** The plan gate is not the only
@@ -158,7 +158,7 @@ The harness-perm-mode row (L1 `acceptEdits` vs L2–L4 `auto`) is surfaced in th
   `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`), and the **never-time-out**
   rule at this gate. Err toward escalating when unsure.
 - **Persist the level** to the state file: `"autonomy_level": <1-4>` (the only
-  autonomy field) — so `/ship-issue` and any post-`/clear` resume inherit it (see
+  autonomy field) — so `/workflow:ship-issue` and any post-`/clear` resume inherit it (see
   Phase 1 and Phase 2 below). The `plan_gated`/`perm_mode` dispositions the
   `autonomy-resolve.sh level` call emitted are runtime-only; do not persist them.
 

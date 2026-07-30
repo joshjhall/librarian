@@ -1,5 +1,5 @@
 ---
-description: Structured GitHub/GitLab issue creation with auto-labeling and scope enforcement. Use when filing new issues, enriching existing issues, or preparing issues for agentic workflows like /next-issue.
+description: Structured GitHub/GitLab issue creation with auto-labeling and scope enforcement. Use when filing new issues, enriching existing issues, or preparing issues for agentic workflows like /workflow:next-issue.
 ---
 
 # File Issue
@@ -10,8 +10,8 @@ and component convention — load when assigning labels.
 
 ## Modes
 
-- **Create** (default): `/file-issue` or `/file-issue "short description"`
-- **Update**: `/file-issue update 123` — enrich existing issue with labels,
+- **Create** (default): `/workflow:file-issue` or `/workflow:file-issue "short description"`
+- **Update**: `/workflow:file-issue update 123` — enrich existing issue with labels,
   structured sections, and scope check
 
 ## Platform Detection
@@ -95,12 +95,12 @@ This is advisory — the user can proceed with a large issue.
 ## When to Use
 
 - Filing a new issue for work you have identified
-- Enriching poorly-labeled issues before running `/next-issue`
+- Enriching poorly-labeled issues before running `/workflow:next-issue`
 - Preparing issues for multi-agent orchestration (need component labels)
 - Converting informal notes or Slack threads into structured issues
 
 ## When NOT to Use
 
-- Bulk issue creation from audit findings (use `/codebase-audit`)
-- Closing or shipping issues (use `/ship-issue`)
+- Bulk issue creation from audit findings (use `/review-audit:codebase-audit`)
+- Closing or shipping issues (use `/workflow:ship-issue`)
 - Triaging existing issues without changes (just read with `gh issue view`)

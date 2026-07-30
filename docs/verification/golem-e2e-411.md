@@ -55,7 +55,7 @@ is already in a linked worktree:
 
 ```bash
 [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] \
-  && echo "Already in a linked worktree — run /golem from the main checkout." && exit
+  && echo "Already in a linked worktree — run /workflow:golem from the main checkout." && exit
 ```
 
 Observed in this session (inside `.worktrees/issue-411`):
@@ -63,8 +63,8 @@ Observed in this session (inside `.worktrees/issue-411`):
 ```text
 git-dir:  /workspace/librarian/.git/worktrees/issue-411
 common:   /workspace/librarian/.git
-→ the two differ → the guard condition is true → /golem prints
-  "Already in a linked worktree — run /golem from the main checkout." and exits.
+→ the two differ → the guard condition is true → /workflow:golem prints
+  "Already in a linked worktree — run /workflow:golem from the main checkout." and exits.
 ```
 
 The guard uses the same primary-vs-linked idiom as
@@ -121,7 +121,7 @@ gh issue create \
 ### AC#1 — L4 happy path
 
 ```text
-/golem S --level 4
+/workflow:golem S --level 4
 ```
 
 Checklist (all must hold):
@@ -129,7 +129,7 @@ Checklist (all must hold):
 - [ ] `.worktrees/issue-S` created on branch `feature/issue-S`
 - [ ] `EnterWorktree` relocates the session into `.worktrees/issue-S`
 - [ ] plan runs **auto** (no plan gate at L4), then implement
-- [ ] `/ship-issue` chains in-turn; **adversarial pre-PR review runs** (Step 3.5
+- [ ] `/workflow:ship-issue` chains in-turn; **adversarial pre-PR review runs** (Step 3.5
       check #6 fires — watch for the `Workflow` review invocation)
 - [ ] Branch + PR opened → CI waited on → **auto-merge on green + clean**
 - [ ] Phase D auto-runs `worktree-rm.sh S` + `ExitWorktree(remove)`
@@ -139,21 +139,21 @@ Checklist (all must hold):
 ### AC#2 — L2 human-merge path
 
 ```text
-/golem S2 --level 2      # use a second scratch issue S2
+/workflow:golem S2 --level 2      # use a second scratch issue S2
 ```
 
 Checklist:
 
 - [ ] run **stops for a human merge** (routine ship gate kept at L2)
 - [ ] worktree is **kept**; `ExitWorktree(keep)`; the `--teardown` hint is printed
-- [ ] after a manual `gh pr merge`, `/golem --teardown S2` verifies the PR/branch
+- [ ] after a manual `gh pr merge`, `/workflow:golem --teardown S2` verifies the PR/branch
       is **MERGED** and prunes the worktree + branch (keys off the merged PR, not
       a state file)
 
 ### AC#4 — Bare invocation
 
 ```text
-/golem
+/workflow:golem
 ```
 
 Checklist:

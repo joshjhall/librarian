@@ -2,7 +2,7 @@
 
 Reference companion for `SKILL.md`.
 
-> **Topology note.** The default `/orchestrate` topology is PR-per-golem
+> **Topology note.** The default `/workflow:orchestrate` topology is PR-per-golem
 > (`SKILL.md` Phases D/M/R). The **merge** and **sync** sections below are
 > **OPT-IN LEGACY local-merge** — used only for tightly-coupled no-PR worktree
 > work. The **Conflict Classification** and **Test Runner Detection** sections
@@ -34,7 +34,7 @@ git rev-list --count "$MERGE_BASE"..<agent-branch>
 ```
 
 After a successful merge, the merge-base advances automatically — no manual
-bookkeeping needed. Subsequent `/orchestrate status` calls will show 0 pending
+bookkeeping needed. Subsequent `/workflow:orchestrate status` calls will show 0 pending
 commits for that agent.
 
 ---
@@ -107,7 +107,7 @@ when `git merge` reports conflicts in the legacy path):
 
    **Worked example (the #585/#586/#587 launch-line union).** Three parallel
    golems each edited the same `worktree-new` launch line: #585 added
-   `--permission-mode auto` plus the `/ship-issue` chain, and #587 added
+   `--permission-mode auto` plus the `/workflow:ship-issue` chain, and #587 added
    `-e GOLEM_ID=golem-{N}`. These are additive and composable — none overwrites
    another's change — so the correct resolution is the **union** of all three:
 
@@ -313,7 +313,7 @@ If no test runner is detected, inform the user and skip testing.
   - Agent made many WIP/fixup commits
   - You want a clean linear history
 
-The user can request squash via `/orchestrate merge <N> --squash` or by asking
+The user can request squash via `/workflow:orchestrate merge <N> --squash` or by asking
 for a squash merge in natural language.
 
 ---
@@ -321,8 +321,8 @@ for a squash merge in natural language.
 ## Review Protocol [OPT-IN LEGACY]
 
 In the default PR-per-golem topology, per-PR review is the **golem's** job (the
-`/ship-issue` adversarial review loop). This section applies only after a
-legacy local merge (`/orchestrate review`), reviewing the merged changes for
+`/workflow:ship-issue` adversarial review loop). This section applies only after a
+legacy local merge (`/workflow:orchestrate review`), reviewing the merged changes for
 correctness and quality.
 
 ### Review Scope
@@ -418,7 +418,7 @@ git merge --abort
 # Log the skip, continue to next agent
 ```
 
-Skipped agents will pick up changes on their next `/orchestrate sync` or when
+Skipped agents will pick up changes on their next `/workflow:orchestrate sync` or when
 the orchestrator merges their work (Phase 2) and syncs again.
 
 ### Post-Sync Verification
@@ -504,7 +504,7 @@ checkpoint context in the review prompt:
 > superseded; conflict classification + test-runner detection (above) remain
 > live.
 
-Use these only when explicitly requested (`/orchestrate merge`, `review`,
+Use these only when explicitly requested (`/workflow:orchestrate merge`, `review`,
 `sync`).
 
 ### Merge (legacy Phase 2)
@@ -523,7 +523,7 @@ Use these only when explicitly requested (`/orchestrate merge`, `review`,
 
 ### Review (legacy Phase 3)
 
-Per-PR review is normally the **golem's** job (the `/ship-issue` review
+Per-PR review is normally the **golem's** job (the `/workflow:ship-issue` review
 loop). This phase applies only after a local merge.
 
 1. `MERGE_COMMIT=$(git log -1 --merges --format='%H')`.

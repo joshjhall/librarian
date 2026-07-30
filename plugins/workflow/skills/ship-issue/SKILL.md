@@ -1,32 +1,32 @@
 ---
-description: Ship the current next-issue work — commit, deliver (PR or push), label the issue, and optionally loop back. Use after implementation and testing are complete for an issue started with /next-issue.
+description: Ship the current next-issue work — commit, deliver (PR or push), label the issue, and optionally loop back. Use after implementation and testing are complete for an issue started with /workflow:next-issue.
 ---
 
 # Ship Issue
 
 Delivers the completed work for an issue previously selected and planned by
-`/next-issue`. Handles committing, pushing, PR creation, issue labeling, and
+`/workflow:next-issue`. Handles committing, pushing, PR creation, issue labeling, and
 state cleanup.
 
 **Prerequisite**: Implementation and testing must be complete before invoking
-this skill. The state file written by `/next-issue` must exist.
+this skill. The state file written by `/workflow:next-issue` must exist.
 
 ## Pipeline
 
-This skill is the delivery half of the `/next-issue` → `/ship-issue`
+This skill is the delivery half of the `/workflow:next-issue` → `/workflow:ship-issue`
 pipeline (the two are kept as separate skills on purpose — see `## Pipeline` in
 the `next-issue` skill for the rationale). The hand-off is the state file
-`.claude/memory/tmp/next-issue-{N}.json`: `/next-issue` writes `phase` +
+`.claude/memory/tmp/next-issue-{N}.json`: `/workflow:next-issue` writes `phase` +
 `checkpoint`; this skill reads them in Step 1. It can be invoked three ways:
 
 - **Manually** after a `/clear` — the normal flow for `effort/medium`/`large`
   work, where planning context was reset before implementation.
-- **Auto-invoked by `/next-issue --ship`** (alias `--now`) — the fast-path for
+- **Auto-invoked by `/workflow:next-issue --ship`** (alias `--now`) — the fast-path for
   `effort/trivial`/`small` issues, chaining here in the same context with no
   `/clear`. **Not an autonomy signal**: it keeps the plan-approval gate and leaves
   the level at **L1**, so this run still prompts for shipping mode (Step 3) and
   every other interactive gate.
-- **Auto-chained by `/next-issue --level 3|4`** — the higher-autonomy flow, which
+- **Auto-chained by `/workflow:next-issue --level 3|4`** — the higher-autonomy flow, which
   persists `autonomy_level` (see below) and invokes this skill **in the same
   turn** (via the `Skill` tool) once implementation + testing complete, without
   suggesting a manual run. Ship must work whether reached in-turn (state current
@@ -94,10 +94,10 @@ it before relying on any of these toggles.
    - **If none exist**: do NOT dead-end immediately — first attempt
      **state reconstruction** from the working context (see below). Only if
      reconstruction fails is there nothing to ship; then stop and tell the user
-     to run `/next-issue` first.
+     to run `/workflow:next-issue` first.
 
    **State reconstruction (missing-state-file fallback).** The Phase 1/2 state
-   write can legitimately be absent — an older `/next-issue` run that entered plan
+   write can legitimately be absent — an older `/workflow:next-issue` run that entered plan
    mode before the write ordering was fixed (issue #409), or a `/clear` that
    dropped an in-context-only state. When the glob finds no `next-issue-*.json`,
    reconstruct a minimal state from the branch + issue before giving up: parse the
@@ -114,7 +114,7 @@ it before relying on any of these toggles.
    feeds the level model above), and `plan_comment_url` (if present).
 
    **Resolve the run's level** by calling the resolver (issue #190) — the same
-   authoritative implementation `/next-issue` uses — rather than validating the
+   authoritative implementation `/workflow:next-issue` uses — rather than validating the
    level by hand:
 
    ```bash
@@ -131,19 +131,19 @@ it before relying on any of these toggles.
    The level decides every gate below: **L1–L2** keep human gates (stop for a
    human at shipping mode and at merge), **L3–L4** auto-pass the routine gates
    (push, PR-open, merge-on-green+clean, prune). The `severity/critical` cap
-   (issue L3 max) is applied by `/next-issue` when it writes `autonomy_level`, so
+   (issue L3 max) is applied by `/workflow:next-issue` when it writes `autonomy_level`, so
    ship trusts the stored level as-is.
 
    > **Dependency queue:** if `.claude/memory/tmp/next-issue-queue.json` exists
    > and the issue being shipped is that queue's `active` entry, **leave the
    > queue file in place** — do NOT delete or mutate it here. The next
-   > `/next-issue` run advances the queue on resume (it re-reads the queue,
+   > `/workflow:next-issue` run advances the queue on resume (it re-reads the queue,
    > drops the now-closed entry, and recomputes `active` — see
    > `next-issue/dependency-queue.md` § Dependency Queue). Shipping only deletes the
    > per-issue `next-issue-{N}.json`, never the queue file.
 
    (If no state file is found, stop and tell the user: *"No in-progress issue
-   found. Run `/next-issue` first to select and plan an issue."*)
+   found. Run `/workflow:next-issue` first to select and plan an issue."*)
 
 ## Step 2 — Detect Platform
 
@@ -321,5 +321,5 @@ carries this step. In brief: **L2–L4 skip it** (an L3–L4 run already merged 
 exited; an L2 run already emitted its completion summary and stops for a human
 merge). Only an **L1** interactive run reaches the loop-back — after shipping,
 tell the user the issue is shipped and `AskUserQuestion` **Pick next issue**
-(invoke `/next-issue`) vs **Stop**. On an `^agent` branch, commit-only (Option 3)
+(invoke `/workflow:next-issue`) vs **Stop**. On an `^agent` branch, commit-only (Option 3)
 persists across invocations without prompting.
