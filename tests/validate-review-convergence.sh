@@ -735,6 +735,50 @@ test_prev_result_missing_its_value_fails_loud() {
     assert_contains "$err" "needs a value" "the message says the flag needs a value"
 }
 
+test_prev_result_as_trailing_token_fails_loud() {
+    # The BOUNDARY the mid-list test above misses. The `--*` guard only fires on
+    # the iteration AFTER the flag, so it needs a following token to exist; a flag
+    # that is the LAST argument falls off the end of the loop with an empty value
+    # and no error. Same invisible drop, different route in.
+    local rc=0 err
+    err="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-lines 400 --prev-result 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-lines 400 --prev-result >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "--prev-result as the last argument exits 2, not a silent empty"
+    assert_contains "$err" "last argument" "the message names the trailing-flag case"
+}
+
+test_optional_flag_as_trailing_token_fails_loud() {
+    # Same boundary in `opt`, and it matters MORE for the optional flags: an empty
+    # --delta-files is indistinguishable from "not passed", so it silently
+    # disables the C7 recursive signal rather than erroring.
+    local rc=0
+    "$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-lines 400 --delta-files >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "--delta-files as the last argument exits 2"
+}
+
+test_optional_flag_missing_its_value_fails_loud() {
+    # The mid-list half of the same guard for `opt`.
+    local rc=0
+    "$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-files --delta-lines 400 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "--delta-files followed by a flag exits 2"
+}
+
+test_trailing_value_is_not_mistaken_for_a_missing_one() {
+    # The complement, and the reason `opt` clears `_opt_prev` on its match: a
+    # perfectly ordinary call whose FINAL token is a matched flag's own value must
+    # still work. Without the reset, the trailing-flag check fires on every such
+    # call — which is how this guard first broke every normal invocation.
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --partial false --prev-delta-lines 400 --delta-lines 400)"
+    assert_equals "continue" "$(val verdict "$out")" "a value in final position is a value, not a missing one"
+    assert_equals "C8-novel" "$(val rule "$out")" "and the run proceeds normally"
+}
+
 test_unknown_subcommand_fails_loud() {
     local rc=0
     "$RC" bogus >/dev/null 2>&1 || rc=$?
@@ -797,6 +841,10 @@ run_test test_bad_ratio_env_fails_loud "bad RATIO env -> exit 2"
 run_test test_leading_zero_numerics_fail_loud "leading-zero numerics -> exit 2 (octal guard)"
 run_test test_plain_zero_delta_lines_is_valid "plain 0 --delta-lines is valid"
 run_test test_prev_result_missing_its_value_fails_loud "--prev-result with no value -> exit 2"
+run_test test_prev_result_as_trailing_token_fails_loud "--prev-result as the LAST argument -> exit 2"
+run_test test_optional_flag_as_trailing_token_fails_loud "--delta-files as the LAST argument -> exit 2"
+run_test test_optional_flag_missing_its_value_fails_loud "--delta-files with no value -> exit 2"
+run_test test_trailing_value_is_not_mistaken_for_a_missing_one "a value in final position still parses"
 run_test test_unknown_subcommand_fails_loud "unknown subcommand -> exit 2"
 run_test test_no_subcommand_fails_loud "no subcommand -> exit 2"
 

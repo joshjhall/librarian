@@ -125,13 +125,29 @@ opt() {
         if [ "$_opt_prev" = "$_opt_name" ]; then
             _opt_found=0
             case "$_opt_tok" in
-                --*) ;;
+                --*)
+                    die "review-convergence: $_opt_name needs a value, got the flag '$_opt_tok' (a value may not begin with '--')"
+                    ;;
                 *) _opt_val="$_opt_tok" ;;
             esac
+            _opt_prev=""
             break
         fi
         _opt_prev="$_opt_tok"
     done
+    # Trailing-flag case: the `--*` guard needs a following token to exist, so a
+    # flag that is the LAST argument falls off the end with an empty value. That
+    # is silent for the OPTIONAL flags (--delta-files, --prev-delta-lines), where
+    # empty is indistinguishable from "not passed" and quietly disables the C7
+    # recursive signal or the C3/C4 surface comparison. Fail instead.
+    #
+    # `_opt_prev` is cleared on the match-and-break above, so reaching here with
+    # it still equal to the flag name means the loop ENDED on the flag — i.e. the
+    # flag was last. Without that reset this fires on every ordinary call whose
+    # final token happens to be the matched flag's own value.
+    if [ "$_opt_prev" = "$_opt_name" ]; then
+        die "review-convergence: $_opt_name needs a value but was the last argument"
+    fi
     command printf '%s' "$_opt_val"
     return "$_opt_found"
 }
@@ -165,6 +181,14 @@ opt_all() {
         fi
         _all_prev="$_all_tok"
     done
+    # The `--*` guard above only fires on the iteration AFTER the flag, so it
+    # needs a following token to exist. When the flag is the LAST token there is
+    # no next iteration and the value is silently empty — the same invisible drop,
+    # reached by falling off the end of the loop instead of by a `--`-shaped
+    # value. Check the trailing case explicitly.
+    if [ "$_all_prev" = "$_all_name" ]; then
+        die "review-convergence: $_all_name needs a value but was the last argument"
+    fi
 }
 
 # is_nonneg_int <value> — 0 if value is a non-negative integer in canonical
