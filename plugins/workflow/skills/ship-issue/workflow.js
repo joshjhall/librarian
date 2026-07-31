@@ -88,6 +88,65 @@ export const meta = {
 // fixes, commits, and files deferred findings.
 // ---------------------------------------------------------------------------
 
+// The complete `args` contract (#597). Every key below is read by one of the
+// `args.<key>` accesses that follow; this list is the machine-readable twin of
+// the header comment block above (lines ~14-35) and MUST stay in sync with it —
+// a key documented there but missing here is rejected at dispatch, and a key
+// here but undocumented there is an input no caller knows to pass. The test
+// suite pins that sync (tests/workflow-helpers/ship-issue.mjs).
+//
+// Order matches the header block so a reader can diff the two by eye.
+const KNOWN_ARG_KEYS = [
+  'phase',
+  'cycle',
+  'maxCycles',
+  'files',
+  'diff',
+  'prComments',
+  'issue',
+  'tokenCeiling',
+  'preScan',
+  'conventionsDigest',
+  'deltaDiff',
+  'deltaFiles',
+  'priorBlockingDimensions',
+]
+
+// Why this exists: every `args.<key>` read below is guarded by a type check that
+// falls back to an empty default, so an input passed under a WRONG key is
+// silently dropped and the cycle reviews less than the caller believes — or,
+// when the dropped key is `diff`, nothing at all. That produces `clean: true`
+// from a review that never happened, byte-identical in the output to a genuine
+// pass. Measured instance (#567): a cycle dispatched with `argsFile` instead of
+// the inline inputs dropped `diff`, `preScan` AND `conventionsDigest`; five
+// reviewers ran against an empty diff and returned zero findings. Since `clean`
+// is half the merge invariant, at L4 that auto-merges.
+//
+// A typo'd key is always a caller bug, never intent, so the caller wiring this
+// up gets a loud throw (repo runtime policy: fail loud, never emit a wrong-but-
+// plausible result). Returns the offending keys as a LIST so the message can
+// name all of them — a caller that mistyped two keys should not have to
+// re-dispatch twice to learn that.
+//
+// Total by construction: a null/undefined/non-object `args` is the legitimate
+// no-input case every read above already tolerates, so it yields [] rather than
+// throwing.
+const unknownArgKeys = (a) =>
+  a && typeof a === 'object' && !Array.isArray(a)
+    ? Object.keys(a).filter((k) => !KNOWN_ARG_KEYS.includes(k))
+    : []
+
+// Whether this cycle has nothing of its own to review (#597, AC#3). A pure
+// predicate rather than an inline condition in the orchestration body so it can
+// be unit-tested directly: the `log()` call it guards sits past ORCH_BOUNDARY
+// and cannot be reached by the extractor, and a structural source-grep alone
+// would not catch the boolean logic being inverted (`||` for `&&`).
+//
+// Guards BOTH inputs deliberately: a narrowed re-review cycle legitimately
+// carries only `deltaDiff`, so testing `scopeDiff` alone would warn on a cycle
+// that has plenty to read.
+const noDiffSupplied = (fullDiff, delta) => !fullDiff && !delta
+
 const PHASE = args && args.phase === 'pr-cycle' ? 'pr-cycle' : 'pre-pr'
 const CYCLE = args && Number.isInteger(args.cycle) ? args.cycle : 1
 const MAX_CYCLES = args && Number.isInteger(args.maxCycles) ? args.maxCycles : 3
@@ -1147,6 +1206,43 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
 }
 
 log(`review cycle ${CYCLE}/${MAX_CYCLES} (phase: ${PHASE})`)
+
+// Reject an unrecognized input key before anything is dispatched (#597). This
+// is deliberately the FIRST thing after the cycle banner: the failure costs no
+// agent turns, and the caller learns at dispatch rather than after a full cycle
+// has reported a hollow `clean: true`. See `unknownArgKeys` above for why a
+// throw beats a clean-looking verdict.
+//
+// This lives in the orchestration body, not the pure prefix, on purpose: a
+// column-0 `if (`/`throw` above the helpers would move the slice boundary that
+// tests/lib/extract-helpers.mjs keys on (ORCH_BOUNDARY) and silently shrink the
+// prefix every ship-issue helper test extracts.
+const unknownKeys = unknownArgKeys(args)
+if (unknownKeys.length > 0) {
+  throw new Error(
+    `review harness: unknown args key(s): ${unknownKeys.join(', ')} — ` +
+      `accepted keys are: ${KNOWN_ARG_KEYS.join(', ')}. ` +
+      'An unrecognized key is silently ignored, so the input it carried would be ' +
+      'missing and this cycle could report a falsely clean review. Fix the key and re-dispatch.'
+  )
+}
+
+// A cycle with neither a full diff nor a fix delta reviews nothing of its own
+// accord (#597, AC#3). This is NOT an error: omitting `diff` is a documented
+// supported mode — each reviewer then derives it in-agent via `git diff
+// origin/main...HEAD`, which costs extra tool calls but still produces a real
+// review (see pre-ship-validation.md). So it warns rather than throwing, and
+// deliberately does not force `clean: false`, which would leave a legitimately
+// diff-less run unable to ever terminate and would dead-end the PR at
+// maxCycles. The point is that a DROPPED `diff` key and an INTENTIONALLY
+// omitted one look identical from inside the harness — this line makes the
+// condition visible in the log either way.
+if (noDiffSupplied(scopeDiff, deltaDiff)) {
+  log(
+    'WARNING: no diff supplied (args.diff and args.deltaDiff both empty) — reviewers ' +
+      'will derive the diff in-agent. If you meant to pass one, it was dropped or mistyped.'
+  )
+}
 
 // Make the active bound observable: an unbounded run is the DEFAULT (#553), and
 // must not look identical in the log to a bounded one.
