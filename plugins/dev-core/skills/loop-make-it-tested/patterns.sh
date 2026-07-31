@@ -59,6 +59,94 @@ truncate_chars() {
     fi
 }
 
+# py_public_symbols_gate <file> — this MODULE's public-API policy (#606).
+#
+# The extractor below treats every non-underscore top-level `def` as public API,
+# which is wrong for a `main()`-guarded CLI script: its internal helpers are
+# driven end-to-end THROUGH the entry point, never imported and never named by a
+# test, so a well-exercised helper reported HIGH "no tests reference".
+#
+# Three policies, echoed on stdout:
+#   all:<space-separated names>  __all__ present — only these names are public
+#   none                         main()-guarded, no __all__ — nothing is API
+#   open                         plain module — every top-level def is public
+#
+# __all__ takes precedence over the main() guard deliberately: it is a POSITIVE
+# declaration by the author, and it is the escape hatch for a module that is
+# genuinely both a CLI and an importable library.
+#
+# Three copies of this logic exist: here, in the sibling patterns.py
+# (_py_public_symbols_gate), and in ship-issue's pre-review-gates.sh. Be precise
+# about which agreements are ENFORCED:
+#
+#   this file <-> sibling patterns.py    — PINNED by tests/validate-python-ports.sh
+#                                          (whole-corpus TSV parity), plus the
+#                                          #606 cases in validate-loop-detectors.sh
+#   this file <-> pre-review-gates.sh    — NOT mechanically checked. Manual.
+#
+# The cross-plugin pair cannot share a sourced library (CLAUDE_PLUGIN_ROOT is
+# plugin-scoped and `workflow` installs without `dev-core`), so the duplication
+# is deliberate — but unlike the check-code-health/pre-review-gates pair, it
+# carries no `# >>> shared:<region>` sentinels and is therefore invisible to
+# tests/validate-shared-scanner-sync.sh. A fix applied to only one copy will
+# drift silently. Extending that gate to this pair is filed as follow-up work;
+# until it lands, edit all three together by hand.
+py_public_symbols_gate() {
+    local file="$1" all_names
+
+    # `__all__ = [...]` / `(...)`, possibly spanning lines.
+    #
+    # awk, not `sed -n '/start/,/end/p'`: a sed range looks for its END pattern
+    # starting at the line AFTER the start, so a single-line `__all__ = ["x"]`
+    # does not terminate on its own closing bracket and the range runs on to the
+    # next `]` or `)` anywhere in the file — swallowing unrelated quoted strings
+    # as if they were exported names. The awk below tests the start line itself.
+    if command grep -qE '^__all__([[:space:]]*:[^=]*)?[[:space:]]*=' "$file" 2>/dev/null; then
+        all_names=$(command awk '
+            /^__all__([[:space:]]*:[^=]*)?[[:space:]]*=/ && !inb {
+                inb = 1
+                rest = substr($0, index($0, "=") + 1)
+                print rest
+                if (rest ~ /[])]/) exit
+                next
+            }
+            inb { print; if ($0 ~ /[])]/) exit }
+        ' "$file" 2>/dev/null |
+            command grep -oE '"[a-zA-Z_][a-zA-Z0-9_]*"|'\''[a-zA-Z_][a-zA-Z0-9_]*'\''' |
+            command tr -d '"'\''' | command tr '\n' ' ')
+        command printf 'all:%s' "$all_names"
+        return
+    fi
+
+    # The `if __name__ == "__main__":` guard, in either quote style. Anchored at
+    # column 0: a guard nested inside a function or class is not the module's
+    # entry point and must not gate the whole file.
+    if command grep -qE '^if[[:space:]]+__name__[[:space:]]*==[[:space:]]*["'\'']__main__["'\'']' \
+        "$file" 2>/dev/null; then
+        command printf 'none'
+        return
+    fi
+
+    command printf 'open'
+}
+
+# py_symbol_is_public <symbol> <gate> — 0 when <symbol> is public under <gate>.
+py_symbol_is_public() {
+    local symbol="$1" gate="$2"
+    case "$gate" in
+        none) return 1 ;;
+        all:*)
+            # Whole-word match within the space-delimited name list; the padding
+            # keeps `check_mcp` from matching `check_mcp_config`.
+            case " ${gate#all:} " in
+                *" $symbol "*) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *) return 0 ;;
+    esac
+}
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -127,14 +215,24 @@ while IFS= read -r file; do
     # Public/exported functions that should have test coverage
     case "$ext" in
         py)
-            # Public functions (not starting with _)
+            # Public functions (not starting with _), minus this module's
+            # non-public symbols (#606) — resolved ONCE per file, since the
+            # policy is a property of the module and not of the symbol.
+            py_gate="$(py_public_symbols_gate "$file")"
             command grep -nE '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
-                    # Check if this function appears in any test file nearby
-                    if ! command grep -rql "\b${func_name}\b" "${dirname}"/test_*.py "${dirname}"/tests/test_*.py 2>/dev/null; then
+                    # Not public API for this module — no test is EXPECTED to
+                    # name it, so "no tests reference" is not a finding.
+                    py_symbol_is_public "$func_name" "$py_gate" || continue
+                    # Check if this function appears in any test file nearby.
+                    # The third glob mirrors pre-review-gates.sh, whose py arm
+                    # has always had it — a src/ module tested from a sibling
+                    # tests/ tree is the commonest layout there is, and without
+                    # it that whole shape reported HIGH (#606).
+                    if ! command grep -rql "\b${func_name}\b" "${dirname}"/test_*.py "${dirname}"/tests/test_*.py "${dirname}"/../tests/test_*.py 2>/dev/null; then
                         evidence=$(truncate_chars 60 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "untested-public-api" \

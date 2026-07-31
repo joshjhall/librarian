@@ -937,6 +937,227 @@ test_py_declared_discovery_join() {
         "an unreferenced def in the same file still fires — the declared join is not a blanket skip (#600)"
 }
 
+# --- untested-public-api: module public-symbol selection (#606) -------------
+#
+# #600 fixed test DISCOVERY; these cover symbol SELECTION. Every case below puts
+# the ARMING fixture and the SATISFYING fixture in SEPARATE files: a single
+# module that both triggers the gate and satisfies it would pass whether or not
+# the gate exists, which is the tautology that made an earlier assertion in this
+# file prove nothing (see the note above test_go_stays_silent_without_any_candidate).
+
+# AC#1 + AC#2 in one run. A helper in a main()-guarded CLI module is not public
+# API — it is driven THROUGH the entry point, so no test is expected to name it.
+# The control lives in a separate, UNGUARDED module and must still fire, which
+# is what proves the gate is selective rather than globally silencing.
+test_py_main_guarded_helper_not_public_api() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src"
+    command printf '%s\n' \
+        "def guarded_helper(a):" "    return a" \
+        "def main(argv):" "    return guarded_helper(argv)" \
+        'if __name__ == "__main__":' "    raise SystemExit(main(None))" >"$sb/src/cli.py"
+    command printf '%s\n' \
+        "def library_export(a):" "    return a" >"$sb/src/lib.py"
+    command printf '%s\n' "$sb/src/cli.py" "$sb/src/lib.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_not_contains "$rows" "guarded_helper" \
+        "a helper in a main()-guarded CLI module is not public API (#606 AC#1)"
+    assert_contains "$rows" "library_export" \
+        "a genuinely public, genuinely untested def in a plain module still fires (#606 AC#2)"
+}
+
+# The main() guard must be the MODULE's entry point. A guard indented inside a
+# function or class is not one, so it must not silence the whole file — without
+# the column-0 anchor this fixture goes quiet and the gate over-suppresses.
+test_py_nested_main_guard_does_not_gate_module() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src"
+    command printf '%s\n' \
+        "def outer(a):" \
+        '    if __name__ == "__main__":' \
+        "        pass" \
+        "    return a" >"$sb/src/nested.py"
+    command printf '%s\n' "$sb/src/nested.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_contains "$rows" "outer" \
+        "an INDENTED __main__ guard is not a module entry point and does not gate it (#606)"
+}
+
+# __all__ wins over the guard, in BOTH directions — a listed name stays public
+# even in a guarded module, an unlisted one does not. Both assertions in one run
+# so neither can pass by the scanner having gone silent.
+test_py_dunder_all_overrides_main_guard() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src"
+    command printf '%s\n' \
+        '__all__ = ["declared_api"]' \
+        "def declared_api(a):" "    return a" \
+        "def undeclared_helper(b):" "    return b" \
+        'if __name__ == "__main__":' "    pass" >"$sb/src/dual.py"
+    command printf '%s\n' "$sb/src/dual.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_contains "$rows" "declared_api" \
+        "a name in __all__ stays public even in a main()-guarded module (#606)"
+    assert_not_contains "$rows" "undeclared_helper" \
+        "a def absent from __all__ is not public API (#606)"
+}
+
+# A single-line `__all__ = ["x"]` must terminate on its OWN closing bracket. A
+# `sed -n '/start/,/end/p'` range does not (it looks for the end pattern from the
+# NEXT line), so it ran on to the next `]`/`)` in the file and swallowed
+# unrelated quoted strings as exported names. Here `phantom_helper` is quoted in
+# a string constant below __all__: if it leaks into the name list it becomes
+# "public" and fires a row that must not exist.
+test_py_single_line_dunder_all_does_not_overrun() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src"
+    command printf '%s\n' \
+        '__all__ = ["real_api"]' \
+        'MSG = ("phantom_helper",)' \
+        "def real_api(a):" "    return a" \
+        "def phantom_helper(b):" "    return b" \
+        'if __name__ == "__main__":' "    pass" >"$sb/src/oneline.py"
+    command printf '%s\n' "$sb/src/oneline.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_contains "$rows" "real_api" \
+        "the single-line __all__ name is parsed (#606)"
+    assert_not_contains "$rows" "phantom_helper" \
+        "a quoted string AFTER a single-line __all__ is not an exported name (#606)"
+}
+
+# A multi-line __all__ collects every listed name across its continuation lines,
+# and still excludes what it omits.
+test_py_multiline_dunder_all_collects_all_names() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src"
+    command printf '%s\n' \
+        "__all__ = [" '    "alpha",' '    "beta",' "]" \
+        "def alpha(a):" "    return a" \
+        "def beta(b):" "    return b" \
+        "def gamma(c):" "    return c" >"$sb/src/multi.py"
+    command printf '%s\n' "$sb/src/multi.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_contains "$rows" "alpha" "the first multi-line __all__ name is public (#606)"
+    assert_contains "$rows" "beta" "a LATER multi-line __all__ name is public too (#606)"
+    assert_not_contains "$rows" "gamma" \
+        "a def absent from a multi-line __all__ is not public API (#606)"
+}
+
+# An ANNOTATED declaration — `__all__: list[str] = [...]` — is valid, ruff-clean
+# Python. A gate matching only `__all__ =` misses it, so a guarded module's real
+# API resolves to "none" and its genuinely-untested exports are silently
+# swallowed. That is the over-suppression direction: a false NEGATIVE, which is
+# the failure mode this whole category exists to avoid.
+test_py_annotated_dunder_all_recognized() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src"
+    command printf '%s\n' \
+        '__all__: list[str] = ["annotated_api"]' \
+        "def annotated_api(a):" "    return a" \
+        "def annotated_helper(b):" "    return b" \
+        'if __name__ == "__main__":' "    pass" >"$sb/src/annot.py"
+    command printf '%s\n' "$sb/src/annot.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_contains "$rows" "annotated_api" \
+        "an ANNOTATED __all__ is recognized, so its listed name stays public (#606)"
+    assert_not_contains "$rows" "annotated_helper" \
+        "an annotated __all__ still excludes what it omits (#606)"
+}
+
+# The __all__ membership test is whole-word: a name that is a strict PREFIX of a
+# listed one must not inherit its public status. Unpadded substring matching
+# would let `check_mcp` pass on the strength of `check_mcp_config`.
+test_py_dunder_all_membership_is_whole_word() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src"
+    command printf '%s\n' \
+        '__all__ = ["check_mcp_config"]' \
+        "def check_mcp_config(a):" "    return a" \
+        "def check_mcp(b):" "    return b" \
+        'if __name__ == "__main__":' "    pass" >"$sb/src/prefix.py"
+    command printf '%s\n' "$sb/src/prefix.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_contains "$rows" "check_mcp_config" \
+        "the listed name itself is public (#606)"
+    assert_not_contains "$rows" "No tests reference check_mcp:" \
+        "a strict PREFIX of a listed name is not public by substring accident (#606)"
+}
+
+# The go arm is deliberately untouched by #606 — capitalization already IS go's
+# visibility rule and there is no main()-guard analog. A go file carrying the
+# python guard text verbatim must behave exactly as before.
+test_go_arm_unaffected_by_py_symbol_gate() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' \
+        "package main" \
+        'if __name__ == "__main__":' \
+        "func ExportedThing(a int) int {" "    return a" "}" >"$sb/src/app.go"
+    command printf '%s\n' "package main" "func TestOther(t *testing.T) {}" \
+        >"$sb/tests/other_test.go"
+    command printf '%s\n' "$sb/src/app.go" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_contains "$rows" "ExportedThing" \
+        "the go arm still fires — the py symbol gate does not leak across arms (#606)"
+}
+
+# AC#3 — the headline number. This repo's own patterns.py files are all
+# main()-guarded CLI scripts whose helpers are exercised through the entry point
+# by tests/coverage-python.sh; #600 took them 49 rows -> 16, and this takes the
+# residual 16 -> 0. Runs against the REAL tree, so it cannot pass on a fixture.
+test_real_repo_patterns_py_emit_no_untested_public_api() {
+    local list rows
+    list="$(command mktemp)"
+    command find "$REPO_ROOT/plugins" -name 'patterns.py' -print >"$list"
+
+    run_gate_in "$REPO_ROOT" "$list"
+    command rm -f "$list"
+
+    rows="$(category_rows "$GATE_OUT" "untested-public-api")"
+    assert_equals "" "$rows" \
+        "this repo's patterns.py files emit zero untested-public-api rows (#606 AC#3 / #600 AC#3)"
+}
+
 # AC#4 — the go arm is covered, not deferred. An exported func referenced from a
 # repo-rooted test emits nothing; an unreferenced one in the same file fires.
 test_go_cross_directory_untested_public_api() {
@@ -1540,6 +1761,15 @@ run_test test_py_symbol_probe_excludes_markdown "py: a symbol named only in a te
 run_test test_py_colocated_test_still_detected "py: a colocated test_<name>.py still suppresses (#600 regression)"
 run_test test_py_candidate_path_with_spaces "py: a space-bearing candidate path is grepped, not word-split (#600)"
 run_test test_py_declared_discovery_join "py: a DECLARED test_discovery path joins the candidate list, control still fires (#600)"
+run_test test_py_main_guarded_helper_not_public_api "py: a main()-guarded helper is not public API; a plain-module export still fires (#606 AC#1/AC#2)"
+run_test test_py_nested_main_guard_does_not_gate_module "py: an INDENTED __main__ guard does not gate the module (#606)"
+run_test test_py_dunder_all_overrides_main_guard "py: __all__ overrides the main() guard in both directions (#606)"
+run_test test_py_single_line_dunder_all_does_not_overrun "py: a single-line __all__ terminates on its own bracket (#606)"
+run_test test_py_multiline_dunder_all_collects_all_names "py: a multi-line __all__ collects every listed name (#606)"
+run_test test_py_annotated_dunder_all_recognized "py: an ANNOTATED __all__ (list[str] = ...) is recognized (#606)"
+run_test test_py_dunder_all_membership_is_whole_word "py: __all__ membership is whole-word, not substring (#606)"
+run_test test_go_arm_unaffected_by_py_symbol_gate "go: the py symbol gate does not leak into the go arm (#606)"
+run_test test_real_repo_patterns_py_emit_no_untested_public_api "this repo's patterns.py files emit zero untested-public-api rows (#606 AC#3)"
 run_test test_go_cross_directory_untested_public_api "go: a repo-rooted *_test.go suppresses, an unreferenced export still fires (#600 AC#4)"
 run_test test_go_declared_discovery_join "go: a DECLARED test_discovery path joins the candidate list, control still fires (#600)"
 run_test test_go_probe_excludes_fixtures "go: a *_test.go under tests/fixtures/ is not coverage and does not arm the gate (#600)"
