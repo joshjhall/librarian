@@ -134,6 +134,24 @@ assert_fires() {
     fi
 }
 
+# assert_absent SKILLDIR CAT NEEDLE MSG ENV.. -- ARGS.. — the category's rows do
+# NOT contain NEEDLE, in both impls.
+#
+# Distinct from assert_silent, which requires the category to be EMPTY. This one
+# is for a fixture where the category legitimately fires for one symbol while a
+# second symbol must be absent — asserting emptiness there would be wrong, and
+# asserting only the positive would let an over-broad detector pass (#606).
+assert_absent() {
+    local skill="$1" cat="$2" needle="$3" msg="$4"
+    shift 4
+    assert_not_contains "$(emit_rows sh "$skill" "$cat" "$@")" \
+        "$needle" "$msg (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$skill" "$cat" "$@")" \
+            "$needle" "$msg (python)"
+    fi
+}
+
 # assert_silent SKILLDIR CAT MSG ENV.. -- ARGS.. — the category emits NOTHING in
 # both impls.
 assert_silent() {
@@ -464,6 +482,128 @@ test_tested_missing_and_untested() {
         "tested: a Go exported func absent from _test.go fires untested-public-api" -- "$list"
 }
 
+# loop-make-it-tested — module public-symbol selection (#606).
+#
+# This scanner carried the same defect as ship-issue's pre-review-gates.sh: every
+# non-underscore top-level `def` counted as public API, so an internal helper of a
+# main()-guarded CLI script — driven end-to-end THROUGH the entry point, never
+# imported, never named by a test — reported HIGH "no tests reference".
+#
+# assert_fires/assert_silent each assert BOTH the bash fallback and the python
+# primary, so every case below is parity-checked for free.
+test_tested_module_public_symbol_gate() {
+    local d list
+
+    # AC#1 + AC#2. A helper in a main()-guarded module is not public API; the
+    # control in a SEPARATE, unguarded module must still fire. Separate files on
+    # purpose: one module that both arms the gate and satisfies it would pass
+    # whether or not the gate exists.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src"
+    command printf '%s\n' \
+        'def guarded_helper(a):' '    return a' \
+        'def main(argv):' '    return guarded_helper(argv)' \
+        'if __name__ == "__main__":' '    raise SystemExit(main(None))' >"$d/src/cli.py"
+    command printf '%s\n' 'def library_export(a):' '    return a' >"$d/src/lib.py"
+    list="$(make_list "$d/l" "$d/src/cli.py")"
+    assert_silent "$SK_TEST" untested-public-api \
+        "tested: a helper in a main()-guarded CLI module is not public API (#606)" -- "$list"
+    list="$(make_list "$d/l2" "$d/src/lib.py")"
+    assert_fires "$SK_TEST" untested-public-api "No tests reference library_export" \
+        "tested: a public untested def in a PLAIN module still fires (#606 control)" -- "$list"
+
+    # The guard must be the MODULE's entry point — an indented one inside a
+    # function is not, and must not silence the file.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src"
+    command printf '%s\n' \
+        'def outer(a):' '    if __name__ == "__main__":' '        pass' '    return a' \
+        >"$d/src/nested.py"
+    list="$(make_list "$d/l" "$d/src/nested.py")"
+    assert_fires "$SK_TEST" untested-public-api "No tests reference outer" \
+        "tested: an INDENTED __main__ guard does not gate the module (#606)" -- "$list"
+
+    # __all__ overrides the guard in BOTH directions. `phantom_helper` is quoted
+    # in a constant BELOW a single-line __all__: it must not leak into the name
+    # list (the sed-range overrun the awk extractor exists to avoid).
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src"
+    command printf '%s\n' \
+        '__all__ = ["declared_api"]' \
+        'MSG = ("phantom_helper",)' \
+        'def declared_api(a):' '    return a' \
+        'def phantom_helper(b):' '    return b' \
+        'if __name__ == "__main__":' '    pass' >"$d/src/dual.py"
+    list="$(make_list "$d/l" "$d/src/dual.py")"
+    assert_fires "$SK_TEST" untested-public-api "No tests reference declared_api" \
+        "tested: a name in __all__ stays public inside a guarded module (#606)" -- "$list"
+    assert_absent "$SK_TEST" untested-public-api "No tests reference phantom_helper" \
+        "tested: a quoted string after a single-line __all__ is not an exported name (#606)" -- "$list"
+
+    # A MULTI-LINE __all__ collects every listed name across its continuation
+    # lines, and still excludes what it omits. Covered here and not only in
+    # validate-pre-review-gates.sh: this scanner's two impls are independently
+    # maintained copies of the algorithm, and validate-python-ports.sh's
+    # whole-corpus TSV parity does not target this shape — a regression in the
+    # continuation loop would otherwise ship unseen.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src"
+    command printf '%s\n' \
+        '__all__ = [' '    "alpha",' '    "beta",' ']' \
+        'def alpha(a):' '    return a' \
+        'def beta(b):' '    return b' \
+        'def gamma(c):' '    return c' >"$d/src/multi.py"
+    list="$(make_list "$d/l" "$d/src/multi.py")"
+    assert_fires "$SK_TEST" untested-public-api "No tests reference alpha" \
+        "tested: the first multi-line __all__ name is public (#606)" -- "$list"
+    assert_fires "$SK_TEST" untested-public-api "No tests reference beta" \
+        "tested: a LATER multi-line __all__ name is public too (#606)" -- "$list"
+    assert_absent "$SK_TEST" untested-public-api "No tests reference gamma" \
+        "tested: a def absent from a multi-line __all__ is not public API (#606)" -- "$list"
+
+    # __all__ membership is WHOLE-WORD: a strict prefix of a listed name must not
+    # inherit its public status via substring accident.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src"
+    command printf '%s\n' \
+        '__all__ = ["check_mcp_config"]' \
+        'def check_mcp_config(a):' '    return a' \
+        'def check_mcp(b):' '    return b' \
+        'if __name__ == "__main__":' '    pass' >"$d/src/prefix.py"
+    list="$(make_list "$d/l" "$d/src/prefix.py")"
+    assert_fires "$SK_TEST" untested-public-api "No tests reference check_mcp_config" \
+        "tested: the listed __all__ name itself is public (#606)" -- "$list"
+    assert_absent "$SK_TEST" untested-public-api "No tests reference check_mcp:" \
+        "tested: a strict PREFIX of a listed name is not public (#606)" -- "$list"
+
+    # An ANNOTATED declaration — `__all__: list[str] = [...]` — is valid,
+    # ruff-clean Python. Missing it meant a guarded module's real API resolved to
+    # "none" and its genuinely-untested exports were silently swallowed.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src"
+    command printf '%s\n' \
+        '__all__: list[str] = ["annotated_api"]' \
+        'def annotated_api(a):' '    return a' \
+        'def annotated_helper(b):' '    return b' \
+        'if __name__ == "__main__":' '    pass' >"$d/src/annot.py"
+    list="$(make_list "$d/l" "$d/src/annot.py")"
+    assert_fires "$SK_TEST" untested-public-api "No tests reference annotated_api" \
+        "tested: an ANNOTATED __all__ is recognized (#606)" -- "$list"
+    assert_absent "$SK_TEST" untested-public-api "No tests reference annotated_helper" \
+        "tested: an annotated __all__ still excludes what it omits (#606)" -- "$list"
+
+    # The missing third colocated glob (#606): a src/ module whose test lives in
+    # a SIBLING tests/ tree. pre-review-gates.sh's py arm has always probed
+    # ../tests/test_*.py; this scanner did not, so that whole layout fired HIGH.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src" "$d/tests"
+    command printf '%s\n' 'def sibling_tree_fn(a):' '    return a' >"$d/src/mod.py"
+    command printf '%s\n' 'def test_it():' '    sibling_tree_fn(1)' >"$d/tests/test_mod.py"
+    list="$(make_list "$d/l" "$d/src/mod.py")"
+    assert_silent "$SK_TEST" untested-public-api \
+        "tested: a test in a SIBLING tests/ tree suppresses the row (#606)" -- "$list"
+}
+
 # The TS/JS and Rust missing-test-file probe arms (separate from the py/go arms
 # above) — each language resolves siblings differently, so assert each on its own.
 test_tested_ts_and_rust() {
@@ -649,6 +789,7 @@ run_test test_secure_secret "loop-make-it-secure: keyed + AWS secret + *test* SK
 run_test test_secure_interpolation "loop-make-it-secure: py/js/go interpolation-query"
 run_test test_secure_dangerous_and_denylist "loop-make-it-secure: dangerous-fn + yaml Loader boundary + denylist"
 run_test test_tested_missing_and_untested "loop-make-it-tested: missing-test + untested-api + sibling boundaries"
+run_test test_tested_module_public_symbol_gate "loop-make-it-tested: main()-guard / __all__ public-symbol selection (#606)"
 run_test test_tested_ts_and_rust "loop-make-it-tested: ts/js + rust missing-test-file probe arms"
 run_test test_documented_python "loop-make-it-documented: py function/class + docstring + blank-skip"
 run_test test_documented_other_langs "loop-make-it-documented: js/go/shell arms + documented negatives"

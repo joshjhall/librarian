@@ -893,6 +893,93 @@ EOF
     return 1
 }
 
+# py_public_symbols_gate <file> — this MODULE's public-API policy (#606).
+#
+# #600 fixed test DISCOVERY for the py arm; this fixes symbol SELECTION. The
+# extractor below treats every non-underscore top-level `def` as public API,
+# which is wrong for a `main()`-guarded CLI script: its internal helpers are
+# driven end-to-end THROUGH the entry point, never imported and never named by a
+# test, so a well-exercised helper reported HIGH "no tests reference".
+#
+# Three policies, echoed on stdout:
+#   all:<space-separated names>  __all__ present — only these names are public
+#   none                         main()-guarded, no __all__ — nothing is API
+#   open                         plain module — every top-level def is public
+#
+# __all__ takes precedence over the main() guard deliberately: it is a POSITIVE
+# declaration by the author, and it is the escape hatch for a module that is
+# genuinely both a CLI and an importable library. Absent it, a main() guard is
+# the only structural evidence available that a module is an entry point.
+#
+# Note what this does NOT do. The issue (#606) originally proposed suppressing a
+# guarded module's def "unless the symbol is imported somewhere outside its own
+# file". Measured against this repo, no such import exists for ANY of the 16
+# symbols — the only cross-file hits are the sibling patterns.sh bash port
+# (which defines a same-named SHELL function) and docs prose. A word-grep proxy
+# for "is imported" would therefore suppress or expose a symbol based on whether
+# a bash port happened to reuse the name, which is arbitrary. Structure only.
+#
+# Callers MUST resolve this ONCE per source file: it is a property of the
+# module, not of the symbol, so recomputing it inside the per-def loop would
+# re-read the whole file once per export for an answer that cannot change.
+py_public_symbols_gate() {
+    local file="$1" all_names
+
+    # `__all__ = [...]` / `(...)`, possibly spanning lines. Take from the first
+    # __all__ assignment to the closing bracket, then keep only the quoted
+    # names. A module with __all__ answers `all:` even if it is ALSO guarded.
+    #
+    # awk, not `sed -n '/start/,/end/p'`: a sed range looks for its END pattern
+    # starting at the line AFTER the start, so a single-line `__all__ = ["x"]`
+    # does not terminate on its own closing bracket and the range runs on to the
+    # next `]` or `)` anywhere in the file — swallowing unrelated quoted strings
+    # as if they were exported names. The awk below tests the start line itself.
+    if command grep -qE '^__all__([[:space:]]*:[^=]*)?[[:space:]]*=' "$file" 2>/dev/null; then
+        all_names=$(command awk '
+            /^__all__([[:space:]]*:[^=]*)?[[:space:]]*=/ && !inb {
+                inb = 1
+                rest = substr($0, index($0, "=") + 1)
+                print rest
+                if (rest ~ /[])]/) exit
+                next
+            }
+            inb { print; if ($0 ~ /[])]/) exit }
+        ' "$file" 2>/dev/null |
+            command grep -oE '"[a-zA-Z_][a-zA-Z0-9_]*"|'\''[a-zA-Z_][a-zA-Z0-9_]*'\''' |
+            command tr -d '"'\''' | command tr '\n' ' ')
+        command printf 'all:%s' "$all_names"
+        return
+    fi
+
+    # The `if __name__ == "__main__":` guard, in either quote style. Anchored at
+    # column 0: a guard nested inside a function or class is not the module's
+    # entry point and must not gate the whole file.
+    if command grep -qE '^if[[:space:]]+__name__[[:space:]]*==[[:space:]]*["'\'']__main__["'\'']' \
+        "$file" 2>/dev/null; then
+        command printf 'none'
+        return
+    fi
+
+    command printf 'open'
+}
+
+# py_symbol_is_public <symbol> <gate> — 0 when <symbol> is public under <gate>.
+py_symbol_is_public() {
+    local symbol="$1" gate="$2"
+    case "$gate" in
+        none) return 1 ;;
+        all:*)
+            # Whole-word match within the space-delimited name list; the padding
+            # keeps `check_mcp` from matching `check_mcp_config`.
+            case " ${gate#all:} " in
+                *" $symbol "*) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *) return 0 ;;
+    esac
+}
+
 scan_untested_public_api() {
     local file="$1"
 
@@ -906,7 +993,7 @@ scan_untested_public_api() {
         return
     fi
 
-    local basename dirname name_no_ext ext repo_rooted_tests declared
+    local basename dirname name_no_ext ext repo_rooted_tests declared py_gate
     basename=$(command basename "$file")
     dirname=$(command dirname "$file")
     name_no_ext="${basename%.*}"
@@ -937,9 +1024,16 @@ scan_untested_public_api() {
                 repo_rooted_tests="${repo_rooted_tests:+${repo_rooted_tests}
 }${declared}"
             fi
+            # Module-level public-API policy (#606) — resolved ONCE per file
+            # alongside the candidate lists above, for the same reason: it does
+            # not depend on the symbol.
+            py_gate="$(py_public_symbols_gate "$file")"
             command grep -nE -- '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     func_name=$(command printf '%s' "$content" | command sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
+                    # Not public API for this module — no test is EXPECTED to
+                    # name it, so "no tests reference" is not a finding.
+                    py_symbol_is_public "$func_name" "$py_gate" || continue
                     if command grep -rql -- "\b${func_name}\b" \
                         "${dirname}"/test_*.py \
                         "${dirname}"/tests/test_*.py \
