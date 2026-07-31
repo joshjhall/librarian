@@ -32,7 +32,8 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    - **Agent environment**: `AGENT_ISSUE` (the assigned issue),
      `REVIEW_MAX_CYCLES` (default 3), and a pass-through `GITHUB_TOKEN`/`GH_TOKEN`
      so the golem can push and open PRs. Autonomy is set on the launch line via
-     `--level 4` (not an env var). Optional: `PRE_REVIEW_STRICT`, `REVIEW_STRICT`.
+     `--level 4` (not an env var). Optional: `PRE_REVIEW_STRICT` (`REVIEW_STRICT`
+     is superseded and inert since #580 — passing it has no effect).
    - **Init system**: `init: true` for tini zombie reaping
    - **Capabilities**: same as devcontainer (`cap_add`, `devices`)
    - **Command**: `sleep infinity` (entrypoint handles startup, tmux starts
@@ -96,7 +97,8 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    # Autonomy is set on the /workflow:next-issue launch line via --level 4 (below).
    export REVIEW_MAX_CYCLES="${REVIEW_MAX_CYCLES:-3}"
    # Optional pass-throughs (inherited from the environment if set):
-   #   PRE_REVIEW_STRICT, REVIEW_STRICT
+   #   PRE_REVIEW_STRICT
+   #   (REVIEW_STRICT is superseded and inert since #580 — no code reads it)
 
    now() { command date -u +%Y-%m-%dT%H:%M:%SZ; }
 

@@ -288,7 +288,9 @@ behavior is noted inline per check; environment variables referenced here
    `dimensions_skipped`, so a narrowed cycle can still return `clean`.
 
    The harness fans the dimensions as one parallel barrier under a single
-   token budget, re-scores certainty with a fresh judge, and returns
+   token budget, re-scores certainty and characterizes each finding with a fresh
+   judge, computes each disposition from that characterization
+   (`ci-review-protocol.md` § How a finding is classified), and returns
    `{ blocking[], deferrable[], summary, budget_exhausted, dimensions_skipped[],
    clean }`. `dimensions_skipped` names any dimensions that did not run this cycle
    (budget floor or mid-barrier failure); a non-empty list means the cycle is
@@ -341,10 +343,15 @@ behavior is noted inline per check; environment variables referenced here
    c. **Resolve the blocking findings**: for each finding in `blocking`, make
    the fix in the working tree, then amend or add a commit. Re-run step (b)
    (incrementing `cycle`) until `clean` is true or `cycle` exceeds
-   `REVIEW_MAX_CYCLES`. When `REVIEW_STRICT=true`, also treat MEDIUM-certainty
-   findings as blocking. On each re-run pass the fix-commit delta args
+   `REVIEW_MAX_CYCLES`. On each re-run pass the fix-commit delta args
    (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`) from step (b)'s cycle > 1
    block so the re-review narrows to what the fix changed (#492).
+
+   > **Standing rule — `blocking: []` is not a merge signal** (#580). Read every
+   > finding on merit, including the deferrables, and fix anything that is a live
+   > defect in code this PR itself wrote. The disposition is a rule list over a
+   > judge's characterization (`ci-review-protocol.md` § How a finding is
+   > classified); a mischaracterized finding lands in the wrong bucket silently.
 
    d. **Collect the deferrables**: keep the `deferrable` list for filing after
    delivery. **Option 1** files them **after the PR exists** so the filed issues

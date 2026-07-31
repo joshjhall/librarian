@@ -1,12 +1,12 @@
 export const meta = {
   name: 'next-issue-review',
   description:
-    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND classifies it blocking-vs-deferrable for the skill to resolve-or-defer. On a re-review cycle (cycle > 1) with a caller-supplied fix-commit delta, narrows the delta-local dimensions to that delta while scope-drift keeps the full diff. One cycle per invocation — the skill owns the cycle loop and the cap.',
+    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND characterizes its nature, from which an ordered rule list computes blocking-vs-deferrable for the skill to resolve-or-defer. On a re-review cycle (cycle > 1) with a caller-supplied fix-commit delta, narrows the delta-local dimensions to that delta while scope-drift keeps the full diff. One cycle per invocation — the skill owns the cycle loop and the cap.',
   phases: [
     { title: 'Manifest', detail: 'build + classify the changed-file manifest, decide specialists' },
     { title: 'Review', detail: 'review dimensions run as one parallel barrier under one budget' },
     { title: 'Comments', detail: 'fold open GitHub PR review comments into the finding stream (pr-cycle only)' },
-    { title: 'Judge', detail: 'one fresh judge re-scores each finding certainty AND splits blocking vs deferrable (no producer self-grading)' },
+    { title: 'Judge', detail: 'one fresh judge re-scores each finding certainty AND characterizes its nature; a rule list then computes blocking vs deferrable (no producer self-grading)' },
   ],
 }
 
@@ -423,11 +423,26 @@ const FINDINGS_SCHEMA = {
 }
 
 // Single fresh-judge pass: for each finding (keyed by its unique `ref`, stamped
-// before the judge runs) return BOTH an independently re-scored certainty AND a
-// blocking-vs-deferrable disposition. This merges what were two separate `fable`
+// before the judge runs) return BOTH an independently re-scored certainty AND
+// the finding's `nature` — an OBSERVATION about the finding, not a decision
+// about what stops the ship. This merges what were two separate `fable`
 // tail agents — rescore + classify — into one, halving the fable tail cost per
 // cycle (#491). The judge still did NOT produce the findings, so the
 // no-producer-self-grading property is preserved.
+//
+// Why `nature` and not `disposition` (#580): the judge used to return the
+// blocking-vs-deferrable verdict directly, applying a prose policy. That policy
+// was unsatisfiable in practice — across the #567 measurement batch (26 cycles,
+// 67 findings) `blocking` fired ONCE, because BLOCKING required
+// `severity ∈ {critical, high}` while DEFERRABLE fired on `severity ∈ {medium,
+// low}` OR `certainty == LOW`, and producers essentially never emit
+// critical/high. The medium band was swallowed whole by the deferrable OR. Six
+// cycles running returned `blocking: []` over a deferrable bucket holding a
+// confirmed defect in code that PR had just written.
+//
+// So the judge now reports what it OBSERVES and `dispositionOf` (below) decides.
+// An LLM applying prose cannot be unit-tested; an ordered rule list can, which
+// is what makes #580's calibration gate possible at all.
 //
 // Independence tradeoff (deliberate): the two passes were both "fresh judge"
 // gates, not a defense-in-depth pair — classify already READ rescore's certainty,
@@ -447,7 +462,7 @@ const JUDGE_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['ref', 'certainty', 'disposition', 'rationale'],
+        required: ['ref', 'certainty', 'nature', 'rationale'],
         properties: {
           ref: { type: 'string' },
           certainty: {
@@ -459,7 +474,18 @@ const JUDGE_SCHEMA = {
               confidence: { type: 'number' },
             },
           },
-          disposition: { type: 'string', enum: ['blocking', 'deferrable'] },
+          // An observation about the finding, NOT a merge decision — see
+          // dispositionOf, which maps (nature x certainty x severity x effort)
+          // to blocking/deferrable deterministically (#580).
+          nature: {
+            type: 'string',
+            enum: [
+              'defect-in-new-code',
+              'defect-in-preexisting-code',
+              'incomplete-work',
+              'improvement',
+            ],
+          },
           rationale: { type: 'string' },
         },
       },
@@ -712,43 +738,54 @@ const commentsPrompt = (manifest) =>
   READONLY
 
 // One fresh-judge prompt that does BOTH jobs the old rescorePrompt + classifyPrompt
-// did — re-score certainty AND assign a blocking/deferrable disposition — in a
-// single pass, keyed per finding by `ref` (#491). The classification policy is
-// carried verbatim from the old classifyPrompt, and the disposition explicitly
-// keys off the certainty the SAME judge just re-scored (the old two-agent flow had
-// classify read rescore's output; here one agent owns both, so the dependency is
-// internal).
-const judgePrompt = (findings, budgetExhausted) =>
+// did — re-score certainty AND characterize the finding — in a single pass, keyed
+// per finding by `ref` (#491).
+//
+// What changed in #580: the judge no longer applies a blocking-vs-deferrable
+// policy. It reports two OBSERVATIONS (certainty, nature) and `dispositionOf`
+// derives the disposition. The old prose policy was unsatisfiable (see the
+// JUDGE_SCHEMA header), and no amount of prose could be tested — a rule list in
+// code can. Asking the judge for what it can actually observe, rather than for a
+// verdict it must derive through a policy it cannot be held to, is the fix.
+//
+// The changed-file list is supplied because `defect-in-new-code` vs
+// `defect-in-preexisting-code` is undecidable without it: the judge previously
+// saw findings ONLY, with no view of what this PR touched.
+const judgePrompt = (findings, budgetExhausted, files = scopeFiles) =>
   `Mode: judge. You are a FRESH judge — you did NOT produce these findings.\n` +
   `For EACH finding below do BOTH of the following, and return exactly one verdict ` +
   `per finding:\n\n` +
   `1. Re-score its certainty (level + confidence) independently, based solely on the ` +
   `evidence in its description and suggestion. Do not add, remove, merge, or ` +
   `otherwise alter any finding.\n\n` +
-  `2. Assign it a disposition for a single PR, applying this policy against the ` +
-  `certainty you just re-scored:\n` +
-  `BLOCKING (must be fixed on this PR before the golem stops):\n` +
-  `  - severity critical or high AND certainty.level is HIGH or MEDIUM\n` +
-  `  - any security finding at HIGH certainty (any severity)\n` +
-  `  - any scope-drift finding describing an UNADDRESSED acceptance criterion ` +
-  `(the work is incomplete)\n` +
-  `  - any tests finding of a missing test file for a changed source file at ` +
-  `HIGH certainty\n` +
-  `DEFERRABLE (file as a follow-up issue, do not block this PR):\n` +
-  `  - severity medium or low, OR certainty.level LOW\n` +
-  `  - scope-drift findings that are out-of-scope improvements (belong in their ` +
-  `own issue)\n` +
-  `  - performance/style-flavored suggestions not tied to a correctness or ` +
-  `security risk\n` +
-  `  - anything with effort=large (a large fix is its own issue), UNLESS ` +
-  `severity is critical\n` +
+  `2. Characterize it with exactly one \`nature\`. This is an OBSERVATION about ` +
+  `the finding, not a decision about what blocks the merge — that is computed ` +
+  `downstream from your answer, so report what you see and do not try to reason ` +
+  `about consequences:\n` +
+  `  - defect-in-new-code: a real defect (wrong behavior, a silent failure, a ` +
+  `test that cannot fail, a security hole) located in code THIS PR wrote or ` +
+  `changed. The changed-file list below is authoritative for "this PR wrote it".\n` +
+  `  - defect-in-preexisting-code: a real defect, but in code this PR did not ` +
+  `touch — it merely became visible during review.\n` +
+  `  - incomplete-work: the PR does not do what it claims — an acceptance ` +
+  `criterion is unaddressed, a stated goal is only partially implemented, or a ` +
+  `change is missing a counterpart it plainly requires.\n` +
+  `  - improvement: a valid suggestion that is not a defect — style, naming, ` +
+  `structure, performance not tied to a correctness or security risk, or a ` +
+  `genuinely out-of-scope enhancement belonging in its own issue.\n` +
+  `When a finding could read as either a defect or an improvement, ask whether ` +
+  `the code is WRONG or merely not as nice as it could be. Only "wrong" is a ` +
+  `defect. When a defect straddles new and pre-existing code, choose ` +
+  `defect-in-new-code if this PR's change is what makes it reachable or wrong.\n` +
   (budgetExhausted
-    ? `NOTE: the budget was exhausted this cycle — bias any genuinely ambiguous ` +
-      `finding to DEFERRABLE so it is filed, never silently dropped.\n`
+    ? `NOTE: the budget was exhausted this cycle — the certainty you assign is ` +
+      `the only signal downstream, so score conservatively rather than ` +
+      `overstating confidence you could not verify.\n`
     : '') +
   `Key each verdict back to its finding by the \`ref\` field carried on that ` +
   `finding — copy it verbatim (it is a unique id; do not reconstruct it from other ` +
   `fields).\n\n` +
+  `Files changed by this PR: ${files.join(', ') || '(unknown — treat every finding as pre-existing unless its evidence shows otherwise)'}\n\n` +
   `Findings to judge:\n${dataBlock('FINDINGS', findings)}\n\n` +
   READONLY
 
@@ -760,16 +797,88 @@ const judgePrompt = (findings, budgetExhausted) =>
 // keys its verdicts off the exact same id we read back.
 const refOf = (f) => f.ref
 
+// The disposition policy (#580), as an ORDERED first-match rule list over the
+// judge's observations plus the finding's own fields. Pure, total, and mutually
+// exclusive by construction: exactly one rule matches any input, because R8 has
+// no condition. That is the whole point — the policy it replaces was two
+// overlapping prose predicates where DEFERRABLE's `OR severity ∈ {medium, low}`
+// claimed the entire band producers actually emit, making `blocking` unreachable
+// (1 firing in 67 findings across 26 cycles).
+//
+// Two deliberate design choices, both load-bearing:
+//
+//   1. Severity is DEMOTED to the R1 carve-out. It is not the primary axis and
+//      must not become one again. The #567 evidence is that producers emit
+//      `medium`/`low` almost exclusively, so ANY policy gated on critical/high
+//      severity is unsatisfiable regardless of how many clauses it grows. The
+//      discriminator that the six missed defects (#544, #549, #555 x2, #568 x2)
+//      actually shared was "a live defect in code this PR just wrote" — which is
+//      `nature`, not severity.
+//
+//   2. Rule ORDER is the semantics for every pair whose conditions can BOTH
+//      hold. R2 (LOW certainty defers) sits above the nature rules so an
+//      unconfident finding never blocks on nature alone; R3 above R4 so a
+//      confirmed security finding blocks even when characterized as an
+//      improvement; R6 above R7 so incomplete work is not deferred for being
+//      large. Reordering any of those changes behavior, and
+//      tests/workflow-helpers/ship-issue.mjs pins each by asserting the
+//      deciding rule on a cell where the two compete.
+//
+//      R1 and R2 are the exception: their conditions are mutually exclusive
+//      (`level !== 'LOW'` vs `level === 'LOW'`), so their relative order is NOT
+//      load-bearing and swapping them is a genuine no-op. Do not read the pinned
+//      cases as proof that every adjacent swap is caught — that pair cannot be
+//      caught because there is no behavioral difference to catch.
+//
+// Returns `{ disposition, rule }`; `rule` names the deciding rule so the reason
+// is attributable in a result and assertable in a test.
+const dispositionOf = (finding, nature) => {
+  const level = finding?.certainty?.level
+  // R1: a critical-severity finding blocks unless we are unsure it is real. The
+  // one place severity still leads — a critical defect should not wait on nature.
+  if (finding?.severity === 'critical' && level !== 'LOW') {
+    return { disposition: 'blocking', rule: 'R1-critical' }
+  }
+  // R2: LOW certainty always defers — filed, never dropped, never blocking. Above
+  // the nature rules so a speculative "defect" cannot stop a ship.
+  if (level === 'LOW') return { disposition: 'deferrable', rule: 'R2-low-certainty' }
+  // R3: a confirmed security finding blocks at any severity (carried from the
+  // old policy — the ONE carve-out that ever fired in the #567 batch).
+  if (finding?.category === 'security' && level === 'HIGH') {
+    return { disposition: 'blocking', rule: 'R3-security-high' }
+  }
+  // R4: not a defect — file it. Covers out-of-scope enhancements and style.
+  if (nature === 'improvement') return { disposition: 'deferrable', rule: 'R4-improvement' }
+  // R5: a real defect, but this PR did not write it. Fixing it here is scope
+  // creep; it earns its own issue.
+  if (nature === 'defect-in-preexisting-code') {
+    return { disposition: 'deferrable', rule: 'R5-preexisting' }
+  }
+  // R6: the PR does not do what it claims. Blocks regardless of effort — an
+  // unaddressed acceptance criterion means the work is not done, and no amount
+  // of remaining effort converts "incomplete" into "shippable".
+  if (nature === 'incomplete-work') return { disposition: 'blocking', rule: 'R6-incomplete' }
+  // R7: a large fix is its own issue even when the defect is real and in new
+  // code. Below R6 on purpose: incompleteness is not deferrable by size.
+  if (finding?.effort === 'large') return { disposition: 'deferrable', rule: 'R7-large-effort' }
+  // R8: what remains is a defect-in-new-code at MEDIUM or HIGH certainty with a
+  // tractable fix — the exact class that was deferred six times running. It
+  // blocks. Unconditional, so the rule list is total.
+  return { disposition: 'blocking', rule: 'R8-defect-in-new-code' }
+}
+
 // Apply one fresh-judge result to the assembled findings and partition them into
 // blocking vs deferrable — the core of the merged Judge stage (#491), extracted
 // here (before the orchestration body, like `computeClean`) so the single-pass
 // invariant is unit-testable. It MUTATES each finding's `certainty` in place (the
 // re-scored level/confidence) and returns `{ blocking, deferrable,
 // budgetExhausted }`:
-//   - success (`judged` truthy): certainty AND disposition are read from the SAME
-//     verdict object, keyed by `ref`, so the two outputs can never come from
-//     different verdicts. A finding whose ref the judge omitted keeps producer
-//     certainty and falls to the default disposition below.
+//   - success (`judged` truthy): certainty AND nature are read from the SAME
+//     verdict object, keyed by `ref`, and the disposition is then computed by
+//     `dispositionOf` from the re-scored certainty — so certainty and nature can
+//     never come from different verdicts, and the policy sees the re-scored
+//     value rather than the producer's. A finding whose ref the judge omitted
+//     keeps producer certainty and falls to the default disposition below.
 //   - failure (`judged` null — budget-skipped or threw): certainty is left at the
 //     producer value and `budgetExhausted` is forced true, so the cycle is PARTIAL
 //     and can never read as clean (#270), matching the old two-stage fallbacks.
@@ -786,7 +895,15 @@ const applyJudgeVerdicts = (rawFindings, judged, budgetExhausted) => {
       const v = verdictByRef.get(refOf(f))
       if (v) {
         f.certainty = { ...f.certainty, level: v.certainty.level, confidence: v.certainty.confidence }
-        dispByRef.set(refOf(f), v.disposition)
+        // Compute AFTER the certainty write above: the policy keys off the
+        // re-scored level, not the producer's (#580).
+        const d = dispositionOf(f, v.nature)
+        // Stamp the deciding rule onto the finding so a surfaced blocking
+        // finding can say WHY it blocks — the old prose policy left that
+        // unattributable, which is part of why 26 cycles of `blocking: []` went
+        // unquestioned.
+        f.disposition_rule = d.rule
+        dispByRef.set(refOf(f), d.disposition)
       }
     }
   } else {
@@ -1177,8 +1294,9 @@ reviewResults.forEach((res, i) => {
     // threw (runtime budget exhausted mid-barrier, or any other terminal
     // failure — parallel() nulls both), OR the in-thunk ceiling check above
     // declined to spend. Either way the cycle is now PARTIAL: mark it exhausted
-    // so the classifier biases ambiguous findings to deferrable and the skill
-    // does not treat a half-reviewed cycle as a clean pass.
+    // so a finding the judge never returned a verdict for defaults to deferrable
+    // (filed, never dropped) and `clean` is forced false — the skill must not
+    // treat a half-reviewed cycle as a clean pass (#270).
     budgetExhausted = true
     dimensionsSkipped.push(dimensions[i].dim.name)
     log(
@@ -1249,16 +1367,17 @@ if (rawFindings.length === 0) {
 // Stamp a UNIQUE, stable ref onto every finding now that the full set is
 // assembled (review dimensions + folded PR comments). The index guarantees
 // uniqueness even when file+line+category collide, so the judge can key its
-// certainty + disposition verdicts back without one finding overwriting another's.
+// certainty + nature verdicts back without one finding overwriting another's.
 rawFindings.forEach((f, i) => {
   f.ref = `${f.file}:${f.line_start}:${f.category}#${i}`
 })
 
-// --- Judge (one fresh pass: re-score certainty AND blocking vs deferrable) ---
-// One tail agent does what were two separate ones — rescore + classify. Merging
-// them halves the judge tail cost per cycle (#491) while keeping the
-// no-producer-self-grading property (this judge did not produce the findings)
-// and the classify-reads-certainty dependency (now internal to one agent).
+// --- Judge (one fresh pass: re-score certainty AND characterize nature) ---
+// One tail agent does what were two separate ones — rescore + characterize.
+// Merging them halves the judge tail cost per cycle (#491) while keeping the
+// no-producer-self-grading property (this judge did not produce the findings).
+// The blocking-vs-deferrable decision itself is NOT made here: `dispositionOf`
+// computes it from this agent's two observations (#580).
 phase('Judge')
 
 const judged = await tailAgent(
@@ -1268,8 +1387,10 @@ const judged = await tailAgent(
       phase: 'Judge',
       agentType: 'dev-core:code-reviewer',
       // Pin the fresh judge to opus: it is the last gate before a finding is
-      // surfaced — its re-scored certainty and its blocking-vs-deferrable
-      // verdict both decide what stops a ship. The accuracy that matters here
+      // surfaced — its re-scored certainty and its `nature` call are the two
+      // inputs `dispositionOf` uses to decide what stops a ship, so a
+      // misjudged nature is now exactly as consequential as a misjudged
+      // certainty. The accuracy that matters here
       // comes from judging in a fresh context that did not produce the
       // findings, not from the tier; opus delivers it at a fraction of fable's
       // cost on a gate that fires up to MAX_CYCLES times per issue (#526).
