@@ -113,7 +113,14 @@ die() {
 
 # opt <name> -- <args...>
 # Echo the token following <name> in the args after `--`. A value that itself
-# starts with `--` is treated as absent. Exit status: 0 found, 1 not found.
+# starts with `--`, or a flag with no following token at all, fails loud.
+# Exit status: 0 found, 1 not found.
+#
+# FIRST-MATCH-WINS, deliberately: it `break`s on the first occurrence, so a
+# repeated flag resolves from occurrence one and any later ones are never
+# visited (including a dangling valueless repeat). That is the asymmetry with
+# `opt_all`, which cannot break — it must collect EVERY occurrence — and
+# therefore needs its post-loop trailing guard to catch a dangling repeat.
 opt() {
     _opt_name="$1"
     shift

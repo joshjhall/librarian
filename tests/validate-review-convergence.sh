@@ -779,6 +779,32 @@ test_trailing_value_is_not_mistaken_for_a_missing_one() {
     assert_equals "C8-novel" "$(val rule "$out")" "and the run proceeds normally"
 }
 
+test_duplicate_flag_is_first_match_wins() {
+    # `opt` breaks on its first match, so a repeated flag's later occurrences are
+    # never visited — including a dangling valueless one. The resolved value is
+    # still correct (the first occurrence's), so this is deliberate, not a bug:
+    # `opt_all` has no `break` because it must collect every occurrence, which is
+    # why only IT needs the trailing guard to catch a dangling repeat. Pinned so
+    # the asymmetry between the two parsers is a documented decision.
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-lines 400 --delta-lines --partial false)"
+    assert_equals "continue" "$(val verdict "$out")" "a duplicate flag resolves from the first occurrence"
+    assert_equals "C8-novel" "$(val rule "$out")" "and the run proceeds on that value"
+}
+
+test_empty_string_value_behaves_as_absent() {
+    # An explicit `--delta-files ''` is indistinguishable downstream from omitting
+    # the flag (`-z` is true either way), so the C7 recursive signal degrades
+    # silently. That is acceptable for an OPTIONAL enrichment — cycle 1 has no fix
+    # delta at all — but the comments discussed it without pinning it. Now pinned.
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/recursive.json" \
+        --delta-files "" --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "continue" "$(val verdict "$out")" "an empty --delta-files degrades like an absent one"
+    assert_equals "0" "$(val recursive "$out")" "no recursive signal, and no hard failure"
+}
+
 test_unknown_subcommand_fails_loud() {
     local rc=0
     "$RC" bogus >/dev/null 2>&1 || rc=$?
@@ -845,6 +871,8 @@ run_test test_prev_result_as_trailing_token_fails_loud "--prev-result as the LAS
 run_test test_optional_flag_as_trailing_token_fails_loud "--delta-files as the LAST argument -> exit 2"
 run_test test_optional_flag_missing_its_value_fails_loud "--delta-files with no value -> exit 2"
 run_test test_trailing_value_is_not_mistaken_for_a_missing_one "a value in final position still parses"
+run_test test_duplicate_flag_is_first_match_wins "a duplicate flag is first-match-wins (documented)"
+run_test test_empty_string_value_behaves_as_absent "an empty optional value degrades, by design"
 run_test test_unknown_subcommand_fails_loud "unknown subcommand -> exit 2"
 run_test test_no_subcommand_fails_loud "no subcommand -> exit 2"
 
