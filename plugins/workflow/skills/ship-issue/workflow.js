@@ -136,6 +136,17 @@ const unknownArgKeys = (a) =>
     ? Object.keys(a).filter((k) => !KNOWN_ARG_KEYS.includes(k))
     : []
 
+// Whether this cycle has nothing of its own to review (#597, AC#3). A pure
+// predicate rather than an inline condition in the orchestration body so it can
+// be unit-tested directly: the `log()` call it guards sits past ORCH_BOUNDARY
+// and cannot be reached by the extractor, and a structural source-grep alone
+// would not catch the boolean logic being inverted (`||` for `&&`).
+//
+// Guards BOTH inputs deliberately: a narrowed re-review cycle legitimately
+// carries only `deltaDiff`, so testing `scopeDiff` alone would warn on a cycle
+// that has plenty to read.
+const noDiffSupplied = (fullDiff, delta) => !fullDiff && !delta
+
 const PHASE = args && args.phase === 'pr-cycle' ? 'pr-cycle' : 'pre-pr'
 const CYCLE = args && Number.isInteger(args.cycle) ? args.cycle : 1
 const MAX_CYCLES = args && Number.isInteger(args.maxCycles) ? args.maxCycles : 3
@@ -1226,7 +1237,7 @@ if (unknownKeys.length > 0) {
 // maxCycles. The point is that a DROPPED `diff` key and an INTENTIONALLY
 // omitted one look identical from inside the harness — this line makes the
 // condition visible in the log either way.
-if (!scopeDiff && !deltaDiff) {
+if (noDiffSupplied(scopeDiff, deltaDiff)) {
   log(
     'WARNING: no diff supplied (args.diff and args.deltaDiff both empty) — reviewers ' +
       'will derive the diff in-agent. If you meant to pass one, it was dropped or mistyped.'

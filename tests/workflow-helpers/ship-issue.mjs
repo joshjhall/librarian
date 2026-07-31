@@ -1281,9 +1281,10 @@ export function run() {
   // broken — the tautology shape this repo hit on #599 and #600.
   // ===========================================================================
   {
-    const { KNOWN_ARG_KEYS, unknownArgKeys } = extractHelpers(SHIP, [
+    const { KNOWN_ARG_KEYS, unknownArgKeys, noDiffSupplied } = extractHelpers(SHIP, [
       "KNOWN_ARG_KEYS",
       "unknownArgKeys",
+      "noDiffSupplied",
     ]);
 
     // --- The regression that motivated the issue ----------------------------
@@ -1337,18 +1338,36 @@ export function run() {
       eq(unknownArgKeys(val).length, 0, `unknownArgKeys: ${label} args yields no unknown keys`);
     }
 
-    // --- Code/doc sync ------------------------------------------------------
+    // --- Code/doc sync (BIDIRECTIONAL) --------------------------------------
     // The header comment block is what a caller reads to learn the contract;
-    // KNOWN_ARG_KEYS is what the harness enforces. If they drift, either a
-    // documented input is rejected or an accepted input is undiscoverable.
+    // KNOWN_ARG_KEYS is what the harness enforces. Drift in EITHER direction is
+    // a live defect, and they fail differently:
+    //
+    //   code → doc  (in the array, not in the header): an accepted input no
+    //               caller knows to pass.
+    //   doc → code  (in the header, not in the array): worse — a caller follows
+    //               the documentation, passes the key, and the harness THROWS on
+    //               a legitimately documented input.
+    //
+    // Iterating KNOWN_ARG_KEYS alone only ever catches the first. So parse the
+    // header's own key list and compare the two as ordered sequences: that pins
+    // both directions at once, and additionally pins the "Order matches the
+    // header block" claim the KNOWN_ARG_KEYS comment makes — a claim a
+    // membership-only check would leave free to become false.
     const src = harnessSource(SHIP);
     const header = src.slice(src.indexOf("// Input (passed verbatim"), src.indexOf("const KNOWN_ARG_KEYS"));
-    for (const k of KNOWN_ARG_KEYS) {
-      ok(
-        new RegExp(`^//\\s+${k}\\??:`, "m").test(header),
-        `KNOWN_ARG_KEYS: ${k} is documented in the header comment block`,
-      );
-    }
+    // Key lines in the block are indented 4+ spaces after the `//`; the 4-space
+    // floor keeps the `// {` / `// }` wrapper and prose lines out.
+    const documented = [...header.matchAll(/^\/\/\s{4,}(\w+)\??:/gm)].map((m) => m[1]);
+    eq(
+      documented.join(","),
+      KNOWN_ARG_KEYS.join(","),
+      "KNOWN_ARG_KEYS: matches the header comment block exactly, in order (bidirectional sync)",
+    );
+    // Guard the parse itself: a header reformat that stopped matching the regex
+    // would make `documented` empty, and an empty-vs-empty comparison would pass
+    // vacuously if KNOWN_ARG_KEYS were ever also empty.
+    ok(documented.length >= 13, "KNOWN_ARG_KEYS: the header block actually parsed (not a vacuous match)");
 
     // --- Structural: the helper is WIRED, not merely defined -----------------
     const boundary = src.match(
@@ -1379,10 +1398,20 @@ export function run() {
       "ship-issue: the thrown message interpolates the offending key(s)",
     );
 
-    // --- Structural: the no-diff cycle is surfaced (AC#3) --------------------
-    // Guards BOTH inputs: checking only `scopeDiff` would fire spuriously on a
-    // narrowed re-review cycle that legitimately carries only a delta.
-    const noDiffIdx = src.indexOf("if (!scopeDiff && !deltaDiff)");
+    // --- Behavioural: the no-diff predicate (AC#3) ---------------------------
+    // The `log()` this guards sits past ORCH_BOUNDARY and cannot be extracted,
+    // so the CONDITION is a pure helper and gets tested directly. A structural
+    // source-grep alone would not notice the boolean logic being inverted
+    // (`||` for `&&`), which is the mistake that actually breaks this: `||`
+    // would warn on every narrowed re-review cycle and train the operator to
+    // ignore the line.
+    eq(noDiffSupplied("", ""), true, "noDiffSupplied: neither diff nor delta → warn");
+    eq(noDiffSupplied("d", ""), false, "noDiffSupplied: a full diff alone → no warning");
+    eq(noDiffSupplied("", "d"), false, "noDiffSupplied: a fix delta alone → no warning (narrowed cycle)");
+    eq(noDiffSupplied("d", "d"), false, "noDiffSupplied: both present → no warning");
+
+    // --- Structural: the no-diff check is wired ------------------------------
+    const noDiffIdx = src.indexOf("if (noDiffSupplied(scopeDiff, deltaDiff))");
     ok(noDiffIdx !== -1, "ship-issue: a cycle with neither diff nor deltaDiff is detected (#597 AC#3)");
     ok(noDiffIdx > boundary.index, "ship-issue: the no-diff check is in the orchestration body");
     ok(
