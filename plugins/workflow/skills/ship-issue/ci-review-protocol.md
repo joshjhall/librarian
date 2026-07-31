@@ -298,12 +298,20 @@ A wall-timed-out cycle is **partial → `clean` forced false**, identical to
 d. **Resolve or defer**:
 
 - For each `blocking` finding (and any comment triaged `blocking`): fix it
-  in the working tree and stage. When `REVIEW_STRICT=true`, MEDIUM-certainty
-  findings are blocking too.
+  in the working tree and stage. Each carries a `disposition_rule` naming the
+  rule that decided it (see § How a finding is classified).
 - For each `deferrable` finding (and any comment triaged `deferrable`): file
   it via "File deferred review findings" below, then reply to the
   originating PR review comment (if any) with the new issue link so the
   comment is **resolved-or-deferred**, not dropped.
+
+> **Standing rule — `blocking: []` is not a merge signal** (#580). Read every
+> finding on merit, including the deferrables, and fix anything that is a live
+> defect in code this PR itself wrote. This holds regardless of how well the
+> classifier is calibrated: it is a policy over a judge's characterization, and
+> a mischaracterized finding lands in the wrong bucket without any error. It
+> was filed after a 26-cycle batch in which six cycles returned `blocking: []`
+> over a deferrable bucket holding a confirmed defect.
 
 e. **If any fixes were applied this cycle**: commit
 `fix(review): address cycle {cycle} findings`, `git push`, and re-run the
@@ -362,6 +370,50 @@ the loop always terminates.
 unavailable, skip this loop with a note ("Multi-cycle review skipped
 (harness not available)") and proceed to labeling. Review never blocks
 shipping due to harness errors.
+
+## How a finding is classified
+
+The harness splits findings into `blocking` and `deferrable` in two steps. The
+**judge** (one fresh agent that did not produce the findings) reports two
+**observations** per finding — a re-scored `certainty`, and a `nature`:
+
+| `nature`                     | Meaning                                                        |
+| ---------------------------- | -------------------------------------------------------------- |
+| `defect-in-new-code`         | A real defect in code this PR wrote or changed                 |
+| `defect-in-preexisting-code` | A real defect, but in code this PR did not touch               |
+| `incomplete-work`            | The PR does not do what it claims (an AC is unaddressed)       |
+| `improvement`                | A valid suggestion that is not a defect (style, perf, scope)   |
+
+`dispositionOf` in `workflow.js` then computes the disposition from those
+observations plus the finding's own `severity` / `category` / `effort`, as an
+**ordered first-match rule list** — the first rule that matches decides, and the
+last has no condition, so the policy is total and non-overlapping:
+
+| Rule                     | Condition                                | Disposition |
+| ------------------------ | ---------------------------------------- | ----------- |
+| `R1-critical`            | `severity=critical` and certainty ≠ LOW  | blocking    |
+| `R2-low-certainty`       | certainty = LOW                          | deferrable  |
+| `R3-security-high`       | `category=security` and certainty = HIGH | blocking    |
+| `R4-improvement`         | `nature=improvement`                     | deferrable  |
+| `R5-preexisting`         | `nature=defect-in-preexisting-code`      | deferrable  |
+| `R6-incomplete`          | `nature=incomplete-work`                 | blocking    |
+| `R7-large-effort`        | `effort=large`                           | deferrable  |
+| `R8-defect-in-new-code`  | (everything else)                        | blocking    |
+
+The deciding rule is stamped on each finding as `disposition_rule`.
+
+**Severity is deliberately not the primary axis** — it appears only in the R1
+carve-out. The policy this replaced gated blocking on
+`severity ∈ {critical, high}` while deferring on `severity ∈ {medium, low}`; since
+producers emit medium/low almost exclusively, `blocking` fired once in 67
+findings across 26 cycles and the merge gate was effectively unguarded (#580).
+The discriminator that the missed defects actually shared was "a live defect in
+code this PR just wrote" — which is `nature`.
+
+`tests/workflow-helpers/ship-issue.mjs` pins this table: rule order, totality,
+reachability of every rule, and — the assertion that makes the gate meaningful —
+that a **medium-severity, MEDIUM-certainty `defect-in-new-code` blocks**. Changing
+the rule order without updating that gate fails the suite.
 
 ## File deferred review findings
 

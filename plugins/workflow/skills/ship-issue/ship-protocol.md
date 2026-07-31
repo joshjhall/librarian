@@ -119,9 +119,15 @@ These env vars toggle non-default behavior; all are opt-in:
   p95, so it catches runaways without truncating normal reviews. Being per-cycle,
   it composes with `REVIEW_MAX_CYCLES`: worst case
   `REVIEW_TOKEN_CEILING × REVIEW_MAX_CYCLES`.
-- `REVIEW_STRICT=true` — treat MEDIUM-certainty findings as blocking in the
-  adversarial review (Step 3.5 item 6 and the Step 4 loop), in addition to the
-  default HIGH-certainty blocking set. Parallels `PRE_REVIEW_STRICT`.
+- `REVIEW_STRICT` — **superseded and inert** (#580). It documented "treat
+  MEDIUM-certainty findings as blocking, in addition to the default
+  HIGH-certainty blocking set". The disposition policy no longer works that way:
+  a MEDIUM-certainty defect in code the PR wrote blocks by **default** (rule
+  `R8`, see `ci-review-protocol.md` § How a finding is classified), so the
+  strict behavior is now the normal behavior. No harness code has ever read this
+  variable — setting it has no effect, and it is retained only so an existing
+  agent config that sets it is not surprising. Unlike `PRE_REVIEW_STRICT`, which
+  remains live.
 - `LIBRARIAN_CI_WAIT_TIMEOUT` — integer **minutes**, default `15`. Threshold for
   the "Wait for CI" poll loop (Step 4 Option 1): once cumulative wait crosses
   this, the loop hits a **checkpoint** instead of polling forever. At **L1–L2**

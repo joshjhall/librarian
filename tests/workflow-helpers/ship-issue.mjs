@@ -32,6 +32,7 @@ export function run() {
       judgePrompt,
       JUDGE_SCHEMA,
       applyJudgeVerdicts,
+      dispositionOf,
     } = extractHelpers(
       SHIP,
       [
@@ -48,6 +49,7 @@ export function run() {
         "judgePrompt",
         "JUDGE_SCHEMA",
         "applyJudgeVerdicts",
+        "dispositionOf",
       ],
       { cycle: 2, phase: "pr-cycle", files: ["x.js"] },
     );
@@ -151,39 +153,79 @@ export function run() {
       jp.includes("<<<FINDINGS") && jp.includes(dataBlock("FINDINGS", shipFindings)),
       "judgePrompt (ship-issue): findings are wrapped in a FINDINGS data block",
     );
-    // The judge carries BOTH the certainty re-score framing and the
-    // blocking/deferrable policy that the two separate prompts used to.
+    // The judge carries the certainty re-score framing AND asks for all four
+    // `nature` values — but must NOT carry a blocking/deferrable policy (#580).
+    // The policy moved into dispositionOf; a judge prompt that still instructs
+    // the model to decide what blocks would reintroduce the untestable prose
+    // predicate this issue removed, while dispositionOf silently overrode it.
     ok(
-      /re-score/i.test(jp) && /BLOCKING/.test(jp) && /DEFERRABLE/.test(jp),
-      "judgePrompt (ship-issue): merges certainty re-scoring and blocking/deferrable policy",
+      /re-score/i.test(jp) && /\bnature\b/.test(jp),
+      "judgePrompt (ship-issue): merges certainty re-scoring and nature characterization",
     );
-    // The budgetExhausted note (bias ambiguous -> deferrable) is threaded through
-    // the merged prompt, exactly as the old classifyPrompt did.
+    for (const nature of [
+      "defect-in-new-code",
+      "defect-in-preexisting-code",
+      "incomplete-work",
+      "improvement",
+    ]) {
+      ok(jp.includes(nature), `judgePrompt (ship-issue): defines the \`${nature}\` nature`);
+    }
+    ok(
+      !/BLOCKING \(/.test(jp) && !/DEFERRABLE \(/.test(jp),
+      "judgePrompt (ship-issue): does NOT ask the judge to apply a blocking/deferrable policy (#580)",
+    );
+    // The changed-file list is what makes new-code vs pre-existing decidable;
+    // before #580 the judge saw findings only. A missing list must degrade
+    // explicitly (treat as pre-existing) rather than silently.
+    ok(
+      judgePrompt(shipFindings, false, ["a.js", "b.js"]).includes("a.js, b.js"),
+      "judgePrompt (ship-issue): carries the changed-file list so nature is decidable (#580)",
+    );
+    ok(
+      /unknown/.test(judgePrompt(shipFindings, false, [])),
+      "judgePrompt (ship-issue): an empty changed-file list degrades explicitly, not silently",
+    );
+    // The budgetExhausted note is threaded through the merged prompt. Its content
+    // changed with #580 (the judge no longer picks a disposition to bias toward,
+    // so it is told to score certainty conservatively instead).
     ok(
       !/budget was exhausted/.test(judgePrompt(shipFindings, false)) &&
         /budget was exhausted/.test(judgePrompt(shipFindings, true)),
       "judgePrompt (ship-issue): budgetExhausted note appears only when the budget is exhausted",
     );
 
-    // JUDGE_SCHEMA is the merged rescore+classify contract (#491): each verdict must
-    // carry the re-scored certainty AND the disposition + rationale, keyed by ref,
-    // so one fresh-judge pass fully replaces the two old StructuredOutputs. Assert
-    // the shape directly — a regression that dropped `disposition` (reverting to a
-    // rescore-only schema) or loosened `additionalProperties` would pass the prompt
-    // assertions above but break the merge.
+    // JUDGE_SCHEMA is the merged rescore+characterize contract (#491, reshaped by
+    // #580): each verdict must carry the re-scored certainty AND the `nature` +
+    // rationale, keyed by ref, so one fresh-judge pass fully replaces the two old
+    // StructuredOutputs. Assert the shape directly — a regression that dropped
+    // `nature` (reverting to a rescore-only schema) or loosened
+    // `additionalProperties` would pass the prompt assertions above but break the
+    // merge.
     const verdictItem = JUDGE_SCHEMA.properties.verdicts.items;
     eq(JUDGE_SCHEMA.required[0], "verdicts", "JUDGE_SCHEMA: top-level requires `verdicts`");
     eq(verdictItem.additionalProperties, false, "JUDGE_SCHEMA: verdict item is closed (additionalProperties:false)");
-    for (const key of ["ref", "certainty", "disposition", "rationale"]) {
+    for (const key of ["ref", "certainty", "nature", "rationale"]) {
       ok(
         verdictItem.required.includes(key),
-        `JUDGE_SCHEMA: verdict item requires \`${key}\` (merged certainty + disposition contract)`,
+        `JUDGE_SCHEMA: verdict item requires \`${key}\` (merged certainty + nature contract)`,
       );
     }
     eq(
-      JSON.stringify(verdictItem.properties.disposition.enum),
-      JSON.stringify(["blocking", "deferrable"]),
-      "JUDGE_SCHEMA: disposition enum is exactly blocking|deferrable",
+      JSON.stringify(verdictItem.properties.nature.enum),
+      JSON.stringify([
+        "defect-in-new-code",
+        "defect-in-preexisting-code",
+        "incomplete-work",
+        "improvement",
+      ]),
+      "JUDGE_SCHEMA: nature enum is exactly the four observation values (#580)",
+    );
+    // The judge must NOT be able to return a disposition: the whole point of #580
+    // is that the policy is computed downstream, so a schema still offering the
+    // field would let a future edit quietly hand the decision back to the model.
+    ok(
+      !("disposition" in verdictItem.properties),
+      "JUDGE_SCHEMA: verdict carries no `disposition` field — the policy is computed, not judged (#580)",
     );
     eq(
       JSON.stringify(verdictItem.properties.certainty.properties.level.enum),
@@ -202,30 +244,54 @@ export function run() {
       severity: "high",
     });
 
-    // (a) Success: certainty AND disposition come from the SAME verdict (keyed by
-    // ref), and the findings partition per the judge's disposition.
+    // (a) Success: certainty AND nature come from the SAME verdict (keyed by ref),
+    // the disposition is computed by dispositionOf from the RE-SCORED certainty,
+    // and the findings partition accordingly.
     {
       const findings = [mkFinding("a#0"), mkFinding("b#1"), mkFinding("c#2")];
       const judged = {
         verdicts: [
-          { ref: "a#0", certainty: { level: "HIGH", confidence: 0.9 }, disposition: "blocking", rationale: "x" },
-          { ref: "b#1", certainty: { level: "LOW", confidence: 0.2 }, disposition: "deferrable", rationale: "y" },
-          { ref: "c#2", certainty: { level: "MEDIUM", confidence: 0.6 }, disposition: "blocking", rationale: "z" },
+          { ref: "a#0", certainty: { level: "HIGH", confidence: 0.9 }, nature: "defect-in-new-code", rationale: "x" },
+          { ref: "b#1", certainty: { level: "LOW", confidence: 0.2 }, nature: "defect-in-new-code", rationale: "y" },
+          { ref: "c#2", certainty: { level: "MEDIUM", confidence: 0.6 }, nature: "incomplete-work", rationale: "z" },
         ],
       };
       const res = applyJudgeVerdicts(findings, judged, false);
-      eq(res.blocking.length, 2, "applyJudgeVerdicts: two blocking dispositions partition to blocking");
-      eq(res.deferrable.length, 1, "applyJudgeVerdicts: one deferrable disposition partitions to deferrable");
+      eq(res.blocking.length, 2, "applyJudgeVerdicts: two blocking-computing verdicts partition to blocking");
+      eq(res.deferrable.length, 1, "applyJudgeVerdicts: one deferrable-computing verdict partitions to deferrable");
       eq(res.budgetExhausted, false, "applyJudgeVerdicts: a complete judge does not force budgetExhausted");
       // The re-scored certainty was applied in place from the matching verdict.
       eq(findings[0].certainty.level, "HIGH", "applyJudgeVerdicts: certainty level re-scored from the same verdict");
       eq(findings[0].certainty.confidence, 0.9, "applyJudgeVerdicts: certainty confidence re-scored from the same verdict");
-      // The blocking finding is the one the judge marked blocking (not merely first).
+      // The blocking set is the computed one (not merely the first entries).
       ok(
         res.blocking.some((f) => f.ref === "a#0") && res.blocking.some((f) => f.ref === "c#2"),
-        "applyJudgeVerdicts: blocking set is exactly the judge-marked blocking refs",
+        "applyJudgeVerdicts: blocking set is exactly the refs whose verdict computes blocking",
       );
-      ok(res.deferrable[0].ref === "b#1", "applyJudgeVerdicts: deferrable set is the judge-marked deferrable ref");
+      ok(res.deferrable[0]?.ref === "b#1", "applyJudgeVerdicts: LOW-certainty verdict lands in deferrable");
+      // The deciding rule is stamped so a surfaced finding can say WHY it blocks.
+      eq(
+        res.deferrable[0]?.disposition_rule,
+        "R2-low-certainty",
+        "applyJudgeVerdicts: stamps the deciding rule onto the finding (#580)",
+      );
+
+      // The policy reads the RE-SCORED certainty, not the producer's. This is the
+      // ordering guarantee inside applyJudgeVerdicts (certainty is written before
+      // dispositionOf is called) and it is load-bearing: a producer-LOW finding
+      // the judge raises to MEDIUM must block. Reversing those two statements
+      // would silently defer every finding the judge upgraded.
+      const upgraded = [mkFinding("up#0", "LOW", 0.3)];
+      const upRes = applyJudgeVerdicts(upgraded, {
+        verdicts: [
+          { ref: "up#0", certainty: { level: "MEDIUM", confidence: 0.6 }, nature: "defect-in-new-code", rationale: "r" },
+        ],
+      }, false);
+      eq(
+        upRes.blocking.length,
+        1,
+        "applyJudgeVerdicts: policy reads the judge's re-scored certainty, not the producer's (#580)",
+      );
     }
 
     // (b) Null judge (budget-skipped / threw): certainty is left untouched, the
@@ -248,7 +314,7 @@ export function run() {
       const findings = [mkFinding("seen#0"), mkFinding("missing#1")];
       const judged = {
         verdicts: [
-          { ref: "seen#0", certainty: { level: "LOW", confidence: 0.3 }, disposition: "deferrable", rationale: "x" },
+          { ref: "seen#0", certainty: { level: "LOW", confidence: 0.3 }, nature: "defect-in-new-code", rationale: "x" },
         ],
       };
       const notExhausted = applyJudgeVerdicts(
@@ -265,6 +331,196 @@ export function run() {
         exhausted.deferrable.some((f) => f.ref === "missing#1"),
         "applyJudgeVerdicts: an unmatched ref defaults to deferrable when budget exhausted",
       );
+    }
+
+    // --- dispositionOf: the #580 calibration gate ---------------------------
+    //
+    // Why this block exists. The policy it guards shipped UNSATISFIABLE and no
+    // test noticed for 26 review cycles: BLOCKING required
+    // `severity ∈ {critical, high}` while DEFERRABLE fired on
+    // `severity ∈ {medium, low}` OR `certainty == LOW`, and producers emit
+    // medium/low almost exclusively — so the medium band was swallowed whole and
+    // `blocking` fired once in 67 findings. `clean` is computed from
+    // `blocking == []`, so the merge gate was unguarded the entire time.
+    //
+    // The gate is designed to FAIL against that old predicate. The specific trap
+    // it avoids: asserting merely "some input produces blocking" would ALSO pass
+    // the old policy, via its critical/high row — a textbook tautology (the
+    // fixture both arms the gate and satisfies it). So the load-bearing
+    // assertions below pin the cells at the severity producers ACTUALLY emit.
+    {
+      const SEVERITIES = ["critical", "high", "medium", "low"];
+      const LEVELS = ["HIGH", "MEDIUM", "LOW"];
+      const EFFORTS = ["trivial", "small", "medium", "large"];
+      const NATURES = [
+        "defect-in-new-code",
+        "defect-in-preexisting-code",
+        "incomplete-work",
+        "improvement",
+      ];
+      const RULES = [
+        "R1-critical",
+        "R2-low-certainty",
+        "R3-security-high",
+        "R4-improvement",
+        "R5-preexisting",
+        "R6-incomplete",
+        "R7-large-effort",
+        "R8-defect-in-new-code",
+      ];
+      // A finding at the shape the review harness actually produces. Defaults sit
+      // at the observed producer distribution (medium severity, MEDIUM certainty,
+      // small effort) so every case below states only what it varies.
+      const f = (o = {}) => ({
+        severity: "medium",
+        category: "correctness",
+        effort: "small",
+        certainty: { level: "MEDIUM", confidence: 0.6, support: 1, method: "producer" },
+        ...o,
+      });
+      const disp = (o, nature = "defect-in-new-code") => dispositionOf(f(o), nature)?.disposition;
+      const rule = (o, nature = "defect-in-new-code") => dispositionOf(f(o), nature)?.rule;
+
+      // (1) SATISFIABILITY at the observed producer distribution. THE assertion
+      // that fails the old policy: severity medium + MEDIUM certainty + a real
+      // defect in code this PR wrote. Every one of the six defects the batch
+      // deferred looked exactly like this. Under the old predicate this cell was
+      // deferrable (medium severity hit the DEFERRABLE `OR`); it must block now.
+      eq(
+        disp({}),
+        "blocking",
+        "dispositionOf: severity=medium + MEDIUM certainty + defect-in-new-code BLOCKS — the cell the old policy could not reach (#580)",
+      );
+      eq(
+        disp({ severity: "low" }),
+        "blocking",
+        "dispositionOf: even severity=low blocks for a confirmed new-code defect — severity is not the axis (#580)",
+      );
+      // Severity is DEMOTED, not merely reweighted: for a new-code defect at
+      // non-LOW certainty the disposition is invariant across all four
+      // severities. A regression that re-promoted severity to the primary axis
+      // fails here even if it kept the medium cell blocking.
+      ok(
+        SEVERITIES.every((severity) => disp({ severity }) === "blocking"),
+        "dispositionOf: a MEDIUM-certainty new-code defect blocks at EVERY severity (severity is demoted, #580)",
+      );
+
+      // (2) The six defects the #567 batch deferred while returning `blocking: []`,
+      // at their recorded severity/certainty. Each is a real confirmed defect in
+      // code its own PR had just written — the regression corpus for this issue.
+      const MISSED = [
+        ["#533", "MEDIUM", 0.6, "absent-matcher swallowed a tmux permission-denied error"],
+        ["#542", "MEDIUM", 0.6, "dispatch tests were textual only — swapped arm bodies still passed"],
+        ["#544", "HIGH", 0.87, "bounded-probe test never exercised the bound"],
+        ["#549", "HIGH", 0.92, "IFS=: -> bare read re-opened the parity class the PR was closing"],
+        ["#568", "HIGH", 0.85, ".mjs/.cjs routed for missing-test-file but not debug-statement"],
+        ["#568", "HIGH", 0.88, "parity gate asserted over a fixture list with no file of the changed extension"],
+      ];
+      for (const [issue, level, confidence, what] of MISSED) {
+        eq(
+          disp({ certainty: { level, confidence, support: 1, method: "producer" } }),
+          "blocking",
+          `dispositionOf: ${issue} (${level}/${confidence}) blocks — ${what} (#580 regression corpus)`,
+        );
+      }
+
+      // (3) Deferral still works. The fix must not be "block everything" — a
+      // policy that blocks unconditionally would pass (1) and (2) while making
+      // every cycle dead-end at the review cap.
+      eq(
+        disp({ certainty: { level: "LOW", confidence: 0.3, support: 1, method: "producer" } }),
+        "deferrable",
+        "dispositionOf: LOW certainty defers — a speculative defect never blocks",
+      );
+      eq(disp({}, "improvement"), "deferrable", "dispositionOf: an improvement defers");
+      eq(
+        disp({}, "defect-in-preexisting-code"),
+        "deferrable",
+        "dispositionOf: a defect in code this PR did not touch defers (fixing it is scope creep)",
+      );
+      eq(
+        disp({ effort: "large" }),
+        "deferrable",
+        "dispositionOf: a large fix is its own issue even when the defect is real and in new code",
+      );
+
+      // (4) Rule ORDER is the semantics. Each case below inverts if the two rules
+      // it straddles are swapped, so a reordering cannot pass silently.
+      eq(
+        rule({ severity: "critical", certainty: { level: "LOW", confidence: 0.2, support: 1, method: "producer" } }),
+        "R2-low-certainty",
+        "dispositionOf: R1 does not fire at LOW certainty — an unconfident critical still defers",
+      );
+      eq(
+        rule({ severity: "critical", effort: "large" }),
+        "R1-critical",
+        "dispositionOf: R1 outranks R7 — a critical defect is not deferred for being large",
+      );
+      eq(
+        rule({ category: "security", certainty: { level: "HIGH", confidence: 0.9, support: 1, method: "producer" } }, "improvement"),
+        "R3-security-high",
+        "dispositionOf: R3 outranks R4 — a confirmed security finding blocks even when characterized as an improvement",
+      );
+      eq(
+        rule({ effort: "large" }, "incomplete-work"),
+        "R6-incomplete",
+        "dispositionOf: R6 outranks R7 — incomplete work is not shippable regardless of remaining effort",
+      );
+      eq(
+        rule({ certainty: { level: "LOW", confidence: 0.2, support: 1, method: "producer" } }, "incomplete-work"),
+        "R2-low-certainty",
+        "dispositionOf: R2 outranks R6 — an unconfident incompleteness claim defers",
+      );
+
+      // (5) TOTALITY. Every cell of the grid decides, and no rule is dead code.
+      // The old policy's failure mode was a band that neither branch claimed
+      // cleanly; this asserts the replacement cannot have one.
+      const seenRules = new Set();
+      let undecided = 0;
+      let badRule = 0;
+      for (const severity of SEVERITIES) {
+        for (const level of LEVELS) {
+          for (const effort of EFFORTS) {
+            for (const nature of NATURES) {
+              for (const category of ["correctness", "security", "tests", "scope-drift"]) {
+                const out = dispositionOf(
+                  f({ severity, effort, category, certainty: { level, confidence: 0.5, support: 1, method: "producer" } }),
+                  nature,
+                );
+                if (out?.disposition !== "blocking" && out?.disposition !== "deferrable") undecided++;
+                if (!RULES.includes(out?.rule)) badRule++;
+                else seenRules.add(out.rule);
+              }
+            }
+          }
+        }
+      }
+      eq(undecided, 0, "dispositionOf: every grid cell yields a valid disposition (the policy is TOTAL, #580)");
+      eq(badRule, 0, "dispositionOf: every grid cell names a known rule");
+      const unreached = RULES.filter((r) => !seenRules.has(r));
+      eq(
+        unreached.join(",") || "(none)",
+        "(none)",
+        "dispositionOf: every rule is reachable from some grid cell — no dead rule (#580)",
+      );
+      // Both dispositions occur across the grid. Guards the two degenerate
+      // directions: a policy that blocks everything (which would pass (1) and (2)
+      // while dead-ending every cycle at the review cap), and one that — like its
+      // predecessor — effectively blocks nothing.
+      let gridBlocking = 0;
+      let gridDeferrable = 0;
+      for (const nature of NATURES) {
+        for (const level of LEVELS) {
+          const d = dispositionOf(
+            f({ certainty: { level, confidence: 0.5, support: 1, method: "producer" } }),
+            nature,
+          )?.disposition;
+          if (d === "blocking") gridBlocking++;
+          if (d === "deferrable") gridDeferrable++;
+        }
+      }
+      ok(gridBlocking > 0, "dispositionOf: the grid produces blocking findings — not block-nothing (#580)");
+      ok(gridDeferrable > 0, "dispositionOf: the grid still produces deferrable findings — not block-everything");
     }
 
     const r = emptyResult(false);
