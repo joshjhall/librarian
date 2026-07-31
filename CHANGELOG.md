@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-07-31
+
+### CI/CD
+
+- Bump the actions group with 2 updates (#537)
+
+### Changed
+
+- Re-run generic security/correctness on ci/docker deltas (#565)
+- Decompose the oversized test files into per-area modules (#590)
+
+### Documentation
+
+- Record the collect-all assertion contract in memory (#566)
+- Record the after-measurement for the review-cost changes (#569)
+- Record that 'unreadable' never existed in checker.md (#570)
+- Record two lint-gate traps that were costing real time (#577)
+- Record why the rumdl gate cannot see scratch notes (#579)
+- Record that rumdl's file selection is invocation-dependent (#582)
+- Record two testing traps found while building the command-ref gate (#585)
+- Use the namespaced /<plugin>:<skill> form for command cross-refs (#583)
+- Record two lessons from the #564 test decomposition (#591)
+- Record two tautological-test shapes found on #599/#600
+
+### Fixed
+
+- Give just lint the ruff→uvx fallback and refresh the docs (#572)
+- Stop splitting pre-scan evidence on ':' (#574)
+- Pin the ruff version across every install path (#575)
+- Distinguish a genuine kill-session failure from a session-absent no-op (#581)
+- Match repo-rooted tests/ for js/ts in pre-review-gates (#592)
+- Find cross-directory tests in pre-review-gates discovery (#593)
+- Give the pre-scan a shell arm so shell diffs can produce findings (#602)
+- Stop the scanners flagging their own pattern literals (#603)
+- Give untested-public-api's py/go arms cross-directory test discovery (#607)
+- Narrow untested-public-api symbol selection to real public API (#608)
+
+### Testing
+
+- Pin the unconditional Step 3a do-not-read-repo-config posture (#561)
+
 ## [0.8.2] - 2026-07-28
 
 ### Changed
@@ -486,6 +527,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.8.3]: https://github.com/joshjhall/librarian/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/joshjhall/librarian/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/joshjhall/librarian/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/joshjhall/librarian/compare/v0.7.0...v0.8.0
