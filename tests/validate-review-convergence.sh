@@ -401,6 +401,46 @@ test_newline_in_category_cannot_forge_a_duplicate() {
     assert_equals "C8-novel" "$(val rule "$out")" "the finding is novel"
 }
 
+test_colon_in_file_cannot_forge_a_duplicate() {
+    # The delimiter vector, distinct from the newline one: no newline is involved.
+    # These two findings are structurally DIFFERENT (different file, line, and
+    # category) yet colon-join to the same string when the delimiter is not
+    # neutralized:
+    #     A: file="src/a.js:10" line=0  cat="correctness"   -> src/a.js:10:0:correctness
+    #     B: file="src/a.js"    line=10 cat="0:correctness" -> src/a.js:10:0:correctness
+    # So B looks like a repeat of A, C6 fires, and the loop stops on a cycle that
+    # actually surfaced new material. Note the fixture must be a genuine COLLIDING
+    # PAIR — an arbitrary colon-bearing path does not collide with anything and
+    # would pass with and without the fix (verified by mutation).
+    command printf '{"blocking":[{"file":"src/a.js:10","line_start":0,"category":"correctness","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/colon-a.json"
+    command printf '{"blocking":[{"file":"src/a.js","line_start":10,"category":"0:correctness","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/colon-b.json"
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/colon-b.json" \
+        --prev-result "$FIXTURES/colon-a.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "continue" "$(val verdict "$out")" "a colon-crafted collision must not forge a C6 stop"
+    assert_equals "C8-novel" "$(val rule "$out")" "the finding is novel, not a duplicate"
+    assert_equals "0" "$(val duplicate "$out")" "the colliding fingerprints stay distinct"
+}
+
+test_colon_in_path_still_matches_for_recursive() {
+    # The complement, and why there are TWO filters: the C7 check matches a whole
+    # path line, where `:` is not a delimiter. Substituting it there would break a
+    # legitimate colon-bearing path — a MISSED recursive signal. `flat` (records
+    # only) must apply there, `field` (records + colons) only to the fingerprint.
+    command printf 'tests/we:ird_test.sh\nsrc/fix.js\n' >"$FIXTURES/delta-colon.txt"
+    command printf '{"blocking":[{"file":"tests/we:ird_test.sh","line_start":5,"category":"tests","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/recursive-colon.json"
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/recursive-colon.json" \
+        --delta-files "$FIXTURES/delta-colon.txt" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C7-recursive" "$(val rule "$out")" "a colon-bearing test path still matches the fix delta"
+    assert_equals "1" "$(val recursive "$out")" "colon substitution must not break real path matching"
+}
+
 test_sanitization_preserves_ordinary_matching() {
     # The complement: sanitizing must not break real duplicate detection. Without
     # this, a mutation that emptied every fingerprint would pass the three
@@ -680,6 +720,21 @@ test_plain_zero_delta_lines_is_valid() {
     assert_equals "C3-narrow-zero" "$(val rule "$out")" "an empty delta is maximally narrow, and valid input"
 }
 
+test_prev_result_missing_its_value_fails_loud() {
+    # `--prev-result --delta-lines 400` means the value was omitted. It must FAIL,
+    # not be silently dropped: unlike the required single-value flags (whose
+    # absence trips an explicit -z check), a dropped prior-cycle file is invisible
+    # — the run would just see less history and drift toward novel/continue, a
+    # verdict computed from silently-incomplete input.
+    local rc=0 err
+    err="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --prev-result --delta-lines 400 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --prev-result --delta-lines 400 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "--prev-result with no value exits 2 rather than dropping the entry"
+    assert_contains "$err" "needs a value" "the message says the flag needs a value"
+}
+
 test_unknown_subcommand_fails_loud() {
     local rc=0
     "$RC" bogus >/dev/null 2>&1 || rc=$?
@@ -732,6 +787,8 @@ run_test test_valid_json_scalar_is_not_misread_as_malformed "jq empty, not jq -e
 run_test test_newline_in_file_cannot_forge_a_duplicate "injection: newline in .file cannot forge a C6 stop"
 run_test test_newline_in_file_cannot_forge_a_recursive_match "injection: newline in .file cannot forge a C7 stop"
 run_test test_newline_in_category_cannot_forge_a_duplicate "injection: newline in .category cannot forge a C6 stop"
+run_test test_colon_in_file_cannot_forge_a_duplicate "injection: colon in .file cannot forge a C6 stop"
+run_test test_colon_in_path_still_matches_for_recursive "colon substitution does not break C7 path matching"
 run_test test_sanitization_preserves_ordinary_matching "sanitization preserves real duplicate matching"
 run_test test_unreadable_prev_result_fails_loud "unreadable --prev-result -> exit 2"
 run_test test_malformed_prev_result_fails_loud "malformed --prev-result -> exit 2"
@@ -739,6 +796,7 @@ run_test test_unreadable_delta_files_is_silently_skipped "missing --delta-files 
 run_test test_bad_ratio_env_fails_loud "bad RATIO env -> exit 2"
 run_test test_leading_zero_numerics_fail_loud "leading-zero numerics -> exit 2 (octal guard)"
 run_test test_plain_zero_delta_lines_is_valid "plain 0 --delta-lines is valid"
+run_test test_prev_result_missing_its_value_fails_loud "--prev-result with no value -> exit 2"
 run_test test_unknown_subcommand_fails_loud "unknown subcommand -> exit 2"
 run_test test_no_subcommand_fails_loud "no subcommand -> exit 2"
 
@@ -749,13 +807,21 @@ run_test test_no_subcommand_fails_loud "no subcommand -> exit 2"
 # after exactly that happened here: test_malformed_prev_result_fails_loud sat
 # defined-but-unregistered and the total stayed put at 48.)
 check_every_test_is_registered() {
-    # Count only `run_test test_*` lines — this guard itself is dispatched by a
-    # `run_test check_every_...` line, which is deliberately outside the `test_*`
-    # namespace so it does not have to count itself.
-    defined="$(command grep -c '^test_[a-z_]*() {' "$0")"
-    registered="$(command grep -c '^run_test test_' "$0")"
-    assert_equals "$defined" "$registered" \
-        "every test_* function is dispatched by a run_test line (defined=$defined registered=$registered)"
+    # Compare NAME SETS, not counts. A bare count is satisfied by two errors that
+    # cancel — registering one test twice while another is never registered keeps
+    # the totals equal and the guard green, which is precisely the failure it
+    # exists to catch. `comm` on the sorted name lists cannot be fooled that way.
+    # This guard itself is dispatched by a `run_test check_every_...` line,
+    # deliberately outside the `test_*` namespace so it need not count itself.
+    local defined registered unregistered undefined
+    defined="$(command grep -o '^test_[a-z_]*() {' "$0" | command sed 's/() {$//' | command sort -u)"
+    registered="$(command grep -o '^run_test test_[a-z_]*' "$0" | command sed 's/^run_test //' | command sort -u)"
+    unregistered="$(command comm -23 <(command printf '%s\n' "$defined") <(command printf '%s\n' "$registered") | command tr '\n' ' ')"
+    undefined="$(command comm -13 <(command printf '%s\n' "$defined") <(command printf '%s\n' "$registered") | command tr '\n' ' ')"
+    assert_equals "" "$(command printf '%s' "$unregistered")" \
+        "no test_* function is defined but never dispatched (unregistered: $unregistered)"
+    assert_equals "" "$(command printf '%s' "$undefined")" \
+        "no run_test dispatches a name that does not exist (undefined: $undefined)"
 }
 run_test check_every_test_is_registered "no test is defined-but-unregistered"
 

@@ -141,6 +141,14 @@ opt() {
 # is repeatable because duplicate detection is against all earlier cycles, not
 # just the immediately preceding one: a finding that reappears after being
 # skipped for a cycle is still a duplicate, not novel material.
+#
+# A value that itself starts with `--` is a caller bug, and here it must FAIL
+# rather than be dropped: `opt`'s single-value flags are all required, so a
+# dropped value trips an explicit `-z` check downstream — but a dropped
+# `--prev-result` is invisible. The loop would just see one fewer prior cycle,
+# quietly weakening duplicate detection toward `novel`/continue. That is a wrong
+# verdict computed from silently-incomplete input, which this script must never
+# emit.
 opt_all() {
     _all_name="$1"
     shift
@@ -149,7 +157,9 @@ opt_all() {
     for _all_tok in "$@"; do
         if [ "$_all_prev" = "$_all_name" ]; then
             case "$_all_tok" in
-                --*) ;;
+                --*)
+                    die "review-convergence: $_all_name needs a value, got the flag '$_all_tok' (a value may not begin with '--')"
+                    ;;
                 *) command printf '%s\n' "$_all_tok" ;;
             esac
         fi
@@ -216,11 +226,29 @@ read_findings() {
 # before the value ever reaches the line-oriented layer, so one finding can only
 # ever produce one record. Applied to every interpolated field, not just `.file` —
 # `.category` is equally attacker-shaped.
-FLATTEN='def flat: (. // "") | tostring | gsub("[\n\r]";" ");'
+# TWO filters, because the two consumers have different delimiters and applying
+# the stricter one everywhere would cause false NEGATIVES:
+#
+#   `flat`  — record separators only. For the C7 check, where the whole line IS
+#             the value (`grep -F -x` of a path against the delta-file list). A
+#             colon is not a delimiter there, so substituting it would make a
+#             legitimate path containing one stop matching — a missed recursive
+#             signal, not a forged one.
+#   `field` — record separators AND the `:` field separator. For the fingerprint,
+#             where values are colon-JOINED. Without it a `.file` of
+#             `src/a.js:10:correctness` with an empty `.category` concatenates to
+#             exactly another finding's fingerprint, forging a C6 match with no
+#             newline involved at all.
+#
+# Substitution rather than rejection: a colon in a path is legitimate on some
+# platforms, and mapping it to `_` keeps ordinary values usable while making
+# forgery require guessing the victim's post-substitution form.
+FLATTEN='def flat: (. // "") | tostring | gsub("[\n\r]";" ");
+         def field: flat | gsub(":";"_");'
 
 fingerprints() {
     command printf '%s' "$1" |
-        command jq -r "$FLATTEN"'.[] | "\(.file | flat):\(.line_start // 0):\(.category | flat)"'
+        command jq -r "$FLATTEN"'.[] | "\(.file | field):\(.line_start // 0):\(.category | field)"'
 }
 
 cmd_check() {
@@ -283,6 +311,14 @@ cmd_check() {
         die "review-convergence: jq is required to read the cycle result JSON but was not found on PATH"
     fi
 
+    # Materialize the repeatable --prev-result list ONCE, in the parent shell, so
+    # `opt_all`'s die propagates. Consuming it inline as a here-doc
+    # (`done <<EOF\n$(opt_all ...)\nEOF`) would run it in a subshell whose exit
+    # status the here-doc discards — the die would print its message and the run
+    # would carry on to emit a verdict anyway, the same swallowed-exit bug as
+    # read_findings' below. Same reason it is not `$(...)` in the loop header.
+    prev_results="$(opt_all --prev-result -- "$@")" || exit 2
+
     findings="$(read_findings "$result")"
     total="$(command printf '%s' "$findings" | command jq -r 'length')"
 
@@ -324,7 +360,7 @@ cmd_check() {
                 die "review-convergence: cannot read prior-cycle result '$prev'"
             fingerprints "$prev_findings" >>"$seen"
         done <<EOF
-$(opt_all --prev-result -- "$@")
+$prev_results
 EOF
         fingerprints "$findings" >"$cur"
         if [ -s "$seen" ]; then
