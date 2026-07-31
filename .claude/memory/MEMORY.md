@@ -22,6 +22,8 @@
 - [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry aborts the run + masks later assertions; use `?.`
 - [set -e aborts are untestable in run_test](set-e-abort-untestable-in-run-test.md) — harness calls bodies as `if "$fn"`, suspending set -e; SLICE the real fn + run at top level (#498)
 - [My comments assert intent, not code](comment-asserts-intent-not-code.md) — 3x across #542/#498: comment claims a property the code lacks, and the wrong comment HIDES the defect; re-read comments as falsifiable claims
+- [Anchored regex → tautological test](anchored-regex-tautological-test.md) — a suppression fixture the detector's anchor never matched passes with AND without the fix (#599)
+- [Gate and evidence converge → tautology](gate-and-evidence-converge-tautology.md) — one fixture both ARMS the gate and SATISFIES it; both branches emit the same output (#600)
 - [Scope-drift check before the FIRST commit](scope-drift-check-before-first-commit.md) — review caught notes-on-a-code-PR on #542, missed it across 5 cycles on #498; `git status` before staging, not `git diff` after
 - [grep -c exits 1 on zero count](grep-c-zero-count-exit-1.md) — prints 0 but EXITS 1; `|| echo 0` double-appends; use `grep -o P | wc -l`
 - [jq empty vs jq -e for JSON validity](jq-validate-empty-vs-e.md) — validity = `jq empty`; `jq -e .` misreports valid scalars false/null as invalid (#253)
