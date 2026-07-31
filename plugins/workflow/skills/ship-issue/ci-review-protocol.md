@@ -322,11 +322,33 @@ of material?" by hand, and do NOT read the cycle counter as that answer. Call th
 bundled helper once per cycle, exactly as the wall-time bound is called in
 `pre-ship-validation.md` step (b):
 
+**`--delta-lines` is the surface THIS cycle reviewed — capture it in step (a),
+before any fix commit.** It is the line count of the diff you fed the harness
+(`deltaDiff` on a narrowed cycle, the full `diff` on cycle 1), not something to
+recompute here:
+
+```bash
+# In step (a), alongside computing deltaDiff — BEFORE step (e) commits a fix:
+delta_lines=$(git diff "$prevReviewedSha"...HEAD | command wc -l)   # cycle > 1
+delta_lines=$(git diff origin/main...HEAD | command wc -l)          # cycle 1
+```
+
+Do **not** recompute it as `git diff "$lastReviewedSha"...HEAD` at step (f) time.
+By then step (e) has committed this cycle's fix and moved `HEAD`, so that
+expression measures the **fix you just applied** rather than the surface you
+reviewed. It breaks worst on exactly the case the predicate exists to judge: a
+**clean** cycle applies no fix, so `lastReviewedSha` still equals `HEAD`, the
+diff is empty, and `--delta-lines` is `0` — which reads as maximally narrow and
+fires `C3` (continue) on a review that had genuinely converged, looping to the
+cap and defeating the early-stop half of #596.
+
+Carry the value forward as the next cycle's `--prev-delta-lines`.
+
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
   --cycle "$cycle" --max-cycles "$cap" \
   --result "$cycle_result_json" \
-  --delta-lines "$(git diff "$lastReviewedSha"...HEAD | command wc -l)" \
+  --delta-lines "$delta_lines" \
   [--prev-result "$prior_cycle_json" ...] \
   [--prev-delta-lines "$prev_delta_lines"] \
   [--delta-files "$delta_files_list"] \
@@ -334,6 +356,11 @@ bundled helper once per cycle, exactly as the wall-time bound is called in
 # -> verdict=continue|stop  rule=C1-cap|…|C8-novel  reason=<slug>
 #    findings=N novel=N duplicate=N refuted=N recursive=N
 ```
+
+**Graceful degradation**: if `review-convergence.sh` is missing or exits
+non-zero, fall back to the plain `cycle` vs `cap` comparison with a one-line
+note — the same posture as a missing `workflow-wall-timeout.sh`. The loop stays
+bounded either way; it only loses the early-stop and the narrow-zero protection.
 
 Write each cycle's harness result to a file so the next cycle can pass it as
 `--prev-result` (repeatable — duplicate detection is against **all** earlier

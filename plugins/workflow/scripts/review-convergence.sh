@@ -202,9 +202,25 @@ read_findings() {
 }
 
 # fingerprints <findings-json> — one `file:line_start:category` line per finding.
+# Both readers below emit ONE RECORD PER LINE and are consumed by line-oriented
+# `grep -F -x`, but their input is finding text that ultimately originates from an
+# LLM reviewer describing a diff — untrusted, and potentially influenced by
+# prompt-injected content in that diff. `jq -r` decodes JSON escapes, so a `.file`
+# value containing a literal `\n` becomes a REAL newline and injects an extra
+# synthetic record. That is not cosmetic: a crafted `.file` can forge a
+# fingerprint match (C6) or a delta-membership match (C7), and BOTH of those rules
+# STOP the review loop — so the injection's payoff is ending a review early and
+# shipping a defect. Same class as the agnix TSV injection (#470).
+#
+# `gsub("[\n\r]";" ")` collapses any embedded newline/CR into a space INSIDE jq,
+# before the value ever reaches the line-oriented layer, so one finding can only
+# ever produce one record. Applied to every interpolated field, not just `.file` —
+# `.category` is equally attacker-shaped.
+FLATTEN='def flat: (. // "") | tostring | gsub("[\n\r]";" ");'
+
 fingerprints() {
     command printf '%s' "$1" |
-        command jq -r '.[] | "\(.file // "?"):\(.line_start // 0):\(.category // "?")"'
+        command jq -r "$FLATTEN"'.[] | "\(.file | flat):\(.line_start // 0):\(.category | flat)"'
 }
 
 cmd_check() {
@@ -287,8 +303,20 @@ cmd_check() {
         # Read line-wise rather than word-splitting `$(...)`, so a path
         # containing a space is one file rather than two unreadable ones (which
         # `read_findings` would then fail loud on).
+        # `read_findings` fails loud via `die` (exit 2), but it runs inside a
+        # `$(...)` command substitution here, where that exit only kills the
+        # SUBSHELL — the loop would otherwise swallow it and go on to compute a
+        # verdict from partial history (an unreadable prior cycle silently
+        # meaning "no duplicates", which biases toward C8-continue). Validate
+        # each path in the parent shell first so the exit-2 actually propagates.
         while IFS= read -r prev; do
             [ -n "$prev" ] || continue
+            if [ ! -r "$prev" ]; then
+                die "review-convergence: cannot read result file '$prev'"
+            fi
+            if ! command jq empty "$prev" >/dev/null 2>&1; then
+                die "review-convergence: result file '$prev' is not valid JSON"
+            fi
             fingerprints "$(read_findings "$prev")" >>"$seen"
         done <<EOF
 $(opt_all --prev-result -- "$@")
@@ -310,7 +338,7 @@ EOF
                     recursive=$((recursive + 1))
                 fi
             done <<EOF
-$(command printf '%s' "$findings" | command jq -r '.[] | .file // empty')
+$(command printf '%s' "$findings" | command jq -r "$FLATTEN"'.[] | select(.file != null and .file != "") | .file | flat')
 EOF
         fi
     fi

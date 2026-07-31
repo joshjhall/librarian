@@ -375,13 +375,22 @@ behavior is noted inline per check; environment variables referenced here
    "${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
      --cycle "$cycle" --max-cycles "$cap" \
      --result "$cycle_result_json" \
-     --delta-lines "$(git diff "$lastReviewedSha"...HEAD | command wc -l)" \
+     --delta-lines "$delta_lines" \
      [--prev-result "$prior_cycle_json" ...] \
      [--prev-delta-lines "$prev_delta_lines"] \
      [--delta-files "$delta_files_list"] \
      --partial "<true if budget_exhausted or wall-timed-out, else false>"
    # -> verdict=continue|stop  rule=C1-cap|…|C8-novel  reason=<slug>
    ```
+
+   **`--delta-lines` is the surface this cycle REVIEWED**, captured when you
+   compute the review scope — the line count of the diff passed to the harness
+   (`deltaDiff` on a narrowed cycle, the full `diff` on cycle 1). Do **not**
+   recompute it from `lastReviewedSha`...`HEAD` after making the cycle's fix
+   commit: that measures the fix rather than the reviewed surface, and on a
+   **clean** cycle (no fix, so `HEAD` has not moved) it is always `0`, which reads
+   as maximally narrow and fires `C3` on a review that had genuinely converged.
+   Carry the value forward as the next cycle's `--prev-delta-lines`.
 
    Pass `--partial true` on a `budget_exhausted` **or** wall-timed-out cycle: the
    predicate then refuses to converge (rule `C2`), matching the existing rule that
