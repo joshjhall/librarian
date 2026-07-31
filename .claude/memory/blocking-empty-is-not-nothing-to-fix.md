@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 1b582930-bded-4097-8522-3105eb5893f8
-  modified: 2026-07-29T14:42:14.791Z
+  modified: 2026-07-31T19:03:57.137Z
 ---
 
 The `/ship-issue` review harness returns `{blocking[], deferrable[], clean}`.
@@ -25,16 +25,33 @@ measurement batch for #567:
   strip for a trailing-whitespace strip. Confirmed by hand in minutes; fixed at
   all 78 sites. See [[check-docs-staleness-ifs-colon-parity]].
 
-**Why:** the judge's blocking/deferrable split is advice about *scheduling* —
-"must this PR wait?" — produced by an agent that does not know which lines the
-PR exists to change. It is an input to judgement, not a substitute for it. A
-defect the judge calls deferrable can still be one whose whole point is that
-this PR was supposed to eliminate it.
+**Root cause found and fixed (#580, 2026-07-31).** This was not judge caution —
+the policy was *unsatisfiable*. BLOCKING required `severity ∈ {critical, high}`
+AND non-LOW certainty; DEFERRABLE fired on `severity ∈ {medium, low}` OR
+`certainty == LOW`. Producers emit medium/low almost exclusively, so the medium
+band was swallowed whole by the deferrable `OR`: **1 blocking firing in 67
+findings across 26 cycles**. The fix moved the decision out of judge prose into
+`dispositionOf`, an ordered first-match rule list in `ship-issue/workflow.js`;
+the judge now returns only observations (re-scored certainty + a `nature`
+enum). Severity is demoted to a critical-only carve-out — the discriminator the
+missed defects shared was "a live defect in code this PR just wrote", not
+severity. A MEDIUM-certainty new-code defect now blocks.
+
+**Why the rule below still stands anyway:** the disposition is now a sound rule
+list, but it runs over a *judge's characterization*, and a mischaracterized
+finding lands in the wrong bucket with no error. The split is advice about
+*scheduling* — "must this PR wait?" — not a substitute for judgement. A defect
+the judge calls deferrable can still be one whose whole point is that this PR
+was supposed to eliminate it. (Confirmed live on #580's own PR: cycle 1 returned
+no blocking findings, and its deferrable-tier notes held a real comment/code
+mismatch I had written and a half-finished doc change.)
 
 **How to apply:** read every finding on merit, not just the `blocking` array.
 Take anything that is a live defect in code the PR itself rewrites, regardless
 of disposition, and say in the commit body that you took a deferrable one and
 why. Corollary: **a fix commit invalidates the cycle that preceded it** — cycle
 N's verdict covers only the bytes cycle N saw, so always re-review after
-fixing rather than merging on the earlier clean. Related:
+fixing rather than merging on the earlier clean. This is now documented as a
+standing rule in `ship-issue/ci-review-protocol.md` + `pre-ship-validation.md`.
+Related: [[issue-580-disposition-rule-list]],
 [[issue-553-review-token-ceiling]], [[review-cost-after-2026-07-28]].
