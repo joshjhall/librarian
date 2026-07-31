@@ -179,7 +179,7 @@ harness **and** folds in open PR review comments, then resolves-or-defers
 everything. This loop **always runs before any merge** — it is the "review is
 clean" half of the merge invariant, and there is no path that skips it.
 
-Run the loop with `cycle = 1` and `cap = REVIEW_MAX_CYCLES` (default 3):
+Run the loop with `cycle = 1` and `cap = REVIEW_MAX_CYCLES` (default 5):
 
 a. **Gather the changed scope** (now includes any CI fixes):
 
@@ -190,8 +190,8 @@ git diff origin/main...HEAD               # -> diff  (FULL PR scope)
 
 **Re-review narrowing (#492).** After cycle 1, also compute the **fix-commit
 delta since the last cycle** so the harness can re-review only what changed
-instead of re-scanning the whole PR every cycle (worst case 3× the full review
-at `REVIEW_MAX_CYCLES=3`). Capture the HEAD SHA the harness actually reviewed
+instead of re-scanning the whole PR every cycle (worst case 5× the full review
+at `REVIEW_MAX_CYCLES=5`). Capture the HEAD SHA the harness actually reviewed
 this cycle **at step (c) time, before step (e) commits any fixes**
 (`git rev-parse HEAD` → `lastReviewedSha`); on the next cycle the delta is
 everything committed since it — the `fix(review): …` and any `fix(ci): …` commits
@@ -317,13 +317,65 @@ e. **If any fixes were applied this cycle**: commit
 `fix(review): address cycle {cycle} findings`, `git push`, and re-run the
 CI-monitor sub-step above (wait for green, auto-fix via `ci-fixer`).
 
-f. **Terminate the loop — green + clean** when ALL of the following hold:
+f. **Consult the convergence predicate** — do NOT decide "have reviewers run out
+of material?" by hand, and do NOT read the cycle counter as that answer. Call the
+bundled helper once per cycle, exactly as the wall-time bound is called in
+`pre-ship-validation.md` step (b):
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
+  --cycle "$cycle" --max-cycles "$cap" \
+  --result "$cycle_result_json" \
+  --delta-lines "$(git diff "$lastReviewedSha"...HEAD | command wc -l)" \
+  [--prev-result "$prior_cycle_json" ...] \
+  [--prev-delta-lines "$prev_delta_lines"] \
+  [--delta-files "$delta_files_list"] \
+  --partial "<true if budget_exhausted or wall-timed-out, else false>"
+# -> verdict=continue|stop  rule=C1-cap|…|C8-novel  reason=<slug>
+#    findings=N novel=N duplicate=N refuted=N recursive=N
+```
+
+Write each cycle's harness result to a file so the next cycle can pass it as
+`--prev-result` (repeatable — duplicate detection is against **all** earlier
+cycles, not just the previous one). On cycle 1 omit `--prev-result` and
+`--prev-delta-lines`.
+
+The helper owns the decision; the loop acts on `verdict` (#596). It replaced the
+bare `cycle >= cap` counter, which #567's 26-cycle batch showed is **both** too
+low — #533's only `blocking` finding of the entire batch (security, 0.92) arrived
+in **cycle 4**, past the old default of 3, and would have shipped — **and** too
+high, since #564 was verifiably clean at cycle 1 and cycles 2–3 were pure cost.
+The rule list, why each rule exists, and which observed cycle motivated it are
+documented in the script header; the deciding rule comes back as `rule` so a
+terminated review is attributable, and `tests/validate-review-convergence.sh`
+pins the table.
+
+**`verdict=stop` is not a merge signal.** It answers only "stop looking",
+and composes with the termination test below in one direction each:
+
+- **`stop` + green + clean** → terminate normally (below).
+- **`stop` + not clean** → the **dead-end** path at the end of this step. Never
+  merge an unclean PR because the predicate said reviewers were done.
+- **`continue` + clean** → keep going: `cycle++` and re-run. This is rule `C3`,
+  the case the issue turns on — a zero-finding cycle on a delta **narrower** than
+  its predecessor says nothing about the material still unreviewed (#568 cycle 2
+  returned zero across five dimensions on a test-only delta, and the next cycle
+  found a 0.88-certainty real defect). Withholding termination only ever **adds**
+  cycles, so it cannot weaken the merge invariant.
+- **`continue` + not clean** → the ordinary `cycle++` path.
+
+A `stop` whose `rule` is `C1-cap` is the hard ceiling — it is what guarantees
+termination, and it fires regardless of every other signal.
+
+g. **Terminate the loop — green + clean** when ALL of the following hold:
 
 - `clean` is true (no blocking findings remain), **and**
 - CI is green, **and**
 - every PR comment is resolved-or-deferred (none left unaddressed), **and**
 - `budget_exhausted` is false — the cycle was **complete** (no dimension in
-  `dimensions_skipped`).
+  `dimensions_skipped`), **and**
+- the convergence predicate returned `verdict=stop` (step f) — so a `C3` narrow-
+  surface zero re-runs instead of terminating.
 
 The harness already folds the last clause into `clean` (a budget-truncated cycle
 returns `clean: false` even when the dimensions that *did* run found nothing), so
@@ -340,8 +392,9 @@ it stops for a human merge with the completion summary. The merge decision has a
 **single site** (Step 4) — this loop only establishes green + clean and never
 merges directly.
 
-Otherwise `cycle++`; if `cycle` exceeds `cap`, the PR is **not** green + clean —
-this is a **dead-end** (`orchestrate/autonomy-levels.md` § dead-end rule; #181).
+Otherwise `cycle++`; if the predicate returned `verdict=stop` (whether at the cap
+or on a convergence signal) and the PR is **not** green + clean, this is a
+**dead-end** (`orchestrate/autonomy-levels.md` § dead-end rule; #181).
 **STOP at every level, L4 included** — the merge invariant forbids merging an
 unclean PR, so there is nothing safe to auto-decide. Emit the **dead-end summary
 template** (`orchestrate/autonomy-levels.md` § *The dead-end summary template*):

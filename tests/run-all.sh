@@ -38,6 +38,7 @@
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #  14a2. journal partial-recovery helper (tests/validate-recover-journal-partials.sh)
 #  14a3. workflow wall-time stop decision (tests/validate-workflow-wall-timeout.sh)
+#  14a4. review convergence stop decision (tests/validate-review-convergence.sh)
 #  14b. autonomy-resolver decision table + parity (tests/validate-autonomy-resolve.sh)
 #  14c. golem-notify Notification hook (tests/validate-golem-notify.sh)
 #  14c1. bash-guard PreToolUse hook (tests/validate-bash-guard.sh)
@@ -169,6 +170,7 @@ run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
 run_stage "journal partial-recovery helper" bash "$SCRIPT_DIR/validate-recover-journal-partials.sh"
 run_stage "workflow wall-time stop decision" bash "$SCRIPT_DIR/validate-workflow-wall-timeout.sh"
+run_stage "review convergence stop decision" bash "$SCRIPT_DIR/validate-review-convergence.sh"
 run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate-autonomy-resolve.sh"
 run_stage "golem-notify Notification hook" bash "$SCRIPT_DIR/validate-golem-notify.sh"
 run_stage "golem-event-listener receiver" bash "$SCRIPT_DIR/validate-golem-event-listener.sh"

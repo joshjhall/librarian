@@ -15,7 +15,7 @@ export const meta = {
 //   {
 //     phase:      'pre-pr' | 'pr-cycle',   // default 'pre-pr'
 //     cycle:      number,                  // 1-based; the skill increments. default 1
-//     maxCycles:  number,                  // default 3 — informational; the SKILL enforces the cap
+//     maxCycles:  number,                  // default 5 — informational; the SKILL enforces the cap
 //     files?:     string[],                // FULL changed-file scope (skill: git diff --name-only origin/main...HEAD)
 //     diff?:      string,                  // FULL precomputed diff for context
 //     prComments?: [{ id, author, path?, line?, body, url? }],  // pr-cycle only
@@ -36,7 +36,7 @@ export const meta = {
 //
 // Re-review narrowing (#492): on a re-review cycle the whole diff was being
 // re-scanned by every dimension, even files/dimensions untouched by the fix
-// (worst case 3× the full review under maxCycles=3). When `cycle > 1` AND the
+// (worst case 5× the full review under maxCycles=5). When `cycle > 1` AND the
 // caller supplies a non-empty `deltaDiff` + `deltaFiles` (the fix-commit delta
 // it already computes each cycle — the sandbox has no git of its own), the
 // harness NARROWS: the manifest is built over the delta, and a delta-local
@@ -149,7 +149,10 @@ const noDiffSupplied = (fullDiff, delta) => !fullDiff && !delta
 
 const PHASE = args && args.phase === 'pr-cycle' ? 'pr-cycle' : 'pre-pr'
 const CYCLE = args && Number.isInteger(args.cycle) ? args.cycle : 1
-const MAX_CYCLES = args && Number.isInteger(args.maxCycles) ? args.maxCycles : 3
+// Mirrors REVIEW_MAX_CYCLES' default (#596 raised it 3 -> 5). Informational
+// here — the harness runs exactly one cycle and the SKILL owns the loop — but a
+// stale default would misreport "cycle 2 of 3" in this cycle's own log line.
+const MAX_CYCLES = args && Number.isInteger(args.maxCycles) ? args.maxCycles : 5
 const scopeFiles = args && Array.isArray(args.files) ? args.files.filter(Boolean) : []
 const scopeDiff = args && typeof args.diff === 'string' ? args.diff : ''
 const prComments = args && Array.isArray(args.prComments) ? args.prComments.filter(Boolean) : []

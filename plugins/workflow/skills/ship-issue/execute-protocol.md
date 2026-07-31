@@ -29,7 +29,8 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    - **Multi-cycle PR review loop** (after green CI) — re-run the `workflow.js`
      harness (`phase: "pr-cycle"`) folding in open PR comments, resolve `blocking`
      / file `deferrable`, commit + push + re-check CI each cycle, terminate when
-     clean + green + every comment resolved-or-deferred (cap `REVIEW_MAX_CYCLES`).
+     clean + green + every comment resolved-or-deferred **and** the convergence
+     predicate says stop (ceiling `REVIEW_MAX_CYCLES`; #596).
    - **File deferred review findings** — file each via `/workflow:file-issue` (autonomous
      fallback: `gh issue create --body-file`, never interpolating LLM text into a
      shell arg), link them on the PR, and append a "Review findings" section to
@@ -171,7 +172,8 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    - **Branch**: {branch}
    - **CI**: {green | stopped-with-failure: {detail}}
    - **CI fixes applied**: {count} — {one-line summaries}
-   - **Review cycles**: {cycles} run (cap {REVIEW_MAX_CYCLES})
+   - **Review cycles**: {cycles} run (ceiling {REVIEW_MAX_CYCLES}); stopped on
+     {deciding `rule` from review-convergence.sh, e.g. `C4-zero` or `C1-cap`}
    - **Review status**: {clean | stopped-with-blocking: {detail}}
    - **Findings fixed**: {count} blocking, on this PR
    - **Findings deferred**: {#A, #B (filed), or "none"}
