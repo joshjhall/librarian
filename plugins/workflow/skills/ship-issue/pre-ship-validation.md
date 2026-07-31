@@ -222,7 +222,24 @@ behavior is noted inline per check; environment variables referenced here
    `git diff` from step a) — the manifest step no longer transcribes it, so pass
    the full diff here (#267). Omitting `diff` is supported but makes each reviewer
    derive it in-agent (`git diff origin/main...HEAD`), which costs extra tool
-   calls; prefer supplying it.
+   calls; prefer supplying it. A cycle with **neither** `diff` nor `deltaDiff`
+   logs a `WARNING:` at cycle start — it still reviews (each reviewer derives the
+   diff), but the line is there because a **dropped** `diff` key and an
+   intentionally omitted one are indistinguishable from inside the harness.
+
+   **Unknown top-level `args` keys are rejected — the harness throws, naming the
+   offending key(s) (#597).** The accepted set is exactly the keys shown in the
+   blocks here and in `ci-review-protocol.md`: `phase`, `cycle`, `maxCycles`,
+   `files`, `diff`, `prComments`, `issue`, `tokenCeiling`, `preScan`,
+   `conventionsDigest`, `deltaDiff`, `deltaFiles`, `priorBlockingDimensions`.
+   Every one is read by name with an empty-default fallback, so a mistyped key
+   was previously **dropped in silence** and its input simply went missing —
+   which on `diff` meant five reviewers scanning an empty diff and returning
+   `clean: true`, a vacuous pass byte-identical to a real one (measured on #567,
+   where an `argsFile` key dropped `diff`, `preScan` **and**
+   `conventionsDigest`). Since `clean` is half the merge invariant, that would
+   auto-merge at L4. A typo'd key is always a caller bug, so it fails loud at
+   dispatch: read the key name out of the error, fix it, re-dispatch.
 
    **`tokenCeiling` is OPT-IN and OFF by default (#553) — measure before you
    arm it.** It bounds **output tokens for one cycle**, measured as a delta from
