@@ -674,6 +674,62 @@ EOF
         \( "${find_args[@]}" \) -print -quit 2>/dev/null
 }
 
+# find_repo_rooted_symbol_test_files — every file under <_PROJECT_ROOT>/tests
+# that could reference a symbol, one path per line (#600).
+#
+# SYMBOL-anchored, NOT filename-anchored — the deliberate divergence from
+# find_repo_rooted_js_tests above, and the whole reason a separate helper
+# exists. That helper insists a candidate be named after the source, so
+# `report.js` is not satisfied by an unrelated `validate-workflow-helpers.mjs`.
+# That anchor does not transfer to python: every patterns.py in this repo shares
+# the stem `patterns`, so python-appropriate stems (test_patterns.py,
+# patterns_test.py) resolve to NOTHING and the name anchor buys zero rows back.
+# Measured over all 21 patterns.py: name-anchored stems left all 49 false rows
+# standing; this symbol search leaves 16. The `\bsymbol\b` grep the callers run
+# against the returned list IS the anchor here — a test that names the function
+# is evidence about that function regardless of what the file is called.
+#
+# Two exclusions, each load-bearing rather than tidy-up:
+#
+#   */fixtures/*  — a fixture is an INPUT to a test, not a test for the source it
+#                   happens to name (#598's rationale, where a single
+#                   tests/fixtures/category-parity/match/patterns.sh silently
+#                   "covered" 14 real scanners).
+#   *.md          — documentation that mentions a symbol does not exercise it.
+#                   tests/ARCHITECTURE.md names `main`; treating that as coverage
+#                   is a false negative bought with prose.
+#
+# Callers MUST resolve this ONCE per source file, never once per symbol: the
+# find is the expensive part and does not depend on the symbol (the same shape
+# the js/ts arm states above). Command substitution, not a `find | head` probe,
+# which exits 141 under `set -o pipefail` when find outruns the reader.
+#
+# The caller has already checked that <_PROJECT_ROOT>/tests exists.
+find_repo_rooted_symbol_test_files() {
+    command find "${_PROJECT_ROOT}/tests" -type f \
+        -not -path '*/fixtures/*' -not -name '*.md' -print 2>/dev/null
+}
+
+# find_repo_rooted_go_tests — repo-rooted GO test files only (#600).
+#
+# The go arm may not use the unrestricted list above, and the restriction is
+# load-bearing rather than tidiness. That arm's contract is CONSERVATIVE: it
+# fires only when a candidate test exists, leaving a package with no tests at
+# all to scan_missing_tests instead of emitting one row per exported func. If
+# "a candidate exists" were satisfied by ANY file under tests/, then in any repo
+# with a populated tests/ tree — this one included — the gate would be
+# permanently true and the arm would fire on every exported func of every
+# untested go package. That is the exact noise the contract exists to prevent,
+# and it was a real regression in the first cut of this change.
+#
+# `*_test.go` is the language's own universal convention (the `go test` toolchain
+# only compiles files with that suffix), so it is the honest spelling of "a go
+# test exists" — no heuristic needed.
+find_repo_rooted_go_tests() {
+    command find "${_PROJECT_ROOT}/tests" -type f \
+        -not -path '*/fixtures/*' -name '*_test.go' -print 2>/dev/null
+}
+
 # has_repo_rooted_sh_test <name-no-ext> — 0 when at least one such test exists,
 # by the full-name arms or the restricted stripped-candidate arm.
 has_repo_rooted_sh_test() {
@@ -815,6 +871,28 @@ scan_missing_tests() {
 # New public/exported functions without test references.
 # =============================================================================
 
+# symbol_in_candidate_list <symbol> <newline-delimited-paths> — 0 when any listed
+# file mentions <symbol> as a whole word (#600). Shared by all three arms so
+# they cannot drift in how a candidate is judged.
+#
+# Iterates rather than passing the list to one `grep -l`: the paths come from a
+# find and an unquoted expansion would word-split any path containing spaces.
+# An empty list returns 1 (not found) without invoking grep — a bare `grep PAT`
+# with no file operand would block reading stdin.
+symbol_in_candidate_list() {
+    local symbol="$1" list="$2" test_path
+    [ -n "$list" ] || return 1
+    while IFS= read -r test_path; do
+        [ -n "$test_path" ] || continue
+        if command grep -q -- "\b${symbol}\b" "$test_path" 2>/dev/null; then
+            return 0
+        fi
+    done <<EOF
+$list
+EOF
+    return 1
+}
+
 scan_untested_public_api() {
     local file="$1"
 
@@ -841,31 +919,86 @@ scan_untested_public_api() {
     # capture groups alnum-only if these extractors ever change.
     case "$ext" in
         py)
+            # Cross-directory fallback (#600). The colocated globs below cannot
+            # see a test in a repo-rooted tests/ tree, so a well-exercised
+            # function reported HIGH "no tests reference" — the same class #555
+            # and #568 removed for js/ts. Resolved ONCE per file, not per
+            # export: the find does not depend on the symbol.
+            repo_rooted_tests=""
+            if [ -n "$_PROJECT_ROOT" ] && [ -d "${_PROJECT_ROOT}/tests" ]; then
+                repo_rooted_tests="$(find_repo_rooted_symbol_test_files)"
+            fi
+            # Declared discovery templates join the SAME candidate list rather
+            # than short-circuiting (#568): the question here is whether a
+            # specific symbol is referenced, so the declared file still has to
+            # be grepped for it.
+            declared="$(declared_test_paths "$file")"
+            if [ -n "$declared" ]; then
+                repo_rooted_tests="${repo_rooted_tests:+${repo_rooted_tests}
+}${declared}"
+            fi
             command grep -nE -- '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     func_name=$(command printf '%s' "$content" | command sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
-                    if ! command grep -rql -- "\b${func_name}\b" \
+                    if command grep -rql -- "\b${func_name}\b" \
                         "${dirname}"/test_*.py \
                         "${dirname}"/tests/test_*.py \
                         "${dirname}"/../tests/test_*.py 2>/dev/null; then
-                        evidence=$(truncate_chars 60 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "untested-public-api" \
-                            "No tests reference ${func_name}: ${evidence}" "HIGH"
+                        continue
                     fi
+                    if symbol_in_candidate_list "$func_name" "$repo_rooted_tests"; then
+                        continue
+                    fi
+                    evidence=$(truncate_chars 60 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "untested-public-api" \
+                        "No tests reference ${func_name}: ${evidence}" "HIGH"
                 done || true
             ;;
         go)
+            # Cross-directory fallback (#600), same shape as the py arm.
+            #
+            # The go arm stays CONSERVATIVE by design: it fires only when at
+            # least one candidate test file exists, so a package with no tests
+            # at all is left to scan_missing_tests rather than emitting one row
+            # per exported func. This change widens WHICH candidates count — the
+            # sibling <name>_test.go plus any repo-rooted *_test.go — it does not
+            # make the arm fire where it was previously silent.
+            #
+            # find_repo_rooted_GO_tests, not the unrestricted symbol list the py
+            # arm uses: the gate below is satisfied by a non-empty candidate list,
+            # so an unrestricted list would make it permanently true in any repo
+            # with a populated tests/ tree and fire on every exported func of
+            # every untested package. See that helper's comment.
+            repo_rooted_tests=""
+            if [ -n "$_PROJECT_ROOT" ] && [ -d "${_PROJECT_ROOT}/tests" ]; then
+                repo_rooted_tests="$(find_repo_rooted_go_tests)"
+            fi
+            declared="$(declared_test_paths "$file")"
+            if [ -n "$declared" ]; then
+                repo_rooted_tests="${repo_rooted_tests:+${repo_rooted_tests}
+}${declared}"
+            fi
             command grep -nE -- '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
                 while IFS=: read -r line_num content; do
                     func_name=$(command printf '%s' "$content" | command sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     test_file="${dirname}/${name_no_ext}_test.go"
-                    if [ -f "$test_file" ] && ! command grep -q -- "\b${func_name}\b" "$test_file" 2>/dev/null; then
-                        evidence=$(truncate_chars 60 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "untested-public-api" \
-                            "No tests reference ${func_name}: ${evidence}" "HIGH"
+                    have_candidate=false
+                    [ -f "$test_file" ] && have_candidate=true
+                    [ -n "$repo_rooted_tests" ] && have_candidate=true
+                    [ "$have_candidate" = "true" ] || continue
+
+                    if [ -f "$test_file" ] &&
+                        command grep -q -- "\b${func_name}\b" "$test_file" 2>/dev/null; then
+                        continue
                     fi
+                    if symbol_in_candidate_list "$func_name" "$repo_rooted_tests"; then
+                        continue
+                    fi
+                    evidence=$(truncate_chars 60 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "untested-public-api" \
+                        "No tests reference ${func_name}: ${evidence}" "HIGH"
                 done || true
             ;;
         ts | js | tsx | jsx | mjs | cjs)
@@ -913,16 +1046,9 @@ scan_untested_public_api() {
                     # cannot see a test in a repo-rooted tests/ tree, so a
                     # genuinely exercised export reported HIGH "no tests
                     # reference". Same candidate set scan_missing_tests uses.
-                    if [ "$found" = "false" ] && [ -n "$repo_rooted_tests" ]; then
-                        while IFS= read -r test_path; do
-                            [ -n "$test_path" ] || continue
-                            if command grep -q -- "\b${func_name}\b" "$test_path" 2>/dev/null; then
-                                found=true
-                                break
-                            fi
-                        done <<EOF
-$repo_rooted_tests
-EOF
+                    if [ "$found" = "false" ] &&
+                        symbol_in_candidate_list "$func_name" "$repo_rooted_tests"; then
+                        found=true
                     fi
                     if [ "$found" = "false" ]; then
                         evidence=$(truncate_chars 60 "$content")
