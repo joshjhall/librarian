@@ -303,21 +303,26 @@ cmd_check() {
         # Read line-wise rather than word-splitting `$(...)`, so a path
         # containing a space is one file rather than two unreadable ones (which
         # `read_findings` would then fail loud on).
-        # `read_findings` fails loud via `die` (exit 2), but it runs inside a
-        # `$(...)` command substitution here, where that exit only kills the
-        # SUBSHELL — the loop would otherwise swallow it and go on to compute a
-        # verdict from partial history (an unreadable prior cycle silently
-        # meaning "no duplicates", which biases toward C8-continue). Validate
-        # each path in the parent shell first so the exit-2 actually propagates.
+        # `read_findings` fails loud via `die` (exit 2) — but a `$(...)` command
+        # substitution only ends the SUBSHELL, so a naive
+        # `fingerprints "$(read_findings "$prev")"` swallows that exit and the
+        # loop goes on to compute a verdict from partial history (an unreadable
+        # prior cycle silently meaning "no duplicates", which biases toward
+        # C8-continue — a wrong verdict from invalid state, the one thing this
+        # script must never produce).
+        #
+        # So capture ONCE and check the substitution's own status: `local`-less
+        # assignment from `$(...)` propagates the command's exit code, and `|| die`
+        # converts a subshell death into a parent-shell one. Deliberately NOT a
+        # pre-check followed by a re-read — that would validate a different read
+        # than the one used (a TOCTOU window if the file changes in between) and
+        # would duplicate `read_findings`'s checks, so the two could drift apart
+        # as it gains new ones. One read, one status, one source of truth.
         while IFS= read -r prev; do
             [ -n "$prev" ] || continue
-            if [ ! -r "$prev" ]; then
-                die "review-convergence: cannot read result file '$prev'"
-            fi
-            if ! command jq empty "$prev" >/dev/null 2>&1; then
-                die "review-convergence: result file '$prev' is not valid JSON"
-            fi
-            fingerprints "$(read_findings "$prev")" >>"$seen"
+            prev_findings="$(read_findings "$prev")" ||
+                die "review-convergence: cannot read prior-cycle result '$prev'"
+            fingerprints "$prev_findings" >>"$seen"
         done <<EOF
 $(opt_all --prev-result -- "$@")
 EOF

@@ -328,19 +328,23 @@ before any fix commit.** It is the line count of the diff you fed the harness
 recompute here:
 
 ```bash
-# In step (a), alongside computing deltaDiff — BEFORE step (e) commits a fix:
-delta_lines=$(git diff "$prevReviewedSha"...HEAD | command wc -l)   # cycle > 1
+# In step (a), on the SAME line count as deltaDiff just above — and note that at
+# step (a) time `$lastReviewedSha` still holds the PREVIOUS cycle's SHA (step (c)
+# has not yet re-captured it to this cycle's HEAD), which is precisely the
+# "since the last cycle" boundary this wants:
+delta_lines=$(git diff "$lastReviewedSha"...HEAD | command wc -l)   # cycle > 1
 delta_lines=$(git diff origin/main...HEAD | command wc -l)          # cycle 1
 ```
 
-Do **not** recompute it as `git diff "$lastReviewedSha"...HEAD` at step (f) time.
-By then step (e) has committed this cycle's fix and moved `HEAD`, so that
-expression measures the **fix you just applied** rather than the surface you
-reviewed. It breaks worst on exactly the case the predicate exists to judge: a
-**clean** cycle applies no fix, so `lastReviewedSha` still equals `HEAD`, the
-diff is empty, and `--delta-lines` is `0` — which reads as maximally narrow and
-fires `C3` (continue) on a review that had genuinely converged, looping to the
-cap and defeating the early-stop half of #596.
+**The timing is the whole point** — the same expression means different things at
+different steps. Do **not** recompute it at step (f) time: by then step (c) has
+re-captured `lastReviewedSha` to this cycle's HEAD and step (e) has committed the
+fix on top, so it measures the **fix you just applied** rather than the surface
+you reviewed. It breaks worst on exactly the case the predicate exists to judge: a
+**clean** cycle applies no fix, so the SHA still equals `HEAD`, the diff is empty,
+and `--delta-lines` is `0` — which reads as maximally narrow and fires `C3`
+(continue) on a review that had genuinely converged, looping to the cap and
+defeating the early-stop half of #596.
 
 Carry the value forward as the next cycle's `--prev-delta-lines`.
 

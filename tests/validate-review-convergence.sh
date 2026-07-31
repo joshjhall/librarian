@@ -367,7 +367,11 @@ test_newline_in_file_cannot_forge_a_duplicate() {
         --delta-lines 400 --prev-delta-lines 400 --partial false)"
     assert_equals "continue" "$(val verdict "$out")" "a newline-injected fingerprint must not forge a C6 stop"
     assert_equals "C8-novel" "$(val rule "$out")" "the finding is novel, not a duplicate"
-    assert_equals "1" "$(val findings "$out")" "one finding stays one finding, not two records"
+    # `duplicate`, NOT `findings`: the findings counter is `jq length` over the
+    # input array, so it reads 1 with and without the sanitization — asserting it
+    # would be the very tautology this file's header warns about. `duplicate` is
+    # what the injected record actually moves.
+    assert_equals "0" "$(val duplicate "$out")" "the injected record does not register as a duplicate"
 }
 
 test_newline_in_file_cannot_forge_a_recursive_match() {
@@ -616,6 +620,20 @@ test_unreadable_prev_result_fails_loud() {
     assert_contains "$err" "cannot read result file" "the message names the unreadable prior-cycle file"
 }
 
+test_malformed_prev_result_fails_loud() {
+    # The parent-shell guard has TWO branches (readable, then valid JSON). The
+    # unreadable one is covered above; without this the jq-empty branch could be
+    # dropped in a refactor and the suite would stay green.
+    local rc=0 err
+    command printf 'not json at all' >"$FIXTURES/bad-prev.json"
+    err="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --prev-result "$FIXTURES/bad-prev.json" --delta-lines 400 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --prev-result "$FIXTURES/bad-prev.json" --delta-lines 400 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "a malformed --prev-result exits 2"
+    assert_contains "$err" "not valid JSON" "the message names the malformed prior-cycle file"
+}
+
 test_unreadable_delta_files_is_silently_skipped() {
     # Deliberate asymmetry with --result/--prev-result: --delta-files is an
     # OPTIONAL enrichment for C7 only, so an absent one means "no recursive
@@ -716,11 +734,29 @@ run_test test_newline_in_file_cannot_forge_a_recursive_match "injection: newline
 run_test test_newline_in_category_cannot_forge_a_duplicate "injection: newline in .category cannot forge a C6 stop"
 run_test test_sanitization_preserves_ordinary_matching "sanitization preserves real duplicate matching"
 run_test test_unreadable_prev_result_fails_loud "unreadable --prev-result -> exit 2"
+run_test test_malformed_prev_result_fails_loud "malformed --prev-result -> exit 2"
 run_test test_unreadable_delta_files_is_silently_skipped "missing --delta-files degrades, by design"
 run_test test_bad_ratio_env_fails_loud "bad RATIO env -> exit 2"
 run_test test_leading_zero_numerics_fail_loud "leading-zero numerics -> exit 2 (octal guard)"
 run_test test_plain_zero_delta_lines_is_valid "plain 0 --delta-lines is valid"
 run_test test_unknown_subcommand_fails_loud "unknown subcommand -> exit 2"
 run_test test_no_subcommand_fails_loud "no subcommand -> exit 2"
+
+# Every `test_*` function defined above must actually be dispatched by a
+# `run_test` line. A test that is written but never registered passes silently by
+# not running at all — which is strictly worse than a missing test, because the
+# suite's green summary asserts coverage that does not exist. (This gate was added
+# after exactly that happened here: test_malformed_prev_result_fails_loud sat
+# defined-but-unregistered and the total stayed put at 48.)
+check_every_test_is_registered() {
+    # Count only `run_test test_*` lines — this guard itself is dispatched by a
+    # `run_test check_every_...` line, which is deliberately outside the `test_*`
+    # namespace so it does not have to count itself.
+    defined="$(command grep -c '^test_[a-z_]*() {' "$0")"
+    registered="$(command grep -c '^run_test test_' "$0")"
+    assert_equals "$defined" "$registered" \
+        "every test_* function is dispatched by a run_test line (defined=$defined registered=$registered)"
+}
+run_test check_every_test_is_registered "no test is defined-but-unregistered"
 
 generate_report
