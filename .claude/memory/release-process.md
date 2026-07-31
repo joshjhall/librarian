@@ -5,14 +5,20 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
-  modified: 2026-07-22T01:03:13.488Z
+  modified: 2026-07-31T17:38:08.519Z
 ---
 
 Librarian has a repo-level semver release flow (added in PR #35, issue #31;
-first release v0.1.0 published 2026-06-28). Latest: **v0.8.0** (2026-07-22, minor
-— 45 commits / 12 feats since v0.7.0 incl. #487 GOLEM_MODEL, #488 checkpoint
-suppression; PR #500). NOTE: `just release-patch` was requested but the range had
-12 `feat` commits → semver says **minor**; flag the bump mismatch before cutting.
+first release v0.1.0 published 2026-06-28). Latest: **v0.8.3** (2026-07-31, patch
+— 23 commits since v0.8.2, all fix/docs/refactor/test/ci, zero `feat`; PR #611).
+NOTE: always check the range's commit types before cutting — on v0.8.0
+`just release-patch` was requested but the range had 12 `feat` commits → semver
+says **minor**; flag the bump mismatch before cutting.
+
+**Pre-push runs the FULL suite (~165s), so a `git push` of the release branch
+exceeds a 2-minute Bash timeout and silently leaves nothing on the remote.**
+Push with a 600s timeout and verify with `git ls-remote origin <branch>` — see
+[[never-tail-a-git-push]].
 
 **Confirmed PR-then-tag recipe (v0.7.0, re-confirmed v0.8.0):** `just release-minor` (bumps
 VERSION/manifests/CHANGELOG, NO commit) → commit on a `release/vX.Y.Z` branch as
