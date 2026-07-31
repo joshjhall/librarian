@@ -815,12 +815,20 @@ const refOf = (f) => f.ref
 //      actually shared was "a live defect in code this PR just wrote" — which is
 //      `nature`, not severity.
 //
-//   2. Rule ORDER is the semantics, not decoration. R2 (LOW certainty defers)
-//      sits above the nature rules so an unconfident finding never blocks on
-//      nature alone; R1 sits above R2 only for the critical case. Reordering
-//      changes behavior — tests/workflow-helpers/ship-issue.mjs pins the order
-//      by asserting specific cells, including the satisfiability case that a
-//      severity-gated policy fails.
+//   2. Rule ORDER is the semantics for every pair whose conditions can BOTH
+//      hold. R2 (LOW certainty defers) sits above the nature rules so an
+//      unconfident finding never blocks on nature alone; R3 above R4 so a
+//      confirmed security finding blocks even when characterized as an
+//      improvement; R6 above R7 so incomplete work is not deferred for being
+//      large. Reordering any of those changes behavior, and
+//      tests/workflow-helpers/ship-issue.mjs pins each by asserting the
+//      deciding rule on a cell where the two compete.
+//
+//      R1 and R2 are the exception: their conditions are mutually exclusive
+//      (`level !== 'LOW'` vs `level === 'LOW'`), so their relative order is NOT
+//      load-bearing and swapping them is a genuine no-op. Do not read the pinned
+//      cases as proof that every adjacent swap is caught — that pair cannot be
+//      caught because there is no behavioral difference to catch.
 //
 // Returns `{ disposition, rule }`; `rule` names the deciding rule so the reason
 // is attributable in a result and assertable in a test.

@@ -408,6 +408,14 @@ export function run() {
       // (2) The six defects the #567 batch deferred while returning `blocking: []`,
       // at their recorded severity/certainty. Each is a real confirmed defect in
       // code its own PR had just written — the regression corpus for this issue.
+      //
+      // Honest scope: these six share a code path (none is LOW certainty, so all
+      // fall past R2 to R8) and therefore pass or fail together — they are one
+      // assertion's worth of coverage, not six. They are kept as named fixtures
+      // because the corpus is the evidence FOR the policy: if a future change
+      // defers any of them again, the failure names the exact historical defect
+      // it would have re-admitted, which a bare "medium/MEDIUM blocks" assertion
+      // does not. Coverage comes from (1), (3) and (4); this block is the record.
       const MISSED = [
         ["#533", "MEDIUM", 0.6, "absent-matcher swallowed a tmux permission-denied error"],
         ["#542", "MEDIUM", 0.6, "dispatch tests were textual only — swapped arm bodies still passed"],

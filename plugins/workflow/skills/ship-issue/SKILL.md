@@ -77,8 +77,9 @@ because the operator stepped away.** Full rule: `orchestrate/autonomy-levels.md`
 **Golem Execution Model** — a golem running this skill is an OS **process**, never
 a Workflow subagent, because this skill's review harness already owns the one
 permitted Workflow nesting level (§ *Golem Execution Model* there); and (2) the
-full **Environment Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_STRICT` /
-`REVIEW_MAX_CYCLES` (review gating) and the `LIBRARIAN_CI_*` / `LIBRARIAN_WORKFLOW_*`
+full **Environment Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_MAX_CYCLES`
+(review gating; `REVIEW_STRICT` is documented there as **superseded and inert**
+since #580) and the `LIBRARIAN_CI_*` / `LIBRARIAN_WORKFLOW_*`
 families (CI-wait + workflow-wall threshold/extensions, infra-flake triage). Load
 it before relying on any of these toggles.
 
