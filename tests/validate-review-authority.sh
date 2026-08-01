@@ -148,15 +148,35 @@ test_invocation_sites_cite_authority() {
         return
     fi
 
-    # Every file that tells the reader to invoke Workflow must, in that same
-    # file, say the call is already opted in and name where the rule lives.
+    # PER-SITE, not per-file. ci-review-protocol.md has TWO invocation sites
+    # (the ci-fixer call and the pr-cycle re-review); a whole-file grep cannot
+    # tell "both cite the authority" from "one regressed and the other still
+    # does". Count the sites, then require a citation within the window
+    # following each one — a golem reads a single invocation step in isolation,
+    # which is the whole reason #637 exists.
+    # Match only BOLD invocation steps (`**Invoke the \`Workflow\` tool**`) —
+    # that is the imperative "make this call here" form. A plain-text mention
+    # like "Invoke the `Workflow` tool as a **background** task" is a
+    # back-reference to a call already introduced above, and demanding a
+    # citation there would require a redundant one.
+    local sites cited
     for f in "$pre" "$ci"; do
-        assert_true "command grep -qiE 'Invoke the .?\`?Workflow\`?.? tool' '$f'" \
+        sites="$(command grep -cE '\*\*Invoke the .?`?Workflow`?.? tool\*\*' "$f")"
+        assert_true "[ \"$sites\" -ge 1 ]" \
             "$(basename "$f"): expected a Workflow invocation step (positive control, #637 AC1)"
-        assert_true "command grep -qiE 'already opted in' '$f'" \
-            "$(basename "$f"): each Workflow invocation site must say the call is already opted in (#637 AC1)"
+
+        # Count sites whose following 4-line window carries "already opted in".
+        cited="$(command awk '
+            /\*\*Invoke the .?`?Workflow`?.? tool\*\*/ { win = 4 }
+            win > 0 && /already opted in/ { hit++; win = 0; next }
+            win > 0 { win-- }
+            END { print hit + 0 }
+        ' "$f")"
+        assert_equals "$sites" "$cited" \
+            "$(basename "$f"): EVERY Workflow invocation site must say the call is already opted in (#637 AC1)"
+
         assert_true "command grep -qi 'Workflow authority' '$f'" \
-            "$(basename "$f"): each invocation site must cite ship-protocol.md § Workflow authority (#637 AC1)"
+            "$(basename "$f"): must cite ship-protocol.md § Workflow authority (#637 AC1)"
     done
 }
 
@@ -178,9 +198,16 @@ test_degradation_excludes_permission_doubt() {
     # excluded reason. Checking both halves separately: a file could plausibly
     # say "mechanical" while omitting the permission carve-out that is the
     # actual fix.
+    #
+    # The "mechanical" check is SLICED to the degradation heading itself.
+    # pre-ship-validation.md says "mechanical" three times — two of them
+    # ("mechanical issues" line 65, "mechanical findings" line 131) predate this
+    # change and have nothing to do with the skip scoping, so a whole-file grep
+    # passes even with the scoping phrase deleted. Anchoring on the heading is
+    # what makes the assertion mean what it claims.
     for f in "$pre" "$ci"; do
-        assert_true "command grep -qiE 'mechanical' '$f'" \
-            "$(basename "$f"): degradation must scope the skip to mechanical failure (#637 AC2)"
+        assert_true "command grep -qiE '^[[:space:]]*\*\*Graceful degradation — mechanical failure only' '$f'" \
+            "$(basename "$f"): the degradation heading itself must scope the skip to mechanical failure (#637 AC2)"
         assert_true "command grep -qiE 'permission' '$f'" \
             "$(basename "$f"): degradation must address the permission-doubt case (#637 AC2)"
         assert_true "command grep -qiE '(lack|lacking) permission|permission doubt is not' '$f'" \
