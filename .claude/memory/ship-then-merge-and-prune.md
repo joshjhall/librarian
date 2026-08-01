@@ -10,7 +10,7 @@ metadata:
 When shipping an issue via `/ship-issue` in **non-autonomous** mode, the skill
 by design stops at green CI and hands off to the human for the merge. The user
 wants me to **carry through**: once CI is green **and** the review is clean
-(the merge invariant — see [[../../plugins/workflow/skills/orchestrate/autonomy-levels.md]]),
+(the merge invariant — see `orchestrate/autonomy-levels.md`),
 squash-merge with `--delete-branch`, then prune the local branch and clear any
 stale `status/pr-pending` label on the now-closed issue. Confirmed on PR #188
 (issue #174), where the user asked "you never merged the pr and prune the
@@ -26,6 +26,6 @@ non-autonomous run, proceed to `gh pr merge <N> --squash --delete-branch`,
 then `git checkout main && git pull --ff-only`, `git branch -D <feature>` if it
 lingers, `git fetch --prune`, and `gh issue edit <N> --remove-label
 status/pr-pending`. Do NOT do this if CI is red or the review requested changes
-— surface that instead. Relates to [[never-timeout-human-gate.md]] (still WAIT
+— surface that instead. Relates to [[never-timeout-human-gate]] (still WAIT
 at genuine human choice gates like shipping mode; this is about not stopping
 *after* the work is verified green).

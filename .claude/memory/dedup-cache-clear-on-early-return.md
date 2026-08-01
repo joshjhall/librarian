@@ -36,5 +36,5 @@ original tests all planted at least one row, so the zero path was never
 exercised, which is also how the [[grep-c-zero-count-exit-1]] bug survived.
 
 Related: [[dropped-gate-in-notification-flood]] (the notification pressure this
-reduces), [[issue-489-liveness-dedup]] (the same dedup applied to the liveness
+reduces), [[harden-one-knob-grep-every-sibling]] (the set-u crash found in the liveness
 channel).

@@ -23,5 +23,5 @@ ACCEPTED once the operator explicitly authorizes it (e.g. "approve all plan gate
 the wall (confirmed 2026-07-15, Batch 3/4).
 
 **The `#29` "human keystroke / real TTY" doc language is misleading** — it's really about an agent *relaying
-option 1 through the auto-mode classifier*, NOT `tmux send-keys` from the live session. Filed [[#280]] (clarify
+option 1 through the auto-mode classifier*, NOT `tmux send-keys` from the live session. Filed #280 (clarify
 SKILL wording), #281 (verify send-keys is agent-drivable / #29 stale), #282 (classifier non-determinism).

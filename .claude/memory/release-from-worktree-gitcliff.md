@@ -20,7 +20,7 @@ full-repo scope regardless of cwd, plus a guard that fails the release if the
 generated changelog lacks the new version's `## [VERSION]` section. So
 `just release-{patch,minor,major}` works from a worktree now.
 
-Release flow recap (see [[release-process.md]]): script bumps VERSION + stamps
+Release flow recap (see [[release-process]]): script bumps VERSION + stamps
 manifests + regenerates CHANGELOG but does NOT commit/tag/push. Order that
 keeps the changelog complete: commit any fix/docs FIRST, then run the release
 script (so those commits appear in the notes), then commit the artifacts, PR to

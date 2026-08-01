@@ -9,7 +9,7 @@ metadata:
 ---
 
 Four-axis efficiency audit (cadence scripts / workflow.js fan-out / always-loaded
-prose / model tiering), sibling to [[issue-485-monitor-lower-burn]]-style monitor
+prose / model tiering), sibling to [[issue-485-monitor-event-driven]]-style monitor
 work. Filed #487-#495.
 
 **Tier 1 (highest live payoff, low risk):**
@@ -18,7 +18,7 @@ work. Filed #487-#495.
   `golem-launch.sh:383,453` + `worktree-new.sh:116` → whole multi-hour pipeline
   inherits operator default (Opus). No `GOLEM_MODEL` knob despite clean
   `config.sh` env convention. Sonnet 5 fine for next-issue→ship; biggest single
-  lever. (SHIPPED — see [[issue-487-golem-model-knob]].)
+  lever. (SHIPPED — see [[harden-one-knob-grep-every-sibling]].)
 - #488 — `golem-status.sh` checkpoint (`:664-797`, `:903-907`) has ZERO
   change-suppression: full table re-emits every 8min unchanged. Impl half of
   #485. Also `:495-499` tails 10 raw feed JSON (dup of BLOCKED block),
