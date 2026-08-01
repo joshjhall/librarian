@@ -438,10 +438,16 @@ behavior is noted inline per check; environment variables referenced here
    - **Interactive**: ask — **Fix remaining blocking findings now, ship anyway,
      or defer them?** (cut short the review vs. extend it by raising
      `REVIEW_MAX_CYCLES`).
-   - **Autonomous**: do NOT prompt. Proceed to deliver (open the PR for Option 1;
-     push for Option 2; finish the local commit for Option 3), but record the
-     remaining blocking findings as a STOP note for the completion summary
-     (Option 1 "Autonomous completion summary" → "Review status").
+   - **Autonomous**: do NOT prompt. Proceed to deliver, **subject to each mode's
+     review gate** — open the PR for Option 1 (it is parked, not merged, by the
+     merge invariant); for Option 2 apply the **Option 2 review gate**
+     (`execute-protocol.md`) — a cap-exhausted cycle with blocking findings left
+     IS `stopped-with-blocking`, so it must **not** push to `main` and falls back
+     to Option 3; finish the local commit for Option 3. Record the remaining
+     blocking findings as a STOP note for the completion summary (Option 1
+     "Autonomous completion summary" → "Review status"). Delivering is never a
+     licence to bypass a gate: it means take each mode as far as its gate allows,
+     then stop for a human (#637).
 
    **Graceful degradation — mechanical failure only (#637)**: skip this step
    **only** when the harness genuinely cannot run, which means exactly one of:

@@ -286,10 +286,52 @@ test_option2_gates_on_review_status() {
         "execute-protocol.md must have an Option 2 section (positive control, #637 AC3)"
     assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'skipped'" \
         "Option 2 must address a skipped review before pushing (#637 AC3)"
+    # BOTH halves of the disjunction, not just the skip. Narrowing the gate to
+    # react only to a mechanically-skipped review would let a run with live
+    # blocking findings push to `main` — the same class of gap, reopened.
+    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'stopped-with-blocking'" \
+        "Option 2 must also gate on stopped-with-blocking, not just skipped (#637 AC3)"
     assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'do NOT .?git push|not .?git push'" \
         "Option 2 must forbid the push when the review did not run clean (#637 AC3)"
     assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'Option 3'" \
         "Option 2 must name the commit-only fallback (#637 AC3)"
+}
+
+# --- 5c. AC3: the cap-exhaustion path also respects the Option 2 gate -------
+#
+# Found by the cycle-4 review: the autonomous cap-exceeded bullet said to
+# "push for Option 2" when the cycle cap ran out with blocking findings still
+# unresolved — which IS `stopped-with-blocking`, the exact state the Option 2
+# gate forbids pushing on. Closing the harness-skip path while leaving the
+# cap-exhaustion path open reopens the gap by another route.
+#
+# Mutation check: restore the bare "push for Option 2" wording -> this fails.
+
+test_cap_exhaustion_respects_option2_gate() {
+    local f para
+    f="$(find_pre_ship)"
+    if [ -z "$f" ]; then
+        skip_test "pre-ship-validation.md not found"
+        return
+    fi
+
+    # Slice the FIRST Autonomous bullet and stop at the first blank-line-led
+    # paragraph break, so a match elsewhere in the file cannot satisfy this —
+    # the bullet itself has to carry the deferral. `done` latches so the slice
+    # can never re-arm on a later match and silently union two paragraphs (which
+    # is how this very assertion first passed a mutation it should have failed).
+    para="$(command awk '
+        done_slice { next }
+        /\*\*Autonomous\*\*: do NOT prompt/ { inpara = 1 }
+        inpara && /^[[:space:]]*$/ { done_slice = 1; next }
+        inpara { print }
+    ' "$f")"
+    assert_not_empty "$para" \
+        "pre-ship-validation.md must have an Autonomous cap-exceeded bullet (positive control, #637)"
+    assert_true "printf '%s' \"\$para\" | command grep -qiE 'Option 2 review gate|apply the .*review gate'" \
+        "the cap-exceeded bullet must defer to the Option 2 review gate (#637 AC3)"
+    assert_true "printf '%s' \"\$para\" | command grep -qiE 'stopped-with-blocking'" \
+        "the cap-exceeded bullet must name the state it produces (#637 AC3)"
 }
 
 # --- Positive control: the target files exist -------------------------------
@@ -317,5 +359,6 @@ run_test test_degradation_forbids_substitute_review "Degradation clauses forbid 
 run_test test_review_status_enum_has_skipped "Review status enum carries 'skipped' (#637 AC3)"
 run_test test_skipped_review_blocks_auto_merge "A skipped review blocks auto-merge (#637 AC3)"
 run_test test_option2_gates_on_review_status "Option 2 gates its push on review status (#637 AC3)"
+run_test test_cap_exhaustion_respects_option2_gate "Cap exhaustion respects the Option 2 gate (#637 AC3)"
 
 generate_report
