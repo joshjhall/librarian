@@ -395,8 +395,18 @@ fingerprints() {
 # result file most plausibly gets wrong — read as no-signal and stop charging the
 # cycle cap. The strict `== true` test keeps the uncharged path reachable only by
 # the harness's own boolean.
+#
+# The `type == "object"` guard is not redundant: indexing a non-object with a
+# string is a jq ERROR (exit 5), not a false, so without it a top-level array or
+# scalar would abort the script with an uncaught jq diagnostic instead of the
+# `die`-formatted exit 2 this script contracts for. Today `read_findings` runs
+# first and already rejects such a file, so the guard is defence in depth — but
+# relying on that ordering means any future reshuffle of these two calls silently
+# converts a fail-loud path into a bare jq crash. Make this function correct on
+# its own inputs rather than correct by virtue of its caller.
 no_review_signal() {
-    command jq -r 'if (.no_review_signal == true) then "true" else "false" end' "$1"
+    command jq -r 'if (type == "object" and .no_review_signal == true)
+                   then "true" else "false" end' "$1"
 }
 
 # convergence_rule — evaluate the CONVERGENCE rules C2..C8 (i.e. everything the

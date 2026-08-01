@@ -817,6 +817,21 @@ test_absent_no_signal_field_reads_as_an_ordinary_cycle() {
     assert_equals "C1-cap" "$(val rule "$out")" "an absent flag is not no-signal"
 }
 
+test_non_object_result_fails_loud_not_with_a_jq_crash() {
+    # A top-level array is valid JSON but has no fields. Indexing it with a
+    # string is a jq ERROR (exit 5), not a false — so the no-signal read must
+    # not be the thing that hits it first. Assert the script's own fail-loud
+    # contract holds: exit 2 with a `die` message, never a bare jq diagnostic.
+    local rc=0 err
+    command printf '[1,2,3]\n' >"$FIXTURES/array.json"
+    err="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/array.json" \
+        --delta-lines 4 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/array.json" \
+        --delta-lines 4 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "a non-object result exits 2, not jq's exit 5"
+    assert_contains "$err" "review-convergence:" "it fails with the script's own message"
+}
+
 test_attempt_defaults_to_cycle_for_an_unmigrated_caller() {
     # A caller that has not adopted the two-counter split passes only --cycle.
     # The new rules must then be inert: with attempt defaulting to cycle, the C0
@@ -1270,6 +1285,7 @@ run_test test_attempt_cap_outranks_everything "C0 outranks C0b, C1 and C2"
 run_test test_no_signal_does_not_affect_an_ordinary_cycle "C0b does not disturb an ordinary cycle"
 run_test test_string_false_is_not_read_as_no_signal "a string flag value is not no-signal"
 run_test test_absent_no_signal_field_reads_as_an_ordinary_cycle "an absent no_review_signal is not no-signal"
+run_test test_non_object_result_fails_loud_not_with_a_jq_crash "a non-object result exits 2, not a bare jq crash"
 run_test test_attempt_defaults_to_cycle_for_an_unmigrated_caller "the new rules are inert for an un-migrated caller"
 run_test test_max_attempts_env_override_moves_the_ceiling "REVIEW_MAX_ATTEMPTS is honored"
 run_test test_every_rule_is_reachable "every rule C1-C8 is reachable"
