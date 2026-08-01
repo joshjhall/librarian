@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: de55e24b-986b-4be4-9eac-43fc9c6a1593
-  modified: 2026-07-20T03:31:42.949Z
+  modified: 2026-08-01T04:13:39.934Z
 ---
 
 **Symptom:** a freshly-dispatched worktree golem comes up DOA with
@@ -37,5 +37,5 @@ DOA golem (`tmux kill-session` + `worktree-rm.sh N` + rm cache) and RE-DISPATCH 
 the fresh session loads the command. (3) PREVENT: never `marketplace add` from a
 worktree cwd; always register librarian against the main checkout. (4) DIAGNOSE
 cue: DOA "Unknown command" on a golem while siblings work = check
-`marketplace list` Source FIRST (distinct from the USER-scope-not-enabled DOA in
-[[orchestrate-session-handoff]], which fails ALL golems, not just the newest).
+`marketplace list` Source FIRST (distinct from a USER-scope-not-enabled DOA,
+which fails ALL golems, not just the newest).
