@@ -572,22 +572,17 @@ export function run() {
       const SEVERITIES = ["critical", "high", "medium", "low"];
       const LEVELS = ["HIGH", "MEDIUM", "LOW"];
       const EFFORTS = ["trivial", "small", "medium", "large"];
-      const NATURES = [
-        "defect-in-new-code",
-        "defect-in-preexisting-code",
-        "incomplete-work",
-        "improvement",
-      ];
-      const RULES = [
-        "R1-critical",
-        "R2-low-certainty",
-        "R3-security-high",
-        "R4-improvement",
-        "R5-preexisting",
-        "R6-incomplete",
-        "R7-large-effort",
-        "R8-defect-in-new-code",
-      ];
+      // Read from the harness's own exported constants rather than re-listing
+      // them here (review cycle 4). These were hand-maintained duplicates, which
+      // is the exact desync NATURE_VALUES / DISPOSITION_RULES exist to prevent:
+      // add a ninth rule, update the exports, miss this copy, and the totality +
+      // reachability grid below would keep passing over a stale rule set while
+      // the tally already counted the new key. Referencing the source removes the
+      // drift rather than asserting it away — there is no second list left to
+      // fall out of step. The literal shape of both lists is pinned separately in
+      // block (e), so this is not a self-referential "grid agrees with itself".
+      const NATURES = NATURE_VALUES;
+      const RULES = DISPOSITION_RULES;
       // A finding at the shape the review harness actually produces. Defaults sit
       // at the observed producer distribution (medium severity, MEDIUM certainty,
       // small effort) so every case below states only what it varies.

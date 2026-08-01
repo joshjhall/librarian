@@ -67,13 +67,16 @@ than smoothing over.
 
 ## Status
 
-**Cycles tallied: 2 of ~10.** The instrument landed with this file, so the first
-rows are the review cycles of the PR that introduced it.
+**Cycles tallied: 4 of ~10.** The instrument landed with this file, so the first
+rows are the review cycles of the PR that introduced it — which also means they
+are not a neutral sample (see § Reading these four rows together).
 
 | # | issue | tier | files | +/- | cycle | total | blocking | `by_nature` | `by_rule` | deferred defect? |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0 | 613 | small code+test+docs | 4 | +366/-10 | 1 | 3 | 0 | improvement 3 | R2 1, R4 2 | **no** — 3 real improvements, all fixed anyway |
 | 1 | 613 | (re-review) | 4 delta | +242 delta | 2 | 1 | 0 | improvement 1 | R4 1 | **no** — a real, self-documented coverage gap |
+| 2 | 613 | (re-review, narrow) | 1 delta | +61 delta | 3 | 0 | 0 | (none) | (none) | n/a — zero findings, `C3` uninformative |
+| 3 | 613 | (re-review, FULL) | 5 | +647 full | 4 | 1 | 0 | improvement 1 | R4 1 | **no** — but see below |
 
 ### Row 0 notes
 
@@ -125,19 +128,74 @@ right call (the PR does what it claims; the gap is a limitation, not an
 unaddressed AC), and it is a small point of evidence that the boundary between
 those two natures is being drawn sensibly.
 
-### Reading these two rows together
+### Row 2 notes
 
-Both cycles: `blocking: []`, `clean: true`, deferred-defect check `no`. Taken at
-face value that is a 0% blocking rate over 4 findings — but 4 findings on one
-small PR is far too thin to say anything about the rate, and every finding was a
-genuine `improvement`, which is exactly what `R4` exists to defer. Nothing here
-yet distinguishes "the policy is well-calibrated" from "this diff happened not
-to contain a new-code defect".
+Zero findings on a 61-line delta against the previous cycle's 242 — under the
+50% comparability ratio, so `review-convergence.sh` returned
+`continue` / `C3-narrow-zero` and the loop did **not** terminate. Reading this
+zero as convergence would have been the #568 mistake exactly. Recorded for
+completeness; it contributes nothing to the recall question, which is the point
+of the `C3` rule.
 
-What these rows *do* establish is that the instrument works end to end: both
-cycles returned populated, internally consistent distributions
-(`sum(by_rule) == sum(by_nature) == total_findings` in both), which is the first
-thing the measurement needed and the thing that was impossible before.
+### Row 3 notes — the most informative row so far
+
+The deliberate full-diff re-read that `C3` forced. It found something the three
+narrower cycles had not: the pre-existing `dispositionOf` totality/reachability
+grid in `tests/workflow-helpers/ship-issue.mjs` kept its own hand-maintained
+`NATURES`/`RULES` arrays, never cross-checked against the `NATURE_VALUES` /
+`DISPOSITION_RULES` constants this very PR introduced to prevent that class of
+desync. Judged `improvement`, MEDIUM 0.55.
+
+**Two things make this row worth more than its `improvement` label.**
+
+First, on the deferred-defect check it is a defensible `no` but the closest call
+in the batch. The duplicate lists are not *wrong* today — they are identical to
+the exports — so nothing is currently miscomputed, which is what keeps it out of
+`defect-in-new-code`. But the defect it enables is real and latent: add a ninth
+rule, update the exports, miss the copy, and the reachability grid keeps passing
+over a stale set while the tally already counts the new key. Judging it
+`improvement` is right on the letter of the definition ("not as nice as it could
+be" rather than "wrong"). It is also the first row where a reasonable reviewer
+could have argued the other way.
+
+Second, it is an instance of a documented recurring failure in this repo —
+harden one knob and leave a sibling unguarded. The PR added the constants
+precisely to stop schema/policy/tally drift, asserted that property for the
+schema, and did not notice an existing third copy two hundred lines down in the
+file it was already editing.
+
+Fixed by pointing the grid at the exported constants, which removes the
+duplication rather than asserting it away — there is no second list left to drift.
+Verified non-tautological: adding a ninth rule to `DISPOSITION_RULES` alone fails
+three assertions, including the reachability grid, so the grid did not become
+self-referential.
+
+### Reading these four rows together
+
+All four cycles: `blocking: []`, `clean: true`, deferred-defect check `no`.
+Taken at face value that is a **0% blocking rate over 5 findings** — but five
+findings on one small PR is far too thin to say anything about the rate, and
+every one was a genuine `improvement`, which is exactly what `R4` exists to
+defer. Nothing here yet distinguishes "the policy is well-calibrated" from "this
+diff happened not to contain a new-code defect for it to miss."
+
+The `by_rule` distribution is already showing its intended value, though: across
+5 findings only **`R2` (1) and `R4` (4)** ever fired. Six of eight rules have
+never fired. That is expected this early and is not yet evidence of a dead rule —
+but it is exactly the observation #613 wanted countable, and it was not
+countable at all before this PR.
+
+What these rows *do* establish is that the instrument works end to end: every
+cycle returned populated, internally consistent distributions
+(`sum(by_rule) == sum(by_nature) == total_findings` throughout), which is the
+first thing the measurement needed.
+
+**A caveat about this batch specifically.** These four cycles reviewed the PR
+that *built* the instrument, so they are not a neutral sample: the reviewers were
+handed a conventions digest saying the partial delivery was by design, which
+correctly suppressed spurious `incomplete-work` calls but also means this batch
+cannot speak to how `incomplete-work` is assigned in the general case. Rows from
+unrelated issues are needed before the `nature` distribution means much.
 
 ## Verdict
 
