@@ -1073,6 +1073,31 @@ export function run() {
   }
 
   // =============================================================================
+  // ship-issue — the maxCycles default mirrors REVIEW_MAX_CYCLES (#620)
+  // =============================================================================
+  // MAX_CYCLES feeds the harness's own `review cycle N/M` log line. It is
+  // informational — the SKILL owns the real loop and review-convergence.sh owns
+  // the cap — so a stale value misreports progress rather than changing behavior,
+  // and nothing else would go red if it drifted. #596 raised REVIEW_MAX_CYCLES'
+  // default 3 -> 5 and #617 mirrored it here; this pins that mirror so an
+  // accidental revert, or drift from review-convergence.sh's default, fails.
+  //
+  // Three rows deliberately, not just the default: asserting `=== 5` alone would
+  // ALSO pass against a hardcoded `const MAX_CYCLES = 5` that ignores `args`
+  // entirely, so the honored-override row is what proves the Number.isInteger
+  // branch is live. The third row pins the non-integer fallback.
+  {
+    const { MAX_CYCLES: fallback } = extractHelpers(SHIP, ["MAX_CYCLES"]);
+    eq(fallback, 5, "ship-issue: an omitted args.maxCycles defaults to 5 (mirrors REVIEW_MAX_CYCLES, #620)");
+
+    const { MAX_CYCLES: explicit } = extractHelpers(SHIP, ["MAX_CYCLES"], { maxCycles: 3 });
+    eq(explicit, 3, "ship-issue: an explicit integer args.maxCycles is honored (the default is not hardcoded)");
+
+    const { MAX_CYCLES: coerced } = extractHelpers(SHIP, ["MAX_CYCLES"], { maxCycles: "7" });
+    eq(coerced, 5, "ship-issue: a non-integer args.maxCycles falls back to the default rather than being coerced");
+  }
+
+  // =============================================================================
   // ship-issue — exploration bounds are attached to every reviewer prompt (#553)
   // =============================================================================
   // The scope-discipline text is what bounds in-agent repo exploration (measured:
