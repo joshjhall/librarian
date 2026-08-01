@@ -108,15 +108,12 @@
 ### Golem status/liveness shipped work
 
 - [#446 golem-status BLOCKED reliability](issue-446-golem-status-reliability.md) — PR #464 covers 2 of 4 modes (ghost filter, pane_is_api_error); #446 still open
-- [#489 liveness dedup](issue-489-liveness-dedup.md) — PR #509: transition-dedup; review caught a set-u `$(( ))` crash on non-numeric interval
-- [#488 checkpoint suppression](issue-488-checkpoint-suppression.md) — PR #499: no-op sweeps collapse to heartbeat; empty-state returns MUST clear cp_prev_sig
-- [#487 GOLEM_MODEL launch knob](issue-487-golem-model-knob.md) — PR #496; REUSABLE BUG = raw $VAR in a tmux `sh -c` string → injection; fix = backslash-escape
+- [Harden one knob, grep every sibling](harden-one-knob-grep-every-sibling.md) — my recurring self-inflicted class (#487/#489/#493): set-u `$(( ))` crash, second splice site, hoist-changed-behavior
+- [Dedup cache clear on early return](dedup-cache-clear-on-early-return.md) — every early return MUST clear the signature cache or a vanish→reappear is wrongly suppressed (#488)
 - [#485 monitor event-driven default](issue-485-monitor-event-driven.md) — PR #504: sweep→event-driven push; the sweep was ALSO the Phase-P pool-refill clock
 - [#248 transcript liveness](issue-248-transcript-liveness.md) — PR #473: reads last assistant stop_reason; `working` needs an mtime gate
 - [#447 turn-end pane push](issue-447-turn-end-pane-push.md) — PR #455: two-poll debounce; confirm_turn_end in `$(...)` discards state
-- [#452 footer-anchor pane matchers](issue-452-footer-anchor-matchers.md) — PR #457: matchers were whole-pane → false push; key off $pane_footer_lines
-- [#459 tail-window boundary tests](issue-459-tail-window-boundary.md) — PR #480: +7-filler=8L incl / +8=9L excl (`<<<` off-by-one)
-- [#458 footer-lines env test](issue-458-footer-lines-env-test.md) — PR #479: liveness_class returns a string; set env BEFORE sourcing
+- [Footer-anchored pane matchers](footer-anchored-pane-matchers.md) — all 5 anchor on the footer tail, not whole pane; +7-filler=8L incl / +8=9L excl; set the env var BEFORE sourcing
 - [#432 gate-age coverage + jq-abort fix](issue-432-gate-age-coverage.md) — PR #482: one malformed .ts aborts feed_snapshot jq → blanks the WHOLE list; fix = try/catch
 - [#392 token-signal coverage](issue-392-token-signal-coverage.md) — PR #413; review caught a HIGH tautology `grep -Evq` (use `! grep -q`)
 - [#283 checkpoint table](issue-283-checkpoint-table.md) — PR #414; DURABLE FIX = run-all.sh unsets GIT_DIR at entry (push-hook-leak flake)
