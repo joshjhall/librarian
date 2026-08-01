@@ -94,7 +94,13 @@ test_workflow_authority_asserted() {
         "authority must cite the tool's slash-command opt-in clause (#637 AC1)"
 
     # The skill itself states it, so a golem reading SKILL.md alone is settled.
-    assert_true "command grep -qiE 'opted in|opt-in' '$skill'" \
+    #
+    # Anchored on the HEADING, not a bare 'opted in|opt-in' anywhere in the file.
+    # Two lines below the heading, SKILL.md describes the Workflow tool's own
+    # documented "opt-in cases" — a whole-file grep is satisfied by that
+    # description even with the heading's actual claim deleted, so the assertion
+    # would pass while the guarantee is gone.
+    assert_true "command grep -qiE '^\*\*Workflow authority — the review harness call is already opted in' '$skill'" \
         "ship-issue/SKILL.md must state the harness call is already opted in (#637 AC1)"
     assert_true "command grep -qi 'Workflow authority' '$skill'" \
         "ship-issue/SKILL.md must point at the Workflow authority rule (#637 AC1)"
