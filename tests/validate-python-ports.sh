@@ -240,6 +240,75 @@ test_python_bash_parity() {
 
 # --- Corpus guard + drive ----------------------------------------------------
 
+# --- Direct unit coverage of a port's predicates (#605) ----------------------
+#
+# Parity is a strong property but a RELATIVE one: it asserts the two impls
+# agree, not that either is correct. If both share a misconception parity stays
+# green and both are wrong — which is exactly how #599 shipped a suppression
+# that suppressed nothing (fixed in #604).
+#
+# So this calls check-code-health/patterns.py's is_test_file DIRECTLY, in
+# Python, with both branches. The sibling cases in
+# tests/validate-pre-review-gates.sh cover the same predicate through the BASH
+# gate; neither substitutes for the other — they are different functions in
+# different languages that happen to agree.
+#
+# Zero new dependency, consistent with the repo's testing posture: the module
+# is stdlib-only and main-guarded, so importlib loads it without executing
+# main(). No pytest, no test framework.
+HEALTH_PY="$PLUGINS_DIR/review-audit/skills/check-code-health/patterns.py"
+
+test_py_is_test_file_direct() {
+    local out rc=0
+    if [ ! -f "$HEALTH_PY" ]; then
+        skip_test "check-code-health/patterns.py not present"
+        return 0
+    fi
+    # Each line: "<expected> <path>". Printed as "FAIL ..." on mismatch so the
+    # assertion below names the specific arm that broke, not just a count.
+    out="$(python3 - "$HEALTH_PY" <<'PY' 2>&1)" || rc=$?
+import importlib.util, sys
+
+spec = importlib.util.spec_from_file_location("health_patterns", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+cases = [
+    # TRUE branch — directory-segment arms, then basename arms.
+    (True, "tests/helper.py"),
+    (True, "src/tests/helper.py"),
+    (True, "spec/a.js"),
+    (True, "__tests__/b.js"),
+    (True, "pkg/test/c.js"),
+    (True, "__pycache__/d.py"),
+    (True, "test_util.py"),
+    (True, "thing_test.js"),
+    (True, "thing_spec.rb"),
+    (True, "thing.test.ts"),
+    (True, "thing.spec.js"),
+    # FALSE branch — the near-misses a loose *test* glob wrongly swallows
+    # (#568), plus a test_-prefixed DIRECTORY holding real source.
+    (False, "contest.py"),
+    (False, "latest.js"),
+    (False, "attestation.go"),
+    (False, "src/protest/manifest.js"),
+    (False, "src/test_helpers/production.py"),
+    (False, "app.py"),
+]
+
+bad = 0
+for expected, path in cases:
+    got = mod.is_test_file(path)
+    if got is not expected:
+        bad += 1
+        print("FAIL is_test_file(%r) -> %r, expected %r" % (path, got, expected))
+if bad == 0:
+    print("OK")
+PY
+    assert_equals "0" "$rc" "the direct is_test_file probe ran without error"
+    assert_equals "OK" "$out" "patterns.py is_test_file: every arm matches its expected branch (#605)"
+}
+
 ports_list="$(list_python_ports)"
 
 test_corpus_non_empty() {
@@ -247,6 +316,7 @@ test_corpus_non_empty() {
 }
 
 run_test test_corpus_non_empty "Python-port corpus is non-empty (gate is not a no-op)"
+run_test test_py_is_test_file_direct "check-code-health/patterns.py: is_test_file called directly, both branches (#605)"
 
 while IFS= read -r py; do
     [ -n "$py" ] || continue
