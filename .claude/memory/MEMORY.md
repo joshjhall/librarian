@@ -24,8 +24,12 @@
 - [My comments assert intent, not code](comment-asserts-intent-not-code.md) — 3x across #542/#498: comment claims a property the code lacks, and the wrong comment HIDES the defect; re-read comments as falsifiable claims
 - [Anchored regex → tautological test](anchored-regex-tautological-test.md) — a suppression fixture the detector's anchor never matched passes with AND without the fix (#599)
 - [Gate and evidence converge → tautology](gate-and-evidence-converge-tautology.md) — one fixture both ARMS the gate and SATISFIES it; both branches emit the same output (#600)
+- [Mutate after every security fixture](mutate-after-every-security-fixture.md) — 2 of my injection fixtures passed with AND without the fix; payload BEFORE the newline, collisions need a real PAIR (#596)
+- [Test defined but never registered](test-defined-but-never-registered.md) — no `run_test` line = silently never runs, suite still green; guard with comm on NAME SETS, not counts (#596)
 - [Scope-drift check before the FIRST commit](scope-drift-check-before-first-commit.md) — review caught notes-on-a-code-PR on #542, missed it across 5 cycles on #498; `git status` before staging, not `git diff` after
+- [Octal month kills date arithmetic](octal-month-date-arithmetic.md) — `date +%m` in `$(( ))` = octal; aborted under set -e in Aug/Sep ONLY → zero findings, green 10 months/yr; fixed #624, incl. how to stub a month
 - [grep -c exits 1 on zero count](grep-c-zero-count-exit-1.md) — prints 0 but EXITS 1; `|| echo 0` double-appends; use `grep -o P | wc -l`
+- [die inside $(...) is swallowed](die-inside-command-substitution-is-swallowed.md) — fail-loud helper only kills the SUBSHELL; capture once + `|| die`, never pre-check-then-re-read (#596)
 - [jq empty vs jq -e for JSON validity](jq-validate-empty-vs-e.md) — validity = `jq empty`; `jq -e .` misreports valid scalars false/null as invalid (#253)
 - [core.bare misconfig](core-bare-misconfig.md) — "must be run in a work tree" = stray core.bare=true; set false (also masks real git status)
 - [Devcontainer bash_env PATH reset](devcontainer-bash-env-path-reset.md) — /etc/bash_env resets $PATH non-interactively; unset BASH_ENV for PATH-stub tests
