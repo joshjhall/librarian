@@ -261,6 +261,37 @@ test_skipped_review_blocks_auto_merge() {
         "a skipped review must park the PR with status/pr-pending (#637 AC3)"
 }
 
+# --- 5b. AC3: the skip gate covers Option 2's push, not just Option 1 -------
+#
+# Found by the cycle-3 review: the merge invariant was wired only into Option
+# 1's gate, but the review "Runs on Options 1, 2, and 3 alike". Option 2 pushes
+# straight to `main` with no PR to park, so an ungated skip there is strictly
+# worse than on Option 1 — the only remedy is a revert.
+#
+# Mutation check: delete the Option 2 review-gate block from execute-protocol.md
+# -> this case fails.
+
+test_option2_gates_on_review_status() {
+    local f opt2
+    f="$(find_execute_protocol)"
+    if [ -z "$f" ]; then
+        skip_test "execute-protocol.md not found"
+        return
+    fi
+
+    # Slice Option 2's section so a match inside Option 1's gate cannot satisfy
+    # this — the whole point is that Option 1's wiring did NOT cover Option 2.
+    opt2="$(command awk '/^## Option 2/{f=1} /^## Option 3/{f=0} f' "$f")"
+    assert_not_empty "$opt2" \
+        "execute-protocol.md must have an Option 2 section (positive control, #637 AC3)"
+    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'skipped'" \
+        "Option 2 must address a skipped review before pushing (#637 AC3)"
+    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'do NOT .?git push|not .?git push'" \
+        "Option 2 must forbid the push when the review did not run clean (#637 AC3)"
+    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'Option 3'" \
+        "Option 2 must name the commit-only fallback (#637 AC3)"
+}
+
 # --- Positive control: the target files exist -------------------------------
 
 test_target_files_present() {
@@ -285,5 +316,6 @@ run_test test_degradation_excludes_permission_doubt "Degradation clauses exclude
 run_test test_degradation_forbids_substitute_review "Degradation clauses forbid a substitute review (#637 AC2)"
 run_test test_review_status_enum_has_skipped "Review status enum carries 'skipped' (#637 AC3)"
 run_test test_skipped_review_blocks_auto_merge "A skipped review blocks auto-merge (#637 AC3)"
+run_test test_option2_gates_on_review_status "Option 2 gates its push on review status (#637 AC3)"
 
 generate_report

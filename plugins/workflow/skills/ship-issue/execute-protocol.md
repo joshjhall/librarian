@@ -200,6 +200,21 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
 
 ## Option 2 — Commit to main + push
 
+**Review gate — check BEFORE the push (#637).** The adversarial review runs on
+Options 1, 2 and 3 alike (`pre-ship-validation.md` Step 3.5 item 6), so the
+"a skipped review is not a clean review" invariant binds here too — and binds
+*harder*, because this option has no PR to park: an ungated push puts unreviewed
+code directly on `main`, where the only remedy is a revert. So if the review
+ended `skipped: {reason}` or `stopped-with-blocking`:
+
+- **Do NOT `git push origin main`.**
+- **Fall back to Option 3** (commit only, no push): the commit is already made,
+  so keep it local, label the issue `status/commit-pending`, and STOP for a
+  human with the reason. Nothing is lost — a human can push or open a PR once
+  the review has actually run.
+
+Proceed with the steps below only when the review ran and came back `clean`.
+
 1. Ensure on `main` (or warn if on a different branch and confirm)
 
 1. **Stage and commit** with `Closes #{N}` in the body (same format as Option 1)

@@ -448,9 +448,12 @@ behavior is noted inline per check; environment variables referenced here
    (1) `~/.claude/skills/ship-issue/workflow.js` is **absent from disk**, or
    (2) the `Workflow` tool **errors on invocation**. Skip with the note
    "Adversarial pre-PR review skipped (harness not available)" and surface it as
-   `Review status: skipped: {reason}` in the completion summary — which parks the
-   PR rather than merging it (see `execute-protocol.md`). Never block shipping due
-   to harness errors.
+   `Review status: skipped: {reason}` in the completion summary. That status
+   **gates delivery in every shipping mode** (see `execute-protocol.md`): Option 1
+   parks the PR instead of merging, and Option 2 must **not** push to `main` —
+   it falls back to Option 3 (commit only) and stops for a human, since a push
+   to `main` has no PR to park and no remedy but a revert. Never block shipping
+   due to harness errors.
 
    Two things are **not** grounds to skip:
 
