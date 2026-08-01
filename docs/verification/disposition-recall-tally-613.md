@@ -67,12 +67,13 @@ than smoothing over.
 
 ## Status
 
-**Cycles tallied: 1 of ~10.** The instrument landed with this file, so the first
-row is the review cycle of the PR that introduced it.
+**Cycles tallied: 2 of ~10.** The instrument landed with this file, so the first
+rows are the review cycles of the PR that introduced it.
 
 | # | issue | tier | files | +/- | cycle | total | blocking | `by_nature` | `by_rule` | deferred defect? |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0 | 613 | small code+test+docs | 4 | +366/-10 | 1 | 3 | 0 | improvement 3 | R2 1, R4 2 | **no** — 3 real improvements, all fixed anyway |
+| 1 | 613 | (re-review) | 4 delta | +242 delta | 2 | 1 | 0 | improvement 1 | R4 1 | **no** — a real, self-documented coverage gap |
 
 ### Row 0 notes
 
@@ -103,6 +104,40 @@ deferred-defect check is a genuine `no`, not a miss:
 **One row proves nothing about recall** — a `no` on a diff this size is the
 expected outcome, and finding 1 in particular is the kind an `improvement` call
 fits reasonably well. Recorded as a baseline, not as evidence.
+
+### Row 1 notes
+
+The re-review of the cycle-1 fix commit. One finding, `improvement` at **HIGH**
+0.85: the `...summarizeJudgeObservations(rawFindings)` spread on the live return
+path is past `ORCH_BOUNDARY` and has no automated coverage — replacing it with
+`tallyBy([], …)` leaves the suite green.
+
+Correctly characterized. It is a real gap and the certainty is well-calibrated,
+but it is not a defect in shipped behavior, and the fix it asks for needs a way
+to unit-test past `ORCH_BOUNDARY` that the harness does not have. The actionable
+half — do not let the volume of nearby tests imply coverage that is absent — was
+taken: it is now disclosed in the PR body.
+
+Worth noting for calibration: this is the first row where `nature` was assigned
+to a finding the author had **already self-documented** as a known gap, and the
+judge still called it `improvement` rather than `incomplete-work`. That is the
+right call (the PR does what it claims; the gap is a limitation, not an
+unaddressed AC), and it is a small point of evidence that the boundary between
+those two natures is being drawn sensibly.
+
+### Reading these two rows together
+
+Both cycles: `blocking: []`, `clean: true`, deferred-defect check `no`. Taken at
+face value that is a 0% blocking rate over 4 findings — but 4 findings on one
+small PR is far too thin to say anything about the rate, and every finding was a
+genuine `improvement`, which is exactly what `R4` exists to defer. Nothing here
+yet distinguishes "the policy is well-calibrated" from "this diff happened not
+to contain a new-code defect".
+
+What these rows *do* establish is that the instrument works end to end: both
+cycles returned populated, internally consistent distributions
+(`sum(by_rule) == sum(by_nature) == total_findings` in both), which is the first
+thing the measurement needed and the thing that was impossible before.
 
 ## Verdict
 
