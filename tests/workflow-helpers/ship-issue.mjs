@@ -822,6 +822,32 @@ export function run() {
         2,
         "ship-issue: no_review_signal is emitted on BOTH return paths, never omitted on one (#616)",
       );
+      // ...and the findings-bearing path must emit the COMPUTED flag, not a
+      // literal. Counting emission sites cannot see the value, which is how a
+      // hardcoded `false` survived cycle 6: having findings does NOT imply a
+      // dimension reported, because `rawFindings` also collects comment-triage
+      // findings, and triage is gated on TAIL_FLOOR (8k) while the fan-out is
+      // gated on BUDGET_FLOOR (40k) — so a starved fan-out plus a surviving
+      // comment finding is reachable in normal operation.
+      ok(
+        /^\s*no_review_signal: allDimensionsFailed,/m.test(orch),
+        "ship-issue: the findings-bearing return emits the computed flag, not a hardcoded false (#616)",
+      );
+      ok(
+        !/^\s*no_review_signal: false,/m.test(orch),
+        "ship-issue: no return path hardcodes no_review_signal false",
+      );
+      // The two floors are what make that state reachable; if they were ever
+      // equalized the hazard would vanish, and this comment would be stale
+      // rather than wrong. Pin the ordering the reasoning depends on.
+      {
+        const floor = Number((orch.match(/const BUDGET_FLOOR = ([\d_]+)/) || [])[1]?.replace(/_/g, ""));
+        const tail = Number((orch.match(/const TAIL_FLOOR = ([\d_]+)/) || [])[1]?.replace(/_/g, ""));
+        ok(
+          Number.isFinite(floor) && Number.isFinite(tail) && tail < floor,
+          "ship-issue: TAIL_FLOOR < BUDGET_FLOOR — comment triage outlives the fan-out (#616 hazard)",
+        );
+      }
       ok(
         !/allDimensionsFailed\s*=\s*[^\n]*dimensionsSkipped\.length === dimensions\.length/.test(orch),
         "ship-issue: the wipeout case is NOT a skipped-vs-selected count comparison (false no-signal)",

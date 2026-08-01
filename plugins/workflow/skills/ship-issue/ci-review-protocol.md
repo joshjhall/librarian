@@ -292,7 +292,11 @@ not be charged against `cap`, see step (f) (#616). The "owed a review" half
 matters: a narrowed cycle whose delta touches no dimension's types legitimately
 selects nothing and is **complete**, not no-signal — it is indistinguishable from
 the budget-wipeout case by dimension count alone, and only the presence of a
-budget-floor skip separates them. Note this is strictly narrower
+budget-floor skip separates them. It can also be true on a cycle that **returned
+findings**: comment triage survives a budget level that already starved the
+dimension fan-out, so a PR-comment finding can arrive from a cycle in which
+nothing read the diff. Do not treat a non-empty `blocking`/`deferrable` as proof
+a review happened. Note this is strictly narrower
 than `budget_exhausted`: an ordinary partial cycle had *some* dimension report,
 so its findings are real evidence and it still charges the cap via `C2-partial`;
 only a total wipeout is uncharged. `dimensions_skipped` names any

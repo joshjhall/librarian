@@ -1724,16 +1724,22 @@ return {
   },
   budget_exhausted: budgetExhausted,
   dimensions_skipped: dimensionsSkipped,
-  // Hardcoded false, and present rather than omitted. This path is reached only
-  // when `rawFindings.length > 0`, and findings are appended solely for a
-  // NON-null result — so a cycle that produced findings necessarily had a
-  // dimension report, and can never be no-signal. Stating it is what makes the
-  // field's "always present" contract true across BOTH return paths rather than
-  // only within `emptyResult`: the reader's default for an absent key is false,
-  // so an omission here is indistinguishable from this explicit false, and a
-  // future consumer written against strict presence would silently reintroduce
-  // the ambiguity #616 closed.
-  no_review_signal: false,
+  // The SAME flag the zero-findings path passes to `emptyResult`, not a
+  // hardcoded false. Having findings does not imply a dimension reported:
+  // `rawFindings` has two sources, and the second is comment triage
+  // (`dimension: 'review-comment'`), which is gated on `TAIL_FLOOR` (8k) while
+  // the fan-out is gated on `BUDGET_FLOOR` (40k). That staggering is deliberate
+  // — the tail agent is meant to survive budget pressure that already starved
+  // the dimensions — so "every dimension failed, yet a PR-comment finding
+  // surfaced" is a normal-operation state, not a contrived one. Hardcoding
+  // false there charges a cycle in which nothing ever read the diff, which is
+  // exactly #616's harm reopened through the one path its fix did not cover.
+  //
+  // Present on this path as well as in `emptyResult`, so the field's
+  // "always present" contract holds across BOTH returns: the reader defaults an
+  // absent key to false, so an omission here would be indistinguishable from a
+  // deliberate false.
+  no_review_signal: allDimensionsFailed,
   // A cycle is clean only when nothing blocks, every PR comment is
   // resolved-or-deferred, AND the cycle was complete (`!budgetExhausted` — no
   // dimension skipped at build time or nulled mid-barrier). Gating on
