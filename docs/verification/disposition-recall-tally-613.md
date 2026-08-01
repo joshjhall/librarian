@@ -67,9 +67,9 @@ than smoothing over.
 
 ## Status
 
-**Cycles tallied: 4 of ~10.** The instrument landed with this file, so the first
+**Cycles tallied: 6 of ~10.** The instrument landed with this file, so the first
 rows are the review cycles of the PR that introduced it — which also means they
-are not a neutral sample (see § Reading these four rows together).
+are not a neutral sample (see § Reading these six rows together).
 
 | # | issue | tier | files | +/- | cycle | total | blocking | `by_nature` | `by_rule` | deferred defect? |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -77,6 +77,8 @@ are not a neutral sample (see § Reading these four rows together).
 | 1 | 613 | (re-review) | 4 delta | +242 delta | 2 | 1 | 0 | improvement 1 | R4 1 | **no** — a real, self-documented coverage gap |
 | 2 | 613 | (re-review, narrow) | 1 delta | +61 delta | 3 | 0 | 0 | (none) | (none) | n/a — zero findings, `C3` uninformative |
 | 3 | 613 | (re-review, FULL) | 5 | +647 full | 4 | 1 | 0 | improvement 1 | R4 1 | **no** — but see below |
+| 4 | 613 | (re-review, narrow) | 2 delta | +149 delta | 5 | 0 | 0 | (none) | (none) | n/a — zero at 23% surface, `C1-cap` |
+| 5 | 613 | (confirmation, FULL) | 5 | +647 full | 6 | 0 | 0 | (none) | (none) | **no** — zero on a comparable surface |
 
 ### Row 0 notes
 
@@ -170,9 +172,39 @@ Verified non-tautological: adding a ninth rule to `DISPOSITION_RULES` alone fail
 three assertions, including the reachability grid, so the grid did not become
 self-referential.
 
-### Reading these four rows together
+### Rows 4-5 notes — and a finding about the stop rule itself
 
-All four cycles: `blocking: []`, `clean: true`, deferred-defect check `no`.
+Row 4 (cycle 5) returned zero, and `review-convergence.sh` said `stop` — but via
+**`C1-cap`**, the hard ceiling, on a delta of 149 lines against the previous
+cycle's 647. That is **23% of the prior surface**, well under the 50%
+comparability floor. Had the cap not fired first, that same zero would have
+tripped `C3-narrow-zero` and the loop would have continued.
+
+So the protocol's own stop signal was, at that moment, indistinguishable from
+"we ran out of budget on an uninformative cycle". Merging there would have been
+defensible by the letter of the rule and wrong in substance — and cycle 4 on this
+very PR had just demonstrated that a full re-read finds what narrow cycles miss.
+
+Row 5 is the extra confirmation cycle run for that reason: the **full** 647-line
+diff again, a comparable surface. Zero findings. Re-running the predicate
+uncapped returns **`C4-zero` / `zero-comparable-surface`** — it stops on
+convergence grounds *independent of the cap*. That is the signal worth merging
+on.
+
+**Worth carrying forward beyond this issue.** `C1-cap` masking a would-be `C3`
+is a real gap in the stop rule: a cap-terminated cycle whose zero came over a
+sub-ratio surface reports `stop` with no indication that convergence was never
+actually established. A caller reading only `verdict` cannot tell the two apart.
+Re-running the predicate with a raised `--max-cycles` is the cheap disambiguation
+(it is a pure function of the inputs), and doing so is what distinguished a real
+stop from a budget artifact here. This is the first observation in the batch that
+is about the *review protocol* rather than the disposition policy, and it did not
+require the instrument to find — but it did require refusing to read `stop` as
+"done".
+
+### Reading these six rows together
+
+All six cycles: `blocking: []`, `clean: true`, deferred-defect check `no`.
 Taken at face value that is a **0% blocking rate over 5 findings** — but five
 findings on one small PR is far too thin to say anything about the rate, and
 every one was a genuine `improvement`, which is exactly what `R4` exists to
@@ -184,6 +216,12 @@ The `by_rule` distribution is already showing its intended value, though: across
 never fired. That is expected this early and is not yet evidence of a dead rule —
 but it is exactly the observation #613 wanted countable, and it was not
 countable at all before this PR.
+
+**The 0% blocking rate here is not reassuring or alarming — it is
+uninformative,** and saying so is the point. `R8` (the rule that exists to catch
+the six defects #580 missed) has never fired, because no cycle produced a
+`defect-in-new-code` for it to fire on. Whether `R8` works in production is
+precisely the open question, and this batch could not test it.
 
 What these rows *do* establish is that the instrument works end to end: every
 cycle returned populated, internally consistent distributions
