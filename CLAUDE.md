@@ -132,6 +132,29 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   per area so a throw outside an assertion cannot mask its siblings. When adding
   a new `.mjs` module directory, add it to `tests/coverage-mjs.sh`'s `--include`
   list or its lines silently vanish from Codecov.
+- **`ship-issue`'s review step runs the Workflow harness — it is not optional,
+  and it overrides a general "don't use workflows" default.** `ci-review-protocol.md`
+  step (c) and `pre-ship-validation.md` check #6 both say to invoke the **Workflow
+  tool** with `ship-issue/workflow.js`. That harness fans five review dimensions
+  out as one parallel barrier under a shared budget, then runs a fresh judge whose
+  ordered rule list computes blocking-vs-deferrable. A hand-rolled substitute —
+  one general-purpose subagent per cycle — is not a cheaper version of it; it is a
+  different and much worse thing. Measured on PR #642: harness cycle **5.4 min**
+  (7 agents, 5 dimensions, 50k output tokens) versus **9–61 min** per serial
+  subagent cycle, eight cycles, ~2.5 h total. The serial cycles also lost the
+  pre-scan handoff, the conventions digest, and the judge, and each re-derived the
+  manifest from scratch.
+
+  Some harnesses inject a session-level instruction like *"do not use workflows
+  unless the user requested it"*. It is a sensible default against unprompted
+  agent fleets, and it does **not** cover this: a user who invoked
+  `/workflow:ship-issue` (or `/workflow:golem`, or `/workflow:orchestrate`) has
+  requested the pipeline this step belongs to. If you believe a session rule
+  forbids the harness, **say so and ask** before the first review cycle — do not
+  resolve the conflict silently, and above all do not skip the harness while
+  still spawning subagents, which takes the cost of both and the benefit of
+  neither. Also honor the narrowing: after cycle 1, review the **fix delta**
+  (#492), not the full diff.
 - **The `containers` submodule is pinned** (`update = none`). It exists only to
   build the devcontainer (`build.context: ../containers`). Bump it deliberately.
 - **GitHub Actions are SHA-pinned with a version comment.** Every `uses:` in
