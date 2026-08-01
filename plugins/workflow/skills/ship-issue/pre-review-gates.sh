@@ -438,6 +438,17 @@ scan_debug_statements() {
     # This case is a DELIBERATE cross-plugin duplicate: review-audit and
     # workflow install independently, so pre-review-gates.sh cannot source
     # it. Edit both copies together; the drift guard fails CI otherwise.
+    #
+    # NO is_scanner_pattern_line guard here, unlike the ai-slop arms (#604).
+    # Every pattern below is `^\s*`-anchored, and a scanner's own pattern
+    # literal always sits INSIDE a grep invocation indented in a function — so
+    # it can never match line-start. The guard therefore suppressed nothing on
+    # the real scanners (measured: 0 rows) while silently dropping genuine
+    # debug statements whose ARGUMENT happened to look like a regex, e.g.
+    # `print(re.search(r"\d+", data))` in ordinary source. Anchoring is what
+    # prevents self-matching in this region; keep it that way. Adding an
+    # UNANCHORED pattern below would reintroduce the self-match the guard was
+    # for — anchor it, or reconsider the guard for that arm alone.
     case "$file" in
         *.py)
             # Python: print() used as debug (not in logging context)
@@ -446,7 +457,6 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -457,7 +467,6 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -470,7 +479,6 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -481,7 +489,6 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -494,7 +501,6 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -507,7 +513,6 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
@@ -520,7 +525,6 @@ scan_debug_statements() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    is_scanner_pattern_line "$content" && continue
                     evidence=$(truncate_chars 80 "$content")
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \

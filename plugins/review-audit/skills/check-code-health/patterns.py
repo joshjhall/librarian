@@ -14,10 +14,11 @@ tests/validate-scanner-classification.sh. See CLAUDE.md § Key conventions.
 Note on the shared bash regions: patterns.sh carries two `>>> shared:` blocks
 (`is-test-file`, `debug-statement-scan`) kept byte-identical with
 ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh. Those
-blocks live in the BASH fallback, which is unchanged — so the sync gate is
-unaffected by this port. This file re-expresses the same logic in Python; the
-parity test guarantees it stays equivalent to the bash (and thus to the shared
-copy).
+blocks live in the BASH fallback; this file re-expresses the same logic in
+Python, and the parity test guarantees it stays equivalent to the bash (and thus
+to the shared copy). A third region, `scanner-pattern-line`, was retired from
+this pair by #604 — the predicate now lives only in pre-review-gates.sh, whose
+unanchored ai-slop arms are the sole place it earns its keep.
 
 Input:  argv[1] = file containing paths to scan (one per line)
 Output: TSV to stdout: file<TAB>line<TAB>category<TAB>evidence<TAB>certainty
@@ -80,29 +81,6 @@ def is_test_file(path: str) -> bool:
     return False
 
 
-def is_scanner_pattern_line(line: str) -> bool:
-    """Return True when LINE is a detector's own regex SOURCE rather than code
-    (#599). Mirrors the `>>> shared:scanner-pattern-line` block in patterns.sh.
-
-    The debug-statement patterns are written as literals inside the scanners'
-    own `grep`/`re.search` calls, so scanning a diff that touches a scanner file
-    makes those literals match themselves and emit HIGH-certainty rows for a
-    guaranteed non-problem.
-
-    LINE-scoped, not path-scoped: a real `console.log` or `print(` left in a
-    scanner file must still fire, so only the invocation line carrying the
-    quoted pattern is suppressed."""
-    # bash form: `command grep -niE -- '<pattern>' "$file"` — any short-flag
-    # cluster, but the `--` end-of-options marker and an opening quote are
-    # required, so a plain filtering grep with no pattern literal still scans.
-    if re.search(r"grep -[a-zA-Z]* -- ['\"]", line):
-        return True
-    # python form: re.search(r"..."), re.match(r'...'), re.compile(r"...")
-    if re.search(r"re\.(search|match|compile)\(r['\"]", line):
-        return True
-    return False
-
-
 def emit(path: str, line_no: int, category: str, label: str, content: str) -> None:
     """Write one TSV finding row: '<label>: <first 80 chars of the code line>'."""
     evidence = label + ": " + content[:EVIDENCE_CAP]
@@ -131,9 +109,15 @@ def scan_file(path: str, lines: list[str]) -> None:
 
         # --- Category: debug-statement (non-test files only) ---
         # Mirrors the `>>> shared:debug-statement-scan` block, per-language.
-        # Scanner pattern literals are skipped first, matching the bash copies'
-        # `is_scanner_pattern_line "$content" && continue` in every arm (#599).
-        if not test_file and not is_scanner_pattern_line(line):
+        #
+        # No scanner-pattern-literal skip here, matching the bash copies after
+        # #604: every pattern below is `^\s*`-anchored, so a scanner's own
+        # literal — always nested inside an indented grep call — can never match
+        # line-start. The old guard suppressed nothing real (measured: 0 rows)
+        # and silently dropped genuine debug statements whose ARGUMENT looked
+        # like a regex, e.g. `print(re.search(r"\d+", data))`. Keep new patterns
+        # anchored; see the bash region comment for the full rationale.
+        if not test_file:
             if ext == "py":
                 if re.search(r"^\s*print\(", line) and not re.search(
                     r"(logging|logger|log\.)", line

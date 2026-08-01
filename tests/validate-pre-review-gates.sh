@@ -219,16 +219,22 @@ test_ai_slop_skips_scanner_pattern_literals() {
         "a genuine hedging comment in a scanner file still fires (#599 AC#2)"
 }
 
-# The same shape for debug-statement, whose patterns self-match too (#599).
+# The INVERSE of the ai-slop case above, and the #604 fix.
 #
-# The reachable form here is NOT the bash `command grep -nE ...` invocation the
-# ai-slop case uses: the debug arms are anchored `^\s*console\.` / `^\s*print\(`,
-# so an indented grep line never matched them and a fixture built that way would
-# assert nothing — it passes with or without the fix. The line that genuinely
-# self-matches is one that EMITS a pattern literal, i.e. a `console.log(` /
-# `print(` at line start whose argument is the regex. Verified to fire on the
-# pre-fix scanner before being pinned here.
-test_debug_statement_skips_scanner_pattern_literals() {
+# #599 gave the debug arms the same is_scanner_pattern_line guard as ai-slop.
+# That was wrong, and this case is the one that changed sides. The debug
+# patterns are `^\s*`-anchored (`^\s*console\.`, `^\s*print\(`), so a scanner's
+# own literal — always nested inside a grep call indented in a function — can
+# never match line-start. The guard suppressed nothing real (measured: 0 rows
+# across all three scanners) while dropping the only lines it COULD reach:
+# genuine line-start debug statements whose ARGUMENT happens to look like a
+# regex. Those are false negatives in ordinary source, invisible by
+# construction.
+#
+# So both lines below must now FIRE. Line 1 is the exact shape #604 reported —
+# a real `console.log` left behind whose argument merely contains
+# regex-shaped text. Under the pre-#604 scanner it emitted nothing.
+test_debug_statement_fires_on_regex_shaped_argument() {
     local d rows
     d="$(fresh_dir)"
     {
@@ -238,10 +244,65 @@ test_debug_statement_skips_scanner_pattern_literals() {
     run_gate "$(make_list "$d" scan.js)"
 
     rows="$(category_rows "$GATE_OUT" "debug-statement")"
-    assert_not_contains "$rows" "	1	" \
-        "a line emitting a scanner pattern literal emits no debug-statement row (#599)"
+    assert_contains "$rows" "	1	" \
+        "a debug statement whose argument contains regex-shaped text still fires (#604 AC#1)"
     assert_contains "$rows" "	2	" \
-        "a genuine console.log in the same file still fires (#599)"
+        "a genuine console.log in the same file still fires (#604)"
+}
+
+# The other half of #604's AC#1, in the language the issue reported it in: the
+# python arm, whose argument carries an `re.search(r"..."` literal. A separate
+# fixture because the two arms are separate `case` branches — a js-only fixture
+# asserts nothing about the py arm.
+test_debug_statement_fires_on_python_regex_argument() {
+    local d rows
+    d="$(fresh_dir)"
+    {
+        command printf '%s\n' 'print(re.search(r"\d+", data))'
+        command printf '%s\n' 'print("a genuine debug print")'
+    } >"$d/app.py"
+    run_gate "$(make_list "$d" app.py)"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_contains "$rows" "	1	" \
+        "a print() whose argument contains re.search(r\"...\") still fires (#604 AC#1)"
+    assert_contains "$rows" "	2	" \
+        "a plain debug print in the same file still fires (#604)"
+}
+
+# WHY the removed guard was unnecessary, pinned as behavior rather than prose.
+#
+# A scanner's own pattern literal is indented inside a function, so the `^\s*`
+# anchor is what prevents the self-match — not the deleted predicate. This case
+# fails if someone ever unanchors a debug pattern (which would reintroduce the
+# #599 self-match the guard existed for) and documents why re-adding the guard
+# is not the remedy: anchor the new pattern instead.
+#
+# The fixture's line 2 must hold the literal text `console.log(` — a real dot
+# and a real paren. The obvious-looking fixture (a `grep -nE -- '^\s*console\.'`
+# invocation) does NOT work: its `\.` and `\(` are backslash-escaped ON DISK, so
+# the detector's own `console\.` / `\(` never match them, and the case then
+# passes with the pattern anchored OR unanchored — a tautology that pins
+# nothing. Verified: mutating the arm to drop its `^\s*` makes line 2 fire here.
+test_indented_scanner_pattern_literal_does_not_self_match() {
+    local d rows
+    d="$(fresh_dir)"
+    {
+        command printf '%s\n' "scan() {"
+        command printf '%s\n' "    const DEBUG_RE = \"console.log(\";"
+        command printf '%s\n' "}"
+        command printf '%s\n' "console.log('genuine debug left behind');"
+    } >"$d/scanner.js"
+    run_gate "$(make_list "$d" scanner.js)"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    # Line 2 carries the detector's own literal, but INDENTED — the anchor
+    # rejects it with no guard in play.
+    assert_not_contains "$rows" "	2	" \
+        "an indented scanner pattern literal self-matches no debug arm (#604: anchoring, not the guard)"
+    # ...and the scanner going silent cannot be why: line 4 still fires.
+    assert_contains "$rows" "	4	" \
+        "...while a real console.log in the same file still fires (#604)"
 }
 
 # ai-slop never called is_test_file, unlike debug-statement which always has
@@ -539,6 +600,71 @@ test_is_test_file_anchors_on_basename() {
         "a genuine test_-prefixed FILE is still skipped"
     assert_not_contains "$rows" "helper.py" \
         "a file under a real tests/ directory is still skipped"
+}
+
+# --- #605: is_test_file, both branches, arm by arm --------------------------
+
+# is_test_file had no direct both-branch coverage: it was exercised only
+# indirectly, and the bash<->python parity fixture asserts the two impls AGREE,
+# not that either is CORRECT — if both share a misconception, parity stays green
+# and both are wrong (#605). The case above covers two arms via
+# missing-test-file; these two cover the REST, through debug-statement, which is
+# the category is_test_file actually gates.
+#
+# Both directions are pinned from one fixture per case, so neither can pass by
+# the scanner having gone silent.
+
+# TRUE branch — every directory-segment and basename arm must SKIP.
+test_is_test_file_true_branch_all_arms() {
+    local d rows
+    d="$(fresh_dir)"
+    command mkdir -p "$d/spec" "$d/__tests__" "$d/pkg/test"
+
+    # One debug statement per arm; each must be suppressed as a test file.
+    command printf '%s\n' "console.log('in spec dir');" >"$d/spec/a.js"
+    command printf '%s\n' "console.log('in __tests__ dir');" >"$d/__tests__/b.js"
+    command printf '%s\n' "console.log('in nested test dir');" >"$d/pkg/test/c.js"
+    command printf '%s\n' "console.log('name arm _test');" >"$d/thing_test.js"
+    command printf '%s\n' "console.log('name arm .spec');" >"$d/thing.spec.js"
+    # ...and a non-test file proving the scanner is alive on this same run.
+    command printf '%s\n' "console.log('real source');" >"$d/app.js"
+
+    run_gate "$(make_list "$d" spec/a.js __tests__/b.js pkg/test/c.js \
+        thing_test.js thing.spec.js app.js)"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_not_contains "$rows" "spec/a.js" "spec/ segment is a test path (#605)"
+    assert_not_contains "$rows" "__tests__/b.js" "__tests__/ segment is a test path (#605)"
+    assert_not_contains "$rows" "pkg/test/c.js" "a nested test/ segment is a test path (#605)"
+    assert_not_contains "$rows" "thing_test.js" "*_test.* basename is a test file (#605)"
+    assert_not_contains "$rows" "thing.spec.js" "*.spec.* basename is a test file (#605)"
+    # The liveness half: without this, every assertion above passes vacuously if
+    # the debug detector breaks entirely.
+    assert_contains "$rows" "app.js" \
+        "...while ordinary source in the same run still fires (#605 liveness)"
+}
+
+# FALSE branch — the near-miss names #568 fixed must NOT be treated as tests.
+# These are the ones a loose `*test*` glob wrongly swallows, silencing real
+# source; each must still emit its debug row.
+test_is_test_file_false_branch_near_misses() {
+    local d rows
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src/protest"
+
+    command printf '%s\n' "print('contest')" >"$d/contest.py"
+    command printf '%s\n' "console.log('latest');" >"$d/latest.js"
+    command printf '%s\n' "console.log('manifesto');" >"$d/src/protest/manifest.js"
+
+    run_gate "$(make_list "$d" contest.py latest.js src/protest/manifest.js)"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_contains "$rows" "contest.py" \
+        "contest.py is NOT a test file — its debug print fires (#605)"
+    assert_contains "$rows" "latest.js" \
+        "latest.js is NOT a test file — its debug log fires (#605)"
+    assert_contains "$rows" "src/protest/manifest.js" \
+        "a protest/ directory is NOT a test segment — source under it is scanned (#605)"
 }
 
 # --- #568: declared conventions from .claude/pre-review.yml -----------------
@@ -1753,7 +1879,9 @@ test_real_repo_sh_sources_not_flagged() {
 run_test test_ai_slop_fires "ai-slop detector fires on a hedging phrase with a 5-column HIGH row"
 run_test test_debug_statement_fires "debug-statement detector fires on a top-level console.log"
 run_test test_ai_slop_skips_scanner_pattern_literals "ai-slop skips a scanner's own pattern literal, but not prose in the same file (#599)"
-run_test test_debug_statement_skips_scanner_pattern_literals "debug-statement skips a scanner's own pattern literal, but not a real console.log (#599)"
+run_test test_debug_statement_fires_on_regex_shaped_argument "debug-statement fires on a console.log whose argument contains regex-shaped text (#604)"
+run_test test_debug_statement_fires_on_python_regex_argument "debug-statement fires on a print() whose argument contains re.search(r\"...\") (#604)"
+run_test test_indented_scanner_pattern_literal_does_not_self_match "an indented scanner pattern literal self-matches no debug arm — anchoring, not a guard (#604)"
 run_test test_ai_slop_skips_test_files "ai-slop skips test files (fixture generators), control in real source still fires (#599)"
 run_test test_missing_test_file_fires "missing-test-file detector fires (line 1, HIGH) for an orphan source"
 run_test test_repo_rooted_js_test_detected "repo-rooted tests/ + cross-extension test suppresses missing-test-file (#555)"
@@ -1764,6 +1892,8 @@ run_test test_colocated_js_test_still_detected "colocated <name>.test.js still s
 run_test test_repo_rooted_probe_is_name_anchored "repo-rooted probe stays name-anchored — unrelated tests/ files don't count (#555)"
 run_test test_real_repo_workflow_js_not_flagged "this repo's ship-issue/workflow.js: no missing-test-file, untested-public-api still fires (#555 AC#3)"
 run_test test_is_test_file_anchors_on_basename "is_test_file anchors name arms on the BASENAME — a test_-prefixed DIRECTORY does not skip source (#568)"
+run_test test_is_test_file_true_branch_all_arms "is_test_file TRUE branch: every segment and basename arm skips (#605)"
+run_test test_is_test_file_false_branch_near_misses "is_test_file FALSE branch: contest.py / latest.js / protest/ are not tests (#605)"
 run_test test_declared_test_conventions_honored "declared test_patterns/test_discovery are honored, control still fires (#568)"
 run_test test_test_patterns_works_without_discovery "test_patterns works ALONE and does not stand in for discovery (#568)"
 run_test test_test_discovery_works_without_patterns "test_discovery works ALONE and does not classify the test file (#568)"

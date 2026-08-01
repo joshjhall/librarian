@@ -15,9 +15,22 @@ line — but the debug arms are anchored `^\s*console\.` / `^\s*print\(`, so an
 indented grep line never matched them in the first place. The test passed
 **before and after** the fix while asserting nothing.
 
-The reachable self-match shape was different: a line that *emits* a pattern
-literal (`console.log("grep -nE -- '^\s*console\.(log)\('")`), at line start,
-where the anchor genuinely fires.
+The reachable shape was different: a line that *emits* a pattern literal
+(`console.log("grep -nE -- '^\s*console\.(log)\('")`), at line start, where the
+anchor genuinely fires.
+
+**Sequel (#604) — the reshaped fixture proved the FIX was wrong, not just the
+test.** That line-start shape is not a scanner self-match at all: it is a
+genuine debug statement whose *argument* looks like a regex. Reshaping the
+fixture to reach the guard was fixing the test to match the code
+([[comment-asserts-intent-not-code]]) instead of asking whether the guard should
+exist. It shouldn't have: the debug arms are anchored, so a real scanner's
+literal — always indented inside a grep call — can never self-match, and
+measurement showed the guard suppressed **0 rows** across every scanner in the
+tree while causing a false negative. When a fixture cannot reach a guard, ask
+*whether anything real ever reaches it* before reshaping the fixture until it
+does. Measure the suppression's actual yield — neuter the predicate, diff the
+output — rather than assuming the guard earns its place.
 
 **Why:** a green negative assertion is indistinguishable from a vacuous one. This
 is the same failure mode as [[blocking-empty-is-not-nothing-to-fix]] and

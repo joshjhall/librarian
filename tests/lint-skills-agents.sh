@@ -484,6 +484,30 @@ test_patterns_sh_executable() {
     done < <(command find "$PLUGINS_DIR" -path '*/skills/*' -name "patterns.sh" -type f 2>/dev/null | command sort)
 }
 
+# EVERY bundled .sh under plugins/ is executable — not just skills' patterns.sh.
+#
+# The narrower check above left every sibling script ungated: the scanners a
+# skill body invokes by path (ship-issue/pre-review-gates.sh), the workflow
+# plugin's scripts/, and the bundled hooks/. #604 lost pre-review-gates.sh's
+# executable bit to a `cp`-based restore and nothing caught it — the mode change
+# rode along in the diff, invisible to `git diff --stat` (only `--summary` and
+# the raw diff show a mode line) and outside the patterns.sh glob.
+#
+# These ship to users via `claude plugin install`, where the mode is what the
+# tarball carries. A skill that documents `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh`
+# as a bare invocation breaks outright without the bit; one invoked as
+# `bash foo.sh` merely works by accident. Gate the whole tree so the next
+# accidental chmod fails here rather than in a user's install.
+test_bundled_shell_scripts_executable() {
+    local sh_file rel
+    while IFS= read -r sh_file; do
+        [ -n "$sh_file" ] || continue
+        rel="${sh_file#"$PLUGINS_DIR"/}"
+        assert_true "[ -x '$sh_file' ]" \
+            "Bundled script is not executable: plugins/$rel"
+    done < <(command find "$PLUGINS_DIR" -name '*.sh' -type f 2>/dev/null | command sort)
+}
+
 # --- Workflow Harness Tests -------------------------------------------------
 
 # Every workflow.js `export const meta` block is a pure literal.
@@ -729,6 +753,7 @@ run_test test_check_skill_structure "check-* skills have 5-file structure"
 run_test test_loop_skill_structure "loop-* skills have 5-file structure"
 run_test test_context_skill_structure "context-* skills have 3-file structure"
 run_test test_patterns_sh_executable "patterns.sh files are executable"
+run_test test_bundled_shell_scripts_executable "every bundled .sh under plugins/ is executable (#604)"
 run_test test_workflow_meta_pure_literal "Every workflow.js meta is a pure literal (no concat/interpolation)"
 run_test test_workflow_js_node_check "Every workflow.js passes node --check (syntax valid)"
 run_test test_workflow_js_node_check_detects_syntax_error "node --check guard fires on a syntax error"

@@ -60,7 +60,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 # block is introduced in both of that pair's files; add a whole line when a new
 # duplicated-logic pair appears.
 SHARED_PAIRS=(
-    "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-statement-scan is-test-file scanner-pattern-line"
+    "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-statement-scan is-test-file"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
 )
 

@@ -17,7 +17,7 @@
 # Runtime: Python 3.11+ primary (patterns.py) with this bash script as the
 # portable fallback. The shim below exec's patterns.py when a python3>=3.11 is
 # present (identical TSV contract); PATTERNS_FORCE_BASH=1 forces this bash body.
-# The two `>>> shared:` regions below stay in the bash fallback and are kept
+# The `>>> shared:` regions below stay in the bash fallback and are kept
 # byte-identical with ship-issue/pre-review-gates.sh by
 # tests/validate-shared-scanner-sync.sh — the port does not disturb them.
 # See CLAUDE.md § Key conventions (runtime policy).
@@ -90,41 +90,6 @@ is_test_file() {
 }
 # <<< shared:is-test-file
 
-# >>> shared:scanner-pattern-line (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
-# is_scanner_pattern_line LINE — return 0 (true) when LINE is a detector's own
-# regex SOURCE rather than prose (#599).
-#
-# The ai-slop and debug-statement patterns are written as literals inside the
-# scanners' own `grep`/`re.search` calls, so pointing the pre-scan at a diff
-# that touches a scanner file makes every one of those literals match itself.
-# Measured over the #567 batch, that was every ai-slop row emitted for a scanner
-# file — HIGH certainty, and handed to five reviewers as candidates to
-# adjudicate (#556). Systematic, not incidental: it recurs on every PR that
-# touches a scanner, which is exactly where reviewer attention is worth most.
-#
-# LINE-scoped on purpose, NOT path-scoped. Exempting patterns.sh /
-# pre-review-gates.sh wholesale is simpler but wrong: a genuine hedging phrase
-# in a scanner file's prose comment must still fire. Only the invocation line
-# carrying the quoted pattern is suppressed, so the comment two lines above it
-# is still scanned normally.
-#
-# Two arms, one per scanner runtime — a pattern literal reads differently in
-# each, and the python primary self-matches just as the bash fallback does:
-#   bash    `command grep -niE -- '<pattern>' "$file"`
-#   python  `re.search(r"<pattern>", line)` (also re.match / re.compile)
-# The flag arm is deliberately `-[a-zA-Z]*` (any short-flag cluster) and
-# requires the `--` end-of-options marker plus an opening quote, so an ordinary
-# filtering grep with no pattern literal (e.g. `grep -vE '(logging|logger)'`,
-# which has no `--`) is NOT suppressed.
-is_scanner_pattern_line() {
-    case "$1" in
-        *grep\ -[a-zA-Z]*\ --\ [\'\"]*) return 0 ;;
-        *re.search\(r[\'\"]* | *re.match\(r[\'\"]* | *re.compile\(r[\'\"]*) return 0 ;;
-    esac
-    return 1
-}
-# <<< shared:scanner-pattern-line
-
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -157,6 +122,17 @@ while IFS= read -r file; do
         # This case is a DELIBERATE cross-plugin duplicate: review-audit and
         # workflow install independently, so pre-review-gates.sh cannot source
         # it. Edit both copies together; the drift guard fails CI otherwise.
+        #
+        # NO is_scanner_pattern_line guard here, unlike the ai-slop arms (#604).
+        # Every pattern below is `^\s*`-anchored, and a scanner's own pattern
+        # literal always sits INSIDE a grep invocation indented in a function — so
+        # it can never match line-start. The guard therefore suppressed nothing on
+        # the real scanners (measured: 0 rows) while silently dropping genuine
+        # debug statements whose ARGUMENT happened to look like a regex, e.g.
+        # `print(re.search(r"\d+", data))` in ordinary source. Anchoring is what
+        # prevents self-matching in this region; keep it that way. Adding an
+        # UNANCHORED pattern below would reintroduce the self-match the guard was
+        # for — anchor it, or reconsider the guard for that arm alone.
         case "$file" in
             *.py)
                 # Python: print() used as debug (not in logging context)
@@ -165,7 +141,6 @@ while IFS= read -r file; do
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
-                        is_scanner_pattern_line "$content" && continue
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -176,7 +151,6 @@ while IFS= read -r file; do
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
-                        is_scanner_pattern_line "$content" && continue
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -189,7 +163,6 @@ while IFS= read -r file; do
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
-                        is_scanner_pattern_line "$content" && continue
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -200,7 +173,6 @@ while IFS= read -r file; do
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
-                        is_scanner_pattern_line "$content" && continue
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -213,7 +185,6 @@ while IFS= read -r file; do
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
-                        is_scanner_pattern_line "$content" && continue
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -226,7 +197,6 @@ while IFS= read -r file; do
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
-                        is_scanner_pattern_line "$content" && continue
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
@@ -239,7 +209,6 @@ while IFS= read -r file; do
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
-                        is_scanner_pattern_line "$content" && continue
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "debug-statement" \
