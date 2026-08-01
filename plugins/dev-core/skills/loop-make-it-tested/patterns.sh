@@ -76,25 +76,32 @@ truncate_chars() {
 # genuinely both a CLI and an importable library.
 #
 # Three copies of this logic exist: here, in the sibling patterns.py
-# (_py_public_symbols_gate), and in ship-issue's pre-review-gates.sh. Be precise
-# about which agreements are ENFORCED:
+# (_py_public_symbols_gate), and in ship-issue's pre-review-gates.sh. Both
+# agreements are now mechanically ENFORCED:
 #
 #   this file <-> sibling patterns.py    — PINNED by tests/validate-python-ports.sh
 #                                          (whole-corpus TSV parity), plus the
 #                                          #606 cases in validate-loop-detectors.sh
-#   this file <-> pre-review-gates.sh    — NOT mechanically checked. Manual.
+#   this file <-> pre-review-gates.sh    — PINNED by the `shared:py-public-symbols`
+#                                          region below, compared line-for-line by
+#                                          tests/validate-shared-scanner-sync.sh (#609)
 #
 # The cross-plugin pair cannot share a sourced library (CLAUDE_PLUGIN_ROOT is
-# plugin-scoped and `workflow` installs without `dev-core`), so the duplication
-# is deliberate — but unlike the check-code-health/pre-review-gates pair, it
-# carries no `# >>> shared:<region>` sentinels and is therefore invisible to
-# tests/validate-shared-scanner-sync.sh. A fix applied to only one copy will
-# drift silently. Extending that gate to this pair is filed as follow-up work;
-# until it lands, edit all three together by hand.
+# plugin-scoped and `workflow` installs without `dev-core`), so the duplication is
+# deliberate. Edit all three copies together: the two gates above will fail the
+# build on a one-sided change, but neither can make the edit for you.
+#
+# Only the sentinel-bracketed FUNCTION BODIES are compared — this doc comment is
+# outside the region and deliberately differs from pre-review-gates.sh's, which
+# carries additional #600/#606 rationale. Comments INSIDE the region are compared
+# like any other line.
+# >>> shared:py-public-symbols (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
 py_public_symbols_gate() {
     local file="$1" all_names
 
-    # `__all__ = [...]` / `(...)`, possibly spanning lines.
+    # `__all__ = [...]` / `(...)`, possibly spanning lines. Take from the first
+    # __all__ assignment to the closing bracket, then keep only the quoted
+    # names. A module with __all__ answers `all:` even if it is ALSO guarded.
     #
     # awk, not `sed -n '/start/,/end/p'`: a sed range looks for its END pattern
     # starting at the line AFTER the start, so a single-line `__all__ = ["x"]`
@@ -146,6 +153,7 @@ py_symbol_is_public() {
         *) return 0 ;;
     esac
 }
+# <<< shared:py-public-symbols
 
 while IFS= read -r file; do
     [ -f "$file" ] || continue

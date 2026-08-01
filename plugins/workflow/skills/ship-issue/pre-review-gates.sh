@@ -922,6 +922,12 @@ EOF
 # Callers MUST resolve this ONCE per source file: it is a property of the
 # module, not of the symbol, so recomputing it inside the per-def loop would
 # re-read the whole file once per export for an answer that cannot change.
+#
+# Only the sentinel-bracketed FUNCTION BODIES are compared — this doc comment is
+# outside the region and deliberately differs from the dev-core copy's, which
+# carries the three-copy enforcement table instead of the #600/#606 rationale
+# above. Comments INSIDE the region are compared like any other line.
+# >>> shared:py-public-symbols (kept in sync with loop-make-it-tested/patterns.sh by tests/validate-shared-scanner-sync.sh)
 py_public_symbols_gate() {
     local file="$1" all_names
 
@@ -979,6 +985,7 @@ py_symbol_is_public() {
         *) return 0 ;;
     esac
 }
+# <<< shared:py-public-symbols
 
 scan_untested_public_api() {
     local file="$1"
