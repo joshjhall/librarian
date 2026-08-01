@@ -100,6 +100,39 @@ test_workflow_authority_asserted() {
         "ship-issue/SKILL.md must point at the Workflow authority rule (#637 AC1)"
 }
 
+# --- 1b. AC1: the INVOCATION SITES cite the authority ----------------------
+#
+# The observed failure happened at a call site: a golem read an "Invoke the
+# `Workflow` tool" step in isolation and re-derived the permission question
+# there. A standalone authority section in ship-protocol.md does not help a
+# reader who never navigates to it, so the inline citation next to each
+# invocation is the load-bearing part of AC1 — assert it directly rather than
+# trusting that the summary docs imply it.
+#
+# Mutation check: delete the "already opted in" citation from either
+# invocation site -> this case fails for that file.
+
+test_invocation_sites_cite_authority() {
+    local pre ci f
+    pre="$(find_pre_ship)"
+    ci="$(find_ci_review)"
+    if [ -z "$pre" ] || [ -z "$ci" ]; then
+        skip_test "pre-ship-validation.md / ci-review-protocol.md not found"
+        return
+    fi
+
+    # Every file that tells the reader to invoke Workflow must, in that same
+    # file, say the call is already opted in and name where the rule lives.
+    for f in "$pre" "$ci"; do
+        assert_true "command grep -qiE 'Invoke the .?\`?Workflow\`?.? tool' '$f'" \
+            "$(basename "$f"): expected a Workflow invocation step (positive control, #637 AC1)"
+        assert_true "command grep -qiE 'already opted in' '$f'" \
+            "$(basename "$f"): each Workflow invocation site must say the call is already opted in (#637 AC1)"
+        assert_true "command grep -qi 'Workflow authority' '$f'" \
+            "$(basename "$f"): each invocation site must cite ship-protocol.md § Workflow authority (#637 AC1)"
+    done
+}
+
 # --- 2. AC2: "unavailable" is narrowed to mechanical failure ----------------
 #
 # Mutation check: delete the permission-exclusion sentence from either clause
@@ -219,6 +252,7 @@ test_target_files_present() {
 
 run_test test_target_files_present "ship-issue contract files present (positive control)"
 run_test test_workflow_authority_asserted "Workflow opt-in authority is asserted once (#637 AC1)"
+run_test test_invocation_sites_cite_authority "Workflow invocation sites cite the authority (#637 AC1)"
 run_test test_degradation_excludes_permission_doubt "Degradation clauses exclude permission doubt (#637 AC2)"
 run_test test_degradation_forbids_substitute_review "Degradation clauses forbid a substitute review (#637 AC2)"
 run_test test_review_status_enum_has_skipped "Review status enum carries 'skipped' (#637 AC3)"
