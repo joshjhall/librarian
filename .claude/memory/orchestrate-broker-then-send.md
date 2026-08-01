@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 8ad52384-dc1c-4058-b9f5-e2707af84d8f
+  modified: 2026-08-01T04:13:40.065Z
 ---
 
 At an `/orchestrate` L1–L3 plan gate, the flow is **broker → human decides → the orchestrator sends the
@@ -22,6 +23,5 @@ ACCEPTED once the operator explicitly authorizes it (e.g. "approve all plan gate
 the wall (confirmed 2026-07-15, Batch 3/4).
 
 **The `#29` "human keystroke / real TTY" doc language is misleading** — it's really about an agent *relaying
-option 1 through the auto-mode classifier*, NOT `tmux send-keys` from the live session. Filed [[#280]] (clarify
-SKILL wording), #281 (verify send-keys is agent-drivable / #29 stale), #282 (classifier non-determinism). See
-[[orchestrate-session-handoff]].
+option 1 through the auto-mode classifier*, NOT `tmux send-keys` from the live session. Filed #280 (clarify
+SKILL wording), #281 (verify send-keys is agent-drivable / #29 stale), #282 (classifier non-determinism).

@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 1ac0f375-23a6-4d60-93e2-6e59f911c353
+  modified: 2026-08-01T04:13:40.340Z
 ---
 
 The pre-scan tools ship bash + python impls that must be byte-identical. Two
@@ -31,5 +32,4 @@ en_US.UTF-8, so this is not hit in practice — but keep it in mind before
 
 Also fixed in #187: check-docs-examples aborted mid-scan under `set -euo
 pipefail` when a code-block line's `grep` found no match (a `$()` non-zero killed
-the whole scan, silently dropping later findings). Guarded with `|| true`. See
-[[lint-gates-per-language]] for the surrounding lint/gate setup.
+the whole scan, silently dropping later findings). Guarded with `|| true`.

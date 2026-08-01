@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 10478e43-b9c4-4a7c-a620-83c6efd01629
-  modified: 2026-07-21T21:08:00.383Z
+  modified: 2026-08-01T04:13:40.208Z
 ---
 
 Golems repeatedly wedge in the `/ship-issue` pre-PR `next-issue-review` harness:
@@ -22,7 +22,7 @@ work → rebase → `run-all.sh` → push+PR).
    to background-invoke the harness, poll `TaskOutput`, and `TaskStop` at the
    ceiling. No mechanical enforcement. A model deep in review doesn't reliably
    self-stop. Same class as the pre-0.6 `MAX_CYCLES`-in-prose cap-drift
-   ([[orchestrate-session-handoff]] golem-266). `git grep
+   (observed live on golem-266). `git grep
    LIBRARIAN_WORKFLOW_WALL_TIMEOUT origin/main` → only `.md` +
    `recover-journal-partials.sh` (a recovery helper, not an enforcement path).
 2. **Installed `/opt/librarian` (0.6.1) predates #307 entirely** — golems run the

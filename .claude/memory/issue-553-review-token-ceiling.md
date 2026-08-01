@@ -57,4 +57,4 @@ which owns a blocking judge rule at `workflow.js:552-554`), #552 (mechanize #492
 narrowing — PARKED, measurement shows low value).
 
 Related: [[two-runtime-model]], [[workflow-js-no-clock]],
-[[token-burn-audit-2026-07-21]], [[issue-492-rereview-narrowing]]
+[[token-burn-audit-2026-07-21]], [[issue-492-review-narrowing]]

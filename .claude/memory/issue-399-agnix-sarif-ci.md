@@ -6,6 +6,9 @@ metadata:
   type: project
   originSessionId: 8f06375c-d241-424f-9c24-0aa4df7251ff
   modified: 2026-07-21T03:55:00.113Z
+  status: stable
+  stale_after: 2026-10-31
+  stale_check: "the agnix `0.40.0` pin — verify against `.agnix.toml` + code-scanning.yml before relying on it; the workflow design does not expire"
 ---
 
 # 399 SHIPPED as PR #460 (2026-07-20, L3). New `.github/workflows/code-scanning.yml`

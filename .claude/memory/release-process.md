@@ -5,12 +5,16 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
-  modified: 2026-07-31T17:38:08.519Z
+  modified: 2026-08-01T04:35:04.088Z
+  status: stable
+  stale_after: 2026-10-31
+  stale_check: "the \"Latest: vX.Y.Z\" line — re-read from `gh api repos/joshjhall/librarian/releases/latest -q .tag_name`; the recipe below does not expire"
 ---
 
 Librarian has a repo-level semver release flow (added in PR #35, issue #31;
-first release v0.1.0 published 2026-06-28). Latest: **v0.8.3** (2026-07-31, patch
-— 23 commits since v0.8.2, all fix/docs/refactor/test/ci, zero `feat`; PR #611).
+first release v0.1.0 published 2026-06-28). For the current release, read it
+live — `gh api repos/joshjhall/librarian/releases/latest -q .tag_name` — rather
+than trusting a version written here (v0.8.3 was latest on 2026-07-31).
 NOTE: always check the range's commit types before cutting — on v0.8.0
 `just release-patch` was requested but the range had 12 `feat` commits → semver
 says **minor**; flag the bump mismatch before cutting.

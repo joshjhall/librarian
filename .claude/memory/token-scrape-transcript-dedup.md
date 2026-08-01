@@ -27,7 +27,7 @@ aren't "work".
 
 **Scope:** Mode 2 worktree golems only (transcript host-readable). Mode 3
 container transcripts are in-container → row shows `n/a (… see #390)`; host-side
-HTTP-POST propagation = follow-up [[#390]]. Deferred coverage/README = #392.
+HTTP-POST propagation = follow-up #390. Deferred coverage/README = #392.
 
 **Frozen-since bookkeeping:** carry `top_level_tokens_at` forward byte-identically
 while the count is unchanged, reset to now() only when it moves. A substring test

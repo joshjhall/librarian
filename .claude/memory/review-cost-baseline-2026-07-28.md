@@ -6,6 +6,9 @@ metadata:
   type: project
   originSessionId: b03da476-855a-4340-a1de-499a566aea26
   modified: 2026-07-29T03:02:10.161Z
+  status: stable
+  stale_after: 2026-10-31
+  stale_check: "a frozen measurement, valid only as the BEFORE half of the #553/#550/#551 comparison — do not read as current cost"
 ---
 
 Frozen baseline of the ship-issue adversarial review harness **before** any

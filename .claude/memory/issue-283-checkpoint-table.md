@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 2ee5cc43-9890-496a-924c-3cd117d9ac0d
-  modified: 2026-07-19T14:48:46.454Z
+  modified: 2026-08-01T04:13:39.804Z
 ---
 
 Issue #283 SHIPPED as PR #414 (2026-07-19, on a worktree from main, L2). Added a
@@ -60,4 +60,4 @@ locally so each cycle ran 20-60 min.
 
 Rebased onto origin/main (conflicted with #413 which also touched
 golem-status.sh + validate-golem-scripts.sh — both additive, kept both sides;
-merged suite = 105/105). See [[orchestrate-session-handoff]].
+merged suite = 105/105).

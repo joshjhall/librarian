@@ -19,7 +19,7 @@ needs a Workflow-tool/runtime change, not a plugin edit.
 
 **What shipped (fix on branch feature/issue-327, L3 run):** mechanize the
 *decision*, not the kill — new bundled `plugins/workflow/scripts/workflow-wall-timeout.sh`
-(bash-only, no python port like [[recover-journal-partials]]) with a `check
+(bash-only, no python port like `recover-journal-partials.sh`) with a `check
 --elapsed-min N --level L --extensions-used K` subcommand returning
 `verdict=continue|extend|stop|checkpoint` + ceiling/next_deadline/extensions_used.
 Reads the same `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` (20) / `_MAX_EXTENSIONS` (1)
