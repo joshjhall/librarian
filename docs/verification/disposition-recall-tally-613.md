@@ -67,13 +67,42 @@ than smoothing over.
 
 ## Status
 
-**Cycles tallied: 0 of ~10.** No rows yet — the instrument landed with this file,
-so the first rows come from the review cycles of the PR that introduced it and
-any subsequent shipped issue.
+**Cycles tallied: 1 of ~10.** The instrument landed with this file, so the first
+row is the review cycle of the PR that introduced it.
 
 | # | issue | tier | files | +/- | cycle | total | blocking | `by_nature` | `by_rule` | deferred defect? |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| *(none yet)* | | | | | | | | | | |
+| 0 | 613 | small code+test+docs | 4 | +366/-10 | 1 | 3 | 0 | improvement 3 | R2 1, R4 2 | **no** — 3 real improvements, all fixed anyway |
+
+### Row 0 notes
+
+The instrument's first live run, on its own PR — which is also the first evidence
+it works: `by_nature` and `by_rule` came back populated and internally consistent
+(`R2 1 + R4 2 = 3 = total_findings`, and `sum(by_nature) == total_findings`, so
+the judge characterized every finding).
+
+`blocking: []` with `clean: true`, and per the standing rule all three
+deferrables were read on merit anyway. **None was a defect in new code** — the
+deferred-defect check is a genuine `no`, not a miss:
+
+1. `tallyBy` used a plain `{}` accumulator with LLM-supplied keys. Judged
+   `improvement` at LOW certainty (0.2) and framed as prototype pollution.
+   Confirmed real on a different axis than the finding argued: on `{}` a
+   `__proto__` value is **silently swallowed** by the inherited setter (no own
+   key, no count, no error) and `constructor` string-concatenates into
+   `"function Object() { [native code] }1"`. That is data loss in a counting
+   function. Fixed with `Object.create(null)`.
+2. The live composition of `by_nature`/`by_rule` was untested — it sat past
+   `ORCH_BOUNDARY` where `extractHelpers` cannot reach. Extracted to
+   `summarizeJudgeObservations` and unit-tested. A residual gap remains and is
+   documented at the test site rather than implied away.
+3. This file's name did not match the documented `<skill>-e2e-<issue>.md`
+   pattern. It genuinely is a running tally rather than an e2e report, so
+   `CLAUDE.md` now documents both artifact shapes.
+
+**One row proves nothing about recall** — a `no` on a diff this size is the
+expected outcome, and finding 1 in particular is the kind an `improvement` call
+fits reasonably well. Recorded as a baseline, not as evidence.
 
 ## Verdict
 

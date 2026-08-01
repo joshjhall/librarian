@@ -29,9 +29,12 @@ plugins/
 tests/validate-manifests.mjs      # zero-dep manifest validator (CI + pre-commit/pre-push)
 tests/lib/                        # shared harness, assertions, per-suite sandboxes
 tests/<suite>/                    # per-area fragments of a split suite (see below)
-docs/verification/                # end-to-end verification reports for issues that
-                                  #   can't be fully exercised in-session; one file
-                                  #   per issue, named <skill>-e2e-<issue>.md
+docs/verification/                # evidence for issues that can't be fully
+                                  #   exercised in-session; one file per issue.
+                                  #   Two shapes: a completed end-to-end report,
+                                  #   <skill>-e2e-<issue>.md; or a running tally
+                                  #   accumulating live data over many sessions,
+                                  #   <topic>-tally-<issue>.md (open until filled)
 containers/                       # pinned submodule — builds the devcontainer only
 ```
 

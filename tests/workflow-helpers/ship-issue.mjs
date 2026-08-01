@@ -34,6 +34,7 @@ export function run() {
       applyJudgeVerdicts,
       dispositionOf,
       tallyBy,
+      summarizeJudgeObservations,
       NATURE_VALUES,
       DISPOSITION_RULES,
     } = extractHelpers(
@@ -54,6 +55,7 @@ export function run() {
         "applyJudgeVerdicts",
         "dispositionOf",
         "tallyBy",
+        "summarizeJudgeObservations",
         "NATURE_VALUES",
         "DISPOSITION_RULES",
       ],
@@ -452,6 +454,84 @@ export function run() {
       // future fifth nature degrades to "missing its zero row", not "invisible".
       const unknown = tallyBy(["surprise"], NATURE_VALUES);
       eq(unknown["surprise"], 1, "tallyBy: an unknown value is counted, not silently dropped (#613)");
+
+      // `nature` is LLM-supplied, so a prototype-adjacent value must count like
+      // any other string. On a plain `{}` the inherited `__proto__` setter
+      // ignores a numeric assignment and the value is SILENTLY SWALLOWED — no
+      // own key, no count, no error — which is precisely the "never dropped"
+      // property above, failing on the one input most likely to be adversarial.
+      // A null-prototype accumulator has no such setter. (Review cycle 1.)
+      const proto = tallyBy(["__proto__", "__proto__", "constructor"], NATURE_VALUES);
+      eq(proto["__proto__"], 2, "tallyBy: a __proto__ value is counted, not swallowed by the setter (#613)");
+      eq(proto["constructor"], 1, "tallyBy: a constructor value is counted as an ordinary key (#613)");
+      // And the real prototype is untouched — the accumulator inherits nothing.
+      eq(Object.getPrototypeOf(proto), null, "tallyBy: accumulator has a null prototype (#613)");
+      eq(({}).__proto__, Object.prototype, "tallyBy: Object.prototype is not polluted (#613)");
+    }
+
+    // (e2) summarizeJudgeObservations: the two distributions, composed.
+    //
+    // Extracted from the return object so this composition is testable at all —
+    // that `rawFindings` genuinely carry `.nature` / `.disposition_rule` by the
+    // time they are counted is the part that can silently regress, and it was
+    // previously only reachable by running the whole harness. (Review cycle 1.)
+    //
+    // KNOWN GAP, stated rather than implied: the single `...summarize…(rawFindings)`
+    // spread in the harness's return object sits past ORCH_BOUNDARY, so
+    // extractHelpers cannot reach it and no assertion here covers it. Replacing
+    // that call with `tallyBy([], …)` still passes this suite. What the extraction
+    // buys is that the LOGIC is now pinned; the one-line wiring is verified by the
+    // live harness run instead (a cycle whose summary reports non-zero counts).
+    {
+      // Compose the two units the way the harness does: judge verdicts in,
+      // distributions out — so a break in the wiring between them is caught.
+      const findings = [
+        mkFinding("s#0", "HIGH", 0.9),
+        mkFinding("s#1", "LOW", 0.2),
+        mkFinding("s#2", "MEDIUM", 0.6),
+      ];
+      applyJudgeVerdicts(
+        findings,
+        {
+          verdicts: [
+            { ref: "s#0", certainty: { level: "HIGH", confidence: 0.9 }, nature: "improvement", rationale: "a" },
+            { ref: "s#1", certainty: { level: "LOW", confidence: 0.2 }, nature: "defect-in-new-code", rationale: "b" },
+            { ref: "s#2", certainty: { level: "MEDIUM", confidence: 0.6 }, nature: "improvement", rationale: "c" },
+          ],
+        },
+        false,
+      );
+      const s = summarizeJudgeObservations(findings);
+      eq(s?.by_nature?.["improvement"], 2, "summarizeJudgeObservations: counts nature off the stamped findings (#613)");
+      eq(
+        s?.by_nature?.["defect-in-new-code"],
+        1,
+        "summarizeJudgeObservations: counts a nature the deciding rule never names (#613)",
+      );
+      eq(s?.by_nature?.["incomplete-work"], 0, "summarizeJudgeObservations: unseen nature present at zero (#613)");
+      eq(s?.by_rule?.["R2-low-certainty"], 1, "summarizeJudgeObservations: counts the deciding rule (#613)");
+      eq(s?.by_rule?.["R4-improvement"], 2, "summarizeJudgeObservations: counts repeated rules (#613)");
+      eq(s?.by_rule?.["R8-defect-in-new-code"], 0, "summarizeJudgeObservations: unfired rule present at zero (#613)");
+
+      // A finding the judge skipped contributes to NEITHER distribution, so the
+      // counts never exceed what the judge actually observed — and the gap from
+      // total_findings stays readable as "not every finding was characterized".
+      const withGap = [mkFinding("g#0", "HIGH", 0.9), mkFinding("g#1", "HIGH", 0.9)];
+      applyJudgeVerdicts(
+        withGap,
+        {
+          verdicts: [
+            { ref: "g#0", certainty: { level: "HIGH", confidence: 0.9 }, nature: "improvement", rationale: "a" },
+          ],
+        },
+        false,
+      );
+      const gapped = summarizeJudgeObservations(withGap);
+      eq(
+        Object.values(gapped?.by_nature || {}).reduce((a, b) => a + b, 0),
+        1,
+        "summarizeJudgeObservations: an unjudged finding contributes to no bucket (#613)",
+      );
     }
 
     // (f) emptyResult carries both distributions, zeroed — a zero-finding cycle

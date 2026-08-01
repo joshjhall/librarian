@@ -519,8 +519,16 @@ const DISPOSITION_RULES = [
 // and a rule that never fires in production is exactly the signal #613 wants
 // (it is either dead or mis-ordered). Unknown values are counted under their own
 // key rather than dropped (see the NATURE_VALUES note above).
+// `Object.create(null)`, not `{}`, because `values` carries LLM-supplied strings
+// (`nature` comes straight off the judge's verdict). On a plain object literal
+// `out['__proto__'] = n` hits the inherited setter, which ignores a numeric
+// assignment — so that value is silently SWALLOWED: no own key, no count, no
+// error. That is the one outcome a counting function must not have, and it would
+// break the "unknown values are counted, never dropped" property directly above.
+// A null-prototype object has no such setter, so every key is an ordinary own
+// property and the count is honest whatever the judge emits.
 const tallyBy = (values, keys) => {
-  const out = {}
+  const out = Object.create(null)
   for (const k of keys) out[k] = 0
   for (const v of values) {
     if (v === undefined || v === null) continue
@@ -528,6 +536,21 @@ const tallyBy = (values, keys) => {
   }
   return out
 }
+
+// The two #613 distributions for one cycle. Extracted here — before the
+// orchestration body, like `computeClean` and `applyJudgeVerdicts` — so the
+// composition is unit-testable: that `rawFindings` really do carry `.nature` /
+// `.disposition_rule` by the time they are counted is the part that can silently
+// regress, and inline in the return object it could only be tested by running
+// the whole harness.
+//
+// Reads the WHOLE finding set, blocking and deferrable alike: the question this
+// measurement exists to answer is whether the deferrable bucket is holding real
+// new-code defects, which a blocking-only count cannot see.
+const summarizeJudgeObservations = (rawFindings) => ({
+  by_nature: tallyBy(rawFindings.map((f) => f.nature), NATURE_VALUES),
+  by_rule: tallyBy(rawFindings.map((f) => f.disposition_rule), DISPOSITION_RULES),
+})
 
 // Single fresh-judge pass: for each finding (keyed by its unique `ref`, stamped
 // before the judge runs) return BOTH an independently re-scored certainty AND
@@ -1599,10 +1622,7 @@ return {
     by_disposition: { blocking: blocking.length, deferrable: deferrable.length },
     by_severity: bySeverity,
     // The two #613 recall measures, counted per cycle so the operator does not
-    // hand-parse every finding to tally them. Both read from the whole
-    // `rawFindings` set — blocking AND deferrable — because the question the
-    // measurement exists to answer is whether the deferrable bucket is holding
-    // real new-code defects, which a blocking-only count cannot see.
+    // hand-parse every finding to tally them (see summarizeJudgeObservations).
     //
     // A finding the judge omitted (or a null-judge cycle) carries neither field;
     // those are skipped rather than bucketed, so the counts never invent an
@@ -1610,8 +1630,7 @@ return {
     // denominator — deliberately, so `sum(by_nature) < total_findings` is
     // readable as "the judge did not characterize every finding", which is
     // itself a signal worth seeing rather than one to paper over.
-    by_nature: tallyBy(rawFindings.map((f) => f.nature), NATURE_VALUES),
-    by_rule: tallyBy(rawFindings.map((f) => f.disposition_rule), DISPOSITION_RULES),
+    ...summarizeJudgeObservations(rawFindings),
   },
   // What this cycle actually cost, reported ALWAYS — including (especially) on
   // unbounded runs (#553). Sizing a ceiling from guesswork is how you get a
