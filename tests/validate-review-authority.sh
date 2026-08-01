@@ -246,19 +246,38 @@ test_review_status_enum_has_skipped() {
 # -> this case fails.
 
 test_skipped_review_blocks_auto_merge() {
-    local f
+    local f para
     f="$(find_execute_protocol)"
     if [ -z "$f" ]; then
         skip_test "execute-protocol.md not found"
         return
     fi
 
-    assert_true "command grep -qiE 'skipped review is not a clean review|skipped rather than run' '$f'" \
-        "execute-protocol.md must state a skipped review fails the merge invariant (#637 AC3)"
-    assert_true "command grep -qiE 'never auto-merge|do \*\*NOT\*\* merge' '$f'" \
-        "a skipped review must be bound to the never-auto-merge rule (#637 AC3)"
-    assert_true "command grep -q 'status/pr-pending' '$f'" \
-        "a skipped review must park the PR with status/pr-pending (#637 AC3)"
+    # Slice the skip paragraph. `status/pr-pending` appears SEVEN times in this
+    # file (the L3-L4 and L1-L2 labeling steps, unrelated to the skip case), so
+    # a whole-file grep for it passes even if the skip clause drops its park
+    # instruction entirely. Same scoping the Option 2 and cap-exhaustion cases
+    # already use; this case was left unscoped until cycle 5 caught it.
+    para="$(command awk '
+        done_slice { next }
+        /A skipped review is not a clean review/ { inpara = 1 }
+        inpara && /^[[:space:]]*$/ { done_slice = 1; next }
+        inpara { print }
+    ' "$f")"
+
+    assert_not_empty "$para" \
+        "execute-protocol.md must carry the skipped-is-not-clean paragraph (#637 AC3)"
+    assert_true "printf '%s' \"\$para\" | command grep -qiE 'stopped-with-blocking'" \
+        "the skip clause must equate a skip with stopped-with-blocking (#637 AC3)"
+    assert_true "printf '%s' \"\$para\" | command grep -qiE 'never auto-merge|do \*\*NOT\*\* merge'" \
+        "the skip clause must carry the never-auto-merge rule (#637 AC3)"
+    assert_true "printf '%s' \"\$para\" | command grep -q 'status/pr-pending'" \
+        "the skip clause itself must park the PR with status/pr-pending (#637 AC3)"
+
+    # The merge invariant must also name the skip as a dead-end trigger; that
+    # sentence lives outside the paragraph above, so check it file-level.
+    assert_true "command grep -qiE 'skipped rather than run' '$f'" \
+        "the merge invariant must list a skipped review as a dead-end (#637 AC3)"
 }
 
 # --- 5b. AC3: the skip gate covers Option 2's push, not just Option 1 -------
