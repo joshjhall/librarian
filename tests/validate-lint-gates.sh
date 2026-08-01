@@ -35,6 +35,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINT_PYTHON="$SCRIPT_DIR/lint-python.sh"
+LINT_SHELLCHECK="$SCRIPT_DIR/lint-shellcheck.sh"
 RUN_ALL="$SCRIPT_DIR/run-all.sh"
 
 REAL_BASH="$(command -v bash)"
@@ -316,11 +317,59 @@ test_run_stage_still_renders_pass_and_fail() {
 
 # --- Wiring: the sentinel constant stays in sync ----------------------------
 
-test_sentinel_constant_agreed_by_both_scripts() {
+test_sentinel_constant_agreed_by_every_script() {
     assert_file_contains "$LINT_PYTHON" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
         "lint-python.sh defines the shared skip sentinel"
+    assert_file_contains "$LINT_SHELLCHECK" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
+        "lint-shellcheck.sh defines the same skip sentinel (#571)"
     assert_file_contains "$RUN_ALL" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
         "run-all.sh defines the same skip sentinel"
+}
+
+# --- The shell gate's own skip path (#571) -----------------------------------
+#
+# lint-shellcheck.sh used to `exit 0` when shellcheck was absent, so run-all.sh
+# rendered `[ok] Shellcheck (bundled shell scripts)` — byte-identical to a real
+# pass — for a gate that never ran. Same inert-gate defect #538 fixed for the
+# Python gate; CI installs shellcheck, so it was a local-host reporting hole
+# that no CI run could catch.
+#
+# The constant check above is grep-level and would still pass if the exit path
+# were wrong. This runs the REAL gate under a PATH with no shellcheck and pins
+# the observable contract: rc 77, and a message that says it did not run.
+test_shellcheck_gate_skips_with_sentinel() {
+    local sb out rc=0
+    stub_dir sb || return 1 # no shellcheck planted
+
+    out="$(/usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+        PATH="$sb/bin" "$REAL_BASH" "$LINT_SHELLCHECK" 2>&1)" || rc=$?
+
+    assert_equals "$SKIP_SENTINEL" "$rc" \
+        "an absent shellcheck exits the reserved skip sentinel, not 0 (#571)"
+    assert_contains "$out" "GATE DID NOT RUN" \
+        "the skip message states the gate did not run (#571)"
+    assert_true "! printf '%s' \"$out\" | command grep -q 'Failed:  [1-9]'" \
+        "a skip is not reported as a failure (#571)"
+}
+
+# The other half of the contract: with shellcheck present the gate must actually
+# run and lint something. Without this, deleting the corpus entirely would still
+# satisfy the skip test above — the gate would be inert in a new way.
+test_shellcheck_gate_runs_when_available() {
+    local out rc=0
+    command -v shellcheck >/dev/null 2>&1 || {
+        skip_test "shellcheck not installed — cannot exercise the ran-for-real arm"
+        return 0
+    }
+
+    out="$(/usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$LINT_SHELLCHECK" 2>&1)" || rc=$?
+
+    assert_equals "0" "$rc" "the gate passes on this repo's scripts"
+    assert_true "! printf '%s' \"$out\" | command grep -q 'GATE DID NOT RUN'" \
+        "a real run does not report itself as skipped"
+    assert_true "printf '%s' \"$out\" | command grep -qE 'Passed:  [1-9]'" \
+        "the gate actually linted something (corpus is non-empty)"
 }
 
 # post-create.sh is the "suspenders" half of the fix — a fresh container must end
@@ -1041,7 +1090,9 @@ run_test test_skip_message_says_it_did_not_run "the skip message says the gate d
 run_test test_run_stage_renders_skip_not_ok "run_stage renders a 77 stage as [SKIP], not [ok]"
 run_test test_run_stage_skip_does_not_fail_suite "a skipped stage does not fail the suite"
 run_test test_run_stage_still_renders_pass_and_fail "pass/fail rendering is undisturbed"
-run_test test_sentinel_constant_agreed_by_both_scripts "the skip sentinel agrees across both scripts"
+run_test test_sentinel_constant_agreed_by_every_script "the skip sentinel agrees across all three scripts (#571)"
+run_test test_shellcheck_gate_skips_with_sentinel "an absent shellcheck exits 77, not 0 (#571)"
+run_test test_shellcheck_gate_runs_when_available "the shell gate really runs when shellcheck is present (#571)"
 run_test test_post_create_ensures_ruff "post-create.sh installs and verifies ruff"
 run_test test_justfile_shares_ruff_resolution "just lint shares the ruff→uvx runner resolution (#544)"
 run_test test_justfile_recipe_body_executes "the just lint recipe body actually parses and resolves (#544)"

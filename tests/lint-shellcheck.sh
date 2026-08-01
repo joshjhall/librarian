@@ -8,9 +8,11 @@
 # (which bans bash-4 constructs for macOS bash-3.2) with shellcheck's broader
 # correctness/quoting analysis.
 #
-# Skips gracefully when shellcheck is absent (bare host without the devcontainer's
-# tooling), mirroring the node/jq skips in run-all.sh — CI installs shellcheck so
-# the gate actually runs there.
+# When shellcheck is absent (bare host without the devcontainer's tooling) the
+# gate exits the reserved sentinel 77, which run-all.sh renders `[SKIP] … did not
+# run` rather than `[ok]` (#571, the same inert-gate fix #538 made for the Python
+# gate). A silent skip is indistinguishable from a pass, which is how a gate can
+# sit inert unnoticed. CI installs shellcheck so the gate actually runs there.
 #
 # Scope: plugins/ tests/ bin/ only. The containers/ submodule is a separate repo
 # with its own CI — out of scope here.
@@ -25,10 +27,14 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 test_suite "Shellcheck (bundled shell scripts)"
 
+# Reserved exit code meaning "this gate did NOT run" (autotools SKIP convention).
+# run-all.sh renders it as [SKIP] instead of [ok] and does not fail the suite.
+SKIP_EXIT_CODE=77
+
 if ! command -v shellcheck >/dev/null 2>&1; then
-    skip_test "shellcheck not available (install shellcheck to lint the shell scripts)"
+    skip_test "GATE DID NOT RUN — shellcheck not available (install shellcheck to lint the shell scripts)"
     generate_report
-    return 0 2>/dev/null || exit 0
+    return "$SKIP_EXIT_CODE" 2>/dev/null || exit "$SKIP_EXIT_CODE"
 fi
 
 # List librarian-proper shell scripts (absolute paths, sorted). Excludes the

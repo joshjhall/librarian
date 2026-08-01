@@ -166,19 +166,21 @@ bash-3.2 target); **Python** → `tests/lint-python.sh` (`ruff check` +
 see `.github/workflows/ci.yml`. `ruff`, `shellcheck`, and `shfmt` also run in the
 lefthook pre-commit hook.
 
-**The gates degrade differently when a tool is absent — do not read "skip" as
-one behavior.** The Python gate resolves a runner `ruff` on PATH → **probed**
-`uvx ruff` → skip (#538); the probe matters because `uvx` can be installed but
-offline/uncached, where an unprobed call would hard-fail instead of skipping.
-When neither resolves it exits the reserved sentinel **77**, which `run-all.sh`
-renders `[SKIP] … did not run` rather than `[ok]` — a silent skip is
-indistinguishable from a pass, which is how that gate once sat inert unnoticed.
-The shell gate still exits 0 on a missing `shellcheck`, so it renders `[ok]` —
-tracked as #571, and not pinned by a test until that lands. `just lint` shares
-the Python gate's ruff→uvx resolution (#544), so the two documented entry points
-agree on a uvx-only host. `tests/validate-lint-gates.sh` is the meta-gate pinning
-all of this — runner resolution, the skip sentinel, the justfile fallback, and
-that a hanging `uvx` probe cannot wedge either entry point.
+**A gate whose tool is absent exits the reserved sentinel 77 — never 0.**
+`run-all.sh` renders 77 as `[SKIP] … did not run` rather than `[ok]`, because a
+silent skip is indistinguishable from a pass, which is how a gate can sit inert
+unnoticed (#538 for Python, #571 for shell — both now on the sentinel). This is
+a **whole-gate** signal: a per-case `skip_test` inside one test function (as in
+`tests/lint-shell-portability.sh`'s `mktemp` guards) is a different thing and
+correctly leaves the rest of the gate running. Runner resolution differs by
+language — the Python gate goes `ruff` on PATH → **probed** `uvx ruff` → skip,
+where the probe matters because `uvx` can be installed but offline/uncached and
+an unprobed call would hard-fail instead of skipping; the shell gate simply looks
+for `shellcheck`. `just lint` shares the Python gate's ruff→uvx resolution
+(#544), so the two documented entry points agree on a uvx-only host.
+`tests/validate-lint-gates.sh` is the meta-gate pinning all of this — runner
+resolution, both gates' skip sentinel, the justfile fallback, and that a hanging
+`uvx` probe cannot wedge either entry point.
 
 **The ruff version is pinned in exactly one place** (#542): `required-version`
 at the **top level** of `ruff.toml` (under a `[table]` ruff rejects it as an

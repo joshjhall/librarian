@@ -82,6 +82,53 @@ read_yaml_list() {
         command sed '/^$/d'
 }
 
+# filter_test_discovery LIST — the `test_discovery` entries that are actually
+# templates, dropping any that carry no `{name}` placeholder (#601).
+#
+# An entry without `{name}` is not a template, it is a CONSTANT: it resolves to
+# the same path for every source file, so if that path exists, has_declared_test()
+# is true for everything and scan_missing_tests returns early for the WHOLE run —
+# a silent false negative that takes the category to zero rows while the scan
+# still exits 0 and still prints its other categories.
+#
+# The shape that triggers it is the natural way to reach for this key ("map this
+# one oddly-named test to its source"), which is why it is rejected loudly here
+# rather than documented as a caveat. A genuine per-source mapping needs its own
+# config key with an explicit source side; this key is templates only.
+#
+# Warns on stderr, never stdout — stdout carries the TSV contract that the review
+# harness parses (file/line/category/evidence/certainty), so a diagnostic there
+# would be read as a finding.
+filter_test_discovery() {
+    local list="$1" entry kept="" dropped=""
+
+    [ -n "$list" ] || return 0
+
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        case "$entry" in
+            *'{name}'*) kept="${kept:+${kept}
+}${entry}" ;;
+            # Comma-joined, not space-joined: a template path may legitimately
+            # contain a space, and a space-joined list would leave the warning
+            # ambiguous about where one rejected entry ends and the next begins.
+            *) dropped="${dropped:+${dropped}, }${entry}" ;;
+        esac
+    done <<EOF
+$list
+EOF
+
+    if [ -n "$dropped" ]; then
+        command printf '%s\n' \
+            "Warning: ignoring test_discovery entries with no {name} placeholder: ${dropped}" \
+            "  A constant path resolves for EVERY source, which would silence missing-test-file for the entire run." \
+            "  Use a template (e.g. tests/validate-{name}.sh); a per-source mapping needs an explicit source side." >&2
+    fi
+
+    [ -n "$kept" ] && command printf '%s\n' "$kept"
+    return 0
+}
+
 # load_test_skip_policy — Merge default + project patterns into a temp git repo.
 # Called once lazily on first is_test_skipped() call.
 load_test_skip_policy() {
@@ -115,7 +162,8 @@ load_test_skip_policy() {
         # false negative, so the built-ins stay conservative and this is the
         # supported escape hatch.
         _TEST_PATTERNS="$(read_yaml_list test_patterns "$project_config")"
-        _TEST_DISCOVERY="$(read_yaml_list test_discovery "$project_config")"
+        _TEST_DISCOVERY="$(filter_test_discovery \
+            "$(read_yaml_list test_discovery "$project_config")")"
 
         # test_patterns are matched by the same git check-ignore engine as the
         # skip patterns, in their OWN exclude file so the two sets cannot
@@ -167,6 +215,13 @@ matches_declared_test_pattern() {
 # The `{name}` expansion itself is a pure bash substitution (no eval, no sed),
 # so a source name carrying shell or regex metacharacters cannot alter the
 # template or escape the `[ -f ]` test.
+#
+# That reasoning covers a HOSTILE config. It does not cover an HONEST one that
+# quietly disables a detector, which is the failure #601 found: an entry with no
+# `{name}` is a constant, resolves for every source, and silences
+# missing-test-file for the whole run. Those entries are rejected up front by
+# filter_test_discovery(), so every template reaching this function carries a
+# placeholder — the loop below can assume expansion actually varies per source.
 declared_test_paths() {
     load_test_skip_policy
     [ -n "$_TEST_DISCOVERY" ] || return 0
@@ -311,7 +366,9 @@ scan_ai_slop() {
 
     # Hedging phrases — strong indicators of unedited AI output
     command grep -niE -- '\b(it.s worth noting that|it is worth noting that|importantly,|notably,|broadly speaking|in essence,|at its core,|fundamentally,)\b' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -321,7 +378,9 @@ scan_ai_slop() {
 
     # Buzzword inflation
     command grep -niE -- '\b(enterprise[- ]grade|robust and scalable|seamlessly integrat|leverage the power of|cutting[- ]edge|state[- ]of[- ]the[- ]art|world[- ]class)\b' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -331,7 +390,9 @@ scan_ai_slop() {
 
     # Filler phrases in comments/docstrings
     command grep -niE -- '\b(this (function|method|class) (is responsible for|handles|takes care of|provides|ensures that)|as (mentioned|discussed|noted) (above|earlier|previously|before))\b' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -341,7 +402,9 @@ scan_ai_slop() {
 
     # Placeholder/stub text left behind
     command grep -niE -- '(# TODO: implement|// TODO: implement|raise NotImplementedError|throw new Error\(.not implemented)' "$file" 2>/dev/null |
-        while IFS=: read -r line_num content; do
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
             is_scanner_pattern_line "$content" && continue
             evidence=$(truncate_chars 80 "$content")
             command printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -1036,7 +1099,9 @@ scan_untested_public_api() {
             # not depend on the symbol.
             py_gate="$(py_public_symbols_gate "$file")"
             command grep -nE -- '^def [a-zA-Z][a-zA-Z0-9_]*\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^def \([a-zA-Z][a-zA-Z0-9_]*\).*/\1/')
                     # Not public API for this module — no test is EXPECTED to
                     # name it, so "no tests reference" is not a finding.
@@ -1081,7 +1146,9 @@ scan_untested_public_api() {
 }${declared}"
             fi
             command grep -nE -- '^func [A-Z][a-zA-Z0-9]*\(' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^func \([A-Z][a-zA-Z0-9]*\).*/\1/')
                     test_file="${dirname}/${name_no_ext}_test.go"
                     have_candidate=false
@@ -1130,7 +1197,9 @@ scan_untested_public_api() {
 }${declared}"
             fi
             command grep -nE -- '^export (function|const|class) [a-zA-Z]' "$file" 2>/dev/null |
-                while IFS=: read -r line_num content; do
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
                     func_name=$(command printf '%s' "$content" | command sed 's/^export \(function\|const\|class\) \([a-zA-Z][a-zA-Z0-9_]*\).*/\2/')
                     found=false
                     for suffix in "test" "spec"; do
