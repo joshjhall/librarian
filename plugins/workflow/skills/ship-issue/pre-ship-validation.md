@@ -208,7 +208,7 @@ behavior is noted inline per check; environment variables referenced here
    args: {
      phase: "pre-pr",
      cycle: 1,
-     maxCycles: <REVIEW_MAX_CYCLES, default 3>,
+     maxCycles: <REVIEW_MAX_CYCLES, default 5>,
      files: [<changed files, FULL scope>],
      diff: "<diff text, FULL scope>",
      issue: { number: {N}, title: "{title}" },
@@ -359,10 +359,51 @@ behavior is noted inline per check; environment variables referenced here
 
    c. **Resolve the blocking findings**: for each finding in `blocking`, make
    the fix in the working tree, then amend or add a commit. Re-run step (b)
-   (incrementing `cycle`) until `clean` is true or `cycle` exceeds
-   `REVIEW_MAX_CYCLES`. On each re-run pass the fix-commit delta args
+   (incrementing `cycle`) until `clean` is true **and** the convergence predicate
+   says stop, or the predicate stops at the `REVIEW_MAX_CYCLES` cap. On each
+   re-run pass the fix-commit delta args
    (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`) from step (b)'s cycle > 1
    block so the re-review narrows to what the fix changed (#492).
+
+   **Consult the predicate once per cycle** — the cycle counter is the ceiling,
+   not the stop signal (#596). Same helper and same call shape the PR-side loop
+   uses; the full rule list and its per-verdict composition with the merge
+   invariant are documented once in `ci-review-protocol.md` § "Multi-cycle PR
+   review loop" step (f), and in the script header:
+
+   ```bash
+   "${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
+     --cycle "$cycle" --max-cycles "$cap" \
+     --result "$cycle_result_json" \
+     --delta-lines "$delta_lines" \
+     [--prev-result "$prior_cycle_json" ...] \
+     [--prev-delta-lines "$prev_delta_lines"] \
+     [--delta-files "$delta_files_list"] \
+     --partial "<true if budget_exhausted or wall-timed-out, else false>"
+   # -> verdict=continue|stop  rule=C1-cap|…|C8-novel  reason=<slug>
+   ```
+
+   **`--delta-lines` is the surface this cycle REVIEWED**, captured when you
+   compute the review scope — the line count of the diff passed to the harness
+   (`deltaDiff` on a narrowed cycle, the full `diff` on cycle 1). Do **not**
+   recompute it from `lastReviewedSha`...`HEAD` after making the cycle's fix
+   commit: that measures the fix rather than the reviewed surface, and on a
+   **clean** cycle (no fix, so `HEAD` has not moved) it is always `0`, which reads
+   as maximally narrow and fires `C3` on a review that had genuinely converged.
+   Carry the value forward as the next cycle's `--prev-delta-lines`.
+
+   Pass `--partial true` on a `budget_exhausted` **or** wall-timed-out cycle: the
+   predicate then refuses to converge (rule `C2`), matching the existing rule that
+   a partial cycle can never read as clean. The one case that **adds** a cycle is
+   `C3` — a zero-finding cycle on a delta narrower than its predecessor does not
+   terminate, because a zero over a fraction of the previous surface says nothing
+   about the rest (#568). Extra cycles never weaken the pre-PR gate.
+
+   **Graceful degradation**: if the helper is missing or exits non-zero, fall
+   back to the plain `cycle` vs `REVIEW_MAX_CYCLES` comparison with a one-line
+   note — the same posture as a missing `workflow-wall-timeout.sh`. The loop
+   stays bounded either way; it just loses the early-stop and the narrow-zero
+   protection.
 
    > **Standing rule — `blocking: []` is not a merge signal** (#580). Read every
    > finding on merit, including the deferrables, and fix anything that is a live
@@ -377,7 +418,7 @@ behavior is noted inline per check; environment variables referenced here
    after the push; Option 3: after the local commit), linking the commit SHA
    instead of a PR number.
 
-   e. **Cap / budget exhaustion / wall-timeout**: `REVIEW_MAX_CYCLES` (default 3)
+   e. **Cap / budget exhaustion / wall-timeout**: `REVIEW_MAX_CYCLES` (default 5)
    caps the number of review **cycles**; `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`
    (default 20 min, step b) caps the **wall-time of one cycle**. Both are the
    review action's thresholds — the cut-short/extend checkpoints, the analogues of

@@ -93,9 +93,43 @@ These env vars toggle non-default behavior; all are opt-in:
 
 - `PRE_REVIEW_STRICT=true` — pre-review gates (Step 3.5) block Option 1 PR
   creation on HIGH certainty findings instead of warning only.
-- `REVIEW_MAX_CYCLES` — integer, default `3`. Caps the post-CI multi-cycle
-  adversarial review loop (Option 1). The cap lives in this skill, not in
-  `workflow.js`, which runs exactly one review cycle per invocation.
+- `REVIEW_MAX_CYCLES` — integer, default `5`. The **hard ceiling** on the
+  post-CI multi-cycle adversarial review loop (Option 1). It is no longer the
+  stop *signal* — it is the backstop that guarantees termination when the
+  convergence predicate (below) has not fired. The cap lives in this skill, not
+  in `workflow.js`, which runs exactly one review cycle per invocation.
+
+  The default moved `3` → `5` in #596. #567's 26-cycle batch measured 3 as wrong
+  in both directions: #533 and #498 each kept finding confirmed defects through
+  cycle 5, and #533's **only** `blocking` finding of the whole batch (security,
+  0.92) arrived in **cycle 4** — under a cap of 3 it would have shipped. The cost
+  of the higher ceiling is paid back by the predicate, which now ends a converged
+  review early (#564 was verifiably clean at cycle 1, where cycles 2–3 were pure
+  cost).
+- `REVIEW_CONVERGENCE_SURFACE_RATIO` — integer percent 1–100, default `50`. The
+  threshold at which a cycle's reviewed surface counts as **comparable** to the
+  previous cycle's, used by
+  `${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh` to decide whether a
+  zero-finding cycle is real convergence.
+
+  A zero-finding cycle terminates the loop only when
+  `delta_lines >= prev_delta_lines × RATIO`. Below it the zero is treated as
+  uninformative and the loop continues (rule `C3`). This is the refinement #596
+  turns on: #568 cycle 2 returned zero across five dimensions on a **test-only**
+  delta and the very next cycle found a 0.88-certainty real defect — a zero over
+  a fraction of the previous surface says nothing about the material still
+  unreviewed. Lowering the ratio makes zeros terminate more readily (cheaper,
+  less thorough); raising it demands a more comparable surface before trusting a
+  zero. It only ever governs whether a cycle is **added**, so it cannot weaken
+  the merge invariant, and `REVIEW_MAX_CYCLES` bounds it regardless.
+
+  The loop calls the helper once per cycle instead of comparing `cycle` to the
+  cap by hand — the same "script owns the decision, model performs the action"
+  split as `workflow-wall-timeout.sh` (#327), and for the same reason: a
+  threshold a model re-derives each cycle drifts. The full ordered rule list
+  (`C1-cap` … `C8-novel`) is documented in the script header and in
+  `ci-review-protocol.md` § "Multi-cycle PR review loop" step (f), and pinned by
+  `tests/validate-review-convergence.sh`.
 - `REVIEW_TOKEN_CEILING` — integer, **unset by default** (no ceiling). Output-token
   ceiling for **one** review cycle, passed to `workflow.js` as `args.tokenCeiling`
   (#553). Opt-in like its neighbors: unset ⇒ the arg is omitted and the cycle is
@@ -181,17 +215,22 @@ These env vars toggle non-default behavior; all are opt-in:
   through to the normal ci-fixer handoff with an escalate-with-note, never a
   hard-fail.
 
-> **Review thresholds — two independent bounds.** `REVIEW_MAX_CYCLES` (above)
+> **Review thresholds — three independent bounds.** `REVIEW_MAX_CYCLES` (above)
 > caps the number of review **cycles** (cost/iterations); it gives the
 > cut-short/extend + non-interactive-fallback semantics *across* cycles (L1–L2
 > prompt to fix/ship/defer at the cap; L3–L4 defers). It does **not** bound the
 > **wall-time of one cycle** — a single harness invocation whose reviewer agent
 > spins runs unbounded even far below the token budget (#224). That latency is
 > bounded separately by `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` (above), applied by the
-> skill around each `Workflow` invocation. The two are orthogonal: the cycle cap
-> bounds *how many* reviews, the wall timeout bounds *how long any one* review may
-> hang. A wall-timed-out cycle is **partial** — it can never read as `clean`,
-> exactly like `budget_exhausted`.
+> skill around each `Workflow` invocation. The third is the **convergence
+> predicate** (`review-convergence.sh`, gated by
+> `REVIEW_CONVERGENCE_SURFACE_RATIO`), which decides whether reviewers still have
+> material *at all*. The three are orthogonal: the cycle cap bounds *how many*
+> reviews, the wall timeout bounds *how long any one* review may hang, and the
+> predicate decides *whether another one is worth running*. A wall-timed-out
+> cycle is **partial** — it can never read as `clean`, exactly like
+> `budget_exhausted`, and the predicate likewise refuses to converge on it (rule
+> `C2`), so a truncated review can never end the loop by either route.
 
 ## Step 5 — Context Reset & Continue
 

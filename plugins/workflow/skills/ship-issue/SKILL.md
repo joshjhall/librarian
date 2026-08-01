@@ -78,7 +78,9 @@ because the operator stepped away.** Full rule: `orchestrate/autonomy-levels.md`
 a Workflow subagent, because this skill's review harness already owns the one
 permitted Workflow nesting level (§ *Golem Execution Model* there); and (2) the
 full **Environment Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_MAX_CYCLES`
-(review gating; `REVIEW_STRICT` is documented there as **superseded and inert**
+/ `REVIEW_CONVERGENCE_SURFACE_RATIO` (review gating; `REVIEW_MAX_CYCLES` is the
+hard ceiling and the convergence predicate is the stop signal, since #596;
+`REVIEW_STRICT` is documented there as **superseded and inert**
 since #580) and the `LIBRARIAN_CI_*` / `LIBRARIAN_WORKFLOW_*`
 families (CI-wait + workflow-wall threshold/extensions, infra-flake triage). Load
 it before relying on any of these toggles.
@@ -217,7 +219,8 @@ mode, run these safety checks in order:
    default, HIGH-certainty findings block Option 1 under `PRE_REVIEW_STRICT=true`.
 1. **Adversarial pre-PR review** (all modes) — run the `workflow.js` harness
    (`phase: "pre-pr"`) on the committed diff regardless of shipping mode; fix
-   `blocking` findings in a `REVIEW_MAX_CYCLES`-capped loop, collect `deferrable`
+   `blocking` findings in a loop that stops on the convergence predicate and is
+   capped by `REVIEW_MAX_CYCLES` (#596), collect `deferrable`
    for filing after delivery. Option 2 runs it **before the push to main** (the
    three-dot diff empties post-push).
 

@@ -30,7 +30,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
      fan-out to ≈0 concurrent agents; 4 CPUs yields ≈2 concurrent agents.
      Raise `AGENT_CPUS` for wider review fan-out.
    - **Agent environment**: `AGENT_ISSUE` (the assigned issue),
-     `REVIEW_MAX_CYCLES` (default 3), and a pass-through `GITHUB_TOKEN`/`GH_TOKEN`
+     `REVIEW_MAX_CYCLES` (default 5), and a pass-through `GITHUB_TOKEN`/`GH_TOKEN`
      so the golem can push and open PRs. Autonomy is set on the launch line via
      `--level 4` (not an env var). Optional: `PRE_REVIEW_STRICT` (`REVIEW_STRICT`
      is superseded and inert since #580 — passing it has no effect).
@@ -59,7 +59,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
          AGENT_ID: agent01
          AGENT_MODE: headless
          AGENT_ISSUE: "${AGENT01_ISSUE:-}"
-         REVIEW_MAX_CYCLES: "${REVIEW_MAX_CYCLES:-3}"
+         REVIEW_MAX_CYCLES: "${REVIEW_MAX_CYCLES:-5}"
          GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
          GH_TOKEN: "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
          # Pass the Anthropic auth through so a container golem starts
@@ -95,7 +95,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    STATUS_FILE="/workspace/.worktrees/.status/${AGENT_ID}.json"
 
    # Autonomy is set on the /workflow:next-issue launch line via --level 4 (below).
-   export REVIEW_MAX_CYCLES="${REVIEW_MAX_CYCLES:-3}"
+   export REVIEW_MAX_CYCLES="${REVIEW_MAX_CYCLES:-5}"
    # Optional pass-throughs (inherited from the environment if set):
    #   PRE_REVIEW_STRICT
    #   (REVIEW_STRICT is superseded and inert since #580 — no code reads it)
