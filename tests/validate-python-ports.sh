@@ -69,6 +69,14 @@ STRIPE_TOK="sk_""live_""ABCDEFGHIJKLMNOPQRSTUV"
 # Loader= (its fixed deserialization filter), and a def whose body is only `pass`
 # (loop-make-it-work's fixed empty-body arm). A divergence between the bash and
 # python impls on any of these fails the parity assertion below.
+#
+# The trailing print() lines carry the #604 case: two debug prints whose
+# ARGUMENT contains regex-shaped text (an `re.search(r"..."` literal and a
+# `grep -niE -- '...'` literal). Before #604 both impls suppressed them, and
+# parity was green on the shared false negative — the exact relative-property
+# failure mode #605 describes. Both now emit debug-statement rows, and parity
+# holds on the corrected behavior. Keep them: they are the fixture's only
+# coverage of that branch.
 command cat >"$FIXDIR/app.py" <<'EOF'
 import hashlib
 query = f"SELECT * FROM users WHERE id={user_id}"
