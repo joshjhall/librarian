@@ -484,6 +484,74 @@ const FINDINGS_SCHEMA = {
   },
 }
 
+// The four `nature` observations the judge may report, and the rule names
+// `dispositionOf` may return. Both are named once here because THREE consumers
+// must agree on them: the judge schema's enum, the disposition rule list, and
+// the per-cycle `by_nature` / `by_rule` tallies (#613). A tally whose keys drift
+// from the policy silently under-counts the very thing it exists to measure.
+//
+// The tallies treat these as the *known* keys to pre-seed at zero, not as an
+// allow-list: a value outside them is still counted (under its own key) rather
+// than dropped. So adding a fifth nature or a ninth rule without updating this
+// list degrades to "the new key is missing its zero row", never to "the new key
+// is invisible" — the failure mode that would make a desync unnoticeable.
+const NATURE_VALUES = [
+  'defect-in-new-code',
+  'defect-in-preexisting-code',
+  'incomplete-work',
+  'improvement',
+]
+
+const DISPOSITION_RULES = [
+  'R1-critical',
+  'R2-low-certainty',
+  'R3-security-high',
+  'R4-improvement',
+  'R5-preexisting',
+  'R6-incomplete',
+  'R7-large-effort',
+  'R8-defect-in-new-code',
+]
+
+// Count `values` into an object pre-seeded with `keys` at zero. Pre-seeding is
+// the point: a rule that fired zero times this cycle must report `0`, not be
+// absent, or a reader cannot distinguish "never fired" from "not measured" —
+// and a rule that never fires in production is exactly the signal #613 wants
+// (it is either dead or mis-ordered). Unknown values are counted under their own
+// key rather than dropped (see the NATURE_VALUES note above).
+// `Object.create(null)`, not `{}`, because `values` carries LLM-supplied strings
+// (`nature` comes straight off the judge's verdict). On a plain object literal
+// `out['__proto__'] = n` hits the inherited setter, which ignores a numeric
+// assignment — so that value is silently SWALLOWED: no own key, no count, no
+// error. That is the one outcome a counting function must not have, and it would
+// break the "unknown values are counted, never dropped" property directly above.
+// A null-prototype object has no such setter, so every key is an ordinary own
+// property and the count is honest whatever the judge emits.
+const tallyBy = (values, keys) => {
+  const out = Object.create(null)
+  for (const k of keys) out[k] = 0
+  for (const v of values) {
+    if (v === undefined || v === null) continue
+    out[v] = (out[v] || 0) + 1
+  }
+  return out
+}
+
+// The two #613 distributions for one cycle. Extracted here — before the
+// orchestration body, like `computeClean` and `applyJudgeVerdicts` — so the
+// composition is unit-testable: that `rawFindings` really do carry `.nature` /
+// `.disposition_rule` by the time they are counted is the part that can silently
+// regress, and inline in the return object it could only be tested by running
+// the whole harness.
+//
+// Reads the WHOLE finding set, blocking and deferrable alike: the question this
+// measurement exists to answer is whether the deferrable bucket is holding real
+// new-code defects, which a blocking-only count cannot see.
+const summarizeJudgeObservations = (rawFindings) => ({
+  by_nature: tallyBy(rawFindings.map((f) => f.nature), NATURE_VALUES),
+  by_rule: tallyBy(rawFindings.map((f) => f.disposition_rule), DISPOSITION_RULES),
+})
+
 // Single fresh-judge pass: for each finding (keyed by its unique `ref`, stamped
 // before the judge runs) return BOTH an independently re-scored certainty AND
 // the finding's `nature` — an OBSERVATION about the finding, not a decision
@@ -539,15 +607,7 @@ const JUDGE_SCHEMA = {
           // An observation about the finding, NOT a merge decision — see
           // dispositionOf, which maps (nature x certainty x severity x effort)
           // to blocking/deferrable deterministically (#580).
-          nature: {
-            type: 'string',
-            enum: [
-              'defect-in-new-code',
-              'defect-in-preexisting-code',
-              'incomplete-work',
-              'improvement',
-            ],
-          },
+          nature: { type: 'string', enum: NATURE_VALUES },
           rationale: { type: 'string' },
         },
       },
@@ -965,6 +1025,18 @@ const applyJudgeVerdicts = (rawFindings, judged, budgetExhausted) => {
         // unattributable, which is part of why 26 cycles of `blocking: []` went
         // unquestioned.
         f.disposition_rule = d.rule
+        // Retain the judge's `nature` observation (#613). NOTHING downstream
+        // reads it — the disposition was already computed above — it exists so
+        // the value the policy keys off is auditable after the fact.
+        //
+        // `disposition_rule` is not a substitute for it. Only R4/R5/R6 name a
+        // nature; R1/R2/R3/R7/R8 short-circuit before or around the nature
+        // checks, so a finding either of those decided has an unrecoverable
+        // nature. R2 and R8 are the two highest-volume rules, which would leave
+        // most findings uncountable — and an unmeasurable `nature` is precisely
+        // how a systematic miscall would stay as invisible as the failure #580
+        // fixed.
+        f.nature = v.nature
         dispByRef.set(refOf(f), d.disposition)
       }
     }
@@ -1188,6 +1260,12 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
       total_findings: 0,
       by_disposition: { blocking: 0, deferrable: 0 },
       by_severity: { critical: 0, high: 0, medium: 0, low: 0 },
+      // Zeroed, not omitted, for the same reason token_report is reported here
+      // (#553): a cycle absent from the sample biases it. A zero-finding cycle
+      // is a real data point for the #613 tally — dropping the keys would make
+      // it indistinguishable from a cycle that was never measured.
+      by_nature: tallyBy([], NATURE_VALUES),
+      by_rule: tallyBy([], DISPOSITION_RULES),
     },
     // Cost report on the empty/early paths too — a cycle that produced no
     // findings still spent tokens, and excluding it would bias the sample the
@@ -1543,6 +1621,16 @@ return {
     total_findings: rawFindings.length,
     by_disposition: { blocking: blocking.length, deferrable: deferrable.length },
     by_severity: bySeverity,
+    // The two #613 recall measures, counted per cycle so the operator does not
+    // hand-parse every finding to tally them (see summarizeJudgeObservations).
+    //
+    // A finding the judge omitted (or a null-judge cycle) carries neither field;
+    // those are skipped rather than bucketed, so the counts never invent an
+    // observation the judge did not make. `total_findings` above stays the
+    // denominator — deliberately, so `sum(by_nature) < total_findings` is
+    // readable as "the judge did not characterize every finding", which is
+    // itself a signal worth seeing rather than one to paper over.
+    ...summarizeJudgeObservations(rawFindings),
   },
   // What this cycle actually cost, reported ALWAYS — including (especially) on
   // unbounded runs (#553). Sizing a ceiling from guesswork is how you get a
