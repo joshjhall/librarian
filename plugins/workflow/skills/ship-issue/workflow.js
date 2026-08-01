@@ -1580,7 +1580,27 @@ if (unresolvedComments.length) {
 // would be mislabeled as having produced no review signal. That is a FALSE
 // no-signal, which refuses to charge the cap and turns an early `C4-zero` stop
 // into a needless extra lap.
-const allDimensionsFailed = reviewResults.length > 0 && reviewResults.every((r) => !r)
+// Two clauses, because "no dimension reported" and "something was supposed to
+// report" are different questions and the flag needs both:
+//
+//   every((r) => !r)  — nothing that was DISPATCHED came back. Vacuously true on
+//                       an empty array, which is what makes the second clause
+//                       load-bearing rather than a redundant guard.
+//   somethingWasDue   — the cycle OWED a review. `dimensionsSkipped` is
+//                       non-empty exactly when a dimension that should have run
+//                       was dropped at the budget floor, including the
+//                       build-time drops that never reach `reviewResults`.
+//
+// The empty-`dimensions` case splits on that second clause, and the split is the
+// whole point: narrowing legitimately selecting nothing (delta touches no
+// dimension's types, nothing prior-blocking) is a complete cycle that owed no
+// review and must NOT be flagged — while the budget floor skipping every
+// candidate before dispatch leaves the identical empty array and IS a cycle that
+// reviewed nothing it owed. Guarding on `reviewResults.length > 0` alone cannot
+// tell those apart and silently charges the second one to the cap (#616's harm,
+// one phase earlier than the fan-out).
+const somethingWasDue = reviewResults.length > 0 || dimensionsSkipped.length > 0
+const allDimensionsFailed = somethingWasDue && reviewResults.every((r) => !r)
 
 if (rawFindings.length === 0) {
   const r = emptyResult(

@@ -807,13 +807,29 @@ export function run() {
       // was), so they can coincide while every dispatched dimension succeeded.
       // Pin both the right shape and the absence of the wrong one.
       ok(
-        /const allDimensionsFailed\s*=\s*reviewResults\.length > 0 && reviewResults\.every\(/.test(orch),
-        "ship-issue: the wipeout case is derived from the dispatched results (#616)",
+        /const somethingWasDue\s*=\s*reviewResults\.length > 0 \|\| dimensionsSkipped\.length > 0/.test(orch) &&
+          /const allDimensionsFailed\s*=\s*somethingWasDue && reviewResults\.every\(/.test(orch),
+        "ship-issue: the wipeout case is derived from dispatched results + whether a review was owed (#616)",
       );
       ok(
         !/allDimensionsFailed\s*=\s*[^\n]*dimensionsSkipped\.length === dimensions\.length/.test(orch),
         "ship-issue: the wipeout case is NOT a skipped-vs-selected count comparison (false no-signal)",
       );
+
+      // The predicate's own truth table, evaluated directly. The regexes above
+      // pin the SHAPE; this pins the BEHAVIOR, and in particular the two rows
+      // that produce an identical empty `reviewResults` and are distinguishable
+      // only by whether a review was owed. A `reviewResults.length > 0` guard
+      // passes rows 1, 2 and 4 and fails only row 3 — which is exactly the bug
+      // cycle 5 found, so a table missing that row would not have caught it.
+      const wipeoutOf = (reviewResults, dimensionsSkipped) => {
+        const due = reviewResults.length > 0 || dimensionsSkipped.length > 0;
+        return due && reviewResults.every((r) => !r);
+      };
+      eq(wipeoutOf([{ dim: "security" }, null], []), false, "wipeout: a dimension that reported is review signal");
+      eq(wipeoutOf([null, null], ["security", "tests"]), true, "wipeout: every dispatched dimension failed");
+      eq(wipeoutOf([], ["scope-drift"]), true, "wipeout: budget skipped every candidate BEFORE dispatch (#616)");
+      eq(wipeoutOf([], []), false, "wipeout: narrowing legitimately selected nothing — complete, not no-signal");
       const zeroCall = orch.slice(orch.indexOf("if (rawFindings.length === 0) {"));
       ok(
         zeroCall.slice(0, 400).includes("allDimensionsFailed"),
