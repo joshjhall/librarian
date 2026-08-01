@@ -811,6 +811,17 @@ export function run() {
           /const allDimensionsFailed\s*=\s*somethingWasDue && reviewResults\.every\(/.test(orch),
         "ship-issue: the wipeout case is derived from dispatched results + whether a review was owed (#616)",
       );
+      // The field must be present on BOTH return paths, not just emptyResult's.
+      // The reader defaults an absent key to false, so an omission on the
+      // findings-bearing path is indistinguishable from an explicit false — and
+      // the behavioral assertions above, which only exercise emptyResult, cannot
+      // see that path at all. Count the sites: one in emptyResult, one in the
+      // non-empty-findings return object.
+      eq(
+        (orch.match(/^\s*no_review_signal:/gm) || []).length,
+        2,
+        "ship-issue: no_review_signal is emitted on BOTH return paths, never omitted on one (#616)",
+      );
       ok(
         !/allDimensionsFailed\s*=\s*[^\n]*dimensionsSkipped\.length === dimensions\.length/.test(orch),
         "ship-issue: the wipeout case is NOT a skipped-vs-selected count comparison (false no-signal)",

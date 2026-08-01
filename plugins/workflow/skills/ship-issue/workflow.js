@@ -1724,6 +1724,16 @@ return {
   },
   budget_exhausted: budgetExhausted,
   dimensions_skipped: dimensionsSkipped,
+  // Hardcoded false, and present rather than omitted. This path is reached only
+  // when `rawFindings.length > 0`, and findings are appended solely for a
+  // NON-null result — so a cycle that produced findings necessarily had a
+  // dimension report, and can never be no-signal. Stating it is what makes the
+  // field's "always present" contract true across BOTH return paths rather than
+  // only within `emptyResult`: the reader's default for an absent key is false,
+  // so an omission here is indistinguishable from this explicit false, and a
+  // future consumer written against strict presence would silently reintroduce
+  // the ambiguity #616 closed.
+  no_review_signal: false,
   // A cycle is clean only when nothing blocks, every PR comment is
   // resolved-or-deferred, AND the cycle was complete (`!budgetExhausted` — no
   // dimension skipped at build time or nulled mid-barrier). Gating on
