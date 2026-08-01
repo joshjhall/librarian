@@ -21,6 +21,7 @@ export function run() {
     const {
       refOf,
       emptyResult,
+      computeAllDimensionsFailed,
       computeClean,
       sameCommentId,
       dataBlock,
@@ -42,6 +43,7 @@ export function run() {
       [
         "refOf",
         "emptyResult",
+        "computeAllDimensionsFailed",
         "computeClean",
         "sameCommentId",
         "dataBlock",
@@ -807,9 +809,8 @@ export function run() {
       // was), so they can coincide while every dispatched dimension succeeded.
       // Pin both the right shape and the absence of the wrong one.
       ok(
-        /const somethingWasDue\s*=\s*reviewResults\.length > 0 \|\| dimensionsSkipped\.length > 0/.test(orch) &&
-          /const allDimensionsFailed\s*=\s*somethingWasDue && reviewResults\.every\(/.test(orch),
-        "ship-issue: the wipeout case is derived from dispatched results + whether a review was owed (#616)",
+        /const allDimensionsFailed\s*=\s*computeAllDimensionsFailed\(reviewResults, dimensionsSkipped\)/.test(orch),
+        "ship-issue: the orchestration body calls the extracted predicate, not an inline copy (#616)",
       );
       // The field must be present on BOTH return paths, not just emptyResult's.
       // The reader defaults an absent key to false, so an omission on the
@@ -853,16 +854,18 @@ export function run() {
         "ship-issue: the wipeout case is NOT a skipped-vs-selected count comparison (false no-signal)",
       );
 
-      // The predicate's own truth table, evaluated directly. The regexes above
-      // pin the SHAPE; this pins the BEHAVIOR, and in particular the two rows
-      // that produce an identical empty `reviewResults` and are distinguishable
-      // only by whether a review was owed. A `reviewResults.length > 0` guard
-      // passes rows 1, 2 and 4 and fails only row 3 — which is exactly the bug
-      // cycle 5 found, so a table missing that row would not have caught it.
-      const wipeoutOf = (reviewResults, dimensionsSkipped) => {
-        const due = reviewResults.length > 0 || dimensionsSkipped.length > 0;
-        return due && reviewResults.every((r) => !r);
-      };
+      // The predicate's own truth table, run against the REAL extracted
+      // function — not a copy of it. The regexes above pin the SHAPE; this pins
+      // the BEHAVIOR. The two rows that matter produce an identical empty
+      // `reviewResults` and are distinguishable only by whether a review was
+      // owed: a `reviewResults.length > 0` guard passes rows 1, 2 and 4 and
+      // fails only row 3, which is exactly the bug cycle 5 found.
+      //
+      // Calling the real function is the point (cycle 8). A local
+      // reimplementation would keep passing while the harness's own copy drifted
+      // — and this predicate has drifted five times, so a test that cannot see
+      // the production code is the wrong test for it.
+      const wipeoutOf = computeAllDimensionsFailed;
       eq(wipeoutOf([{ dim: "security" }, null], []), false, "wipeout: a dimension that reported is review signal");
       eq(wipeoutOf([null, null], ["security", "tests"]), true, "wipeout: every dispatched dimension failed");
       eq(wipeoutOf([], ["scope-drift"]), true, "wipeout: budget skipped every candidate BEFORE dispatch (#616)");

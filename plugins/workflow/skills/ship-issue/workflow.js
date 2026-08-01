@@ -1061,6 +1061,36 @@ const applyJudgeVerdicts = (rawFindings, judged, budgetExhausted) => {
 // the merge-invariant guard unit-testable at every site (a budget-truncated
 // cycle can never read as clean, even with findings that all classify
 // deferrable), so `clean` stays unforgeable by truncation (#270).
+// computeAllDimensionsFailed — did this cycle produce NO review signal?
+//
+// True iff a review was OWED and nothing that was dispatched came back. The two
+// clauses answer different questions and both are load-bearing:
+//
+//   somethingWasDue — the cycle owed a review. `dimensionsSkipped` is non-empty
+//                     exactly when a dimension that should have run was dropped
+//                     at the budget floor, INCLUDING build-time drops that never
+//                     reach `reviewResults` at all.
+//   every((r) => !r) — nothing dispatched reported. Vacuously true on an empty
+//                     array, which is what makes the first clause necessary
+//                     rather than a redundant guard.
+//
+// The empty-`dimensions` case splits on `somethingWasDue`, and that split is the
+// whole point: narrowing legitimately selecting nothing (the delta touches no
+// dimension's types, nothing prior-blocking) is a COMPLETE cycle that owed no
+// review, while the budget floor skipping every candidate before dispatch leaves
+// an identical empty array and IS a cycle that reviewed nothing it owed.
+//
+// Extracted here — before the orchestration body, like `computeClean` and for
+// the same reason — because the orchestration body is untestable: nothing past
+// ORCH_BOUNDARY can be pulled into a unit test, so a truth table written against
+// it can only re-implement it, and a reimplementation drifts silently from the
+// code it claims to pin. This predicate has been wrong five times (#616 review
+// cycles 3-7: manifest-only, disjoint-population counts, the empty-array
+// conflation, a missing emission, a hardcoded literal), so it is precisely the
+// code that must be exercised directly rather than mirrored.
+const computeAllDimensionsFailed = (reviewResults, dimensionsSkipped) =>
+  (reviewResults.length > 0 || dimensionsSkipped.length > 0) && reviewResults.every((r) => !r)
+
 const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
   blockingLen === 0 && unresolvedLen === 0 && !budgetExhausted
 
@@ -1553,54 +1583,12 @@ if (unresolvedComments.length) {
   log(`${unresolvedComments.length} PR comment(s) not yet resolved-or-deferred`)
 }
 
-// A cycle where EVERY dimension failed or was skipped produced no review signal,
-// exactly like a dead manifest: nothing looked at the diff, so its zero is not
-// evidence about convergence. The manifest case is merely the shape observed on
-// PR #615; a fan-out-wide agent failure (transient API outage) or a token
-// ceiling that skips every dimension at the budget floor reaches the same state
-// one phase later, and charging THAT to REVIEW_MAX_CYCLES re-opens #616 for the
-// narrower case.
-//
-// Distinct from an ordinary partial cycle, which is why it is not simply
-// `budgetExhausted`: a partial cycle had SOME dimension report, so its findings
-// (or lack of them) are real evidence and it correctly charges the cap via
-// `C2-partial`. Only the total-wipeout case is uncharged. `dimensions.length > 0`
-// guards the degenerate empty-selection case, where "every dimension failed" is
-// vacuously true but nothing was ever supposed to run.
-//
-// Derived from `reviewResults` — the dimensions actually DISPATCHED — and not
-// from `dimensionsSkipped.length === dimensions.length`. Those two lengths are
-// not comparable: `dimensionsSkipped` mixes two disjoint populations. A
-// build-time budget-floor skip (in `selectReviewDimensions`, and the conditional
-// specialists) names a dimension that was never pushed to `dimensions` at all,
-// while a mid-barrier null names one that was. So the counts can coincide while
-// every dispatched dimension succeeded — e.g. a narrowed late cycle running
-// [security, correctness] to completion while [conventions, scope-drift] were
-// both budget-skipped at build time: 2 === 2, and a genuinely converged cycle
-// would be mislabeled as having produced no review signal. That is a FALSE
-// no-signal, which refuses to charge the cap and turns an early `C4-zero` stop
-// into a needless extra lap.
-// Two clauses, because "no dimension reported" and "something was supposed to
-// report" are different questions and the flag needs both:
-//
-//   every((r) => !r)  — nothing that was DISPATCHED came back. Vacuously true on
-//                       an empty array, which is what makes the second clause
-//                       load-bearing rather than a redundant guard.
-//   somethingWasDue   — the cycle OWED a review. `dimensionsSkipped` is
-//                       non-empty exactly when a dimension that should have run
-//                       was dropped at the budget floor, including the
-//                       build-time drops that never reach `reviewResults`.
-//
-// The empty-`dimensions` case splits on that second clause, and the split is the
-// whole point: narrowing legitimately selecting nothing (delta touches no
-// dimension's types, nothing prior-blocking) is a complete cycle that owed no
-// review and must NOT be flagged — while the budget floor skipping every
-// candidate before dispatch leaves the identical empty array and IS a cycle that
-// reviewed nothing it owed. Guarding on `reviewResults.length > 0` alone cannot
-// tell those apart and silently charges the second one to the cap (#616's harm,
-// one phase earlier than the fan-out).
-const somethingWasDue = reviewResults.length > 0 || dimensionsSkipped.length > 0
-const allDimensionsFailed = somethingWasDue && reviewResults.every((r) => !r)
+// Did this cycle produce NO review signal? See `computeAllDimensionsFailed`
+// (before ORCH_BOUNDARY) for the predicate, what each clause is for, and the
+// five ways it has been got wrong. It lives there rather than inline here so the
+// truth table in tests/workflow-helpers/ship-issue.mjs exercises the REAL
+// predicate instead of a reimplementation that can drift from it.
+const allDimensionsFailed = computeAllDimensionsFailed(reviewResults, dimensionsSkipped)
 
 if (rawFindings.length === 0) {
   const r = emptyResult(
