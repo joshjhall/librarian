@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# Review-harness authority + loud-skip contract gate (issue #637).
+#
+# Two rules collide during a golem's `/workflow:ship-issue` run: the harness
+# system prompt restricts the `Workflow` tool to explicit opt-in, while this
+# skill *mandates* a Workflow call for the adversarial review. The tool's own
+# description resolves it — invoking a slash command whose instructions direct
+# the call IS opt-in — but until #637 no skill in this repo cited that clause,
+# so every golem re-derived it. Observed consequence: a golem declined the
+# harness and substituted a serial in-context review, costing hours of wall time
+# for a weaker result, and the completion summary had no vocabulary to say the
+# review had not run (the only non-blocking value was `clean`).
+#
+# This gate pins the resolution as a prose contract so it cannot silently
+# regress:
+#
+#   1. ship-issue/SKILL.md + ship-protocol.md assert the Workflow opt-in
+#      authority (AC1) — the invocation is settled, not re-derived per run.
+#   2. Both graceful-degradation clauses (pre-ship-validation.md,
+#      ci-review-protocol.md) restrict the skip to MECHANICAL failure and
+#      exclude "I lack permission" as a reason (AC2).
+#   3. Both clauses forbid substituting a hand-rolled review (AC2, widened from
+#      the observed failure).
+#   4. execute-protocol.md's `Review status` enum carries `skipped` (AC3).
+#   5. A skipped review is bound to the merge invariant — never auto-merge (AC3).
+#
+# Every assertion here is DOC-SHAPED, which is exactly the shape that writes
+# itself tautologically (see the anchored-regex-tautological-test and
+# mutate-after-every-security-fixture lessons). Each case below was verified by
+# mutating the source line it guards and confirming the case FAILS without the
+# fix; the mutation recipe is in the header comment of each section.
+#
+# Pure bash + coreutils; no node/jq. Skill files are located by `find` so the
+# gate is layout-independent (mirrors validate-next-issue-handoff.sh). Files
+# absent => the case skips rather than false-passing.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=tests/lib/harness.sh
+source "$SCRIPT_DIR/lib/harness.sh"
+
+PLUGINS_DIR="$REPO_ROOT/plugins"
+
+test_suite "Review-harness authority + loud skip (#637)"
+
+# --- Locators (layout-independent, first match wins) ------------------------
+
+find_ship_skill() {
+    command find "$PLUGINS_DIR" -type f -path '*/skills/ship-issue/SKILL.md' \
+        2>/dev/null | command sort | command head -1
+}
+
+find_ship_protocol() {
+    command find "$PLUGINS_DIR" -type f -path '*/skills/ship-issue/ship-protocol.md' \
+        2>/dev/null | command sort | command head -1
+}
+
+find_pre_ship() {
+    command find "$PLUGINS_DIR" -type f -path '*/skills/ship-issue/pre-ship-validation.md' \
+        2>/dev/null | command sort | command head -1
+}
+
+find_ci_review() {
+    command find "$PLUGINS_DIR" -type f -path '*/skills/ship-issue/ci-review-protocol.md' \
+        2>/dev/null | command sort | command head -1
+}
+
+find_execute_protocol() {
+    command find "$PLUGINS_DIR" -type f -path '*/skills/ship-issue/execute-protocol.md' \
+        2>/dev/null | command sort | command head -1
+}
+
+# --- 1. AC1: the Workflow opt-in authority is asserted ----------------------
+#
+# Mutation check: delete the "Workflow authority" heading from ship-protocol.md,
+# or the "already opted in" sentence from SKILL.md -> this case fails.
+
+test_workflow_authority_asserted() {
+    local skill protocol
+    skill="$(find_ship_skill)"
+    protocol="$(find_ship_protocol)"
+    if [ -z "$skill" ] || [ -z "$protocol" ]; then
+        skip_test "ship-issue SKILL.md / ship-protocol.md not found"
+        return
+    fi
+
+    # The deep authority section exists and names the opt-in clause it relies on.
+    assert_true "command grep -qi 'Workflow authority' '$protocol'" \
+        "ship-protocol.md must carry a 'Workflow authority' section (#637 AC1)"
+    assert_true "command grep -qiE 'slash command whose instructions' '$protocol'" \
+        "authority must cite the tool's slash-command opt-in clause (#637 AC1)"
+
+    # The skill itself states it, so a golem reading SKILL.md alone is settled.
+    assert_true "command grep -qiE 'opted in|opt-in' '$skill'" \
+        "ship-issue/SKILL.md must state the harness call is already opted in (#637 AC1)"
+    assert_true "command grep -qi 'Workflow authority' '$skill'" \
+        "ship-issue/SKILL.md must point at the Workflow authority rule (#637 AC1)"
+}
+
+# --- 2. AC2: "unavailable" is narrowed to mechanical failure ----------------
+#
+# Mutation check: delete the permission-exclusion sentence from either clause
+# -> this case fails for that file.
+
+test_degradation_excludes_permission_doubt() {
+    local pre ci f
+    pre="$(find_pre_ship)"
+    ci="$(find_ci_review)"
+    if [ -z "$pre" ] || [ -z "$ci" ]; then
+        skip_test "pre-ship-validation.md / ci-review-protocol.md not found"
+        return
+    fi
+
+    # Both clauses must scope the skip to mechanical failure AND name the
+    # excluded reason. Checking both halves separately: a file could plausibly
+    # say "mechanical" while omitting the permission carve-out that is the
+    # actual fix.
+    for f in "$pre" "$ci"; do
+        assert_true "command grep -qiE 'mechanical' '$f'" \
+            "$(basename "$f"): degradation must scope the skip to mechanical failure (#637 AC2)"
+        assert_true "command grep -qiE 'permission' '$f'" \
+            "$(basename "$f"): degradation must address the permission-doubt case (#637 AC2)"
+        assert_true "command grep -qiE '(lack|lacking) permission|permission doubt is not' '$f'" \
+            "$(basename "$f"): must exclude 'I lack permission' as a skip reason (#637 AC2)"
+    done
+}
+
+# --- 3. AC2 (widened): no hand-rolled substitute review ---------------------
+#
+# The observed failure was not a clean skip — the golem re-implemented the
+# review serially in-context, which reports as a review having run.
+#
+# Mutation check: delete the "Never substitute" sentence from either clause
+# -> this case fails for that file.
+
+test_degradation_forbids_substitute_review() {
+    local pre ci f
+    pre="$(find_pre_ship)"
+    ci="$(find_ci_review)"
+    if [ -z "$pre" ] || [ -z "$ci" ]; then
+        skip_test "pre-ship-validation.md / ci-review-protocol.md not found"
+        return
+    fi
+
+    for f in "$pre" "$ci"; do
+        assert_true "command grep -qiE 'never substitute|do \*\*not\*\* re-implement|not re-implement' '$f'" \
+            "$(basename "$f"): must forbid substituting a hand-rolled review (#637 AC2)"
+    done
+}
+
+# --- 4. AC3: the Review status enum carries `skipped` -----------------------
+#
+# Mutation check: drop `| skipped: {reason}` from the enum line -> this fails.
+
+test_review_status_enum_has_skipped() {
+    local f enum_line
+    f="$(find_execute_protocol)"
+    if [ -z "$f" ]; then
+        skip_test "execute-protocol.md not found"
+        return
+    fi
+
+    # Anchor on the enum line itself, not on the word "skipped" anywhere in the
+    # file — a passing match elsewhere would make this tautological.
+    enum_line="$(command grep -E '\*\*Review status\*\*:' "$f" 2>/dev/null | command head -1)"
+    assert_not_empty "$enum_line" \
+        "execute-protocol.md must render a **Review status** line (#637 AC3)"
+    assert_contains "$enum_line" "skipped" \
+        "the Review status enum must include a 'skipped' value (#637 AC3)"
+    # The pre-existing values must survive the addition.
+    assert_contains "$enum_line" "clean" \
+        "the Review status enum must retain 'clean' (#637 AC3)"
+    assert_contains "$enum_line" "stopped-with-blocking" \
+        "the Review status enum must retain 'stopped-with-blocking' (#637 AC3)"
+}
+
+# --- 5. AC3: a skipped review gates like a failure --------------------------
+#
+# The enum value alone is cosmetic — it matters only if a skip blocks the
+# auto-merge. Assert the binding, not just the vocabulary.
+#
+# Mutation check: delete the "A skipped review is not a clean review" paragraph
+# -> this case fails.
+
+test_skipped_review_blocks_auto_merge() {
+    local f
+    f="$(find_execute_protocol)"
+    if [ -z "$f" ]; then
+        skip_test "execute-protocol.md not found"
+        return
+    fi
+
+    assert_true "command grep -qiE 'skipped review is not a clean review|skipped rather than run' '$f'" \
+        "execute-protocol.md must state a skipped review fails the merge invariant (#637 AC3)"
+    assert_true "command grep -qiE 'never auto-merge|do \*\*NOT\*\* merge' '$f'" \
+        "a skipped review must be bound to the never-auto-merge rule (#637 AC3)"
+    assert_true "command grep -q 'status/pr-pending' '$f'" \
+        "a skipped review must park the PR with status/pr-pending (#637 AC3)"
+}
+
+# --- Positive control: the target files exist -------------------------------
+
+test_target_files_present() {
+    local missing=""
+    [ -n "$(find_ship_skill)" ] || missing="${missing} ship-issue/SKILL.md"
+    [ -n "$(find_ship_protocol)" ] || missing="${missing} ship-issue/ship-protocol.md"
+    [ -n "$(find_pre_ship)" ] || missing="${missing} ship-issue/pre-ship-validation.md"
+    [ -n "$(find_ci_review)" ] || missing="${missing} ship-issue/ci-review-protocol.md"
+    [ -n "$(find_execute_protocol)" ] || missing="${missing} ship-issue/execute-protocol.md"
+    if [ -n "$missing" ]; then
+        skip_test "target skill files absent:${missing}"
+        return
+    fi
+    assert_true "true" "All five ship-issue contract files are present"
+}
+
+run_test test_target_files_present "ship-issue contract files present (positive control)"
+run_test test_workflow_authority_asserted "Workflow opt-in authority is asserted once (#637 AC1)"
+run_test test_degradation_excludes_permission_doubt "Degradation clauses exclude permission doubt (#637 AC2)"
+run_test test_degradation_forbids_substitute_review "Degradation clauses forbid a substitute review (#637 AC2)"
+run_test test_review_status_enum_has_skipped "Review status enum carries 'skipped' (#637 AC3)"
+run_test test_skipped_review_blocks_auto_merge "A skipped review blocks auto-merge (#637 AC3)"
+
+generate_report

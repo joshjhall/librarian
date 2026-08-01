@@ -107,7 +107,8 @@ iteration counter by hand.
 
 - **Invoke the `Workflow` tool** with the script at
   `~/.claude/agents/ci-fixer/workflow.js` (it ships bundled with the
-  `ci-fixer` agent), passing
+  `ci-fixer` agent) — **already opted in**, like every harness call this skill
+  mandates (`ship-protocol.md` § *Workflow authority*, #637) — passing
   `args: { checks: [{ name, logs, pr: {pr_number} }, …] }`. The harness runs
   a capped `parse → fix → verify` loop per check and returns
   `{ results: [{ check, fixed, summary, files_changed, remainingFailures, … }] }`.
@@ -226,7 +227,8 @@ differs from its triaged disposition: an unresolved comment always keeps `clean`
 false regardless of numeric-vs-string origin (#261).
 
 c. **Invoke the `Workflow` tool** with
-`~/.claude/skills/ship-issue/workflow.js`, passing:
+`~/.claude/skills/ship-issue/workflow.js` — **already opted in**
+(`ship-protocol.md` § *Workflow authority*, #637) — passing:
 
 ```text
 args: {
@@ -548,10 +550,22 @@ The cap and budget bound the loop: `workflow.js` runs one cycle per
 invocation and returns partial results if its shared budget is exhausted, so
 the loop always terminates.
 
-**Graceful degradation**: if the `Workflow` tool or the harness script is
-unavailable, skip this loop with a note ("Multi-cycle review skipped
-(harness not available)") and proceed to labeling. Review never blocks
-shipping due to harness errors.
+**Graceful degradation — mechanical failure only (#637)**: skip this loop
+**only** when the harness genuinely cannot run — the harness script is **absent
+from disk**, or the `Workflow` tool **errors on invocation**. Skip with a note
+("Multi-cycle review skipped (harness not available)"), carry it into the
+completion summary as `Review status: skipped: {reason}`, and proceed to
+labeling. Review never blocks shipping due to harness errors.
+
+The same two exclusions as the pre-PR clause apply verbatim
+(`pre-ship-validation.md` Step 3.5 item 6):
+
+- **"I believe I lack permission to call `Workflow`" is excluded** — the call is
+  authorized (`ship-protocol.md` § *Workflow authority*). Permission doubt is not
+  unavailability.
+- **Never substitute a hand-rolled review.** Record the skip and move on; do not
+  re-read the PR diff serially in-context. A substitute is slower, weaker, and
+  invisible — it reports as a review having run.
 
 ## How a finding is classified
 

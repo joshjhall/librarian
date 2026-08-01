@@ -19,6 +19,30 @@ Orchestrators (e.g. the master-orchestrator in #524) MUST spawn golems as
 Spawning a golem as a Workflow subagent would consume the one nesting level and
 make the review harness invocation throw.
 
+## Workflow authority — the review harness call is already opted in (#637)
+
+The harness that runs this skill restricts the `Workflow` tool to cases where
+the user explicitly opted into multi-agent orchestration. **That opt-in is
+already satisfied here, and this is the one place that says so** — the tool's
+own description lists as valid opt-in:
+
+> The user invoked a skill or slash command whose instructions tell you to call
+> Workflow.
+
+`/workflow:ship-issue` is exactly that: a slash command whose instructions
+direct the `Workflow` call. Every harness invocation this skill mandates — the
+Step 3.5 adversarial pre-PR review, the Step 4 multi-cycle PR loop, and the
+`ci-fixer` harness — is therefore **authorized by the operator's invocation of
+the command**, not something to weigh against the restriction.
+
+So: **do not re-derive this per run, and do not treat the restriction as a
+reason to skip.** A golem that re-litigates the question on every ship pays for
+the same resolution forever; one that resolves it *wrongly* degrades the review
+(see the graceful-degradation clauses in `pre-ship-validation.md` and
+`ci-review-protocol.md`, which exclude permission doubt as a skip reason and
+forbid substituting a hand-rolled review). The invocation sites cross-reference
+this section rather than restating it — keep the authority here, in one place.
+
 ## State reconstruction (missing-state-file fallback)
 
 Loaded from SKILL.md Step 1. The Phase 1/2 state write can legitimately be

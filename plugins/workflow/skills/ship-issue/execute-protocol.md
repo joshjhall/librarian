@@ -48,11 +48,22 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
 
    **The merge invariant is checked first, at every level (incl. L4):** if the
    loop did **not** reach green + clean — CI still red after `ci-fixer`'s cap, an
-   unresolved blocking finding, or an unaddressed comment — this is a **dead-end**
+   unresolved blocking finding, an unaddressed comment, **or a review that was
+   skipped rather than run** — this is a **dead-end**
    (`orchestrate/autonomy-levels.md`; #181). Do **NOT** merge at any level. Park
    the PR, emit the dead-end summary (what is un-green/unclean, what was
    attempted, what remains), leave `status/pr-pending` on the issue, and STOP for
    a human. Then skip the rest of this step.
+
+   **A skipped review is not a clean review (#637).** A `Review status` of
+   `skipped: {reason}` fails this invariant exactly like `stopped-with-blocking`:
+   at **L3–L4**, park with `status/pr-pending` and never auto-merge. `clean` was
+   never established — no review ran to establish it. This is the `lint-python.sh`
+   exit-77 rule applied to the review harness: a silent skip is indistinguishable
+   from a pass, so it must render as a skip and gate like a failure, never fall
+   through to `clean` because that is the only other value available. The
+   mechanical-failure-only conditions under which a skip is even legitimate are in
+   `pre-ship-validation.md` Step 3.5 item 6 and `ci-review-protocol.md`.
 
    With the invariant satisfied, dispatch by level:
 
@@ -174,7 +185,7 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    - **CI fixes applied**: {count} — {one-line summaries}
    - **Review cycles**: {cycles} run (ceiling {REVIEW_MAX_CYCLES}); stopped on
      {deciding `rule` from review-convergence.sh, e.g. `C4-zero` or `C1-cap`}
-   - **Review status**: {clean | stopped-with-blocking: {detail}}
+   - **Review status**: {clean | stopped-with-blocking: {detail} | skipped: {reason}}
    - **Findings fixed**: {count} blocking, on this PR
    - **Findings deferred**: {#A, #B (filed), or "none"}
    - **Comments resolved-or-deferred**: {n}/{total}
