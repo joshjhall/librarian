@@ -1567,7 +1567,20 @@ if (unresolvedComments.length) {
 // `C2-partial`. Only the total-wipeout case is uncharged. `dimensions.length > 0`
 // guards the degenerate empty-selection case, where "every dimension failed" is
 // vacuously true but nothing was ever supposed to run.
-const allDimensionsFailed = dimensions.length > 0 && dimensionsSkipped.length === dimensions.length
+//
+// Derived from `reviewResults` — the dimensions actually DISPATCHED — and not
+// from `dimensionsSkipped.length === dimensions.length`. Those two lengths are
+// not comparable: `dimensionsSkipped` mixes two disjoint populations. A
+// build-time budget-floor skip (in `selectReviewDimensions`, and the conditional
+// specialists) names a dimension that was never pushed to `dimensions` at all,
+// while a mid-barrier null names one that was. So the counts can coincide while
+// every dispatched dimension succeeded — e.g. a narrowed late cycle running
+// [security, correctness] to completion while [conventions, scope-drift] were
+// both budget-skipped at build time: 2 === 2, and a genuinely converged cycle
+// would be mislabeled as having produced no review signal. That is a FALSE
+// no-signal, which refuses to charge the cap and turns an early `C4-zero` stop
+// into a needless extra lap.
+const allDimensionsFailed = reviewResults.length > 0 && reviewResults.every((r) => !r)
 
 if (rawFindings.length === 0) {
   const r = emptyResult(

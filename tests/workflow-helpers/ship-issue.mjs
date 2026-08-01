@@ -800,9 +800,19 @@ export function run() {
     // would still pass.
     {
       const orch = harnessSource(SHIP);
+      // Derived from the DISPATCHED results, never from a
+      // `dimensionsSkipped.length === dimensions.length` count comparison —
+      // those two lengths mix disjoint populations (a build-time skip names a
+      // dimension never added to `dimensions`; a mid-barrier null names one that
+      // was), so they can coincide while every dispatched dimension succeeded.
+      // Pin both the right shape and the absence of the wrong one.
       ok(
-        /const allDimensionsFailed\s*=\s*dimensions\.length > 0 && dimensionsSkipped\.length === dimensions\.length/.test(orch),
-        "ship-issue: the wipeout case is computed from the skipped-vs-selected counts (#616)",
+        /const allDimensionsFailed\s*=\s*reviewResults\.length > 0 && reviewResults\.every\(/.test(orch),
+        "ship-issue: the wipeout case is derived from the dispatched results (#616)",
+      );
+      ok(
+        !/allDimensionsFailed\s*=\s*[^\n]*dimensionsSkipped\.length === dimensions\.length/.test(orch),
+        "ship-issue: the wipeout case is NOT a skipped-vs-selected count comparison (false no-signal)",
       );
       const zeroCall = orch.slice(orch.indexOf("if (rawFindings.length === 0) {"));
       ok(
