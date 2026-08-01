@@ -105,7 +105,6 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    export REVIEW_CONVERGENCE_SURFACE_RATIO="${REVIEW_CONVERGENCE_SURFACE_RATIO:-50}"
    # Optional pass-throughs (inherited from the environment if set):
    #   PRE_REVIEW_STRICT
-   #   (REVIEW_STRICT is superseded and inert since #580 — no code reads it)
 
    now() { command date -u +%Y-%m-%dT%H:%M:%SZ; }
 

@@ -78,10 +78,11 @@ because the operator stepped away.** Full rule: `orchestrate/autonomy-levels.md`
 a Workflow subagent, because this skill's review harness already owns the one
 permitted Workflow nesting level (§ *Golem Execution Model* there); and (2) the
 full **Environment Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_MAX_CYCLES`
-/ `REVIEW_CONVERGENCE_SURFACE_RATIO` (review gating; `REVIEW_MAX_CYCLES` is the
-hard ceiling and the convergence predicate is the stop signal, since #596;
-`REVIEW_STRICT` is documented there as **superseded and inert**
-since #580) and the `LIBRARIAN_CI_*` / `LIBRARIAN_WORKFLOW_*`
+/ `REVIEW_MAX_ATTEMPTS` / `REVIEW_CONVERGENCE_SURFACE_RATIO` (review gating;
+`REVIEW_MAX_CYCLES` is the hard ceiling on cycles that produced a review and the
+convergence predicate is the stop signal, since #596; `REVIEW_MAX_ATTEMPTS`
+bounds attempts so a crashed cycle can stop charging the cycle cap without the
+loop becoming unbounded, since #616) and the `LIBRARIAN_CI_*` / `LIBRARIAN_WORKFLOW_*`
 families (CI-wait + workflow-wall threshold/extensions, infra-flake triage). Load
 it before relying on any of these toggles.
 

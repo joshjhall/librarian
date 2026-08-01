@@ -3,7 +3,7 @@
 Companion to `ship-issue/SKILL.md`, loaded for **Step 3.5**. Before
 executing the chosen shipping mode (Step 4), run these safety checks. Autonomous
 behavior is noted inline per check; environment variables referenced here
-(`PRE_REVIEW_STRICT`, `REVIEW_MAX_CYCLES`, `REVIEW_STRICT`) are defined in
+(`PRE_REVIEW_STRICT`, `REVIEW_MAX_CYCLES`) are defined in
 `ship-protocol.md` § Environment Variables.
 
 1. **Run test suite** — auto-detect the project's test runner (see

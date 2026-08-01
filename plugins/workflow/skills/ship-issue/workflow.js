@@ -1246,7 +1246,20 @@ const selectReviewDimensions = ({
 // `dimensions`: this function is hoisted and the manifest-failure call site
 // below runs BEFORE that const is initialized, so touching it here would throw
 // a TDZ error on exactly the failure path that must degrade gracefully.
-function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
+// `noReviewSignal` marks the cycle as having produced NO review signal at all —
+// it died before any dimension ran, so it is not evidence about convergence in
+// either direction. The convergence helper reads this field to decline charging
+// the cycle against REVIEW_MAX_CYCLES (rule C0b), because otherwise three infra
+// flakes exhaust the cap and dead-end the PR with a summary implying findings
+// that were never produced (#616).
+//
+// It is an EXPLICIT parameter rather than something inferred from
+// `dimensions_run === 0`: a narrowed cycle whose dimensions were all filtered
+// out (#492) ran to completion by design, and inferring would conflate
+// "reviewed nothing because nothing changed" with "reviewed nothing because it
+// crashed". It defaults to false so every existing call site — all of which
+// describe cycles that DID review — keeps its current meaning.
+function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun, noReviewSignal) {
   if (note) log(note)
   return {
     cycle: CYCLE,
@@ -1278,6 +1291,10 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
     },
     budget_exhausted: !!budgetExhausted,
     dimensions_skipped: dimensionsSkipped || [],
+    // Always present (never conditionally omitted): the helper's default for an
+    // absent field is `false`, so omitting it on the crash path and emitting it
+    // elsewhere would make the two indistinguishable from outside.
+    no_review_signal: !!noReviewSignal,
     // No blocking findings produced — but a budget-truncated cycle is PARTIAL
     // (some dimension never ran), so it can never read as clean; nor can a
     // manifest/early failure, for which callers still override clean explicitly.
@@ -1363,7 +1380,13 @@ const manifest = await agent(manifestPrompt(), {
 })
 
 if (!manifest) {
-  const r = emptyResult(false, 'manifest step failed — nothing to review this cycle')
+  // The manifest is a single point of failure ahead of the whole fan-out, so its
+  // death means NO dimension ever ran — the cycle produced zero review signal.
+  // Flag it as such (5th arg) so the convergence helper does not charge it to
+  // REVIEW_MAX_CYCLES: this is the exact failure observed on PR #615, where a
+  // schema-validation failure repeated identically across all five retries and
+  // burned a cycle slot having reviewed nothing (#616).
+  const r = emptyResult(false, 'manifest step failed — nothing to review this cycle', [], 0, true)
   // A failed manifest is not a clean pass: do not let the skill stop the loop
   // on a degenerate cycle.
   r.clean = false

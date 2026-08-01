@@ -105,6 +105,25 @@ command printf 'tests/foo_test.sh\nsrc/fix.js\n' >"$FIXTURES/delta-files.txt"
 # path looks like a test".
 command printf 'src/fix.js\n' >"$FIXTURES/delta-files-nontest.txt"
 
+# NO-SIGNAL — the cycle died before any dimension ran (#616). This is what
+# `emptyResult(..., noReviewSignal=true)` emits on the manifest-failure path:
+# zero findings AND `clean: false`, which is exactly why the zero must not be
+# read as convergence. Distinct from zero.json ONLY in the flag, so a detector
+# that ignores it returns the same verdict for both.
+command printf '{"blocking":[],"deferrable":[],"clean":false,"no_review_signal":true}\n' \
+    >"$FIXTURES/no-signal.json"
+
+# NO-SIGNAL-FALSE — the same shape with the flag explicitly false. The C0b
+# partner fixture: pairs with no-signal.json differing in one boolean.
+command printf '{"blocking":[],"deferrable":[],"clean":true,"no_review_signal":false}\n' \
+    >"$FIXTURES/no-signal-false.json"
+
+# NO-SIGNAL-STRING — the flag as the STRING "false". jq truthiness would read
+# this as no-signal and stop charging the cycle cap; the script requires a
+# literal boolean `true`, so this must behave as an ordinary cycle.
+command printf '{"blocking":[],"deferrable":[],"no_review_signal":"false"}\n' \
+    >"$FIXTURES/no-signal-string.json"
+
 # val <key> <output> — echo the value of a `key=value` line from the script's
 # stdout. Keeps assertions terse and independent of line order.
 val() {
@@ -612,6 +631,211 @@ test_deferrable_findings_count_as_material() {
     assert_equals "C8-novel" "$(val rule "$out")" "and is therefore not a zero-convergence"
 }
 
+# --- capped_over: what C1 concealed (#635) ----------------------------------
+#
+# ANTI-TAUTOLOGY: every case here asserts `capped_over` against a fixture whose
+# UNCAPPED verdict is independently pinned by the paired assertion below it. A
+# `capped_over` that merely echoed `rule`, or that hardcoded one value, fails the
+# pair — the two halves differ only in `--max-cycles`.
+
+test_capped_over_names_the_would_be_narrow_zero() {
+    # The #635 reproduction, with the issue's own numbers: PR #634 cycle 5
+    # returned zero over a 149-line delta against the previous cycle's 647 (23%,
+    # under the 50% floor). The cap fired on a cycle the rule list itself calls
+    # uninformative, and `verdict` alone could not say so.
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 149 --prev-delta-lines 647 --partial false)"
+    assert_equals "stop" "$(val verdict "$out")" "the cap still stops (C1 outranks C3)"
+    assert_equals "C1-cap" "$(val rule "$out")" "the cap is still the deciding rule"
+    assert_equals "C3-narrow-zero" "$(val capped_over "$out")" \
+        "capped_over names the rule the cap concealed (#635)"
+}
+
+test_capped_over_matches_the_verdict_with_the_cap_lifted() {
+    # The differential half: the SAME inputs with the cap raised must actually
+    # produce the rule `capped_over` claimed. This is what makes the assertion
+    # above non-tautological — it pins capped_over against an independently
+    # computed value rather than against a constant.
+    local capped lifted
+    capped="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 149 --prev-delta-lines 647 --partial false)"
+    lifted="$("$RC" check --cycle 5 --max-cycles 99 --result "$FIXTURES/zero.json" \
+        --delta-lines 149 --prev-delta-lines 647 --partial false)"
+    assert_equals "C3-narrow-zero" "$(val rule "$lifted")" "with the cap lifted, C3 decides"
+    assert_equals "continue" "$(val verdict "$lifted")" "and it would have CONTINUED"
+    assert_equals "$(val rule "$lifted")" "$(val capped_over "$capped")" \
+        "capped_over equals the rule the uncapped run reports"
+}
+
+test_capped_over_distinguishes_a_corroborated_cap() {
+    # The other side of the disambiguation, and the reason the field is worth
+    # more than a boolean: a cap that coincides with a REAL convergence signal.
+    # Same cycle and cap as the narrow-zero case — only the surface differs — so
+    # a capped_over that ignored the inputs cannot report both.
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C1-cap" "$(val rule "$out")" "the cap decides"
+    assert_equals "C4-zero" "$(val capped_over "$out")" \
+        "a comparable-surface zero at the cap is corroborated convergence"
+}
+
+test_capped_over_reports_still_productive_material() {
+    # The worst case for a caller: the cap fired while reviewers still had novel
+    # material (#533's only blocking finding arrived past the then-cap). The stop
+    # is a pure budget artifact and capped_over must say so.
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C1-cap" "$(val rule "$out")" "the cap decides"
+    assert_equals "C8-novel" "$(val capped_over "$out")" \
+        "capped_over reports that novel material remained"
+}
+
+test_capped_over_reports_a_capped_partial() {
+    # C2 is the rule directly under C1, so this is the tightest ordering probe:
+    # a partial cycle at the cap must report C1 as the rule and C2 as what it
+    # concealed — proving the field walks the real chain rather than skipping to
+    # the zero/finding rules.
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-lines 400 --partial true)"
+    assert_equals "C1-cap" "$(val rule "$out")" "the cap outranks C2 (termination intact)"
+    assert_equals "C2-partial" "$(val capped_over "$out")" "capped_over reports the partial"
+}
+
+test_capped_over_is_empty_on_a_non_cap_stop() {
+    # A genuine C4-zero convergence: nothing was concealed, so the field must be
+    # empty. Without this, a capped_over that always reported something would
+    # make every stop look like a budget artifact.
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C4-zero" "$(val rule "$out")" "a real convergence stop"
+    assert_equals "" "$(val capped_over "$out")" "capped_over is empty when C1 did not fire"
+}
+
+test_capped_over_is_emitted_on_every_verdict() {
+    # The output contract: the KEY is always present (possibly empty), so a
+    # caller can read it unconditionally without testing for its existence.
+    local out
+    for out in \
+        "$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/novel.json" --delta-lines 400 --partial false)" \
+        "$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" --delta-lines 400 --partial false)" \
+        "$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/refuted.json" --delta-lines 400 --partial false)"; do
+        assert_contains "$out" "capped_over=" "capped_over key present on every verdict"
+    done
+}
+
+# --- C0/C0b: a crashed cycle produces no review signal (#616) ---------------
+
+test_no_signal_cycle_does_not_stop_at_the_cycle_cap() {
+    # The core of #616. At cycle 5 of 5 — where C1 would fire — a cycle that died
+    # before any dimension ran must NOT end the review: it produced no evidence
+    # about convergence, so charging it to the cap would let three infra flakes
+    # dead-end a PR having reviewed nothing.
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --attempt 5 --max-attempts 10 \
+        --result "$FIXTURES/no-signal.json" --delta-lines 0 --partial false)"
+    assert_equals "continue" "$(val verdict "$out")" "a no-signal cycle does not consume the cap"
+    assert_equals "C0b-no-signal" "$(val rule "$out")" "C0b outranks C1 for a crashed cycle"
+}
+
+test_no_signal_pair_differs_only_in_the_flag() {
+    # ANTI-TAUTOLOGY pair: identical flags, identical finding content, and the
+    # fixtures differ ONLY in `no_review_signal`. A detector that ignores the
+    # field returns the same rule for both, so the pair cannot both pass unless
+    # the field is genuinely read.
+    local crashed complete
+    crashed="$("$RC" check --cycle 5 --max-cycles 5 --attempt 5 --max-attempts 10 \
+        --result "$FIXTURES/no-signal.json" --delta-lines 0 --partial false)"
+    complete="$("$RC" check --cycle 5 --max-cycles 5 --attempt 5 --max-attempts 10 \
+        --result "$FIXTURES/no-signal-false.json" --delta-lines 0 --partial false)"
+    assert_equals "C0b-no-signal" "$(val rule "$crashed")" "the crashed cycle is uncharged"
+    assert_equals "C1-cap" "$(val rule "$complete")" "the complete cycle still hits the cap"
+}
+
+test_attempt_cap_terminates_a_persistently_crashing_loop() {
+    # C0b returns `continue` unconditionally, so without an attempts ceiling a
+    # harness that crashes every time would loop forever. This is the
+    # termination guarantee that replaces C1's for the no-signal path — driven as
+    # a real loop, like the AC#3 integration test above.
+    local attempt=1 verdict="" rule="" out iterations=0
+    while [ "$iterations" -lt 30 ]; do
+        iterations=$((iterations + 1))
+        out="$("$RC" check --cycle 1 --max-cycles 5 --attempt "$attempt" --max-attempts 8 \
+            --result "$FIXTURES/no-signal.json" --delta-lines 0 --partial false)"
+        verdict="$(val verdict "$out")"
+        rule="$(val rule "$out")"
+        [ "$verdict" = "stop" ] && break
+        attempt=$((attempt + 1))
+    done
+    assert_equals "stop" "$verdict" "a persistently crashing loop still terminates"
+    assert_equals "C0-attempt-cap" "$rule" "it terminates at the ATTEMPT cap, not the cycle cap"
+    assert_equals "8" "$attempt" "it stops exactly at max-attempts"
+}
+
+test_attempt_cap_outranks_everything() {
+    # C0 is the new absolute ceiling: it must fire even on a cycle carrying novel
+    # material AND a partial flag, the two rules that otherwise say `continue`.
+    local out
+    out="$("$RC" check --cycle 1 --max-cycles 5 --attempt 8 --max-attempts 8 \
+        --result "$FIXTURES/novel.json" --delta-lines 400 --partial true)"
+    assert_equals "stop" "$(val verdict "$out")" "the attempt cap stops a productive partial cycle"
+    assert_equals "C0-attempt-cap" "$(val rule "$out")" "C0 outranks C0b, C1 and C2"
+}
+
+test_no_signal_does_not_affect_an_ordinary_cycle() {
+    # The complement: a normal cycle below the cap is unchanged by the new rules.
+    # Without this, a C0b that fired too eagerly would silently convert every
+    # convergence stop into a `continue` and defeat the early-stop half of #596.
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --attempt 2 --max-attempts 10 \
+        --result "$FIXTURES/zero.json" --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "stop" "$(val verdict "$out")" "an ordinary converged cycle still stops"
+    assert_equals "C4-zero" "$(val rule "$out")" "the convergence rule still decides"
+}
+
+test_string_false_is_not_read_as_no_signal() {
+    # jq truthiness would accept the STRING "false" as no-signal and stop
+    # charging the cycle cap. Only a literal boolean `true` may take the
+    # uncharged path.
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/no-signal-string.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C1-cap" "$(val rule "$out")" "a string flag value is not a no-signal cycle"
+}
+
+test_absent_no_signal_field_reads_as_an_ordinary_cycle() {
+    # Backward compatibility: a result file from a harness predating #616 has no
+    # such field. It must read as an ordinary cycle, not silently become
+    # uncharged (which would make every legacy cycle stop consuming the cap).
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/zero.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C1-cap" "$(val rule "$out")" "an absent flag is not no-signal"
+}
+
+test_attempt_defaults_to_cycle_for_an_unmigrated_caller() {
+    # A caller that has not adopted the two-counter split passes only --cycle.
+    # The new rules must then be inert: with attempt defaulting to cycle, the C0
+    # ceiling sits at 2x the cycle cap and never fires first.
+    local out
+    out="$("$RC" check --cycle 5 --max-cycles 5 --result "$FIXTURES/novel.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "stop" "$(val verdict "$out")" "the un-migrated caller still stops at its cap"
+    assert_equals "C1-cap" "$(val rule "$out")" "C1 decides, not C0"
+}
+
+test_max_attempts_env_override_moves_the_ceiling() {
+    # REVIEW_MAX_ATTEMPTS is the documented knob; pin that it is actually read.
+    local out
+    out="$(REVIEW_MAX_ATTEMPTS=6 "$RC" check --cycle 1 --max-cycles 5 --attempt 6 \
+        --result "$FIXTURES/novel.json" --delta-lines 400 --partial false)"
+    assert_equals "C0-attempt-cap" "$(val rule "$out")" "the env ceiling is honored"
+}
+
 # --- Integration: the loop always terminates --------------------------------
 
 test_loop_terminates_on_a_never_converging_review() {
@@ -650,6 +874,58 @@ test_loop_terminates_early_on_a_converged_review() {
 }
 
 # --- Fail-loud exits (exit 2 + message on stderr) ---------------------------
+
+test_bad_attempt_fails_loud() {
+    local rc=0 err
+    err="$("$RC" check --cycle 1 --max-cycles 5 --attempt 0 --result "$FIXTURES/zero.json" \
+        --delta-lines 4 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 1 --max-cycles 5 --attempt 0 --result "$FIXTURES/zero.json" \
+        --delta-lines 4 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "--attempt 0 exits 2"
+    assert_contains "$err" "--attempt must be an integer" "--attempt 0 fails loud"
+}
+
+test_noninteger_attempt_fails_loud() {
+    local rc=0 err
+    err="$("$RC" check --cycle 1 --max-cycles 5 --attempt 2x --result "$FIXTURES/zero.json" \
+        --delta-lines 4 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 1 --max-cycles 5 --attempt 2x --result "$FIXTURES/zero.json" \
+        --delta-lines 4 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "a non-integer --attempt exits 2"
+    assert_contains "$err" "--attempt must be an integer" "a non-integer --attempt fails loud"
+}
+
+test_bad_max_attempts_fails_loud() {
+    local rc=0 err
+    err="$("$RC" check --cycle 1 --max-cycles 5 --max-attempts 0 --result "$FIXTURES/zero.json" \
+        --delta-lines 4 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 1 --max-cycles 5 --max-attempts 0 --result "$FIXTURES/zero.json" \
+        --delta-lines 4 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "--max-attempts 0 exits 2"
+    assert_contains "$err" "--max-attempts must be an integer" "--max-attempts 0 fails loud"
+}
+
+test_max_attempts_below_max_cycles_fails_loud() {
+    # A ceiling below the cycle cap makes C1 unreachable — every cycle cap would
+    # silently become an attempt cap and the convergence policy would be
+    # discarded. That is a misconfiguration, so it fails rather than clamping.
+    local rc=0 err
+    err="$("$RC" check --cycle 1 --max-cycles 5 --max-attempts 3 --result "$FIXTURES/zero.json" \
+        --delta-lines 4 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 1 --max-cycles 5 --max-attempts 3 --result "$FIXTURES/zero.json" \
+        --delta-lines 4 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "--max-attempts below --max-cycles exits 2"
+    assert_contains "$err" "cycle cap is unreachable" "it names the consequence, not just the values"
+}
+
+test_leading_zero_attempt_fails_loud() {
+    # The octal guard, extended to the new flags: `08` crashes bash arithmetic
+    # and `030` is silently read as octal.
+    local rc=0
+    "$RC" check --cycle 1 --max-cycles 5 --attempt 08 --result "$FIXTURES/zero.json" \
+        --delta-lines 4 >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "a leading-zero --attempt exits 2"
+}
 
 test_missing_cycle_fails_loud() {
     local rc=0 err
@@ -980,12 +1256,33 @@ run_test test_duplicate_matches_across_all_earlier_cycles "C6 matches across all
 run_test test_recursive_test_machinery_stops "C7: recursive test machinery stops (#498)"
 run_test test_test_file_outside_the_fix_delta_is_not_recursive "C7 keys off delta membership"
 run_test test_mixed_recursive_continues "C7 is ALL, not ANY"
+run_test test_capped_over_names_the_would_be_narrow_zero "capped_over names the concealed C3 (#635 repro)"
+run_test test_capped_over_matches_the_verdict_with_the_cap_lifted "capped_over == the uncapped run's rule"
+run_test test_capped_over_distinguishes_a_corroborated_cap "a cap over a real C4-zero is corroborated"
+run_test test_capped_over_reports_still_productive_material "capped_over reports C8-novel at the cap"
+run_test test_capped_over_reports_a_capped_partial "capped_over reports C2 directly under C1"
+run_test test_capped_over_is_empty_on_a_non_cap_stop "capped_over empty when C1 did not fire"
+run_test test_capped_over_is_emitted_on_every_verdict "capped_over key present on every verdict"
+run_test test_no_signal_cycle_does_not_stop_at_the_cycle_cap "C0b: a crashed cycle does not consume the cap (#616)"
+run_test test_no_signal_pair_differs_only_in_the_flag "C0b pair differs only in no_review_signal (anti-tautology)"
+run_test test_attempt_cap_terminates_a_persistently_crashing_loop "C0: a crashing loop still terminates"
+run_test test_attempt_cap_outranks_everything "C0 outranks C0b, C1 and C2"
+run_test test_no_signal_does_not_affect_an_ordinary_cycle "C0b does not disturb an ordinary cycle"
+run_test test_string_false_is_not_read_as_no_signal "a string flag value is not no-signal"
+run_test test_absent_no_signal_field_reads_as_an_ordinary_cycle "an absent no_review_signal is not no-signal"
+run_test test_attempt_defaults_to_cycle_for_an_unmigrated_caller "the new rules are inert for an un-migrated caller"
+run_test test_max_attempts_env_override_moves_the_ceiling "REVIEW_MAX_ATTEMPTS is honored"
 run_test test_every_rule_is_reachable "every rule C1-C8 is reachable"
 run_test test_every_verdict_is_continue_or_stop "verdict is always continue|stop"
 run_test test_counts_are_reported_on_every_verdict "counts reported on every verdict"
 run_test test_deferrable_findings_count_as_material "deferrables count as material (#580)"
 run_test test_loop_terminates_on_a_never_converging_review "a never-converging loop stops at the cap (AC#3)"
 run_test test_loop_terminates_early_on_a_converged_review "a converged loop stops early (AC#1)"
+run_test test_bad_attempt_fails_loud "--attempt 0 -> exit 2"
+run_test test_noninteger_attempt_fails_loud "non-integer --attempt -> exit 2"
+run_test test_bad_max_attempts_fails_loud "--max-attempts 0 -> exit 2"
+run_test test_max_attempts_below_max_cycles_fails_loud "--max-attempts < --max-cycles -> exit 2"
+run_test test_leading_zero_attempt_fails_loud "leading-zero --attempt -> exit 2 (octal guard)"
 run_test test_missing_cycle_fails_loud "missing --cycle -> exit 2"
 run_test test_missing_delta_lines_fails_loud "missing --delta-lines -> exit 2, never defaulted"
 run_test test_missing_max_cycles_fails_loud "missing --max-cycles -> exit 2"

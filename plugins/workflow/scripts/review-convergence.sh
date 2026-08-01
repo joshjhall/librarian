@@ -40,10 +40,13 @@
 #
 # Subcommand (emits `key=value` lines to stdout):
 #   check --cycle N --max-cycles N --result FILE --delta-lines N
+#         [--attempt N] [--max-attempts N]
 #         [--prev-result FILE ...] [--prev-delta-lines N] [--delta-files FILE]
 #         [--partial true|false]
 #         -> verdict   continue | stop
-#            rule      the deciding rule (C1-cap … C8-novel)
+#            rule      the deciding rule (C0-attempt-cap … C8-novel)
+#            capped_over  the rule that WOULD have decided had C1 not fired
+#                         (empty unless rule=C1-cap) — see #635 below
 #            reason    a short slug naming why
 #            findings / novel / duplicate / refuted / recursive   counts
 #
@@ -53,6 +56,8 @@
 # same reason: an LLM applying prose cannot be unit-tested, an ordered rule list
 # can.)
 #
+#   C0-attempt-cap  attempt >= max-attempts                    -> stop
+#   C0b-no-signal   the cycle produced NO review signal        -> continue
 #   C1-cap        cycle >= max-cycles                          -> stop
 #   C2-partial    the cycle was partial                        -> continue
 #   C3-narrow-zero  zero findings on a NARROWER surface        -> continue
@@ -63,8 +68,59 @@
 #                 previous cycle's own fix
 #   C8-novel      (everything else)                            -> continue
 #
-# C1 outranks everything, so termination is GUARANTEED regardless of the
-# convergence signals — the hard ceiling is retained (#596 AC#3).
+# C1 outranks every CONVERGENCE rule (C2-C8), so the cycle ceiling still binds
+# regardless of the convergence signals (#596 AC#3). The two rules above it are
+# not convergence signals at all — they are assertions about whether the cycle
+# was a valid data point, and the absolute termination guarantee moves up to C0.
+#
+# C0b/C0 — a crashed cycle must not be charged to the cycle cap (#616).
+#   A cycle whose harness died before any dimension ran produces no review
+#   signal: `agent_count: 1, agents_done: 0, agents_error: 1`, no dimension ever
+#   executed. Observed live on PR #615, where a `$PARAMETER_VALUE`-wrapped
+#   manifest payload failed schema validation identically on all five retries.
+#   Charging that to `max_cycles` makes a crashed cycle INDISTINGUISHABLE from a
+#   substantive one: three infra flakes exhaust the cap and dead-end the PR with
+#   a summary reading "review could not reach clean in N cycles" — implying
+#   findings that were never produced. That is the mirror of #597: not a falsely
+#   CLEAN cycle (the harness already forces `clean: false` here, correctly), but
+#   a falsely EXHAUSTED loop.
+#
+#   So C0b returns `continue` without the cycle counter advancing — and because
+#   that alone would let a persistently crashing harness loop forever, C0
+#   bounds total ATTEMPTS above it. Cycles count reviews; attempts count tries.
+#   The caller increments `attempt` every iteration and `cycle` only when the
+#   cycle produced signal (`ci-review-protocol.md` step (f)).
+#
+#   `no_review_signal` is read from the result JSON as an EXPLICIT field the
+#   harness sets, never inferred from a zero dimension count: a narrowed cycle
+#   whose dimensions were all filtered out ran to completion by design (#492),
+#   and inferring would conflate "reviewed nothing because nothing changed" with
+#   "reviewed nothing because it crashed" — the exact conflation this rule exists
+#   to end.
+#
+# capped_over — what C1 concealed (#635).
+#   `verdict=stop` alone cannot distinguish `C4-zero` (reviewers found nothing on
+#   a comparable surface — genuine convergence) from `C1-cap` (the loop ran out
+#   of budget — says nothing about convergence). `ci-review-protocol.md` step (f)
+#   acts on `verdict`, and ship-issue's merge invariant treats a clean cycle plus
+#   `stop` as review-converged, so a `C1-cap` stop can satisfy that check while
+#   providing none of the evidence it represents.
+#
+#   Observed on PR #634 cycle 5: zero findings over a 149-line delta against the
+#   previous cycle's 647 — 23% of the prior surface, well under the ratio floor,
+#   which the rule list itself calls uninformative (`C3-narrow-zero` ->
+#   continue). The cap fired first and the loop terminated on a cycle whose own
+#   zero the policy considers meaningless: the "looks converged, isn't" shape C3
+#   exists to prevent, reintroduced at the cap boundary.
+#
+#   The fix does NOT reorder the rules — C1 must keep outranking C2-C8 or
+#   termination is no longer guaranteed. Instead the ambiguity is made VISIBLE:
+#   when C1 fires, the remaining conditions are evaluated anyway and the rule
+#   that would have decided is reported as `capped_over`. A caller then reads
+#   `rule=C1-cap capped_over=C3-narrow-zero` and can tell a real stop from a
+#   budget artifact with no second invocation. The field is emitted on every
+#   verdict (empty when the deciding rule was not C1-cap) so the output contract
+#   is stable and a consumer never has to test for the key's presence.
 #
 # C2 sits directly under it and is the safety rule: a budget-exhausted or
 # wall-timed-out cycle can never be a convergence stop. It is partial, not
@@ -92,18 +148,26 @@
 set -euo pipefail
 
 USAGE="Usage: review-convergence check --cycle N --max-cycles N --result FILE --delta-lines N
+                                  [--attempt N] [--max-attempts N]
                                   [--prev-result FILE ...] [--prev-delta-lines N]
                                   [--delta-files FILE] [--partial true|false]
-  --cycle N             1-based cycle number just completed (positive integer)
-  --max-cycles N        hard ceiling (positive integer; REVIEW_MAX_CYCLES)
+  --cycle N             1-based number of cycles that PRODUCED A REVIEW (positive
+                        integer). A no-signal cycle does not advance it.
+  --max-cycles N        ceiling on reviewed cycles (positive integer;
+                        REVIEW_MAX_CYCLES)
   --result FILE         this cycle's harness result JSON
   --delta-lines N       lines of diff this cycle reviewed (non-negative integer)
+  --attempt N           1-based number of loop ATTEMPTS including crashed ones
+                        (positive integer; defaults to --cycle)
+  --max-attempts N      absolute ceiling on attempts (positive integer;
+                        REVIEW_MAX_ATTEMPTS, default 2 x --max-cycles)
   --prev-result FILE    an earlier cycle's result JSON; repeatable
   --prev-delta-lines N  lines of diff the previous cycle reviewed
   --delta-files FILE    newline-delimited paths in this cycle's delta
                         (git diff --name-only), for the recursive check
   --partial true|false  whether the cycle was budget-exhausted or timed out
-env: REVIEW_CONVERGENCE_SURFACE_RATIO (percent, default 50)"
+env: REVIEW_CONVERGENCE_SURFACE_RATIO (percent, default 50)
+     REVIEW_MAX_ATTEMPTS (positive integer, default 2 x --max-cycles)"
 
 # die <message> — fail loud: actionable message + usage on stderr, exit 2.
 die() {
@@ -321,6 +385,70 @@ fingerprints() {
         command jq -r "$FLATTEN"'.[] | "\(.file | field):\(.line_start // 0):\(.category | field)"'
 }
 
+# no_review_signal <file> — echo `true` when the harness marked this cycle as
+# having produced no review signal at all (it died before any dimension ran),
+# else `false`. Absent field => false, so a result from a harness predating #616
+# reads as an ordinary cycle rather than silently becoming uncharged.
+#
+# Only a literal JSON `true` counts. `jq`'s truthiness would accept any non-null
+# non-false value, which would let a string "false" — the shape a shell-templated
+# result file most plausibly gets wrong — read as no-signal and stop charging the
+# cycle cap. The strict `== true` test keeps the uncharged path reachable only by
+# the harness's own boolean.
+no_review_signal() {
+    command jq -r 'if (.no_review_signal == true) then "true" else "false" end' "$1"
+}
+
+# convergence_rule — evaluate the CONVERGENCE rules C2..C8 (i.e. everything the
+# cap outranks) and echo `rule|verdict|reason`.
+#
+# Extracted so the C1 branch can ask "what would have decided here?" by calling
+# the SAME code that decides normally. A second, hand-copied condition chain for
+# `capped_over` would be free to drift from the real one — and a drifted copy is
+# worse than no field at all, since it would misreport exactly the case the
+# operator consults it for (#635).
+#
+# Reads the caller's already-computed signals from the enclosing scope
+# (`partial`, `total`, `delta_lines`, `prev_delta_lines`, `ratio`, `refuted`,
+# `duplicate`, `recursive`) rather than taking nine positional arguments, which
+# in bash-3.2 would be its own class of ordering bug.
+convergence_rule() {
+    if [ "$partial" = "true" ]; then
+        # C2: a partial cycle is not a converged one. Its counts describe the
+        # dimensions that ran, not the review — the same reason `clean` is forced
+        # false on budget exhaustion. Never let one end the loop.
+        command printf 'C2-partial|continue|partial'
+    elif [ "$total" -eq 0 ] && [ -n "$prev_delta_lines" ] &&
+        [ $((delta_lines * 100)) -lt $((prev_delta_lines * ratio)) ]; then
+        # C3: the #568 case, and the refinement the issue turns on (AC#2). A zero
+        # only means "reviewers found nothing HERE" — if `here` was a fraction of
+        # the previous surface, it says nothing about the material still
+        # unreviewed. Withhold termination.
+        command printf 'C3-narrow-zero|continue|narrow-surface-zero'
+    elif [ "$total" -eq 0 ]; then
+        # C4: zero on a comparable-or-larger surface (including cycle 1, where the
+        # surface is the whole diff and there is no predecessor). This is the
+        # #564 case — clean at cycle 1, where cycles 2-3 were pure cost.
+        command printf 'C4-zero|stop|zero-comparable-surface'
+    elif [ "$refuted" -eq "$total" ]; then
+        # C5: the strongest signal in the batch (#555 cycle 3) — a cycle whose
+        # only output did not survive verification is reviewers out of material.
+        command printf 'C5-refuted-only|stop|refuted-only'
+    elif [ "$duplicate" -eq "$total" ]; then
+        # C6: nothing new, only earlier findings restated (#533 cycle 5, where 3
+        # of 4 findings were one point seen from different dimensions).
+        command printf 'C6-duplicate|stop|duplicate-findings'
+    elif [ "$recursive" -eq "$total" ]; then
+        # C7: findings about the machinery the last fix added (#498 cycle 4).
+        # This class has no fixed point, so it is termination, not progress.
+        command printf 'C7-recursive|stop|recursive-test-machinery'
+    else
+        # C8: novel, non-duplicative material remains. Unconditional, so the rule
+        # list is total.
+        command printf 'C8-novel|continue|novel-material'
+    fi
+}
+
 cmd_check() {
     cycle="$(opt --cycle -- "$@" || true)"
     max_cycles="$(opt --max-cycles -- "$@" || true)"
@@ -329,6 +457,8 @@ cmd_check() {
     prev_delta_lines="$(opt --prev-delta-lines -- "$@" || true)"
     delta_files="$(opt --delta-files -- "$@" || true)"
     partial="$(opt --partial -- "$@" || true)"
+    attempt="$(opt --attempt -- "$@" || true)"
+    max_attempts="$(opt --max-attempts -- "$@" || true)"
 
     if [ -z "$partial" ]; then
         partial="false"
@@ -373,6 +503,32 @@ cmd_check() {
         die "review-convergence: REVIEW_CONVERGENCE_SURFACE_RATIO must be an integer 1-100, got '$ratio'"
     fi
 
+    # --attempt defaults to --cycle: a caller that has not adopted the #616
+    # attempt/cycle split passes only --cycle, and with the two equal the C0
+    # ceiling sits at 2x the cycle cap and never fires before C1. So the new
+    # rules are inert for an un-migrated caller rather than changing its
+    # verdicts — the same additive posture as the #492 delta args.
+    if [ -z "$attempt" ]; then
+        attempt="$cycle"
+    fi
+    if ! is_nonneg_int "$attempt" || [ "$attempt" -lt 1 ]; then
+        die "review-convergence: --attempt must be an integer >= 1, got '$attempt'"
+    fi
+    if [ -z "$max_attempts" ]; then
+        max_attempts="${REVIEW_MAX_ATTEMPTS:-$((max_cycles * 2))}"
+    fi
+    if ! is_nonneg_int "$max_attempts" || [ "$max_attempts" -lt 1 ]; then
+        die "review-convergence: --max-attempts must be an integer >= 1, got '$max_attempts'"
+    fi
+    # An attempts ceiling below the cycles ceiling makes C1 unreachable — the
+    # loop would always die at C0 first, silently converting every cycle cap into
+    # an attempt cap and discarding the convergence policy. That is a
+    # misconfiguration, not a policy choice, so it fails loud rather than
+    # quietly clamping (which would hide the operator's mistake).
+    if [ "$max_attempts" -lt "$max_cycles" ]; then
+        die "review-convergence: --max-attempts ($max_attempts) must be >= --max-cycles ($max_cycles), or the cycle cap is unreachable"
+    fi
+
     # `jq` is the JSON reader. Missing it must fail loud: a verdict computed
     # without reading the findings would be a confident wrong answer, and
     # `continue` vs `stop` are both consequential (wasted cycles vs a shipped
@@ -391,6 +547,10 @@ cmd_check() {
 
     findings="$(read_findings "$result")"
     total="$(command printf '%s' "$findings" | command jq -r 'length')"
+    # Read AFTER read_findings, which is what validates the file is readable and
+    # parseable — so a malformed result still fails loud there rather than
+    # reaching a bare `jq` here that would emit "false" and quietly proceed.
+    no_signal="$(no_review_signal "$result")"
 
     # --- Signal counts (computed before the rule list so every verdict reports
     # the same numbers, whichever rule fires). ---
@@ -459,63 +619,47 @@ EOF
     fi
 
     # --- Ordered first-match rule list ---------------------------------------
-    if [ "$cycle" -ge "$max_cycles" ]; then
-        # C1: the hard ceiling. Outranks every convergence signal so the loop
-        # always terminates (#596 AC#3).
+    # `capped_over` is empty for every rule but C1, where it names what C1
+    # concealed. Set once here so each branch below need not clear it.
+    capped_over=""
+    if [ "$attempt" -ge "$max_attempts" ]; then
+        # C0: the absolute ceiling, in ATTEMPTS rather than reviewed cycles. This
+        # is what guarantees termination now that C0b can decline to charge the
+        # cycle cap — a persistently crashing harness stops here (#616).
+        rule="C0-attempt-cap"
+        verdict="stop"
+        reason="attempt-cap"
+    elif [ "$no_signal" = "true" ]; then
+        # C0b: the cycle died before any dimension ran, so it is not a data point
+        # about convergence in either direction. Continue WITHOUT the caller
+        # charging a cycle — see the header for why charging it makes a crashed
+        # cycle indistinguishable from a substantive one at the cap (#616).
+        rule="C0b-no-signal"
+        verdict="continue"
+        reason="no-review-signal"
+    elif [ "$cycle" -ge "$max_cycles" ]; then
+        # C1: the cycle ceiling. Outranks every convergence signal (C2-C8) so the
+        # loop still terminates on reviewed cycles alone (#596 AC#3).
+        #
+        # Evaluate the convergence rules anyway and report what WOULD have
+        # decided: a stop here says only "out of budget", and without this field
+        # a caller cannot tell it from a genuine C4-zero convergence (#635).
         rule="C1-cap"
         verdict="stop"
         reason="cap"
-    elif [ "$partial" = "true" ]; then
-        # C2: a partial cycle is not a converged one. Its counts describe the
-        # dimensions that ran, not the review — the same reason `clean` is forced
-        # false on budget exhaustion. Never let one end the loop.
-        rule="C2-partial"
-        verdict="continue"
-        reason="partial"
-    elif [ "$total" -eq 0 ] && [ -n "$prev_delta_lines" ] &&
-        [ $((delta_lines * 100)) -lt $((prev_delta_lines * ratio)) ]; then
-        # C3: the #568 case, and the refinement the issue turns on (AC#2). A zero
-        # only means "reviewers found nothing HERE" — if `here` was a fraction of
-        # the previous surface, it says nothing about the material still
-        # unreviewed. Withhold termination.
-        rule="C3-narrow-zero"
-        verdict="continue"
-        reason="narrow-surface-zero"
-    elif [ "$total" -eq 0 ]; then
-        # C4: zero on a comparable-or-larger surface (including cycle 1, where the
-        # surface is the whole diff and there is no predecessor). This is the
-        # #564 case — clean at cycle 1, where cycles 2-3 were pure cost.
-        rule="C4-zero"
-        verdict="stop"
-        reason="zero-comparable-surface"
-    elif [ "$refuted" -eq "$total" ]; then
-        # C5: the strongest signal in the batch (#555 cycle 3) — a cycle whose
-        # only output did not survive verification is reviewers out of material.
-        rule="C5-refuted-only"
-        verdict="stop"
-        reason="refuted-only"
-    elif [ "$duplicate" -eq "$total" ]; then
-        # C6: nothing new, only earlier findings restated (#533 cycle 5, where 3
-        # of 4 findings were one point seen from different dimensions).
-        rule="C6-duplicate"
-        verdict="stop"
-        reason="duplicate-findings"
-    elif [ "$recursive" -eq "$total" ]; then
-        # C7: findings about the machinery the last fix added (#498 cycle 4).
-        # This class has no fixed point, so it is termination, not progress.
-        rule="C7-recursive"
-        verdict="stop"
-        reason="recursive-test-machinery"
+        _cr="$(convergence_rule)"
+        capped_over="${_cr%%|*}"
     else
-        # C8: novel, non-duplicative material remains. Unconditional, so the rule
-        # list is total.
-        rule="C8-novel"
-        verdict="continue"
-        reason="novel-material"
+        _cr="$(convergence_rule)"
+        rule="${_cr%%|*}"
+        _cr="${_cr#*|}"
+        verdict="${_cr%%|*}"
+        reason="${_cr#*|}"
     fi
 
     command printf 'verdict=%s\n' "$verdict"
     command printf 'rule=%s\n' "$rule"
+    command printf 'capped_over=%s\n' "$capped_over"
     command printf 'reason=%s\n' "$reason"
     command printf 'findings=%s\n' "$total"
     command printf 'novel=%s\n' "$novel"

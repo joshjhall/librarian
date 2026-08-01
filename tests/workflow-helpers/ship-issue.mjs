@@ -767,6 +767,30 @@ export function run() {
       JSON.stringify(["tests", "conventions"]),
       "emptyResult: dimensions_skipped names the dimensions that did not run",
     );
+    // #616: `no_review_signal` distinguishes a cycle that CRASHED before any
+    // dimension ran from one that reviewed and found nothing. The convergence
+    // helper reads it to decline charging the cycle against REVIEW_MAX_CYCLES,
+    // so a false positive here would silently stop the cycle cap from binding.
+    eq(r.no_review_signal, false, "emptyResult: no_review_signal defaults false for a complete cycle");
+    eq(
+      truncated.no_review_signal,
+      false,
+      "emptyResult: a budget-truncated cycle DID review — partial, not no-signal (#616)",
+    );
+    const crashed = emptyResult(false, undefined, [], 0, true);
+    eq(crashed.no_review_signal, true, "emptyResult: no_review_signal set on the crash path (#616)");
+    // The field is always present, never conditionally omitted: the helper's
+    // default for an absent field is `false`, so omitting it on one path and
+    // emitting it on another would make the two indistinguishable downstream.
+    ok(
+      Object.prototype.hasOwnProperty.call(r, "no_review_signal"),
+      "emptyResult: no_review_signal is always present, not conditionally omitted",
+    );
+    // A no-signal cycle is still not clean by virtue of the flag alone — the
+    // manifest-failure call site sets `clean = false` explicitly. Pin that the
+    // flag does not accidentally imply cleanliness in either direction.
+    eq(crashed.clean, true, "emptyResult: no_review_signal alone does not force clean false (caller does)");
+
     // #270: computeClean is the shared predicate behind BOTH return paths,
     // including the non-empty-findings path that sits past the ORCH_BOUNDARY and
     // so is otherwise untestable. The merge-invariant guarantee — a truncated

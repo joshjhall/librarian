@@ -6,7 +6,7 @@ loop, and filing deferred review findings. These steps run after the PR is
 created (and after the auto-merge fast path is NOT taken). Environment variables
 (`LIBRARIAN_CI_WAIT_TIMEOUT`, `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS`,
 `LIBRARIAN_CI_INFRA_STEPS`, `LIBRARIAN_CI_INFRA_RETRIES`, `REVIEW_MAX_CYCLES`,
-`REVIEW_STRICT`) are defined in `ship-protocol.md` § Environment Variables.
+`REVIEW_MAX_ATTEMPTS`) are defined in `ship-protocol.md` § Environment Variables.
 
 ## Monitor CI and remediate failures
 
@@ -179,7 +179,10 @@ harness **and** folds in open PR review comments, then resolves-or-defers
 everything. This loop **always runs before any merge** — it is the "review is
 clean" half of the merge invariant, and there is no path that skips it.
 
-Run the loop with `cycle = 1` and `cap = REVIEW_MAX_CYCLES` (default 5):
+Run the loop with `cycle = 1`, `cap = REVIEW_MAX_CYCLES` (default 5), `attempt =
+1`, and `attempt_cap = REVIEW_MAX_ATTEMPTS` (default `2 × cap`). `cycle` counts
+cycles that produced a review; `attempt` counts every trip including crashed ones
+— see step (f) (#616):
 
 a. **Gather the changed scope** (now includes any CI fixes):
 
@@ -280,7 +283,10 @@ touch it is **not** a partial cycle: narrowing never sets `budget_exhausted` /
 `dimensions_skipped`, so a narrowed cycle can still return `clean`.
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
-budget_exhausted, dimensions_skipped[], clean }`. `dimensions_skipped` names any
+budget_exhausted, dimensions_skipped[], no_review_signal, clean }`.
+`no_review_signal` is true only when the cycle died before **any** dimension ran
+(e.g. the manifest step failed) — that cycle produced no review signal and must
+not be charged against `cap`, see step (f) (#616). `dimensions_skipped` names any
 review dimensions that did not run this cycle (skipped at the budget floor or
 failed mid-barrier); a non-empty list means `budget_exhausted` is true and the
 cycle is **partial**.
@@ -371,20 +377,62 @@ Carry the value forward as the next cycle's `--prev-delta-lines`.
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
   --cycle "$cycle" --max-cycles "$cap" \
+  --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
   --delta-lines "$delta_lines" \
   [--prev-result "$prior_cycle_json" ...] \
   [--prev-delta-lines "$prev_delta_lines"] \
   [--delta-files "$delta_files_list"] \
   --partial "<true if budget_exhausted or wall-timed-out, else false>"
-# -> verdict=continue|stop  rule=C1-cap|…|C8-novel  reason=<slug>
-#    findings=N novel=N duplicate=N refuted=N recursive=N
+# -> verdict=continue|stop  rule=C0-attempt-cap|…|C8-novel  capped_over=<rule|>
+#    reason=<slug>  findings=N novel=N duplicate=N refuted=N recursive=N
 ```
 
+**Two counters, not one (#616).** `attempt` counts every trip through this loop;
+`cycle` counts only the trips that **produced a review**. Increment `attempt`
+unconditionally, and `cycle` only when the harness result has
+`no_review_signal: false`:
+
+```bash
+attempt=$((attempt + 1))
+if [ "$(jq -r '.no_review_signal // false' "$cycle_result_json")" = "true" ]; then
+    : # crashed before any dimension ran — do NOT advance $cycle
+else
+    cycle=$((cycle + 1))
+fi
+```
+
+`attempt_cap` is `REVIEW_MAX_ATTEMPTS` (default `2 × cap`). A cycle that crashed
+before any dimension ran is not evidence about convergence, so charging it to
+`cap` would make it indistinguishable from a substantive cycle: three infra
+flakes would exhaust the cap and dead-end the PR with a summary reading "review
+could not reach clean in N cycles", implying findings that were never produced.
+Rule `C0b-no-signal` returns `continue` for that case and `C0-attempt-cap` — the
+new absolute ceiling — is what still guarantees termination.
+
+**`capped_over` disambiguates a `C1-cap` stop (#635).** `verdict=stop` alone
+cannot distinguish `C4-zero` (reviewers found nothing on a comparable surface —
+genuine convergence) from `C1-cap` (the loop ran out of budget). When
+`rule=C1-cap`, `capped_over` names the rule that *would* have decided:
+
+- `capped_over=C4-zero`/`C5`/`C6`/`C7` — the cap coincided with a real
+  convergence signal. The stop is corroborated; treat it as a normal stop.
+- `capped_over=C3-narrow-zero` or `C8-novel` — the loop stopped on a cycle the
+  policy considers **uninformative or still-productive**. This is a budget
+  artifact, not convergence. Do **not** present it as a converged review: say so
+  explicitly in the completion summary, and if the PR is otherwise green + clean,
+  note that the merge rests on the cycle cap rather than on a convergence signal.
+
+The field is empty for every rule but `C1-cap`, so a caller can read it
+unconditionally.
+
 **Graceful degradation**: if `review-convergence.sh` is missing or exits
-non-zero, fall back to the plain `cycle` vs `cap` comparison with a one-line
-note — the same posture as a missing `workflow-wall-timeout.sh`. The loop stays
-bounded either way; it only loses the early-stop and the narrow-zero protection.
+non-zero, fall back to the plain `cycle` vs `cap` comparison **plus** the
+`attempt` vs `attempt_cap` one, with a one-line note — the same posture as a
+missing `workflow-wall-timeout.sh`. Keep both comparisons: without the attempts
+bound, a fallback that also stops charging crashed cycles would be unbounded. The
+loop stays bounded either way; it only loses the early-stop, the narrow-zero
+protection, and the `capped_over` disambiguation.
 
 Write each cycle's harness result to a file so the next cycle can pass it as
 `--prev-result` (repeatable — duplicate detection is against **all** earlier
@@ -415,8 +463,10 @@ and composes with the termination test below in one direction each:
   cycles, so it cannot weaken the merge invariant.
 - **`continue` + not clean** → the ordinary `cycle++` path.
 
-A `stop` whose `rule` is `C1-cap` is the hard ceiling — it is what guarantees
-termination, and it fires regardless of every other signal.
+A `stop` whose `rule` is `C1-cap` is the cycle ceiling — it fires regardless of
+every convergence signal, and `capped_over` tells you which one it concealed. A
+`stop` whose rule is `C0-attempt-cap` is the absolute ceiling that guarantees
+termination even when crashed cycles are not charging `cap`.
 
 g. **Terminate the loop — green + clean** when ALL of the following hold:
 
@@ -453,6 +503,21 @@ template** (`orchestrate/autonomy-levels.md` § *The dead-end summary template*)
 "review is clean" cannot be met), *what was attempted* (the fixes applied across
 the `cap` cycles and which findings resisted), *options that remain* (keep
 fixing manually, re-scope, or defer specific findings — never merge unclean).
+
+**The summary MUST distinguish cycles that reviewed from attempts that did not**
+(#616). "Review could not reach clean in N cycles" is a claim about findings, and
+it is false if some attempts never produced one. State both counts and name the
+no-signal attempts explicitly:
+
+> Reviewed N cycles across M attempts. Attempts 2 and 4 produced **no review
+> signal** (harness failed before any dimension ran) and are not evidence about
+> convergence.
+
+If the loop ended at `C0-attempt-cap`, say so plainly — that is "the harness kept
+crashing", a fundamentally different dead-end from "reviewers kept finding
+problems", and it points at infrastructure rather than at the code. Likewise, if
+it ended at `C1-cap` with a `capped_over` of `C3-narrow-zero` or `C8-novel`, note
+that the review was still productive when the budget ran out (#635).
 Surface it on the feed as a `dead-end` event (message begins `DEAD-END:`):
 
 ```bash
