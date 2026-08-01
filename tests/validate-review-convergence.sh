@@ -441,6 +441,48 @@ test_colon_in_path_still_matches_for_recursive() {
     assert_equals "1" "$(val recursive "$out")" "colon substitution must not break real path matching"
 }
 
+test_underscore_and_colon_paths_do_not_collide() {
+    # #618: the ACCIDENTAL half of the collision class, distinct from the crafted
+    # collision above. These two findings differ only in one character of `.file`
+    # and are structurally different, yet the old `gsub(":";"_")` sanitizer — a
+    # many-to-one map — sent both to the SAME fingerprint:
+    #     A: file="a:b"  line=10 cat="correctness" -> a_b:10:correctness
+    #     B: file="a_b"  line=10 cat="correctness" -> a_b:10:correctness
+    # So B reads as a repeat of A, C6 fires, and the loop stops on a cycle that
+    # surfaced new material. Underscores are far more common in real paths than
+    # colons, so this needs no attacker at all. The fix is an INJECTIVE encoding;
+    # this pins that the pair stays distinct.
+    command printf '{"blocking":[{"file":"a:b","line_start":10,"category":"correctness","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/collide-colon.json"
+    command printf '{"blocking":[{"file":"a_b","line_start":10,"category":"correctness","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/collide-underscore.json"
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/collide-underscore.json" \
+        --prev-result "$FIXTURES/collide-colon.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "continue" "$(val verdict "$out")" "a:b and a_b must not collide into a C6 stop"
+    assert_equals "C8-novel" "$(val rule "$out")" "the finding is novel, not a duplicate"
+    assert_equals "0" "$(val duplicate "$out")" "distinct inputs keep distinct fingerprints"
+}
+
+test_percent_in_path_does_not_collide_with_an_encoded_colon() {
+    # The escape alphabet must itself be injective, or the fix just relocates the
+    # collision. With `%` encoded FIRST, a literal `a%3Ab` becomes `a%253Ab` while
+    # `a:b` becomes `a%3Ab` — distinct. Encode `:` first and BOTH become `a%3Ab`,
+    # re-forging the C6 match through the encoding that was meant to prevent it.
+    # This case is what makes the substitution ORDER load-bearing rather than
+    # incidental; it fails against an otherwise-correct percent-encoder.
+    command printf '{"blocking":[{"file":"a%%3Ab","line_start":10,"category":"correctness","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/collide-percent.json"
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/collide-percent.json" \
+        --prev-result "$FIXTURES/collide-colon.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "continue" "$(val verdict "$out")" "a literal %3A must not collide with an encoded colon"
+    assert_equals "C8-novel" "$(val rule "$out")" "the finding is novel, not a duplicate"
+    assert_equals "0" "$(val duplicate "$out")" "the escape alphabet is itself injective"
+}
+
 test_sanitization_preserves_ordinary_matching() {
     # The complement: sanitizing must not break real duplicate detection. Without
     # this, a mutation that emptied every fingerprint would pass the three
@@ -645,6 +687,42 @@ test_valid_json_scalar_is_not_misread_as_malformed() {
     out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/scalar.json" \
         --delta-lines 400 --partial false)"
     assert_equals "C4-zero" "$(val rule "$out")" "a null bucket is a valid empty cycle, not malformed JSON"
+}
+
+test_noninteger_line_start_fails_loud() {
+    # #619: `.line_start` is interpolated into the fingerprint as a number, so it
+    # never passes through the `field` encoder that guards `.file`/`.category`.
+    # That asymmetry assumed FINDING_SCHEMA's integer constraint had already run —
+    # but `read_findings` only checked that the document PARSES, and a result file
+    # can reach this script without passing that gate. A string `line_start`
+    # carrying a newline injects a second record and forges a C6 match through a
+    # third field. The payload here is exactly that: the injected line is a
+    # byte-exact copy of novel.json's fingerprint.
+    command printf '{"blocking":[{"file":"src/evil.js","line_start":"0:x\\nsrc/a.js:10:correctness","category":"x","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/bad-line-start.json"
+    local rc=0 err
+    err="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/bad-line-start.json" \
+        --prev-result "$FIXTURES/novel.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/bad-line-start.json" \
+        --prev-result "$FIXTURES/novel.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "a non-integer line_start exits 2 rather than injecting a record"
+    assert_contains "$err" "line_start" "the message names the offending field"
+}
+
+test_null_line_start_is_valid() {
+    # The complement, and the anti-tautology guard for the case above: a mutation
+    # that rejected EVERY document would pass that test while breaking the script
+    # entirely. `line_start` is legitimately omittable — `fingerprints` defaults it
+    # via `// 0` — so an absent field must still produce a verdict, not an exit 2.
+    command printf '{"blocking":[{"file":"src/z.js","category":"correctness","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/null-line-start.json"
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/null-line-start.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C8-novel" "$(val rule "$out")" "an omitted line_start still yields a verdict"
+    assert_equals "1" "$(val findings "$out")" "the finding is counted, not rejected"
 }
 
 test_unreadable_prev_result_fails_loud() {
@@ -859,7 +937,11 @@ run_test test_newline_in_file_cannot_forge_a_recursive_match "injection: newline
 run_test test_newline_in_category_cannot_forge_a_duplicate "injection: newline in .category cannot forge a C6 stop"
 run_test test_colon_in_file_cannot_forge_a_duplicate "injection: colon in .file cannot forge a C6 stop"
 run_test test_colon_in_path_still_matches_for_recursive "colon substitution does not break C7 path matching"
+run_test test_underscore_and_colon_paths_do_not_collide "injective: a:b and a_b do not collide (#618)"
+run_test test_percent_in_path_does_not_collide_with_an_encoded_colon "injective: the escape alphabet is itself injective (#618)"
 run_test test_sanitization_preserves_ordinary_matching "sanitization preserves real duplicate matching"
+run_test test_noninteger_line_start_fails_loud "non-integer line_start -> exit 2 (#619)"
+run_test test_null_line_start_is_valid "an omitted line_start is still valid (#619)"
 run_test test_unreadable_prev_result_fails_loud "unreadable --prev-result -> exit 2"
 run_test test_malformed_prev_result_fails_loud "malformed --prev-result -> exit 2"
 run_test test_unreadable_delta_files_is_silently_skipped "missing --delta-files degrades, by design"

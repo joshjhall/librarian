@@ -239,6 +239,25 @@ read_findings() {
     if ! command jq empty "$1" >/dev/null 2>&1; then
         die "review-convergence: result file '$1' is not valid JSON"
     fi
+    # `.line_start` is interpolated into the fingerprint as a NUMBER, so unlike
+    # `.file`/`.category` it never passes through `field`. That asymmetry rests on
+    # an assumption nothing here enforced: `workflow.js`'s FINDING_SCHEMA declares
+    # `line_start` an integer, but a result file can reach this script without
+    # having passed that gate (a hand-built fixture, a corrupted file, a future
+    # caller). A string `line_start` carrying a newline injects a whole extra
+    # record and reopens the forging vector through a third field (#619).
+    #
+    # Validate here rather than sanitizing at the interpolation site, so the check
+    # covers this cycle's result AND every `--prev-result` through one code path,
+    # and so a malformed file fails loud (the script's contract) instead of being
+    # silently coerced into a verdict. `null` stays valid — `fingerprints`
+    # defaults it via `.line_start // 0`, and omitting the field is legitimate.
+    if ! command jq -e 'all((.blocking // [])[], (.deferrable // [])[];
+            .line_start == null
+            or ((.line_start | type) == "number"
+                and (.line_start | floor) == .line_start))' "$1" >/dev/null 2>&1; then
+        die "review-convergence: result file '$1' has a finding whose line_start is not an integer (findings must satisfy FINDING_SCHEMA)"
+    fi
     command jq -c '[(.blocking // [])[], (.deferrable // [])[]]' "$1"
 }
 
@@ -253,29 +272,42 @@ read_findings() {
 # STOP the review loop — so the injection's payoff is ending a review early and
 # shipping a defect. Same class as the agnix TSV injection (#470).
 #
-# `gsub("[\n\r]";" ")` collapses any embedded newline/CR into a space INSIDE jq,
-# before the value ever reaches the line-oriented layer, so one finding can only
-# ever produce one record. Applied to every interpolated field, not just `.file` —
-# `.category` is equally attacker-shaped.
+# Neutralizing the separators INSIDE jq, before the value ever reaches the
+# line-oriented layer, is what keeps one finding to one record. Applied to every
+# interpolated field, not just `.file` — `.category` is equally attacker-shaped.
 # TWO filters, because the two consumers have different delimiters and applying
 # the stricter one everywhere would cause false NEGATIVES:
 #
-#   `flat`  — record separators only. For the C7 check, where the whole line IS
-#             the value (`grep -F -x` of a path against the delta-file list). A
-#             colon is not a delimiter there, so substituting it would make a
-#             legitimate path containing one stop matching — a missed recursive
-#             signal, not a forged one.
+#   `flat`  — record separators only, collapsed to a space. For the C7 check,
+#             where the whole line IS the value (`grep -F -x` of a path against
+#             the delta-file list). A colon is not a delimiter there, so encoding
+#             it would make a legitimate path containing one stop matching — a
+#             missed recursive signal, not a forged one.
 #   `field` — record separators AND the `:` field separator. For the fingerprint,
 #             where values are colon-JOINED. Without it a `.file` of
 #             `src/a.js:10:correctness` with an empty `.category` concatenates to
 #             exactly another finding's fingerprint, forging a C6 match with no
 #             newline involved at all.
 #
-# Substitution rather than rejection: a colon in a path is legitimate on some
-# platforms, and mapping it to `_` keeps ordinary values usable while making
-# forgery require guessing the victim's post-substitution form.
+# `field` PERCENT-ENCODES rather than substituting, because the fingerprint's
+# correctness requirement is INJECTIVITY: distinct triples must produce distinct
+# strings. A many-to-one sanitizer forges C6 matches by collision instead of by
+# injection — the earlier `gsub(":";"_")` mapped `a:b` and `a_b` to one
+# fingerprint, and underscores are common enough in real paths that this was
+# reachable by accident, not only adversarially (#618). Percent-encoding is
+# reversible, so no two inputs can share an output.
+#
+# Order is load-bearing: `%` is encoded FIRST, which makes the escape alphabet
+# itself injective — a literal `a%3Ab` becomes `a%253Ab`, distinct from the
+# encoding of `a:b` (`a%3Ab`). Encode `:` first and the two re-collide.
+#
+# `field` deliberately does NOT derive from `flat`: `flat` maps a newline and a
+# literal space to the same space, so building on it would leave `field`
+# many-to-one on that pair. It encodes the record separators itself.
 FLATTEN='def flat: (. // "") | tostring | gsub("[\n\r]";" ");
-         def field: flat | gsub(":";"_");'
+         def field: (. // "") | tostring
+                    | gsub("%";"%25") | gsub(":";"%3A")
+                    | gsub("\n";"%0A") | gsub("\r";"%0D");'
 
 fingerprints() {
     command printf '%s' "$1" |
