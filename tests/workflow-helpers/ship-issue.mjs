@@ -1095,6 +1095,24 @@ export function run() {
 
     const { MAX_CYCLES: coerced } = extractHelpers(SHIP, ["MAX_CYCLES"], { maxCycles: "7" });
     eq(coerced, 5, "ship-issue: a non-integer args.maxCycles falls back to the default rather than being coerced");
+
+    // Where the guard STOPS. Unlike tokenCeiling above — whose malformed values
+    // all fail safe to unbounded — Number.isInteger(0) and Number.isInteger(-1)
+    // are both true, so a 0 or negative maxCycles passes through verbatim into
+    // the `review cycle N/M` line. That is tolerable precisely because the value
+    // is informational (review-convergence.sh validates the real cap and rejects
+    // < 1), but it is a genuine asymmetry between two neighbouring args, so pin
+    // it rather than leave the boundary undocumented and drifting.
+    for (const [bad, want] of [
+      [0, 0],
+      [-1, -1],
+      [1.5, 5],
+      [NaN, 5],
+      [null, 5],
+    ]) {
+      const { MAX_CYCLES: got } = extractHelpers(SHIP, ["MAX_CYCLES"], { maxCycles: bad });
+      eq(got, want, `ship-issue: maxCycles=${JSON.stringify(bad)} yields ${want} (integer check, not a range check)`);
+    }
   }
 
   // =============================================================================
