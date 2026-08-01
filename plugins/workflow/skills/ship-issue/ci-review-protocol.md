@@ -313,6 +313,26 @@ d. **Resolve or defer**:
 > was filed after a 26-cycle batch in which six cycles returned `blocking: []`
 > over a deferrable bucket holding a confirmed defect.
 
+**Record the cycle for the recall measurement** (#613). While the tally in
+`docs/verification/disposition-recall-tally-613.md` is still accumulating,
+append one row per cycle from the harness result — no re-derivation needed,
+since the summary reports both distributions directly:
+
+```bash
+jq '{cycle, by_nature: .summary.by_nature, by_rule: .summary.by_rule,
+     total: .summary.total_findings, blocking: .summary.by_disposition.blocking}' \
+  "$cycle_result_json"
+```
+
+Then answer, in one line on the row, **the check the measurement actually turns
+on**: *does the deferrable bucket still hold a real defect in code this PR
+wrote?* That is the same manual read that caught all six misses in the #567
+batch, and it is the one thing no aggregate can answer — a systematic `nature`
+miscall produces a perfectly healthy-looking set of counts. You have already
+done this read as part of the standing rule above; the row just records what it
+found. A `yes` is the finding #613 exists to detect, and is worth surfacing
+immediately rather than at the end of the batch.
+
 e. **If any fixes were applied this cycle**: commit
 `fix(review): address cycle {cycle} findings`, `git push`, and re-run the
 CI-monitor sub-step above (wait for green, auto-fix via `ci-fixer`).
@@ -484,7 +504,18 @@ last has no condition, so the policy is total and non-overlapping:
 | `R7-large-effort`        | `effort=large`                           | deferrable  |
 | `R8-defect-in-new-code`  | (everything else)                        | blocking    |
 
-The deciding rule is stamped on each finding as `disposition_rule`.
+The deciding rule is stamped on each finding as `disposition_rule`, and the
+judge's observation as `nature` (#613). Both are also aggregated per cycle into
+`summary.by_nature` / `summary.by_rule`, with every key present at zero so a rule
+that never fires is visible as `0` rather than absent.
+
+`nature` is retained even though nothing downstream reads it, because
+`disposition_rule` cannot be reversed into it: only `R4`/`R5`/`R6` name a nature,
+while `R2` and `R8` — the two highest-volume rules — decide without reference to
+one. Without the stamp the majority of findings carry no recoverable
+characterization, which is what makes a **systematic miscall of `nature`** the
+natural successor to the failure #580 fixed: both present as a healthy-looking
+`blocking: []`, and neither raises an error.
 
 **Severity is deliberately not the primary axis** — it appears only in the R1
 carve-out. The policy this replaced gated blocking on

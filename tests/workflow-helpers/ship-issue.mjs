@@ -33,6 +33,9 @@ export function run() {
       JUDGE_SCHEMA,
       applyJudgeVerdicts,
       dispositionOf,
+      tallyBy,
+      NATURE_VALUES,
+      DISPOSITION_RULES,
     } = extractHelpers(
       SHIP,
       [
@@ -50,6 +53,9 @@ export function run() {
         "JUDGE_SCHEMA",
         "applyJudgeVerdicts",
         "dispositionOf",
+        "tallyBy",
+        "NATURE_VALUES",
+        "DISPOSITION_RULES",
       ],
       { cycle: 2, phase: "pr-cycle", files: ["x.js"] },
     );
@@ -330,6 +336,140 @@ export function run() {
       ok(
         exhausted.deferrable.some((f) => f.ref === "missing#1"),
         "applyJudgeVerdicts: an unmatched ref defaults to deferrable when budget exhausted",
+      );
+    }
+
+    // (d) The judge's `nature` is RETAINED on the finding (#613).
+    //
+    // Why this matters enough to pin. `nature` is the axis the whole disposition
+    // policy turns on, and before #613 it was read by `dispositionOf` and then
+    // dropped — so a systematic miscall (an `improvement` label on what is really
+    // a `defect-in-new-code`) was uncountable after the fact, which is the same
+    // invisibility #580 was filed to end. `disposition_rule` cannot stand in for
+    // it: only R4/R5/R6 name a nature, while R2 and R8 — the two highest-volume
+    // rules — do not.
+    {
+      const findings = [
+        mkFinding("keep#0", "HIGH", 0.9),
+        mkFinding("keep#1", "LOW", 0.2),
+        mkFinding("gone#2", "HIGH", 0.9),
+      ];
+      const judged = {
+        verdicts: [
+          { ref: "keep#0", certainty: { level: "HIGH", confidence: 0.9 }, nature: "improvement", rationale: "x" },
+          { ref: "keep#1", certainty: { level: "LOW", confidence: 0.2 }, nature: "defect-in-new-code", rationale: "y" },
+        ],
+      };
+      applyJudgeVerdicts(findings, judged, false);
+
+      // Stamped verbatim — NOT re-derived from the deciding rule. `keep#0` is the
+      // case that separates the two: it is decided by R4, which does name a
+      // nature, so it alone would pass either way.
+      eq(findings[0]?.nature, "improvement", "applyJudgeVerdicts: stamps the judge's nature onto the finding (#613)");
+
+      // The load-bearing one. `keep#1` is decided by R2-low-certainty, which
+      // short-circuits ABOVE every nature rule — so its nature is unrecoverable
+      // from `disposition_rule` and can only be present if it was genuinely
+      // retained. Asserting only the R4 case above would be tautological.
+      eq(
+        findings[1]?.nature,
+        "defect-in-new-code",
+        "applyJudgeVerdicts: retains nature even when the deciding rule (R2) does not name one (#613)",
+      );
+      eq(findings[1]?.disposition_rule, "R2-low-certainty", "applyJudgeVerdicts: …and that rule is indeed R2");
+
+      // nature and certainty come from the SAME verdict — the existing
+      // same-verdict guarantee, now extended to the third field keyed by ref.
+      eq(findings[0]?.certainty?.level, "HIGH", "applyJudgeVerdicts: nature and certainty come from the same verdict");
+
+      // A finding the judge omitted gets NO nature — it must not inherit a
+      // neighbour's. This is the `nature` analogue of the ref-collision bug the
+      // refOf comment documents, and it is what keeps the tally from inventing
+      // an observation the judge never made.
+      eq(findings[2]?.nature, undefined, "applyJudgeVerdicts: an unmatched ref is left without a nature (#613)");
+    }
+
+    // (e) tallyBy: the per-cycle distribution counters behind the #613 measures.
+    {
+      // The four nature values and eight rule names must stay in lockstep with
+      // the policy — a tally keyed off a drifted list under-counts silently.
+      eq(
+        JSON.stringify(NATURE_VALUES),
+        JSON.stringify([
+          "defect-in-new-code",
+          "defect-in-preexisting-code",
+          "incomplete-work",
+          "improvement",
+        ]),
+        "NATURE_VALUES: exactly the four judge observations (#613)",
+      );
+      eq(
+        JSON.stringify(DISPOSITION_RULES),
+        JSON.stringify([
+          "R1-critical",
+          "R2-low-certainty",
+          "R3-security-high",
+          "R4-improvement",
+          "R5-preexisting",
+          "R6-incomplete",
+          "R7-large-effort",
+          "R8-defect-in-new-code",
+        ]),
+        "DISPOSITION_RULES: exactly the eight rules dispositionOf can return (#613)",
+      );
+      // JUDGE_SCHEMA's enum is the SAME list — the desync this constant exists
+      // to prevent, asserted rather than assumed.
+      eq(
+        JSON.stringify(JUDGE_SCHEMA?.properties?.verdicts?.items?.properties?.nature?.enum),
+        JSON.stringify(NATURE_VALUES),
+        "JUDGE_SCHEMA: nature enum is NATURE_VALUES, so schema and tally cannot drift (#613)",
+      );
+
+      const counts = tallyBy(
+        ["improvement", "improvement", "defect-in-new-code"],
+        NATURE_VALUES,
+      );
+      eq(counts["improvement"], 2, "tallyBy: counts repeated values");
+      eq(counts["defect-in-new-code"], 1, "tallyBy: counts a single value");
+      // Present-and-zero, not absent. A rule that never fires in production is
+      // itself the signal (#613 — dead or mis-ordered), so "0" and "missing"
+      // must not be the same observation.
+      eq(counts["incomplete-work"], 0, "tallyBy: an unseen key is present at zero, not absent (#613)");
+      ok(
+        Object.prototype.hasOwnProperty.call(counts, "defect-in-preexisting-code"),
+        "tallyBy: every known key is pre-seeded even at zero (#613)",
+      );
+      // Undefined is skipped, not bucketed — a finding the judge omitted must
+      // not invent an observation.
+      const withGaps = tallyBy([undefined, "improvement", null], NATURE_VALUES);
+      eq(withGaps["improvement"], 1, "tallyBy: skips undefined/null rather than counting them");
+      eq(
+        Object.values(withGaps).reduce((a, b) => a + b, 0),
+        1,
+        "tallyBy: gaps contribute nothing to the total (#613)",
+      );
+      // An unknown value is counted under its own key, never dropped — so a
+      // future fifth nature degrades to "missing its zero row", not "invisible".
+      const unknown = tallyBy(["surprise"], NATURE_VALUES);
+      eq(unknown["surprise"], 1, "tallyBy: an unknown value is counted, not silently dropped (#613)");
+    }
+
+    // (f) emptyResult carries both distributions, zeroed — a zero-finding cycle
+    // is a real row in the tally, and omitting the keys would make it read as
+    // "not measured" (the same reasoning that puts token_report on this path).
+    {
+      const r = emptyResult(false, undefined, []);
+      eq(r.summary?.by_nature?.["defect-in-new-code"], 0, "emptyResult: by_nature present and zeroed (#613)");
+      eq(r.summary?.by_rule?.["R8-defect-in-new-code"], 0, "emptyResult: by_rule present and zeroed (#613)");
+      eq(
+        Object.keys(r.summary?.by_nature || {}).length,
+        4,
+        "emptyResult: by_nature carries all four nature keys (#613)",
+      );
+      eq(
+        Object.keys(r.summary?.by_rule || {}).length,
+        8,
+        "emptyResult: by_rule carries all eight rule keys (#613)",
       );
     }
 
