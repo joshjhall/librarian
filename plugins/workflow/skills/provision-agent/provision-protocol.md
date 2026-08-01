@@ -33,8 +33,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
      `REVIEW_MAX_CYCLES` (default 5), `REVIEW_CONVERGENCE_SURFACE_RATIO`
      (default 50), and a pass-through `GITHUB_TOKEN`/`GH_TOKEN`
      so the golem can push and open PRs. Autonomy is set on the launch line via
-     `--level 4` (not an env var). Optional: `PRE_REVIEW_STRICT` (`REVIEW_STRICT`
-     is superseded and inert since #580 — passing it has no effect).
+     `--level 4` (not an env var). Optional: `PRE_REVIEW_STRICT`.
    - **Init system**: `init: true` for tini zombie reaping
    - **Capabilities**: same as devcontainer (`cap_add`, `devices`)
    - **Command**: `sleep infinity` (entrypoint handles startup, tmux starts
@@ -105,7 +104,6 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    export REVIEW_CONVERGENCE_SURFACE_RATIO="${REVIEW_CONVERGENCE_SURFACE_RATIO:-50}"
    # Optional pass-throughs (inherited from the environment if set):
    #   PRE_REVIEW_STRICT
-   #   (REVIEW_STRICT is superseded and inert since #580 — no code reads it)
 
    now() { command date -u +%Y-%m-%dT%H:%M:%SZ; }
 

@@ -21,6 +21,7 @@ export function run() {
     const {
       refOf,
       emptyResult,
+      computeAllDimensionsFailed,
       computeClean,
       sameCommentId,
       dataBlock,
@@ -42,6 +43,7 @@ export function run() {
       [
         "refOf",
         "emptyResult",
+        "computeAllDimensionsFailed",
         "computeClean",
         "sameCommentId",
         "dataBlock",
@@ -767,6 +769,118 @@ export function run() {
       JSON.stringify(["tests", "conventions"]),
       "emptyResult: dimensions_skipped names the dimensions that did not run",
     );
+    // #616: `no_review_signal` distinguishes a cycle that CRASHED before any
+    // dimension ran from one that reviewed and found nothing. The convergence
+    // helper reads it to decline charging the cycle against REVIEW_MAX_CYCLES,
+    // so a false positive here would silently stop the cycle cap from binding.
+    eq(r.no_review_signal, false, "emptyResult: no_review_signal defaults false for a complete cycle");
+    eq(
+      truncated.no_review_signal,
+      false,
+      "emptyResult: a budget-truncated cycle DID review — partial, not no-signal (#616)",
+    );
+    const crashed = emptyResult(false, undefined, [], 0, true);
+    eq(crashed.no_review_signal, true, "emptyResult: no_review_signal set on the crash path (#616)");
+    // A fan-out-wide wipeout is as void of review signal as a dead manifest, and
+    // must be flagged the same way — otherwise #616 is only half fixed: the
+    // crash point moves one phase later and the cycle charges the cap again.
+    const wipeout = emptyResult(true, undefined, ["security", "correctness"], 2, true);
+    eq(wipeout.no_review_signal, true, "emptyResult: an all-dimensions-failed cycle is no-signal (#616)");
+    eq(wipeout.clean, false, "emptyResult: a wipeout is still not clean (it is also partial)");
+    // The field is always present, never conditionally omitted: the helper's
+    // default for an absent field is `false`, so omitting it on one path and
+    // emitting it on another would make the two indistinguishable downstream.
+    ok(
+      Object.prototype.hasOwnProperty.call(r, "no_review_signal"),
+      "emptyResult: no_review_signal is always present, not conditionally omitted",
+    );
+    // The wipeout detection itself lives in the ORCHESTRATION body (past
+    // ORCH_BOUNDARY), so no extracted helper can reach it — assert structurally
+    // that the flag is both computed and threaded, like the sibling checks below.
+    // Without this, `emptyResult` could accept the 5th arg correctly while the
+    // zero-findings call site never passes it, and the behavioral test above
+    // would still pass.
+    {
+      const orch = harnessSource(SHIP);
+      // Derived from the DISPATCHED results, never from a
+      // `dimensionsSkipped.length === dimensions.length` count comparison —
+      // those two lengths mix disjoint populations (a build-time skip names a
+      // dimension never added to `dimensions`; a mid-barrier null names one that
+      // was), so they can coincide while every dispatched dimension succeeded.
+      // Pin both the right shape and the absence of the wrong one.
+      ok(
+        /const allDimensionsFailed\s*=\s*computeAllDimensionsFailed\(reviewResults, dimensionsSkipped\)/.test(orch),
+        "ship-issue: the orchestration body calls the extracted predicate, not an inline copy (#616)",
+      );
+      // The field must be present on BOTH return paths, not just emptyResult's.
+      // The reader defaults an absent key to false, so an omission on the
+      // findings-bearing path is indistinguishable from an explicit false — and
+      // the behavioral assertions above, which only exercise emptyResult, cannot
+      // see that path at all. Count the sites: one in emptyResult, one in the
+      // non-empty-findings return object.
+      eq(
+        (orch.match(/^\s*no_review_signal:/gm) || []).length,
+        2,
+        "ship-issue: no_review_signal is emitted on BOTH return paths, never omitted on one (#616)",
+      );
+      // ...and the findings-bearing path must emit the COMPUTED flag, not a
+      // literal. Counting emission sites cannot see the value, which is how a
+      // hardcoded `false` survived cycle 6: having findings does NOT imply a
+      // dimension reported, because `rawFindings` also collects comment-triage
+      // findings, and triage is gated on TAIL_FLOOR (8k) while the fan-out is
+      // gated on BUDGET_FLOOR (40k) — so a starved fan-out plus a surviving
+      // comment finding is reachable in normal operation.
+      ok(
+        /^\s*no_review_signal: allDimensionsFailed,/m.test(orch),
+        "ship-issue: the findings-bearing return emits the computed flag, not a hardcoded false (#616)",
+      );
+      ok(
+        !/^\s*no_review_signal: false,/m.test(orch),
+        "ship-issue: no return path hardcodes no_review_signal false",
+      );
+      // The two floors are what make that state reachable; if they were ever
+      // equalized the hazard would vanish, and this comment would be stale
+      // rather than wrong. Pin the ordering the reasoning depends on.
+      {
+        const floor = Number((orch.match(/const BUDGET_FLOOR = ([\d_]+)/) || [])[1]?.replace(/_/g, ""));
+        const tail = Number((orch.match(/const TAIL_FLOOR = ([\d_]+)/) || [])[1]?.replace(/_/g, ""));
+        ok(
+          Number.isFinite(floor) && Number.isFinite(tail) && tail < floor,
+          "ship-issue: TAIL_FLOOR < BUDGET_FLOOR — comment triage outlives the fan-out (#616 hazard)",
+        );
+      }
+      ok(
+        !/allDimensionsFailed\s*=\s*[^\n]*dimensionsSkipped\.length === dimensions\.length/.test(orch),
+        "ship-issue: the wipeout case is NOT a skipped-vs-selected count comparison (false no-signal)",
+      );
+
+      // The predicate's own truth table, run against the REAL extracted
+      // function — not a copy of it. The regexes above pin the SHAPE; this pins
+      // the BEHAVIOR. The two rows that matter produce an identical empty
+      // `reviewResults` and are distinguishable only by whether a review was
+      // owed: a `reviewResults.length > 0` guard passes rows 1, 2 and 4 and
+      // fails only row 3, which is exactly the bug cycle 5 found.
+      //
+      // Calling the real function is the point (cycle 8). A local
+      // reimplementation would keep passing while the harness's own copy drifted
+      // — and this predicate has drifted five times, so a test that cannot see
+      // the production code is the wrong test for it.
+      const wipeoutOf = computeAllDimensionsFailed;
+      eq(wipeoutOf([{ dim: "security" }, null], []), false, "wipeout: a dimension that reported is review signal");
+      eq(wipeoutOf([null, null], ["security", "tests"]), true, "wipeout: every dispatched dimension failed");
+      eq(wipeoutOf([], ["scope-drift"]), true, "wipeout: budget skipped every candidate BEFORE dispatch (#616)");
+      eq(wipeoutOf([], []), false, "wipeout: narrowing legitimately selected nothing — complete, not no-signal");
+      const zeroCall = orch.slice(orch.indexOf("if (rawFindings.length === 0) {"));
+      ok(
+        zeroCall.slice(0, 400).includes("allDimensionsFailed"),
+        "ship-issue: the zero-findings emptyResult call threads allDimensionsFailed (#616)",
+      );
+    }
+    // A no-signal cycle is still not clean by virtue of the flag alone — the
+    // manifest-failure call site sets `clean = false` explicitly. Pin that the
+    // flag does not accidentally imply cleanliness in either direction.
+    eq(crashed.clean, true, "emptyResult: no_review_signal alone does not force clean false (caller does)");
+
     // #270: computeClean is the shared predicate behind BOTH return paths,
     // including the non-empty-findings path that sits past the ORCH_BOUNDARY and
     // so is otherwise untestable. The merge-invariant guarantee — a truncated

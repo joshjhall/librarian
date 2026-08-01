@@ -153,15 +153,16 @@ These env vars toggle non-default behavior; all are opt-in:
   p95, so it catches runaways without truncating normal reviews. Being per-cycle,
   it composes with `REVIEW_MAX_CYCLES`: worst case
   `REVIEW_TOKEN_CEILING × REVIEW_MAX_CYCLES`.
-- `REVIEW_STRICT` — **superseded and inert** (#580). It documented "treat
-  MEDIUM-certainty findings as blocking, in addition to the default
-  HIGH-certainty blocking set". The disposition policy no longer works that way:
-  a MEDIUM-certainty defect in code the PR wrote blocks by **default** (rule
-  `R8`, see `ci-review-protocol.md` § How a finding is classified), so the
-  strict behavior is now the normal behavior. No harness code has ever read this
-  variable — setting it has no effect, and it is retained only so an existing
-  agent config that sets it is not surprising. Unlike `PRE_REVIEW_STRICT`, which
-  remains live.
+- `REVIEW_MAX_ATTEMPTS` — integer, default `2 × REVIEW_MAX_CYCLES`. The absolute
+  ceiling on review-loop **attempts**, as distinct from `REVIEW_MAX_CYCLES`'s
+  ceiling on cycles that actually produced a review. A cycle whose harness died
+  before any dimension ran (`no_review_signal`) produces no review signal, so it
+  does not charge a cycle — rule `C0b-no-signal` in `review-convergence.sh`
+  returns `continue` (#616). This variable is what still guarantees termination
+  in that case: rule `C0-attempt-cap` outranks everything, so a persistently
+  crashing harness stops after `REVIEW_MAX_ATTEMPTS` tries rather than looping
+  forever. Raise it only if genuine infra flakiness is exhausting it; a value
+  below `REVIEW_MAX_CYCLES` makes the cycle cap unreachable.
 - `LIBRARIAN_CI_WAIT_TIMEOUT` — integer **minutes**, default `15`. Threshold for
   the "Wait for CI" poll loop (Step 4 Option 1): once cumulative wait crosses
   this, the loop hits a **checkpoint** instead of polling forever. At **L1–L2**

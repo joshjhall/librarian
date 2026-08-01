@@ -1061,6 +1061,36 @@ const applyJudgeVerdicts = (rawFindings, judged, budgetExhausted) => {
 // the merge-invariant guard unit-testable at every site (a budget-truncated
 // cycle can never read as clean, even with findings that all classify
 // deferrable), so `clean` stays unforgeable by truncation (#270).
+// computeAllDimensionsFailed — did this cycle produce NO review signal?
+//
+// True iff a review was OWED and nothing that was dispatched came back. The two
+// clauses answer different questions and both are load-bearing:
+//
+//   somethingWasDue — the cycle owed a review. `dimensionsSkipped` is non-empty
+//                     exactly when a dimension that should have run was dropped
+//                     at the budget floor, INCLUDING build-time drops that never
+//                     reach `reviewResults` at all.
+//   every((r) => !r) — nothing dispatched reported. Vacuously true on an empty
+//                     array, which is what makes the first clause necessary
+//                     rather than a redundant guard.
+//
+// The empty-`dimensions` case splits on `somethingWasDue`, and that split is the
+// whole point: narrowing legitimately selecting nothing (the delta touches no
+// dimension's types, nothing prior-blocking) is a COMPLETE cycle that owed no
+// review, while the budget floor skipping every candidate before dispatch leaves
+// an identical empty array and IS a cycle that reviewed nothing it owed.
+//
+// Extracted here — before the orchestration body, like `computeClean` and for
+// the same reason — because the orchestration body is untestable: nothing past
+// ORCH_BOUNDARY can be pulled into a unit test, so a truth table written against
+// it can only re-implement it, and a reimplementation drifts silently from the
+// code it claims to pin. This predicate has been wrong five times (#616 review
+// cycles 3-7: manifest-only, disjoint-population counts, the empty-array
+// conflation, a missing emission, a hardcoded literal), so it is precisely the
+// code that must be exercised directly rather than mirrored.
+const computeAllDimensionsFailed = (reviewResults, dimensionsSkipped) =>
+  (reviewResults.length > 0 || dimensionsSkipped.length > 0) && reviewResults.every((r) => !r)
+
 const computeClean = (blockingLen, unresolvedLen, budgetExhausted) =>
   blockingLen === 0 && unresolvedLen === 0 && !budgetExhausted
 
@@ -1246,7 +1276,20 @@ const selectReviewDimensions = ({
 // `dimensions`: this function is hoisted and the manifest-failure call site
 // below runs BEFORE that const is initialized, so touching it here would throw
 // a TDZ error on exactly the failure path that must degrade gracefully.
-function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
+// `noReviewSignal` marks the cycle as having produced NO review signal at all —
+// it died before any dimension ran, so it is not evidence about convergence in
+// either direction. The convergence helper reads this field to decline charging
+// the cycle against REVIEW_MAX_CYCLES (rule C0b), because otherwise three infra
+// flakes exhaust the cap and dead-end the PR with a summary implying findings
+// that were never produced (#616).
+//
+// It is an EXPLICIT parameter rather than something inferred from
+// `dimensions_run === 0`: a narrowed cycle whose dimensions were all filtered
+// out (#492) ran to completion by design, and inferring would conflate
+// "reviewed nothing because nothing changed" with "reviewed nothing because it
+// crashed". It defaults to false so every existing call site — all of which
+// describe cycles that DID review — keeps its current meaning.
+function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun, noReviewSignal) {
   if (note) log(note)
   return {
     cycle: CYCLE,
@@ -1278,6 +1321,10 @@ function emptyResult(budgetExhausted, note, dimensionsSkipped, dimensionsRun) {
     },
     budget_exhausted: !!budgetExhausted,
     dimensions_skipped: dimensionsSkipped || [],
+    // Always present (never conditionally omitted): the helper's default for an
+    // absent field is `false`, so omitting it on the crash path and emitting it
+    // elsewhere would make the two indistinguishable from outside.
+    no_review_signal: !!noReviewSignal,
     // No blocking findings produced — but a budget-truncated cycle is PARTIAL
     // (some dimension never ran), so it can never read as clean; nor can a
     // manifest/early failure, for which callers still override clean explicitly.
@@ -1363,7 +1410,13 @@ const manifest = await agent(manifestPrompt(), {
 })
 
 if (!manifest) {
-  const r = emptyResult(false, 'manifest step failed — nothing to review this cycle')
+  // The manifest is a single point of failure ahead of the whole fan-out, so its
+  // death means NO dimension ever ran — the cycle produced zero review signal.
+  // Flag it as such (5th arg) so the convergence helper does not charge it to
+  // REVIEW_MAX_CYCLES: this is the exact failure observed on PR #615, where a
+  // schema-validation failure repeated identically across all five retries and
+  // burned a cycle slot having reviewed nothing (#616).
+  const r = emptyResult(false, 'manifest step failed — nothing to review this cycle', [], 0, true)
   // A failed manifest is not a clean pass: do not let the skill stop the loop
   // on a degenerate cycle.
   r.clean = false
@@ -1530,8 +1583,21 @@ if (unresolvedComments.length) {
   log(`${unresolvedComments.length} PR comment(s) not yet resolved-or-deferred`)
 }
 
+// Did this cycle produce NO review signal? See `computeAllDimensionsFailed`
+// (before ORCH_BOUNDARY) for the predicate, what each clause is for, and the
+// five ways it has been got wrong. It lives there rather than inline here so the
+// truth table in tests/workflow-helpers/ship-issue.mjs exercises the REAL
+// predicate instead of a reimplementation that can drift from it.
+const allDimensionsFailed = computeAllDimensionsFailed(reviewResults, dimensionsSkipped)
+
 if (rawFindings.length === 0) {
-  const r = emptyResult(budgetExhausted, 'no findings this cycle', dimensionsSkipped, dimensions.length)
+  const r = emptyResult(
+    budgetExhausted,
+    'no findings this cycle',
+    dimensionsSkipped,
+    dimensions.length,
+    allDimensionsFailed
+  )
   r.comments_addressed = commentsAddressed
   // Clean only if every comment is resolved-or-deferred AND the cycle was
   // complete: a budget-truncated cycle (some dimension never ran) is partial and
@@ -1646,6 +1712,22 @@ return {
   },
   budget_exhausted: budgetExhausted,
   dimensions_skipped: dimensionsSkipped,
+  // The SAME flag the zero-findings path passes to `emptyResult`, not a
+  // hardcoded false. Having findings does not imply a dimension reported:
+  // `rawFindings` has two sources, and the second is comment triage
+  // (`dimension: 'review-comment'`), which is gated on `TAIL_FLOOR` (8k) while
+  // the fan-out is gated on `BUDGET_FLOOR` (40k). That staggering is deliberate
+  // — the tail agent is meant to survive budget pressure that already starved
+  // the dimensions — so "every dimension failed, yet a PR-comment finding
+  // surfaced" is a normal-operation state, not a contrived one. Hardcoding
+  // false there charges a cycle in which nothing ever read the diff, which is
+  // exactly #616's harm reopened through the one path its fix did not cover.
+  //
+  // Present on this path as well as in `emptyResult`, so the field's
+  // "always present" contract holds across BOTH returns: the reader defaults an
+  // absent key to false, so an omission here would be indistinguishable from a
+  // deliberate false.
+  no_review_signal: allDimensionsFailed,
   // A cycle is clean only when nothing blocks, every PR comment is
   // resolved-or-deferred, AND the cycle was complete (`!budgetExhausted` — no
   // dimension skipped at build time or nulled mid-barrier). Gating on
