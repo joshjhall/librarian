@@ -43,6 +43,22 @@ the same resolution forever; one that resolves it *wrongly* degrades the review
 forbid substituting a hand-rolled review). The invocation sites cross-reference
 this section rather than restating it — keep the authority here, in one place.
 
+**What the substitute actually costs — measured (#645).** The worst resolution
+is not skipping; it is skipping the harness *while still spawning subagents*,
+which takes the cost of both and the benefit of neither. Measured on PR #642:
+
+| | Wall time | Shape |
+| --- | --- | --- |
+| **Harness cycle** | **5.4 min** | 7 agents, 5 dimensions in one parallel barrier, 50k output tokens |
+| **Serial substitute** | **9–61 min per cycle**, 8 cycles, **~2.5 h** | one general-purpose subagent per cycle |
+
+The serial cycles also **lost the pre-scan handoff, the conventions digest, and
+the judge**, and each re-derived the manifest from scratch — so the substitute
+is not a cheaper version of the harness, it is a different and much worse thing.
+(Source: librarian's own `CLAUDE.md` § *`ship-issue`'s review step runs the
+Workflow harness*, which carries the same rule as repo-level session guidance;
+this section is its counterpart for consuming repos, which never load that file.)
+
 ## State reconstruction (missing-state-file fallback)
 
 Loaded from SKILL.md Step 1. The Phase 1/2 state write can legitimately be

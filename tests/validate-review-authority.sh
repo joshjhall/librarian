@@ -100,6 +100,33 @@ test_workflow_authority_asserted() {
         "ship-issue/SKILL.md must point at the Workflow authority rule (#637 AC1)"
 }
 
+# --- 1a. AC1: the substitute's measured cost is stated ----------------------
+#
+# Prose alone ("slower and weaker") is easy to discount; the measurement is not.
+# A consuming repo never loads librarian's CLAUDE.md, so the numbers recorded
+# there by #645 have to live in the skill too or they do not travel with the
+# plugin.
+#
+# Mutation check: delete the measurement table from ship-protocol.md -> fails.
+
+test_substitute_cost_is_measured() {
+    local protocol
+    protocol="$(find_ship_protocol)"
+    if [ -z "$protocol" ]; then
+        skip_test "ship-protocol.md not found"
+        return
+    fi
+
+    # The concrete figures, not just an assertion that substitutes are bad.
+    assert_true "command grep -qiE '5\.4 min' '$protocol'" \
+        "ship-protocol.md must state the measured harness cycle time (#637/#645)"
+    assert_true "command grep -qiE '2\.5 ?h' '$protocol'" \
+        "ship-protocol.md must state the measured serial-substitute total (#637/#645)"
+    # The qualitative losses are what make the substitute worse, not just slower.
+    assert_true "command grep -qiE 'pre-scan handoff' '$protocol'" \
+        "ship-protocol.md must name what the substitute loses (#637/#645)"
+}
+
 # --- 1b. AC1: the INVOCATION SITES cite the authority ----------------------
 #
 # The observed failure happened at a call site: a golem read an "Invoke the
@@ -252,6 +279,7 @@ test_target_files_present() {
 
 run_test test_target_files_present "ship-issue contract files present (positive control)"
 run_test test_workflow_authority_asserted "Workflow opt-in authority is asserted once (#637 AC1)"
+run_test test_substitute_cost_is_measured "Substitute review's measured cost is stated (#637 AC1/#645)"
 run_test test_invocation_sites_cite_authority "Workflow invocation sites cite the authority (#637 AC1)"
 run_test test_degradation_excludes_permission_doubt "Degradation clauses exclude permission doubt (#637 AC2)"
 run_test test_degradation_forbids_substitute_review "Degradation clauses forbid a substitute review (#637 AC2)"
