@@ -53,3 +53,18 @@ the rest. When an issue closes, its memory either graduates to a lesson or goes.
 Each entry appears in exactly one index. A sub-index that outgrows a screen splits
 by topic; this root file stays selective — it is loaded every session, so an entry
 earns its place here only by applying across tasks.
+
+A memory whose content **time can falsify** — a version pin, a "latest" claim, an
+open-issue status, a measured baseline — carries three optional `metadata:` keys
+(borrowed from OKF, see #631):
+
+```yaml
+status: stable          # draft | stable | deprecated
+stale_after: 2026-10-31 # stale once today >= this date
+stale_check: "what specifically rots, and how to re-derive it"
+```
+
+`stale_check` matters more than the date: it names the sentence to re-verify, so
+a stale memory gets that one line refreshed instead of being distrusted whole. A
+durable lesson needs none of this — being old is not being wrong. Prefer writing
+the fact so it cannot rot at all (say how to look the version up, don't paste it).

@@ -6,6 +6,9 @@ metadata:
   type: project
   originSessionId: ea401363-2ee0-40ee-95f3-eac14055d50b
   modified: 2026-07-29T03:11:56.710Z
+  status: stable
+  stale_after: 2026-10-31
+  stale_check: "a frozen measurement at v0.8.2; recall was unproven at n=2 — re-measure before citing as current cost"
 ---
 
 The "after" arm for [[review-cost-baseline-2026-07-28]], answering #559. Written
