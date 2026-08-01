@@ -388,6 +388,29 @@ test_newline_in_file_cannot_forge_a_recursive_match() {
     assert_equals "0" "$(val recursive "$out")" "the injected test path is not counted as recursive"
 }
 
+test_carriage_return_in_file_cannot_forge_a_recursive_match() {
+    # Both filters treat CR as a record separator alongside LF, but every other
+    # injection case here uses `\n` only — so the CR half was pinned by nothing.
+    # Verified by mutation: narrowing `flat` to `gsub("\n";" ")` and dropping the
+    # `%0D` encoding left the whole suite green.
+    #
+    # CR is forgeable on a different mechanism than LF. It does not split a line
+    # for `grep`, so it cannot inject a second record; instead `flat` COLLAPSES it
+    # to a space, which is what lets a crafted `.file` match a delta path that
+    # genuinely contains a space. Drop the CR from `flat` and the byte stays
+    # literal, so this fixture stops matching — which is why the assertion is a
+    # C7 stop rather than the C8 continue the newline cases assert.
+    command printf 'tests/foo test.sh\nsrc/fix.js\n' >"$FIXTURES/delta-space.txt"
+    command printf '{"blocking":[{"file":"tests/foo\\rtest.sh","line_start":5,"category":"tests","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/inject-cr.json"
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/inject-cr.json" \
+        --delta-files "$FIXTURES/delta-space.txt" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "C7-recursive" "$(val rule "$out")" "a CR is normalized to a space like a newline is"
+    assert_equals "1" "$(val recursive "$out")" "CR handling in flat is load-bearing, not vestigial"
+}
+
 test_newline_in_category_cannot_forge_a_duplicate() {
     # `.category` is interpolated into the same fingerprint and is equally
     # attacker-shaped; sanitizing only `.file` would leave this path open.
@@ -711,6 +734,28 @@ test_noninteger_line_start_fails_loud() {
     assert_contains "$err" "line_start" "the message names the offending field"
 }
 
+test_fractional_line_start_fails_loud() {
+    # The guard has TWO failure branches — not JSON type `number`, and a number
+    # that is not whole — and the string fixture above only reaches the first.
+    # A fractional `line_start` is a genuine JSON number, so it passes the type
+    # check and can only be caught by the `floor` comparison. Verified by
+    # mutation: deleting `and ((.line_start | floor) == .line_start)` leaves the
+    # whole suite green without this case, i.e. half the guard was untested.
+    #
+    # It matters beyond tidiness because `10.5` and `10` are DISTINCT fingerprints
+    # for what a well-formed producer would call the same line, so a fractional
+    # value silently weakens C6 duplicate detection toward continue.
+    command printf '{"blocking":[{"file":"src/f.js","line_start":10.5,"category":"correctness","disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/frac-line-start.json"
+    local rc=0 err
+    err="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/frac-line-start.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false 2>&1 >/dev/null || true)"
+    "$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/frac-line-start.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false >/dev/null 2>&1 || rc=$?
+    assert_exit "2" "$rc" "a fractional line_start exits 2 (the floor half of the guard)"
+    assert_contains "$err" "line_start" "the message names the offending field"
+}
+
 test_null_line_start_is_valid() {
     # The complement, and the anti-tautology guard for the case above: a mutation
     # that rejected EVERY document would pass that test while breaking the script
@@ -934,6 +979,7 @@ run_test test_malformed_result_fails_loud "malformed result JSON -> exit 2"
 run_test test_valid_json_scalar_is_not_misread_as_malformed "jq empty, not jq -e, is the validity probe"
 run_test test_newline_in_file_cannot_forge_a_duplicate "injection: newline in .file cannot forge a C6 stop"
 run_test test_newline_in_file_cannot_forge_a_recursive_match "injection: newline in .file cannot forge a C7 stop"
+run_test test_carriage_return_in_file_cannot_forge_a_recursive_match "injection: CR is normalized like a newline"
 run_test test_newline_in_category_cannot_forge_a_duplicate "injection: newline in .category cannot forge a C6 stop"
 run_test test_colon_in_file_cannot_forge_a_duplicate "injection: colon in .file cannot forge a C6 stop"
 run_test test_colon_in_path_still_matches_for_recursive "colon substitution does not break C7 path matching"
@@ -941,6 +987,7 @@ run_test test_underscore_and_colon_paths_do_not_collide "injective: a:b and a_b 
 run_test test_percent_in_path_does_not_collide_with_an_encoded_colon "injective: the escape alphabet is itself injective (#618)"
 run_test test_sanitization_preserves_ordinary_matching "sanitization preserves real duplicate matching"
 run_test test_noninteger_line_start_fails_loud "non-integer line_start -> exit 2 (#619)"
+run_test test_fractional_line_start_fails_loud "fractional line_start -> exit 2 (the floor half, #619)"
 run_test test_null_line_start_is_valid "an omitted line_start is still valid (#619)"
 run_test test_unreadable_prev_result_fails_loud "unreadable --prev-result -> exit 2"
 run_test test_malformed_prev_result_fails_loud "malformed --prev-result -> exit 2"
