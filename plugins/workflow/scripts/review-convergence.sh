@@ -304,8 +304,15 @@ read_findings() {
 # `field` deliberately does NOT derive from `flat`: `flat` maps a newline and a
 # literal space to the same space, so building on it would leave `field`
 # many-to-one on that pair. It encodes the record separators itself.
-FLATTEN='def flat: (. // "") | tostring | gsub("[\n\r]";" ");
-         def field: (. // "") | tostring
+#
+# Both filters default a MISSING value with an explicit `. == null` test rather
+# than `// ""`. jq's `//` fires on `false` as well as `null`, so a boolean-`false`
+# field would coerce to `""` — indistinguishable from an absent one, which is a
+# many-to-one map and so the same injectivity break the encoding exists to close.
+# The explicit test stringifies `false` to the distinct text "false".
+FLATTEN='def orblank: if . == null then "" else . end;
+         def flat: orblank | tostring | gsub("[\n\r]";" ");
+         def field: orblank | tostring
                     | gsub("%";"%25") | gsub(":";"%3A")
                     | gsub("\n";"%0A") | gsub("\r";"%0D");'
 

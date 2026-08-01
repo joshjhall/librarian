@@ -506,6 +506,26 @@ test_percent_in_path_does_not_collide_with_an_encoded_colon() {
     assert_equals "0" "$(val duplicate "$out")" "the escape alphabet is itself injective"
 }
 
+test_boolean_false_field_does_not_collide_with_an_absent_one() {
+    # The last hole in the injectivity argument. `// ""` — the idiom both filters
+    # used — fires on `false` as well as `null`, so a boolean-`false` `.category`
+    # coerced to `""`, exactly like an absent one: two structurally different
+    # findings, one fingerprint, a forged C6 stop. Same defect class as the `a:b`
+    # / `a_b` collision, reached through a value TYPE rather than a character.
+    # The explicit `. == null` test stringifies `false` to "false" instead.
+    command printf '{"blocking":[{"file":"src/q.js","line_start":3,"category":false,"disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/false-cat.json"
+    command printf '{"blocking":[{"file":"src/q.js","line_start":3,"disposition_rule":"R8-defect-in-new-code","title":"t"}],"deferrable":[]}\n' \
+        >"$FIXTURES/absent-cat.json"
+    local out
+    out="$("$RC" check --cycle 2 --max-cycles 5 --result "$FIXTURES/false-cat.json" \
+        --prev-result "$FIXTURES/absent-cat.json" \
+        --delta-lines 400 --prev-delta-lines 400 --partial false)"
+    assert_equals "continue" "$(val verdict "$out")" "a false field must not collide with an absent one"
+    assert_equals "C8-novel" "$(val rule "$out")" "the finding is novel, not a duplicate"
+    assert_equals "0" "$(val duplicate "$out")" "only null defaults to the empty string"
+}
+
 test_sanitization_preserves_ordinary_matching() {
     # The complement: sanitizing must not break real duplicate detection. Without
     # this, a mutation that emptied every fingerprint would pass the three
@@ -985,6 +1005,7 @@ run_test test_colon_in_file_cannot_forge_a_duplicate "injection: colon in .file 
 run_test test_colon_in_path_still_matches_for_recursive "colon substitution does not break C7 path matching"
 run_test test_underscore_and_colon_paths_do_not_collide "injective: a:b and a_b do not collide (#618)"
 run_test test_percent_in_path_does_not_collide_with_an_encoded_colon "injective: the escape alphabet is itself injective (#618)"
+run_test test_boolean_false_field_does_not_collide_with_an_absent_one "injective: false does not collide with an absent field"
 run_test test_sanitization_preserves_ordinary_matching "sanitization preserves real duplicate matching"
 run_test test_noninteger_line_start_fails_loud "non-integer line_start -> exit 2 (#619)"
 run_test test_fractional_line_start_fails_loud "fractional line_start -> exit 2 (the floor half, #619)"
