@@ -779,6 +779,12 @@ export function run() {
     );
     const crashed = emptyResult(false, undefined, [], 0, true);
     eq(crashed.no_review_signal, true, "emptyResult: no_review_signal set on the crash path (#616)");
+    // A fan-out-wide wipeout is as void of review signal as a dead manifest, and
+    // must be flagged the same way — otherwise #616 is only half fixed: the
+    // crash point moves one phase later and the cycle charges the cap again.
+    const wipeout = emptyResult(true, undefined, ["security", "correctness"], 2, true);
+    eq(wipeout.no_review_signal, true, "emptyResult: an all-dimensions-failed cycle is no-signal (#616)");
+    eq(wipeout.clean, false, "emptyResult: a wipeout is still not clean (it is also partial)");
     // The field is always present, never conditionally omitted: the helper's
     // default for an absent field is `false`, so omitting it on one path and
     // emitting it on another would make the two indistinguishable downstream.
@@ -786,6 +792,24 @@ export function run() {
       Object.prototype.hasOwnProperty.call(r, "no_review_signal"),
       "emptyResult: no_review_signal is always present, not conditionally omitted",
     );
+    // The wipeout detection itself lives in the ORCHESTRATION body (past
+    // ORCH_BOUNDARY), so no extracted helper can reach it — assert structurally
+    // that the flag is both computed and threaded, like the sibling checks below.
+    // Without this, `emptyResult` could accept the 5th arg correctly while the
+    // zero-findings call site never passes it, and the behavioral test above
+    // would still pass.
+    {
+      const orch = harnessSource(SHIP);
+      ok(
+        /const allDimensionsFailed\s*=\s*dimensions\.length > 0 && dimensionsSkipped\.length === dimensions\.length/.test(orch),
+        "ship-issue: the wipeout case is computed from the skipped-vs-selected counts (#616)",
+      );
+      const zeroCall = orch.slice(orch.indexOf("if (rawFindings.length === 0) {"));
+      ok(
+        zeroCall.slice(0, 400).includes("allDimensionsFailed"),
+        "ship-issue: the zero-findings emptyResult call threads allDimensionsFailed (#616)",
+      );
+    }
     // A no-signal cycle is still not clean by virtue of the flag alone — the
     // manifest-failure call site sets `clean = false` explicitly. Pin that the
     // flag does not accidentally imply cleanliness in either direction.

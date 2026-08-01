@@ -74,10 +74,14 @@
 # was a valid data point, and the absolute termination guarantee moves up to C0.
 #
 # C0b/C0 — a crashed cycle must not be charged to the cycle cap (#616).
-#   A cycle whose harness died before any dimension ran produces no review
-#   signal: `agent_count: 1, agents_done: 0, agents_error: 1`, no dimension ever
-#   executed. Observed live on PR #615, where a `$PARAMETER_VALUE`-wrapped
-#   manifest payload failed schema validation identically on all five retries.
+#   A cycle in which no dimension reported at all produces no review signal:
+#   `agent_count: 1, agents_done: 0, agents_error: 1`, nothing ever read the
+#   diff. Observed live on PR #615, where a `$PARAMETER_VALUE`-wrapped manifest
+#   payload failed schema validation identically on all five retries — but the
+#   harness sets the flag for a fan-out-wide wipeout too (every dimension failed
+#   or was skipped at the budget floor), which is the same void one phase later.
+#   Strictly narrower than a PARTIAL cycle: a partial had some dimension report,
+#   so its findings are evidence and it still charges the cap via C2.
 #   Charging that to `max_cycles` makes a crashed cycle INDISTINGUISHABLE from a
 #   substantive one: three infra flakes exhaust the cap and dead-end the PR with
 #   a summary reading "review could not reach clean in N cycles" — implying

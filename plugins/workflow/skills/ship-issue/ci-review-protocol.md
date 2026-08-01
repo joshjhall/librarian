@@ -284,9 +284,13 @@ touch it is **not** a partial cycle: narrowing never sets `budget_exhausted` /
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
 budget_exhausted, dimensions_skipped[], no_review_signal, clean }`.
-`no_review_signal` is true only when the cycle died before **any** dimension ran
-(e.g. the manifest step failed) — that cycle produced no review signal and must
-not be charged against `cap`, see step (f) (#616). `dimensions_skipped` names any
+`no_review_signal` is true when **no dimension reported at all** — the manifest
+step failed before the fan-out, or every selected dimension failed or was skipped
+at the budget floor. Either way the cycle produced no review signal and must not
+be charged against `cap`, see step (f) (#616). Note this is strictly narrower
+than `budget_exhausted`: an ordinary partial cycle had *some* dimension report,
+so its findings are real evidence and it still charges the cap via `C2-partial`;
+only a total wipeout is uncharged. `dimensions_skipped` names any
 review dimensions that did not run this cycle (skipped at the budget floor or
 failed mid-barrier); a non-empty list means `budget_exhausted` is true and the
 cycle is **partial**.

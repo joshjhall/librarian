@@ -1553,8 +1553,30 @@ if (unresolvedComments.length) {
   log(`${unresolvedComments.length} PR comment(s) not yet resolved-or-deferred`)
 }
 
+// A cycle where EVERY dimension failed or was skipped produced no review signal,
+// exactly like a dead manifest: nothing looked at the diff, so its zero is not
+// evidence about convergence. The manifest case is merely the shape observed on
+// PR #615; a fan-out-wide agent failure (transient API outage) or a token
+// ceiling that skips every dimension at the budget floor reaches the same state
+// one phase later, and charging THAT to REVIEW_MAX_CYCLES re-opens #616 for the
+// narrower case.
+//
+// Distinct from an ordinary partial cycle, which is why it is not simply
+// `budgetExhausted`: a partial cycle had SOME dimension report, so its findings
+// (or lack of them) are real evidence and it correctly charges the cap via
+// `C2-partial`. Only the total-wipeout case is uncharged. `dimensions.length > 0`
+// guards the degenerate empty-selection case, where "every dimension failed" is
+// vacuously true but nothing was ever supposed to run.
+const allDimensionsFailed = dimensions.length > 0 && dimensionsSkipped.length === dimensions.length
+
 if (rawFindings.length === 0) {
-  const r = emptyResult(budgetExhausted, 'no findings this cycle', dimensionsSkipped, dimensions.length)
+  const r = emptyResult(
+    budgetExhausted,
+    'no findings this cycle',
+    dimensionsSkipped,
+    dimensions.length,
+    allDimensionsFailed
+  )
   r.comments_addressed = commentsAddressed
   // Clean only if every comment is resolved-or-deferred AND the cycle was
   // complete: a budget-truncated cycle (some dimension never ran) is partial and
