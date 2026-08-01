@@ -251,6 +251,93 @@ test_staleness() {
         "staleness: a plain TODO with no staleness word is silent"
 }
 
+# stub_date_dir DIR YYYY MM — write a `date` stub into DIR that answers +%Y, +%m
+# and +%Y-%m with the GIVEN values, delegating every other format to the real
+# binary.
+# Injecting the month is the whole point: the bug below is live in exactly two
+# calendar months, so a fixture reading the wall clock proves nothing the other
+# ten (and would have "passed" all the way to the August day it broke CI).
+#
+# `command date` resolves through PATH, so prepending DIR is enough. BASH_ENV
+# must be unset for the child: the devcontainer's /etc/bash_env resets $PATH
+# non-interactively and would silently restore the real `date`, turning the
+# would-fail arm below into a vacuous pass.
+stub_date_dir() {
+    local dir="$1" year="$2" month="$3" real_date
+    # Resolve the real binary HERE, before $dir is on PATH, and bake in the
+    # absolute path — the stub cannot look `date` up itself without finding
+    # itself. `command -v` rather than a literal /bin/date: the real one lives in
+    # /usr/bin on some hosts and /bin on others.
+    real_date="$(command -v date)"
+    # `+%Y-%m` is answered explicitly, not just `+%Y` and `+%m`. A stub that
+    # delegates the COMBINED format to the real binary reports the stubbed month
+    # to the scanner and the real one to any caller asking for both at once —
+    # the two then disagree, which reads exactly like a scanner bug and sent this
+    # very fix chasing a phantom failure. Keep the formats in sync.
+    command printf '%s\n' \
+        '#!/usr/bin/env sh' \
+        'case "$1" in' \
+        "  +%Y) echo ${year} ;;" \
+        "  +%m) echo ${month} ;;" \
+        "  +%Y-%m) echo ${year}-${month} ;;" \
+        "  *) exec ${real_date} \"\$@\" ;;" \
+        'esac' >"$dir/date"
+    command chmod +x "$dir/date"
+}
+
+# staleness_rows_at YYYY MM LIST CWD — the bash arm's expired-date rows with the
+# clock stubbed to YYYY-MM. stderr is KEPT on stdout here (unlike emit_rows,
+# which discards it) so an abort is visible as text rather than as silence.
+staleness_rows_at() {
+    local year="$1" month="$2" list="$3" cwd="$4" stub
+    stub="$(fresh_dir)"
+    stub_date_dir "$stub" "$year" "$month"
+    (
+        cd "$cwd" && /usr/bin/env -u BASH_ENV \
+            PATH="$stub:$PATH" PATTERNS_FORCE_BASH=1 \
+            "$REAL_BASH" "$SK_STALE/patterns.sh" "$list" 2>&1
+    )
+}
+
+# The month is read in base 10, not OCTAL (#624).
+#
+# `date +%m` is zero-padded, and bash parses a leading-zero literal in `$(( ))`
+# as octal — where `08` and `09` are INVALID digits. Without the `10#` prefix the
+# threshold arithmetic aborts under `set -e` and the scanner emits nothing at
+# all: a silent false-clean, not a visible failure. It is therefore correct in
+# ten months and broken in two, which is how it shipped green for months and then
+# turned `main` red the day CI crossed into 08 UTC.
+#
+# Every month is swept rather than just 08/09 — a future rewrite could plausibly
+# break a different one, and the sweep costs nothing. 2001-01-15 is old enough to
+# be stale against any of them.
+test_staleness_month_is_base_ten() {
+    local d list rows m
+
+    d="$(fresh_dir)"
+    command printf '%s\n' "Originally written 2001-01-15 for v1." >"$d/old.md"
+    list="$(make_list "$d/l" "$d/old.md")"
+
+    for m in 01 02 03 04 05 06 07 08 09 10 11 12; do
+        rows="$(staleness_rows_at 2026 "$m" "$list" "$WORKDIR")"
+
+        # Fires: the pre-fix octal abort produced EMPTY output, so this is the
+        # assertion that flips red without the `10#`.
+        assert_contains "$rows" "Date reference older than 12 months" \
+            "staleness: a stale date still fires with the clock at 2026-${m} (#624)"
+
+        # ...and fails LOUD if it ever regresses differently. An abort message on
+        # stderr would satisfy neither this nor the assertion above, but pinning
+        # it separately names the failure mode instead of just its symptom.
+        local clean="yes"
+        case "$rows" in
+            *"value too great for base"* | *"error token"*) clean="no" ;;
+        esac
+        assert_equals "yes" "$clean" \
+            "staleness: no octal arithmetic error at 2026-${m} (#624)"
+    done
+}
+
 # ============================================================================
 # check-docs-deadlinks — broken-relative-link / broken-anchor / suspicious-external-link
 # ============================================================================
@@ -638,6 +725,7 @@ if [ "$HAVE_PY" -eq 0 ]; then
 fi
 
 run_test test_staleness "check-docs-staleness: expired-date boundary, version/URL, stale-comment"
+run_test test_staleness_month_is_base_ten "check-docs-staleness: the month is read base-10, not octal (#624)"
 run_test test_deadlinks "check-docs-deadlinks: relative-link schemes, anchors, suspicious URL"
 run_test test_examples "check-docs-examples: python/shell fences, known/in-project skips, non-md"
 run_test test_missing_api "check-docs-missing-api: py/ts/go/rs/sh/rb/java documented vs not"

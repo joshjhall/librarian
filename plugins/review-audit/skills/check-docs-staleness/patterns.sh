@@ -59,9 +59,17 @@ truncate_chars() {
     fi
 }
 
-# Current date components for staleness comparison
-CURRENT_YEAR=$(command date +%Y)
-CURRENT_MONTH=$(command date +%m)
+# Current date components for staleness comparison.
+#
+# `10#` forces base 10. `date +%m` is ZERO-PADDED, and bash reads a leading-zero
+# literal in `$(( ))` as OCTAL — so `08` and `09` are invalid digits and the
+# arithmetic below aborts the whole script under `set -e`, emitting ZERO findings
+# rather than an error anyone notices. That made this scanner silently blind for
+# two months a year (#624); it went green for August 2026 only because CI crossed
+# into 08 UTC. Do not drop the prefix. `date +%Y` needs no guard (a year is never
+# zero-padded), but it is wrapped identically so the two lines cannot drift.
+CURRENT_YEAR=$((10#$(command date +%Y)))
+CURRENT_MONTH=$((10#$(command date +%m)))
 
 # Staleness threshold in months (default 12, overridable via env)
 STALENESS_MONTHS="${CHECK_STALENESS_MONTHS:-12}"
