@@ -86,8 +86,9 @@ with a background PR poller, autonomous pipeline in tmux) — lives in
 1. **Write `.worktrees/docker-compose.agents.yml`** from the devcontainer
    config: same base image / Dockerfile / `INCLUDE_*` flags, plus
    `SKIP_LSP_INSTALL=true`, per-agent worktree + `.status` volumes, the golem
-   environment (`AGENT_ISSUE`, `REVIEW_MAX_CYCLES`, pass-through
-   `GITHUB_TOKEN`/`GH_TOKEN`; autonomy is set on the launch line via `--level 4`),
+   environment (`AGENT_ISSUE`, `REVIEW_MAX_CYCLES`,
+   `REVIEW_CONVERGENCE_SURFACE_RATIO`, pass-through `GITHUB_TOKEN`/`GH_TOKEN`;
+   autonomy is set on the launch line via `--level 4`),
    `deploy.resources.limits` (4 CPU / 8 GB defaults via
    `AGENT_CPUS`/`AGENT_MEMORY`), `init: true`, and `command: sleep infinity`.
 1. **Write `.worktrees/agent-entrypoint.sh`** — verifies git-host auth, then
