@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
-  modified: 2026-08-01T04:35:04.088Z
+  modified: 2026-08-02T15:01:26.936Z
   status: stable
   stale_after: 2026-10-31
   stale_check: "the \"Latest: vX.Y.Z\" line — re-read from `gh api repos/joshjhall/librarian/releases/latest -q .tag_name`; the recipe below does not expire"
@@ -14,7 +14,7 @@ metadata:
 Librarian has a repo-level semver release flow (added in PR #35, issue #31;
 first release v0.1.0 published 2026-06-28). For the current release, read it
 live — `gh api repos/joshjhall/librarian/releases/latest -q .tag_name` — rather
-than trusting a version written here (v0.8.3 was latest on 2026-07-31).
+than trusting a version written here (v0.8.4 was latest on 2026-08-02).
 NOTE: always check the range's commit types before cutting — on v0.8.0
 `just release-patch` was requested but the range had 12 `feat` commits → semver
 says **minor**; flag the bump mismatch before cutting.
@@ -24,7 +24,11 @@ exceeds a 2-minute Bash timeout and silently leaves nothing on the remote.**
 Push with a 600s timeout and verify with `git ls-remote origin <branch>` — see
 [[never-tail-a-git-push]].
 
-**Confirmed PR-then-tag recipe (v0.7.0, re-confirmed v0.8.0):** `just release-minor` (bumps
+**The `gh pr merge` of the release PR is blocked by the auto-mode classifier as
+self-authored** (see [[auto-mode-blocks-self-merge]]) — expect to park for the
+human to authorize the merge, then carry on to the tag. Do not work around it.
+
+**Confirmed PR-then-tag recipe (v0.7.0, re-confirmed v0.8.0 and v0.8.4):** `just release-minor` (bumps
 VERSION/manifests/CHANGELOG, NO commit) → commit on a `release/vX.Y.Z` branch as
 `chore(release): release version X.Y.Z` (`release` IS a valid conform scope) →
 PR to main → after green CI, squash-merge → `git checkout main && git pull` →
