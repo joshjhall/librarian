@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-08-02
+
+### Changed
+
+- Replace the fixed review cycle cap with a convergence predicate (#617)
+
+### Documentation
+
+- Update the release memory for v0.8.3 and the push-timeout trap
+- Record the #580 disposition fix and update the blocking==[] memory
+- Record the octal-month trap and three #596 testing lessons (#629)
+- Prune, merge and re-index .claude/memory into a two-tier index (#633)
+- Pin that ship-issue's review step must run the Workflow harness (#645)
+- Settle the Workflow opt-in and make a skipped review loud (#647)
+
+### Fixed
+
+- Make the judge's blocking-vs-deferrable disposition satisfiable (#612)
+- Reject unknown args keys in the review harness (#615)
+- Read the staleness month in base 10, not octal (#627)
+- Make the convergence fingerprint injective and validate line_start (#638)
+- Stop three gates from silently reporting the wrong thing (#639)
+- Drop the debug-arm scanner-pattern-line suppression (#643)
+- Stop the review loop's verdict from misreporting why it stopped (#642)
+
+### Testing
+
+- Pin the py-public-symbols cross-plugin pair (#623)
+- Pin the maxCycles default and pass the convergence ratio to golems (#625)
+- Make disposition-policy recall measurable and seed the tally (#634)
+
 ## [0.8.3] - 2026-07-31
 
 ### CI/CD
@@ -527,6 +558,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.8.4]: https://github.com/joshjhall/librarian/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/joshjhall/librarian/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/joshjhall/librarian/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/joshjhall/librarian/compare/v0.8.0...v0.8.1
