@@ -19,6 +19,46 @@ Orchestrators (e.g. the master-orchestrator in #524) MUST spawn golems as
 Spawning a golem as a Workflow subagent would consume the one nesting level and
 make the review harness invocation throw.
 
+## Workflow authority — the review harness call is already opted in (#637)
+
+The harness that runs this skill restricts the `Workflow` tool to cases where
+the user explicitly opted into multi-agent orchestration. **That opt-in is
+already satisfied here, and this is the one place that says so** — the tool's
+own description lists as valid opt-in:
+
+> The user invoked a skill or slash command whose instructions tell you to call
+> Workflow.
+
+`/workflow:ship-issue` is exactly that: a slash command whose instructions
+direct the `Workflow` call. Every harness invocation this skill mandates — the
+Step 3.5 adversarial pre-PR review, the Step 4 multi-cycle PR loop, and the
+`ci-fixer` harness — is therefore **authorized by the operator's invocation of
+the command**, not something to weigh against the restriction.
+
+So: **do not re-derive this per run, and do not treat the restriction as a
+reason to skip.** A golem that re-litigates the question on every ship pays for
+the same resolution forever; one that resolves it *wrongly* degrades the review
+(see the graceful-degradation clauses in `pre-ship-validation.md` and
+`ci-review-protocol.md`, which exclude permission doubt as a skip reason and
+forbid substituting a hand-rolled review). The invocation sites cross-reference
+this section rather than restating it — keep the authority here, in one place.
+
+**What the substitute actually costs — measured (#645).** The worst resolution
+is not skipping; it is skipping the harness *while still spawning subagents*,
+which takes the cost of both and the benefit of neither. Measured on PR #642:
+
+| | Wall time | Shape |
+| --- | --- | --- |
+| **Harness cycle** | **5.4 min** | 7 agents, 5 dimensions in one parallel barrier, 50k output tokens |
+| **Serial substitute** | **9–61 min per cycle**, 8 cycles, **~2.5 h** | one general-purpose subagent per cycle |
+
+The serial cycles also **lost the pre-scan handoff, the conventions digest, and
+the judge**, and each re-derived the manifest from scratch — so the substitute
+is not a cheaper version of the harness, it is a different and much worse thing.
+(Source: librarian's own `CLAUDE.md` § *`ship-issue`'s review step runs the
+Workflow harness*, which carries the same rule as repo-level session guidance;
+this section is its counterpart for consuming repos, which never load that file.)
+
 ## State reconstruction (missing-state-file fallback)
 
 Loaded from SKILL.md Step 1. The Phase 1/2 state write can legitimately be

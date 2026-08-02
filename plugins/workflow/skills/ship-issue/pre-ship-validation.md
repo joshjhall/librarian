@@ -204,6 +204,10 @@ behavior is noted inline per check; environment variables referenced here
    b. **Invoke the `Workflow` tool** with the script bundled alongside this
    skill at `~/.claude/skills/ship-issue/workflow.js`, passing:
 
+   > This call is **already opted in** — `/workflow:ship-issue` is a slash
+   > command whose instructions direct it. See `ship-protocol.md`
+   > § *Workflow authority* (#637); do not re-derive the permission question.
+
    ```text
    args: {
      phase: "pre-pr",
@@ -434,15 +438,43 @@ behavior is noted inline per check; environment variables referenced here
    - **Interactive**: ask — **Fix remaining blocking findings now, ship anyway,
      or defer them?** (cut short the review vs. extend it by raising
      `REVIEW_MAX_CYCLES`).
-   - **Autonomous**: do NOT prompt. Proceed to deliver (open the PR for Option 1;
-     push for Option 2; finish the local commit for Option 3), but record the
-     remaining blocking findings as a STOP note for the completion summary
-     (Option 1 "Autonomous completion summary" → "Review status").
+   - **Autonomous**: do NOT prompt. Proceed to deliver, **subject to each mode's
+     review gate** — open the PR for Option 1 (it is parked, not merged, by the
+     merge invariant); for Option 2 apply the **Option 2 review gate**
+     (`execute-protocol.md`) — a cap-exhausted cycle with blocking findings left
+     IS `stopped-with-blocking`, so it must **not** push to `main` and falls back
+     to Option 3; finish the local commit for Option 3. Record the remaining
+     blocking findings as a STOP note for the completion summary (Option 1
+     "Autonomous completion summary" → "Review status"). Delivering is never a
+     licence to bypass a gate: it means take each mode as far as its gate allows,
+     then stop for a human (#637).
 
-   **Graceful degradation**: if the `Workflow` tool or
-   `~/.claude/skills/ship-issue/workflow.js` is unavailable, skip this
-   step with a note: "Adversarial pre-PR review skipped (harness not
-   available)." Never block shipping due to harness errors. If only
+   **Graceful degradation — mechanical failure only (#637)**: skip this step
+   **only** when the harness genuinely cannot run, which means exactly one of:
+   (1) `~/.claude/skills/ship-issue/workflow.js` is **absent from disk**, or
+   (2) the `Workflow` tool **errors on invocation**. Skip with the note
+   "Adversarial pre-PR review skipped (harness not available)" and surface it as
+   `Review status: skipped: {reason}` in the completion summary. That status
+   **gates delivery in every shipping mode** (see `execute-protocol.md`): Option 1
+   parks the PR instead of merging, and Option 2 must **not** push to `main` —
+   it falls back to Option 3 (commit only) and stops for a human, since a push
+   to `main` has no PR to park and no remedy but a revert. Never block shipping
+   due to harness errors.
+
+   Two things are **not** grounds to skip:
+
+   - **"I believe I lack permission to call `Workflow`" is excluded.** The call
+     is authorized — `/workflow:ship-issue` is a slash command whose instructions
+     direct it (`ship-protocol.md` § *Workflow authority*). Permission doubt is
+     not unavailability; invoke the harness.
+   - **Never substitute a hand-rolled review.** If the harness is genuinely
+     unavailable, record the skip and proceed to delivery. Do **not** re-implement
+     the review yourself — reading the diff serially in-context is slower and
+     weaker than the harness fan-out, and worse, it *reports as a review having
+     run*, so the skip never surfaces. An observed run burned hours of wall time
+     this way. A loud skip beats a quiet substitute.
+
+   If only
    `workflow-wall-timeout.sh` is missing or errors (non-zero exit), do **not**
    skip the review — fall back to the inline bound (checkpoint at
    `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`, auto-extend up to

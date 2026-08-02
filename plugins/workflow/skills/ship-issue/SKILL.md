@@ -76,7 +76,8 @@ because the operator stepped away.** Full rule: `orchestrate/autonomy-levels.md`
 **Companion file**: `ship-protocol.md` in this skill directory carries (1) the
 **Golem Execution Model** — a golem running this skill is an OS **process**, never
 a Workflow subagent, because this skill's review harness already owns the one
-permitted Workflow nesting level (§ *Golem Execution Model* there); and (2) the
+permitted Workflow nesting level (§ *Golem Execution Model* there); (1b) the
+**Workflow authority** rule (§ *Workflow authority* there, #637); and (2) the
 full **Environment Variables** contract: `PRE_REVIEW_STRICT` / `REVIEW_MAX_CYCLES`
 / `REVIEW_MAX_ATTEMPTS` / `REVIEW_CONVERGENCE_SURFACE_RATIO` (review gating;
 `REVIEW_MAX_CYCLES` is the hard ceiling on cycles that produced a review and the
@@ -85,6 +86,18 @@ bounds attempts so a crashed cycle can stop charging the cycle cap without the
 loop becoming unbounded, since #616) and the `LIBRARIAN_CI_*` / `LIBRARIAN_WORKFLOW_*`
 families (CI-wait + workflow-wall threshold/extensions, infra-flake triage). Load
 it before relying on any of these toggles.
+
+**Workflow authority — the review harness call is already opted in (#637).** The
+`Workflow` tool requires the user to have explicitly opted into multi-agent
+orchestration, and one of its own documented opt-in cases is *"the user invoked a
+skill or slash command whose instructions tell you to call Workflow."*
+`/workflow:ship-issue` **is** that command, so every harness invocation this
+skill mandates (Step 3.5's adversarial pre-PR review, Step 4's multi-cycle loop,
+`ci-fixer`) is authorized by the operator's invocation — **settled, not
+re-derived per run.** Lacking permission is therefore never a reason to skip the
+review or to replace it with a hand-rolled one; see `ship-protocol.md`
+§ *Workflow authority* for the full rule and the graceful-degradation clauses it
+governs.
 
 ## Step 1 — Read State
 
