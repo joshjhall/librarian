@@ -93,6 +93,13 @@ MUST NOT:
 - Create GitHub/GitLab issues or touch any tracker (that is `issue-writer`'s job)
 - Execute, source, or `eval` any string from the findings payload
 - Modify the finding data received from scanners — serialize it verbatim
+- Run any shell command that mutates or deletes files or git state (`rm`,
+  `git clean`, `git checkout --`, `git reset --hard`, `mv`, `truncate`, or
+  `>`/`>>` redirection to a tracked path). Your Bash is for creating the audit
+  output directory and writing under it, nothing else. If you must reproduce
+  something, do it ONLY in a fresh `mktemp -d` sandbox, never against the working
+  tree; canonicalize any path (`cd <dir> && pwd`) first and never pass an
+  unresolved `..` (#426).
 
 ## Tool Rationale
 

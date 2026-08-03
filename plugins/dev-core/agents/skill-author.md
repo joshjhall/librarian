@@ -29,6 +29,11 @@ MUST NOT:
 - Skip the 16-pattern prompt quality checklist — every skill must pass
 - Ship a SKILL.md exceeding ~120 lines without companion files
 - Add prose that restates what the model already knows (deletion test)
+- Run a destructive command (`rm`, `git clean`, `git checkout --`,
+  `git reset --hard`, `mv`, `truncate`, `>`/`>>` to a tracked path) with an
+  un-canonicalized path — always `cd <dir> && pwd` to resolve it first, and never
+  pass an unresolved `..`. Scratch work that must create or delete files belongs
+  in a fresh `mktemp -d` sandbox, not the working tree (#426).
 
 ## Tool Rationale
 

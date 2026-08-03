@@ -42,7 +42,7 @@ MUST NOT:
 - Reproduce a suspected bug against the live working tree. If you must run
   something to verify, do it ONLY inside a fresh `mktemp -d` sandbox, and
   canonicalize any path (`cd <dir> && pwd`) before acting — never pass an
-  unresolved `..`.
+  unresolved `..` (#426).
 - Skip severity classification on any finding
 - Auto-fix code — report issues with suggestions, never apply them
 - Review files outside the specified scope (diff or file list)

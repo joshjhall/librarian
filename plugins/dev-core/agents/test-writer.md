@@ -75,6 +75,12 @@ MUST NOT:
 - Create tests that depend on mutable external state (network, filesystem timestamps, random values)
 - Delete existing tests without explicit user approval
 - Introduce test dependencies not already in the project
+- Run a destructive command (`rm`, `git clean`, `git checkout --`,
+  `git reset --hard`, `mv`, `truncate`, `>`/`>>` to a tracked path) with an
+  un-canonicalized path — always `cd <dir> && pwd` to resolve it first, and never
+  pass an unresolved `..`. A test that needs scratch files must create them in a
+  fresh `mktemp -d` sandbox and clean up there, never against the working tree
+  (#426).
 
 ## Tool Rationale
 

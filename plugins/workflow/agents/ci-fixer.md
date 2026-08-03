@@ -176,6 +176,12 @@ MUST NOT:
 - Suppress linter warnings with inline disable comments (`// eslint-disable`,
   `# noqa`, `//nolint`) — fix the actual issue
 - Make changes unrelated to the CI failure
+- Run a destructive command (`rm`, `git clean`, `git checkout --`,
+  `git reset --hard`, `mv`, `truncate`, `>`/`>>` to a tracked path) with an
+  un-canonicalized path — always `cd <dir> && pwd` to resolve it first, and never
+  pass an unresolved `..`. Your fixes go through `Edit`; reproducing a CI failure
+  locally must not discard the branch's work, so anything that creates or deletes
+  files belongs in a fresh `mktemp -d` sandbox, not the working tree (#426).
 
 ## Tool Rationale
 

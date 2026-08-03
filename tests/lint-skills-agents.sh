@@ -12,6 +12,7 @@
 # - Every workflow.js `export const meta` is a pure literal (no concat/interp)
 # - Every workflow.js passes `node --check`
 # - The meta pure-literal detector fires on a known-bad negative fixture
+# - Every agent's `## Restrictions` carries the #426 destructive-shell clause
 #
 # No Docker required — pure filesystem + node checks against the plugins tree.
 # Empty plugins (only .gitkeep placeholders) PASS: the discovery globs simply
@@ -95,6 +96,57 @@ is_valid_value() {
         [ "$value" = "$item" ] && return 0
     done
     return 1
+}
+
+# Print an agent file's `## Restrictions` section body (heading excluded), up to
+# the next `## ` heading or EOF.
+#
+# Scoping the #426 clause check to this section is load-bearing, not tidiness.
+# code-reviewer.md carries the string `#426` in its Tool Rationale TABLE while
+# its Restrictions bullet had lost the marker — a whole-file grep reports that
+# file compliant and the gate then passes identically before and after the fix it
+# is supposed to enforce. Every agent uses this exact heading, so an agent that
+# renames or drops the section yields empty output here and fails the sweep on
+# all four tokens rather than passing by omission.
+agent_restrictions_section() {
+    command awk '
+        /^## Restrictions[[:space:]]*$/ { capturing = 1; next }
+        capturing && /^## / { exit }
+        capturing { print }
+    ' "$1"
+}
+
+# Report which parts of the #426 destructive-shell clause are MISSING from an
+# agent's Restrictions section, one token name per line. Empty output = compliant.
+#
+# #426: a nominally read-only reviewer subagent ran destructive shell against the
+# LIVE working tree and was technically compliant, because the prose banned file
+# mutation but not the shell that performs it. The prose clause is the belt;
+# plugins/workflow/hooks/bash-guard.sh is the braces. This detector keeps the belt
+# honest across all the hand-copied copies.
+#
+# It asserts an invariant CORE, not a fixed sentence: the sandbox (`mktemp -d`),
+# path canonicalization, the no-unresolved-`..` rule, and the `#426` provenance
+# marker that tells a future editor why the clause exists. Per-agent adaptations
+# stay legal — checker.md extends it with agnix autofix fencing, debugger.md
+# reframes it for a write-capable agent — as long as all four survive. Normalizing
+# every copy to identical text would break those adaptations; this does not.
+#
+# The scans use a here-string, NOT `printf ... | grep -q`. `grep -q` exits at the
+# first match and closes the pipe, so a large enough left-hand side takes SIGPIPE
+# and the pipeline reports 141 under `set -o pipefail` — the `||` then fires and
+# reports a token as missing that is demonstrably present. Observed here against
+# the largest agent (checker.md, ~39 KB): intermittent, size-dependent, and it
+# fails in the unsafe direction for a security gate that must not cry wolf. A
+# here-string has no writer process, so there is nothing to signal.
+agent_missing_clause_tokens() {
+    local section
+    section="$(agent_restrictions_section "$1")"
+
+    command grep -qF 'mktemp -d' <<<"$section" || printf 'mktemp\n'
+    command grep -qi 'canonicali' <<<"$section" || printf 'canonicalize\n'
+    command grep -qi 'unresolved' <<<"$section" || printf 'unresolved\n'
+    command grep -qF '#426' <<<"$section" || printf 'provenance\n'
 }
 
 # Report pure-literal violations in a workflow.js `export const meta` block, one
@@ -739,6 +791,58 @@ test_skill_required_tools_guard_detects_drift() {
     fi
 }
 
+# Every agent carries the #426 destructive-shell clause in its Restrictions
+# section (live sweep). All agents in this repo hold Bash, so the sweep is
+# universal and there is no exemption list — an exemption list would be
+# empty-by-rights today and would only be somewhere for future drift to hide.
+test_agent_destructive_clause_present() {
+    local agent_file
+    while IFS= read -r agent_file; do
+        [ -n "$agent_file" ] || continue
+        [ -f "$agent_file" ] || continue
+        local missing
+        missing="$(agent_missing_clause_tokens "$agent_file")"
+        if [ -n "$missing" ]; then
+            assert_true false \
+                "Agent $(command basename "$agent_file"): Restrictions section omits the #426 destructive-shell clause — missing: $(printf '%s' "$missing" | command tr '\n' ' ')"
+        fi
+    done < <(list_agent_files)
+}
+
+# The clause detector FIRES on the negative fixture and stays QUIET on the
+# positive one.
+#
+# The negative assertion pins the EXACT missing-token set, not merely that
+# something was reported: a detector that reported one token for every file would
+# satisfy a non-empty check while catching nothing. The positive fixture states
+# the clause in wording that matches no real agent verbatim, so it fails first if
+# the detector is ever tightened into a literal-string match — which would break
+# checker.md's and debugger.md's legitimate adaptations.
+test_agent_destructive_clause_guard_detects_drift() {
+    local bad="$FIXTURES_DIR/agent_clause_bad.md"
+    local good="$FIXTURES_DIR/agent_clause_good.md"
+
+    assert_file_exists "$bad" "Negative destructive-clause fixture exists"
+    assert_file_exists "$good" "Positive destructive-clause fixture exists"
+    [ -f "$bad" ] && [ -f "$good" ] || return 0
+
+    assert_equals "mktemp canonicalize unresolved provenance" \
+        "$(agent_missing_clause_tokens "$bad" | command tr '\n' ' ' | command sed 's/ $//')" \
+        "Detector reports every invariant token as missing on the clause-free fixture"
+
+    assert_equals "" "$(agent_missing_clause_tokens "$good")" \
+        "Detector accepts a reworded clause carrying all four invariant tokens"
+
+    # Section-scoping is what makes the code-reviewer.md case (#426 in the Tool
+    # Rationale table, absent from the bullet) detectable. Prove the extractor
+    # really is bounded: the fixture's Output Format section sits after
+    # Restrictions and must not be scanned.
+    if agent_restrictions_section "$good" | command grep -q '^## '; then
+        assert_true false \
+            "Restrictions extractor must stop at the next heading, not run to EOF"
+    fi
+}
+
 # --- Run All Tests ----------------------------------------------------------
 
 run_test test_agent_files_exist "Every agent has correctly named .md file"
@@ -767,5 +871,7 @@ run_test test_workflow_budget_floor_consistent "Every workflow.js BUDGET_FLOOR e
 run_test test_workflow_budget_floor_guard_detects_drift "BUDGET_FLOOR consistency guard fires on the negative fixture"
 run_test test_skill_required_tools_referenced "Every skill's required_tools are referenced in the skill"
 run_test test_skill_required_tools_guard_detects_drift "required_tools reference guard fires on the negative fixture"
+run_test test_agent_destructive_clause_present "Every agent's Restrictions carries the #426 destructive-shell clause"
+run_test test_agent_destructive_clause_guard_detects_drift "Destructive-clause guard fires on the negative fixture, passes the reworded one"
 
 generate_report
