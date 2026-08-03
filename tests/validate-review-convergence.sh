@@ -118,14 +118,26 @@ command printf '{"blocking":[],"deferrable":[],"clean":false,"no_review_signal":
 command printf '{"blocking":[],"deferrable":[],"clean":true,"no_review_signal":false}\n' \
     >"$FIXTURES/no-signal-false.json"
 
-# DEFERRABLE-ONLY — findings, but none blocking (#656). This is the shape of PR
-# #655 cycle 1, and it is the fixture that separates `next_scope`'s real rule
-# ("blocking forces another cycle") from the plausible-but-wrong "any findings
-# mean narrow": it has material, so it is NOT zero.json, yet nothing about it
-# obliges a further cycle. Paired against novel.json, which differs only in which
-# bucket its finding sits in.
+# NEXT-SCOPE-DEFERRABLE — findings, but none blocking (#656). This is the shape
+# of PR #655 cycle 1, and it is the fixture that separates `next_scope`'s real
+# rule ("blocking forces another cycle") from the plausible-but-wrong "any
+# findings mean narrow": it has material, so it is NOT zero.json, yet nothing
+# about it obliges a further cycle. Paired against novel.json, which differs only
+# in which bucket its finding sits in.
+#
+# Named `next-scope-` rather than the obvious `deferrable-only`: that name is
+# already taken by a fixture `test_deferrable_findings_count_as_material` writes
+# MID-SUITE (it is the only test here that does), so sharing it would make these
+# cases depend on `run_test` registration order — every other fixture is written
+# once, up front, precisely so order is free.
 command printf '{"blocking":[],"deferrable":[%s],"clean":true}\n' \
-    "$(finding "src/f.js" 60 tests R4-improvement)" >"$FIXTURES/deferrable-only.json"
+    "$(finding "src/f.js" 60 tests R4-improvement)" >"$FIXTURES/next-scope-deferrable.json"
+
+# NO-BLOCKING-KEY — a result document that omits `blocking` entirely. Pins
+# blocking_count()'s `// []` default, which its comment documents but which every
+# other fixture hides by always writing an explicit `"blocking":[]`. A comment
+# asserting behavior no test exercises is the shape that hides a defect.
+command printf '{"deferrable":[]}\n' >"$FIXTURES/no-blocking-key.json"
 
 # NO-SIGNAL-STRING — the flag as the STRING "false". jq truthiness would read
 # this as no-signal and stop charging the cycle cap; the script requires a
@@ -175,7 +187,7 @@ test_next_scope_is_full_after_clean() {
 test_next_scope_is_full_after_deferrable_only() {
     local out
     out="$("$RC" check --cycle 1 --max-cycles 5 \
-        --result "$FIXTURES/deferrable-only.json" --delta-lines 500)"
+        --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 500)"
     assert_equals "full" "$(val next_scope "$out")" \
         "a deferrable-only cycle advises FULL — deferrables oblige no further cycle"
     # It must still be material for CONVERGENCE (#580) — the two questions are
@@ -186,16 +198,30 @@ test_next_scope_is_full_after_deferrable_only() {
         "and still reads as novel material, so the loop continues"
 }
 
+# A result may omit `blocking` altogether — blocking_count()'s `// []` default
+# says that reads as zero, i.e. `full`. Without this the default is asserted only
+# by a comment, and `read_findings` already tolerates the same omission, so a
+# document of this shape genuinely reaches here.
+test_next_scope_handles_a_missing_blocking_key() {
+    local out
+    out="$("$RC" check --cycle 1 --max-cycles 5 \
+        --result "$FIXTURES/no-blocking-key.json" --delta-lines 500)"
+    assert_equals "full" "$(val next_scope "$out")" \
+        "an absent blocking key counts as 0 blocking findings, not null"
+    assert_equals "0" "$(val findings "$out")" "and the document still reads as zero findings"
+    assert_equals "C4-zero" "$(val rule "$out")" "so it converges normally"
+}
+
 # The differential the anti-tautology note demands: novel.json and
-# deferrable-only.json each carry exactly ONE finding. They differ only in the
-# bucket. A rule written as `total > 0 -> narrow` passes both preceding tests
+# next-scope-deferrable.json each carry exactly ONE finding. They differ only in
+# the bucket. A rule written as `total > 0 -> narrow` passes both preceding tests
 # individually but cannot satisfy this one.
 test_next_scope_keys_on_bucket_not_count() {
     local blocking_out deferrable_out
     blocking_out="$("$RC" check --cycle 1 --max-cycles 5 \
         --result "$FIXTURES/novel.json" --delta-lines 500)"
     deferrable_out="$("$RC" check --cycle 1 --max-cycles 5 \
-        --result "$FIXTURES/deferrable-only.json" --delta-lines 500)"
+        --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 500)"
 
     assert_equals "1" "$(val findings "$blocking_out")" "the blocking fixture has one finding"
     assert_equals "1" "$(val findings "$deferrable_out")" "the deferrable fixture has one finding"
@@ -237,7 +263,7 @@ test_next_scope_emitted_on_every_verdict() {
 
     # And the field is never empty on any of them — a blank would force a
     # consumer to branch on presence, which is the contract this avoids.
-    for fixture in zero novel deferrable-only refuted recursive; do
+    for fixture in zero novel next-scope-deferrable refuted recursive; do
         cases="$("$RC" check --cycle 1 --max-cycles 5 \
             --result "$FIXTURES/$fixture.json" --delta-lines 500)"
         assert_not_empty "$(val next_scope "$cases")" \
@@ -276,7 +302,7 @@ test_clean_then_clean_terminates_in_two_cycles() {
     local c1 c2 scope delta2
     # Cycle 1: the real PR #655 shape — deferrable-only over the full diff.
     c1="$("$RC" check --cycle 1 --max-cycles 5 \
-        --result "$FIXTURES/deferrable-only.json" --delta-lines 1855)"
+        --result "$FIXTURES/next-scope-deferrable.json" --delta-lines 1855)"
     assert_equals "continue" "$(val verdict "$c1")" "cycle 1 continues (novel material)"
     scope="$(val next_scope "$c1")"
     assert_equals "full" "$scope" "cycle 1 advises a FULL cycle 2"
@@ -1463,6 +1489,7 @@ run_test test_attempt_defaults_to_cycle_for_an_unmigrated_caller "the new rules 
 run_test test_next_scope_is_narrow_after_blocking "next_scope=narrow after a blocking cycle (#656)"
 run_test test_next_scope_is_full_after_clean "next_scope=full after a clean cycle (#656)"
 run_test test_next_scope_is_full_after_deferrable_only "next_scope=full after deferrable-only (#656)"
+run_test test_next_scope_handles_a_missing_blocking_key "next_scope: an absent blocking key reads as 0 (#656)"
 run_test test_next_scope_keys_on_bucket_not_count "next_scope keys on the BLOCKING bucket, not finding count (#656)"
 run_test test_next_scope_emitted_on_every_verdict "next_scope is emitted on every verdict incl. the cap paths (#656)"
 run_test test_next_scope_changes_no_existing_verdict "adding next_scope changed no verdict/rule/count (#656)"
