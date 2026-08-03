@@ -71,8 +71,10 @@ Authoritative status comes from **PR + issue-label state**. The
    distinguish "infra flake — retried" from "real failure — escalated" so the
    operator is not flagged to investigate a buildx flake as if it were a code
    regression. The triage adds no new hard bound — its retry is env-overridable
-   (`LIBRARIAN_CI_INFRA_RETRIES`, default 1) and degrades to escalate-with-note,
-   never blocking shipping.
+   (`LIBRARIAN_CI_INFRA_RETRIES`, default `1`; **agent-interpreted**, read from
+   the environment by the triaging agent rather than by any script — see
+   `ship-issue/ship-protocol.md` § Environment Variables) and degrades to
+   escalate-with-note, never blocking shipping.
 
 1. **Loop** (for `monitor`/`watch`): the default surface is **event-driven** —
    arm the two **push** gate-watch channels below and act on the transitions they

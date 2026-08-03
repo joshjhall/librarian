@@ -19,8 +19,11 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
 
    - **Monitor CI and remediate failures** (advisory; `ci-fixer` caps fixes at 3
      attempts per check). An L3–L4 run always waits. Poll `gh pr checks` every
-     30 s against the `LIBRARIAN_CI_WAIT_TIMEOUT` checkpoint (L3–L4 auto-extends
-     up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS`, then STOPs). On failure, **triage
+     30 s, calling `scripts/ci-wait-timeout.sh` each poll for the
+     continue/extend/checkpoint/stop verdict it computes from
+     `LIBRARIAN_CI_WAIT_TIMEOUT` + `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` (L3–L4
+     auto-extends, then STOPs) — never re-derive that arithmetic by hand. On
+     failure, **triage
      infra-flake vs real first** (classify by failing-step name vs the diff;
      auto-retry an infra flake once via `gh run rerun --failed`; collapse cascade
      failures to their root cause), then hand real failures to the `ci-fixer`

@@ -124,6 +124,9 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `seed-worktree-trust.sh` | Seed Claude Code workspace trust for a worktree |
 | `recover-journal-partials.sh <journal>` | Recover finding-shaped partials from a `TaskStop`-ped review harness's `journal.jsonl` (#224) |
 | `review-convergence.sh check …` | Decide whether the review loop has converged or should run another cycle — the ordered rule list that replaced the bare `REVIEW_MAX_CYCLES` counter (#596) |
+| `ci-wait-timeout.sh check …` | Decide whether to keep polling pending CI, extend, checkpoint, or stop — mechanizes the `LIBRARIAN_CI_WAIT_*` bound that was prose-only until #588 |
+| `workflow-wall-timeout.sh check …` | The same decision for one bounded `Workflow` invocation, over `LIBRARIAN_WORKFLOW_WALL_*` (#327) |
+| `threshold-check.sh` | Shared verdict arithmetic behind the two above (sourced) |
 | `config.sh` | Shared env-overridable config + `repo_root` helper (sourced) |
 
 ### Configuration (env-overridable; defaults in `scripts/config.sh`)
@@ -146,8 +149,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `CLAUDE_PROJECTS_DIR` | `$HOME/.claude/projects` | Base dir of per-project session transcripts; `golem-token-scrape.sh` and `golem-transcript-liveness.sh` resolve a golem's transcript under it |
 
 The `GOLEM_*` vars above are sourced by the bundled shell scripts. The vars
-below are **skill-level tunables** — read from the environment by the
-`ship-issue` skill itself (not by any shell script), following the same
+below are **skill-level tunables** for the `ship-issue` skill, following the same
 opt-in/override convention. They are documented in that skill's "Environment
 Variables" section.
 
@@ -156,14 +158,26 @@ Variables" section.
 This is a quick reference; the skill's "Environment Variables" section is
 authoritative and documents the same vars in the same order.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `PRE_REVIEW_STRICT` | _unset_ | `true` blocks PR creation on HIGH-certainty pre-review findings |
-| `REVIEW_MAX_CYCLES` | `5` | Hard ceiling on post-CI adversarial review cycles (the review action's cut-short/extend lever). No longer the stop _signal_ — the convergence predicate below decides when reviewers have run out of material, and this guarantees termination when it has not fired. Raised from `3` in #596: #533's only blocking finding of a 26-cycle batch arrived in cycle 4 |
-| `REVIEW_CONVERGENCE_SURFACE_RATIO` | `50` | Percent of the previous cycle's reviewed surface at which a zero-finding cycle counts as real convergence. Below it the zero is uninformative and the loop continues (#568 returned zero on a test-only delta, then found a 0.88-certainty defect). Only ever **adds** cycles, so it cannot weaken the merge invariant |
-| `REVIEW_TOKEN_CEILING` | _unset_ | Opt-in output-token ceiling for **one** review cycle (`args.tokenCeiling`); unset ⇒ unbounded (the default). Hitting it degrades the cycle like budget exhaustion (`clean` forced false) — never a false clean, but that forces another cycle, so a ceiling set **below** actual output costs more than none and can dead-end the PR. Size it from the `token_report` each cycle returns, not a guess |
-| `REVIEW_MAX_ATTEMPTS` | `2 × REVIEW_MAX_CYCLES` | Absolute ceiling on review **attempts**, as opposed to `REVIEW_MAX_CYCLES`'s ceiling on cycles that produced a review. A cycle whose harness died before any dimension ran does not charge the cycle cap (rule `C0b-no-signal`), so this is what still guarantees termination when the harness keeps crashing (#616). Must be ≥ `REVIEW_MAX_CYCLES`, or the cycle cap is unreachable — the helper fails loud rather than clamping |
-| `LIBRARIAN_CI_WAIT_TIMEOUT` | `15 min` | CI-wait threshold; at the checkpoint, prompt cut-short/extend (at L3–L4: auto-extend up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times then stop). A machine timer for _pending CI_, not a human gate — the never-time-out rule governs human gates, not this bounded wait |
-| `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | L3–L4 only: extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals before giving up on pending CI (no hang) |
-| `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` | `20 min` | Max wall-time for a single `Workflow` invocation (review fan-out, `ci-fixer`) before a checkpoint; at L3–L4 auto-extend up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` then `TaskStop` and proceed with recovered partials. Bounds a spinning agent the token budget can't (#224); a timed-out cycle is partial, never `clean` |
-| `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` | `1` | L3–L4 only: extra `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` intervals a hung `Workflow` invocation gets before it is stopped (no hang) |
+**How a tunable takes effect differs by row, and the "Read by" column says
+which** (#588). A **helper-backed** var is read by a bundled script the skill
+calls, so setting it provably applies. An **agent-interpreted** var is read from
+the environment by the shipping agent itself while it works: it is operator
+intent passed into a prompt, it takes effect insofar as the agent honors it, and
+you cannot verify from outside that it took. That is deliberate where the
+decision it feeds is a judgment rather than arithmetic — but it is a real
+difference in guarantee, so it is stated per row rather than left to be
+inferred. `tests/lint-env-var-drift.sh` keeps the agent-interpreted rows' stated
+defaults consistent across every file that states them, and flags any new
+prose-only variable.
+
+| Variable | Default | Read by | Meaning |
+| --- | --- | --- | --- |
+| `PRE_REVIEW_STRICT` | _unset_ | agent | `true` blocks PR creation on HIGH-certainty pre-review findings |
+| `REVIEW_MAX_CYCLES` | `5` | agent | Hard ceiling on post-CI adversarial review cycles (the review action's cut-short/extend lever). No longer the stop _signal_ — the convergence predicate below decides when reviewers have run out of material, and this guarantees termination when it has not fired. Raised from `3` in #596: #533's only blocking finding of a 26-cycle batch arrived in cycle 4 |
+| `REVIEW_CONVERGENCE_SURFACE_RATIO` | `50` | `review-convergence.sh` | Percent of the previous cycle's reviewed surface at which a zero-finding cycle counts as real convergence. Below it the zero is uninformative and the loop continues (#568 returned zero on a test-only delta, then found a 0.88-certainty defect). Only ever **adds** cycles, so it cannot weaken the merge invariant |
+| `REVIEW_TOKEN_CEILING` | _unset_ | agent | Opt-in output-token ceiling for **one** review cycle (`args.tokenCeiling`); unset ⇒ unbounded (the default). Hitting it degrades the cycle like budget exhaustion (`clean` forced false) — never a false clean, but that forces another cycle, so a ceiling set **below** actual output costs more than none and can dead-end the PR. Size it from the `token_report` each cycle returns, not a guess |
+| `REVIEW_MAX_ATTEMPTS` | `2 × REVIEW_MAX_CYCLES` | `review-convergence.sh` | Absolute ceiling on review **attempts**, as opposed to `REVIEW_MAX_CYCLES`'s ceiling on cycles that produced a review. A cycle whose harness died before any dimension ran does not charge the cycle cap (rule `C0b-no-signal`), so this is what still guarantees termination when the harness keeps crashing (#616). Must be ≥ `REVIEW_MAX_CYCLES`, or the cycle cap is unreachable — the helper fails loud rather than clamping |
+| `LIBRARIAN_CI_WAIT_TIMEOUT` | `15 min` | `ci-wait-timeout.sh` | CI-wait threshold; at the checkpoint, prompt cut-short/extend (at L3–L4: auto-extend up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times then stop). A machine timer for _pending CI_, not a human gate — the never-time-out rule governs human gates, not this bounded wait |
+| `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` | `2` | `ci-wait-timeout.sh` | L3–L4 only: extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals before giving up on pending CI (no hang) |
+| `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` | `20 min` | `workflow-wall-timeout.sh` | Max wall-time for a single `Workflow` invocation (review fan-out, `ci-fixer`) before a checkpoint; at L3–L4 auto-extend up to `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` then `TaskStop` and proceed with recovered partials. Bounds a spinning agent the token budget can't (#224); a timed-out cycle is partial, never `clean` |
+| `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` | `1` | `workflow-wall-timeout.sh` | L3–L4 only: extra `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` intervals a hung `Workflow` invocation gets before it is stopped (no hang) |

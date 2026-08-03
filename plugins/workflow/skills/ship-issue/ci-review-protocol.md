@@ -8,6 +8,12 @@ created (and after the auto-merge fast path is NOT taken). Environment variables
 `LIBRARIAN_CI_INFRA_STEPS`, `LIBRARIAN_CI_INFRA_RETRIES`, `REVIEW_MAX_CYCLES`,
 `REVIEW_MAX_ATTEMPTS`) are defined in `ship-protocol.md` § Environment Variables.
 
+**Two kinds of variable appear below, and the difference is load-bearing.** The
+`LIBRARIAN_CI_WAIT_*` pair is read by `scripts/ci-wait-timeout.sh`, which you
+**call** — set it and it provably takes effect. The `LIBRARIAN_CI_INFRA_*` pair
+is **agent-interpreted**: no script reads it, and it takes effect only because
+you honor it while triaging below (#588).
+
 ## Monitor CI and remediate failures
 
 Advisory; the `ci-fixer` Workflow harness caps fixes at 3 attempts per check.
@@ -30,17 +36,31 @@ slow CI run never blocks indefinitely):
 - GitHub: `gh pr checks {pr_number} --json name,state,conclusion`
   (poll every 30 seconds until no checks have `state: "pending"`)
 - GitLab: `glab ci status` (check for completion)
-- **Threshold checkpoint** — track cumulative wait time. Once it crosses
-  `LIBRARIAN_CI_WAIT_TIMEOUT` minutes (default 15), do NOT keep polling
-  blindly:
-  - **L1–L2** (interactive): prompt — **Cut short** (stop waiting; proceed to
-    labeling, noting CI was still pending) or **Extend** (wait another
-    `LIBRARIAN_CI_WAIT_TIMEOUT` minutes, then re-checkpoint).
-  - **L3–L4**: do NOT prompt. Auto-extend up to
-    `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times (default 2 → 45 min total), then
-    **STOP** — proceed to the completion summary with a STOP note ("CI still
-    pending after {total} min — not waited further"), mirroring the
-    L3–L4 CI-failure STOP below. Never hang waiting on a prompt.
+- **Threshold checkpoint** — track cumulative wait time, but do **not**
+  re-derive the threshold/extension arithmetic in your head (that drift wedged
+  three golems on the sibling wall-timeout, #327). **Call** the helper each
+  poll and act on its verdict:
+
+  ```bash
+  ${CLAUDE_PLUGIN_ROOT}/scripts/ci-wait-timeout.sh check \
+      --elapsed-min {cumulative} --level {N} --extensions-used {K}
+  ```
+
+  It reads `LIBRARIAN_CI_WAIT_TIMEOUT` (default `15`) and
+  `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` (default `2` → a 45 min ceiling) and
+  returns `verdict`, `ceiling_min`, `next_deadline_min`, and
+  `extensions_used`:
+
+  | `verdict` | Do |
+  | --- | --- |
+  | `continue` | Keep polling every 30 s, up to `next_deadline_min`. |
+  | `extend` | L3–L4 auto-grant: carry the returned `extensions_used` into the next call and keep polling. |
+  | `checkpoint` | L1–L2 only: prompt — **Cut short** (stop waiting; proceed to labeling, noting CI was still pending) or **Extend** (re-call with `--extensions-used` incremented). |
+  | `stop` | Stop waiting at the ceiling — proceed to the completion summary with a STOP note ("CI still pending after `{ceiling_min}` min — not waited further"), mirroring the L3–L4 CI-failure STOP below. |
+
+  Never hang waiting on a prompt at L3–L4. The `stop` verdict is a machine
+  timer for **pending CI**, not a human gate — the never-time-out rule governs
+  human gates, not this bounded wait.
 
 b. **If all checks pass** (CI green): inform the user and proceed to the
 multi-cycle review loop below; green CI is one half of the merge invariant, and
@@ -65,16 +85,17 @@ cause:
 
 - **Classify each failure:**
   - **Likely infra/flake** — the failing step matches a known
-    setup/provisioning step (the env-overridable list
-    `LIBRARIAN_CI_INFRA_STEPS`, default:
+    setup/provisioning step (the env-overridable, **agent-interpreted** list
+    `LIBRARIAN_CI_INFRA_STEPS`, default
     `Set up Docker Buildx|Checkout|checkout|Login|login|cache|Cache|Set up job`),
     OR the failing job type cannot be affected by the PR's changed files
     (e.g. a Docker `Build` job on a docs/tests-only diff). → **auto-retry
     once**: `gh run rerun --failed`, then re-poll from (a) and re-evaluate;
     escalate only if it **re-fails**. This auto-retry is bounded by
-    `LIBRARIAN_CI_INFRA_RETRIES` (default `1`) and is INDEPENDENT of — it does
-    not consume or duplicate — the `ci-fixer` 3-attempt cap (that cap covers
-    *code* fixes; this covers *re-running* an unchanged infra step).
+    `LIBRARIAN_CI_INFRA_RETRIES` (default `1`, also agent-interpreted) and is
+    INDEPENDENT of — it does not consume or duplicate — the `ci-fixer` 3-attempt
+    cap (that cap covers *code* fixes; this covers *re-running* an unchanged
+    infra step).
   - **Likely real** — the failing step exercises the change (a test / lint /
     build step touching the diff). → skip the retry; go straight to the
     `ci-fixer` handoff below (today's behavior).

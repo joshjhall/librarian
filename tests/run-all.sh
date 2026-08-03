@@ -27,6 +27,7 @@
 #  11. Action pin format (tests/lint-action-pins.sh)
 #  11b. Shell portability / bash-3.2 clean (tests/lint-shell-portability.sh)
 #  11b2. READONLY harness wording (tests/lint-readonly-harness.sh)
+#  11b3. Prose-vs-code env var drift (tests/lint-env-var-drift.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
 #  11c2. Pre-scan bash<->python differential (tests/validate-prescan-differential.sh)
 #  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
@@ -39,6 +40,7 @@
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
 #  14a2. journal partial-recovery helper (tests/validate-recover-journal-partials.sh)
 #  14a3. workflow wall-time stop decision (tests/validate-workflow-wall-timeout.sh)
+#  14a3b. CI-wait stop decision (tests/validate-ci-wait-timeout.sh)
 #  14a4. review convergence stop decision (tests/validate-review-convergence.sh)
 #  14b. autonomy-resolver decision table + parity (tests/validate-autonomy-resolve.sh)
 #  14c. golem-notify Notification hook (tests/validate-golem-notify.sh)
@@ -160,6 +162,7 @@ run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
 run_stage "Namespaced slash-command refs" bash "$SCRIPT_DIR/lint-command-refs.sh"
 run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"
 run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
+run_stage "Prose-vs-code env var drift" bash "$SCRIPT_DIR/lint-env-var-drift.sh"
 run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
 run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-prescan-differential.sh"
 run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner-category-parity.sh"
@@ -172,6 +175,7 @@ run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
 run_stage "journal partial-recovery helper" bash "$SCRIPT_DIR/validate-recover-journal-partials.sh"
 run_stage "workflow wall-time stop decision" bash "$SCRIPT_DIR/validate-workflow-wall-timeout.sh"
+run_stage "CI-wait stop decision" bash "$SCRIPT_DIR/validate-ci-wait-timeout.sh"
 run_stage "review convergence stop decision" bash "$SCRIPT_DIR/validate-review-convergence.sh"
 run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate-autonomy-resolve.sh"
 run_stage "golem-notify Notification hook" bash "$SCRIPT_DIR/validate-golem-notify.sh"
