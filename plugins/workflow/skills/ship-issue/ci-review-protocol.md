@@ -213,11 +213,37 @@ git diff --name-only origin/main...HEAD   # -> files (FULL PR scope)
 git diff origin/main...HEAD               # -> diff  (FULL PR scope)
 ```
 
-**Re-review narrowing (#492).** After cycle 1, also compute the **fix-commit
-delta since the last cycle** so the harness can re-review only what changed
-instead of re-scanning the whole PR every cycle (worst case 5× the full review
-at `REVIEW_MAX_CYCLES=5`). Capture the HEAD SHA the harness actually reviewed
-this cycle **at step (c) time, before step (e) commits any fixes**
+**Re-review narrowing (#492) — but only when the previous cycle said to (#656).**
+Narrowing re-reviews only what changed instead of re-scanning the whole PR every
+cycle (worst case 5× the full review at `REVIEW_MAX_CYCLES=5`). It is **not**
+applied on every cycle after the first: **narrow iff the previous cycle's
+`next_scope` was `narrow`.** On cycle 1, and on any cycle whose predecessor
+returned `next_scope=full`, **omit all three delta args** and review the full
+diff.
+
+> **Why this is conditional.** Narrowing and `C3-narrow-zero` (#568) compose
+> badly: a narrowed cycle is narrow *by construction*, so a zero-finding result
+> is under the surface ratio and `C3` withholds termination — the cycle is
+> **structurally incapable of ending the loop** whatever it finds. Measured on
+> PR #655: cycle 2, narrowed to 244 lines against cycle 1's 1855, cost 45k output
+> tokens and could not have returned `stop`. The same shape already terminated a
+> loop on a meaningless zero at the cap boundary (#635, PR #634 cycle 5:
+> `C1-cap capped_over=C3-narrow-zero`). `next_scope` resolves it: a cycle with
+> **blocking** findings advises `narrow` (a fix must be re-checked, so another
+> cycle is coming regardless and the saving is free), while a **clean or
+> deferrable-only** cycle advises `full` (the next cycle is a candidate
+> terminator and must be able to converge). Do **not** re-derive that rule here —
+> read `next_scope` from step (f), the same helper that owns the stop decision.
+
+**`--delta-lines` must move WITH the scope** — they are two halves of one
+statement about the surface. On a `full` cycle the surface is the whole diff, so
+`--delta-lines` is the full diff's line count; passing a fix-delta count there
+while reviewing the full diff re-creates the very C3 misfire this fixes, one
+input earlier. See step (f), which pairs the two.
+
+When the previous cycle advised `narrow`, compute the **fix-commit delta since
+the last cycle**. Capture the HEAD SHA the harness actually reviewed this cycle
+**at step (c) time, before step (e) commits any fixes**
 (`git rev-parse HEAD` → `lastReviewedSha`); on the next cycle the delta is
 everything committed since it — the `fix(review): …` and any `fix(ci): …` commits
 from steps (e) / the CI-monitor loop:
@@ -230,7 +256,10 @@ git diff "$lastReviewedSha"...HEAD               # -> deltaDiff
 Also derive `priorBlockingDimensions` — the distinct `dimension` (equivalently
 `category`) values of the previous cycle's `blocking[]` findings — so a dimension
 that blocked last cycle is always re-run to confirm the fix. On **cycle 1** there
-is no prior SHA and no prior blocking set: omit all three delta args (full review).
+is no prior SHA and no prior blocking set: omit all three delta args (full
+review). Omit them equally whenever the previous cycle returned
+`next_scope=full` — that is the same full-review path, reached by a different
+route, and it needs no special handling beyond not passing the delta args.
 
 b. **Gather open PR review comments** and normalize unresolved review-thread
 comments + issue-style PR comments into a `prComments` array of
@@ -394,9 +423,15 @@ recompute here:
 # step (a) time `$lastReviewedSha` still holds the PREVIOUS cycle's SHA (step (c)
 # has not yet re-captured it to this cycle's HEAD), which is precisely the
 # "since the last cycle" boundary this wants:
-delta_lines=$(git diff "$lastReviewedSha"...HEAD | command wc -l)   # cycle > 1
-delta_lines=$(git diff origin/main...HEAD | command wc -l)          # cycle 1
+delta_lines=$(git diff "$lastReviewedSha"...HEAD | command wc -l)   # narrowed cycle
+delta_lines=$(git diff origin/main...HEAD | command wc -l)          # full cycle
 ```
+
+Which line applies is decided by **scope, not cycle number** (#656): the full-diff
+form is used on cycle 1 **and** on any cycle the previous `next_scope` set to
+`full`. Keying it off `cycle > 1` instead would hand a fix-delta line count to a
+cycle that reviewed the whole diff, making a genuinely full cycle look narrow to
+`C3` — the same misfire as the one below, from the other direction.
 
 **The timing is the whole point** — the same expression means different things at
 different steps. Do **not** recompute it at step (f) time: by then step (c) has
@@ -422,7 +457,16 @@ Carry the value forward as the next cycle's `--prev-delta-lines`.
   --partial "<true if budget_exhausted or wall-timed-out, else false>"
 # -> verdict=continue|stop  rule=C0-attempt-cap|…|C8-novel  capped_over=<rule|>
 #    reason=<slug>  findings=N novel=N duplicate=N refuted=N recursive=N
+#    next_scope=full|narrow
 ```
+
+**`next_scope` (#656)** is the scope advice for the **next** cycle, emitted on
+every verdict (never empty, so never test for its presence — the same contract as
+`capped_over`). Carry it forward exactly as `--prev-delta-lines` is carried: when
+`verdict=continue`, it decides whether step (a) narrows. It is **advisory only** —
+it changes no verdict and no rule, and the loop's termination guarantee still
+rests entirely on `verdict`. Pair it with `--delta-lines`: a `full` cycle passes
+the full diff's line count, a `narrow` cycle passes the fix delta's.
 
 **Two counters, not one (#616).** `attempt` counts every trip through this loop;
 `cycle` counts only the trips that **produced a review**. Increment `attempt`

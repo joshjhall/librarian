@@ -329,6 +329,21 @@ read_findings() {
     command jq -c '[(.blocking // [])[], (.deferrable // [])[]]' "$1"
 }
 
+# blocking_count <file> — how many findings this cycle put in the BLOCKING
+# bucket. Deliberately separate from read_findings, which merges blocking +
+# deferrable because convergence is about whether reviewers still have MATERIAL.
+# `next_scope` asks a different question — "must the loop run another cycle to
+# re-check a fix?" — and only a blocking finding forces one. Folding this into
+# read_findings would make the two questions share an answer, which is exactly
+# the conflation #656 is about.
+#
+# Runs after read_findings has already validated the file, so a malformed result
+# fails loud there rather than reaching this bare jq. `// []` keeps a result with
+# no blocking key at 0 rather than null.
+blocking_count() {
+    command jq -r '((.blocking // []) | length)' "$1"
+}
+
 # fingerprints <findings-json> — one `file:line_start:category` line per finding.
 # Both readers below emit ONE RECORD PER LINE and are consumed by line-oriented
 # `grep -F -x`, but their input is finding text that ultimately originates from an
@@ -463,6 +478,51 @@ convergence_rule() {
     fi
 }
 
+# next_scope_of — what surface the NEXT cycle should review: `full` | `narrow`.
+#
+# #656. Re-review narrowing (#492) told the caller to narrow every cycle after
+# the first, unconditionally. `C3-narrow-zero` (#568) then rejects a zero-finding
+# cycle whose surface is under the ratio floor. Composed, a narrowed cycle is
+# STRUCTURALLY INCAPABLE of ending the loop: it is narrow by construction, so a
+# clean result is pre-committed to being uninformative before a reviewer runs. It
+# can only ever say "found something" or "found nothing, doesn't count".
+#
+# Measured on PR #655: cycle 2 narrowed to 244 lines against cycle 1's 1855
+# (13%), cost 45k output tokens and ~5.6 min, and could not have returned `stop`
+# under any outcome. Cycle 3 went full and stopped immediately on C4-zero. The
+# same shape already bit at the cap boundary once — #635 records PR #634 cycle 5
+# stopping on `C1-cap capped_over=C3-narrow-zero`, a loop terminating on a cycle
+# whose own zero the policy calls meaningless. #635 made that visible; this
+# removes what manufactures it.
+#
+# The rule is total and has two branches:
+#
+#   blocking > 0        -> narrow.  Another cycle is coming regardless (the fix
+#                          must be re-checked), so narrowing costs no
+#                          termination opportunity and #492's saving is free.
+#   blocking == 0       -> full.    This cycle is a CANDIDATE TERMINATOR, whether
+#                          it was clean or deferrable-only. Narrowing the next one
+#                          would forfeit its ability to stop the loop.
+#
+# Keyed on BLOCKING, not on total findings: a deferrable-only cycle forces no
+# further work, so the next cycle is a candidate terminator too. That is exactly
+# PR #655 cycle 1 (0 blocking, 1 deferrable), the case that would be decided
+# wrongly by an "any findings -> narrow" rule.
+#
+# ADVISORY, never a stop signal. It is emitted alongside `verdict` on every
+# verdict — including the C0/C1 cap paths, where the loop is ending and the
+# caller will not use it — so the output contract is stable and a consumer never
+# tests for key presence (the same posture as `capped_over`). It changes no
+# verdict, no rule, and no count; the C0->C1 ordering that guarantees termination
+# is untouched.
+next_scope_of() {
+    if [ "$blocking" -gt 0 ]; then
+        command printf 'narrow'
+    else
+        command printf 'full'
+    fi
+}
+
 cmd_check() {
     cycle="$(opt --cycle -- "$@" || true)"
     max_cycles="$(opt --max-cycles -- "$@" || true)"
@@ -565,6 +625,9 @@ cmd_check() {
     # parseable — so a malformed result still fails loud there rather than
     # reaching a bare `jq` here that would emit "false" and quietly proceed.
     no_signal="$(no_review_signal "$result")"
+    # Read after read_findings for the same reason as no_signal above: that call
+    # is what fails loud on an unreadable or malformed file.
+    blocking="$(blocking_count "$result")"
 
     # --- Signal counts (computed before the rule list so every verdict reports
     # the same numbers, whichever rule fires). ---
@@ -680,6 +743,7 @@ EOF
     command printf 'duplicate=%s\n' "$duplicate"
     command printf 'refuted=%s\n' "$refuted"
     command printf 'recursive=%s\n' "$recursive"
+    command printf 'next_scope=%s\n' "$(next_scope_of)"
 }
 
 if [ "$#" -eq 0 ]; then
