@@ -116,6 +116,26 @@ agent_restrictions_section() {
     ' "$1"
 }
 
+# Print the Restrictions section one BULLET per line: a leading `- `/`* ` item
+# with its indented continuation lines folded onto the same line.
+#
+# The clause is checked per-bullet rather than per-section so the four tokens must
+# co-occur in ONE prohibition. Checking the section as a whole would let an editor
+# delete the clause entirely and still pass on incidental co-occurrence — one
+# bullet citing `#426`, another using the word "unresolved" — which is #426's own
+# failure mode (technically compliant prose, no actual restriction) reproduced one
+# level up in the gate meant to close it. Verified against all 18 agents: every
+# real clause, including checker.md's agnix-extended and debugger.md's
+# write-capable rewordings, states the invariant in a single bullet.
+agent_restrictions_bullets() {
+    agent_restrictions_section "$1" | command awk '
+        /^[-*] /            { if (bullet != "") print bullet; bullet = $0; next }
+        /^[[:space:]]+[^ ]/ { if (bullet != "") bullet = bullet " " $0; next }
+                            { if (bullet != "") print bullet; bullet = "" }
+        END                 { if (bullet != "") print bullet }
+    '
+}
+
 # Report which parts of the #426 destructive-shell clause are MISSING from an
 # agent's Restrictions section, one token name per line. Empty output = compliant.
 #
@@ -140,13 +160,28 @@ agent_restrictions_section() {
 # fails in the unsafe direction for a security gate that must not cry wolf. A
 # here-string has no writer process, so there is nothing to signal.
 agent_missing_clause_tokens() {
-    local section
-    section="$(agent_restrictions_section "$1")"
+    local bullets clause
+    bullets="$(agent_restrictions_bullets "$1")"
 
-    command grep -qF 'mktemp -d' <<<"$section" || printf 'mktemp\n'
-    command grep -qi 'canonicali' <<<"$section" || printf 'canonicalize\n'
-    command grep -qi 'unresolved' <<<"$section" || printf 'unresolved\n'
-    command grep -qF '#426' <<<"$section" || printf 'provenance\n'
+    # The clause bullet = the one carrying the sandbox requirement. Anchoring on
+    # `mktemp -d` picks it out; the remaining tokens are then required in THAT
+    # bullet, so a near-miss reports precisely what it lacks instead of being
+    # rescued by wording elsewhere in the section.
+    clause="$(command grep -F 'mktemp -d' <<<"$bullets" || true)"
+
+    if [ -z "$clause" ]; then
+        printf 'mktemp\n'
+        # No clause bullet at all: report every token, so the failure message
+        # names the whole missing invariant rather than one arbitrary piece.
+        command grep -qi 'canonicali' <<<"$bullets" || printf 'canonicalize\n'
+        command grep -qi 'unresolved' <<<"$bullets" || printf 'unresolved\n'
+        command grep -qF '#426' <<<"$bullets" || printf 'provenance\n'
+        return 0
+    fi
+
+    command grep -qi 'canonicali' <<<"$clause" || printf 'canonicalize\n'
+    command grep -qi 'unresolved' <<<"$clause" || printf 'unresolved\n'
+    command grep -qF '#426' <<<"$clause" || printf 'provenance\n'
 }
 
 # Report pure-literal violations in a workflow.js `export const meta` block, one
@@ -833,6 +868,34 @@ test_agent_destructive_clause_guard_detects_drift() {
     assert_equals "" "$(agent_missing_clause_tokens "$good")" \
         "Detector accepts a reworded clause carrying all four invariant tokens"
 
+    # Per-bullet, not per-section: the scattered fixture has all four tokens
+    # somewhere in Restrictions but no bullet that actually states the
+    # prohibition. A section-wide sweep passes it; this must not.
+    local scattered="$FIXTURES_DIR/agent_clause_scattered.md"
+    assert_file_exists "$scattered" "Scattered-token fixture exists"
+    if [ -f "$scattered" ]; then
+        assert_equals "canonicalize unresolved provenance" \
+            "$(agent_missing_clause_tokens "$scattered" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "Detector rejects tokens scattered across unrelated bullets"
+    fi
+
+    # Partial-miss precision: drop ONLY the provenance marker from the positive
+    # fixture — the historical code-reviewer.md defect — and the report must name
+    # exactly `provenance`. Pins each token's check as independent, which neither
+    # the all-missing nor the none-missing case can show. Built in a mktemp -d
+    # sandbox; the fixture on disk is never modified.
+    local sandbox
+    sandbox="$(mktemp -d 2>/dev/null || true)"
+    if [ -n "$sandbox" ] && [ -d "$sandbox" ]; then
+        command sed 's/ (#426)\././' "$good" >"$sandbox/partial.md"
+        assert_equals "provenance" \
+            "$(agent_missing_clause_tokens "$sandbox/partial.md" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "Detector reports only the dropped token when the rest of the clause is intact"
+        command rm -rf "$sandbox"
+    else
+        skip_test "mktemp -d unavailable — partial-miss precision case skipped"
+    fi
+
     # Section-scoping is what makes the code-reviewer.md case (#426 in the Tool
     # Rationale table, absent from the bullet) detectable. Prove the extractor
     # really is bounded: the fixture's Output Format section sits after
@@ -840,6 +903,19 @@ test_agent_destructive_clause_guard_detects_drift() {
     if agent_restrictions_section "$good" | command grep -q '^## '; then
         assert_true false \
             "Restrictions extractor must stop at the next heading, not run to EOF"
+    fi
+
+    # A file with NO Restrictions heading yields an empty section, so the sweep
+    # fails it on the whole invariant rather than passing it by omission. Any
+    # agent file without the heading exercises this; workflow.js harnesses do not
+    # have one.
+    local noheading="$FIXTURES_DIR/skill_tooldrift_bad/SKILL.md"
+    if [ -f "$noheading" ]; then
+        assert_equals "" "$(agent_restrictions_section "$noheading")" \
+            "Extractor returns empty for a file with no Restrictions heading"
+        assert_equals "mktemp canonicalize unresolved provenance" \
+            "$(agent_missing_clause_tokens "$noheading" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "A missing Restrictions section fails the invariant, never passes by omission"
     fi
 }
 

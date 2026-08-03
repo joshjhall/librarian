@@ -29,4 +29,5 @@ MUST NOT:
 
 ## Output Format
 
-Nothing. This agent is never dispatched.
+Nothing. This agent is never dispatched. The heading above also proves the
+section extractor stops here rather than running to EOF.
