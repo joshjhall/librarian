@@ -196,10 +196,16 @@ agent_missing_clause_tokens() {
     done <<<"$(agent_restrictions_bullets "$1")"
 
     # Deliberately unquoted: word-splitting turns the space-separated accumulator
-    # back into the one-token-per-line contract every caller parses. The tokens
+    # back into this function's documented one-token-per-line output. The tokens
     # are fixed literals from this function, so there is nothing to glob or
-    # inject. Quoting it would emit a single space-joined line and silently break
-    # the callers' `tr '\n' ' '` normalization.
+    # inject.
+    #
+    # Quoting would emit one space-joined line instead. Checked by hand, not by
+    # any test here: that breaks nothing today, because every current caller
+    # pipes through `tr '\n' ' '` and both forms normalize identically. So the
+    # split is kept for the contract rather than to prevent a live breakage — a
+    # future caller reading line-by-line is what it protects, and no assertion
+    # will tell you if that stops being true.
     # shellcheck disable=SC2086
     printf '%s\n' $best_missing
 }
@@ -972,16 +978,21 @@ test_agent_destructive_clause_guard_detects_drift() {
             "$(agent_missing_clause_tokens "$sandbox2/noanchor.md" | command tr '\n' ' ' | command sed 's/ $//')" \
             "No sandbox bullet: reports more than the anchor token, never rescued section-wide"
 
-        # Heading present, body empty. Distinct from the no-heading case above:
-        # here the extractor DOES find its section and returns nothing from it,
-        # and the initial all-four value must survive to the output. What this
-        # pins is the OUTCOME — an empty section can never read as compliant —
-        # not any particular internal step. (`agent_restrictions_bullets` emits
-        # nothing here, but a `<<<` here-string of the empty string still yields
-        # one empty-line iteration, which is what the `[ -n "$bullet" ]` guard
-        # skips. The guard is belt-and-braces for this shape rather than
-        # load-bearing: an empty line scores all four missing anyway, so it never
-        # displaces the initial value.)
+        # Heading present, body empty — the same zero-bullet state as the
+        # no-heading case above, reached by a different path (the extractor finds
+        # its section and returns nothing from it, rather than never matching).
+        # Both pin the same OUTCOME: zero bullets can never read as compliant.
+        # The regression they catch together is a plausible refactor that
+        # early-returns empty when the section yields no bullets; measured, that
+        # mutation fails both assertions, so this one is deliberate overlap on
+        # the second input shape rather than unique coverage.
+        #
+        # It pins the outcome, not an internal step: `agent_restrictions_bullets`
+        # emits nothing here, but a `<<<` here-string of the empty string still
+        # yields one empty-line iteration, which the `[ -n "$bullet" ]` guard
+        # skips. That guard is belt-and-braces for this shape — measured, an
+        # empty line scores all four missing anyway, so it never displaces the
+        # initial value and removing the guard changes nothing here.
         printf '## Restrictions\n\n## Output Format\n\nNothing.\n' >"$sandbox2/emptysec.md"
         assert_equals "mktemp canonicalize unresolved provenance" \
             "$(agent_missing_clause_tokens "$sandbox2/emptysec.md" | command tr '\n' ' ' | command sed 's/ $//')" \
