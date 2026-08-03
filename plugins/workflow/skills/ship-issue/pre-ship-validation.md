@@ -273,8 +273,26 @@ behavior is noted inline per check; environment variables referenced here
    The `token bound:` line at cycle start says which bound is live
    (`runtime` / `caller ceiling N` / `none (default)`).
 
-   **Re-review narrowing on cycle > 1 (#492).** Cycle 1 is a full review (no
-   delta args). When step (c) below re-runs the harness after a fix, pass the
+   **Re-review narrowing — gated on the previous cycle's `next_scope` (#492,
+   #656).** Cycle 1 is a full review (no delta args). After that, narrow **iff
+   the previous cycle's `next_scope` (step (c)'s convergence call) was
+   `narrow`** — NOT merely because `cycle > 1`. When it was `full`, omit the
+   delta args and review the whole diff again.
+
+   > This loop shares `review-convergence.sh` — and therefore `C3-narrow-zero` —
+   > with the post-PR loop in `ci-review-protocol.md`, so it inherits the same
+   > composition bug: a narrowed cycle is narrow *by construction*, so a
+   > zero-finding result falls under the surface-ratio floor and `C3` withholds
+   > termination. Such a cycle is **structurally incapable of ending the loop**
+   > whatever it finds. `next_scope` resolves it identically here: a cycle with
+   > **blocking** findings advises `narrow` (a fix must be re-checked, so another
+   > cycle is coming regardless), while a **clean or deferrable-only** cycle
+   > advises `full` (the next cycle is a candidate terminator). A **crashed**
+   > cycle always advises `full`. Do not re-derive that rule — read `next_scope`
+   > from the convergence call in step (c) and carry it forward exactly as
+   > `--prev-delta-lines` is carried.
+
+   When the previous cycle advised `narrow`, pass the
    **fix-commit delta since the last reviewed HEAD** so the harness re-reviews
    only what changed instead of re-scanning the whole diff every cycle:
 
@@ -289,6 +307,8 @@ behavior is noted inline per check; environment variables referenced here
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
      preScan: [<pre-review-gates.sh TSV rows + lint-gate rows from item 5>],
      conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
+     // Omit ALL THREE unless the PREVIOUS cycle advised next_scope=narrow
+     // (#656); cycle 1 always omits them:
      deltaFiles: [<git diff --name-only lastReviewedSha...HEAD>],
      deltaDiff: "<git diff lastReviewedSha...HEAD>",
      priorBlockingDimensions: [<dimensions that blocked last cycle>]
@@ -304,8 +324,9 @@ behavior is noted inline per check; environment variables referenced here
    re-included via the prior-blocking carry-over also reads the full `diff` (it
    must re-confirm a finding that may live outside the delta); only a dimension
    pulled in because the delta *touches* its file types reads `deltaDiff` (the
-   saving). The delta args are additive and default-off: omit them (or on cycle 1)
-   for the pre-#492 full review. Narrowing never sets `budget_exhausted` /
+   saving). The delta args are additive and default-off: omit them — on cycle 1,
+   **and on any cycle whose predecessor advised `next_scope=full`** — for the
+   pre-#492 full review. Narrowing never sets `budget_exhausted` /
    `dimensions_skipped`, so a narrowed cycle can still return `clean`.
 
    The harness fans the dimensions as one parallel barrier under a single
@@ -365,9 +386,13 @@ behavior is noted inline per check; environment variables referenced here
    the fix in the working tree, then amend or add a commit. Re-run step (b)
    (incrementing `cycle`) until `clean` is true **and** the convergence predicate
    says stop, or the predicate stops at the `REVIEW_MAX_CYCLES` cap. On each
-   re-run pass the fix-commit delta args
-   (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`) from step (b)'s cycle > 1
-   block so the re-review narrows to what the fix changed (#492).
+   re-run, pass the fix-commit delta args
+   (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`) from step (b)'s narrowing
+   block **only when the previous cycle's `next_scope` was `narrow`** (#492,
+   #656); when it was `full`, omit them and re-review the whole diff. Resolving a
+   blocking finding is itself the case that advises `narrow`, so a cycle that
+   just fixed something does narrow — the gate only stops a *clean* cycle being
+   followed by one that cannot terminate.
 
    **Consult the predicate once per cycle** — the cycle counter is the ceiling,
    not the stop signal (#596). Same helper and same call shape the PR-side loop

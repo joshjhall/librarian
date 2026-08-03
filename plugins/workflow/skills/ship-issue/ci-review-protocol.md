@@ -299,7 +299,8 @@ args: {
   // Conventions digest (#557) — distilled ONCE by the caller so five reviewers
   // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
   conventionsDigest: "<distilled project-convention rules>",
-  // Re-review narrowing (#492) — omit ALL THREE on cycle 1 (full review):
+  // Re-review narrowing (#492) — omit ALL THREE unless the PREVIOUS cycle
+  // advised next_scope=narrow (#656; see step a). Cycle 1 always omits them:
   deltaFiles: [<changed files since lastReviewedSha>],
   deltaDiff: "<diff since lastReviewedSha>",
   priorBlockingDimensions: [<dimension names that blocked last cycle>]
