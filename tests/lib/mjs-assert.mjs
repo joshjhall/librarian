@@ -47,6 +47,32 @@ export function eq(actual, expected, msg) {
   );
 }
 
+// resolves(promise, msg) — await a promise that must RESOLVE, recording a
+// failure instead of propagating if it rejects. Returns the resolved value, or
+// `undefined` on rejection.
+//
+// Why this exists (#646): the guards under test convert a thrown agent call into
+// a returned failure record, so the natural test is "await it and inspect the
+// result". But if the guard regresses, that await REJECTS — and a bare `await`
+// inside an area's run() escapes every assertion, aborts the rest of the block,
+// and is recorded by the entry point as one opaque "threw outside an assertion".
+// Measured while writing the mutation check: removing the catch masked ~25
+// sibling assertions in the same block. That is the collect-all property the
+// #564 split exists to protect, so the rejection is caught HERE and attributed
+// like any other failure.
+//
+// Callers should use `?.` on the returned value — it is undefined on rejection,
+// and a bare field access would re-introduce the throw this helper prevents.
+export async function resolves(promise, msg) {
+  assertions += 1;
+  try {
+    return await promise;
+  } catch (err) {
+    push(`${msg} — expected it to resolve, but it rejected: ${err?.message || err}`);
+    return undefined;
+  }
+}
+
 /** throws(fn, msg) — assert `fn` throws. The throw is caught, never propagated. */
 export function throws(fn, msg) {
   assertions += 1;

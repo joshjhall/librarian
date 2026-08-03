@@ -73,6 +73,49 @@ async function tailAgent(fn, label) {
   }
 }
 
+// Run a LEADING single-agent stage without letting it throw the run away — the
+// manifest's analog of `tailAgent` (#646). No budget pre-check (nothing to
+// conserve ahead of the run's first agent), and a DISCRIMINATED result rather
+// than a bare null so the caller can report WHICH failure fired: `agent()`
+// returns null on a terminal API error but THROWS on StructuredOutput retry-cap
+// exhaustion, and the bare `if (!manifest)` guard below only ever saw the first.
+// A throw propagated out of the script, exiting the whole run `failed` with the
+// report never constructed.
+//
+// Lives in the pure prefix rather than as an inline try/catch at the call site
+// so the throw path is unit-testable: the call site is past ORCH_BOUNDARY and
+// can only be pinned structurally (#636), and a source regex cannot fail when
+// the catch is removed.
+//
+// `fn` is a thunk so the agent() call is made inside the try — passing a live
+// promise would let a synchronous throw in the prompt builder escape.
+async function attempt(fn, label) {
+  try {
+    const value = await fn()
+    if (!value) return { ok: false, threw: false }
+    return { ok: true, value }
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — reporting an empty report instead of crashing`)
+    return { ok: false, threw: true, error: e }
+  }
+}
+
+// The reason string for a failed manifest, naming WHICH failure fired (#646).
+// A pure function rather than an inline ternary for the same reason `attempt` is
+// a helper: past ORCH_BOUNDARY only a regex could assert it, and a regex cannot
+// tell that the two branches produce DIFFERENT strings — the property that saves
+// the next reader a transcript. Control chars are stripped (this harness has no
+// shared `sanitize`) because the message can quote model output and is log()'d,
+// so a smuggled newline must not start what looks like a new log line.
+const manifestFailureNote = (threw, error) =>
+  threw
+    ? `manifest step failed (agent threw: ${String(error && error.message ? error.message : error)
+        .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200)}) — nothing to review`
+    : 'manifest step failed (agent returned no result) — nothing to review'
+
 const CERTAINTY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -836,17 +879,27 @@ function reassembleReport(merge, rawFindings, manifest) {
 // --- Manifest ---------------------------------------------------------------
 phase('Manifest')
 
-const manifest = await agent(manifestPrompt(), {
-  label: 'manifest',
-  phase: 'Manifest',
-  agentType: 'dev-core:code-reviewer',
-  schema: MANIFEST_SCHEMA,
-})
+// Dispatched through `attempt` so a THROW is reported as an empty report rather
+// than crashing the run (#646). `agent()` fails two ways — a terminal API error
+// returns null, StructuredOutput retry-cap exhaustion throws — and only the
+// first ever reached the guard below.
+const manifestAttempt = await attempt(
+  () =>
+    agent(manifestPrompt(), {
+      label: 'manifest',
+      phase: 'Manifest',
+      agentType: 'dev-core:code-reviewer',
+      schema: MANIFEST_SCHEMA,
+    }),
+  'manifest'
+)
 
-if (!manifest) {
-  log('manifest step failed — nothing to review')
+if (!manifestAttempt.ok) {
+  log(manifestFailureNote(manifestAttempt.threw, manifestAttempt.error))
   return emptyReport(null)
 }
+
+const manifest = manifestAttempt.value
 
 // --- Review (core 4 + conditional specialists as ONE barrier) ---------------
 phase('Review')

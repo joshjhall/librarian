@@ -394,6 +394,64 @@ async function tailAgent(fn, label) {
   }
 }
 
+// Run a LEADING single-agent stage without letting it throw the run away — the
+// manifest's analog of `tailAgent` (#646). Two differences from that helper, both
+// deliberate:
+//
+//   1. No budget pre-check. There is nothing to conserve ahead of the cycle's
+//      first agent, and skipping the manifest for budget would kill the cycle
+//      just as surely as a crash.
+//   2. A DISCRIMINATED result rather than a bare null, because the caller must
+//      tell the two failures apart to report which one fired (AC3). A null-return
+//      and a throw are the same void to the harness but not to the person reading
+//      the log: `agent()` returns null on a terminal API error and THROWS on
+//      StructuredOutput retry-cap exhaustion.
+//
+// Why this exists at all: #616 guarded the manifest with `if (!manifest)`, which
+// only runs when `agent()` RETURNS. The failure actually observed — twice — is a
+// retry-cap throw (`StructuredOutput retry cap (5) exceeded`, the payload correct
+// on all five attempts but wrapped in a `$PARAMETER_VALUE` envelope). That throw
+// propagated out of the script: the whole workflow exited `failed`, `emptyResult`
+// was never constructed, `no_review_signal` was never set, and the convergence
+// helper's C0b rule never saw the cycle — so the slot was charged exactly as
+// before #616's fix, and the C0-attempt-cap accounting never counted it either.
+//
+// Lives in the pure prefix (above ORCH_BOUNDARY) rather than as an inline
+// try/catch at the call site so the throw path is genuinely unit-testable. The
+// call site is past the boundary and can only be pinned structurally (#636); a
+// test that can only regex the source cannot fail when the catch is removed,
+// which is precisely the mutation AC4 requires to be caught.
+//
+// `fn` is a thunk so the agent() call is made inside the try — passing a live
+// promise would let a synchronous throw in the prompt builder escape.
+async function attempt(fn, label) {
+  try {
+    const value = await fn()
+    // A null return is a failure too — same void, different cause. Reported
+    // separately (`threw: false`) rather than folded into one flag.
+    if (!value) return { ok: false, threw: false }
+    return { ok: true, value }
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — reporting the cycle instead of crashing`)
+    return { ok: false, threw: true, error: e }
+  }
+}
+
+// The reason string for a failed manifest, naming WHICH failure fired (#646
+// AC3). A pure function rather than an inline ternary at the call site for the
+// same reason `attempt` is: the call site is past ORCH_BOUNDARY, so an inline
+// version could only be regex-asserted, and a regex cannot tell that the two
+// branches produce DIFFERENT strings — which is the whole property that saves
+// the next person a transcript read.
+//
+// The error message is `sanitize`d: it is attacker-influenced in the general
+// case (it can quote model output) and this string is log()'d, so a smuggled
+// newline must not start what looks like a new log line.
+const manifestFailureNote = (threw, error) =>
+  threw
+    ? `manifest step failed (agent threw: ${sanitize(error && error.message ? error.message : error, 200)}) — nothing to review this cycle`
+    : 'manifest step failed (agent returned no result) — nothing to review this cycle'
+
 const CERTAINTY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -1402,26 +1460,45 @@ if (conventionsDigest) {
 // --- Manifest ---------------------------------------------------------------
 phase('Manifest')
 
-const manifest = await agent(manifestPrompt(), {
-  label: 'manifest',
-  phase: 'Manifest',
-  agentType: 'dev-core:code-reviewer',
-  schema: MANIFEST_SCHEMA,
-})
+// Dispatched through `attempt` so a THROW is reported as a cycle result rather
+// than crashing the script (#646). `agent()` fails two ways — a terminal API
+// error returns null, StructuredOutput retry-cap exhaustion throws — and #616's
+// bare `if (!manifest)` guard only ever saw the first. The throw is if anything
+// the MORE common one: it was the observed failure both times.
+const manifestAttempt = await attempt(
+  () =>
+    agent(manifestPrompt(), {
+      label: 'manifest',
+      phase: 'Manifest',
+      agentType: 'dev-core:code-reviewer',
+      schema: MANIFEST_SCHEMA,
+    }),
+  'manifest'
+)
 
-if (!manifest) {
+if (!manifestAttempt.ok) {
   // The manifest is a single point of failure ahead of the whole fan-out, so its
   // death means NO dimension ever ran — the cycle produced zero review signal.
   // Flag it as such (5th arg) so the convergence helper does not charge it to
   // REVIEW_MAX_CYCLES: this is the exact failure observed on PR #615, where a
   // schema-validation failure repeated identically across all five retries and
   // burned a cycle slot having reviewed nothing (#616).
-  const r = emptyResult(false, 'manifest step failed — nothing to review this cycle', [], 0, true)
+  const r = emptyResult(
+    false,
+    // Names which failure fired, so the next person debugging this does not have
+    // to read a transcript to tell a null return from a caught throw (#646 AC3).
+    manifestFailureNote(manifestAttempt.threw, manifestAttempt.error),
+    [],
+    0,
+    true
+  )
   // A failed manifest is not a clean pass: do not let the skill stop the loop
   // on a degenerate cycle.
   r.clean = false
   return r
 }
+
+const manifest = manifestAttempt.value
 
 // --- Review (dimensions as ONE barrier under one budget) --------------------
 phase('Review')

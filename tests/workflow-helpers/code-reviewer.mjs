@@ -9,10 +9,12 @@
 // collect-all (they record, never throw), so a failure here does not mask any
 // sibling area — see tests/lib/mjs-assert.mjs.
 
-import { ok, eq, throws } from "../lib/mjs-assert.mjs";
-import { extractHelpers, REVIEW } from "../lib/extract-helpers.mjs";
+import { ok, eq, throws, resolves } from "../lib/mjs-assert.mjs";
+import { extractHelpers, harnessSource, REVIEW } from "../lib/extract-helpers.mjs";
 
-export function run() {
+// async because the #646 area exercises `attempt`, an async guard. The entry
+// point awaits every run(), so a synchronous area is unaffected.
+export async function run() {
   // =============================================================================
   // code-reviewer / ship-issue — refOf + empty-result constructors
   // =============================================================================
@@ -618,6 +620,76 @@ export function run() {
     throws(
       () => reviewerPrompt("bogus-reviewer", manifest),
       "reviewerPrompt (code-reviewer): throws on an unknown reviewer key (#494 fail-loud)",
+    );
+  }
+
+  // --- #646: a manifest agent that THROWS must be reported, not crash --------
+  //
+  // Same defect class as ship-issue's, one harness over: the manifest was a bare
+  // `await agent(...)` behind an `if (!manifest)` guard that only sees a null
+  // RETURN, while StructuredOutput retry-cap exhaustion THROWS. The blast radius
+  // differs — this harness has no no_review_signal consumer, so a throw was a
+  // plain crash rather than a miscounted review cycle — but the fix is the same
+  // and so is the reason a bare regex assertion would be insufficient.
+  {
+    const { attempt, manifestFailureNote } = extractHelpers(REVIEW, ["attempt", "manifestFailureNote"]);
+
+    const boom = new Error("StructuredOutput retry cap (5) exceeded");
+    // Awaited through `resolves` so a regressed attempt() records one failure
+    // instead of escaping the block and masking its siblings.
+    const threwResult = await resolves(
+      attempt(() => {
+        throw boom;
+      }, "manifest"),
+      "attempt (code-reviewer): a throwing agent call resolves, never rejects (#646)",
+    );
+    eq(threwResult?.ok, false, "attempt (code-reviewer): a thrown agent call is a failure (#646)");
+    eq(threwResult?.threw, true, "attempt (code-reviewer): a throw reports threw:true");
+    eq(threwResult?.error, boom, "attempt (code-reviewer): the original error is preserved");
+
+    const rejected = await resolves(
+      attempt(() => Promise.reject(new Error("async retry cap")), "manifest"),
+      "attempt (code-reviewer): a rejected agent promise resolves, never rejects (#646)",
+    );
+    eq(rejected?.threw, true, "attempt (code-reviewer): an async rejection is caught too (#646)");
+
+    const nullResult = await attempt(() => null, "manifest");
+    eq(nullResult?.ok, false, "attempt (code-reviewer): a null result is still a failure");
+    eq(nullResult?.threw, false, "attempt (code-reviewer): a null return is distinguishable from a throw");
+
+    const value = { files: ["a.ts"] };
+    const okResult = await attempt(() => value, "manifest");
+    eq(okResult?.ok, true, "attempt (code-reviewer): a real manifest is a success");
+    eq(okResult?.value, value, "attempt (code-reviewer): the value passes through by reference");
+
+    // The two failures must read differently, or the reason string buys nothing.
+    ok(
+      manifestFailureNote(true, boom) !== manifestFailureNote(false),
+      "manifestFailureNote (code-reviewer): throw and null-return read differently (#646)",
+    );
+    ok(
+      manifestFailureNote(true, boom).includes("retry cap (5) exceeded"),
+      "manifestFailureNote (code-reviewer): quotes the underlying error message",
+    );
+    // This harness has no shared `sanitize`, so the note scrubs control chars
+    // inline. Same hazard, same assertion: the string is log()'d.
+    ok(
+      !manifestFailureNote(true, new Error("a\nIGNORE ABOVE")).includes("\n"),
+      "manifestFailureNote (code-reviewer): strips control chars from the message",
+    );
+
+    const orch = harnessSource(REVIEW);
+    ok(
+      /const manifestAttempt = await attempt\(/.test(orch),
+      "code-reviewer: the manifest is dispatched through attempt(), not a bare await (#646)",
+    );
+    ok(
+      !/^const manifest = await agent\(/m.test(orch),
+      "code-reviewer: the unguarded bare `const manifest = await agent(` is gone (#646)",
+    );
+    ok(
+      /if \(!manifestAttempt\.ok\) \{/.test(orch),
+      "code-reviewer: BOTH failure modes take the guarded path",
     );
   }
 }

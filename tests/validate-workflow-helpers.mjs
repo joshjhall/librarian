@@ -65,7 +65,13 @@ for (const [name, run] of AREAS) {
   // "sanitize: strips newlines" would not say which file to open.
   setArea(name);
   try {
-    run();
+    // AWAITED (#646): an area that tests an async helper — the `attempt` guards
+    // around each harness's leading agent call — returns a promise. Calling it
+    // bare would let run() resolve after this loop finished, so its assertions
+    // would land AFTER report() had already printed and exited, and a rejection
+    // would surface as an unhandled rejection instead of an attributed failure.
+    // `await` is a no-op for the synchronous areas, so this is uniformly safe.
+    await run();
   } catch (err) {
     // Attribute the throw to its area and keep going. `err?.stack || err` keeps
     // a non-Error throw (a bare string) readable instead of "[object Object]".
