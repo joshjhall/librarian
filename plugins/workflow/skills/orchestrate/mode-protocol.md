@@ -696,10 +696,13 @@ the PR's changed-file set (`git diff --name-only origin/main...HEAD`).
 | **real** | failing step exercises the change (test / lint / build touching the diff) | escalate immediately — hand to `ci-fixer` (today's behavior) |
 | **cascade** | an aggregation/summary job (e.g. `PR Tier > Summarize`) that failed only because an upstream job failed | attribute to the upstream root cause; report **once**, not as a second independent failure |
 
-**Bounds (all env-overridable; mirror `REVIEW_MAX_CYCLES`'s `${VAR:-default}`
-posture):**
+**Bounds (both env-overridable and **agent-interpreted** — read from the
+environment by the triaging agent, not by any script, because the classification
+they feed is a judgment over `gh run view` JSON and the changed-file set; #588.
+Authority: `ship-issue/ship-protocol.md` § Environment Variables):**
 
-- `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra step names.
+- `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra step names,
+  default `Set up Docker Buildx|Checkout|checkout|Login|login|cache|Cache|Set up job`.
 - `LIBRARIAN_CI_INFRA_RETRIES` — infra-flake auto-retry count, default `1`.
   **Independent of** the `ci-fixer` 3-attempt cap (that caps code fixes; this
   re-runs an unchanged infra step). `0` disables infra auto-retry.

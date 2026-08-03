@@ -107,6 +107,17 @@ does exactly this via `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` +
 `LIBRARIAN_CI_WAIT_TIMEOUT` CI-wait loop. When a harness needs a latency bound,
 document it as a caller responsibility, not a harness feature.
 
+**And give the caller a helper, not arithmetic to do.** "Caller responsibility"
+is where both of those bounds first went wrong: each was introduced as prose
+telling the model to track elapsed time, compare it to a threshold, count
+extensions, and stop at the ceiling. A model deep in a review cycle does not
+reliably do that — three golems wedged unbounded before #327, and the CI-wait
+pair was read by no code at all until #588. Both now **call** a script
+(`workflow-wall-timeout.sh`, `ci-wait-timeout.sh`; shared arithmetic in
+`threshold-check.sh`) that returns a `continue|extend|stop|checkpoint` verdict.
+A threshold a model must apply by hand is not a bound — it is a suggestion that
+reads like one.
+
 ## Findings & Keying
 
 - When findings are keyed across steps (rescore, classify, dedup), stamp a

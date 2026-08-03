@@ -426,7 +426,9 @@ behavior is noted inline per check; environment variables referenced here
    caps the number of review **cycles**; `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`
    (default 20 min, step b) caps the **wall-time of one cycle**. Both are the
    review action's thresholds — the cut-short/extend checkpoints, the analogues of
-   `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop. A `budget_exhausted` cycle
+   `LIBRARIAN_CI_WAIT_TIMEOUT` for the CI-wait loop (which, like the wall-timeout,
+   is applied by a helper — `scripts/ci-wait-timeout.sh` — not by hand).
+   A `budget_exhausted` cycle
    **and** a wall-timed-out cycle are both **partial regardless of their
    findings**: `clean` is false even with zero blocking findings (some dimension
    in `dimensions_skipped` never ran, or the run was stopped mid-flight), so

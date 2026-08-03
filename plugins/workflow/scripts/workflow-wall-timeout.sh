@@ -18,6 +18,11 @@
 # owns the L1-L4 disposition table); the caller still issues the actual TaskStop
 # tool call — but on this script's verdict, not on its own reading of prose.
 #
+# The decision itself lives in threshold-check.sh, shared with ci-wait-timeout.sh
+# (#588): the two loops differ only in env var names and defaults, so a second
+# copy of the ceiling arithmetic would re-open exactly the drift this file closed.
+# This wrapper owns the wall-timeout identity; that library owns the verdict.
+#
 # Subcommand (emits `key=value` lines to stdout):
 #   check --elapsed-min N --level L [--extensions-used K]
 #         -> verdict           continue | extend | stop | checkpoint
@@ -47,6 +52,10 @@
 # § Key conventions (runtime policy).
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./threshold-check.sh
+. "$SCRIPT_DIR/threshold-check.sh"
+
 USAGE="Usage: workflow-wall-timeout check --elapsed-min N --level L [--extensions-used K]
   N = cumulative wall-minutes waited so far (non-negative integer)
   L = autonomy level 1-4
@@ -54,148 +63,9 @@ USAGE="Usage: workflow-wall-timeout check --elapsed-min N --level L [--extension
 env: LIBRARIAN_WORKFLOW_WALL_TIMEOUT (default 20),
      LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS (default 1)"
 
-# die <message> — fail loud: actionable message + usage on stderr, exit 2.
-die() {
-    command printf '%s\n%s\n' "$1" "$USAGE" >&2
-    exit 2
-}
-
-# opt <name> -- <args...>
-# Echo the token following <name> in the args after `--`. A value that itself
-# starts with `--` is treated as absent. Exit status: 0 found, 1 not found.
-opt() {
-    _opt_name="$1"
-    shift
-    shift # consume the literal `--` separator
-    _opt_prev=""
-    _opt_found=1
-    _opt_val=""
-    for _opt_tok in "$@"; do
-        if [ "$_opt_prev" = "$_opt_name" ]; then
-            _opt_found=0
-            case "$_opt_tok" in
-                --*) ;;
-                *) _opt_val="$_opt_tok" ;;
-            esac
-            break
-        fi
-        _opt_prev="$_opt_tok"
-    done
-    command printf '%s' "$_opt_val"
-    return "$_opt_found"
-}
-
-# is_nonneg_int <value> — 0 if value is a non-negative integer in canonical
-# base-10 form, else 1. Empty, any non-digit (a leading `-` or stray whitespace),
-# AND a leading-zero numeral all fail. Rejecting leading zeros is deliberate: the
-# accepted values feed bash arithmetic (`$(( ))`, `[ -lt ]`), where `030` is read
-# as OCTAL — that silently applies a wrong threshold (ceiling 48, not 60) and `08`
-# crashes with "value too great for base", both bypassing this script's fail-loud
-# exit-2 contract (the silent-wrong-verdict class #327 exists to kill). `0` itself
-# is the sole valid zero.
-is_nonneg_int() {
-    case "$1" in
-        '' | *[!0-9]*) return 1 ;;
-        0) return 0 ;;
-        0*) return 1 ;;
-        *) return 0 ;;
-    esac
-}
-
-# valid_level <value> — 0 if value is 1-4, else 1.
-valid_level() {
-    case "$1" in
-        1 | 2 | 3 | 4) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-cmd_check() {
-    elapsed="$(opt --elapsed-min -- "$@" || true)"
-    level="$(opt --level -- "$@" || true)"
-    ext_used="$(opt --extensions-used -- "$@" || true)"
-
-    # --extensions-used defaults to 0 (no extension granted yet).
-    if [ -z "$ext_used" ]; then
-        ext_used="0"
-    fi
-
-    if [ -z "$elapsed" ]; then
-        die "workflow-wall-timeout: check needs --elapsed-min N"
-    fi
-    if ! is_nonneg_int "$elapsed"; then
-        die "workflow-wall-timeout: --elapsed-min must be a non-negative integer, got '$elapsed'"
-    fi
-    if [ -z "$level" ]; then
-        die "workflow-wall-timeout: check needs --level L"
-    fi
-    if ! valid_level "$level"; then
-        die "workflow-wall-timeout: --level must be 1-4, got '$level'"
-    fi
-    if ! is_nonneg_int "$ext_used"; then
-        die "workflow-wall-timeout: --extensions-used must be a non-negative integer, got '$ext_used'"
-    fi
-
-    # Thresholds from the env (same vars #307 defined). Validate — a bad
-    # override must fail loud, never silently pick a wrong ceiling.
-    timeout="${LIBRARIAN_WORKFLOW_WALL_TIMEOUT:-20}"
-    max_ext="${LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS:-1}"
-    if ! is_nonneg_int "$timeout" || [ "$timeout" -lt 1 ]; then
-        die "workflow-wall-timeout: LIBRARIAN_WORKFLOW_WALL_TIMEOUT must be an integer >= 1, got '$timeout'"
-    fi
-    if ! is_nonneg_int "$max_ext"; then
-        die "workflow-wall-timeout: LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS must be a non-negative integer, got '$max_ext'"
-    fi
-    # --extensions-used can never exceed the ceiling's extension count: a K past
-    # max_ext is a caller bookkeeping bug (or MAX_EXTENSIONS lowered mid-run), and
-    # left unchecked it inflates next_deadline (timeout*(K+1)) past the ceiling and
-    # keeps returning `continue` — a silently-extended budget, the very drift this
-    # helper removes. Fail loud instead of computing a verdict from invalid state.
-    if [ "$ext_used" -gt "$max_ext" ]; then
-        die "workflow-wall-timeout: --extensions-used ($ext_used) exceeds LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS ($max_ext)"
-    fi
-
-    # next_deadline: the checkpoint the current (K-extension) budget polls to.
-    # ceiling: the hard cap once every extension is spent.
-    next_deadline=$((timeout * (ext_used + 1)))
-    ceiling=$((timeout * (max_ext + 1)))
-
-    if [ "$elapsed" -lt "$next_deadline" ]; then
-        # Still inside the current budget window — keep polling.
-        verdict="continue"
-        out_ext="$ext_used"
-        out_deadline="$next_deadline"
-    elif [ "$elapsed" -ge "$ceiling" ] || [ "$ext_used" -ge "$max_ext" ]; then
-        # Ceiling reached (extensions exhausted, or elapsed already blew past the
-        # hard cap) — stop and recover partials. This is the same STOP at every
-        # level; the merge invariant is unaffected (a stopped review is partial).
-        verdict="stop"
-        out_ext="$ext_used"
-        out_deadline="$ceiling"
-    elif [ "$level" -ge 3 ]; then
-        # Crossed the checkpoint with extensions left, L3-L4: auto-grant one more.
-        verdict="extend"
-        out_ext=$((ext_used + 1))
-        out_deadline=$((timeout * (out_ext + 1)))
-    else
-        # Crossed the checkpoint with extensions left, L1-L2: a human decides.
-        verdict="checkpoint"
-        out_ext="$ext_used"
-        out_deadline="$next_deadline"
-    fi
-
-    command printf 'verdict=%s\n' "$verdict"
-    command printf 'ceiling_min=%s\n' "$ceiling"
-    command printf 'next_deadline_min=%s\n' "$out_deadline"
-    command printf 'extensions_used=%s\n' "$out_ext"
-}
-
-if [ "$#" -eq 0 ]; then
-    die "workflow-wall-timeout: missing subcommand"
-fi
-sub="$1"
-shift
-case "$sub" in
-    check) cmd_check "$@" ;;
-    *) die "workflow-wall-timeout: unknown subcommand '$sub'" ;;
-esac
+threshold_check_main \
+    "workflow-wall-timeout" \
+    "LIBRARIAN_WORKFLOW_WALL_TIMEOUT" 20 \
+    "LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS" 1 \
+    "$USAGE" \
+    "$@"

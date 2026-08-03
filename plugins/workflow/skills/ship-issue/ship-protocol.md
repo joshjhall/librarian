@@ -209,16 +209,26 @@ These env vars toggle non-default behavior; all are opt-in:
   (interactive): prompt **cut short** vs **extend** (another interval). At
   **L3–L4**: extend automatically up to `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` times,
   then STOP — see the CI-monitor sub-step. The 30 s poll cadence is unchanged;
-  this only bounds total wait.
+  this only bounds total wait. As with its `LIBRARIAN_WORKFLOW_WALL_*` siblings
+  below, the threshold/extension **arithmetic is not re-derived in prose** — the
+  skill **calls** `scripts/ci-wait-timeout.sh check --elapsed-min N --level L
+  --extensions-used K` each poll, which reads this var and returns a
+  `continue|extend|stop|checkpoint` verdict. Until #588 this pair was read by no
+  code at all: the bound was whatever the shipping model did by hand, so setting
+  it carried no guarantee it took. It now does.
 - `LIBRARIAN_CI_WAIT_MAX_EXTENSIONS` — integer, default `2`. At **L3–L4**, how
   many extra `LIBRARIAN_CI_WAIT_TIMEOUT` intervals the CI-wait loop adds before
   giving up (default `15` + 2×`15` = 45 min total), so a headless golem polling a
   stuck CI run cannot hang. Ignored at L1–L2 (the human chooses cut-short/extend
-  at each checkpoint).
+  at each checkpoint). Read by `scripts/ci-wait-timeout.sh` alongside
+  `LIBRARIAN_CI_WAIT_TIMEOUT` to compute the ceiling
+  (`TIMEOUT × (MAX_EXTENSIONS + 1)`); `0` makes the first checkpoint the ceiling
+  (no auto-extend, even at L4).
 - `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` — integer **minutes**, default `20`. Max
   wall-time the skill awaits a **single `Workflow` tool invocation** (the pre-PR /
   post-PR review fan-out, `ci-fixer`) before hitting a checkpoint — the
-  wall-clock analogue of `LIBRARIAN_CI_WAIT_TIMEOUT`, for #224. The `workflow.js`
+  wall-clock analogue of `LIBRARIAN_CI_WAIT_TIMEOUT` (both helper-backed, and for
+  the same reason), for #224. The `workflow.js`
   sandbox bans clocks/timers (`Date.now`/`new Date` throw; no `setTimeout`/
   `AbortSignal`), and a *spinning* agent emits no tokens so it never advances the
   harness token budget — so a harness cannot self-deadline. The skill bounds the
@@ -240,14 +250,16 @@ These env vars toggle non-default behavior; all are opt-in:
   by `scripts/workflow-wall-timeout.sh` alongside `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`
   to compute the ceiling (`TIMEOUT × (MAX_EXTENSIONS + 1)`); `0` makes the first
   checkpoint the ceiling (no auto-extend, even at L4).
-- `LIBRARIAN_CI_INFRA_STEPS` — `|`-separated regex of known infra/setup step
+- `LIBRARIAN_CI_INFRA_STEPS` — **agent-interpreted, not script-read** (#588; see
+  the note below the list). `|`-separated regex of known infra/setup step
   names that mark a CI failure as a **likely flake** rather than a code
-  regression (CI-failure triage, Step 4 Option 1). Default:
+  regression (CI-failure triage, Step 4 Option 1), default
   `Set up Docker Buildx|Checkout|checkout|Login|login|cache|Cache|Set up job`.
   A failure whose failing step matches this — or whose failing job type cannot
   be affected by the PR's changed files — is auto-retried once before any
   escalation. Override per repo to teach the triage that repo's setup steps.
-- `LIBRARIAN_CI_INFRA_RETRIES` — integer, default `1`. How many times an
+- `LIBRARIAN_CI_INFRA_RETRIES` — **agent-interpreted, not script-read** (#588).
+  Integer, default `1`. How many times an
   infra-classified failure is `gh run rerun --failed` before escalating to
   `ci-fixer`/the human. This bound is **independent of** the `ci-fixer` 3-attempt
   cap (which covers code fixes) — it only re-runs an unchanged infra step. Set
@@ -255,6 +267,20 @@ These env vars toggle non-default behavior; all are opt-in:
   Degrades gracefully: if classification data can't be fetched, the triage falls
   through to the normal ci-fixer handoff with an escalate-with-note, never a
   hard-fail.
+
+> **Agent-interpreted, by design (#588).** Unlike every other variable in this
+> section, the `LIBRARIAN_CI_INFRA_*` pair is read by **no script** — it is read
+> by *you*, from the environment, while triaging. That is deliberate rather than
+> a gap: the classification these feed is a judgment over `gh run view` JSON and
+> the PR's changed-file set ("can this job type be affected by this diff?"), so
+> a helper could own only the retry count, not the decision. The operator is
+> passing **intent into a prompt**, and it takes effect exactly insofar as you
+> honor it. Two consequences worth stating plainly: an operator cannot verify
+> from outside that a setting took, and these defaults are kept honest by
+> `tests/lint-env-var-drift.sh` (which allowlists these two and asserts every
+> file stating a default agrees) rather than by execution.
+
+---
 
 > **Review thresholds — three independent bounds.** `REVIEW_MAX_CYCLES` (above)
 > caps the number of review **cycles** (cost/iterations); it gives the
