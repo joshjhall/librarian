@@ -136,18 +136,40 @@ check #6), so a solo run cannot skip it by choosing commit-only.
 
 ### Phase D — Teardown (auto after merge, prompt otherwise)
 
-- **L3–L4 (the PR auto-merged this turn):** prune and leave the worktree
-  automatically —
+- **L3–L4 (the PR auto-merged this turn):** leave the worktree, then prune it —
+  in that order, automatically —
+
+  ```text
+  ExitWorktree({ action: "keep" })
+  ```
 
   ```bash
   ${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh N
   ```
 
-  ```text
-  ExitWorktree({ action: "remove" })
-  ```
-
   Report the merged PR URL.
+
+  **`keep` + `worktree-rm.sh` IS the complete teardown — not a workaround, and
+  not a step to "correct" back to `remove`.** Two independent reasons, both
+  load-bearing:
+
+  - **`remove` is unavailable.** `ExitWorktree` only removes a worktree *it*
+    created via `EnterWorktree({ name })`. Phase B enters an **existing** one by
+    **path** (`worktree-new.sh N` created it first), and the `ExitWorktree`
+    contract says of that entry method: *"ExitWorktree will not remove a worktree
+    entered this way; use `action: "keep"` to return to the original
+    directory."* So `remove` refuses by contract, every run.
+  - **The order is not cosmetic.** `worktree-rm.sh` performs the entire teardown
+    itself — `git worktree remove` **plus** `branch -D` plus the `golem-N` tmux
+    kill — so running it first deletes this session's own cwd out from under it.
+    `keep` returns the session to the main checkout; the prune then runs from
+    there.
+
+  **Cross-ref #626** (move the golem worktree root to `.claude/worktrees/`). If
+  that lands, golem worktrees sit where `EnterWorktree` natively places its own,
+  which may make `EnterWorktree({ name })` viable and would make `remove`
+  correct. Whichever lands second must **re-check** this sequence rather than
+  assume it.
 
 - **L1–L2 (human merges later):** the PR is **not** merged, so do **not** remove
   the worktree. Return the session to the main checkout so it's free for other
@@ -169,8 +191,13 @@ check #6), so a solo run cannot skip it by choosing commit-only.
   glab mr view --source-branch feature/issue-N          # merged           (GitLab)
   ```
 
-  If merged, `worktree-rm.sh N` then `ExitWorktree({ action: "remove" })`. If not
-  yet merged, say so and stop (do not remove an unmerged worktree —
+  If merged, `ExitWorktree({ action: "keep" })` then `worktree-rm.sh N` — same
+  order and same action as the L3–L4 block above, for the same two reasons
+  (`remove` refuses on a path-entered worktree; prune-first deletes the cwd). A
+  `--teardown` re-entry usually runs from the **main checkout** already, where
+  `ExitWorktree` is a documented no-op — call it anyway, so the one case that
+  matters (re-entry from inside the worktree) is covered. If not yet merged, say
+  so and stop (do not remove an unmerged worktree —
   `worktree-rm.sh` also refuses on uncommitted changes as a backstop).
 
 ## When to Use
