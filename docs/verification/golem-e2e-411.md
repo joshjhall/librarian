@@ -141,7 +141,9 @@ Checklist (all must hold):
 - [ ] `/workflow:ship-issue` chains in-turn; **adversarial pre-PR review runs** (Step 3.5
       check #6 fires — watch for the `Workflow` review invocation)
 - [ ] Branch + PR opened → CI waited on → **auto-merge on green + clean**
-- [ ] Phase D auto-runs `worktree-rm.sh S` + `ExitWorktree(remove)`
+- [ ] Phase D auto-runs `ExitWorktree(keep)` **then** `worktree-rm.sh S` (in that
+      order — `remove` refuses on a path-entered worktree, and prune-first would
+      delete the session's cwd; see `golem/SKILL.md` § Phase D)
 - [ ] the **main checkout is untouched** throughout (no stray files, branch, or
       HEAD move in the primary working tree)
 
