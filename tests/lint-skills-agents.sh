@@ -155,6 +155,14 @@ agent_restrictions_bullets() {
 # reframes it for a write-capable agent — as long as all four survive. Normalizing
 # every copy to identical text would break those adaptations; this does not.
 #
+# Scope, so nobody reads more into a pass than it means: this catches DELETION and
+# DRIFT — the failure this repo actually saw, where a hand-copied clause quietly
+# lost a piece. It is a token check, not semantic analysis, so a single bullet
+# carrying all four tokens with inverted meaning would pass. That residual is
+# accepted: the prose clause is only the belt, and
+# plugins/workflow/hooks/bash-guard.sh enforces the ban at the tool level for
+# every Bash-capable subagent regardless of what any agent file says.
+#
 # The scans use a here-string, NOT `printf ... | grep -q`. `grep -q` exits at the
 # first match and closes the pipe, so a large enough left-hand side takes SIGPIPE
 # and the pipeline reports 141 under `set -o pipefail` — the `||` then fires and
