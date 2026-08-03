@@ -10,6 +10,12 @@
 # override, a fail-loud exit the caller's degradation path keys on) would return
 # the loop to that state, so this gate pins the deterministic decision table.
 #
+# Coverage of the shared library is split three ways, on purpose:
+#   this file + tests/validate-workflow-wall-timeout.sh  end-to-end, per wrapper
+#   tests/validate-threshold-check.sh                    library units
+# The unit suite exists for what no wrapper CLI can reach (e.g. tc_opt's
+# flag-shaped-value guard: delete it and BOTH end-to-end suites still pass).
+#
 # This suite and tests/validate-workflow-wall-timeout.sh cover the two wrappers
 # over the SHARED threshold-check.sh. That overlap is deliberate, not redundant:
 # each wrapper's whole contribution is its var names and defaults (15/2 -> ceiling
