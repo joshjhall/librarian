@@ -671,11 +671,28 @@ export async function run() {
       manifestFailureNote(true, boom).includes("retry cap (5) exceeded"),
       "manifestFailureNote (code-reviewer): quotes the underlying error message",
     );
+    // The null branch's CONTENT, not just its inequality with the throw branch.
+    // Inequality alone would still pass if this branch regressed to the empty
+    // string — "different" is satisfied by garbage.
+    ok(
+      /returned no result/.test(manifestFailureNote(false)),
+      "manifestFailureNote (code-reviewer): the null variant says the agent returned nothing",
+    );
     // This harness has no shared `sanitize`, so the note scrubs control chars
     // inline. Same hazard, same assertion: the string is log()'d.
     ok(
       !manifestFailureNote(true, new Error("a\nIGNORE ABOVE")).includes("\n"),
       "manifestFailureNote (code-reviewer): strips control chars from the message",
+    );
+    // The length clamp is the OTHER half of that bespoke inline sanitizer, and
+    // unlike the two sibling harnesses (which clamp via the shared, separately
+    // tested `sanitize`) nothing else pins it here. It exists to bound an
+    // attacker/model-influenced log line, so a refactor that drops the
+    // `.slice(0, 200)` must fail a test rather than silently uncap the message.
+    const longNote = manifestFailureNote(true, new Error("x".repeat(300)));
+    ok(
+      !longNote.includes("x".repeat(201)),
+      "manifestFailureNote (code-reviewer): the quoted message is length-clamped (bespoke .slice)",
     );
 
     const orch = harnessSource(REVIEW);

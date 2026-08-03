@@ -478,6 +478,12 @@ export async function run() {
       mapFailureNote(true, boom).includes("retry cap (5) exceeded"),
       "mapFailureNote: quotes the underlying error message",
     );
+    // The null branch's CONTENT, not just its inequality with the throw branch:
+    // "different" is satisfied by garbage, including the empty string.
+    ok(
+      /returned no result/.test(mapFailureNote(false)),
+      "mapFailureNote: the null variant says the agent returned nothing",
+    );
     // Sanitized because this note lands in `report_markdown`, not just a log —
     // a smuggled newline could forge report structure (a fake heading or bullet).
     ok(
