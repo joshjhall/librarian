@@ -195,6 +195,12 @@ agent_missing_clause_tokens() {
         fi
     done <<<"$(agent_restrictions_bullets "$1")"
 
+    # Deliberately unquoted: word-splitting turns the space-separated accumulator
+    # back into the one-token-per-line contract every caller parses. The tokens
+    # are fixed literals from this function, so there is nothing to glob or
+    # inject. Quoting it would emit a single space-joined line and silently break
+    # the callers' `tr '\n' ' '` normalization.
+    # shellcheck disable=SC2086
     printf '%s\n' $best_missing
 }
 
@@ -965,6 +971,22 @@ test_agent_destructive_clause_guard_detects_drift() {
         assert_equals "mktemp unresolved provenance" \
             "$(agent_missing_clause_tokens "$sandbox2/noanchor.md" | command tr '\n' ' ' | command sed 's/ $//')" \
             "No sandbox bullet: reports more than the anchor token, never rescued section-wide"
+
+        # Heading present, body empty. Distinct from the no-heading case above:
+        # here the extractor DOES find its section and returns nothing from it,
+        # and the initial all-four value must survive to the output. What this
+        # pins is the OUTCOME — an empty section can never read as compliant —
+        # not any particular internal step. (`agent_restrictions_bullets` emits
+        # nothing here, but a `<<<` here-string of the empty string still yields
+        # one empty-line iteration, which is what the `[ -n "$bullet" ]` guard
+        # skips. The guard is belt-and-braces for this shape rather than
+        # load-bearing: an empty line scores all four missing anyway, so it never
+        # displaces the initial value.)
+        printf '## Restrictions\n\n## Output Format\n\nNothing.\n' >"$sandbox2/emptysec.md"
+        assert_equals "mktemp canonicalize unresolved provenance" \
+            "$(agent_missing_clause_tokens "$sandbox2/emptysec.md" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "An empty Restrictions section reports the whole invariant, never passes by omission"
+
         command rm -rf "$sandbox2"
     else
         skip_test "mktemp -d unavailable — no-anchor case skipped"
