@@ -136,8 +136,11 @@ agent_restrictions_bullets() {
     '
 }
 
-# Report which parts of the #426 destructive-shell clause are MISSING from an
-# agent's Restrictions section, one token name per line. Empty output = compliant.
+# Report which parts of the #426 destructive-shell clause are MISSING, one token
+# name per line. Empty output = compliant, meaning SOME single bullet in the
+# agent's Restrictions section carries the whole invariant. A non-empty report
+# describes the closest bullet found — the most actionable near-miss — so it is a
+# diagnostic message, not an exhaustive list of everything the section lacks.
 #
 # #426: a nominally read-only reviewer subagent ran destructive shell against the
 # LIVE working tree and was technically compliant, because the prose banned file
@@ -160,28 +163,39 @@ agent_restrictions_bullets() {
 # fails in the unsafe direction for a security gate that must not cry wolf. A
 # here-string has no writer process, so there is nothing to signal.
 agent_missing_clause_tokens() {
-    local bullets clause
-    bullets="$(agent_restrictions_bullets "$1")"
+    local bullet best_missing="mktemp canonicalize unresolved provenance" missing
 
-    # The clause bullet = the one carrying the sandbox requirement. Anchoring on
-    # `mktemp -d` picks it out; the remaining tokens are then required in THAT
-    # bullet, so a near-miss reports precisely what it lacks instead of being
-    # rescued by wording elsewhere in the section.
-    clause="$(command grep -F 'mktemp -d' <<<"$bullets" || true)"
+    # Score every bullet INDEPENDENTLY and keep the best (fewest tokens missing);
+    # a bullet is never combined with any other. Two earlier shapes both failed by
+    # letting a second bullet rescue the first: grepping the section as a whole,
+    # and grepping all `mktemp -d`-bearing bullets into one blob (an agent whose
+    # clause bullet carried only the sandbox then passed on a sibling bullet's
+    # wording). Both are the same #426 failure mode — technically compliant prose
+    # stating no actual restriction — so the loop evaluates one bullet at a time
+    # and no cross-bullet path exists to reintroduce it.
+    #
+    # With no bullets at all (no Restrictions section, or an empty one), the
+    # initial value stands and the whole invariant is reported missing — the
+    # section fails loudly rather than passing by omission.
+    while IFS= read -r bullet; do
+        [ -n "$bullet" ] || continue
+        missing=""
+        command grep -qF 'mktemp -d' <<<"$bullet" || missing="$missing mktemp"
+        command grep -qi 'canonicali' <<<"$bullet" || missing="$missing canonicalize"
+        command grep -qi 'unresolved' <<<"$bullet" || missing="$missing unresolved"
+        command grep -qF '#426' <<<"$bullet" || missing="$missing provenance"
+        missing="${missing# }"
 
-    if [ -z "$clause" ]; then
-        printf 'mktemp\n'
-        # No clause bullet at all: report every token, so the failure message
-        # names the whole missing invariant rather than one arbitrary piece.
-        command grep -qi 'canonicali' <<<"$bullets" || printf 'canonicalize\n'
-        command grep -qi 'unresolved' <<<"$bullets" || printf 'unresolved\n'
-        command grep -qF '#426' <<<"$bullets" || printf 'provenance\n'
-        return 0
-    fi
+        [ -z "$missing" ] && return 0 # a fully compliant bullet: nothing missing
+        # Fewer missing tokens = closer to the real clause, so its report is the
+        # most actionable one to show the editor.
+        if [ "$(printf '%s' "$missing" | command wc -w)" \
+            -lt "$(printf '%s' "$best_missing" | command wc -w)" ]; then
+            best_missing="$missing"
+        fi
+    done <<<"$(agent_restrictions_bullets "$1")"
 
-    command grep -qi 'canonicali' <<<"$clause" || printf 'canonicalize\n'
-    command grep -qi 'unresolved' <<<"$clause" || printf 'unresolved\n'
-    command grep -qF '#426' <<<"$clause" || printf 'provenance\n'
+    printf '%s\n' $best_missing
 }
 
 # Report pure-literal violations in a workflow.js `export const meta` block, one
@@ -879,6 +893,18 @@ test_agent_destructive_clause_guard_detects_drift() {
             "Detector rejects tokens scattered across unrelated bullets"
     fi
 
+    # Nor is it "all mktemp-bearing bullets merged": two bullets each mention the
+    # sandbox and neither states the full invariant, so a blob anchor satisfies
+    # all four tokens across them and passes. Scoring each bullet alone must
+    # report the near-miss instead.
+    local twomk="$FIXTURES_DIR/agent_clause_twomktemp.md"
+    assert_file_exists "$twomk" "Two-mktemp-bullet fixture exists"
+    if [ -f "$twomk" ]; then
+        assert_equals "provenance" \
+            "$(agent_missing_clause_tokens "$twomk" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "Detector never merges two sandbox-mentioning bullets into one clause"
+    fi
+
     # Partial-miss precision: drop ONLY the provenance marker from the positive
     # fixture — the historical code-reviewer.md defect — and the report must name
     # exactly `provenance`. Pins each token's check as independent, which neither
@@ -916,6 +942,32 @@ test_agent_destructive_clause_guard_detects_drift() {
         assert_equals "mktemp canonicalize unresolved provenance" \
             "$(agent_missing_clause_tokens "$noheading" | command tr '\n' ' ' | command sed 's/ $//')" \
             "A missing Restrictions section fails the invariant, never passes by omission"
+    fi
+
+    # A section with bullets but NO sandbox mention anywhere still fails, and
+    # fails on more than the anchor token. An earlier shape special-cased "no
+    # anchor found" by falling back to a section-wide scan of the other three
+    # tokens, which let them be satisfied across unrelated bullets and reported
+    # only `mktemp` — the very co-occurrence hole the per-bullet design closes,
+    # surviving in the branch that handles its absence. Scoring per bullet, the
+    # closest bullet here carries just one token, so `mktemp` plus the two it
+    # also lacks are reported.
+    local sandbox2
+    sandbox2="$(mktemp -d 2>/dev/null || true)"
+    if [ -n "$sandbox2" ] && [ -d "$sandbox2" ]; then
+        {
+            printf '## Restrictions\n\nMUST NOT:\n\n'
+            printf -- '- Canonicalize the findings payload before emitting it\n'
+            printf -- '- Leave an unresolved placeholder in generated output\n'
+            printf -- '- Skip the schema check introduced in #426\n\n'
+            printf '## Output Format\n\nNothing.\n'
+        } >"$sandbox2/noanchor.md"
+        assert_equals "mktemp unresolved provenance" \
+            "$(agent_missing_clause_tokens "$sandbox2/noanchor.md" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "No sandbox bullet: reports more than the anchor token, never rescued section-wide"
+        command rm -rf "$sandbox2"
+    else
+        skip_test "mktemp -d unavailable — no-anchor case skipped"
     fi
 }
 
