@@ -12,6 +12,7 @@
 # - Every workflow.js `export const meta` is a pure literal (no concat/interp)
 # - Every workflow.js passes `node --check`
 # - The meta pure-literal detector fires on a known-bad negative fixture
+# - Every agent's `## Restrictions` carries the #426 destructive-shell clause
 #
 # No Docker required — pure filesystem + node checks against the plugins tree.
 # Empty plugins (only .gitkeep placeholders) PASS: the discovery globs simply
@@ -95,6 +96,126 @@ is_valid_value() {
         [ "$value" = "$item" ] && return 0
     done
     return 1
+}
+
+# Print an agent file's `## Restrictions` section body (heading excluded), up to
+# the next `## ` heading or EOF.
+#
+# Scoping the #426 clause check to this section is load-bearing, not tidiness.
+# code-reviewer.md carries the string `#426` in its Tool Rationale TABLE while
+# its Restrictions bullet had lost the marker — a whole-file grep reports that
+# file compliant and the gate then passes identically before and after the fix it
+# is supposed to enforce. Every agent uses this exact heading, so an agent that
+# renames or drops the section yields empty output here and fails the sweep on
+# all four tokens rather than passing by omission.
+agent_restrictions_section() {
+    command awk '
+        /^## Restrictions[[:space:]]*$/ { capturing = 1; next }
+        capturing && /^## / { exit }
+        capturing { print }
+    ' "$1"
+}
+
+# Print the Restrictions section one BULLET per line: a leading `- `/`* ` item
+# with its indented continuation lines folded onto the same line.
+#
+# The clause is checked per-bullet rather than per-section so the four tokens must
+# co-occur in ONE prohibition. Checking the section as a whole would let an editor
+# delete the clause entirely and still pass on incidental co-occurrence — one
+# bullet citing `#426`, another using the word "unresolved" — which is #426's own
+# failure mode (technically compliant prose, no actual restriction) reproduced one
+# level up in the gate meant to close it. Verified against all 18 agents: every
+# real clause, including checker.md's agnix-extended and debugger.md's
+# write-capable rewordings, states the invariant in a single bullet.
+agent_restrictions_bullets() {
+    agent_restrictions_section "$1" | command awk '
+        /^[-*] /            { if (bullet != "") print bullet; bullet = $0; next }
+        /^[[:space:]]+[^ ]/ { if (bullet != "") bullet = bullet " " $0; next }
+                            { if (bullet != "") print bullet; bullet = "" }
+        END                 { if (bullet != "") print bullet }
+    '
+}
+
+# Report which parts of the #426 destructive-shell clause are MISSING, one token
+# name per line. Empty output = compliant, meaning SOME single bullet in the
+# agent's Restrictions section carries the whole invariant. A non-empty report
+# describes the closest bullet found — the most actionable near-miss — so it is a
+# diagnostic message, not an exhaustive list of everything the section lacks.
+#
+# #426: a nominally read-only reviewer subagent ran destructive shell against the
+# LIVE working tree and was technically compliant, because the prose banned file
+# mutation but not the shell that performs it. The prose clause is the belt;
+# plugins/workflow/hooks/bash-guard.sh is the braces. This detector keeps the belt
+# honest across all the hand-copied copies.
+#
+# It asserts an invariant CORE, not a fixed sentence: the sandbox (`mktemp -d`),
+# path canonicalization, the no-unresolved-`..` rule, and the `#426` provenance
+# marker that tells a future editor why the clause exists. Per-agent adaptations
+# stay legal — checker.md extends it with agnix autofix fencing, debugger.md
+# reframes it for a write-capable agent — as long as all four survive. Normalizing
+# every copy to identical text would break those adaptations; this does not.
+#
+# Scope, so nobody reads more into a pass than it means: this catches DELETION and
+# DRIFT — the failure this repo actually saw, where a hand-copied clause quietly
+# lost a piece. It is a token check, not semantic analysis, so a single bullet
+# carrying all four tokens with inverted meaning would pass. That residual is
+# accepted: the prose clause is only the belt, and
+# plugins/workflow/hooks/bash-guard.sh enforces the ban at the tool level for
+# every Bash-capable subagent regardless of what any agent file says.
+#
+# The scans use a here-string, NOT `printf ... | grep -q`. `grep -q` exits at the
+# first match and closes the pipe, so a large enough left-hand side takes SIGPIPE
+# and the pipeline reports 141 under `set -o pipefail` — the `||` then fires and
+# reports a token as missing that is demonstrably present. Observed here against
+# the largest agent (checker.md, ~39 KB): intermittent, size-dependent, and it
+# fails in the unsafe direction for a security gate that must not cry wolf. A
+# here-string has no writer process, so there is nothing to signal.
+agent_missing_clause_tokens() {
+    local bullet best_missing="mktemp canonicalize unresolved provenance" missing
+
+    # Score every bullet INDEPENDENTLY and keep the best (fewest tokens missing);
+    # a bullet is never combined with any other. Two earlier shapes both failed by
+    # letting a second bullet rescue the first: grepping the section as a whole,
+    # and grepping all `mktemp -d`-bearing bullets into one blob (an agent whose
+    # clause bullet carried only the sandbox then passed on a sibling bullet's
+    # wording). Both are the same #426 failure mode — technically compliant prose
+    # stating no actual restriction — so the loop evaluates one bullet at a time
+    # and no cross-bullet path exists to reintroduce it.
+    #
+    # With no bullets at all (no Restrictions section, or an empty one), the
+    # initial value stands and the whole invariant is reported missing — the
+    # section fails loudly rather than passing by omission.
+    while IFS= read -r bullet; do
+        [ -n "$bullet" ] || continue
+        missing=""
+        command grep -qF 'mktemp -d' <<<"$bullet" || missing="$missing mktemp"
+        command grep -qi 'canonicali' <<<"$bullet" || missing="$missing canonicalize"
+        command grep -qi 'unresolved' <<<"$bullet" || missing="$missing unresolved"
+        command grep -qF '#426' <<<"$bullet" || missing="$missing provenance"
+        missing="${missing# }"
+
+        [ -z "$missing" ] && return 0 # a fully compliant bullet: nothing missing
+        # Fewer missing tokens = closer to the real clause, so its report is the
+        # most actionable one to show the editor.
+        if [ "$(printf '%s' "$missing" | command wc -w)" \
+            -lt "$(printf '%s' "$best_missing" | command wc -w)" ]; then
+            best_missing="$missing"
+        fi
+    done <<<"$(agent_restrictions_bullets "$1")"
+
+    # Deliberately unquoted: word-splitting turns the space-separated accumulator
+    # back into this function's documented one-token-per-line output. The tokens
+    # are fixed literals from this function, so there is nothing to glob or
+    # inject.
+    #
+    # Quoting would emit one space-joined line instead. Checked by hand, not by
+    # any test here: that breaks nothing today, because every current caller
+    # pipes through `tr '\n' ' '` and both forms normalize identically. So the
+    # split is kept for the contract rather than to prevent a live breakage — a
+    # future caller reading line-by-line is what it protects, and no assertion
+    # will tell you if that stops being true.
+    # shellcheck disable=SC2086
+    printf '%s\n' $best_missing
 }
 
 # Report pure-literal violations in a workflow.js `export const meta` block, one
@@ -739,6 +860,158 @@ test_skill_required_tools_guard_detects_drift() {
     fi
 }
 
+# Every agent carries the #426 destructive-shell clause in its Restrictions
+# section (live sweep). All agents in this repo hold Bash, so the sweep is
+# universal and there is no exemption list — an exemption list would be
+# empty-by-rights today and would only be somewhere for future drift to hide.
+test_agent_destructive_clause_present() {
+    local agent_file
+    while IFS= read -r agent_file; do
+        [ -n "$agent_file" ] || continue
+        [ -f "$agent_file" ] || continue
+        local missing
+        missing="$(agent_missing_clause_tokens "$agent_file")"
+        if [ -n "$missing" ]; then
+            assert_true false \
+                "Agent $(command basename "$agent_file"): Restrictions section omits the #426 destructive-shell clause — missing: $(printf '%s' "$missing" | command tr '\n' ' ')"
+        fi
+    done < <(list_agent_files)
+}
+
+# The clause detector FIRES on the negative fixture and stays QUIET on the
+# positive one.
+#
+# The negative assertion pins the EXACT missing-token set, not merely that
+# something was reported: a detector that reported one token for every file would
+# satisfy a non-empty check while catching nothing. The positive fixture states
+# the clause in wording that matches no real agent verbatim, so it fails first if
+# the detector is ever tightened into a literal-string match — which would break
+# checker.md's and debugger.md's legitimate adaptations.
+test_agent_destructive_clause_guard_detects_drift() {
+    local bad="$FIXTURES_DIR/agent_clause_bad.md"
+    local good="$FIXTURES_DIR/agent_clause_good.md"
+
+    assert_file_exists "$bad" "Negative destructive-clause fixture exists"
+    assert_file_exists "$good" "Positive destructive-clause fixture exists"
+    [ -f "$bad" ] && [ -f "$good" ] || return 0
+
+    assert_equals "mktemp canonicalize unresolved provenance" \
+        "$(agent_missing_clause_tokens "$bad" | command tr '\n' ' ' | command sed 's/ $//')" \
+        "Detector reports every invariant token as missing on the clause-free fixture"
+
+    assert_equals "" "$(agent_missing_clause_tokens "$good")" \
+        "Detector accepts a reworded clause carrying all four invariant tokens"
+
+    # Per-bullet, not per-section: the scattered fixture has all four tokens
+    # somewhere in Restrictions but no bullet that actually states the
+    # prohibition. A section-wide sweep passes it; this must not.
+    local scattered="$FIXTURES_DIR/agent_clause_scattered.md"
+    assert_file_exists "$scattered" "Scattered-token fixture exists"
+    if [ -f "$scattered" ]; then
+        assert_equals "canonicalize unresolved provenance" \
+            "$(agent_missing_clause_tokens "$scattered" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "Detector rejects tokens scattered across unrelated bullets"
+    fi
+
+    # Nor is it "all mktemp-bearing bullets merged": two bullets each mention the
+    # sandbox and neither states the full invariant, so a blob anchor satisfies
+    # all four tokens across them and passes. Scoring each bullet alone must
+    # report the near-miss instead.
+    local twomk="$FIXTURES_DIR/agent_clause_twomktemp.md"
+    assert_file_exists "$twomk" "Two-mktemp-bullet fixture exists"
+    if [ -f "$twomk" ]; then
+        assert_equals "provenance" \
+            "$(agent_missing_clause_tokens "$twomk" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "Detector never merges two sandbox-mentioning bullets into one clause"
+    fi
+
+    # Partial-miss precision: drop ONLY the provenance marker from the positive
+    # fixture — the historical code-reviewer.md defect — and the report must name
+    # exactly `provenance`. Pins each token's check as independent, which neither
+    # the all-missing nor the none-missing case can show. Built in a mktemp -d
+    # sandbox; the fixture on disk is never modified.
+    local sandbox
+    sandbox="$(mktemp -d 2>/dev/null || true)"
+    if [ -n "$sandbox" ] && [ -d "$sandbox" ]; then
+        command sed 's/ (#426)\././' "$good" >"$sandbox/partial.md"
+        assert_equals "provenance" \
+            "$(agent_missing_clause_tokens "$sandbox/partial.md" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "Detector reports only the dropped token when the rest of the clause is intact"
+        command rm -rf "$sandbox"
+    else
+        skip_test "mktemp -d unavailable — partial-miss precision case skipped"
+    fi
+
+    # Section-scoping is what makes the code-reviewer.md case (#426 in the Tool
+    # Rationale table, absent from the bullet) detectable. Prove the extractor
+    # really is bounded: the fixture's Output Format section sits after
+    # Restrictions and must not be scanned.
+    if agent_restrictions_section "$good" | command grep -q '^## '; then
+        assert_true false \
+            "Restrictions extractor must stop at the next heading, not run to EOF"
+    fi
+
+    # A file with NO Restrictions heading yields an empty section, so the sweep
+    # fails it on the whole invariant rather than passing it by omission. Any
+    # agent file without the heading exercises this; workflow.js harnesses do not
+    # have one.
+    local noheading="$FIXTURES_DIR/skill_tooldrift_bad/SKILL.md"
+    if [ -f "$noheading" ]; then
+        assert_equals "" "$(agent_restrictions_section "$noheading")" \
+            "Extractor returns empty for a file with no Restrictions heading"
+        assert_equals "mktemp canonicalize unresolved provenance" \
+            "$(agent_missing_clause_tokens "$noheading" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "A missing Restrictions section fails the invariant, never passes by omission"
+    fi
+
+    # A section with bullets but NO sandbox mention anywhere still fails, and
+    # fails on more than the anchor token. An earlier shape special-cased "no
+    # anchor found" by falling back to a section-wide scan of the other three
+    # tokens, which let them be satisfied across unrelated bullets and reported
+    # only `mktemp` — the very co-occurrence hole the per-bullet design closes,
+    # surviving in the branch that handles its absence. Scoring per bullet, the
+    # closest bullet here carries just one token, so `mktemp` plus the two it
+    # also lacks are reported.
+    local sandbox2
+    sandbox2="$(mktemp -d 2>/dev/null || true)"
+    if [ -n "$sandbox2" ] && [ -d "$sandbox2" ]; then
+        {
+            printf '## Restrictions\n\nMUST NOT:\n\n'
+            printf -- '- Canonicalize the findings payload before emitting it\n'
+            printf -- '- Leave an unresolved placeholder in generated output\n'
+            printf -- '- Skip the schema check introduced in #426\n\n'
+            printf '## Output Format\n\nNothing.\n'
+        } >"$sandbox2/noanchor.md"
+        assert_equals "mktemp unresolved provenance" \
+            "$(agent_missing_clause_tokens "$sandbox2/noanchor.md" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "No sandbox bullet: reports more than the anchor token, never rescued section-wide"
+
+        # Heading present, body empty — the same zero-bullet state as the
+        # no-heading case above, reached by a different path (the extractor finds
+        # its section and returns nothing from it, rather than never matching).
+        # Both pin the same OUTCOME: zero bullets can never read as compliant.
+        # The regression they catch together is a plausible refactor that
+        # early-returns empty when the section yields no bullets; measured, that
+        # mutation fails both assertions, so this one is deliberate overlap on
+        # the second input shape rather than unique coverage.
+        #
+        # It pins the outcome, not an internal step: `agent_restrictions_bullets`
+        # emits nothing here, but a `<<<` here-string of the empty string still
+        # yields one empty-line iteration, which the `[ -n "$bullet" ]` guard
+        # skips. That guard is belt-and-braces for this shape — measured, an
+        # empty line scores all four missing anyway, so it never displaces the
+        # initial value and removing the guard changes nothing here.
+        printf '## Restrictions\n\n## Output Format\n\nNothing.\n' >"$sandbox2/emptysec.md"
+        assert_equals "mktemp canonicalize unresolved provenance" \
+            "$(agent_missing_clause_tokens "$sandbox2/emptysec.md" | command tr '\n' ' ' | command sed 's/ $//')" \
+            "An empty Restrictions section reports the whole invariant, never passes by omission"
+
+        command rm -rf "$sandbox2"
+    else
+        skip_test "mktemp -d unavailable — no-anchor case skipped"
+    fi
+}
+
 # --- Run All Tests ----------------------------------------------------------
 
 run_test test_agent_files_exist "Every agent has correctly named .md file"
@@ -767,5 +1040,7 @@ run_test test_workflow_budget_floor_consistent "Every workflow.js BUDGET_FLOOR e
 run_test test_workflow_budget_floor_guard_detects_drift "BUDGET_FLOOR consistency guard fires on the negative fixture"
 run_test test_skill_required_tools_referenced "Every skill's required_tools are referenced in the skill"
 run_test test_skill_required_tools_guard_detects_drift "required_tools reference guard fires on the negative fixture"
+run_test test_agent_destructive_clause_present "Every agent's Restrictions carries the #426 destructive-shell clause"
+run_test test_agent_destructive_clause_guard_detects_drift "Destructive-clause guard fires on the negative fixture, passes the reworded one"
 
 generate_report

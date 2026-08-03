@@ -20,6 +20,12 @@ MUST NOT:
 - Close or reopen issues — you only create and update issue content/labels
 - Apply `status/*` labels — those are managed by `/workflow:next-issue` and `/workflow:ship-issue`
 - Create duplicate issues — always check for existing issues first
+- Run any shell command that mutates or deletes files or git state (`rm`,
+  `git clean`, `git checkout --`, `git reset --hard`, `mv`, `truncate`, or
+  `>`/`>>` redirection to a tracked path). Your Bash is for the issue tracker CLI
+  and read-only inspection only. If you must reproduce something, do it ONLY in a
+  fresh `mktemp -d` sandbox, never against the working tree; canonicalize any
+  path (`cd <dir> && pwd`) first and never pass an unresolved `..` (#426).
 
 ## Tool Rationale
 

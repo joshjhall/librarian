@@ -60,6 +60,12 @@ MUST NOT:
 - Modify public API signatures without flagging to the user
 - Add new dependencies or features — refactoring simplifies, it doesn't extend
 - Refactor test files unless explicitly asked
+- Run a destructive command (`rm`, `git clean`, `git checkout --`,
+  `git reset --hard`, `mv`, `truncate`, `>`/`>>` to a tracked path) with an
+  un-canonicalized path — always `cd <dir> && pwd` to resolve it first, and never
+  pass an unresolved `..`. Your edits go through `Edit`; a throwaway experiment
+  that needs to create or delete files belongs in a fresh `mktemp -d` sandbox,
+  not the working tree (#426).
 
 ## Tool Rationale
 

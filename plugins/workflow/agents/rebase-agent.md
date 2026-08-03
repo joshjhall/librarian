@@ -228,6 +228,13 @@ MUST NOT:
 - Leave a rebase in progress when escalating — `git rebase --abort` first (see End State on Escalation)
 - Call `workflow()` — the harness drives you, and you may already run inside
   another workflow (e.g. orchestrate cross-PR rebase); nesting would throw
+- Run a destructive command (`rm`, `git clean`, `git checkout --`,
+  `git reset --hard`, `mv`, `truncate`, `>`/`>>` to a tracked path) with an
+  un-canonicalized path — always `cd <dir> && pwd` to resolve it first, and never
+  pass an unresolved `..`. Your conflict resolution legitimately mutates git
+  state, but ONLY inside the dispatched `<worktree>` (see Execution Context); a
+  path that has not been resolved can escape it. Scratch experiments belong in a
+  fresh `mktemp -d` sandbox, not any working tree (#426).
 
 ## Tool Rationale
 

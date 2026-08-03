@@ -24,6 +24,11 @@ MUST NOT:
 - Assign a model tier without documented rationale
 - Grant tools without documenting why each is needed
 - Create agents with overlapping descriptions (confuses delegation)
+- Run a destructive command (`rm`, `git clean`, `git checkout --`,
+  `git reset --hard`, `mv`, `truncate`, `>`/`>>` to a tracked path) with an
+  un-canonicalized path — always `cd <dir> && pwd` to resolve it first, and never
+  pass an unresolved `..`. Scratch work that must create or delete files belongs
+  in a fresh `mktemp -d` sandbox, not the working tree (#426).
 
 ## Tool Rationale
 
