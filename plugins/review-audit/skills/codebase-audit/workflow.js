@@ -133,6 +133,33 @@ async function tailAgent(fn, label) {
   }
 }
 
+// Run a LEADING single-agent stage without letting it throw the run away — the
+// map step's analog of `tailAgent` (#646). No budget pre-check (nothing to
+// conserve ahead of the run's first agent), and a DISCRIMINATED result rather
+// than a bare null so the caller can report WHICH failure fired: `agent()`
+// returns null on a terminal API error but THROWS on StructuredOutput retry-cap
+// exhaustion, and the bare `if (!map)` guard below only ever saw the first. A
+// throw propagated out of the script, exiting the whole audit `failed` with no
+// result envelope constructed at all.
+//
+// Lives in the pure prefix rather than as an inline try/catch at the call site
+// so the throw path is unit-testable: the call site is past ORCH_BOUNDARY and
+// can only be pinned structurally (#636), and a source regex cannot fail when
+// the catch is removed.
+//
+// `fn` is a thunk so the agent() call is made inside the try — passing a live
+// promise would let a synchronous throw in the prompt builder escape.
+async function attempt(fn, label) {
+  try {
+    const value = await fn()
+    if (!value) return { ok: false, threw: false }
+    return { ok: true, value }
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — reporting an empty audit instead of crashing`)
+    return { ok: false, threw: true, error: e }
+  }
+}
+
 // Cap issues per group so one runaway domain can't open dozens of issues; the
 // aggregate step splits larger groups with (1/N) suffixes per issue-templates.md.
 const MAX_FINDINGS_PER_ISSUE = 10
@@ -413,6 +440,21 @@ const sanitize = (v, max = 200) =>
     .trim()
     .slice(0, max)
 const sanitizeList = (xs) => (Array.isArray(xs) ? xs.map((x) => sanitize(x)) : [])
+
+// The reason string for a failed map step, naming WHICH failure fired (#646).
+// A pure function rather than an inline ternary at the call site for the same
+// reason `attempt` is a helper: past ORCH_BOUNDARY only a regex could assert it,
+// and a regex cannot tell that the two branches produce DIFFERENT strings — the
+// property that saves the next reader a transcript. `sanitize`d because the
+// message can quote model output and this string is surfaced in the report
+// markdown, so a smuggled newline must not forge report structure.
+//
+// Defined here rather than beside `attempt` because it needs `sanitize`, which
+// is declared below that helper.
+const mapFailureNote = (threw, error) =>
+  threw
+    ? `Map step failed (agent threw: ${sanitize(error && error.message ? error.message : error)}) — no scope partition produced; nothing scanned.`
+    : 'Map step failed (agent returned no result) — no scope partition produced; nothing scanned.'
 
 // Reduce an untrusted string to a SINGLE safe path component — no directory
 // separators, no `..`, no leading dots. `category` and group titles flow from
@@ -785,16 +827,26 @@ log(`codebase-audit (depth: ${depth}, threshold: ${severityThreshold}, output: $
 // --- Map --------------------------------------------------------------------
 phase('Map')
 
-const map = await agent(mapPrompt(), {
-  label: 'map',
-  phase: 'Map',
-  agentType: 'review-audit:checker',
-  schema: MAP_SCHEMA,
-})
+// Dispatched through `attempt` so a THROW is reported as a result envelope
+// rather than crashing the audit (#646). `agent()` fails two ways — a terminal
+// API error returns null, StructuredOutput retry-cap exhaustion throws — and
+// only the first ever reached the guard below.
+const mapAttempt = await attempt(
+  () =>
+    agent(mapPrompt(), {
+      label: 'map',
+      phase: 'Map',
+      agentType: 'review-audit:checker',
+      schema: MAP_SCHEMA,
+    }),
+  'map'
+)
 
-if (!map) {
-  return finalResult({ report_markdown: 'Map step failed — no scope partition produced; nothing scanned.' })
+if (!mapAttempt.ok) {
+  return finalResult({ report_markdown: mapFailureNote(mapAttempt.threw, mapAttempt.error) })
 }
+
+const map = mapAttempt.value
 for (const p of map.excluded) log(`excluded from scan: ${p}`)
 
 let domains = map.domains

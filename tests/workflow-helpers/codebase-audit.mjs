@@ -10,10 +10,12 @@
 // collect-all (they record, never throw), so a failure here does not mask any
 // sibling area — see tests/lib/mjs-assert.mjs.
 
-import { ok, eq } from "../lib/mjs-assert.mjs";
-import { extractHelpers, CA } from "../lib/extract-helpers.mjs";
+import { ok, eq, resolves } from "../lib/mjs-assert.mjs";
+import { extractHelpers, harnessSource, CA } from "../lib/extract-helpers.mjs";
 
-export function run() {
+// async because the #646 area exercises `attempt`, an async guard. The entry
+// point awaits every run(), so a synchronous area is unaffected.
+export async function run() {
   // =============================================================================
   // codebase-audit — sanitize / sanitizeList / dataBlock / stampRefs / finalResult
   // =============================================================================
@@ -424,5 +426,88 @@ export function run() {
 
     const noReport = extractHelpers(CA, ["reportPath"], { writeReport: false });
     eq(noReport.reportPath, "", "reportPath: empty when writeReport is false");
+  }
+
+  // --- #646: a map agent that THROWS must be reported, not crash -------------
+  //
+  // Same defect class as ship-issue's manifest, at this harness's leading stage:
+  // the map was a bare `await agent(...)` behind an `if (!map)` guard that only
+  // sees a null RETURN, while StructuredOutput retry-cap exhaustion THROWS. A
+  // throw exited the whole audit `failed` with no result envelope constructed at
+  // all — so a caller could not even tell which stage died.
+  {
+    const { attempt, mapFailureNote, finalResult } = extractHelpers(CA, [
+      "attempt",
+      "mapFailureNote",
+      "finalResult",
+    ]);
+
+    const boom = new Error("StructuredOutput retry cap (5) exceeded");
+    // Awaited through `resolves` so a regressed attempt() records one failure
+    // instead of escaping the block and masking its siblings.
+    const threwResult = await resolves(
+      attempt(() => {
+        throw boom;
+      }, "map"),
+      "attempt (codebase-audit): a throwing agent call resolves, never rejects (#646)",
+    );
+    eq(threwResult?.ok, false, "attempt (codebase-audit): a thrown agent call is a failure (#646)");
+    eq(threwResult?.threw, true, "attempt (codebase-audit): a throw reports threw:true");
+    eq(threwResult?.error, boom, "attempt (codebase-audit): the original error is preserved");
+
+    const rejected = await resolves(
+      attempt(() => Promise.reject(new Error("async retry cap")), "map"),
+      "attempt (codebase-audit): a rejected agent promise resolves, never rejects (#646)",
+    );
+    eq(rejected?.threw, true, "attempt (codebase-audit): an async rejection is caught too (#646)");
+
+    const nullResult = await attempt(() => null, "map");
+    eq(nullResult?.ok, false, "attempt (codebase-audit): a null result is still a failure");
+    eq(nullResult?.threw, false, "attempt (codebase-audit): a null return is distinguishable from a throw");
+
+    const value = { domains: [{ name: "security" }], excluded: [], platform: "github" };
+    const okResult = await attempt(() => value, "map");
+    eq(okResult?.ok, true, "attempt (codebase-audit): a real map is a success");
+    eq(okResult?.value, value, "attempt (codebase-audit): the value passes through by reference");
+
+    ok(
+      mapFailureNote(true, boom) !== mapFailureNote(false),
+      "mapFailureNote: throw and null-return read differently (#646)",
+    );
+    ok(
+      mapFailureNote(true, boom).includes("retry cap (5) exceeded"),
+      "mapFailureNote: quotes the underlying error message",
+    );
+    // The null branch's CONTENT, not just its inequality with the throw branch:
+    // "different" is satisfied by garbage, including the empty string.
+    ok(
+      /returned no result/.test(mapFailureNote(false)),
+      "mapFailureNote: the null variant says the agent returned nothing",
+    );
+    // Sanitized because this note lands in `report_markdown`, not just a log —
+    // a smuggled newline could forge report structure (a fake heading or bullet).
+    ok(
+      !mapFailureNote(true, new Error("a\n## Findings: none")).includes("\n"),
+      "mapFailureNote: strips control chars so a message cannot forge report markdown",
+    );
+
+    // The note is carried on the EXISTING result envelope — no new field.
+    const failed = finalResult({ report_markdown: mapFailureNote(true, boom) });
+    ok(
+      failed?.report_markdown?.includes("retry cap (5) exceeded"),
+      "finalResult: the map-failure reason rides report_markdown, no contract widening (#646)",
+    );
+    eq(failed?.scanned_domains?.length, 0, "finalResult: a dead map scanned no domains");
+
+    const orch = harnessSource(CA);
+    ok(
+      /const mapAttempt = await attempt\(/.test(orch),
+      "codebase-audit: the map is dispatched through attempt(), not a bare await (#646)",
+    );
+    ok(
+      !/^const map = await agent\(/m.test(orch),
+      "codebase-audit: the unguarded bare `const map = await agent(` is gone (#646)",
+    );
+    ok(/if \(!mapAttempt\.ok\) \{/.test(orch), "codebase-audit: BOTH failure modes take the guarded path");
   }
 }
