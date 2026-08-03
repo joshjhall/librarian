@@ -133,6 +133,15 @@ command printf '{"blocking":[],"deferrable":[],"clean":true,"no_review_signal":f
 command printf '{"blocking":[],"deferrable":[%s],"clean":true}\n' \
     "$(finding "src/f.js" 60 tests R4-improvement)" >"$FIXTURES/next-scope-deferrable.json"
 
+# NO-SIGNAL-WITH-BLOCKING — a harness that died PARTWAY: one dimension posted a
+# finding, then the run wiped out. `no_review_signal` is true AND `blocking[]` is
+# non-empty. The bucket rule alone would answer `narrow` here; the crash branch
+# must win. Without this fixture the crash case is only ever seen with empty
+# buckets, where both rules agree and the branch is untested.
+command printf '{"blocking":[%s],"deferrable":[],"clean":false,"no_review_signal":true}\n' \
+    "$(finding "src/g.js" 70 correctness R8-defect-in-new-code)" \
+    >"$FIXTURES/no-signal-with-blocking.json"
+
 # NO-BLOCKING-KEY — a result document that omits `blocking` entirely. Pins
 # blocking_count()'s `// []` default, which its comment documents but which every
 # other fixture hides by always writing an explicit `"blocking":[]`. A comment
@@ -202,6 +211,34 @@ test_next_scope_is_full_after_deferrable_only() {
 # says that reads as zero, i.e. `full`. Without this the default is asserted only
 # by a comment, and `read_findings` already tolerates the same omission, so a
 # document of this shape genuinely reaches here.
+# A crashed cycle advises `full` UNCONDITIONALLY — including when it managed to
+# post a blocking finding before dying. What such a cycle actually reviewed is
+# unknown, so narrowing the retry would review a fraction of an unknown
+# remainder. The pair below is the differential: both fixtures carry one blocking
+# finding and differ ONLY in `no_review_signal`, so a rule that consults just the
+# bucket returns `narrow` for both and cannot pass.
+test_next_scope_after_a_crash_is_always_full() {
+    local crashed healthy
+    crashed="$("$RC" check --cycle 1 --max-cycles 5 \
+        --result "$FIXTURES/no-signal-with-blocking.json" --delta-lines 500)"
+    healthy="$("$RC" check --cycle 1 --max-cycles 5 \
+        --result "$FIXTURES/novel.json" --delta-lines 500)"
+
+    assert_equals "C0b-no-signal" "$(val rule "$crashed")" "the crashed fixture takes the C0b path"
+    assert_equals "full" "$(val next_scope "$crashed")" \
+        "a crash advises full even WITH a blocking finding (what it reviewed is unknown)"
+    assert_equals "narrow" "$(val next_scope "$healthy")" \
+        "the same lone blocking finding on a healthy cycle still advises narrow"
+
+    # And the empty-bucket crash, where both rules happen to agree — asserted so
+    # the two crash shapes are pinned to the same answer.
+    local empty_crash
+    empty_crash="$("$RC" check --cycle 1 --max-cycles 5 \
+        --result "$FIXTURES/no-signal.json" --delta-lines 500)"
+    assert_equals "full" "$(val next_scope "$empty_crash")" \
+        "a crash with empty buckets advises full too"
+}
+
 test_next_scope_handles_a_missing_blocking_key() {
     local out
     out="$("$RC" check --cycle 1 --max-cycles 5 \
@@ -1220,6 +1257,11 @@ test_valid_json_scalar_is_not_misread_as_malformed() {
     out="$("$RC" check --cycle 1 --max-cycles 5 --result "$FIXTURES/scalar.json" \
         --delta-lines 400 --partial false)"
     assert_equals "C4-zero" "$(val rule "$out")" "a null bucket is a valid empty cycle, not malformed JSON"
+    # blocking_count()'s `// []` must coerce an explicit null the same way it
+    # coerces an absent key (no-blocking-key.json covers that one) — a null here
+    # would otherwise reach `[ "$blocking" -gt 0 ]` as the string "null" (#656).
+    assert_equals "full" "$(val next_scope "$out")" \
+        "an explicitly null blocking bucket reads as 0, not as the string null"
 }
 
 test_noninteger_line_start_fails_loud() {
@@ -1489,6 +1531,7 @@ run_test test_attempt_defaults_to_cycle_for_an_unmigrated_caller "the new rules 
 run_test test_next_scope_is_narrow_after_blocking "next_scope=narrow after a blocking cycle (#656)"
 run_test test_next_scope_is_full_after_clean "next_scope=full after a clean cycle (#656)"
 run_test test_next_scope_is_full_after_deferrable_only "next_scope=full after deferrable-only (#656)"
+run_test test_next_scope_after_a_crash_is_always_full "next_scope: a crashed cycle always advises full (#656)"
 run_test test_next_scope_handles_a_missing_blocking_key "next_scope: an absent blocking key reads as 0 (#656)"
 run_test test_next_scope_keys_on_bucket_not_count "next_scope keys on the BLOCKING bucket, not finding count (#656)"
 run_test test_next_scope_emitted_on_every_verdict "next_scope is emitted on every verdict incl. the cap paths (#656)"

@@ -315,7 +315,11 @@ supported but makes each reviewer derive it in-agent (`git diff
 origin/main...HEAD`), which costs extra tool calls; prefer supplying it.
 
 `deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
-delta** from step a. When present on `cycle > 1` the harness narrows the
+delta** from step a. They are present **iff the previous cycle advised
+`next_scope=narrow`** (step a) — not merely because `cycle > 1`, which was the
+pre-#656 trigger and is no longer the rule: a cycle 3 whose predecessor returned
+`next_scope=full` omits them despite `cycle > 1` being true. When present the
+harness narrows the
 delta-local dimensions (security, correctness, tests, conventions) and runs each
 only if it blocked last cycle or the delta touches a file type it reviews. The
 conditional specialists (database, devops) follow the same include rule with their

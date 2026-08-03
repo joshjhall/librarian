@@ -515,8 +515,23 @@ convergence_rule() {
 # tests for key presence (the same posture as `capped_over`). It changes no
 # verdict, no rule, and no count; the C0->C1 ordering that guarantees termination
 # is untouched.
+# A CRASHED cycle (`no_review_signal`) always advises `full`, and that is a
+# decision rather than a consequence of its empty buckets. C0b returns
+# `continue`, so this advice does reach the retry's scope choice. After a cycle
+# that died before reporting, what was actually reviewed is UNKNOWN — narrowing
+# the retry to a fix delta would review a fraction of an unknown remainder, which
+# is the same "looks converged, isn't" shape #656 exists to remove. Reviewing
+# everything is the conservative direction, so take it explicitly.
+#
+# Stated as its own branch rather than left to `blocking == 0`: a harness that
+# died partway (one dimension posted findings, then the run wiped out) can emit
+# `no_review_signal: true` WITH a non-empty `blocking[]`, and the bucket rule
+# alone would answer `narrow` for it — contradicting both this reasoning and the
+# skill's framing. Pinned by test_next_scope_after_a_crash_is_always_full.
 next_scope_of() {
-    if [ "$blocking" -gt 0 ]; then
+    if [ "$no_signal" = "true" ]; then
+        command printf 'full'
+    elif [ "$blocking" -gt 0 ]; then
         command printf 'narrow'
     else
         command printf 'full'
