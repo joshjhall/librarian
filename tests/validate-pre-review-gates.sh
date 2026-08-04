@@ -2060,68 +2060,54 @@ test_py_foreign_probe_content_anchor_is_delimited() {
         "a bare and a PATH-QUALIFIED mention both still suppress (#644)"
 }
 
-# The candidate loop must check EVERY name-matching test, not just the first.
+# A name-matching candidate that FAILS the content anchor must not suppress —
+# the probe has to evaluate the anchor and fall through, not treat "a candidate
+# exists" as coverage.
 #
-# The helper collects all name-matching candidates and returns 0 on the first
-# whose content anchor holds. Every other case here has exactly one name-matching
-# candidate, so a regression that gave up after the first (a stray `return 1`
-# inside the loop) would pass all of them.
+# What this case deliberately does NOT claim to pin, because a black-box test
+# cannot: that the loop keeps scanning PAST a failed candidate to a later
+# satisfying one. Pinning that needs a fixture where a miss is visited before a
+# match, and the visit order is `find ... -print`'s, which is unspecified —
+# MEASURED here it is directory-hash order, neither name nor creation order
+# (five files created 01..05 came back 02, 04, 05, 01, 03). So with two
+# candidates the outcome depends on which one find happens to reach first:
 #
-# The ordering is NOT ours to choose: `find ... -print` has no specified
-# traversal order (POSIX leaves it to the directory's entry order), so a fixture
-# that assumes the non-matching candidate comes first pins nothing on a
-# filesystem that yields the other order — under the reversed order the buggy
-# loop matches immediately and the case passes WITH the regression. That was a
-# real hole in the first version of this test, demonstrated by reversing the
-# candidate list: the return-after-first mutation went green.
+#   miss first  -> a return-after-first regression yields 1, the case fails (good)
+#   match first -> that same regression yields 0, the case passes (bad)
 #
-# So both extremes run, and BOTH must suppress. Whatever deterministic order the
-# platform's find uses — name-ascending, name-descending, or directory-entry
-# (creation) order — at least one arrangement below puts a NON-matching candidate
-# first, where the early-return bug is fatal:
+# Both halves of that coin were observed while writing this: the first version
+# of this test asserted the two-candidate shape and went GREEN under a reversed
+# candidate list with the regression applied. Supplying several arrangements
+# does not rescue it either — an arbitrary permutation has no finite set of
+# orderings to enumerate, so any "one of these always puts a miss first" comment
+# would be asserting a guarantee the fixture cannot deliver. A many-misses/
+# one-match fixture only makes the bug PROBABLY caught, which is a flaky test,
+# not a pin.
 #
-#   A: match sorts LAST  (alpha = miss, beta = match), miss created first
-#   B: match sorts FIRST (alpha = match, beta = miss),  miss created LAST
-#
-# name-ascending kills A, name-descending kills B, creation order kills A, and
-# reverse-creation kills B.
-test_py_foreign_probe_checks_every_candidate() {
+# So the loop's continue-past-a-miss behaviour is covered by construction review
+# rather than by this suite, and the single-candidate contract below — the half
+# that IS order-independent, since one candidate is visited first under every
+# order — is what gets asserted.
+test_py_foreign_probe_evaluates_a_failing_candidate() {
     local sb
 
-    # A — the matching candidate sorts (and is created) last.
     new_git_sandbox sb
     command mkdir -p "$sb/src" "$sb/tests"
     command printf '%s\n' "x = 1" >"$sb/src/thing.py"
     command printf '%s\n' "# tests the shell sibling only" \
-        >"$sb/tests/validate-thing-alpha.sh"
+        >"$sb/tests/validate-thing.sh"
+    # Mentions the source but is NOT name-matching, so it never enters the
+    # candidate set — the row must still fire.
     command printf '%s\n' "# exercises thing.py" \
-        >"$sb/tests/validate-thing-beta.sh"
+        >"$sb/tests/unrelated-suite.sh"
     command printf '%s\n' "$sb/src/thing.py" >"$sb/files.txt"
 
     run_gate_in "$sb" "$sb/files.txt"
 
-    assert_equals "0" \
+    assert_equals "1" \
         "$(category_rows "$GATE_OUT" "missing-test-file" |
             command grep -c 'thing\.py' || true)" \
-        "the loop reaches a matching candidate that sorts LAST (#644)"
-
-    # B — the matching candidate sorts first but is created last, so the two
-    # arrangements disagree on which candidate any given order visits first.
-    new_git_sandbox sb
-    command mkdir -p "$sb/src" "$sb/tests"
-    command printf '%s\n' "x = 1" >"$sb/src/thing.py"
-    command printf '%s\n' "# tests the shell sibling only" \
-        >"$sb/tests/validate-thing-beta.sh"
-    command printf '%s\n' "# exercises thing.py" \
-        >"$sb/tests/validate-thing-alpha.sh"
-    command printf '%s\n' "$sb/src/thing.py" >"$sb/files.txt"
-
-    run_gate_in "$sb" "$sb/files.txt"
-
-    assert_equals "0" \
-        "$(category_rows "$GATE_OUT" "missing-test-file" |
-            command grep -c 'thing\.py' || true)" \
-        "the loop reaches a matching candidate that sorts FIRST but was created last (#644)"
+        "a name-matching candidate failing the content anchor does not suppress (#644)"
 }
 
 # A basename carrying regex metacharacters must be matched LITERALLY, so the
@@ -2492,7 +2478,7 @@ run_test test_py_foreign_probe_requires_content_anchor "py: a name-matching shel
 run_test test_py_foreign_probe_is_name_anchored "py: the foreign probe stays name-anchored — no constant resolves for every source (#644 AC#3)"
 run_test test_py_foreign_probe_excludes_fixtures_and_markdown "py: tests/fixtures/** and tests/*.md are not coverage for the foreign probe (#644)"
 run_test test_py_foreign_probe_content_anchor_is_delimited "py: the content anchor is delimited — a superstring does not suppress, a path-qualified mention still does (#644)"
-run_test test_py_foreign_probe_checks_every_candidate "py: the candidate loop checks every name-matching test, not just the first (#644)"
+run_test test_py_foreign_probe_evaluates_a_failing_candidate "py: a name-matching candidate failing the content anchor does not suppress (#644)"
 run_test test_py_foreign_probe_escapes_regex_metacharacters "py: a regex metacharacter in the basename is matched literally (#644)"
 run_test test_real_repo_py_sources_not_flagged "this repo's own bash-gate-covered .py sources are not flagged (#644 AC#1)"
 run_test test_ai_slop_evidence_keeps_trailing_colon "ai-slop evidence keeps a trailing colon (#573)"
