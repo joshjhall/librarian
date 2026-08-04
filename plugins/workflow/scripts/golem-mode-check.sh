@@ -266,12 +266,26 @@ verify_send() {
 }
 
 # _expect_not_plan <pane-text> — the verify_send predicate for a mode
-# correction: the golem has left plan mode. Deliberately "not plan" rather than
-# "== auto": a correction that lands in accept-edits still cleared the #659
-# condition (edits stop being plan-blocked), and treating that as failure would
-# burn the retry budget on an already-fixed golem.
+# correction: the golem has POSITIVELY landed in a working mode.
+#
+# Requires `auto` or `accept-edits` rather than merely "not plan". The weaker
+# `!= plan` form also accepts `unknown` — the documented "cannot tell" state for
+# a pane that has not repainted, a full-screen modal, or a transient overlay
+# raised by the keystroke itself. Accepting it would report a correction as
+# landed without ever confirming the mode, which is precisely the
+# assume-the-keystroke-worked failure this whole check exists to close, and it
+# contradicts pane_mode_class's own contract that `unknown` is never a licence
+# to assume a golem is fine. An `unknown` read therefore consumes a retry
+# instead of ending the loop.
+#
+# Both accepting modes are correct outcomes: accept-edits clears the #659
+# condition just as auto does (edits stop being plan-blocked), so treating it as
+# failure would burn the retry budget on an already-fixed golem.
 _expect_not_plan() {
-    [ "$(pane_mode_class "$1")" != "plan" ]
+    case "$(pane_mode_class "$1")" in
+        auto | accept-edits) return 0 ;;
+    esac
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -295,9 +309,17 @@ report_correction() {
 # check_once <fix?> — scan every live golem-* session once. Echoes one line per
 # finding; returns 0 when every golem is healthy, 1 when drift was found and (in
 # fix mode) could not be corrected.
+#
+# The return code is STICKY-WORST across the fleet, never last-write-wins. A
+# single scalar reassigned per golem would let a later golem's clean fix
+# overwrite an earlier golem's unresolved escalation, so a sweep that printed an
+# ESCALATION line would still exit 0 — the watch loop and any caller keying off
+# the exit status would read "all handled" while a golem sat waiting for an
+# operator. `_co_unresolved` only ever latches to 1, so one unresolved golem
+# anywhere in the sweep decides the result no matter what follows it.
 check_once() {
     _co_fix="$1"
-    _co_rc=0
+    _co_unresolved=0
     _co_sessions="$(tmux ls 2>/dev/null | "$GREP" -oE '^golem-[0-9]+' || true)"
     if [ -z "$_co_sessions" ]; then
         command echo "No live golem-* tmux sessions."
@@ -320,12 +342,13 @@ check_once() {
             continue
         fi
 
-        _co_rc=1
         _co_exp="$(expected_mode "${GOLEM_LEVEL:-4}")"
         _co_detail="in plan mode past the planning phase"
         [ -n "$_co_exp" ] && _co_detail="$_co_detail (expected $_co_exp)"
 
         if [ "$_co_fix" -eq 0 ]; then
+            # Report mode: drift itself is the unresolved condition.
+            _co_unresolved=1
             command echo "$_co_sess — DRIFT: $_co_detail — rerun with --fix to correct"
             continue
         fi
@@ -335,11 +358,22 @@ check_once() {
         _co_attempt=1
         _co_fixed=0
         while [ "$_co_attempt" -le "$GOLEM_MODE_FIX_ATTEMPTS" ]; do
-            if verify_send "$_co_sess" _expect_not_plan S-Tab; then
+            # BTab, NOT S-Tab. tmux's traditional key table names shift-tab
+            # `BTab` (back-tab); `S-<name>` modifier syntax needs extended-keys
+            # support and is silently downgraded otherwise. Measured on tmux
+            # 3.5a with `cat -v` behind the pane: `send-keys S-Tab` delivers
+            # `^I` — a PLAIN TAB, modifier dropped — while `send-keys BTab`
+            # delivers `^[[Z`, the real CSI Z shift-tab. BOTH return rc=0, so the
+            # send's exit status cannot distinguish them: S-Tab would have typed
+            # a bare Tab into the golem's prompt, never cycling the mode, and the
+            # loop would burn every attempt before escalating a golem it could
+            # actually have fixed. This is the same "the keystroke did not do
+            # what was assumed" trap the check exists to close — which is why the
+            # verification below is what catches it rather than the send's rc.
+            if verify_send "$_co_sess" _expect_not_plan BTab; then
                 report_correction "$_co_sess" \
                     "auto-corrected out of plan mode on attempt $_co_attempt ($_co_detail)"
                 _co_fixed=1
-                _co_rc=0
                 break
             fi
             _co_attempt=$((_co_attempt + 1))
@@ -351,11 +385,12 @@ check_once() {
             # issue explicitly asks us to bound.
             command echo "$_co_sess — ESCALATION: still $_co_detail after $GOLEM_MODE_FIX_ATTEMPTS attempt(s);" \
                 "the keystroke is not sticking — attach with golem-attach.sh $_co_n"
-            _co_rc=1
+            # Latch: a later golem's successful fix must NOT clear this.
+            _co_unresolved=1
         fi
     done
 
-    return "$_co_rc"
+    return "$_co_unresolved"
 }
 
 # require_tmux — fail LOUD when tmux is absent. Reporting "no drift" because we

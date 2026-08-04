@@ -65,6 +65,47 @@ EOF
     command chmod +x "$sb/bin/tmux"
 }
 
+# plant_mode_tmux2 <sandbox> <paneA> <paneB> [flipB] — a two-session variant of
+# the stub: `tmux ls` reports golem-7 AND golem-8, and capture-pane dispatches on
+# the -t target so each golem has its own independently-controlled pane.
+#
+# This exists because a single-session stub cannot see a whole CLASS of bug: any
+# per-golem outcome that is aggregated across the sweep (the run's exit code
+# being the case in point) is trivially correct when there is only ever one
+# golem. Only <flipB> is supported — golem-8 is the one that can be made to fix
+# cleanly while golem-7 stays stuck, which is exactly the ordering that exposes a
+# last-write-wins aggregation.
+plant_mode_tmux2() {
+    local sb="$1" paneA="$2" paneB="$3" flipB="${4:-}"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<EOF
+#!/usr/bin/env bash
+# Test stub: two golem sessions with independent panes.
+case "\$1" in
+    ls) printf 'golem-7: 1 windows\ngolem-8: 1 windows\n' ;;
+    capture-pane)
+        case "\$*" in
+            *golem-8*) command cat "$paneB" ;;
+            *) command cat "$paneA" ;;
+        esac
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >>"$sb/send-keys.log"
+        case "\$*" in
+            *golem-8*)
+                if [ -n "$flipB" ] && [ -f "$flipB" ]; then
+                    printf 'work\n\n> \n  \342\217\265\342\217\265 auto mode on (shift+tab to cycle)\n' >"$paneB"
+                    command rm -f "$flipB"
+                fi
+                ;;
+        esac
+        ;;
+esac
+exit 0
+EOF
+    command chmod +x "$sb/bin/tmux"
+}
+
 # run_mode_check <sandbox> [args...] — invoke golem-mode-check.sh in the sandbox
 # with the stub tmux on PATH. Captures RUN_RC / RUN_OUT.
 run_mode_check() {
@@ -316,6 +357,102 @@ test_mode_fix_attempts_env_override() {
     attempts="$(command wc -l <"$sb/send-keys.log" | command tr -d ' ')"
     assert_true "[ '$attempts' -eq 1 ]" \
         "GOLEM_MODE_FIX_ATTEMPTS=1 sends exactly one keystroke (sent $attempts)"
+}
+
+# The auto-correct must send tmux's BACK-TAB key name, not the `S-Tab` modifier
+# form. Measured on tmux 3.5a: `send-keys S-Tab` delivers `^I` — a PLAIN TAB with
+# the Shift modifier silently dropped — while `send-keys BTab` delivers `^[[Z`,
+# the real CSI Z shift-tab. Both return rc=0, so the send's own exit status
+# cannot tell them apart; only asserting on the key ARGUMENT can. With `S-Tab`
+# the golem gets a bare Tab in its prompt, the mode never cycles, and the loop
+# burns every attempt before escalating a golem it could have fixed.
+test_mode_fix_sends_backtab_not_s_tab() {
+    local sb
+    new_sandbox sb
+    _mode_worktree "$sb" 7 2
+    _pane_footer "$(_footer_plan)" >"$sb/pane.txt"
+    command : >"$sb/flip"
+    plant_mode_tmux "$sb" "$sb/pane.txt" "$sb/flip"
+    run_mode_check "$sb" --once --fix
+    assert_contains "$(command cat "$sb/send-keys.log")" "BTab" \
+        "the mode-cycle keystroke is tmux's BTab (real shift-tab)"
+    assert_not_contains "$(command cat "$sb/send-keys.log")" "S-Tab" \
+        "never S-Tab, which tmux downgrades to a plain Tab"
+}
+
+# An `unknown` pane read after the send is NOT a confirmed correction. `unknown`
+# is the documented "cannot tell" state (a pane that has not repainted, a modal
+# raised by the keystroke itself); accepting it would report a fix that was never
+# verified — the exact assume-the-keystroke-worked failure this check exists to
+# close, and a contradiction of pane_mode_class's own contract. It must consume a
+# retry and ultimately escalate instead.
+test_mode_fix_unknown_pane_is_not_a_confirmed_fix() {
+    local sb
+    new_sandbox sb
+    _mode_worktree "$sb" 7 2
+    _pane_footer "$(_footer_plan)" >"$sb/pane.txt"
+    command : >"$sb/flip"
+    # The "keystroke lands" path rewrites the pane to a FOOTERLESS body, which
+    # classifies as `unknown` — not plan, but not a confirmed working mode.
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    ls) printf 'golem-7: 1 windows\n' ;;
+    capture-pane) command cat "$sb/pane.txt" ;;
+    send-keys)
+        printf '%s\n' "\$*" >>"$sb/send-keys.log"
+        printf 'some output\nno mode footer at all\n' >"$sb/pane.txt"
+        ;;
+esac
+exit 0
+EOF
+    command chmod +x "$sb/bin/tmux"
+    run_mode_check "$sb" --once --fix
+    assert_exit 1 "$RUN_RC" "an unconfirmable correction exits 1, not 0"
+    assert_contains "$RUN_OUT" "ESCALATION" "an unknown pane escalates rather than claiming success"
+    assert_not_contains "$RUN_OUT" "auto-corrected" "an unverified mode is never reported as corrected"
+}
+
+# --- multi-golem aggregation ------------------------------------------------
+
+# STICKY-WORST EXIT CODE. golem-7 cannot be fixed (escalates); golem-8, processed
+# after it, fixes cleanly. The run must still exit non-zero — a later golem's
+# success must not overwrite an earlier golem's unresolved escalation, or a sweep
+# that PRINTED an escalation would report "all handled" to its caller and the
+# waiting golem would go unnoticed. Every other test here drives a single-session
+# stub, where any aggregation is trivially correct; this is the only shape that
+# can see the bug.
+test_mode_multi_golem_escalation_is_sticky() {
+    local sb
+    new_sandbox sb
+    _mode_worktree "$sb" 7 2
+    _mode_worktree "$sb" 8 2
+    _pane_footer "$(_footer_plan)" >"$sb/paneA.txt"
+    _pane_footer "$(_footer_plan)" >"$sb/paneB.txt"
+    command : >"$sb/flipB"
+    plant_mode_tmux2 "$sb" "$sb/paneA.txt" "$sb/paneB.txt" "$sb/flipB"
+    run_mode_check "$sb" --once --fix
+    assert_contains "$RUN_OUT" "ESCALATION" "the unfixable golem escalates"
+    assert_contains "$RUN_OUT" "auto-corrected" "the fixable golem is still corrected"
+    assert_exit 1 "$RUN_RC" \
+        "a later golem's clean fix does NOT clear the earlier escalation (sticky-worst)"
+}
+
+# Both golems healthy across a multi-session sweep → exit 0. Guards the sticky
+# latch against the opposite error: a latch that never clears would report
+# failure on a clean fleet, making the exit code useless in the other direction.
+test_mode_multi_golem_all_healthy_exits_zero() {
+    local sb
+    new_sandbox sb
+    _mode_worktree "$sb" 7 2 implement
+    _mode_worktree "$sb" 8 2 implement
+    _pane_footer "$(_footer_auto)" >"$sb/paneA.txt"
+    _pane_footer "$(_footer_auto)" >"$sb/paneB.txt"
+    plant_mode_tmux2 "$sb" "$sb/paneA.txt" "$sb/paneB.txt"
+    run_mode_check "$sb" --once
+    assert_exit 0 "$RUN_RC" "a fleet with no drift exits 0"
+    assert_not_contains "$RUN_OUT" "DRIFT" "no drift is reported for healthy golems"
 }
 
 # --- verify-send (the #659 rider) -------------------------------------------
