@@ -270,7 +270,24 @@ Monitor({                                       # panes: live worktree golems
   description: "golem prompt overlays (tmux capture-pane)",
   persistent: true,
 })
+Monitor({                                       # modes: plan-mode drift (#659)
+  command: "${CLAUDE_PLUGIN_ROOT}/scripts/golem-mode-check.sh --watch --fix",
+  description: "golem permission-mode drift (auto-corrected, reported loudly)",
+  persistent: true,
+})
 ```
+
+The **mode channel** is a third co-equal watch, and it catches a failure the
+other two structurally cannot: a golem left in **plan mode past plan approval**
+is not at a gate at all. It is working — narrating file writes, prompting on
+each one — so neither the feed nor the pane-overlay matchers ever fire, while
+the run silently degrades from its dispatched level to L1 (#659). It emits on
+drift and on each correction; a **recurring** correction for the same golem is
+itself the signal that the root cause is still live, so surface it rather than
+filing it as noise. Because it is phase-gated (drift only when plan mode
+coexists with evidence of post-planning work), a golem legitimately designing in
+plan mode produces no line and is never corrected — a correction there would
+skip the very gate its level exists to enforce.
 
 Each emitted `golem-{N}\t<message>` line is **one fresh gate** → raise it to the
 operator and point them at `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`. The watcher emits only on the

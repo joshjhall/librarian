@@ -54,6 +54,7 @@ SCRIPTS="$REPO_ROOT/plugins/workflow/scripts"
     STATUS="$SCRIPTS/golem-status.sh"
     SCRAPE="$SCRIPTS/golem-token-scrape.sh"
     TRANSCRIPT_LIVENESS="$SCRIPTS/golem-transcript-liveness.sh"
+    MODE_CHECK="$SCRIPTS/golem-mode-check.sh"
     INBOX="$SCRIPTS/golem-inbox.sh"
     CONFIG="$SCRIPTS/config.sh"
     # The Mode-3 container entrypoint lives as a bash code block inside this skill
@@ -101,7 +102,8 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     60-status.sh \
     70-status-checkpoint.sh \
     80-token-scrape.sh \
-    90-transcript-liveness.sh
+    90-transcript-liveness.sh \
+    100-mode-check.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -292,5 +294,29 @@ run_fragment_test test_status_checkpoint_issueless_row_not_gone "golem-status: -
 run_fragment_test test_status_checkpoint_double_lane_claim_dedup "golem-status: --checkpoint dedups a double-lane-claimed golem — one row, tokens once (#415)"
 run_fragment_test test_provision_write_status_started_idempotent "provision-agent: write_status() stamps started once and preserves it + sibling fields on same-issue writes (#415/#428)"
 run_fragment_test test_provision_write_status_issue_reassignment_resets_stale_fields "provision-agent: write_status() clears issue-scoped fields but preserves container/branch identity on issue reassignment (#428)"
+run_fragment_test test_mode_class_plan "golem-mode-check: the plan-mode footer classifies as plan (#659)"
+run_fragment_test test_mode_class_auto "golem-mode-check: the auto-mode footer classifies as auto (#659)"
+run_fragment_test test_mode_class_accept_edits "golem-mode-check: the accept-edits footer classifies as accept-edits (#659)"
+run_fragment_test test_mode_class_unknown_when_no_footer "golem-mode-check: a footerless pane is unknown, never a violation (#659)"
+run_fragment_test test_mode_class_bare_words_do_not_match "golem-mode-check: bare words without the glyph do not match (#659)"
+run_fragment_test test_mode_class_scrollback_does_not_self_trip "golem-mode-check: a plan footer in scrollback does not self-trip the matcher (#246/#659)"
+run_fragment_test test_mode_planning_golem_is_not_drift "golem-mode-check: a legitimately-planning golem is NOT drift (#659)"
+run_fragment_test test_mode_planning_golem_is_not_corrected "golem-mode-check: --fix never corrects a legitimately-planning golem (#659)"
+run_fragment_test test_mode_drift_detected_via_commits "golem-mode-check: plan mode with commits beyond base is drift (#659)"
+run_fragment_test test_mode_drift_detected_via_state_file "golem-mode-check: the state-file phase arm detects drift standing alone (#659)"
+run_fragment_test test_mode_drift_detected_without_state_file "golem-mode-check: the commit-count arm detects drift with no state file (#659)"
+run_fragment_test test_mode_auto_while_implementing_is_not_drift "golem-mode-check: auto mode past planning is healthy, not drift (#659)"
+run_fragment_test test_mode_fix_corrects_and_confirms "golem-mode-check: --fix corrects, re-scrapes to confirm, and reports loudly (#659)"
+run_fragment_test test_mode_fix_bounded_then_escalates "golem-mode-check: --fix bounds attempts and escalates rather than looping (#659)"
+run_fragment_test test_mode_fix_attempts_env_override "golem-mode-check: GOLEM_MODE_FIX_ATTEMPTS bounds the auto-correct (#659)"
+run_fragment_test test_mode_fix_sends_backtab_not_s_tab "golem-mode-check: the mode keystroke is BTab, not the S-Tab tmux downgrades to plain Tab (#659)"
+run_fragment_test test_mode_fix_unknown_pane_is_not_a_confirmed_fix "golem-mode-check: an unknown pane after the send is not a confirmed fix (#659)"
+run_fragment_test test_mode_multi_golem_escalation_is_sticky "golem-mode-check: a later golem's fix does not clear an earlier escalation (#659)"
+run_fragment_test test_mode_multi_golem_all_healthy_exits_zero "golem-mode-check: a healthy multi-golem fleet still exits 0 (#659)"
+run_fragment_test test_mode_verify_send_confirms_delivery "golem-mode-check: verify-send confirms a delivered send by re-scrape (#659)"
+run_fragment_test test_mode_verify_send_detects_swallowed "golem-mode-check: verify-send detects a send swallowed by an open modal (#659)"
+run_fragment_test test_mode_missing_tmux_fails_loud "golem-mode-check: missing tmux fails loud (exit 2), never a clean no-drift (#659)"
+run_fragment_test test_mode_unknown_arg_exits_2 "golem-mode-check: an unknown argument exits 2 (#659)"
+run_fragment_test test_mode_bad_interval_exits_2 "golem-mode-check: a non-positive --interval exits 2 (#659)"
 
 generate_report
