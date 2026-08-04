@@ -46,6 +46,7 @@
 #  14b. autonomy-resolver decision table + parity (tests/validate-autonomy-resolve.sh)
 #  14c. golem-notify Notification hook (tests/validate-golem-notify.sh)
 #  14c1. bash-guard PreToolUse hook (tests/validate-bash-guard.sh)
+#  14c1a. bash-guard main-session worktree rule (tests/validate-bash-guard-worktree.sh)
 #  14c1b. worktree-scope PreToolUse hook (tests/validate-worktree-guard.sh)
 #  14c1. golem-resolve clearing-signal helper (tests/validate-golem-resolve.sh)
 #  14c2. golem-inbox brokered gate reverse channel (tests/validate-golem-inbox.sh)
@@ -183,6 +184,7 @@ run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate
 run_stage "golem-notify Notification hook" bash "$SCRIPT_DIR/validate-golem-notify.sh"
 run_stage "golem-event-listener receiver" bash "$SCRIPT_DIR/validate-golem-event-listener.sh"
 run_stage "bash-guard PreToolUse hook" bash "$SCRIPT_DIR/validate-bash-guard.sh"
+run_stage "bash-guard main-session worktree rule" bash "$SCRIPT_DIR/validate-bash-guard-worktree.sh"
 run_stage "worktree-scope PreToolUse hook" bash "$SCRIPT_DIR/validate-worktree-guard.sh"
 run_stage "golem-resolve clearing-signal helper" bash "$SCRIPT_DIR/validate-golem-resolve.sh"
 run_stage "golem-inbox brokered gate reverse channel" bash "$SCRIPT_DIR/validate-golem-inbox.sh"

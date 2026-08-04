@@ -305,7 +305,15 @@ test_allow_reset_soft() {
     assert_allow "git reset HEAD (no --hard)"
 }
 
-# --- Main-session safety (no agent_id => never blocked) ---------------------
+# --- Main-session safety (no agent_id) --------------------------------------
+# Since #662 the main session is no longer an UNCONDITIONAL allow: a destructive
+# GIT verb aimed at ANOTHER session's linked worktree is denied (Rule B). These
+# two cases keep asserting the allow side, and — because `jsonpayload` emits no
+# `cwd` — they specifically pin Rule B's FAIL-OPEN path: with no cwd the target
+# tree is unresolvable, and the guard must fall back to the historical allow
+# rather than deny. The tree-aware cases (a real worktree topology on disk, and
+# both mutation checks) live in the sibling tests/validate-bash-guard-worktree.sh,
+# which this suite deliberately stays free of git fixtures for.
 test_main_rm() {
     jq_required || return 0
     CUR_AGENT=''

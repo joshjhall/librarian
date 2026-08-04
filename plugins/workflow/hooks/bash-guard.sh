@@ -22,11 +22,10 @@
 # where `agent_id` + `agent_type` are present ONLY for a subagent call — a
 # main-session Bash call carries NO agent_id. That presence is the caller signal.
 #
-# GATING — DENY iff ALL of:
+# GATING — TWO independent deny rules, evaluated against the SAME deny-set match.
+#
+# RULE A (#448) — SUBAGENT destructive shell. DENY iff ALL of:
 #   1. Positive subagent: stdin `agent_id` (or camelCase `agentId`) is non-empty.
-#      The main session has none, so it is structurally in the ALLOW path — its
-#      legitimate worktree-teardown deletes are never at risk, no matter how
-#      broad the deny-set is.
 #   2. Destructive head: the command (normalized, split on ; && || | ( $( )
 #      matches the deny-set — the file-removing/renaming/truncating tokens and
 #      the working-tree-resetting git verbs (clean, reset-hard, checkout-dashdash)
@@ -35,8 +34,34 @@
 #   3. Not scratch-confined: allow when the command stages a mktemp sandbox or the
 #      destructive target resolves under /tmp, $TMPDIR, or /var/tmp (the
 #      sandbox carve-out those same prose constants grant).
-#   To DENY: exit 0 with the JSON permissionDecision:"deny" envelope + a reason
-#   the model can act on. Everything else exits 0 silently (allow).
+#
+# RULE B (#662) — MAIN-SESSION destructive git aimed at ANOTHER tree's worktree.
+# The main session (no agent_id) was historically an UNCONDITIONAL allow, on the
+# reasoning that it is the human's own session and its worktree-teardown deletes
+# must never be at risk. #662 showed that blanket exemption is too wide in one
+# specific direction: an ORCHESTRATOR is the main session, it routinely runs
+# `git -C <worktree> …` for status polling and rebase resolution, and a
+# `git reset --hard` slipped into that routine destroyed a golem's uncommitted
+# work. A golem worktree is BY DESIGN the densest concentration of uncommitted
+# work in the topology — no reflog entry, no stash, no PR — so the blast radius
+# there is strictly LARGER than the same command in the main checkout, while
+# being the less-guarded of the two. DENY iff ALL of:
+#   1. Main session: NO agent_id (a subagent is Rule A's business).
+#   2. The deny-set match is one of the three GIT verbs (`git reset --hard`,
+#      `git clean`, `git checkout --`). Deliberately NOT the whole deny-set:
+#      `rm`/`mv`/`truncate`/redirection keep their unconditional main-session
+#      allow, so `rm -rf .worktrees/issue-N` teardown still works and
+#      worktree-rm.sh (which does its own dirty check) stays the owner of
+#      deliberate teardown.
+#   3. CROSS-TREE into a linked worktree: the command's resolved TARGET tree is a
+#      linked worktree (its git-dir != its git-common-dir) AND is not the calling
+#      session's OWN tree. The second half is load-bearing, not a nicety — it is
+#      what lets a golem reset ITS OWN worktree, and what keeps a bare-repo
+#      worktree host's own work unblocked. A rule of merely "target is a
+#      worktree" would break both.
+#
+# To DENY (either rule): exit 0 with the JSON permissionDecision:"deny" envelope
+# + a reason the model can act on. Everything else exits 0 silently (allow).
 #
 # FAILURE MODE — fail-open for the session, fail-LOUD on parse trouble (operator
 # decision, #448). On any parse failure (empty stdin, non-JSON, no agent_id
@@ -48,6 +73,16 @@
 # path so a permanent no-op fails CI) is tolerable where a false main-session
 # block is not. Note the exit contract is INVERTED from the sibling golem-notify
 # hook (which always exits 0 / never blocks) — this one must be able to deny.
+#
+# Rule B keeps that posture and inherits an extra class of it: every way the
+# TARGET-TREE resolution can fail — no `cwd` in the payload, `git` not on PATH,
+# the target not inside a git repo, a `rev-parse` that errors — ALLOWS, which is
+# exactly the main session's historical behavior. Combined with Rule B's
+# git-verbs-only scope, the #662 change can therefore only ever ADD a denial and
+# can never remove one; that property is what makes it safe on a hook that fires
+# before EVERY Bash call in the session. Rule B's resolution is also LAZY: it runs
+# only after a destructive verb has already matched (see the caller gate's
+# placement below), so an ordinary main-session command pays no `git` cost at all.
 #
 # DETECTION SCOPE — a pragmatic tokenizer, NOT a shell parser or a sandbox. It is
 # the second enforcement layer behind #426's shipped prose+lint belt, and it
@@ -69,6 +104,26 @@
 #   - statement-ORDER edge: the contrived reverse `d=src; rm -rf $d;
 #     d=$(mktemp -d)` (delete a live var BEFORE its name is reassigned to a
 #     scratch dir) — the natural `mktemp-then-delete` forms ARE covered.
+# Rule B (#662) adds three of its own, same spirit:
+#   - TARGETING forms other than `-C <path>` and a preceding `cd <path>`:
+#     `git --git-dir=<wt>/.git --work-tree=<wt> reset --hard` in EITHER the
+#     attached (`--git-dir=<p>`) or separated (`--git-dir <p>`) form, and `$GIT_DIR`
+#     set in the environment. Both `--git-dir` forms are consumed as global options
+#     by the subcommand scanner so the verb is still detected, but neither is
+#     re-parsed as a target — only `-C`'s operand is captured. `-C` is what an
+#     orchestrator actually types (it is the form the polling and rebase paths
+#     use) and `cd` is the natural hand-typed alternative.
+#   - an operand that is a VARIABLE or command substitution (`cd "$wt" && git
+#     reset --hard`, `git -C "$wt" …`): the target is not knowable without
+#     evaluating the shell, so it resolves to the payload `cwd` like a bare
+#     command would. `~/…` is NOT in this class — it is expanded from $HOME
+#     below, because leaving it unexpanded was a live silent bypass.
+#   - `~user/...` (another user's home): expanding it needs a passwd lookup this
+#     hook has no business doing, so it falls through to the fail-open path.
+#   - REPEATED `-C a -C b`, which real git treats as successive relative chdirs
+#     (`<cwd>/a/b`); this captures only the last (`b`). A contrived form — the
+#     single-`-C` shape is what tooling and operators emit — and it fails toward
+#     allow, never toward a wrong deny.
 # These are logged nowhere and pass silently BY DESIGN; the belt (#426 prose) and
 # human PR review remain the backstop for them.
 #
@@ -111,6 +166,47 @@ SED="$(_bin sed)"
 HEAD="$(_bin head)"
 TR="$(_bin tr)"
 
+# `_emit_deny_reason <reason>` writes the PreToolUse deny envelope (jq when
+# present, a sanitized hand-roll otherwise) and exits 0 — the decision travels in
+# the JSON, not the exit code. Shared by BOTH deny rules (#448's subagent rule and
+# #662's main-session worktree rule) so the jq/no-jq emission logic lives once;
+# the sibling worktree-guard.sh factors its `_emit_deny` the same way.
+_emit_deny_reason() {
+    _edr_reason="$1"
+    if command -v jq >/dev/null 2>&1; then
+        jq -cn --arg reason "$_edr_reason" \
+            '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}' \
+            2>/dev/null && exit 0
+    fi
+    # No jq: hand-roll the deny envelope. Sanitize the reason (drop backslashes and
+    # control chars that can't be JSON-escaped without a real encoder, then escape
+    # double quotes) so the output stays valid JSON.
+    _edr_safe="$(printf '%s' "${_edr_reason//\\/}" | "$TR" -d '[:cntrl:]')"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
+        "${_edr_safe//\"/\\\"}"
+    exit 0
+}
+
+# `_abs_git_dir <dir> <--git-dir|--git-common-dir>` echoes that git dir as an
+# ABSOLUTE path, or "" when <dir> is not in a repo / git errors. Used only by Rule
+# B (#662), whose whole comparison is git-dir identity — a relative answer would
+# make two different trees' `.git` compare equal and silently disarm the rule.
+#
+# Deliberately NOT `rev-parse --path-format=absolute`, despite that flag reading
+# cleaner and having precedent elsewhere in this repo (config.sh,
+# golem-event-listener.py). It requires git >= 2.31, and on an older git it does
+# not degrade to a relative path — it FAILS, yielding "" and thus a permanent
+# silent fail-open. A guard that quietly stops guarding on an old git is the one
+# outcome worth extra lines to avoid, and this hook's whole point is running
+# identically on host / bare-linux / container / base macOS. So absolutize the
+# way the sibling worktree-guard.sh does: `cd` into the answer and `pwd`, which
+# works on every git and needs no version gate.
+_abs_git_dir() {
+    _agd_raw="$(git -C "$1" rev-parse "$2" 2>/dev/null || true)"
+    [ -n "$_agd_raw" ] || return 0
+    (cd "$1" 2>/dev/null && cd "$_agd_raw" 2>/dev/null && pwd) || true
+}
+
 # --- Read stdin -------------------------------------------------------------
 payload="$("$CAT" 2>/dev/null || true)"
 if [ -z "$payload" ]; then
@@ -118,10 +214,15 @@ if [ -z "$payload" ]; then
     exit 0
 fi
 
-# --- Extract agent_id + command --------------------------------------------
+# --- Extract agent_id + command + cwd ---------------------------------------
 # Prefer jq; fall back to a pure-bash extractor so the guard enforces without jq.
+# `cwd` (the session's working directory) is read for Rule B (#662) only: it is
+# both the fallback target tree for a command that names none, and the base a
+# relative `git -C <path>` / `cd <path>` resolves against. Rule A ignores it, so
+# an absent cwd costs Rule A nothing and merely fails Rule B open.
 agent_id=""
 command_str=""
+cwd=""
 have_fields=0
 if command -v jq >/dev/null 2>&1; then
     # `have_fields` gates on whether jq successfully PARSED the payload as JSON —
@@ -136,6 +237,7 @@ if command -v jq >/dev/null 2>&1; then
         # alternate spelling (the verified field is snake_case agent_id).
         agent_id="$(printf '%s' "$payload" | jq -r '(.agent_id // .agentId) // empty' 2>/dev/null || true)"
         command_str="$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null || true)"
+        cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null || true)"
         # A parsed payload with no command is not a Bash call we can evaluate —
         # nothing to enforce against, so allow (no destructive command present).
         if [ -z "$command_str" ]; then
@@ -168,16 +270,27 @@ if [ "$have_fields" -eq 0 ]; then
     command_str="$(printf '%s' "$payload" |
         "$SED" -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
         "$HEAD" -n1)"
+    # cwd for Rule B (#662). Same shortest-span caveat as the scrape above; an
+    # empty or truncated result only fails Rule B OPEN (allow), never closed.
+    cwd="$(printf '%s' "$payload" |
+        "$SED" -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        "$HEAD" -n1)"
     if [ -z "$command_str" ]; then
         printf '%s: could not parse PreToolUse input; NOT enforcing (fail-open)\n' "$DIAG_TAG" >&2
         exit 0
     fi
 fi
 
-# --- Caller gate: main session (no agent_id) is never blocked ---------------
-if [ -z "$agent_id" ]; then
-    exit 0
-fi
+# --- Caller gate is DEFERRED (#662) -----------------------------------------
+# This is where the main-session gate USED to short-circuit (`[ -z "$agent_id" ]
+# && exit 0`). It cannot any more: Rule B denies a main-session destructive GIT
+# verb aimed at another tree's linked worktree, so the main session must reach
+# the deny-set scan. The gate now lives AFTER that scan — see "Caller gate" near
+# the end of this file — which also means the ordering is a deliberate
+# PERFORMANCE property, not an accident: an ordinary main-session command never
+# matches a deny-head, so it exits on the `[ -z "$matched" ]` path below without
+# ever forking `git`. Only an already-destructive command pays for the two
+# `rev-parse` calls Rule B needs.
 
 # --- Deny-set detection -----------------------------------------------------
 # Normalize in TWO steps so statement separators survive. A real newline inside
@@ -343,6 +456,15 @@ target_ok() {
 segments="$(printf '%s' "$norm" |
     "$SED" 's/&&/\n/g; s/||/\n/g; s/&/\n/g; s/;/\n/g; s/|/\n/g; s/\$(/\n/g; s/`/\n/g; s/(/\n/g; s/)/\n/g')"
 
+# Rule B (#662) target-tree tracking, threaded through the SAME ordered segment
+# walk that finds the deny-head — which is what makes it statement-ORDER-correct
+# for free, with none of the separate-scan machinery `mktemp_var` needed. The
+# segments are already in execution order, so a `cd` recorded here necessarily
+# appeared BEFORE the git verb that later reads it. `cd_dir` holds the most recent
+# literal `cd` operand; `matched_dir` freezes the target at the moment a git verb
+# matches (`-C <path>` when present, else whatever `cd` was in effect).
+cd_dir=""
+matched_dir=""
 matched=""
 while IFS= read -r seg; do
     [ -n "$seg" ] || continue
@@ -395,6 +517,30 @@ while IFS= read -r seg; do
     head="${head#\'}"
     head="${head%\'}" # surrounding single quotes
     case "$head" in
+        # Rule B (#662): record a literal `cd <dir>` so a later `git reset --hard`
+        # in the same command resolves against it (`cd <wt> && git reset --hard`
+        # must decide identically to `git -C <wt> reset --hard` — the two forms
+        # are interchangeable to the operator, so a cwd-only check would miss the
+        # realistic one). Only a LITERAL operand is honored: a `$var` / `$(…)`
+        # operand cannot be resolved without evaluating the shell, so it is left
+        # unset and the target falls back to the payload cwd (a documented gap
+        # above, and one that fails toward allow). NOT a deny-head itself — the
+        # walk continues to the real command.
+        cd)
+            _cdop="${seg#* }"
+            _cdop="${_cdop%% *}"
+            case "$_cdop" in
+                '' | -*) ;;                 # `cd` alone, or an option: no literal target
+                *'$'* | *'`'*) cd_dir="" ;; # unresolvable: fall back to payload cwd
+                *)
+                    _cdop="${_cdop#\"}"
+                    _cdop="${_cdop%\"}"
+                    _cdop="${_cdop#\'}"
+                    _cdop="${_cdop%\'}"
+                    cd_dir="$_cdop"
+                    ;;
+            esac
+            ;;
         rm | /bin/rm | /usr/bin/rm) # lint-allow-path: deny-set match DATA, not an invocation
             target_ok "$seg" && continue
             matched="rm"
@@ -418,6 +564,11 @@ while IFS= read -r seg; do
             # `-C`/`-c`/`--git-dir`/`--work-tree`/`--namespace` (separated forms)
             # take a following argument; the `--opt=val` attached forms are single
             # tokens. Loop until the head is no longer a global option.
+            # Rule B (#662): `git_C` captures a literal `-C <path>` operand as it
+            # is skipped, so the same pass that finds the subcommand also learns
+            # the target tree. Reset per segment — a `-C` belongs to ITS OWN git
+            # invocation and must never leak into a later one.
+            git_C=""
             while :; do
                 sub="${rest%% *}"
                 case "$rest" in *" "*) ;; *) break ;; esac
@@ -425,6 +576,19 @@ while IFS= read -r seg; do
                     -C | -c | --git-dir | --work-tree | --namespace)
                         rest="${rest#* }"
                         rest="${rest# }" # drop opt
+                        _optval="${rest%% *}"
+                        if [ "$sub" = "-C" ]; then
+                            case "$_optval" in
+                                '' | *'$'* | *'`'*) ;; # unresolvable -> leave unset
+                                *)
+                                    _optval="${_optval#\"}"
+                                    _optval="${_optval%\"}"
+                                    _optval="${_optval#\'}"
+                                    _optval="${_optval%\'}"
+                                    git_C="$_optval"
+                                    ;;
+                            esac
+                        fi
                         rest="${rest#* }"
                         rest="${rest# }"
                         ;; # drop its value
@@ -436,16 +600,23 @@ while IFS= read -r seg; do
                 esac
             done
             sub="${rest%% *}"
+            # Rule B (#662): freeze this invocation's target tree alongside the
+            # match — `-C` when it named one, else the `cd` in effect at this
+            # point in statement order, else "" meaning "the payload cwd". Set on
+            # the same line as `matched` so the two can never disagree about which
+            # invocation they describe.
             case "$sub" in
                 clean)
                     target_ok "$seg" && continue
                     matched="git clean"
+                    matched_dir="${git_C:-$cd_dir}"
                     break
                     ;;
                 reset)
                     case " $rest " in
                         *" --hard"*)
                             matched="git reset --hard"
+                            matched_dir="${git_C:-$cd_dir}"
                             break
                             ;;
                     esac
@@ -457,6 +628,7 @@ while IFS= read -r seg; do
                     case " $rest " in
                         *" -- "*)
                             matched="git checkout --"
+                            matched_dir="${git_C:-$cd_dir}"
                             break
                             ;;
                     esac
@@ -478,18 +650,91 @@ if [ -z "$matched" ]; then
     exit 0
 fi
 
-# --- Deny -------------------------------------------------------------------
-reason="Blocked destructive shell (\`$matched\`) in read-only review/analysis subagent ${agent_id}: this agent must not delete or mutate the live working tree (#426/#448). If you must reproduce something, do it inside a fresh \`mktemp -d\` sandbox, never against the checkout."
+# --- Caller gate (#662) -----------------------------------------------------
+# A destructive command has matched. WHO ran it decides which rule applies:
+#   subagent (agent_id set) -> Rule A: deny, tree-independent (unchanged, #448).
+#   main session (no agent_id) -> Rule B: deny ONLY a git verb aimed at another
+#   tree's linked worktree; everything else keeps its historical allow.
+if [ -z "$agent_id" ]; then
+    # Rule B applies to the three GIT verbs only. rm/mv/truncate/redirection from
+    # the main session stay unconditionally allowed — that is what keeps
+    # `rm -rf .worktrees/issue-N` teardown working (worktree-rm.sh owns the
+    # deliberate path and has its own dirty check).
+    case "$matched" in
+        "git reset --hard" | "git clean" | "git checkout --") ;;
+        *) exit 0 ;;
+    esac
 
-if command -v jq >/dev/null 2>&1; then
-    jq -cn --arg reason "$reason" \
-        '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}' \
-        2>/dev/null && exit 0
+    # Resolve the target tree. Every failure below ALLOWS — the main session's
+    # historical behavior — so Rule B can only ever add a denial (see FAILURE
+    # MODE in the header).
+    command -v git >/dev/null 2>&1 || exit 0
+
+    # `matched_dir` is the `-C`/`cd` operand frozen at the match, "" meaning "no
+    # explicit target, so the session's own cwd". A relative operand resolves
+    # against cwd, which is exactly how the shell would resolve it.
+    target_dir="${matched_dir:-$cwd}"
+
+    # Expand a leading `~/` (and a bare `~`) to $HOME BEFORE the absolute-vs-
+    # relative test. Tilde expansion is the shell's job and happens before git
+    # ever sees the operand, so `git -C ~/wt reset --hard` and
+    # `git -C $HOME/wt reset --hard` are the SAME command — but `~/wt` is not
+    # absolute by the `/*` test below, so without this it would be glued onto cwd
+    # as `<cwd>/~/wt`, a path that does not exist, and the `-d` check would then
+    # fail-open. That turns a routine idiom into a SILENT BYPASS of Rule B: the
+    # identical worktree denies via an absolute path and allows via `~`
+    # (dynamically repro'd, #662 pre-PR review). `~user/...` is deliberately NOT
+    # expanded — resolving another user's home needs passwd lookups this hook has
+    # no business doing — so it falls through to the fail-open path below, which
+    # is the safe direction and is recorded as an accepted gap in the header.
+    # shellcheck disable=SC2088  # the quoted `~` is a literal match PATTERN (the
+    # unexpanded operand as it arrived in the payload), never an expansion — the
+    # expansion is the $HOME substitution on the right-hand side, which is exactly
+    # what SC2088 asks for.
+    case "$target_dir" in
+        "~") [ -n "${HOME:-}" ] && target_dir="$HOME" ;;
+        "~/"*) [ -n "${HOME:-}" ] && target_dir="$HOME/${target_dir#\~/}" ;;
+    esac
+
+    case "$target_dir" in
+        /*) ;;
+        *)
+            [ -n "$cwd" ] || exit 0 # nothing to resolve a relative path against
+            target_dir="$cwd/$target_dir"
+            ;;
+    esac
+    [ -d "$target_dir" ] || exit 0
+
+    # A linked worktree has git-dir != git-common-dir; a primary checkout has them
+    # equal. This is the repo-standard idiom (golem/SKILL.md,
+    # ship-issue/execute-protocol.md, worktree-guard.sh) — and deriving
+    # worktree-ness from git itself rather than from a literal `.worktrees/` path
+    # means the env-overridable GOLEM_WORKTREE_DIR is honored for free.
+    tgt_git="$(_abs_git_dir "$target_dir" --git-dir)"
+    tgt_common="$(_abs_git_dir "$target_dir" --git-common-dir)"
+    { [ -n "$tgt_git" ] && [ -n "$tgt_common" ]; } || exit 0
+    [ "$tgt_git" != "$tgt_common" ] || exit 0 # target is a primary checkout: allow
+
+    # The target IS a linked worktree. Allow only when it is the caller's OWN tree
+    # — a golem resetting its own worktree, or a bare-repo worktree host working
+    # in its only tree. Comparing GIT-DIRS (not paths) is what makes this exact:
+    # each linked worktree has a distinct .git/worktrees/<id> dir, so two peers
+    # never compare equal, while `cd <own-wt> && git reset --hard` and a bare
+    # `git reset --hard` from the same session both resolve to the same one.
+    #
+    # An UNRESOLVABLE caller tree fails open: cwd is required to establish "own",
+    # and without it every worktree target would look foreign — turning a missing
+    # payload field into a broad new denial, the one direction this change must
+    # never take.
+    [ -n "$cwd" ] || exit 0
+    own_git="$(_abs_git_dir "$cwd" --git-dir)"
+    [ -n "$own_git" ] || exit 0
+    [ "$tgt_git" != "$own_git" ] || exit 0 # the caller's own worktree: allow
+
+    reason="Blocked destructive git (\`$matched\`) from the MAIN session against the linked worktree \`${target_dir}\` (#662). That worktree belongs to another session (a golem): it is by design full of UNCOMMITTED work, so this command has no recovery path — no reflog entry, no stash, no PR. Read-only inspection (\`git -C ${target_dir} status\`/\`log\`/\`diff\`) is allowed and is what polling should use. To tear the worktree down deliberately, run \`\${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh <issue-number>\`, which refuses to discard uncommitted work. To reset YOUR OWN tree, run the command without \`-C\` from your own checkout."
+    _emit_deny_reason "$reason"
 fi
-# No jq: hand-roll the deny envelope. Sanitize the reason (drop backslashes and
-# control chars that can't be JSON-escaped without a real encoder, then escape
-# double quotes) so the output stays valid JSON.
-reason_safe="$(printf '%s' "${reason//\\/}" | "$TR" -d '[:cntrl:]')"
-printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
-    "${reason_safe//\"/\\\"}"
-exit 0
+
+# --- Deny (Rule A: subagent) ------------------------------------------------
+reason="Blocked destructive shell (\`$matched\`) in read-only review/analysis subagent ${agent_id}: this agent must not delete or mutate the live working tree (#426/#448). If you must reproduce something, do it inside a fresh \`mktemp -d\` sandbox, never against the checkout."
+_emit_deny_reason "$reason"
