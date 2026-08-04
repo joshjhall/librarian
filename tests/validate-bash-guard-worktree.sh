@@ -298,6 +298,64 @@ test_deny_explicit_dashC_overrides_cd() {
     assert_decision "$MAIN_DIR" "cd $MAIN_DIR && git -C $WT_DIR reset --hard" deny \
         "an explicit \`-C <wt>\` overrides an earlier \`cd <main>\` (DENY)"
 }
+test_deny_repeated_dashC_chains() {
+    jq_required || return 0
+    # #662 review cycle 2 (BLOCKING, dynamically repro'd): real git treats
+    # successive `-C` as chained chdirs, so `-C a -C b` targets `<cwd>/a/b`.
+    # Resolving only the LAST operand pointed at `<cwd>/b` instead — and when some
+    # unrelated `<cwd>/b` is itself a linked worktree, that is a WRONG-TREE deny
+    # (naming a worktree the command never touched), not merely a missed one.
+    #
+    # The fixture makes the two paths genuinely different worktrees, so a decision
+    # that named the wrong one cannot pass: the assertion reads the worktree path
+    # out of the deny reason rather than just checking deny-vs-allow.
+    local nest="$WT_DIR/nested"
+    git_clean -C "$MAIN_DIR" worktree add -q -b chain-nested "$MAIN_DIR/a/b" >/dev/null 2>&1 || {
+        skip_test "could not build the chained-C fixture"
+        return 0
+    }
+    run_guard "$MAIN_DIR" "git -C a -C b reset --hard"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" "chained \`-C a -C b\` into a worktree is DENIED"
+    local reason
+    reason="$(printf '%s' "$GUARD_OUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)"
+    assert_contains "$reason" "$MAIN_DIR/a/b" \
+        "chained \`-C\` names the REAL target (<cwd>/a/b), not <cwd>/b"
+    # An ABSOLUTE operand resets the chain, exactly as chdir does.
+    run_guard "$MAIN_DIR" "git -C a -C $WT_DIR reset --hard"
+    reason="$(printf '%s' "$GUARD_OUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)"
+    assert_contains "$reason" "$WT_DIR" \
+        "an ABSOLUTE \`-C\` resets the chain rather than appending"
+    command true "$nest" # keep the local referenced under set -u
+}
+test_deny_bare_tilde_operand() {
+    jq_required || return 0
+    # The `"~")` arm of the expansion `case` (bare tilde, no trailing slash) had no
+    # dynamic coverage — a refactor could silently drop it. Needs $HOME to BE a
+    # worktree, which is not arrangeable, so assert the observable half: a bare `~`
+    # resolves to $HOME (a real directory, hence a decision) rather than being
+    # glued onto cwd as the nonexistent `<cwd>/~`.
+    if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then
+        skip_test "HOME unset or missing"
+        return 0
+    fi
+    assert_decision "$MAIN_DIR" "git -C ~ reset --hard" allow \
+        "a BARE \`~\` operand resolves to \$HOME (not <cwd>/~) and allows there"
+}
+test_failopen_git_dir_env_var() {
+    jq_required || return 0
+    # `GIT_DIR=<wt>/.git git reset --hard` is a documented targeting gap: the env
+    # var is not parsed as a Rule B target, so the command resolves against cwd.
+    # Pinned so the documented behavior is asserted rather than assumed.
+    assert_decision "$MAIN_DIR" "GIT_DIR=$WT_DIR/.git git reset --hard" allow \
+        "a \`GIT_DIR=\` env-var target is not detected and fails open (documented gap)"
+}
+test_failopen_separated_git_dir_flag() {
+    jq_required || return 0
+    # Likewise the separated `--git-dir <p>` form: consumed as a global option so
+    # the VERB is still detected, but never re-parsed as a target.
+    assert_decision "$MAIN_DIR" "git --git-dir $WT_DIR/.git reset --hard" allow \
+        "a separated \`--git-dir <p>\` target is not detected and fails open (documented gap)"
+}
 test_allow_own_worktree_bare() {
     jq_required || return 0
     assert_decision "$WT_DIR" "git reset --hard" allow \
@@ -650,6 +708,10 @@ run_test test_deny_chained_after_poll "AC1 deny: chained after a poll"
 run_test test_deny_cd_persists_across_segments "AC1 deny: cd persists across an intervening segment"
 run_test test_deny_tilde_path_to_worktree "AC1 deny: ~/-prefixed path (review BLOCKING regression)"
 run_test test_deny_peer_to_peer "AC1 deny: peer worktree -> peer worktree"
+run_test test_deny_repeated_dashC_chains "AC1 deny: chained -C a -C b names the REAL target (cycle-2 BLOCKING)"
+run_test test_deny_bare_tilde_operand "targeting: bare ~ resolves to \$HOME"
+run_test test_failopen_git_dir_env_var "fail-open: GIT_DIR= env-var target (documented gap)"
+run_test test_failopen_separated_git_dir_flag "fail-open: separated --git-dir <p> (documented gap)"
 run_test test_allow_dashC_does_not_leak_to_later_git "targeting: -C does not leak to a later git"
 run_test test_allow_later_cd_overrides_earlier "targeting: later cd overrides earlier"
 run_test test_deny_explicit_dashC_overrides_cd "targeting: explicit -C overrides an ambient cd"

@@ -120,10 +120,14 @@
 #     below, because leaving it unexpanded was a live silent bypass.
 #   - `~user/...` (another user's home): expanding it needs a passwd lookup this
 #     hook has no business doing, so it falls through to the fail-open path.
-#   - REPEATED `-C a -C b`, which real git treats as successive relative chdirs
-#     (`<cwd>/a/b`); this captures only the last (`b`). A contrived form — the
-#     single-`-C` shape is what tooling and operators emit — and it fails toward
-#     allow, never toward a wrong deny.
+#     (REPEATED `-C a -C b` is NOT in this gap list — it is implemented, chaining
+#     each relative operand onto the previous exactly as git's successive chdirs
+#     do. It was briefly documented here as an accepted gap "that fails toward
+#     allow"; that claim was FALSE and the review caught it — resolving only the
+#     last operand points at `<cwd>/b` rather than `<cwd>/a/b`, so an unrelated
+#     linked worktree at that path is denied by NAME, a wrong-deny rather than a
+#     missed one. Kept as a note because "we simplified X and it is safe" is the
+#     shape of comment worth distrusting.)
 # These are logged nowhere and pass silently BY DESIGN; the belt (#426 prose) and
 # human PR review remain the backstop for them.
 #
@@ -585,7 +589,21 @@ while IFS= read -r seg; do
                                     _optval="${_optval%\"}"
                                     _optval="${_optval#\'}"
                                     _optval="${_optval%\'}"
-                                    git_C="$_optval"
+                                    # CHAIN repeated `-C`, matching real git: each
+                                    # `-C` is a chdir relative to the PREVIOUS one,
+                                    # so `-C a -C b` targets `<cwd>/a/b`. Keeping
+                                    # only the last operand would resolve `b`
+                                    # against cwd instead — a DIFFERENT directory,
+                                    # which is not merely a missed deny: if some
+                                    # unrelated `<cwd>/b` happens to be a linked
+                                    # worktree, the guard denies naming the WRONG
+                                    # tree (dynamically repro'd, #662 review cycle
+                                    # 2). An absolute operand resets the chain,
+                                    # exactly as chdir does.
+                                    case "$_optval" in
+                                        /*) git_C="$_optval" ;;
+                                        *) git_C="${git_C:+$git_C/}$_optval" ;;
+                                    esac
                                     ;;
                             esac
                         fi
