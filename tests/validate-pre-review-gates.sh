@@ -1997,6 +1997,134 @@ test_py_foreign_probe_excludes_fixtures_and_markdown() {
         "a tests/*.md that documents the .py is not coverage (#644)"
 }
 
+# The content anchor is DELIMITED, not a bare substring — the pre-PR review
+# caught this as a live false negative, not a hypothetical.
+#
+# An unanchored `grep -F "patterns.py"` also matches `get_patterns.py`,
+# `not_patterns.py` and `patterns.py.bak`. Both anchors were satisfied by a suite
+# NAMED validate-patterns.sh that only discussed an unrelated get_patterns.py, so
+# a real HIGH row was silently suppressed — the over-match class #598/#601 exist
+# to prevent.
+#
+# Three superstring shapes (prefix, suffix, both) must each still fire, and the
+# two legitimate shapes — the bare basename and a PATH-QUALIFIED reference — must
+# still suppress. Without those last two this case would pass just as well if the
+# anchor had over-tightened into matching nothing.
+test_py_foreign_probe_content_anchor_is_delimited() {
+    local sb
+    new_git_sandbox sb
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "x = 1" >"$sb/src/patterns.py"
+    command printf '%s\n' "y = 2" >"$sb/src/widget.py"
+    command printf '%s\n' "z = 3" >"$sb/src/gadget.py"
+    # Each names its source but mentions only a SUPERSTRING of it.
+    command printf '%s\n' "# exercises get_patterns.py, an unrelated file" \
+        >"$sb/tests/validate-patterns.sh"
+    command printf '%s\n' "# exercises widget.py.bak, a stale copy" \
+        >"$sb/tests/validate-widget.sh"
+    command printf '%s\n' "# exercises my_gadget.pyc, a build artifact" \
+        >"$sb/tests/validate-gadget.sh"
+    command printf '%s\n' "$sb/src/patterns.py" "$sb/src/widget.py" \
+        "$sb/src/gadget.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c '/patterns\.py' || true)" \
+        "a PREFIX superstring (get_patterns.py) does not suppress patterns.py (#644)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c '/widget\.py' || true)" \
+        "a SUFFIX superstring (widget.py.bak) does not suppress widget.py (#644)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c '/gadget\.py' || true)" \
+        "a both-ends superstring (my_gadget.pyc) does not suppress gadget.py (#644)"
+
+    # The positive direction, so the anchor cannot pass by matching NOTHING: a
+    # bare mention and a path-qualified mention must both still resolve.
+    new_git_sandbox sb
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "x = 1" >"$sb/src/patterns.py"
+    command printf '%s\n' "y = 2" >"$sb/src/widget.py"
+    command printf '%s\n' "# exercises patterns.py" \
+        >"$sb/tests/validate-patterns.sh"
+    command printf '%s\n' "# exercises src/widget.py end to end" \
+        >"$sb/tests/validate-widget.sh"
+    command printf '%s\n' "$sb/src/patterns.py" "$sb/src/widget.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_output_empty "$(category_rows "$GATE_OUT" "missing-test-file" || true)" \
+        "a bare and a PATH-QUALIFIED mention both still suppress (#644)"
+}
+
+# The candidate loop must check EVERY name-matching test, not just the first.
+#
+# The helper collects all name-matching candidates and returns 0 on the first
+# whose content anchor holds. Every other case here has exactly one name-matching
+# candidate, so a regression that gave up after the first (a stray `return 1`
+# inside the loop) would pass all of them. Ordering is pinned by the alpha/beta
+# names: `alpha` sorts first and does NOT mention the source, so a suppression
+# can only come from the loop reaching `beta`.
+test_py_foreign_probe_checks_every_candidate() {
+    local sb
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "x = 1" >"$sb/src/thing.py"
+    command printf '%s\n' "# tests the shell sibling only" \
+        >"$sb/tests/validate-thing-alpha.sh"
+    command printf '%s\n' "# exercises thing.py" \
+        >"$sb/tests/validate-thing-beta.sh"
+    command printf '%s\n' "$sb/src/thing.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_equals "0" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'thing\.py' || true)" \
+        "the loop checks past a non-matching candidate to a later matching one (#644)"
+}
+
+# A basename carrying regex metacharacters must be matched LITERALLY, so the
+# escaping in the content anchor is load-bearing in the suite and not only in the
+# comment. `.` is the reachable metacharacter in a python basename: unescaped, it
+# is "any char", so `c.d.py` would match the text `cXdYpy` and suppress a source
+# that nothing tests.
+test_py_foreign_probe_escapes_regex_metacharacters() {
+    local sb
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "x = 1" >"$sb/src/c.d.py"
+    # Matches `c.d.py` as a REGEX but not as a literal.
+    command printf '%s\n' "# exercises cXdYpy and nothing else" \
+        >"$sb/tests/validate-c.d.sh"
+    command printf '%s\n' "$sb/src/c.d.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'c\.d\.py' || true)" \
+        "a dot in the basename is escaped, not treated as any-char (#644)"
+
+    # ...and the same name still resolves on a LITERAL mention, so the escaping
+    # did not simply break the match.
+    new_git_sandbox sb
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "x = 1" >"$sb/src/c.d.py"
+    command printf '%s\n' "# exercises c.d.py" >"$sb/tests/validate-c.d.sh"
+    command printf '%s\n' "$sb/src/c.d.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_output_empty "$(category_rows "$GATE_OUT" "missing-test-file" || true)" \
+        "...while a LITERAL mention of the same metacharacter name still suppresses (#644)"
+}
+
 # The REAL tree — the measurement the issue opens with, pinned. Mirrors
 # test_real_repo_sh_sources_not_flagged so the fix cannot be passing only on
 # synthetic sandboxes.
@@ -2327,6 +2455,9 @@ run_test test_py_repo_rooted_foreign_test_detected "py: a repo-rooted SHELL gate
 run_test test_py_foreign_probe_requires_content_anchor "py: a name-matching shell test that never mentions the .py does not suppress (#644)"
 run_test test_py_foreign_probe_is_name_anchored "py: the foreign probe stays name-anchored — no constant resolves for every source (#644 AC#3)"
 run_test test_py_foreign_probe_excludes_fixtures_and_markdown "py: tests/fixtures/** and tests/*.md are not coverage for the foreign probe (#644)"
+run_test test_py_foreign_probe_content_anchor_is_delimited "py: the content anchor is delimited — a superstring does not suppress, a path-qualified mention still does (#644)"
+run_test test_py_foreign_probe_checks_every_candidate "py: the candidate loop checks every name-matching test, not just the first (#644)"
+run_test test_py_foreign_probe_escapes_regex_metacharacters "py: a regex metacharacter in the basename is matched literally (#644)"
 run_test test_real_repo_py_sources_not_flagged "this repo's own bash-gate-covered .py sources are not flagged (#644 AC#1)"
 run_test test_ai_slop_evidence_keeps_trailing_colon "ai-slop evidence keeps a trailing colon (#573)"
 run_test test_untested_api_evidence_keeps_trailing_colon "untested-public-api evidence keeps a trailing colon (#573)"

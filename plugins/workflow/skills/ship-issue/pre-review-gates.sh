@@ -826,13 +826,24 @@ has_repo_rooted_sh_test() {
 #             derived from the SOURCE's own basename, so it cannot degenerate
 #             into a constant that resolves for every source the way a
 #             {name}-less test_discovery template would.
-#   content — the candidate must mention <basename>. Cross-language coverage is
-#             a weaker claim than same-language, so this probe is deliberately
-#             STRICTER than the sh arm it mirrors: sharing a stem with a shell
-#             suite is not, on its own, evidence that the suite exercises the
-#             python file. Measured to cost 0 rows across the tree today — every
-#             .py that resolves by name also mentions itself in that test — so
-#             the strictness is free insurance rather than a live tradeoff.
+#   content — the candidate must mention <basename>, DELIMITED. Cross-language
+#             coverage is a weaker claim than same-language, so this probe is
+#             deliberately STRICTER than the sh arm it mirrors: sharing a stem
+#             with a shell suite is not, on its own, evidence that the suite
+#             exercises the python file. Measured to cost 0 rows across the tree
+#             today — every .py that resolves by name also mentions itself in
+#             that test — so the strictness is free insurance rather than a live
+#             tradeoff.
+#
+# The content anchor is DELIMITED, not a bare substring, and that is load-bearing
+# rather than tidiness. An unanchored `grep -F "patterns.py"` also matches
+# `get_patterns.py`, `not_patterns.py` and `patterns.py.bak`, so a suite named
+# validate-patterns.sh that discusses an unrelated get_patterns.py satisfied BOTH
+# anchors and silently suppressed a real HIGH row — a reproduced false negative,
+# and exactly the over-match class #598/#601 exist to prevent. The basename is
+# regex-escaped and required to sit between non-filename characters (or a line
+# edge), so a path-qualified `plugins/x/patterns.py` still counts while a
+# superstring does not.
 #
 # NO hyphen-stripped arm, unlike has_repo_rooted_sh_test. Measured across every
 # hyphenated python stem in the tree — golem-event-listener -> event-listener,
@@ -853,7 +864,7 @@ has_repo_rooted_sh_test() {
 # The caller has already checked that <_PROJECT_ROOT>/tests exists.
 has_repo_rooted_foreign_py_test() {
     local name="$1" basename="$2"
-    local find_args=() tok candidates cand
+    local find_args=() tok candidates cand esc pattern
 
     while IFS= read -r tok; do
         find_args+=("$tok")
@@ -866,9 +877,17 @@ EOF
         \( "${find_args[@]}" \) -print 2>/dev/null)"
     [ -n "$candidates" ] || return 1
 
+    # Escape every ERE metacharacter so the basename is matched literally, then
+    # require a non-filename character (or a line edge) on each side. `-.` are
+    # inside the bracket negation, so `-` must stay LAST there to read as a
+    # literal rather than opening a range.
+    esc="$(command printf '%s' "$basename" |
+        command sed 's/[][^$.*+?(){}|\\/]/\\&/g')"
+    pattern="(^|[^A-Za-z0-9_.-])${esc}([^A-Za-z0-9_.-]|\$)"
+
     while IFS= read -r cand; do
         [ -n "$cand" ] || continue
-        command grep -q -F -- "$basename" "$cand" 2>/dev/null && return 0
+        command grep -qE -- "$pattern" "$cand" 2>/dev/null && return 0
     done <<EOF
 $candidates
 EOF
