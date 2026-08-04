@@ -161,6 +161,16 @@ diverge under the auto-mode classifier:
 - **Option 2 — "Yes, manually approve edits"** approves the plan WITHOUT the
   auto-mode switch (an agent *can* select it), but then the golem gates on
   **every subsequent edit** and does NOT run unattended to a PR.
+- **Option 3 — "Tell Claude what to change"** (approve-with-feedback) submits
+  refinement text instead of a bare yes. It is a legitimate — and often the
+  *best* — way to approve a plan, because the refinements land in-context before
+  implementation. But it carries **no mode transition**: unlike option 1, whose
+  label explicitly names auto mode, option 3 leaves the session **in plan mode**.
+  The golem takes the feedback and keeps working, so nothing errors and nothing
+  looks wrong — but every subsequent `Edit`/`Write` prompts, and the run is
+  effectively **L1 with extra steps** (#659). Whenever a plan is approved this
+  way, the mode MUST be corrected explicitly afterward — see the verification
+  step below, which is now mechanical rather than advisory.
 
 So the flow is **broker → human decides → the orchestrator sends option 1
 itself**: the orchestrator presents the plan in-session (e.g. `AskUserQuestion`),
@@ -173,8 +183,36 @@ keypress; do not hand the keystroke back to the operator to paste.
 Worked example: `AskUserQuestion "approve plan for #{N}?"` → operator approves →
 orchestrator runs `tmux send-keys -t golem-{N} 1 Enter` → run
 `${CLAUDE_PLUGIN_ROOT}/scripts/golem-resolve.sh {N}` to clear the now-stale gate
-from the BLOCKED list → verify the golem left plan mode (`⏵⏵ auto mode on`,
-branch name in the status bar).
+from the BLOCKED list → **verify the golem actually left plan mode**:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/golem-mode-check.sh --once --fix
+```
+
+That last step is **mechanical, not a look-and-see**. It was prose advice here
+for a long time ("verify the golem left plan mode") with nothing enforcing it,
+and that is precisely how #659 went unnoticed: two L3 golems stayed in plan mode
+through their whole implementation phase, ~40 edits were hand-approved, and the
+degraded autonomy was only spotted when an operator happened to read the pane
+footer. A verification nobody can skip is the only kind that holds — and a
+documented check with no mechanism reads as *done* while checking nothing.
+
+`golem-mode-check.sh` is **phase-gated**: it flags a golem only when plan mode
+coexists with evidence the golem is past planning (its `next-issue` state file
+phase, corroborated by commits beyond base). Plan mode *during* planning is
+legal and is never touched — correcting a still-designing golem would skip the
+very gate the level exists to enforce. `--fix` sends the mode-cycle keystroke,
+**re-scrapes to confirm it landed**, and after `GOLEM_MODE_FIX_ATTEMPTS` (3)
+failed attempts escalates instead of looping.
+
+**Do not assume a `send-keys` was delivered.** A send to a golem with a
+permission modal open is **silently swallowed** — the keys never reach the
+transcript, and `tmux` still reports success because it delivered to the pane.
+For any brokered send whose delivery matters, confirm it:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/golem-mode-check.sh verify-send {N} 1 Enter
+```
 
 The `golem-resolve.sh` step is not optional bookkeeping: the send-keys approval
 fires no `Notification`, so without it the golem's `gate` feed line is never

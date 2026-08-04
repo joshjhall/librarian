@@ -82,6 +82,17 @@
 #                                                          Default: 300 (5 min)
 #   GOLEM_INBOX_POLL     Poll interval, seconds, of `consume`'s inner loop while
 #                        it waits for a matching decision.  Default: 3
+#   GOLEM_MODE_FIX_ATTEMPTS
+#                        Max mode-cycle keystrokes golem-mode-check.sh --fix will
+#                        send to ONE golem in a single run before giving up and
+#                        escalating. Bounds the #659 auto-correct so a genuine
+#                        mode-lock (the keystroke does not stick) escalates to the
+#                        operator instead of becoming an infinite keystroke loop.
+#                                                          Default: 3
+#   GOLEM_MODE_CHECK_INTERVAL
+#                        Poll interval, seconds, of golem-mode-check.sh --watch.
+#                        Drift is corrected within one poll rather than at
+#                        operator noticing.                Default: 60
 #   GOLEM_SWEEP_INTERVAL Cadence, seconds, of the orchestrator's Phase M status
 #                        sweep (golem-status.sh --watch; opt-in since #485,
 #                        was default-on #304). Env OVERRIDE for
@@ -187,10 +198,18 @@
 : "${GOLEM_INBOX_WAIT:=300}"
 : "${GOLEM_INBOX_POLL:=3}"
 
+# Mode-drift check (golem-mode-check.sh, #659): the per-golem auto-correct bound
+# and the --watch cadence. The attempt bound is the guardrail the issue asks for
+# — a golem whose mode will not stick escalates to the operator rather than
+# spinning keystrokes forever.
+: "${GOLEM_MODE_FIX_ATTEMPTS:=3}"
+: "${GOLEM_MODE_CHECK_INTERVAL:=60}"
+
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL GOLEM_LIVENESS_SUMMARY_INTERVAL \
     GOLEM_INBOX_WAIT GOLEM_INBOX_POLL \
+    GOLEM_MODE_FIX_ATTEMPTS GOLEM_MODE_CHECK_INTERVAL \
     GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT \
     GOLEM_EVENT_LISTEN_ADDR GOLEM_EVENT_LISTEN_PORT GOLEM_EVENT_MAX_BODY
 
