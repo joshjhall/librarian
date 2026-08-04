@@ -2065,13 +2065,31 @@ test_py_foreign_probe_content_anchor_is_delimited() {
 # The helper collects all name-matching candidates and returns 0 on the first
 # whose content anchor holds. Every other case here has exactly one name-matching
 # candidate, so a regression that gave up after the first (a stray `return 1`
-# inside the loop) would pass all of them. Ordering is pinned by the alpha/beta
-# names: `alpha` sorts first and does NOT mention the source, so a suppression
-# can only come from the loop reaching `beta`.
+# inside the loop) would pass all of them.
+#
+# The ordering is NOT ours to choose: `find ... -print` has no specified
+# traversal order (POSIX leaves it to the directory's entry order), so a fixture
+# that assumes the non-matching candidate comes first pins nothing on a
+# filesystem that yields the other order — under the reversed order the buggy
+# loop matches immediately and the case passes WITH the regression. That was a
+# real hole in the first version of this test, demonstrated by reversing the
+# candidate list: the return-after-first mutation went green.
+#
+# So both extremes run, and BOTH must suppress. Whatever deterministic order the
+# platform's find uses — name-ascending, name-descending, or directory-entry
+# (creation) order — at least one arrangement below puts a NON-matching candidate
+# first, where the early-return bug is fatal:
+#
+#   A: match sorts LAST  (alpha = miss, beta = match), miss created first
+#   B: match sorts FIRST (alpha = match, beta = miss),  miss created LAST
+#
+# name-ascending kills A, name-descending kills B, creation order kills A, and
+# reverse-creation kills B.
 test_py_foreign_probe_checks_every_candidate() {
     local sb
-    new_git_sandbox sb
 
+    # A — the matching candidate sorts (and is created) last.
+    new_git_sandbox sb
     command mkdir -p "$sb/src" "$sb/tests"
     command printf '%s\n' "x = 1" >"$sb/src/thing.py"
     command printf '%s\n' "# tests the shell sibling only" \
@@ -2085,7 +2103,25 @@ test_py_foreign_probe_checks_every_candidate() {
     assert_equals "0" \
         "$(category_rows "$GATE_OUT" "missing-test-file" |
             command grep -c 'thing\.py' || true)" \
-        "the loop checks past a non-matching candidate to a later matching one (#644)"
+        "the loop reaches a matching candidate that sorts LAST (#644)"
+
+    # B — the matching candidate sorts first but is created last, so the two
+    # arrangements disagree on which candidate any given order visits first.
+    new_git_sandbox sb
+    command mkdir -p "$sb/src" "$sb/tests"
+    command printf '%s\n' "x = 1" >"$sb/src/thing.py"
+    command printf '%s\n' "# tests the shell sibling only" \
+        >"$sb/tests/validate-thing-beta.sh"
+    command printf '%s\n' "# exercises thing.py" \
+        >"$sb/tests/validate-thing-alpha.sh"
+    command printf '%s\n' "$sb/src/thing.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_equals "0" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'thing\.py' || true)" \
+        "the loop reaches a matching candidate that sorts FIRST but was created last (#644)"
 }
 
 # A basename carrying regex metacharacters must be matched LITERALLY, so the
