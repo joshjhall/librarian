@@ -853,9 +853,19 @@ has_repo_rooted_sh_test() {
 # tests/release/10-version-utils.sh). It buys nothing and costs false-negative
 # surface, so the foreign probe stays full-name only.
 #
-# `-not -path '*/fixtures/*'` and `-not -name '*.md'` carry over from the sh and
-# symbol helpers for their reasons: a fixture is an INPUT to a test, and prose
-# that mentions a file does not exercise it.
+# `-not -path '*/fixtures/*'` carries over from the sh helper for its reason: a
+# fixture is an INPUT to a test, not a test for the source it happens to name.
+# MEASURED to be load-bearing here too — dropping it lets a
+# tests/fixtures/**/validate-<name>.sh that mentions the source suppress a real
+# row.
+#
+# The sibling symbol helper also excludes `-name '*.md'`; this one deliberately
+# does NOT, because here it would be dead code. That helper searches the tests/
+# tree UNFILTERED by name, so a doc can reach it; this probe only ever sees
+# candidates that matched sh_test_find_args, and every one of those 40 arms ends
+# in `.sh` or `.bash`. No `.md` can be in the candidate set to begin with, so the
+# clause would exclude nothing — and a test written to "pin" it passes with the
+# clause deleted, which is how it was caught.
 #
 # The find is resolved ONCE into a command substitution rather than piped into a
 # reader — a `find | head`-shaped probe exits 141 (SIGPIPE) under `set -o
@@ -873,7 +883,7 @@ $(sh_test_find_args "$name")
 EOF
 
     candidates="$(command find "${_PROJECT_ROOT}/tests" -type f \
-        -not -path '*/fixtures/*' -not -name '*.md' \
+        -not -path '*/fixtures/*' \
         \( "${find_args[@]}" \) -print 2>/dev/null)"
     [ -n "$candidates" ] || return 1
 

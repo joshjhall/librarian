@@ -1917,6 +1917,21 @@ test_py_repo_rooted_foreign_test_detected() {
 # This is the half that makes the foreign probe stricter than the sh arm it
 # mirrors. Without it, the name arms alone decide, and this fixture would go
 # silent.
+#
+# KNOWN UNCOVERED, recorded here because it is not evident from the suite: that
+# the candidate loop keeps scanning PAST a failed candidate to a later
+# satisfying one. Pinning it needs a miss visited before a match, and the visit
+# order is `find ... -print`'s, which is unspecified — measured here it is
+# directory-hash order, neither name nor creation (five files created 01..05 came
+# back 02, 04, 05, 01, 03). With two candidates the outcome flips on which one
+# find reaches first, so such a fixture passes WITH a return-after-first
+# regression whenever the match comes first; several arrangements do not rescue
+# it (an arbitrary permutation has no finite set of orders to enumerate), and a
+# many-misses/one-match shape only makes the bug PROBABLY caught, which is flaky
+# rather than pinned. `find` also cannot be stubbed through this harness:
+# run_gate_in execs the gate via /usr/bin/env with a scrubbed environment and the
+# probe calls `command find`, which bypasses functions and aliases. So that
+# property rests on construction review, not on a fixture here.
 test_py_foreign_probe_requires_content_anchor() {
     local sb
     new_git_sandbox sb
@@ -1965,11 +1980,19 @@ test_py_foreign_probe_is_name_anchored() {
         "a populated tests/ tree that names the .py but isn't NAMED for it still fires (#644 AC#3)"
 }
 
-# Both exclusions, each in its own sandbox so a match can only come from the
-# candidate under test. A fixture is an INPUT to a test (#598's rationale, where
-# one tests/fixtures/.../patterns.sh silently "covered" 14 real scanners), and a
-# markdown doc that names a file does not exercise it (#600's).
-test_py_foreign_probe_excludes_fixtures_and_markdown() {
+# The fixtures exclusion, which is load-bearing: a fixture is an INPUT to a test
+# (#598's rationale, where one tests/fixtures/.../patterns.sh silently "covered"
+# 14 real scanners). MEASURED — dropping `-not -path '*/fixtures/*'` from the
+# probe fails this case.
+#
+# There is deliberately NO markdown half, though the sibling symbol helper
+# excludes `*.md` and an earlier version of this case asserted it here. That
+# assertion was a tautology: this probe only sees candidates that already matched
+# sh_test_find_args, and all 40 of those arms end in `.sh`/`.bash`, so no `.md`
+# can be in the candidate set. The fixture passed with the `-not -name '*.md'`
+# clause DELETED — proving nothing, and presenting dead code as covered. The
+# clause is now gone from the probe.
+test_py_foreign_probe_excludes_fixtures() {
     local sb
 
     new_git_sandbox sb
@@ -1984,17 +2007,6 @@ test_py_foreign_probe_excludes_fixtures_and_markdown() {
             command grep -c 'thing\.py' || true)" \
         "a matching candidate under tests/fixtures/ is not coverage for a .py (#644)"
 
-    new_git_sandbox sb
-    command mkdir -p "$sb/src" "$sb/tests"
-    command printf '%s\n' "x = 1" >"$sb/src/thing.py"
-    command printf '%s\n' "# validate-thing.md documents thing.py" \
-        >"$sb/tests/validate-thing.md"
-    command printf '%s\n' "$sb/src/thing.py" >"$sb/files.txt"
-    run_gate_in "$sb" "$sb/files.txt"
-    assert_equals "1" \
-        "$(category_rows "$GATE_OUT" "missing-test-file" |
-            command grep -c 'thing\.py' || true)" \
-        "a tests/*.md that documents the .py is not coverage (#644)"
 }
 
 # The content anchor is DELIMITED, not a bare substring — the pre-PR review
@@ -2058,56 +2070,6 @@ test_py_foreign_probe_content_anchor_is_delimited() {
 
     assert_output_empty "$(category_rows "$GATE_OUT" "missing-test-file" || true)" \
         "a bare and a PATH-QUALIFIED mention both still suppress (#644)"
-}
-
-# A name-matching candidate that FAILS the content anchor must not suppress —
-# the probe has to evaluate the anchor and fall through, not treat "a candidate
-# exists" as coverage.
-#
-# What this case deliberately does NOT claim to pin, because a black-box test
-# cannot: that the loop keeps scanning PAST a failed candidate to a later
-# satisfying one. Pinning that needs a fixture where a miss is visited before a
-# match, and the visit order is `find ... -print`'s, which is unspecified —
-# MEASURED here it is directory-hash order, neither name nor creation order
-# (five files created 01..05 came back 02, 04, 05, 01, 03). So with two
-# candidates the outcome depends on which one find happens to reach first:
-#
-#   miss first  -> a return-after-first regression yields 1, the case fails (good)
-#   match first -> that same regression yields 0, the case passes (bad)
-#
-# Both halves of that coin were observed while writing this: the first version
-# of this test asserted the two-candidate shape and went GREEN under a reversed
-# candidate list with the regression applied. Supplying several arrangements
-# does not rescue it either — an arbitrary permutation has no finite set of
-# orderings to enumerate, so any "one of these always puts a miss first" comment
-# would be asserting a guarantee the fixture cannot deliver. A many-misses/
-# one-match fixture only makes the bug PROBABLY caught, which is a flaky test,
-# not a pin.
-#
-# So the loop's continue-past-a-miss behaviour is covered by construction review
-# rather than by this suite, and the single-candidate contract below — the half
-# that IS order-independent, since one candidate is visited first under every
-# order — is what gets asserted.
-test_py_foreign_probe_evaluates_a_failing_candidate() {
-    local sb
-
-    new_git_sandbox sb
-    command mkdir -p "$sb/src" "$sb/tests"
-    command printf '%s\n' "x = 1" >"$sb/src/thing.py"
-    command printf '%s\n' "# tests the shell sibling only" \
-        >"$sb/tests/validate-thing.sh"
-    # Mentions the source but is NOT name-matching, so it never enters the
-    # candidate set — the row must still fire.
-    command printf '%s\n' "# exercises thing.py" \
-        >"$sb/tests/unrelated-suite.sh"
-    command printf '%s\n' "$sb/src/thing.py" >"$sb/files.txt"
-
-    run_gate_in "$sb" "$sb/files.txt"
-
-    assert_equals "1" \
-        "$(category_rows "$GATE_OUT" "missing-test-file" |
-            command grep -c 'thing\.py' || true)" \
-        "a name-matching candidate failing the content anchor does not suppress (#644)"
 }
 
 # A basename carrying regex metacharacters must be matched LITERALLY, so the
@@ -2476,9 +2438,8 @@ run_test test_real_repo_sh_sources_not_flagged "this repo's own convention-cover
 run_test test_py_repo_rooted_foreign_test_detected "py: a repo-rooted SHELL gate suppresses; an uncovered .py in the same run still fires (#644 AC#1/AC#4)"
 run_test test_py_foreign_probe_requires_content_anchor "py: a name-matching shell test that never mentions the .py does not suppress (#644)"
 run_test test_py_foreign_probe_is_name_anchored "py: the foreign probe stays name-anchored — no constant resolves for every source (#644 AC#3)"
-run_test test_py_foreign_probe_excludes_fixtures_and_markdown "py: tests/fixtures/** and tests/*.md are not coverage for the foreign probe (#644)"
+run_test test_py_foreign_probe_excludes_fixtures "py: tests/fixtures/** is not coverage for the foreign probe (#644)"
 run_test test_py_foreign_probe_content_anchor_is_delimited "py: the content anchor is delimited — a superstring does not suppress, a path-qualified mention still does (#644)"
-run_test test_py_foreign_probe_evaluates_a_failing_candidate "py: a name-matching candidate failing the content anchor does not suppress (#644)"
 run_test test_py_foreign_probe_escapes_regex_metacharacters "py: a regex metacharacter in the basename is matched literally (#644)"
 run_test test_real_repo_py_sources_not_flagged "this repo's own bash-gate-covered .py sources are not flagged (#644 AC#1)"
 run_test test_ai_slop_evidence_keeps_trailing_colon "ai-slop evidence keeps a trailing colon (#573)"
