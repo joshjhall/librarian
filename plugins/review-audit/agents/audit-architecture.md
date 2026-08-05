@@ -109,13 +109,12 @@ Every finding MUST include a `certainty` object.
   - High line count AND high fan-in AND multiple unrelated categories
     of functionality
   - Classes with many methods spanning different concerns
-- **Measure production code lines only** — exclude blank lines, comment-only
-  lines, and inline test blocks (same rules as `audit-code-health` file-length):
-  - Rust: exclude `#[cfg(test)]` blocks and comment lines
-  - Python: exclude `if __name__` test guards and comment lines
-  - JS/TS: exclude `describe(`/`test(` blocks and comment lines
-  - Go: exclude `func Test`/`func Benchmark` blocks and comment lines
-  - Other languages: exclude blank and comment-only lines at minimum
+- **Consume the production-LOC number from the `check-decomposition` pre-scan**
+  — do not re-derive it. That scanner computes production LOC once, with
+  per-language comment and test-block exclusion; this agent's job is the
+  **coupling** half (fan-in, concern mix), which no line counter can supply.
+  The counting rules used to be duplicated here as prose and had already
+  drifted from the `audit-code-health` copy (issue #663).
 - Warning (medium): file with >300 production code lines AND >5 incoming
   dependencies AND multiple distinct concerns
 - High: file with >500 production code lines AND >10 incoming dependencies

@@ -16,8 +16,6 @@ compatible_with: "finding-schema.md >= 1.0"
 | ---------------------- | --------- | ------------- | ---------- |
 | `agent-frontmatter`    | HIGH      | deterministic | >= 0.9     |
 | `skill-frontmatter`    | HIGH      | deterministic | >= 0.9     |
-| `ai-file-bloat`        | HIGH      | deterministic | >= 0.9     |
-| `doc-file-bloat`       | HIGH      | deterministic | >= 0.9     |
 | `claude-md-drift`      | MEDIUM    | heuristic     | 0.7-0.9    |
 | `config-inconsistency` | MEDIUM    | heuristic     | 0.7-0.9    |
 | `mcp-misconfiguration` | HIGH      | deterministic | >= 0.9     |
@@ -97,8 +95,9 @@ check-ai-config is imported; a diagnostic whose prefix is unmapped, or whose
 | `CC-MEM-*`          | `claude-md-drift`        |
 
 The `CC-MEM-*` bloat rules (`CC-MEM-009`/`CC-MEM-014`) are **agnix-disabled**
-per ADR §3 (the env-tunable `ai-file-bloat` thresholds stay authoritative), so
-only non-bloat memory rules (import-path drift, etc.) arrive here.
+per ADR §3, so only non-bloat memory rules (import-path drift, etc.) arrive
+here. They stay disabled after #663: the env-tunable bloat thresholds remain
+authoritative, they simply live in `check-decomposition` now.
 
 ### Emitted columns
 

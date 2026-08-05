@@ -71,7 +71,7 @@ trap 'rm -rf "$WORKDIR"' EXIT
 # tests/ suites this script has no run_test counters, so an unwired fragment
 # surfaces immediately as an unbound path-list variable under `set -u` rather
 # than as a silently smaller pass count.
-for _frag in 10-ai-config 20-source 30-lifecycle 40-loop-drift 50-docs; do
+for _frag in 10-ai-config 20-source 30-lifecycle 40-loop-drift 50-docs 60-decomposition; do
     _frag_path="$SCRIPT_DIR/python-corpus/${_frag}.sh"
     if [ ! -f "$_frag_path" ]; then
         printf '[FAIL] python-coverage — corpus fragment missing: %s\n' "$_frag_path" >&2
@@ -159,6 +159,34 @@ while IFS= read -r py; do
             # File-list-not-found arm (a list PATH that does not exist -> OSError).
             python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$SRC_NOFILE_LIST" >/dev/null 2>&1 || true
+            ;;
+        */check-decomposition/patterns.py)
+            # Drive the six segmenters, the bloat arms migrated here from
+            # check-ai-config, the god-module arm and all three decline reasons
+            # over the decomposition corpus (#663). Thresholds are tuned down so
+            # the compact fixtures reach the seam/size/bloat branches; the
+            # generic FILE_LIST keeps the no-match early paths covered. The
+            # negative-path arms (usage error, file-list-not-found) run below.
+            DECOMP_LOC_WARN=5 DECOMP_SEAM_MIN_LINES=8 \
+                CLAUDE_MD_WARN=2 CLAUDE_MD_HIGH=3 SKILL_WARN=2 SKILL_HIGH=3 \
+                AGENT_WARN=2 AGENT_HIGH=3 DOC_WARN=2 DOC_HIGH=3 \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$DECOMP_LIST" >/dev/null 2>&1 || true
+            # Second pass on the WARNING-only side of each bloat branch
+            # (WARN < lines < HIGH), which the pass above skips over.
+            DECOMP_LOC_WARN=900 \
+                CLAUDE_MD_WARN=3 CLAUDE_MD_HIGH=99 SKILL_WARN=3 SKILL_HIGH=99 \
+                AGENT_WARN=3 AGENT_HIGH=99 DOC_WARN=3 DOC_HIGH=99 \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$DECOMP_LIST" >/dev/null 2>&1 || true
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$FILE_LIST" >/dev/null 2>&1 || true
+            # Usage-error arm (no argument -> exit 1).
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" >/dev/null 2>&1 || true
+            # File-list-not-found arm (a list PATH that does not exist -> OSError).
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$DECOMP_NOFILE_LIST" >/dev/null 2>&1 || true
             ;;
         */check-lifecycle/patterns.py)
             # Drive the per-language arms (swift/py/js/go spawn/terminate/handle/

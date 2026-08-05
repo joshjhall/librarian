@@ -16,8 +16,12 @@ Exit codes:
   0 = success (zero or more findings)
   1 = usage error (missing argument) or file list not found
 
-Thresholds are env-overridable (CLAUDE_MD_WARN/HIGH, SKILL_*, AGENT_*, DOC_*),
-matching the bash impl.
+File-size/bloat is NOT this scanner's concern: the ai-file-bloat and
+doc-file-bloat categories, and their env-overridable per-file-type thresholds,
+moved to check-decomposition (issue #663) so that one tool owns line counting.
+Two scanners emitting a line-limit finding at line 1 of the same file with
+different numbers are two genuinely different messages, which ADR-0001 § 3
+identifies as the failure mode to avoid.
 """
 
 from __future__ import annotations
@@ -28,14 +32,6 @@ import re
 import sys
 
 EVIDENCE_CAP = 80  # printf '%.80s' for the grep-derived evidence rows
-
-
-def _int_env(name: str, default: int) -> int:
-    val = os.environ.get(name, "")
-    try:
-        return int(val)
-    except ValueError:
-        return default
 
 
 def emit(path: str, line_no: str, category: str, message: str, certainty: str) -> None:
@@ -223,63 +219,6 @@ def check_skill_frontmatter(path: str, lines: list[str]) -> None:
         )
 
 
-def check_ai_file_bloat(path: str, lines: list[str]) -> None:
-    n = len(lines)
-    # `category` splits documentation bloat (docs/*.md) into its own
-    # `doc-file-bloat` slug — the canonical name in finding-schema.md — while the
-    # AI-instruction files (CLAUDE.md / SKILL.md / agent md) stay `ai-file-bloat`.
-    category = "ai-file-bloat"
-    if _glob(path, "*/CLAUDE.md") or _glob(path, "*/AGENTS.md"):
-        warn, high, ftype = (
-            _int_env("CLAUDE_MD_WARN", 400),
-            _int_env("CLAUDE_MD_HIGH", 600),
-            "CLAUDE.md",
-        )
-    elif _glob(path, "*/skills/*/SKILL.md"):
-        warn, high, ftype = (
-            _int_env("SKILL_WARN", 300),
-            _int_env("SKILL_HIGH", 500),
-            "skill definition",
-        )
-    elif _glob(path, "*/agents/*/*.md") or _glob(path, "*/agents/*.md"):
-        # Both agent layouts are bloat-scanned: the FLAT form agents/<name>.md
-        # (how Claude Code discovers plugin agents) AND the nested
-        # agents/<name>/<name>.md a harness-bearing agent uses. The frontmatter
-        # detector keys only off the nested glob; this bloat branch deliberately
-        # covers both so a flat agent over the line threshold is not missed (#494).
-        warn, high, ftype = (
-            _int_env("AGENT_WARN", 250),
-            _int_env("AGENT_HIGH", 400),
-            "agent definition",
-        )
-    elif _glob(path, "*/docs/*.md"):
-        warn, high, ftype, category = (
-            _int_env("DOC_WARN", 500),
-            _int_env("DOC_HIGH", 800),
-            "documentation",
-            "doc-file-bloat",
-        )
-    else:
-        return
-
-    if n > high:
-        emit(
-            path,
-            "1",
-            category,
-            f"{ftype} exceeds high threshold: {n} lines (>{high})",
-            "HIGH",
-        )
-    elif n > warn:
-        emit(
-            path,
-            "1",
-            category,
-            f"{ftype} exceeds warning threshold: {n} lines (>{warn})",
-            "MEDIUM",
-        )
-
-
 # Backtick-quoted relative path with a source-file extension and at least one
 # `/`. The char class [A-Za-z0-9_.-] excludes `$ { } * :`, so `${VAR}` templates,
 # globs, and `scheme://` URLs cannot match — the skip is built into the pattern.
@@ -450,7 +389,6 @@ def check_harness_logic(path: str, lines: list[str]) -> None:
 def scan_file(path: str, lines: list[str]) -> None:
     check_agent_frontmatter(path, lines)
     check_skill_frontmatter(path, lines)
-    check_ai_file_bloat(path, lines)
     check_claude_md_drift(path, lines)
     check_config_inconsistency(path, lines)
     check_mcp_config(path, lines)

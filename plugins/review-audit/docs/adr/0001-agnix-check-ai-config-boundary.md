@@ -139,19 +139,27 @@ messages. So each overlapping rule gets a single owner, enforced through
 | Skill frontmatter schema   | `CC-SK-*`                | skill-frontmatter | **agnix**       |
 | Dangerous hook command     | `CC-HK-009`              | hook-safety       | **agnix**       |
 | Insecure MCP transport     | `MCP-*` (http)           | mcp-misconfig     | **agnix**       |
-| CLAUDE.md line / token cap  | `CC-MEM-014`,`CC-MEM-009`| ai-file-bloat     | **check-ai-cfg**|
-| File bloat thresholds      | —                        | ai/doc-file-bloat | **check-ai-cfg**|
+| CLAUDE.md line / token cap  | `CC-MEM-014`,`CC-MEM-009`| ai-file-bloat     | **check-decomp**|
+| File bloat thresholds      | —                        | ai/doc-file-bloat | **check-decomp**|
 | CLAUDE.md path drift        | —                        | claude-md-drift   | **check-ai-cfg**|
 | Plugin cross-reference      | —                        | config-inconsist. | **check-ai-cfg**|
 | workflow.js harness logic  | —                        | harness-logic     | **check-ai-cfg**|
 | Model-fit / decomposability| —                        | LLM pass          | **check-ai-cfg**|
 
 agnix owns the richer *schema* rules (its `CC-AG-*`/`CC-SK-*` frontmatter
-validation and `CC-HK-009` are more thorough than our regex checks). check-ai-config
-keeps the **bloat thresholds** — they are tuned to librarian's file taxonomy and
-env-overridable (`CLAUDE_MD_WARN/HIGH`, `SKILL_*`, `AGENT_*`, `DOC_*` in
-`thresholds.yml`), which agnix's fixed `CC-MEM-014`/`CC-MEM-009` are not — so those
-two agnix rules are **disabled** to prevent contradictory line-limit findings.
+validation and `CC-HK-009` are more thorough than our regex checks). The **bloat
+thresholds** stay ours — they are tuned to librarian's file taxonomy and
+env-overridable (`CLAUDE_MD_WARN/HIGH`, `SKILL_*`, `AGENT_*`, `DOC_*`), which
+agnix's fixed `CC-MEM-014`/`CC-MEM-009` are not — so those two agnix rules are
+**disabled** to prevent contradictory line-limit findings.
+
+**Amended by #663**: the two bloat rows moved from `check-ai-config` to
+`check-decomposition`, which now owns all line counting (its per-file-type
+thresholds are the same table under the same env var names). The reasoning is
+unchanged and in fact reinforced — this section's own argument, that two tools
+emitting a line-limit finding at line 1 with different numbers are two genuinely
+different messages, applies just as much between two of *our* scanners as it does
+between ours and agnix. The `CC-MEM-*` bloat rules stay disabled.
 
 ### 4. Surfaces and the integration boundary object
 

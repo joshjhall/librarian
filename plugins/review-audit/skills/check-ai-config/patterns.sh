@@ -59,15 +59,12 @@ truncate_chars() {
     fi
 }
 
-# Thresholds (overridable via thresholds.yml in caller)
-CLAUDE_MD_WARN=${CLAUDE_MD_WARN:-400}
-CLAUDE_MD_HIGH=${CLAUDE_MD_HIGH:-600}
-SKILL_WARN=${SKILL_WARN:-300}
-SKILL_HIGH=${SKILL_HIGH:-500}
-AGENT_WARN=${AGENT_WARN:-250}
-AGENT_HIGH=${AGENT_HIGH:-400}
-DOC_WARN=${DOC_WARN:-500}
-DOC_HIGH=${DOC_HIGH:-800}
+# The per-file-type line thresholds (CLAUDE_MD_*, SKILL_*, AGENT_*, DOC_*) used
+# to live here. They moved to check-decomposition/thresholds.yml together with
+# the ai-file-bloat / doc-file-bloat categories (issue #663) so exactly one tool
+# counts lines — ADR-0001 § 3 calls two scanners emitting a line-limit finding
+# at line 1 of the same file with different numbers the failure mode to avoid.
+# The variable NAMES are unchanged there, so an operator override keeps working.
 
 # =============================================================================
 # Helper: extract YAML frontmatter value from a file
@@ -212,65 +209,6 @@ check_skill_frontmatter() {
         command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "skill-frontmatter" \
             "Missing metadata.yml in skill directory" "MEDIUM"
-    fi
-}
-
-# =============================================================================
-# Category: ai-file-bloat
-# Checks AI instruction files against line count thresholds.
-# =============================================================================
-
-check_ai_file_bloat() {
-    local file="$1"
-    local basename lines threshold_warn threshold_high file_type category
-
-    basename=$(command basename "$file")
-    lines=$(command wc -l <"$file" 2>/dev/null) || return
-    lines=$((lines + 0)) # ensure numeric
-
-    # `category` splits documentation bloat (docs/*.md) into its own
-    # `doc-file-bloat` slug — the canonical name in finding-schema.md — while the
-    # AI-instruction files (CLAUDE.md / SKILL.md / agent md) stay `ai-file-bloat`.
-    category="ai-file-bloat"
-
-    # Determine file type and thresholds
-    case "$file" in
-        */CLAUDE.md | */AGENTS.md)
-            threshold_warn=$CLAUDE_MD_WARN
-            threshold_high=$CLAUDE_MD_HIGH
-            file_type="CLAUDE.md"
-            ;;
-        */skills/*/SKILL.md)
-            threshold_warn=$SKILL_WARN
-            threshold_high=$SKILL_HIGH
-            file_type="skill definition"
-            ;;
-        */agents/*/*.md | */agents/*.md)
-            # Match BOTH the flat agents/<name>.md (Claude Code's discovery form)
-            # and the nested agents/<name>/<name>.md a harness-bearing agent uses,
-            # so a flat agent over the line threshold is not missed (#494). Mirrors
-            # the patterns.py bloat branch exactly (bash<->python parity).
-            threshold_warn=$AGENT_WARN
-            threshold_high=$AGENT_HIGH
-            file_type="agent definition"
-            ;;
-        */docs/*.md)
-            threshold_warn=$DOC_WARN
-            threshold_high=$DOC_HIGH
-            file_type="documentation"
-            category="doc-file-bloat"
-            ;;
-        *) return ;;
-    esac
-
-    if [ "$lines" -gt "$threshold_high" ]; then
-        command printf '%s\t%s\t%s\t%s\t%s\n' \
-            "$file" "1" "$category" \
-            "${file_type} exceeds high threshold: ${lines} lines (>${threshold_high})" "HIGH"
-    elif [ "$lines" -gt "$threshold_warn" ]; then
-        command printf '%s\t%s\t%s\t%s\t%s\n' \
-            "$file" "1" "$category" \
-            "${file_type} exceeds warning threshold: ${lines} lines (>${threshold_warn})" "MEDIUM"
     fi
 }
 
@@ -509,7 +447,6 @@ while IFS= read -r file; do
 
     check_agent_frontmatter "$file"
     check_skill_frontmatter "$file"
-    check_ai_file_bloat "$file"
     check_claude_md_drift "$file"
     check_config_inconsistency "$file"
     check_mcp_config "$file"

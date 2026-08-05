@@ -29,7 +29,6 @@ finding was detected:
 
 | Category              | Expected Level | Confidence | Method        | Rationale                              |
 | --------------------- | -------------- | ---------- | ------------- | -------------------------------------- |
-| `file-length`         | HIGH           | ≥0.9       | deterministic | Numeric line count, objective          |
 | `function-complexity` | HIGH           | ≥0.9       | deterministic | Cyclomatic complexity count            |
 | `code-duplication`    | HIGH           | ≥0.9       | deterministic | Token/line similarity ratio            |
 | `magic-numbers`       | HIGH           | ≥0.9       | deterministic | Literal detection in non-const context |
@@ -52,26 +51,17 @@ finding was detected:
 
 ## Categories and Checklist
 
-### file-length
+### file-length — owned by `audit-decomposition`
 
-- Count **production code lines only** — exclude blank lines, comment-only
-  lines, and inline test blocks. Use language-aware filtering:
-  - **Rust**: exclude everything from `#[cfg(test)]` to end of file; exclude
-    `//`, `///`, `//!`, `/* */` comment lines
-  - **Python**: exclude everything from `if __name__` test guard to end of
-    file; exclude `#` comment lines and docstring-only lines
-  - **JS/TS**: exclude `describe(` / `it(` / `test(` blocks (detect by
-    scanning for top-level test framework calls); exclude `//` and `/* */`
-    comment lines
-  - **Go**: exclude `func Test` / `func Benchmark` functions to end of their
-    closing brace; exclude `//` comment lines
-  - **Shell**: exclude lines after `# --- tests ---` or similar test markers;
-    exclude `#` comment lines
-  - **Other languages**: exclude blank and comment-only lines at minimum
-- Warning (medium): >300 production code lines
-- High: >500 production code lines
-- Evidence: production code line count, total line count, function count,
-  class count, what was excluded (e.g., "excluded 280 test lines, 45 comment lines")
+**This agent no longer scans for file length.** The category, its thresholds,
+and the per-language production-LOC counting rules moved to the
+`check-decomposition` skill and the `audit-decomposition` agent (issue #663),
+where they are computed deterministically **once** instead of being
+re-implemented in prose by three agents that had already drifted apart.
+
+If you observe an oversized file while scanning for the categories below, do
+not report it — `audit-decomposition` covers it, and will additionally propose
+the concrete seam to extract.
 
 ### function-complexity
 
@@ -196,10 +186,10 @@ audit:acknowledge category=<slug> [date=YYYY-MM-DD] [baseline=<number>] [reason=
 Build a per-file acknowledgment map. When a finding matches an acknowledged
 entry (same file, same category, overlapping line range):
 
-- **Numeric categories** (`file-length`, `function-complexity`,
-  `code-duplication`): Suppress only if the current measurement is at or
-  below the `baseline` value. If exceeded, re-raise with `acknowledged: true`
-  and `acknowledged_baseline` set to the baseline value.
+- **Numeric categories** (`function-complexity`, `code-duplication`): Suppress
+  only if the current measurement is at or below the `baseline` value. If
+  exceeded, re-raise with `acknowledged: true` and `acknowledged_baseline` set
+  to the baseline value.
 - **Boolean categories** (`naming-drift`, `magic-numbers`, `dead-code`,
   `unused-import`, `tech-debt-marker`, `deprecated-api`): Suppress
   entirely — move to `acknowledged_findings`.
@@ -255,8 +245,8 @@ array for any suppressed acknowledged findings.
 - When uncertain whether something is dead code, use severity `low` and note
   the uncertainty in the description
 - Do not flag test files for naming conventions (test names are often verbose)
-- Count production code lines only for file length metrics (see file-length
-  category for language-specific exclusion rules)
+- Do not report file length — `audit-decomposition` owns that category and the
+  production-LOC counting rules behind it
 - For duplication, compare within the scanned batch and note cross-file matches
 - If a file batch is empty or contains only non-source files, return zero
   findings with the correct `files_scanned` count

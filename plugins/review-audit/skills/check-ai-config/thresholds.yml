@@ -13,12 +13,6 @@ severity:
     missing_description: high
     missing_workflow: medium
     missing_metadata: medium
-  ai-file-bloat:
-    over_warning: medium
-    over_high: high
-  doc-file-bloat:
-    over_warning: medium
-    over_high: high
   claude-md-drift:
     broken_reference: medium
   config-inconsistency:
@@ -34,19 +28,10 @@ severity:
     unsafe_regen: medium
     unsafe_interpolation: high
 
-bloat_thresholds:
-  claude_md:
-    warning: 400
-    high: 600
-  skill_md:
-    warning: 300
-    high: 500
-  agent_md:
-    warning: 250
-    high: 400
-  doc_md:
-    warning: 500
-    high: 800
+# bloat_thresholds moved to check-decomposition/thresholds.yml (issue #663)
+# along with the ai-file-bloat / doc-file-bloat categories, so one tool owns
+# line counting. The env var names (CLAUDE_MD_WARN, SKILL_*, AGENT_*, DOC_*)
+# are unchanged there, so an existing project override keeps working.
 
 min_confidence:
   deterministic: 0.9

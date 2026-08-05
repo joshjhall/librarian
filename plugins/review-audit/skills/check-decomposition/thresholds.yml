@@ -1,0 +1,70 @@
+# check-decomposition — Configurable Thresholds
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/check-decomposition/thresholds.yml.
+#
+# Every value below is also readable as an environment variable of the same
+# name in UPPER_SNAKE (shown per entry), which is how the orchestrator passes a
+# project override through to both patterns.py and patterns.sh.
+
+severity:
+  file-length:
+    over_warning: medium
+    over_high: high
+  god-module:
+    size_and_concerns: medium
+  ai-file-bloat:
+    over_warning: medium
+    over_high: high
+  doc-file-bloat:
+    over_warning: medium
+    over_high: high
+  decomposition-seam:
+    extractable: medium
+    declined: info
+
+# Production-LOC thresholds. Production LOC excludes blank lines, comment lines,
+# and test units (per-language, computed from unit spans).
+size_thresholds:
+  production_loc:
+    warning: 300 # DECOMP_LOC_WARN
+    high: 500 # DECOMP_LOC_HIGH
+
+# What makes a candidate span worth reporting as a seam.
+seam:
+  min_units: 3 # DECOMP_SEAM_MIN_UNITS — units in the family cluster
+  min_lines: 40 # DECOMP_SEAM_MIN_LINES — span size worth moving
+  max_fanin: 3 # DECOMP_SEAM_MAX_FANIN — at/under this, callers are named
+
+# god-module needs size AND many units AND several distinct concerns. The
+# cross-file coupling half of this category stays with audit-architecture.
+god_module:
+  min_units: 12 # DECOMP_GOD_UNITS
+  min_concerns: 3 # DECOMP_GOD_CONCERNS
+
+# A file at or under this many top-level units is reported as "single cohesive
+# unit" rather than as an unsplittable mystery.
+cohesive:
+  max_units: 2 # DECOMP_COHESIVE_MAX_UNITS
+
+# Per-file-type line thresholds for AI-instruction and documentation files.
+# Migrated from check-ai-config (issue #663) with the env var names intact, so
+# an operator's existing overrides keep working across the move.
+bloat_thresholds:
+  claude_md: # CLAUDE.md / AGENTS.md — loaded every conversation
+    warning: 400 # CLAUDE_MD_WARN
+    high: 600 # CLAUDE_MD_HIGH
+  skill_md: # skills/*/SKILL.md — loaded when the skill activates
+    warning: 300 # SKILL_WARN
+    high: 500 # SKILL_HIGH
+  agent_md: # agents/*.md — loaded per agent dispatch
+    warning: 250 # AGENT_WARN
+    high: 400 # AGENT_HIGH
+  doc_md: # docs/*.md — not auto-loaded, but hard to navigate when huge
+    warning: 500 # DOC_WARN
+    high: 800 # DOC_HIGH
+
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5
