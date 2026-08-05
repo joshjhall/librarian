@@ -315,15 +315,18 @@ for the per-check commands, tables, and per-level rules.
    **dead-end** that parks the PR and waits for a human; with the invariant
    satisfied, **L3–L4** auto-merge squash then prune inline —
    **worktree-aware**: `--delete-branch` is withheld when **any worktree holds
-   the PR branch** (not merely when the session sits in one, #653), the remote
-   branch is pruned **unconditionally** via `git push origin --delete` on every
-   path, the local `checkout main` is skipped in a linked worktree, and a
-   non-zero `gh pr merge` whose PR is in fact `MERGED` is treated as post-merge
-   cleanup (not a dead-end) — **L1–L2** stop for a human
-   merge) → **label** `status/pr-pending` (remove `status/in-progress`) →
-   **comment**, **checkout main** (skipped in a linked worktree), **delete state
-   file**, **show the PR URL** → the **L2 completion summary** block. Squash by
-   default: single-issue PRs keep history linear.
+   the PR branch** (not merely when the session sits in one, #653); the PR's real
+   state is then read via `gh pr view --json state`, and **only on `MERGED`** is
+   the remote branch pruned via `git push origin --delete` and the result
+   **verified** rather than inferred from an exit code (a non-`MERGED` state is a
+   dead-end that touches no branch); the local `checkout main` is skipped in a
+   linked worktree — **L1–L2** stop for a human
+   merge) → **clear the in-flight labels** (remove `status/in-progress` **and**
+   `status/pr-pending`; the merge has landed, so adding pr-pending here would
+   stamp a closing issue, #654) → **comment**, **checkout main** (skipped in a
+   linked worktree), **delete state file**, **show the PR URL** → the **L2
+   completion summary** block. Squash by default: single-issue PRs keep history
+   linear.
 
 ### Options 2 & 3
 
