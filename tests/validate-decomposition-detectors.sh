@@ -48,14 +48,20 @@
 #   decline-order — the cohesive branch disabled so prose wins    -> 1 case red
 #   py-region — the `if __name__` marker, BOTH impls              -> 1 case red
 #   sh-region — the `# --- tests ---` marker, BOTH impls          -> 1 case red
+#   fanin-cap — the `count <= seam_max_fanin` guard dropped, BOTH -> 1 case red
+#   fanin-callers — the `and callers` guard dropped, BOTH impls  -> 1 case red
 # All went red under mutation and green on revert.
 #
-# The last four were added by the pre-PR review (cycle 1): the fourth decline
+# The last six were added by the pre-PR review. Cycle 1: the fourth decline
 # reason and the two whole-file test-REGION markers were exercised only by the
 # Codecov corpus, which asserts nothing — so a broken region regex would have
 # shown green coverage and a green suite simultaneously. Note `decline-order`:
 # it pins the BRANCH ORDER, not just the predicate, since a reason chosen by the
-# wrong arm is still a wrong finding.
+# wrong arm is still a wrong finding. Cycle 3: the third fan-in evidence shape
+# (a bare `fan-in N`, reached both over the cap and when no reference resolves
+# to a top-level unit) had no assertion at all — its case carries a control that
+# raises the cap so the same fixture DOES name its callers, so the bare-count
+# assertion cannot pass merely because caller resolution broke.
 #
 # The adjacency case is here BECAUSE the first mutation round found it was the
 # one rule with no failing test — the suite stayed green with the guard removed.
@@ -480,6 +486,91 @@ EOF
 }
 
 # ============================================================================
+# fan-in: the OVER-CAP shape — a bare "fan-in N" with no caller list
+# ============================================================================
+test_fanin_over_cap() {
+    local d f list
+
+    # Three fan-in evidence shapes exist: "no external references" (count 0),
+    # "fan-in N <- callers" (count <= max_fanin AND a caller resolved), and a
+    # bare "fan-in N". The other cases here cover the first two; this covers the
+    # third, which is otherwise reachable only through the Codecov corpus (which
+    # asserts nothing). Both of its arms are exercised:
+    #   (a) count > DECOMP_SEAM_MAX_FANIN — the cap arm, below;
+    #   (b) count > 0 with NO caller resolvable to a top-level unit — the
+    #       module-level-reference arm, in the second fixture.
+    d="$(fresh_dir)"
+    f="$d/overcap.py"
+    command cat >"$f" <<'EOF'
+def parse_a(x):
+    return x
+
+def parse_b(x):
+    return x
+
+def parse_c(x):
+    return x
+
+def caller_one(x):
+    return parse_a(x)
+
+def caller_two(x):
+    return parse_b(x)
+
+def caller_three(x):
+    return parse_c(x)
+
+def caller_four(x):
+    return parse_a(x)
+
+def caller_five(x):
+    return parse_b(x)
+EOF
+    list="$(list_of "$f")"
+    # Over the fan-in cap: the caller list is dropped, leaving a bare count.
+    assert_fires "$list" decomposition-seam "fan-in 5)" \
+        "fan-in: over the cap, evidence is a bare count with no caller list" \
+        DECOMP_SEAM_MAX_FANIN=2
+    # ...and with the cap raised past the count, the SAME file names its
+    # callers. Without this control the assertion above could pass merely
+    # because caller resolution broke entirely.
+    assert_fires "$list" decomposition-seam "fan-in 5 <- caller_five" \
+        "fan-in: under a raised cap, the same file names its callers" \
+        DECOMP_SEAM_MAX_FANIN=9
+
+    # Arm (b): references exist but sit at module level, outside any top-level
+    # unit, so no caller name resolves and the "<- " form is skipped even though
+    # the count is under the cap.
+    # NB: the references must sit ABOVE the cluster. A cluster's span runs to
+    # the next unit header or EOF, so trailing module-level lines would fall
+    # INSIDE the span and not count as external at all.
+    f="$d/modlevel.py"
+    command cat >"$f" <<'EOF'
+import sys
+
+TABLE = {
+    "a": "parse_a",
+    "b": "parse_b",
+}
+
+def zzz_anchor(x):
+    return x
+
+def parse_a(x):
+    return x
+
+def parse_b(x):
+    return x
+
+def parse_c(x):
+    return x
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "fan-in 2)" \
+        "fan-in: module-level references yield a bare count (no caller unit)"
+}
+
+# ============================================================================
 # Adjacency — a family INTERLEAVED with other units is not a movable seam
 # ============================================================================
 test_adjacency_required() {
@@ -834,6 +925,7 @@ run_test test_seam_rust "rust: fn-family seam + #[cfg(test)] region exclusion"
 run_test test_seam_go "go: func-family seam + func Test exclusion"
 run_test test_seam_shell "shell: function-family seam + comment exclusion"
 run_test test_seam_markdown "markdown: heading-cluster seam + fenced-block counter"
+run_test test_fanin_over_cap "fan-in: bare-count shape (over cap, and module-level references)"
 run_test test_adjacency_required "adjacency: interleaved family rejected, contiguous family accepted"
 run_test test_decline_reasons "decline: generated / cohesive / mutually-referential, each with a reason"
 run_test test_ai_file_bloat "ai-file-bloat: warn/high arms, flat+nested agent globs (moved from #204 gate)"
