@@ -99,13 +99,13 @@ at the cost of one extra prefix to grep for in map-mode logs.
 Batch files by line count targeting ~2000 lines per batch. Route files to
 scanners based on classification:
 
-| File Type               | Routed To                                      |
-| ----------------------- | ---------------------------------------------- |
-| Source files            | code-health, security, architecture, lifecycle |
-| Test files              | test-gaps only                                 |
-| Config files            | security only                                  |
-| Doc files               | docs, ai-config                                |
-| AI Config files         | ai-config only                                 |
+| File Type               | Routed To                                                     |
+| ----------------------- | ------------------------------------------------------------- |
+| Source files            | code-health, security, architecture, lifecycle, decomposition |
+| Test files              | test-gaps only                                                |
+| Config files            | security only                                                 |
+| Doc files               | docs, ai-config, decomposition                                |
+| AI Config files         | ai-config, decomposition                                      |
 | Source + paired test    | test-gaps (paired)                             |
 | High-churn files (deep) | all scanners                                   |
 | All files (per scope)   | project agents (self-filtering)                |
@@ -190,8 +190,9 @@ regex-matchable findings at zero LLM cost.
 
 1. **Map findings to scanner domains**: Match check-\* skill names to audit
    agent domains (e.g., `check-security` → `audit-security`,
-   `check-code-health` → `audit-code-health`). Unmatched findings go into a
-   standalone `pre-scan` findings group.
+   `check-code-health` → `audit-code-health`, `check-decomposition` →
+   `audit-decomposition`). Unmatched findings go into a standalone `pre-scan`
+   findings group.
 
 1. **Include pre-scan findings in scanner manifests**: When dispatching each
    audit agent in Step 3, include the relevant pre-scan findings in the task
@@ -248,6 +249,8 @@ The harness collects every verified finding and drives one `checker`
    merge into one finding (keep broader range, combine evidence)
 1. **Cross-scanner correlation** (see `issue-templates.md` for rules):
    - Dead code (code-health) + orphaned file (architecture) → merge
+   - file-length (decomposition) + god-module (architecture) → merge (same
+     file, same cause; keep the seam recommendation as the suggestion)
    - Security issue + test gap on same file → bump severity of the group
    - Stale comment (docs) + deprecated API (code-health) → merge
    - CLAUDE.md drift (ai-config) + outdated README (docs) → merge

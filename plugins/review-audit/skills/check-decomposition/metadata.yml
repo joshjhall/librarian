@@ -1,0 +1,9 @@
+name: check-decomposition
+version: "1.0"
+labels: []
+required_tools:
+  - name: awk
+    purpose: "Per-file segmentation and sizing in the bash fallback"
+    install_hint: "POSIX-mandated; present in the base container image"
+required_permissions: []
+required_mcps: []

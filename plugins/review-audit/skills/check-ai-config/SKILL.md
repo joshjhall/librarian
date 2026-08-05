@@ -47,19 +47,12 @@ metadata.yml.
 LLM adds: vague descriptions that don't help routing, scope overlap with
 other skills, missing output format specification.
 
-### ai-file-bloat (deterministic)
+### ai-file-bloat / doc-file-bloat — moved to `check-decomposition`
 
-Pre-scan detects all AI-instruction files (CLAUDE.md/AGENTS.md, skill
-definitions, agent definitions) via line counting against configurable
-thresholds. LLM confirms whether large files contain decomposable sections.
-Documentation files (`docs/*.md`) are counted under `doc-file-bloat` instead.
-
-### doc-file-bloat (deterministic)
-
-Pre-scan detects oversized documentation files (`docs/*.md`) via line counting
-against the `doc_md` thresholds in `thresholds.yml` (warning 500 / high 800 by
-default). Split out of `ai-file-bloat` so documentation bloat carries its own
-canonical slug. LLM confirms whether the file is decomposable.
+Both categories, and their per-file-type line thresholds, moved to the
+`check-decomposition` skill (issue #663) so exactly one tool counts lines. That
+scanner also segments markdown by heading hierarchy, so the finding names the
+sections to extract instead of only reporting a total.
 
 ### claude-md-drift (deterministic pre-scan + heuristic)
 

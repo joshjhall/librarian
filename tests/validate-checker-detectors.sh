@@ -21,6 +21,12 @@
 # bash fallback (PATTERNS_FORCE_BASH=1 patterns.sh) — free parity reinforcement on
 # top of validate-python-ports.sh's whole-corpus diff.
 #
+# NOTE (#663): the ai-file-bloat / doc-file-bloat cases that used to live here
+# were MOVED, not dropped — check-ai-config no longer counts lines. They are in
+# tests/validate-decomposition-detectors.sh, asserted against the scanner that
+# owns them now, including the #494 flat-vs-nested agent glob arms and the #222
+# docs-does-not-emit-ai-file-bloat counter.
+#
 # SKIPS (does not fail) when a python3>=3.11 is unavailable — the same posture as
 # validate-python-ports.sh; the bash path is still asserted where present.
 #
@@ -214,69 +220,6 @@ test_skill_frontmatter() {
 }
 
 # ============================================================================
-# ai-file-bloat — thresholds tuned down via env so a tiny fixture trips them.
-# ============================================================================
-test_ai_file_bloat() {
-    local d f list
-    d="$(fresh_dir)"
-
-    # 5-line CLAUDE.md with HIGH driven to 3 -> exceeds high (HIGH).
-    f="$d/CLAUDE.md"
-    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
-    list="$(list_of "$f")"
-    assert_fires ai-file-bloat "$list" "exceeds high threshold" \
-        "ai-file-bloat: CLAUDE.md over high threshold flagged" \
-        CLAUDE_MD_WARN=2 CLAUDE_MD_HIGH=3
-
-    # Same file, WARN=3 HIGH=99 -> warning arm only (MEDIUM).
-    assert_fires ai-file-bloat "$list" "exceeds warning threshold" \
-        "ai-file-bloat: CLAUDE.md over warning threshold flagged" \
-        CLAUDE_MD_WARN=3 CLAUDE_MD_HIGH=99
-
-    # Counter: comfortably under both thresholds -> silent.
-    assert_silent ai-file-bloat "$list" \
-        "ai-file-bloat: CLAUDE.md under thresholds is silent" \
-        CLAUDE_MD_WARN=50 CLAUDE_MD_HIGH=99
-
-    # SKILL.md threshold arm (separate env family).
-    command mkdir -p "$d/skills/big"
-    f="$d/skills/big/SKILL.md"
-    command printf '%s\n' "---" "description: d" "---" "## Workflow" "a" "b" "c" >"$f"
-    command printf '%s\n' "name: big" >"$d/skills/big/metadata.yml"
-    list="$(list_of "$f")"
-    assert_fires ai-file-bloat "$list" "skill definition exceeds high threshold" \
-        "ai-file-bloat: SKILL.md over high threshold flagged" \
-        SKILL_WARN=2 SKILL_HIGH=3
-
-    # Agent-definition arm — the FLAT layout agents/<name>.md (Claude Code's
-    # discovery form). The bloat glob was */agents/*/*.md only, which does not
-    # match a flat file, so a flat agent over threshold was silently missed (#494).
-    command mkdir -p "$d/agents"
-    f="$d/agents/rev.md"
-    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
-    list="$(list_of "$f")"
-    assert_fires ai-file-bloat "$list" "agent definition exceeds high threshold" \
-        "ai-file-bloat: FLAT agent md over high threshold flagged (#494)" \
-        AGENT_WARN=2 AGENT_HIGH=3
-
-    # Counter: the widened glob must not OVER-fire — a flat agent comfortably under
-    # threshold stays silent (mirrors the CLAUDE.md silent counter above).
-    assert_silent ai-file-bloat "$list" \
-        "ai-file-bloat: FLAT agent md under thresholds is silent (#494)" \
-        AGENT_WARN=50 AGENT_HIGH=99
-
-    # Agent-definition arm — the NESTED layout agents/<name>/<name>.md (a
-    # harness-bearing agent's sibling md). Must still fire after the glob widened.
-    command mkdir -p "$d/agents/nested"
-    f="$d/agents/nested/nested.md"
-    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
-    list="$(list_of "$f")"
-    assert_fires ai-file-bloat "$list" "agent definition exceeds warning threshold" \
-        "ai-file-bloat: NESTED agent md over warning threshold flagged" \
-        AGENT_WARN=3 AGENT_HIGH=99
-}
-
-# ============================================================================
 # mcp-misconfiguration — *.json with insecure http:// (non-localhost)
 # ============================================================================
 test_mcp_config() {
@@ -364,40 +307,6 @@ test_harness_logic() {
     list="$(list_of "$f")"
     assert_silent harness-logic "$list" \
         "harness-logic: namespaced agentType + lockfile-only install + indexed ref are silent"
-}
-
-# ============================================================================
-# doc-file-bloat — */docs/*.md over the DOC_WARN/DOC_HIGH thresholds. This is the
-# arm split out of ai-file-bloat (#222): a docs file must emit doc-file-bloat and
-# NOT ai-file-bloat.
-# ============================================================================
-test_doc_file_bloat() {
-    local d f list
-    d="$(fresh_dir)"
-
-    command mkdir -p "$d/docs"
-    f="$d/docs/guide.md"
-    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
-    list="$(list_of "$f")"
-
-    # 5-line docs file, HIGH driven to 3 -> exceeds high (HIGH), under doc-file-bloat.
-    assert_fires doc-file-bloat "$list" "documentation exceeds high threshold" \
-        "doc-file-bloat: docs/*.md over high threshold flagged" \
-        DOC_WARN=2 DOC_HIGH=3
-    # It must NOT surface under the old ai-file-bloat slug (the split is the point).
-    assert_silent ai-file-bloat "$list" \
-        "doc-file-bloat: docs bloat does not emit under ai-file-bloat" \
-        DOC_WARN=2 DOC_HIGH=3
-
-    # Warning arm (MEDIUM).
-    assert_fires doc-file-bloat "$list" "documentation exceeds warning threshold" \
-        "doc-file-bloat: docs/*.md over warning threshold flagged" \
-        DOC_WARN=3 DOC_HIGH=99
-
-    # Counter: comfortably under both -> silent.
-    assert_silent doc-file-bloat "$list" \
-        "doc-file-bloat: docs/*.md under thresholds is silent" \
-        DOC_WARN=50 DOC_HIGH=99
 }
 
 # ============================================================================
@@ -495,11 +404,9 @@ fi
 
 run_test test_agent_frontmatter "agent-frontmatter: naming, fences, required fields, model, wildcard"
 run_test test_skill_frontmatter "skill-frontmatter: description, structural section, metadata.yml"
-run_test test_ai_file_bloat "ai-file-bloat: warn/high threshold arms (CLAUDE.md, SKILL.md)"
 run_test test_mcp_config "mcp-misconfiguration: insecure http:// vs localhost allowlist"
 run_test test_hook_safety "hook-safety: destructive commands + secret leaks vs benign"
 run_test test_harness_logic "harness-logic: ref-collision, bare agentType, unsafe interp, install"
-run_test test_doc_file_bloat "doc-file-bloat: docs/*.md warn/high arms, not ai-file-bloat"
 run_test test_claude_md_drift "claude-md-drift: missing backtick path vs existing/template/glob"
 run_test test_config_inconsistency "config-inconsistency: broken plugin:name ref vs resolvable/non-plugin"
 
