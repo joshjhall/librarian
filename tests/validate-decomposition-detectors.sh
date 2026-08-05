@@ -50,6 +50,7 @@
 #   sh-region — the `# --- tests ---` marker, BOTH impls          -> 1 case red
 #   fanin-cap — the `count <= seam_max_fanin` guard dropped, BOTH -> 1 case red
 #   fanin-callers — the `and callers` guard dropped, BOTH impls  -> 1 case red
+#   rs-pending — the standalone-#[test] attribute carry, BOTH impls-> 1 case red
 # All went red under mutation and green on revert.
 #
 # The last six were added by the pre-PR review. Cycle 1: the fourth decline
@@ -319,6 +320,35 @@ EOF
     # #[cfg(test)] to EOF is excluded — the rule that used to be prose in two agents.
     assert_fires "$list" file-length "5 test-excluded" \
         "rust: #[cfg(test)] region excluded from production LOC"
+
+    # A STANDALONE top-level `#[test]` attribute (no `mod tests` wrapper) is a
+    # THIRD, distinct mechanism: the attribute line sets a pending flag that
+    # marks the NEXT unit as test code. The fixture above never reaches it —
+    # its #[test] sits indented inside a #[cfg(test)] block, which the
+    # whole-file region marker already excluded to EOF. Valid Rust, own branch,
+    # so it needs its own fixture.
+    f="$d/standalone.rs"
+    command cat >"$f" <<'EOF'
+pub fn main_entry(s: &str) -> String {
+    parse_a(s)
+}
+
+fn parse_a(s: &str) -> String {
+    s.to_string()
+}
+
+#[test]
+fn helper_one() {
+    assert!(true);
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "3 test-excluded" \
+        "rust: a standalone top-level #[test] attribute excludes the next unit"
+    # Control: the two production fns are still counted, so the assertion above
+    # cannot pass by the file being excluded wholesale.
+    assert_fires "$list" file-length "2 top-level units" \
+        "rust: the standalone-#[test] file still counts its production units"
 }
 
 # ============================================================================
