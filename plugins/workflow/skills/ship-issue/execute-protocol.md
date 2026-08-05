@@ -115,12 +115,30 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      tree, so a failed local checkout can never strand the label swap (the exact
      half-finish issue #225 reports):
 
-     a. Label the issue `status/pr-pending` → the `Closes #{N}` in the PR body
-     closes it on merge; remove `status/in-progress`:
+     a. **Clear the in-flight status labels.** The merge has already landed by
+     the time this step runs, so the `Closes #{N}` in the PR body is closing the
+     issue right now — do **NOT** add `status/pr-pending` here. That label means
+     "a PR exists and is awaiting merge"; on this path the wait is already over,
+     so adding it would stamp a closed issue with a stale in-flight label that
+     nothing later removes (#654). Remove both instead:
 
         ```bash
-        gh issue edit {N} --add-label "status/pr-pending" --remove-label "status/in-progress"
+        gh issue edit {N} --remove-label "status/in-progress" --remove-label "status/pr-pending"
         ```
+
+        ```bash
+        # GitLab
+        glab issue update {N} --unlabel "status/in-progress" --unlabel "status/pr-pending"
+        ```
+
+     The `status/pr-pending` removal covers a PR that picked the label up in an
+     earlier parked cycle (a dead-end that a human later un-parked, or an L1–L2
+     ship whose merge gate was crossed by hand). When the label was never
+     applied this is a **clean no-op**: `gh issue edit --remove-label` exits 0
+     for a label that exists in the repo but is absent from the issue, and only
+     errors when the label does not exist in the **repo** at all (which is not
+     this case — ship applies it on the L1–L2 path). No `|| true` guard is
+     needed, and adding one would only mask a genuinely missing label.
 
      b. Comment on the issue:
 
@@ -197,6 +215,13 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
 
    CI green + review clean. At L1–L2 the merge gate is a human's — ready for
    human merge. (An L3–L4 run would have auto-merged.)
+
+   **After you merge:** remove `status/pr-pending` from #{N}. The squash
+   commit's `Closes #{N}` closes the issue, but nothing takes the label off —
+   ship has already exited by then (#654). `/workflow:golem --teardown {N}`
+   does it for you on a golem run; finishing by hand means
+   `gh issue edit {N} --remove-label "status/pr-pending"`
+   (GitLab: `glab issue update {N} --unlabel "status/pr-pending"`).
    ```
 
    Then STOP — do not proceed to Step 5.

@@ -10,6 +10,7 @@
 #   5. SKILL.md ↔ agent cross-reference integrity (tests/validate-crossrefs.sh)
 #   5b. next-issue->ship-issue hand-off ordering (tests/validate-next-issue-handoff.sh)
 #   5c. review-harness authority + loud skip (tests/validate-review-authority.sh)
+#   5d. status/pr-pending label lifecycle (tests/validate-label-lifecycle.sh)
 #   6. Pre-scan empty/missing-input robustness (tests/validate-prescans.sh)
 #   7. pre-review-gates scan categories + skip policy (tests/validate-pre-review-gates.sh)
 #   8. codebase-audit issue-template sync (tests/validate-template-sync.sh)
@@ -147,6 +148,7 @@ run_stage "Skill contract validation" bash "$SCRIPT_DIR/validate-contracts.sh"
 run_stage "SKILL.md ↔ agent cross-reference integrity" bash "$SCRIPT_DIR/validate-crossrefs.sh"
 run_stage "next-issue->ship-issue hand-off ordering" bash "$SCRIPT_DIR/validate-next-issue-handoff.sh"
 run_stage "review-harness authority + loud skip" bash "$SCRIPT_DIR/validate-review-authority.sh"
+run_stage "status/pr-pending label lifecycle" bash "$SCRIPT_DIR/validate-label-lifecycle.sh"
 run_stage "Pre-scan empty/missing-input robustness" bash "$SCRIPT_DIR/validate-prescans.sh"
 run_stage "pre-review-gates scan categories + skip policy" bash "$SCRIPT_DIR/validate-pre-review-gates.sh"
 run_stage "codebase-audit issue-template sync" bash "$SCRIPT_DIR/validate-template-sync.sh"

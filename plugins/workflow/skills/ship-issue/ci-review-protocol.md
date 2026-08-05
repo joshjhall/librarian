@@ -185,6 +185,15 @@ iteration counter by hand.
     for the human** — never lapse-and-default (`autonomy-levels.md` § *Standing
     rule*).
 
+    `status/pr-pending` is correct **while** the PR is parked — it is exactly the
+    "awaiting merge" signal. Say in the hand-off that it must come **off** once
+    the PR eventually lands: the merge happens after this run has exited, so no
+    step of ship is left to clean it up and the squash commit closes the issue
+    with the label still attached (#654). `/workflow:golem --teardown {N}` owns
+    the sweep on a golem run; a human finishing by hand runs
+    `gh issue edit {N} --remove-label "status/pr-pending"`
+    (GitLab: `glab issue update {N} --unlabel "status/pr-pending"`).
+
 The harness stops on its own once the per-check cap or the shared budget is
 reached, so there is no separate "after 3 attempts" step — surface any
 still-failing results to the user as above.

@@ -198,7 +198,14 @@ Rules that hold for every dead-end summary, at every level:
 - **Never merge**, never force past the merge invariant, never fabricate a human
   answer or lapse-and-default (see § *Standing rule* below).
 - Leave the PR **parked** (`status/pr-pending`), not merged, not in a prompting
-  state.
+  state. The label is correct for as long as the PR sits there — but state in
+  the hand-off that it must be **removed once the PR lands**. A dead-end is
+  resolved by a human after this run has exited, so nothing downstream takes the
+  label off and the squash commit's `Closes #{N}` closes the issue with a stale
+  in-flight label on it (#654). `/workflow:golem --teardown {N}` owns that sweep
+  on a golem run; by hand it is
+  `gh issue edit {N} --remove-label "status/pr-pending"`
+  (GitLab: `glab issue update {N} --unlabel "status/pr-pending"`).
 - **Surface it on the feed** as a `dead-end` event (message begins `DEAD-END:`)
   so `golem-status.sh` / `golem-gate-watch.sh` flag it distinctly from a routine
   `escalation` and point the operator at `golem-attach.sh {N}`. See
