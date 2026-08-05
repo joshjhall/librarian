@@ -71,40 +71,56 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    With the invariant satisfied, dispatch by level:
 
    - **L3–L4 — auto-merge, then prune (worktree-aware).** Merge the PR yourself
-     (squash), then do the cleanup inline. First detect whether this run is in a
-     **linked worktree** — an `EnterWorktree` session or an `orchestrate`
-     per-golem worktree — because `main` is checked out in the **primary**
-     worktree and git refuses a second checkout of it. Use the same `git
-     rev-parse` idiom as `hooks/golem-notify.sh` and
-     `scripts/seed-worktree-trust.sh`: `git rev-parse --git-dir` != `git rev-parse
-     --git-common-dir` means a linked worktree (`IN_WORKTREE=1`); equal means the
-     primary checkout (`IN_WORKTREE=0`). Merge on that flag —
+     (squash), then do the cleanup inline.
 
-     **Primary checkout** — merge with `--delete-branch`; `gh` fast-forwards the
-     local `main`:
-
-     ```bash
-     gh pr merge "$PR_NUM" --squash --delete-branch
-     ```
-
-     **Linked worktree** — do NOT pass `--delete-branch` (it forces a local `git
-     checkout main` to prune, which fails with `'main' is already used by worktree
-     at …`). Merge without it, then delete the remote branch explicitly, which
-     needs no local checkout:
+     **Decide `--delete-branch` on whether a worktree HOLDS the branch — not on
+     where this session is (#653).** `--delete-branch` makes `gh` prune the local
+     branch, and git refuses to delete a branch that any worktree has checked
+     out. That is a fact about **the branch**, not about the caller: merging from
+     the **primary checkout** while the golem worktree still exists fails exactly
+     the same way. Keying off session location misses that combination — and it
+     is now the *routine* one, since #640 made golem Phase D park the session in
+     the main checkout (`ExitWorktree keep`) **before** `worktree-rm.sh` prunes.
 
      ```bash
-     gh pr merge "$PR_NUM" --squash
-     git push origin --delete "$BRANCH"   # remote prune; ignore "remote ref does not exist"
+     BRANCH="$(gh pr view "$PR_NUM" --json headRefName -q .headRefName)"
+
+     # Does ANY worktree hold this branch? (`--porcelain` prints one
+     # `branch refs/heads/<name>` line per worktree; `-x` anchors the whole line
+     # so `feature/issue-6` cannot match `feature/issue-65`.)
+     if git worktree list --porcelain | command grep -qx "branch refs/heads/$BRANCH"; then
+         gh pr merge "$PR_NUM" --squash              # a worktree holds it: local prune would fail
+     else
+         gh pr merge "$PR_NUM" --squash --delete-branch
+     fi
      ```
+
+     **Then prune the remote UNCONDITIONALLY — on every path, whichever arm ran
+     (#653 AC2):**
+
+     ```bash
+     git push origin --delete "$BRANCH" 2>/dev/null || true   # tolerate "remote ref does not exist"
+     ```
+
+     This step is **not** conditional and must **never** be gated on `gh`'s exit
+     code. When `gh` fails the local branch delete it **aborts the rest of its
+     cleanup** — including the remote delete — while still **exiting 0**. Observed
+     on PR #652: `state: MERGED`, `RC=0`, and `feature/issue-640` still on the
+     remote afterward. A caller trusting `RC` alone concludes the branch was
+     pruned when it was not, which is why the prune runs on its own rather than as
+     an error path. It is idempotent: on the `--delete-branch` arm the ref is
+     already gone and the `|| true` absorbs the "remote ref does not exist".
 
      **If `gh pr merge` exits non-zero, classify before calling it a dead-end.** A
      post-merge **cleanup** failure (the local `checkout main` in a worktree) is
      NOT a merge refusal — the server-side merge already landed. Check the PR's
      real state with `gh pr view "$PR_NUM" --json state -q .state`: a state of
      **`MERGED`** means the merge succeeded and the non-zero was cleanup — this is
-     **not** a dead-end, so finish the remote-branch delete if it did not run
-     (`git push origin --delete "$BRANCH"`, ignore "remote ref does not exist")
-     and continue to the cleanup steps below. **Any other state** (`OPEN`, blank)
+     **not** a dead-end, so continue to the unconditional remote prune above and
+     then the cleanup steps below. (Because that prune is unconditional rather
+     than an error path, this branch needs no special-case delete of its own —
+     which is the point: the RC=0 variant of the same failure would never have
+     reached an error path at all.) **Any other state** (`OPEN`, blank)
      is a genuine refusal (branch protection needs a human approval the golem
      can't supply, or merge is disabled): treat it as a **dead-end** — log the
      error, leave the PR open + labeled, emit the dead-end summary, and STOP for a
@@ -143,13 +159,19 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      b. Comment on the issue:
 
         ```bash
-        gh issue comment {N} --body "Fix merged in PR #{pr_number} (squash + delete-branch) after green CI + clean review."
+        gh issue comment {N} --body "Fix merged in PR #{pr_number} (squash) after green CI + clean review."
         ```
 
      c. **Primary checkout only:** `git checkout main` (then `git pull` to
-     fast-forward the merge). **Skip in a linked worktree** (`IN_WORKTREE=1`) —
-     its HEAD need not move and the golem worktree is torn down by
-     `worktree-rm.sh`.
+     fast-forward the merge). **Skip in a linked worktree** — its HEAD need not
+     move and the golem worktree is torn down by `worktree-rm.sh`. This is the
+     one step that genuinely turns on **session location**, so detect it here
+     with the repo-standard idiom (`git rev-parse --git-dir` != `git rev-parse
+     --git-common-dir` means a linked worktree; equal means the primary
+     checkout) — the same check `hooks/golem-notify.sh` and
+     `scripts/seed-worktree-trust.sh` use. Do **not** reuse it to decide
+     `--delete-branch` above: that is a question about the branch, not the
+     caller (#653).
      d. Delete the state file (`.claude/memory/tmp/next-issue-{N}.json`)
      e. Show the PR URL, then **exit** — skip the L1–L2 labeling/comment steps
      below and Step 5.
