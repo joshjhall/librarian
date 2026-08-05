@@ -26,6 +26,7 @@ to every task, not just this topic.
 - [Scrub GIT_* in temp-repo tests](flaky-golem-gate-watch-test.md) — push exports GIT_DIR into hooks → tests hit the OUTER repo; reads as flake
 - [send-keys rc proves nothing](send-keys-rc-proves-nothing.md) — tmux exits 0 on an unknown key name and types it literally; assert the ARGUMENT (#659)
 - [local can't self-reference](local-declaration-cannot-self-reference.md) — `local a=$1 b=$a` aborts under set -u; shellcheck SC2318 catches it — lint before you debug
+- [Apostrophe ends a quoted awk program](quoted-awk-program-apostrophe.md) — even in a COMMENT; plus awk has no block scope, so helper loop vars must be params (#663)
 
 ## Lint & format gates
 

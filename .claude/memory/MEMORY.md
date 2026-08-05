@@ -34,6 +34,7 @@
 - [Measure a suppression before keeping it](measure-suppression-before-keeping-it.md) — neuter the predicate and diff; a guard can buy 0 rows and cost a false negative (#604)
 - [Expand before you scope a path](path-guard-must-expand-before-scoping.md) — unexpanded `~` → nonexistent path → fail-open → silent bypass; same target must decide alike in every spelling (#662)
 - [Mutate after every security fixture](mutate-after-every-security-fixture.md) — 2 injection fixtures passed without the fix too (#596)
+- [Mutate every RULE, not every test](mutation-round-finds-the-untested-rule.md) — the rule with 0 failures is the one the round exists to find (#663)
 - [Test defined but never registered](test-defined-but-never-registered.md) — no `run_test` line = never runs; guard by NAME SETS, not counts (#596)
 - [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry masks later assertions; use `?.`
 - [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice (#544, #549)
