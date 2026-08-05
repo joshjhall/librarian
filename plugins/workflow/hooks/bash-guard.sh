@@ -330,6 +330,25 @@ mktemp_var="$(printf '%s' "$norm" |
     "$SED" -n 's/.*\(^\|[^A-Za-z0-9_]\)\([A-Za-z_][A-Za-z0-9_]*\)=[`$]\{1\}[({]*mktemp[[:space:]].*/\2/p' |
     "$HEAD" -n1)"
 
+# `_rule_b_target` echoes the target directory frozen at a git-verb match: the
+# chained `-C` operand when this invocation had a usable one, else the `cd` in
+# effect at this point in statement order, else "" meaning "the payload cwd".
+#
+# It exists so the poison rule lives in ONE place. `git_C_bad` is set when any
+# `-C` operand in the invocation was unresolvable (a `$var`/backtick), and it must
+# discard the WHOLE chain rather than just that operand — git re-chdirs on every
+# `-C`, so an earlier literal says nothing about where the command actually lands.
+# Falling back to `cd_dir`/cwd is the fail-open direction. Three call sites (one
+# per git verb) route through here; inlining the rule would be the
+# harden-one-knob-grep-every-sibling class waiting to happen (#662 review 3).
+_rule_b_target() {
+    if [ "${git_C_bad:-0}" = "1" ] || [ -z "${git_C:-}" ]; then
+        printf '%s' "${cd_dir:-}"
+        return 0
+    fi
+    printf '%s' "$git_C"
+}
+
 # is_scratch <path> -> return 0 only when the path is PREFIX-anchored under a
 # recognized scratch root (/tmp, /var/tmp, $TMPDIR). A substring match would
 # wrongly carve out a live path that merely contains `/tmp/` (`src/tmp/live`) or
@@ -573,6 +592,7 @@ while IFS= read -r seg; do
             # the target tree. Reset per segment — a `-C` belongs to ITS OWN git
             # invocation and must never leak into a later one.
             git_C=""
+            git_C_bad=0 # set when any `-C` operand in THIS invocation is unresolvable
             while :; do
                 sub="${rest%% *}"
                 case "$rest" in *" "*) ;; *) break ;; esac
@@ -583,12 +603,41 @@ while IFS= read -r seg; do
                         _optval="${rest%% *}"
                         if [ "$sub" = "-C" ]; then
                             case "$_optval" in
-                                '' | *'$'* | *'`'*) ;; # unresolvable -> leave unset
+                                # UNRESOLVABLE operand. It is not enough to skip
+                                # it: git re-chdirs on EVERY `-C`, so a later
+                                # `-C "$var"` fully re-targets the tree. Leaving a
+                                # `git_C` accumulated from an earlier LITERAL
+                                # operand would make the hook decide about a tree
+                                # the command may never touch — wrong in BOTH
+                                # directions (a false allow if the real target is
+                                # a peer worktree, or a wrong-tree deny naming an
+                                # uninvolved one). So POISON the whole invocation
+                                # and fall back to the cwd-only fail-open path
+                                # (#662 review cycle 3, dynamically repro'd).
+                                '' | *'$'* | *'`'*) git_C_bad=1 ;;
                                 *)
                                     _optval="${_optval#\"}"
                                     _optval="${_optval%\"}"
                                     _optval="${_optval#\'}"
                                     _optval="${_optval%\'}"
+                                    # Expand `~` PER OPERAND, before it is folded
+                                    # into the chain: once joined, a mid-chain
+                                    # tilde becomes `a/~`, which matches neither
+                                    # `~` nor `~/*` at the end and so is never
+                                    # expanded — it lands on the nonexistent
+                                    # `<cwd>/a/~` and fail-opens. A leading tilde
+                                    # only worked by string-shape luck (#662
+                                    # review cycle 3, dynamically repro'd). Like
+                                    # real chdir, an expanded (absolute) `~`
+                                    # RESETS the chain.
+                                    # shellcheck disable=SC2088  # the quoted `~` is
+                                    # a literal match PATTERN for the operand as
+                                    # typed; the $HOME substitution on the right is
+                                    # exactly what SC2088 asks for.
+                                    case "$_optval" in
+                                        "~") [ -n "${HOME:-}" ] && _optval="$HOME" ;;
+                                        "~/"*) [ -n "${HOME:-}" ] && _optval="$HOME/${_optval#\~/}" ;;
+                                    esac
                                     # CHAIN repeated `-C`, matching real git: each
                                     # `-C` is a chdir relative to the PREVIOUS one,
                                     # so `-C a -C b` targets `<cwd>/a/b`. Keeping
@@ -627,14 +676,14 @@ while IFS= read -r seg; do
                 clean)
                     target_ok "$seg" && continue
                     matched="git clean"
-                    matched_dir="${git_C:-$cd_dir}"
+                    matched_dir="$(_rule_b_target)"
                     break
                     ;;
                 reset)
                     case " $rest " in
                         *" --hard"*)
                             matched="git reset --hard"
-                            matched_dir="${git_C:-$cd_dir}"
+                            matched_dir="$(_rule_b_target)"
                             break
                             ;;
                     esac
@@ -646,7 +695,7 @@ while IFS= read -r seg; do
                     case " $rest " in
                         *" -- "*)
                             matched="git checkout --"
-                            matched_dir="${git_C:-$cd_dir}"
+                            matched_dir="$(_rule_b_target)"
                             break
                             ;;
                     esac

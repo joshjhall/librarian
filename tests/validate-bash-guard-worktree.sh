@@ -309,23 +309,82 @@ test_deny_repeated_dashC_chains() {
     # The fixture makes the two paths genuinely different worktrees, so a decision
     # that named the wrong one cannot pass: the assertion reads the worktree path
     # out of the deny reason rather than just checking deny-vs-allow.
-    local nest="$WT_DIR/nested"
-    git_clean -C "$MAIN_DIR" worktree add -q -b chain-nested "$MAIN_DIR/a/b" >/dev/null 2>&1 || {
-        skip_test "could not build the chained-C fixture"
+    # BOTH paths must be real, DIFFERENT worktrees. Building only `a/b` would make
+    # the pre-fix code resolve `<cwd>/b` — a path that then does not exist — so it
+    # would fail-open to ALLOW and the test would pass against a plain revert while
+    # never exercising the historically-real failure: denying by NAMING an
+    # unrelated but real worktree (#662 review cycle 3 caught exactly this
+    # incomplete fixture).
+    git_clean -C "$MAIN_DIR" worktree add -q -b chain-real "$MAIN_DIR/a/b" >/dev/null 2>&1 || {
+        skip_test "could not build the chained-C fixture (a/b)"
+        return 0
+    }
+    git_clean -C "$MAIN_DIR" worktree add -q -b chain-decoy "$MAIN_DIR/b" >/dev/null 2>&1 || {
+        skip_test "could not build the chained-C decoy (b)"
         return 0
     }
     run_guard "$MAIN_DIR" "git -C a -C b reset --hard"
     assert_equals "deny" "$(decision "$GUARD_OUT")" "chained \`-C a -C b\` into a worktree is DENIED"
     local reason
     reason="$(printf '%s' "$GUARD_OUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)"
+    # Assert on the NAMED tree, not deny-vs-allow: with the decoy present, the
+    # pre-fix code denies too — just naming the wrong worktree.
     assert_contains "$reason" "$MAIN_DIR/a/b" \
-        "chained \`-C\` names the REAL target (<cwd>/a/b), not <cwd>/b"
+        "chained \`-C\` names the REAL target (<cwd>/a/b)"
+    assert_not_contains "$reason" "worktree \`$MAIN_DIR/b\`" \
+        "chained \`-C\` does NOT name the decoy (<cwd>/b) — the wrong-tree deny"
     # An ABSOLUTE operand resets the chain, exactly as chdir does.
     run_guard "$MAIN_DIR" "git -C a -C $WT_DIR reset --hard"
     reason="$(printf '%s' "$GUARD_OUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)"
     assert_contains "$reason" "$WT_DIR" \
         "an ABSOLUTE \`-C\` resets the chain rather than appending"
-    command true "$nest" # keep the local referenced under set -u
+}
+test_failopen_chain_poisoned_by_later_var() {
+    jq_required || return 0
+    # #662 review cycle 3 (BLOCKING, dynamically repro'd): git re-chdirs on EVERY
+    # `-C`, so a later unresolvable `-C "$var"` fully re-targets the tree. Trusting
+    # the chain accumulated from an earlier LITERAL operand decided about a tree
+    # the command may never touch — a wrong-tree DENY here (it named `a/b`).
+    # The whole invocation must fall back to the cwd-only fail-open path.
+    run_guard "$MAIN_DIR" 'git -C a/b -C "$var" reset --hard'
+    assert_equals "allow" "$(decision "$GUARD_OUT")" \
+        "an unresolvable LATER \`-C\` poisons the whole chain (fail-open, not a stale wrong-tree deny)"
+}
+test_deny_tilde_mid_chain() {
+    jq_required || return 0
+    # #662 review cycle 3 (BLOCKING, dynamically repro'd): once folded into the
+    # chain, a mid-chain tilde becomes `a/~`, which matched neither `~` nor `~/*`
+    # at the end, so it was never expanded — it landed on the nonexistent
+    # `<cwd>/a/~` and fail-opened. A LEADING tilde only worked by string-shape
+    # luck. Expansion is now per-operand, and an expanded (absolute) tilde resets
+    # the chain like any absolute operand.
+    if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ] || [ ! -w "$HOME" ]; then
+        skip_test "HOME unset or not writable"
+        return 0
+    fi
+    local sb rel
+    sb="$(command mktemp -d "$HOME/bgwt-midchain.XXXXXX" 2>/dev/null)" || {
+        skip_test "could not create a sandbox under HOME"
+        return 0
+    }
+    git_clean -C "$sb" init -q
+    git_clean -C "$sb" config user.email "test@example.com"
+    git_clean -C "$sb" config user.name "Test"
+    printf 'x\n' >"$sb/f"
+    git_clean -C "$sb" add f
+    git_clean -C "$sb" -c commit.gpgsign=false commit -qm s
+    git_clean -C "$sb" worktree add -q -b midchain-wt "$sb/wt" >/dev/null 2>&1
+    rel="${sb#"$HOME"/}"
+
+    run_guard "$MAIN_DIR" "git -C a -C ~/$rel/wt reset --hard"
+    assert_equals "deny" "$(decision "$GUARD_OUT")" \
+        "a MID-CHAIN \`~/\` operand is expanded and DENIED (not silently fail-opened)"
+    local reason
+    reason="$(printf '%s' "$GUARD_OUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)"
+    assert_contains "$reason" "$sb/wt" \
+        "the expanded mid-chain tilde RESETS the chain (names \$HOME/../wt, not <cwd>/a/...)"
+
+    command rm -rf "$sb"
 }
 test_deny_bare_tilde_operand() {
     jq_required || return 0
@@ -709,6 +768,8 @@ run_test test_deny_cd_persists_across_segments "AC1 deny: cd persists across an 
 run_test test_deny_tilde_path_to_worktree "AC1 deny: ~/-prefixed path (review BLOCKING regression)"
 run_test test_deny_peer_to_peer "AC1 deny: peer worktree -> peer worktree"
 run_test test_deny_repeated_dashC_chains "AC1 deny: chained -C a -C b names the REAL target (cycle-2 BLOCKING)"
+run_test test_failopen_chain_poisoned_by_later_var "fail-open: later unresolvable -C poisons the chain (cycle-3 BLOCKING)"
+run_test test_deny_tilde_mid_chain "AC1 deny: mid-chain ~/ expands and resets (cycle-3 BLOCKING)"
 run_test test_deny_bare_tilde_operand "targeting: bare ~ resolves to \$HOME"
 run_test test_failopen_git_dir_env_var "fail-open: GIT_DIR= env-var target (documented gap)"
 run_test test_failopen_separated_git_dir_flag "fail-open: separated --git-dir <p> (documented gap)"
