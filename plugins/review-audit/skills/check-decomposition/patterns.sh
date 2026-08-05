@@ -300,13 +300,13 @@ while IFS= read -r file; do
             }
         }
         # Unit spans: header line to the line before the next header (or EOF).
-        for (i = 1; i <= nu; i++) ue[i] = (i < nu) ? us[i + 1] - 1 : total
+        for (i = 1; i <= nu; i++) uend[i] = (i < nu) ? us[i + 1] - 1 : total
 
         # ---- generic sizing layer -----------------------------------------
         # Lines belonging to a test unit.
         for (i = 1; i <= nu; i++) {
             if (!ut[i]) continue
-            for (j = us[i]; j <= ue[i]; j++) tl[j] = 1
+            for (j = us[i]; j <= uend[i]; j++) tl[j] = 1
         }
         # Whole-file test-region markers: match to EOF.
         for (i = 1; i <= total; i++) {
@@ -362,11 +362,11 @@ while IFS= read -r file; do
             if (ut[i]) continue
             p = family_prefix(un[i])
             if (nc > 0 && cp[nc] == p && clast[nc] == i - 1) {
-                cn[nc]++; ce[nc] = ue[i]; clast[nc] = i
+                cn[nc]++; ce[nc] = uend[i]; clast[nc] = i
                 cmem[nc, cn[nc]] = un[i]
             } else {
                 nc++
-                cp[nc] = p; cs[nc] = us[i]; ce[nc] = ue[i]
+                cp[nc] = p; cs[nc] = us[i]; ce[nc] = uend[i]
                 cn[nc] = 1; clast[nc] = i
                 cmem[nc, 1] = un[i]
             }
@@ -426,7 +426,7 @@ while IFS= read -r file; do
                 if (!found) continue
                 count++
                 for (m = 1; m <= nu; m++) {
-                    if (j >= us[m] && j <= ue[m]) {
+                    if (j >= us[m] && j <= uend[m]) {
                         if (!(un[m] in seen_call)) { seen_call[un[m]] = 1; ncall++; calls[ncall] = un[m] }
                         break
                     }
