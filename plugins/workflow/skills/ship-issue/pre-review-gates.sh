@@ -807,6 +807,104 @@ has_repo_rooted_sh_test() {
     [ -n "$hit" ]
 }
 
+# has_repo_rooted_foreign_py_test <name-no-ext> <basename> — 0 when a repo-rooted
+# SHELL test both names and mentions this python source (#644).
+#
+# Cross-language on purpose. The py arm above it looks only for python-named
+# tests (test_<name>.py, <name>_test.py); in a repo whose python is deliberately
+# tested by bash gates no such file will ever exist, so that arm cannot resolve
+# BY CONSTRUCTION and every python source carries a permanent HIGH row. Measured
+# before this helper: 15 of 15 plugins/**/patterns.py fired while 0 of 15 sibling
+# patterns.sh did — same directories, same suites, and the differing outcome was
+# an artifact of which arm got a repo-rooted probe (#598 gave the sh arm one),
+# not a real difference in coverage.
+#
+# TWO anchors, and the finding needs BOTH. Each is load-bearing:
+#
+#   name    — sh_test_find_args, the same OR-chain the sh arm uses. This is also
+#             what makes #601 structurally unreachable here: the search is
+#             derived from the SOURCE's own basename, so it cannot degenerate
+#             into a constant that resolves for every source the way a
+#             {name}-less test_discovery template would.
+#   content — the candidate must mention <basename>, DELIMITED. Cross-language
+#             coverage is a weaker claim than same-language, so this probe is
+#             deliberately STRICTER than the sh arm it mirrors: sharing a stem
+#             with a shell suite is not, on its own, evidence that the suite
+#             exercises the python file. Measured to cost 0 rows across the tree
+#             today — every .py that resolves by name also mentions itself in
+#             that test — so the strictness is free insurance rather than a live
+#             tradeoff.
+#
+# The content anchor is DELIMITED, not a bare substring, and that is load-bearing
+# rather than tidiness. An unanchored `grep -F "patterns.py"` also matches
+# `get_patterns.py`, `not_patterns.py` and `patterns.py.bak`, so a suite named
+# validate-patterns.sh that discusses an unrelated get_patterns.py satisfied BOTH
+# anchors and silently suppressed a real HIGH row — a reproduced false negative,
+# and exactly the over-match class #598/#601 exist to prevent. The basename is
+# regex-escaped and required to sit between non-filename characters (or a line
+# edge), so a path-qualified `plugins/x/patterns.py` still counts while a
+# superstring does not.
+#
+# NO hyphen-stripped arm, unlike has_repo_rooted_sh_test. Measured across every
+# hyphenated python stem in the tree — golem-event-listener -> event-listener,
+# autonomy-resolve -> resolve, agnix-normalize -> normalize — stripping resolves
+# ZERO additional files while carrying exactly the generic-token over-match risk
+# sh_test_find_args_exact documents (a bare `version` matching
+# tests/release/10-version-utils.sh). It buys nothing and costs false-negative
+# surface, so the foreign probe stays full-name only.
+#
+# `-not -path '*/fixtures/*'` carries over from the sh helper for its reason: a
+# fixture is an INPUT to a test, not a test for the source it happens to name.
+# MEASURED to be load-bearing here too — dropping it lets a
+# tests/fixtures/**/validate-<name>.sh that mentions the source suppress a real
+# row.
+#
+# The sibling symbol helper also excludes `-name '*.md'`; this one deliberately
+# does NOT, because here it would be dead code. That helper searches the tests/
+# tree UNFILTERED by name, so a doc can reach it; this probe only ever sees
+# candidates that matched sh_test_find_args, and every one of those 40 arms ends
+# in `.sh` or `.bash`. No `.md` can be in the candidate set to begin with, so the
+# clause would exclude nothing — and a test written to "pin" it passes with the
+# clause deleted, which is how it was caught.
+#
+# The find is resolved ONCE into a command substitution rather than piped into a
+# reader — a `find | head`-shaped probe exits 141 (SIGPIPE) under `set -o
+# pipefail` when find outruns it, which would read as a scan failure.
+#
+# The caller has already checked that <_PROJECT_ROOT>/tests exists.
+has_repo_rooted_foreign_py_test() {
+    local name="$1" basename="$2"
+    local find_args=() tok candidates cand esc pattern
+
+    while IFS= read -r tok; do
+        find_args+=("$tok")
+    done <<EOF
+$(sh_test_find_args "$name")
+EOF
+
+    candidates="$(command find "${_PROJECT_ROOT}/tests" -type f \
+        -not -path '*/fixtures/*' \
+        \( "${find_args[@]}" \) -print 2>/dev/null)"
+    [ -n "$candidates" ] || return 1
+
+    # Escape every ERE metacharacter so the basename is matched literally, then
+    # require a non-filename character (or a line edge) on each side. `-.` are
+    # inside the bracket negation, so `-` must stay LAST there to read as a
+    # literal rather than opening a range.
+    esc="$(command printf '%s' "$basename" |
+        command sed 's/[][^$.*+?(){}|\\/]/\\&/g')"
+    pattern="(^|[^A-Za-z0-9_.-])${esc}([^A-Za-z0-9_.-]|\$)"
+
+    while IFS= read -r cand; do
+        [ -n "$cand" ] || continue
+        command grep -qE -- "$pattern" "$cand" 2>/dev/null && return 0
+    done <<EOF
+$candidates
+EOF
+
+    return 1
+}
+
 scan_missing_tests() {
     local file="$1"
 
@@ -848,6 +946,15 @@ scan_missing_tests() {
                 command find "${_PROJECT_ROOT}/tests" \
                     -name "test_${name_no_ext}.py" \
                     -print -quit 2>/dev/null | command grep -q . && return
+                # Repo-rooted SHELL test naming this source (#644). Every probe
+                # above is python-named, so in a repo that tests its python from
+                # bash gates the arm cannot resolve by construction and the row
+                # is permanent — which is why this one reaches across languages.
+                # It is stricter than the sh arm's equivalent (name AND content,
+                # no hyphen-stripped candidate); the rationale for each anchor,
+                # and the measurements behind them, are at the helper.
+                has_repo_rooted_foreign_py_test "$name_no_ext" "$basename" &&
+                    return
             fi
             ;;
         ts | js | tsx | jsx | mjs | cjs)
