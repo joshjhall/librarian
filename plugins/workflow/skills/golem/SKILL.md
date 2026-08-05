@@ -198,8 +198,8 @@ check #6), so a solo run cannot skip it by choosing commit-only.
   prune the orphaned remote branch**, then `ExitWorktree({ action: "keep" })`,
   then `worktree-rm.sh N`.
 
-  `/workflow:golem --teardown N` **owns** this sweep (#654). The label is added
-  when the PR opens and is correct for as long as the PR sits unmerged, but on
+  `/workflow:golem --teardown N` **owns** the label sweep (#654). The label is
+  added when the PR opens and is correct for as long as the PR sits unmerged, but on
   the parked and L1–L2 paths the merge happens *after* `/workflow:ship-issue` has
   already exited — no step of ship is left to clean up, and the squash commit's
   `Closes #{N}` trailer closes the issue with the label still on it. This

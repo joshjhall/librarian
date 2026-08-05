@@ -177,6 +177,17 @@
 #     `-`-led case above, so its absence from this list would read as coverage.
 #     Note the guard still denies a spaceless path that is merely QUOTED — the
 #     quote-stripping covers that, and it is the common spelling.
+#   - the operand scan is an unquoted `for … in $_wt_rest`, so it inherits this
+#     file's existing word-splitting AND pathname expansion (no `set -f` is in
+#     effect anywhere here; the same is true of the `for tok in $seg` scan that
+#     predates it). A glob operand can therefore expand against whatever cwd the
+#     hook happens to run in. Accepted rather than special-cased: `git worktree
+#     remove` takes ONE worktree, a glob is not a spelling anyone uses for it,
+#     and the expansion cannot silently target a DIFFERENT tree than the shell
+#     would — the shell expands the same glob in the same cwd before git ever
+#     runs, so the guard and the command see the same operand. Recorded because
+#     this is a NEW use of that pattern driving a destructive verb's target
+#     resolution, which is exactly the kind of inheritance worth stating.
 # These are logged nowhere and pass silently BY DESIGN; the belt (#426 prose) and
 # human PR review remain the backstop for them.
 #

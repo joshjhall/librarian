@@ -862,6 +862,22 @@ test_allow_worktree_remove_cd_main_dot() {
     assert_decision "$MAIN_DIR" "cd $MAIN_DIR && git worktree remove --force ." allow \
         "#665 allow: \`cd <main> && remove --force .\` targets a primary checkout"
 }
+test_failopen_worktree_remove_dashled_basename() {
+    jq_required || return 0
+    # The OTHER documented gap (#677 review cycle 4). Its sibling above got a
+    # fixture and this one did not, which is the asymmetry worth removing: a gap
+    # asserted only in a comment drifts silently, and "documented" then means
+    # nothing. `-mytree` is read as a flag by the operand scanner, so the target
+    # falls back to the -C/cd/cwd base — here the MAIN checkout, a primary tree,
+    # hence allow. Asserting current behavior so a future scanner fix fails here
+    # and flips it deliberately.
+    assert_decision "$MAIN_DIR" "git worktree remove --force -mytree" allow \
+        "#665 documented gap: a dash-led basename is read as a flag (fail-open)"
+    # The `--`-separated spelling IS handled — the header claims this, so pin it.
+    # Without this the doc's "the -- form works" sentence is unverified prose.
+    assert_decision "$MAIN_DIR" "git worktree remove --force -- $WT_DIR" deny \
+        "#665: the \`--\`-separated spelling still resolves and DENIES"
+}
 test_failopen_worktree_remove_space_in_path() {
     jq_required || return 0
     # DOCUMENTED GAP (#677 review cycle 2), pinned so it stays a decision rather
@@ -1171,6 +1187,7 @@ run_test test_deny_worktree_remove_dashC_dotdot "#665 deny: -C <peer-B> remove -
 run_test test_deny_worktree_remove_cd_dotdot "#665 deny: cd <peer-B> && remove --force ../<peer-A>"
 run_test test_allow_worktree_remove_own_tree_dot "#665 allow: own worktree via bare ."
 run_test test_allow_worktree_remove_cd_main_dot "#665 allow: cd <main> && remove --force ."
+run_test test_failopen_worktree_remove_dashled_basename "#665 documented gap: dash-led basename"
 run_test test_failopen_worktree_remove_space_in_path "#665 documented gap: space in the worktree path"
 run_test test_failopen_worktree_remove_unresolvable_path "#665 fail-open: unresolvable positional operand"
 run_test test_worktree_rm_still_works "AC4: worktree-rm.sh teardown still works"
