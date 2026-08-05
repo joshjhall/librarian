@@ -141,10 +141,14 @@ test_teardown_owns_the_sweep() {
         return
     fi
 
-    assert_true "printf '%s' \"\$teardown\" | command grep -q 'remove-label \"status/pr-pending\"'" \
-        "--teardown must remove status/pr-pending (#654 AC2)"
-    assert_true "printf '%s' \"\$teardown\" | command grep -q 'unlabel \"status/pr-pending\"'" \
-        "--teardown must carry the GitLab --unlabel sibling (#654 AC2)"
+    # Both commands must use the braced `{N}` placeholder, matching every other
+    # issue-number token in this file and its companion docs. A bare `N` reads
+    # like a literal an agent could paste into a shell verbatim, so pin the
+    # spelling rather than just the presence of the command.
+    assert_true "printf '%s' \"\$teardown\" | command grep -q 'gh issue edit {N} --remove-label \"status/pr-pending\"'" \
+        "--teardown must remove status/pr-pending, using the {N} placeholder (#654 AC2)"
+    assert_true "printf '%s' \"\$teardown\" | command grep -q 'glab issue update {N} --unlabel \"status/pr-pending\"'" \
+        "--teardown must carry the GitLab --unlabel sibling, using {N} (#654 AC2)"
 
     # Merged-only: the block must say the unmerged branch keeps the label, so a
     # reader cannot hoist the sweep above the MERGED check.
