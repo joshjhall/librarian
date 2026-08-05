@@ -98,8 +98,10 @@ generator, and a nuisance generator is eventually ignored wholesale.
 
 When you decline to split:
 
-- Emit the finding anyway, with severity `info` and a `suggestion` of
-  `No action — <reason>`.
+- Emit the finding anyway, with severity `low` and a `suggestion` of
+  `No action — <reason>`. (`low`, not `info`: `finding-schema.md` defines
+  severity as exactly `critical | high | medium | low`, and the aggregator
+  filters and sorts on that enum — an out-of-enum value has no defined rank.)
 - State the reason concretely (generated artifact; single cohesive unit; the
   length is documentation; the units are mutually referential so no cut is
   cheap).

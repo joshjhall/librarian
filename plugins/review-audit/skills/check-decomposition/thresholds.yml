@@ -21,7 +21,9 @@ severity:
     over_high: high
   decomposition-seam:
     extractable: medium
-    declined: info
+    # `low`, not `info`: finding-schema.md's severity enum is exactly
+    # critical|high|medium|low, and the aggregator filters/sorts on it.
+    declined: low
 
 # Production-LOC thresholds. Production LOC excludes blank lines, comment lines,
 # and test units (per-language, computed from unit spans).

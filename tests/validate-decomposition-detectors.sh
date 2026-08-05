@@ -44,7 +44,18 @@
 #   god-mod  — the >= god_concerns requirement relaxed to >= 0   -> 1 case  red
 #   adjacency— the index-adjacency guard dropped, in BOTH impls  -> 1 case  red
 #              (py: `and idx == last_idx + 1`; sh: `clast[nc] == i - 1`)
+#   prose-decline — comment_pct >= 50 raised to >= 99, BOTH impls -> 1 case red
+#   decline-order — the cohesive branch disabled so prose wins    -> 1 case red
+#   py-region — the `if __name__` marker, BOTH impls              -> 1 case red
+#   sh-region — the `# --- tests ---` marker, BOTH impls          -> 1 case red
 # All went red under mutation and green on revert.
+#
+# The last four were added by the pre-PR review (cycle 1): the fourth decline
+# reason and the two whole-file test-REGION markers were exercised only by the
+# Codecov corpus, which asserts nothing — so a broken region regex would have
+# shown green coverage and a green suite simultaneously. Note `decline-order`:
+# it pins the BRANCH ORDER, not just the predicate, since a reason chosen by the
+# wrong arm is still a wrong finding.
 #
 # The adjacency case is here BECAUSE the first mutation round found it was the
 # one rule with no failing test — the suite stayed green with the guard removed.
@@ -176,6 +187,33 @@ EOF
     # test_parse_entry is excluded from production LOC (2 test lines).
     assert_fires "$list" file-length "2 test-excluded" \
         "python: test unit excluded from production LOC"
+
+    # Whole-file test-REGION marker: `if __name__` excludes to EOF. This is a
+    # different mechanism from the per-unit test exclusion above (TEST_REGION_RE
+    # vs TEST_UNIT_RE) and needs its own fixture — the coverage corpus carries
+    # the marker but asserts nothing, so without this a broken region regex
+    # would show green coverage and a green suite at the same time.
+    f="$d/withmain.py"
+    command cat >"$f" <<'EOF'
+def alpha(x):
+    return x
+
+def beta(x):
+    return x
+
+def gamma(x):
+    return x
+
+def delta(x):
+    return x
+
+if __name__ == "__main__":
+    alpha(1)
+    beta(2)
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "3 test-excluded" \
+        "python: if __name__ region excluded to EOF from production LOC"
 
     # Counter: one small cohesive file has no seam and is not over threshold.
     f="$d/small.py"
@@ -352,6 +390,30 @@ EOF
     # The shebang comment is counted as a comment, not production code.
     assert_fires "$list" file-length "1 comment" \
         "shell: comment lines excluded from production LOC"
+
+    # Whole-file test-REGION marker: `# --- tests ---` excludes to EOF. Same
+    # distinct mechanism as the python `if __name__` case above.
+    f="$d/withtests.sh"
+    command cat >"$f" <<'EOF'
+#!/usr/bin/env bash
+alpha() {
+    printf 'a
+'
+}
+
+beta() {
+    printf 'b
+'
+}
+
+# --- tests ---
+test_alpha() {
+    alpha
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "4 test-excluded" \
+        "shell: '# --- tests ---' region excluded to EOF from production LOC"
 }
 
 # ============================================================================
@@ -564,6 +626,34 @@ EOF
     list="$(list_of "$f")"
     assert_fires "$list" decomposition-seam "declined: no low-coupling seam found" \
         "decline: mutually referential units are declined, with the reason recorded"
+
+    # Majority prose/comment: the length is documentation, not logic. Needs
+    # MORE than cohesive_max_units units so it does not fall into the
+    # single-cohesive-unit branch first — that branch order is what this
+    # fixture pins, alongside the comment_pct >= 50 predicate itself.
+    f="$d/documented.py"
+    command cat >"$f" <<'EOF'
+# This module is mostly explanation.
+# Every function below carries a long comment block describing why it
+# exists, what it assumes, and how it fails. That is deliberate: the file
+# is a reference, and the prose is the point.
+def alpha(x):
+    return x
+
+# Beta exists for the same reason as alpha, and its comment is just as
+# long, because the explanation is the deliverable here rather than the
+# three lines of code it accompanies.
+def beta(x):
+    return x
+
+# Gamma closes the set. The comment-to-code ratio across this file is
+# well over half, which is what the decline predicate keys on.
+def gamma(x):
+    return x
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "declined: majority prose/comment" \
+        "decline: a comment-majority file is declined, with the reason recorded"
 
     # THE POINT OF THE CATEGORY: a declined file is never silent. An empty
     # findings list is not evidence that nothing needed doing, so every
