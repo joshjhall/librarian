@@ -214,10 +214,18 @@ test_gitlab_sibling_parity() {
         gh_hits="$(command grep -c -- 'remove-label "status/pr-pending"' "$f" || true)"
         glab_hits="$(command grep -c -- 'unlabel "status/pr-pending"' "$f" || true)"
 
+        # Symmetric on purpose: a GitLab-only mutation is the same defect class
+        # as a GitHub-only one, just mirrored. Checking a single direction would
+        # let `--unlabel` land without its `--remove-label` sibling silently.
         if [ "$gh_hits" -gt 0 ] && [ "$glab_hits" -eq 0 ]; then
             _fail "GitHub --remove-label without its GitLab --unlabel sibling (#654)" \
                 "File: $f" \
                 "remove-label hits: $gh_hits, unlabel hits: $glab_hits"
+        fi
+        if [ "$glab_hits" -gt 0 ] && [ "$gh_hits" -eq 0 ]; then
+            _fail "GitLab --unlabel without its GitHub --remove-label sibling (#654)" \
+                "File: $f" \
+                "unlabel hits: $glab_hits, remove-label hits: $gh_hits"
         fi
     done
 

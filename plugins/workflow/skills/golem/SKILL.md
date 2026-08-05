@@ -206,11 +206,11 @@ check #6), so a solo run cannot skip it by choosing commit-only.
   step and has **already verified `state == MERGED`** immediately above:
 
   ```bash
-  gh issue edit N --remove-label "status/pr-pending"          # GitHub
+  gh issue edit {N} --remove-label "status/pr-pending"        # GitHub
   ```
 
   ```bash
-  glab issue update N --unlabel "status/pr-pending"           # GitLab
+  glab issue update {N} --unlabel "status/pr-pending"         # GitLab
   ```
 
   Two properties this relies on:
