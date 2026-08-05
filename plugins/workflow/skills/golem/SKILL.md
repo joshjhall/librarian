@@ -194,8 +194,9 @@ check #6), so a solo run cannot skip it by choosing commit-only.
   glab mr view --source-branch feature/issue-N          # merged           (GitLab)
   ```
 
-  If merged, **first sweep the stale `status/pr-pending` label off the issue**,
-  then `ExitWorktree({ action: "keep" })`, then `worktree-rm.sh N`.
+  If merged, **first sweep the stale `status/pr-pending` label off the issue and
+  prune the orphaned remote branch**, then `ExitWorktree({ action: "keep" })`,
+  then `worktree-rm.sh N`.
 
   `/workflow:golem --teardown N` **owns** this sweep (#654). The label is added
   when the PR opens and is correct for as long as the PR sits unmerged, but on
@@ -227,9 +228,26 @@ check #6), so a solo run cannot skip it by choosing commit-only.
     that would swallow the repo-missing case, which is a real misconfiguration
     worth surfacing.
 
-  Then prune — same order and same action as the L3–L4 block above, for the same
-  two reasons (`remove` refuses on a path-entered worktree; prune-first deletes
-  the cwd). A
+  **Prune the REMOTE branch here too (#653 AC4).** `worktree-rm.sh` deletes the
+  worktree and the **local** branch (`git branch -D`); nothing in this path
+  touches the remote. On a parked / L1–L2 PR the human merges *after*
+  `/workflow:ship-issue` has exited, so ship's own remote prune never runs — and
+  this re-entry is then the last step that could do it. Without this the remote
+  keeps a stale `feature/issue-N`, which is the same orphaned-branch symptom
+  #653 fixes on the in-turn merge path, reached by the other route:
+
+  ```bash
+  git push origin --delete "feature/issue-N" 2>/dev/null || true   # tolerate "remote ref does not exist"
+  ```
+
+  This re-entry therefore owns **two** post-merge sweeps — the stale label
+  (#654) and the orphaned remote branch (#653) — and both rest on the same
+  property: `state == MERGED` was verified immediately above. That check is what
+  makes each one legitimate; on the not-yet-merged branch below, neither runs.
+
+  Then prune the worktree — same order and same action as the L3–L4 block above,
+  for the same two reasons (`remove` refuses on a path-entered worktree;
+  prune-first deletes the cwd). A
   `--teardown` re-entry usually runs from the **main checkout** already, where
   `ExitWorktree` is a documented no-op — call it anyway, so the one case that
   matters (re-entry from inside the worktree) is covered. If not yet merged, say

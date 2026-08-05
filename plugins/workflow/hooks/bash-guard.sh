@@ -166,6 +166,17 @@
 #     rather than an oversight (#677 review). The `--`-separated spelling of the
 #     same command IS handled — `--` is skipped as a flag and the path after it
 #     resolves normally.
+#   - a worktree path containing a SPACE (`git worktree remove --force "my wt"`)
+#     splits on IFS like every other operand in this file, so the scanner takes
+#     the first fragment (`my`) as the target; it resolves nowhere and the `-d`
+#     check fail-opens. Accepted for the same reason the whole DETECTION SCOPE
+#     section gives — this is a pragmatic tokenizer, not a shell parser, and
+#     honoring quotes properly means implementing quote-aware word splitting for
+#     every operand path here, not just this one. Called out explicitly (#677
+#     review cycle 2) because a space in a path is far more ORDINARY than the
+#     `-`-led case above, so its absence from this list would read as coverage.
+#     Note the guard still denies a spaceless path that is merely QUOTED — the
+#     quote-stripping covers that, and it is the common spelling.
 # These are logged nowhere and pass silently BY DESIGN; the belt (#426 prose) and
 # human PR review remain the backstop for them.
 #

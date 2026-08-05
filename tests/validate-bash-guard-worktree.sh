@@ -862,6 +862,35 @@ test_allow_worktree_remove_cd_main_dot() {
     assert_decision "$MAIN_DIR" "cd $MAIN_DIR && git worktree remove --force ." allow \
         "#665 allow: \`cd <main> && remove --force .\` targets a primary checkout"
 }
+test_failopen_worktree_remove_space_in_path() {
+    jq_required || return 0
+    # DOCUMENTED GAP (#677 review cycle 2), pinned so it stays a decision rather
+    # than drifting silently: operands are IFS-split like everywhere else in this
+    # hook, so a path containing a space yields only its first fragment, which
+    # resolves nowhere and fail-opens. Asserting the CURRENT behavior means a
+    # future change that closes the gap fails here loudly and gets to flip this
+    # to `deny` deliberately — the alternative (no fixture) lets it flip either
+    # way unnoticed.
+    local sb="$FIXTURE/spacerepo"
+    command mkdir -p "$sb"
+    git_clean -C "$sb" init -q
+    git_clean -C "$sb" config user.email "test@example.com"
+    git_clean -C "$sb" config user.name "Test"
+    printf 'x\n' >"$sb/f"
+    git_clean -C "$sb" add f
+    git_clean -C "$sb" -c commit.gpgsign=false commit -qm s
+    git_clean -C "$sb" worktree add -q -b spacewt "$sb/my wt" >/dev/null 2>&1
+    local sbc
+    sbc="$(cd "$sb" && pwd)"
+
+    # Control FIRST: the same worktree via a space-free path must DENY, so an
+    # allow below is attributable to the space and not to a broken sandbox.
+    git_clean -C "$sb" worktree add -q -b nospacewt "$sb/nospace" >/dev/null 2>&1
+    assert_decision "$sbc" "git worktree remove --force $sbc/nospace" deny \
+        "control: a space-FREE path in the same repo DENIES"
+    assert_decision "$sbc" "git worktree remove --force \"$sbc/my wt\"" allow \
+        "#665 documented gap: a path with a SPACE fail-opens (IFS split, not a shell parser)"
+}
 test_failopen_worktree_remove_unresolvable_path() {
     jq_required || return 0
     assert_decision "$MAIN_DIR" 'git worktree remove --force $wt' allow \
@@ -1142,6 +1171,7 @@ run_test test_deny_worktree_remove_dashC_dotdot "#665 deny: -C <peer-B> remove -
 run_test test_deny_worktree_remove_cd_dotdot "#665 deny: cd <peer-B> && remove --force ../<peer-A>"
 run_test test_allow_worktree_remove_own_tree_dot "#665 allow: own worktree via bare ."
 run_test test_allow_worktree_remove_cd_main_dot "#665 allow: cd <main> && remove --force ."
+run_test test_failopen_worktree_remove_space_in_path "#665 documented gap: space in the worktree path"
 run_test test_failopen_worktree_remove_unresolvable_path "#665 fail-open: unresolvable positional operand"
 run_test test_worktree_rm_still_works "AC4: worktree-rm.sh teardown still works"
 run_test test_rule_a_subagent_still_denied "Rule A regression: subagent rm still denied"

@@ -99,36 +99,56 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      fi
      ```
 
-     **Then prune the remote UNCONDITIONALLY — on every path, whichever arm ran
-     (#653 AC2):**
+     **Next, establish the PR's REAL state — before touching any branch.** Do
+     this whatever `gh pr merge` returned, because its exit code answers a
+     different question than "did the merge land":
+
+     ```bash
+     PR_STATE="$(gh pr view "$PR_NUM" --json state -q .state)"
+     ```
+
+     - **`MERGED`** — the merge landed. A non-zero exit here was a post-merge
+       **cleanup** failure (e.g. the local `checkout main` in a worktree), NOT a
+       merge refusal, so it is **not** a dead-end: proceed to the prune below and
+       the cleanup steps.
+     - **Any other state** (`OPEN`, blank) — a genuine refusal (branch protection
+       needs a human approval the golem can't supply, or merge is disabled).
+       Treat it as a **dead-end**: log the error, leave the PR open + labeled,
+       emit the dead-end summary, and STOP for a human. **Do NOT run the prune
+       below** — deleting the source branch of an unmerged PR is destructive and
+       hard to recover once `worktree-rm.sh` has torn the worktree down. Never
+       loop-retry a merge the platform refused.
+
+     **Then, on the `MERGED` path only, prune the remote and VERIFY it is gone
+     (#653 AC2 + AC3):**
 
      ```bash
      git push origin --delete "$BRANCH" 2>/dev/null || true   # tolerate "remote ref does not exist"
+
+     # AC3 — RC is not proof of cleanup. VERIFY, don't infer.
+     if [ -n "$(git ls-remote --heads origin "$BRANCH")" ]; then
+         echo "WARNING: remote branch $BRANCH still present after prune" >&2
+     fi
+     if [ -n "$(git branch --list "$BRANCH")" ]; then
+         echo "NOTE: local branch $BRANCH still present (expected while a worktree holds it — worktree-rm.sh deletes it at teardown)" >&2
+     fi
      ```
 
-     This step is **not** conditional and must **never** be gated on `gh`'s exit
-     code. When `gh` fails the local branch delete it **aborts the rest of its
-     cleanup** — including the remote delete — while still **exiting 0**. Observed
-     on PR #652: `state: MERGED`, `RC=0`, and `feature/issue-640` still on the
-     remote afterward. A caller trusting `RC` alone concludes the branch was
-     pruned when it was not, which is why the prune runs on its own rather than as
-     an error path. It is idempotent: on the `--delete-branch` arm the ref is
+     **"Unconditional" means "not gated on `gh`'s exit code" — not "regardless of
+     whether the merge landed".** Those differ, and only the first is safe. Within
+     the `MERGED` path the prune must **never** be gated on RC: when `gh` fails
+     the local branch delete it **aborts the rest of its cleanup** — including the
+     remote delete — while still **exiting 0**. Observed on PR #652:
+     `state: MERGED`, `RC=0`, and `feature/issue-640` still on the remote
+     afterward. A caller trusting `RC` alone concludes the branch was pruned when
+     it was not — which is exactly why AC3 demands a **verify** rather than an
+     inference, and why the check above reads the actual ref instead of an exit
+     code. The prune is idempotent: on the `--delete-branch` arm the ref is
      already gone and the `|| true` absorbs the "remote ref does not exist".
 
-     **If `gh pr merge` exits non-zero, classify before calling it a dead-end.** A
-     post-merge **cleanup** failure (the local `checkout main` in a worktree) is
-     NOT a merge refusal — the server-side merge already landed. Check the PR's
-     real state with `gh pr view "$PR_NUM" --json state -q .state`: a state of
-     **`MERGED`** means the merge succeeded and the non-zero was cleanup — this is
-     **not** a dead-end, so continue to the unconditional remote prune above and
-     then the cleanup steps below. (Because that prune is unconditional rather
-     than an error path, this branch needs no special-case delete of its own —
-     which is the point: the RC=0 variant of the same failure would never have
-     reached an error path at all.) **Any other state** (`OPEN`, blank)
-     is a genuine refusal (branch protection needs a human approval the golem
-     can't supply, or merge is disabled): treat it as a **dead-end** — log the
-     error, leave the PR open + labeled, emit the dead-end summary, and STOP for a
-     human. Never loop-retry a merge the platform refused.
+     A **local** branch surviving is expected, not an error, whenever a worktree
+     still holds it (the AC1 arm above) — `worktree-rm.sh` deletes it during
+     teardown. It is reported as a NOTE so the two cases stay distinguishable.
 
      The cleanup steps below run on **both** the clean-merge and the
      MERGED-after-cleanup-failure paths. Steps a and b hit the API, not the local
