@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-05
+
+### Added
+
+- Deterministic file-sizing + language-aware decomposition seams (#674)
+
+### Documentation
+
+- Refresh release-process memory after v0.8.4
+- Correct golem Phase D teardown to keep-then-prune (#652)
+- Record the tmux send-keys exit-status lesson
+- Record the copied-guard-is-unreachable variant (#644)
+- Record two lessons from the #663 decomposition scanner
+- Record the standing authorization for the review harness
+
+### Fixed
+
+- Report the cycle when the manifest agent throws (#651)
+- Mechanize the CI-wait bound, gate prose-only env vars (#655)
+- Gate the #426 destructive-shell clause across every agent (#658)
+- Let the convergence helper own the re-review scope (#657)
+- Detect and correct golem plan-mode drift (#660)
+- Close the .sh/.py asymmetry in missing-test-file (#666)
+- Deny main-session destructive git in a golem worktree (#667)
+- Remove status/pr-pending when the PR actually merges (#676)
+- Worktree-aware branch cleanup + guard worktree-remove --force (#677)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.19.22
+
 ## [0.8.4] - 2026-08-02
 
 ### Changed
@@ -558,6 +589,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.9.0]: https://github.com/joshjhall/librarian/compare/v0.8.4...v0.9.0
 [0.8.4]: https://github.com/joshjhall/librarian/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/joshjhall/librarian/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/joshjhall/librarian/compare/v0.8.1...v0.8.2
