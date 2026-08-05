@@ -154,8 +154,18 @@
 #   - `git worktree remove` takes its target POSITIONALLY, not via `-C` — the
 #     path names the tree being deleted, whereas `-C` only says where git runs.
 #     So that arm scans operands for the first non-flag token instead of reusing
-#     `_rule_b_target`, and a `$var`/backtick operand is unresolvable: it falls
-#     back to the `-C`/`cd`/cwd chain, i.e. fail-open, same as everywhere else.
+#     `_rule_b_target` ALONE — it JOINS the two, because git resolves a relative
+#     operand against the `-C`/`cd` cwd (see the arm's own comment). A
+#     `$var`/backtick operand is unresolvable: it falls back to the `-C`/`cd`/cwd
+#     chain, i.e. fail-open, same as everywhere else.
+#   - a worktree path whose basename starts with `-` (`git worktree remove
+#     --force -mytree`) is read as a FLAG by the operand scanner, so the target
+#     falls back to the `-C`/`cd`/cwd base. Accepted, not fixed: `-`-led
+#     directory names are pathological, git itself needs `--` to accept one, and
+#     the fallback lands on the fail-open side. Recorded here so it is a decision
+#     rather than an oversight (#677 review). The `--`-separated spelling of the
+#     same command IS handled — `--` is skipped as a flag and the path after it
+#     resolves normally.
 # These are logged nowhere and pass silently BY DESIGN; the belt (#426 prose) and
 # human PR review remain the backstop for them.
 #
@@ -779,11 +789,47 @@ while IFS= read -r seg; do
                         esac
                     done
                     matched="git worktree remove --force"
-                    if [ -n "$_wt_path" ]; then
-                        matched_dir="$_wt_path"
-                    else
-                        matched_dir="$(_rule_b_target)"
-                    fi
+                    # COMBINE the positional path with the `-C`/`cd` context —
+                    # never either one alone. git resolves a RELATIVE operand
+                    # against its effective cwd, which `-C <dir>` and a preceding
+                    # `cd <dir>` both move. Assigning `matched_dir="$_wt_path"`
+                    # outright (the first version of this arm) made the caller
+                    # gate later join the relative path onto the PAYLOAD cwd
+                    # instead, computing a DIFFERENT directory than the command
+                    # actually deletes — so `cd <peer-wt> && git worktree remove
+                    # --force .` resolved to the main checkout, saw a primary
+                    # tree, and ALLOWED the very deletion Rule B exists to stop
+                    # (repro'd against a live fixture, #677 review cycle 1).
+                    #
+                    # Note this is NOT the documented fail-open direction: an
+                    # unresolvable target declines to decide and allows, which is
+                    # deliberate, whereas this computed a confidently WRONG
+                    # target. Same class as #662's unexpanded-`~` bypass: a path
+                    # must be fully expanded BEFORE it is scoped, and every
+                    # spelling of one target must decide alike.
+                    _wt_base="$(_rule_b_target)"
+                    # shellcheck disable=SC2088  # the quoted `~` patterns below
+                    # are literal match PATTERNS for the operand as typed, never
+                    # expansions — expansion happens in the caller gate, which is
+                    # the single place that owns it.
+                    case "$_wt_path" in
+                        # No positional operand: the `-C`/`cd` base IS the target
+                        # (git removes the worktree it is standing in).
+                        '') matched_dir="$_wt_base" ;;
+                        # Absolute: self-contained, the base is irrelevant —
+                        # exactly as an absolute operand resets a `-C` chain. The
+                        # `~` forms are passed through UNEXPANDED on purpose: the
+                        # caller gate expands them against $HOME right before the
+                        # `-d` test, so expanding here too would be duplicate
+                        # logic that could drift (#662 made the unexpanded-tilde
+                        # bypass a live finding, so the expansion lives in exactly
+                        # one place).
+                        /* | '~' | '~/'*) matched_dir="$_wt_path" ;;
+                        # Relative: join onto the base when there is one, else
+                        # let the caller gate resolve it against the payload cwd
+                        # (correct when no `-C`/`cd` moved the effective cwd).
+                        *) matched_dir="${_wt_base:+$_wt_base/}$_wt_path" ;;
+                    esac
                     break
                     ;;
             esac

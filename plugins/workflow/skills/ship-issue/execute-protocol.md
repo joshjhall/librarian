@@ -86,9 +86,13 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      BRANCH="$(gh pr view "$PR_NUM" --json headRefName -q .headRefName)"
 
      # Does ANY worktree hold this branch? (`--porcelain` prints one
-     # `branch refs/heads/<name>` line per worktree; `-x` anchors the whole line
-     # so `feature/issue-6` cannot match `feature/issue-65`.)
-     if git worktree list --porcelain | command grep -qx "branch refs/heads/$BRANCH"; then
+     # `branch refs/heads/<name>` line per worktree.) Match with `-F -x`, never a
+     # bare `-x`: `-x` anchors the whole line so `feature/issue-6` cannot match
+     # `feature/issue-65`, and `-F` makes the branch name a LITERAL. Git allows
+     # `.`, `[`, `*`, `^`, `$` in a branch name, all of which are regex
+     # metacharacters — an unescaped `fix/v1.2` would match `fix/v1X2` and could
+     # withhold `--delete-branch` on a branch no worktree actually holds.
+     if git worktree list --porcelain | command grep -qFx "branch refs/heads/$BRANCH"; then
          gh pr merge "$PR_NUM" --squash              # a worktree holds it: local prune would fail
      else
          gh pr merge "$PR_NUM" --squash --delete-branch

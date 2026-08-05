@@ -228,6 +228,17 @@ test_deny_tilde_path_to_worktree() {
     assert_decision "$sb" "git -C ~/$rel reset --hard" allow \
         "a \`~/\` path at a PRIMARY checkout still ALLOWS (expansion is not a blanket deny)"
 
+    # #665: the same must hold for the POSITIONAL operand. That arm passes `~`
+    # forms through unexpanded by design — the caller gate owns the single $HOME
+    # expansion — so this pins that the operand actually reaches it rather than
+    # being glued onto a base and lost, which is the #662 bypass in a new
+    # spelling. Reuses this sandbox because a `~`-reachable worktree is the
+    # expensive part of the setup.
+    assert_decision "$sb" "git worktree remove --force ~/$rel/wt" deny \
+        "#665: a \`~/\`-prefixed POSITIONAL path resolves via \$HOME and is DENIED"
+    assert_decision "$sb" "git worktree remove --force ~/$rel" allow \
+        "#665: a \`~/\` positional path at a PRIMARY checkout still ALLOWS"
+
     command rm -rf "$sb"
 }
 test_deny_peer_to_peer() {
@@ -725,6 +736,23 @@ test_deny_worktree_remove_doubled_f() {
     assert_decision "$MAIN_DIR" "git worktree remove --force --force $WT_DIR" deny \
         "#665 deny: the doubled \`--force --force\` form"
 }
+test_deny_worktree_remove_quoted() {
+    jq_required || return 0
+    # The arm strips surrounding quotes off the scanned token, and quoting a path
+    # is the NORMAL way to write this command — so the branch is both reachable
+    # and the common case. Left unfixtured it could mis-strip into a bogus path
+    # that fails the `-d` test and silently fail-opens (#677 review, deferrable).
+    # NOTE the quoting: `run_guard` JSON-encodes the command with `jq --arg`, so
+    # the shell string here must already CONTAIN the literal `"` characters the
+    # operator would type. Writing `\\\"` instead yields backslash-quote in the
+    # payload — a token the parser rightly does not treat as a quoted path, which
+    # is a broken fixture rather than a caught bug (it failed exactly that way
+    # first, while the hook handled a genuine double-quoted command correctly).
+    assert_decision "$MAIN_DIR" 'git worktree remove --force "'"$WT_DIR"'"' deny \
+        "#665 deny: a DOUBLE-quoted positional path"
+    assert_decision "$MAIN_DIR" "git worktree remove --force '$WT_DIR'" deny \
+        "#665 deny: a SINGLE-quoted positional path"
+}
 test_deny_worktree_remove_relative() {
     jq_required || return 0
     assert_decision "$MAIN_DIR" "git worktree remove --force .worktrees/issue-1" deny \
@@ -785,6 +813,54 @@ test_allow_worktree_other_subcommands() {
         "#665 scope: \`worktree prune\` stays allowed"
     assert_decision "$MAIN_DIR" "git worktree add -f $MAIN_DIR/.worktrees/issue-9" allow \
         "#665 scope: \`worktree add -f\` is not a removal (the -f must not match alone)"
+}
+# --- #665: the positional path COMBINES with the -C/cd context --------------
+# Review cycle 1 of PR #677 found (and a live fixture confirmed) that the first
+# version of this arm assigned `matched_dir="$_wt_path"` outright, discarding any
+# `-C`/`cd` seen earlier. git resolves a RELATIVE operand against its effective
+# cwd, which both of those move — so `cd <peer-wt> && git worktree remove --force
+# .` deleted the peer worktree while the guard resolved `.` against the PAYLOAD
+# cwd, saw the primary checkout, and ALLOWED it.
+#
+# That is NOT the documented fail-open direction (decline to resolve → allow); it
+# computed a confidently WRONG target. Same class as #662's unexpanded-`~`
+# bypass, which is why every spelling of one target is asserted here: a guard is
+# only as good as its least-specific spelling.
+test_deny_worktree_remove_cd_dot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "cd $WT_DIR && git worktree remove --force ." deny \
+        "#665 deny: \`cd <peer-wt> && remove --force .\` (cycle-1 BLOCKING bypass)"
+}
+test_deny_worktree_remove_dashC_dot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git -C $WT_DIR worktree remove --force ." deny \
+        "#665 deny: \`-C <peer-wt> … remove --force .\` (cycle-1 BLOCKING bypass)"
+}
+test_deny_worktree_remove_dashC_dotdot() {
+    jq_required || return 0
+    # `..` traversal from one peer to another: the relative operand only names the
+    # real target once joined onto the `-C` base.
+    assert_decision "$MAIN_DIR" "git -C $WT2_DIR worktree remove --force ../issue-1" deny \
+        "#665 deny: \`-C <peer-B> … remove --force ../<peer-A>\`"
+}
+test_deny_worktree_remove_cd_dotdot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "cd $WT2_DIR && git worktree remove --force ../issue-1" deny \
+        "#665 deny: \`cd <peer-B> && remove --force ../<peer-A>\`"
+}
+test_allow_worktree_remove_own_tree_dot() {
+    jq_required || return 0
+    # The other direction of the same mechanism: a golem force-removing ITS OWN
+    # worktree via a bare `.` must still be ALLOWED. This is the clause that keeps
+    # golems working, and a fix that merely denied everything relative would break
+    # it — so it is asserted alongside the denies rather than trusted.
+    assert_decision "$WT_DIR" "git worktree remove --force ." allow \
+        "#665 allow: a golem force-removing its OWN worktree via bare \`.\`"
+}
+test_allow_worktree_remove_cd_main_dot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "cd $MAIN_DIR && git worktree remove --force ." allow \
+        "#665 allow: \`cd <main> && remove --force .\` targets a primary checkout"
 }
 test_failopen_worktree_remove_unresolvable_path() {
     jq_required || return 0
@@ -958,6 +1034,33 @@ test_mutation_force_requirement_dropped() {
         "MUTATION: mutant 4 still denies the forced form (it only widened the match)" "$m"
 }
 
+# --- Mutant 5: restore the cycle-1 bypass -----------------------------------
+# Re-introduce the exact defect review cycle 1 found: assign the positional path
+# to `matched_dir` outright, discarding the `-C`/`cd` base. The relative-form
+# denies must flip to ALLOW; the ABSOLUTE form must NOT flip (it never needed the
+# base), which is what proves these fixtures measure the join specifically rather
+# than the arm as a whole — mutant 3 already covers the arm.
+test_mutation_positional_ignores_base() {
+    jq_required || return 0
+    local m
+    m="$(mutant_build wtbase 's#^                        \*) matched_dir="\${_wt_base:+\$_wt_base/}\$_wt_path" ;;$#                        *) matched_dir="$_wt_path" ;;#')"
+    assert_not_empty "$m" "mutant 5 built (the relative-join anchor still matches the source)"
+    [ -n "$m" ] || return 0
+    assert_true "\"$REAL_BASH\" -n \"$m\"" "mutant 5 is syntactically valid (allows are real, not crashes)"
+
+    assert_decision "$MAIN_DIR" "cd $WT_DIR && git worktree remove --force ." allow \
+        "MUTATION: dropping the base makes \`cd <wt> && remove .\` ALLOW (the cycle-1 bypass, fixture is load-bearing)" "$m"
+    assert_decision "$MAIN_DIR" "git -C $WT_DIR worktree remove --force ." allow \
+        "MUTATION: dropping the base makes \`-C <wt> … remove .\` ALLOW" "$m"
+    assert_decision "$MAIN_DIR" "git -C $WT2_DIR worktree remove --force ../issue-1" allow \
+        "MUTATION: dropping the base makes the \`../\` traversal ALLOW" "$m"
+
+    # The absolute form must SURVIVE the mutant — it does not depend on the base,
+    # so a flip here would mean these fixtures are measuring the arm, not the join.
+    assert_decision "$MAIN_DIR" "git worktree remove --force $WT_DIR" deny \
+        "MUTATION: mutant 5 still denies the ABSOLUTE form (the join is what these fixtures measure)"
+}
+
 # --- Registration integrity -------------------------------------------------
 test_hooks_registered() {
     jq_required || return 0
@@ -1023,6 +1126,7 @@ run_test test_allow_worktree_into_primary_checkout "scope boundary: worktree -> 
 run_test test_deny_worktree_remove_force "#665 deny: worktree remove --force <peer>"
 run_test test_deny_worktree_remove_f_short "#665 deny: -f short form"
 run_test test_deny_worktree_remove_doubled_f "#665 deny: doubled -f -f / --force --force"
+run_test test_deny_worktree_remove_quoted "#665 deny: quoted positional path"
 run_test test_deny_worktree_remove_relative "#665 deny: relative positional path"
 run_test test_deny_worktree_remove_peer_to_peer "#665 deny: peer -> peer"
 run_test test_deny_worktree_remove_after_dashdash "#665 deny: path after --"
@@ -1032,6 +1136,12 @@ run_test test_allow_worktree_remove_unforced "#665 scope: unforced remove stays 
 run_test test_allow_worktree_remove_own_tree "#665 allow: own worktree"
 run_test test_allow_worktree_remove_primary_target "#665 allow: primary-checkout target"
 run_test test_allow_worktree_other_subcommands "#665 scope: list/prune/add unaffected"
+run_test test_deny_worktree_remove_cd_dot "#665 deny: cd <wt> && remove --force . (cycle-1 BLOCKING)"
+run_test test_deny_worktree_remove_dashC_dot "#665 deny: -C <wt> remove --force . (cycle-1 BLOCKING)"
+run_test test_deny_worktree_remove_dashC_dotdot "#665 deny: -C <peer-B> remove --force ../<peer-A>"
+run_test test_deny_worktree_remove_cd_dotdot "#665 deny: cd <peer-B> && remove --force ../<peer-A>"
+run_test test_allow_worktree_remove_own_tree_dot "#665 allow: own worktree via bare ."
+run_test test_allow_worktree_remove_cd_main_dot "#665 allow: cd <main> && remove --force ."
 run_test test_failopen_worktree_remove_unresolvable_path "#665 fail-open: unresolvable positional operand"
 run_test test_worktree_rm_still_works "AC4: worktree-rm.sh teardown still works"
 run_test test_rule_a_subagent_still_denied "Rule A regression: subagent rm still denied"
@@ -1042,6 +1152,7 @@ run_test test_mutation_neutered_gate "AC5 MUTATION 1: neutered gate flips every 
 run_test test_mutation_forced_cross_tree "AC5 MUTATION 2: forced cross-tree flips every own-tree ALLOW"
 run_test test_mutation_neutered_worktree_arm "#665 MUTATION 3: neutered worktree arm flips every new DENY"
 run_test test_mutation_force_requirement_dropped "#665 MUTATION 4: dropped --force test flips the unforced ALLOW"
+run_test test_mutation_positional_ignores_base "#665 MUTATION 5: positional path ignoring the -C/cd base restores the cycle-1 bypass"
 run_test test_hooks_registered "hooks.json registers the guard"
 
 generate_report
