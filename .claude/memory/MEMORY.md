@@ -13,6 +13,7 @@
 
 ## Operator directives
 
+- [Workflow harness is pre-authorized](workflow-harness-standing-authorization.md) — a `/workflow:` invocation IS the opt-in; run it, don't re-ask each session
 - [No --no-verify: fix the lint](no-noverify-fix-the-lint.md) — never skip rumdl/typos; don't `rumdl fmt` blind; only indexes are exempt
 - [Librarian runs outside containers](librarian-runs-outside-containers.md) — Mac/bare-linux/container alike; never hard-depend on the submodule
 - [Never time out a human gate](never-timeout-human-gate.md) — WAIT indefinitely for the answer; never lapse and decide alone
