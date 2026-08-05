@@ -1,4 +1,5 @@
 ---
+name: check-decomposition
 description: Deterministic file-sizing and language-aware decomposition pre-scan. Counts production LOC with per-language test/comment exclusion and emits actionable decomposition seams (which lines move where), not just a line count. Runs patterns.sh before LLM analysis. Used by the checker agent and the audit-decomposition agent.
 ---
 
