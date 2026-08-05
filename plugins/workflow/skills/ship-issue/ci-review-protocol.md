@@ -582,7 +582,8 @@ dead-end below — **never merge on a partial review**.
 
 This green + clean state is exactly the **merge invariant** precondition. On
 reaching it, hand control back to SKILL.md Step 4's **level-aware merge gate**:
-at **L3–L4** ship auto-merges (squash, delete-branch) then prunes; at **L1–L2**
+at **L3–L4** ship auto-merges (squash; branch cleanup is worktree-aware) then
+prunes; at **L1–L2**
 it stops for a human merge with the completion summary. The merge decision has a
 **single site** (Step 4) — this loop only establishes green + clean and never
 merges directly.

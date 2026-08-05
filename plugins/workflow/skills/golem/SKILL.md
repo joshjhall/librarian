@@ -194,11 +194,12 @@ check #6), so a solo run cannot skip it by choosing commit-only.
   glab mr view --source-branch feature/issue-N          # merged           (GitLab)
   ```
 
-  If merged, **first sweep the stale `status/pr-pending` label off the issue**,
-  then `ExitWorktree({ action: "keep" })`, then `worktree-rm.sh N`.
+  If merged, **first sweep the stale `status/pr-pending` label off the issue and
+  prune the orphaned remote branch**, then `ExitWorktree({ action: "keep" })`,
+  then `worktree-rm.sh N`.
 
-  `/workflow:golem --teardown N` **owns** this sweep (#654). The label is added
-  when the PR opens and is correct for as long as the PR sits unmerged, but on
+  `/workflow:golem --teardown N` **owns** the label sweep (#654). The label is
+  added when the PR opens and is correct for as long as the PR sits unmerged, but on
   the parked and L1–L2 paths the merge happens *after* `/workflow:ship-issue` has
   already exited — no step of ship is left to clean up, and the squash commit's
   `Closes #{N}` trailer closes the issue with the label still on it. This
@@ -213,23 +214,42 @@ check #6), so a solo run cannot skip it by choosing commit-only.
   glab issue update {N} --unlabel "status/pr-pending"         # GitLab
   ```
 
-  Two properties this relies on:
+  **Prune the orphaned REMOTE branch here too (#653 AC4).** `worktree-rm.sh`
+  deletes the worktree and the **local** branch (`git branch -D`); nothing in
+  this path touches the remote. On the same parked / L1–L2 paths, ship's own
+  remote prune never runs either, so this re-entry is the last step that could
+  do it — without it the remote keeps a stale `feature/issue-N`, the same
+  orphaned-branch symptom #653 fixes on the in-turn merge path, reached by the
+  other route:
 
-  - **Merged-only.** The sweep runs **only** on the verified-MERGED branch. The
+  ```bash
+  git push origin --delete "feature/issue-N" 2>/dev/null || true   # tolerate "remote ref does not exist"
+  ```
+
+  So this re-entry owns **two** post-merge sweeps — the stale label (#654) and
+  the orphaned remote branch (#653). Three properties they share:
+
+  - **Merged-only.** Both run **only** on the verified-MERGED branch; the
+    `state == MERGED` check above is what makes each legitimate. The
     not-yet-merged branch below stops without removing anything, and must
     **keep** the label — an unmerged PR is genuinely awaiting merge, which is
-    exactly what the label is for.
+    exactly what the label is for — and must not delete the remote branch of a
+    PR that has not landed.
   - **Idempotent.** Removing an already-absent label is a clean no-op:
     `gh issue edit --remove-label` exits 0 when the label exists in the repo but
     is not on the issue, and errors only when the label does not exist in the
-    **repo** at all. So a re-run of `--teardown N`, or a PR that reached merge
-    without ever being parked, costs nothing. Do **not** wrap it in `|| true` —
-    that would swallow the repo-missing case, which is a real misconfiguration
-    worth surfacing.
+    **repo** at all. Likewise a `--delete` of an already-pruned ref is absorbed.
+    So a re-run of `--teardown N`, or a PR that reached merge without ever being
+    parked, costs nothing.
+  - **Guarded differently, on purpose.** The label removal takes **no**
+    `|| true` — that would swallow the repo-missing case, a real
+    misconfiguration worth surfacing. The branch delete **does**, because
+    "remote ref does not exist" is the expected outcome whenever ship already
+    pruned it.
 
-  Then prune — same order and same action as the L3–L4 block above, for the same
-  two reasons (`remove` refuses on a path-entered worktree; prune-first deletes
-  the cwd). A
+  Then prune the worktree — same order and same action as the L3–L4 block above,
+  for the same two reasons (`remove` refuses on a path-entered worktree;
+  prune-first deletes the cwd). A
   `--teardown` re-entry usually runs from the **main checkout** already, where
   `ExitWorktree` is a documented no-op — call it anyway, so the one case that
   matters (re-entry from inside the worktree) is covered. If not yet merged, say

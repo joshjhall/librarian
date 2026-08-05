@@ -47,12 +47,34 @@
 # there is strictly LARGER than the same command in the main checkout, while
 # being the less-guarded of the two. DENY iff ALL of:
 #   1. Main session: NO agent_id (a subagent is Rule A's business).
-#   2. The deny-set match is one of the three GIT verbs (`git reset --hard`,
-#      `git clean`, `git checkout --`). Deliberately NOT the whole deny-set:
+#   2. The deny-set match is one of the four GIT verbs (`git reset --hard`,
+#      `git clean`, `git checkout --`, `git worktree remove --force`).
+#      Deliberately NOT the whole deny-set:
 #      `rm`/`mv`/`truncate`/redirection keep their unconditional main-session
 #      allow, so `rm -rf .worktrees/issue-N` teardown still works and
 #      worktree-rm.sh (which does its own dirty check) stays the owner of
 #      deliberate teardown.
+#
+#      `git worktree remove --force` was added by #665, which #662 deferred
+#      BECAUSE the verb is itself a teardown verb — the one shape that sits
+#      against, rather than merely extending, the git-verbs-only scope decision.
+#      DECISION: DENY, on two grounds.
+#      (a) The objection does not hold. It was that denying would break the
+#          sanctioned `scripts/worktree-rm.sh`, which runs `git worktree remove
+#          --force` internally. It cannot: this is a PreToolUse hook on the BASH
+#          TOOL, so it only ever sees the command string the model submits.
+#          worktree-rm.sh is invoked as `bash .../worktree-rm.sh N`; the forced
+#          remove inside it is a SUBPROCESS OF THE SCRIPT and never reaches this
+#          hook. Verified by piping that exact payload in — allow, no output —
+#          and pinned by test_worktree_rm_still_works. So the sanctioned path is
+#          unaffected BY CONSTRUCTION, not by a carve-out that could rot.
+#      (b) `--force` is precisely the case with something to lose. The PLAIN form
+#          already refuses a dirty worktree, so an operator reaches for `--force`
+#          exactly WHEN the tree is dirty — Rule B's stated rationale verbatim.
+#      Corollary, and the reason the scope is `--force`-only: plain `git worktree
+#      remove` stays ALLOWED. It has its own dirty-refusal and thus no
+#      unrecoverable work to destroy; denying it would block a safe verb and push
+#      operators toward the forced form, which is the opposite of the goal.
 #   3. CROSS-TREE into a linked worktree: the command's resolved TARGET tree is a
 #      linked worktree (its git-dir != its git-common-dir) AND is not the calling
 #      session's OWN tree. The second half is load-bearing, not a nicety — it is
@@ -128,6 +150,44 @@
 #     linked worktree at that path is denied by NAME, a wrong-deny rather than a
 #     missed one. Kept as a note because "we simplified X and it is safe" is the
 #     shape of comment worth distrusting.)
+# #665 adds one more, from the fourth verb's different targeting shape:
+#   - `git worktree remove` takes its target POSITIONALLY, not via `-C` — the
+#     path names the tree being deleted, whereas `-C` only says where git runs.
+#     So that arm scans operands for the first non-flag token instead of reusing
+#     `_rule_b_target` ALONE — it JOINS the two, because git resolves a relative
+#     operand against the `-C`/`cd` cwd (see the arm's own comment). A
+#     `$var`/backtick operand is unresolvable: it falls back to the `-C`/`cd`/cwd
+#     chain, i.e. fail-open, same as everywhere else.
+#   - a worktree path whose basename starts with `-` (`git worktree remove
+#     --force -mytree`) is read as a FLAG by the operand scanner, so the target
+#     falls back to the `-C`/`cd`/cwd base. Accepted, not fixed: `-`-led
+#     directory names are pathological, git itself needs `--` to accept one, and
+#     the fallback lands on the fail-open side. Recorded here so it is a decision
+#     rather than an oversight (#677 review). The `--`-separated spelling of the
+#     same command IS handled — `--` is skipped as a flag and the path after it
+#     resolves normally.
+#   - a worktree path containing a SPACE (`git worktree remove --force "my wt"`)
+#     splits on IFS like every other operand in this file, so the scanner takes
+#     the first fragment (`my`) as the target; it resolves nowhere and the `-d`
+#     check fail-opens. Accepted for the same reason the whole DETECTION SCOPE
+#     section gives — this is a pragmatic tokenizer, not a shell parser, and
+#     honoring quotes properly means implementing quote-aware word splitting for
+#     every operand path here, not just this one. Called out explicitly (#677
+#     review cycle 2) because a space in a path is far more ORDINARY than the
+#     `-`-led case above, so its absence from this list would read as coverage.
+#     Note the guard still denies a spaceless path that is merely QUOTED — the
+#     quote-stripping covers that, and it is the common spelling.
+#   - the operand scan is an unquoted `for … in $_wt_rest`, so it inherits this
+#     file's existing word-splitting AND pathname expansion (no `set -f` is in
+#     effect anywhere here; the same is true of the `for tok in $seg` scan that
+#     predates it). A glob operand can therefore expand against whatever cwd the
+#     hook happens to run in. Accepted rather than special-cased: `git worktree
+#     remove` takes ONE worktree, a glob is not a spelling anyone uses for it,
+#     and the expansion cannot silently target a DIFFERENT tree than the shell
+#     would — the shell expands the same glob in the same cwd before git ever
+#     runs, so the guard and the command see the same operand. Recorded because
+#     this is a NEW use of that pattern driving a destructive verb's target
+#     resolution, which is exactly the kind of inheritance worth stating.
 # These are logged nowhere and pass silently BY DESIGN; the belt (#426 prose) and
 # human PR review remain the backstop for them.
 #
@@ -700,6 +760,106 @@ while IFS= read -r seg; do
                             ;;
                     esac
                     ;;
+                worktree)
+                    # Rule B verb #4 (#665). `git worktree remove --force <wt>`
+                    # destroys the whole worktree directory INCLUDING uncommitted
+                    # work, against the identical target the other three verbs are
+                    # denied for. Only the FORCED form is denied: plain `git
+                    # worktree remove` refuses a dirty tree on its own, so it has
+                    # nothing unrecoverable to destroy, and denying it would block
+                    # a safe verb for no benefit.
+                    #
+                    # Target resolution differs from every other verb here and is
+                    # the load-bearing part: `worktree remove` names its target
+                    # POSITIONALLY, not via `-C`. Routing it through
+                    # `_rule_b_target` alone would resolve to the caller's cwd —
+                    # the MAIN checkout, which is a primary tree — so the rule
+                    # would fail the linked-worktree test and ALLOW every time: a
+                    # silent no-op that reads as a fix. So scan the operands for
+                    # the positional path, and fall back to `_rule_b_target` only
+                    # when there is none to find.
+                    _wt_sub="${rest#* }"
+                    _wt_sub="${_wt_sub%% *}"
+                    [ "$_wt_sub" = "remove" ] || continue
+                    # `--force`/`-f` anywhere in the operand list, including the
+                    # doubled `-f -f` / `--force --force` form git demands when the
+                    # tree also holds untracked files. One `-f` is enough to match;
+                    # the doubled form is a superset, not a separate shape.
+                    case " $rest " in
+                        *" --force "* | *" -f "*) ;;
+                        *) continue ;;
+                    esac
+                    # First non-flag token after `remove` is the worktree path.
+                    # An unresolvable operand (`$var`/backtick) is left empty so
+                    # the fallback runs and the command fail-opens, matching every
+                    # other unresolvable-target gap in this hook.
+                    _wt_path=""
+                    _wt_rest="${rest#* }"     # drop `worktree`
+                    _wt_rest="${_wt_rest#* }" # drop `remove`
+                    for _wt_tok in $_wt_rest; do
+                        case "$_wt_tok" in
+                            -*) continue ;;         # a flag
+                            *'$'* | *'`'*) break ;; # unresolvable: fail open
+                            *)
+                                _wt_tok="${_wt_tok#\"}"
+                                _wt_tok="${_wt_tok%\"}"
+                                _wt_tok="${_wt_tok#\'}"
+                                _wt_tok="${_wt_tok%\'}"
+                                _wt_path="$_wt_tok"
+                                break
+                                ;;
+                        esac
+                    done
+                    matched="git worktree remove --force"
+                    # COMBINE the positional path with the `-C`/`cd` context —
+                    # never either one alone. git resolves a RELATIVE operand
+                    # against its effective cwd, which `-C <dir>` and a preceding
+                    # `cd <dir>` both move. Assigning `matched_dir="$_wt_path"`
+                    # outright (the first version of this arm) made the caller
+                    # gate later join the relative path onto the PAYLOAD cwd
+                    # instead, computing a DIFFERENT directory than the command
+                    # actually deletes — so `cd <peer-wt> && git worktree remove
+                    # --force .` resolved to the main checkout, saw a primary
+                    # tree, and ALLOWED the very deletion Rule B exists to stop
+                    # (repro'd against a live fixture, #677 review cycle 1).
+                    #
+                    # Note this is NOT the documented fail-open direction: an
+                    # unresolvable target declines to decide and allows, which is
+                    # deliberate, whereas this computed a confidently WRONG
+                    # target. Same class as #662's unexpanded-`~` bypass: a path
+                    # must be fully expanded BEFORE it is scoped, and every
+                    # spelling of one target must decide alike.
+                    _wt_base="$(_rule_b_target)"
+                    # shellcheck disable=SC2088  # the quoted `~` patterns below
+                    # are literal match PATTERNS for the operand as typed, never
+                    # expansions — expansion happens in the caller gate, which is
+                    # the single place that owns it.
+                    case "$_wt_path" in
+                        # No positional operand. NOT a real git usage — `git
+                        # worktree remove` requires a <worktree> argument and
+                        # exits with a usage error without one (verified), so
+                        # there is no "remove the tree I am standing in" form.
+                        # This is a defensive fallback for a degenerate or
+                        # mis-scanned invocation (e.g. the `-`-led basename gap
+                        # above): fall back to the `-C`/`cd` base rather than
+                        # leaving the target unset.
+                        '') matched_dir="$_wt_base" ;;
+                        # Absolute: self-contained, the base is irrelevant —
+                        # exactly as an absolute operand resets a `-C` chain. The
+                        # `~` forms are passed through UNEXPANDED on purpose: the
+                        # caller gate expands them against $HOME right before the
+                        # `-d` test, so expanding here too would be duplicate
+                        # logic that could drift (#662 made the unexpanded-tilde
+                        # bypass a live finding, so the expansion lives in exactly
+                        # one place).
+                        /* | '~' | '~/'*) matched_dir="$_wt_path" ;;
+                        # Relative: join onto the base when there is one, else
+                        # let the caller gate resolve it against the payload cwd
+                        # (correct when no `-C`/`cd` moved the effective cwd).
+                        *) matched_dir="${_wt_base:+$_wt_base/}$_wt_path" ;;
+                    esac
+                    break
+                    ;;
             esac
             ;;
     esac
@@ -728,7 +888,8 @@ if [ -z "$agent_id" ]; then
     # `rm -rf .worktrees/issue-N` teardown working (worktree-rm.sh owns the
     # deliberate path and has its own dirty check).
     case "$matched" in
-        "git reset --hard" | "git clean" | "git checkout --") ;;
+        "git reset --hard" | "git clean" | "git checkout --" | \
+            "git worktree remove --force") ;;
         *) exit 0 ;;
     esac
 

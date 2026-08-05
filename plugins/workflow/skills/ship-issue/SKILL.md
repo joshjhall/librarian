@@ -48,7 +48,7 @@ removed in #215 (and GitHub's `gh pr merge --auto` / the harness's
 
 | Level | Shipping mode (Step 3) | CI | Merge (Step 4) |
 | ----- | ---------------------- | -- | -------------- |
-| **L3–L4** | no prompt — always Branch + PR (Option 1) | always wait + auto-fix | **auto-merge** squash+delete-branch, then prune |
+| **L3–L4** | no prompt — always Branch + PR (Option 1) | always wait + auto-fix | **auto-merge** squash (+`--delete-branch` unless a worktree holds the branch), prune remote, then prune |
 | **L1–L2** | prompt for mode | wait | **stop** at green+clean with the completion summary — human merges |
 
 **The merge invariant (all levels, including L4).** Never merge unless CI is green
@@ -313,15 +313,20 @@ for the per-check commands, tables, and per-level rules.
    before any merge) → the **level-aware merge gate** (the merge invariant is
    checked first at every level incl. L4 — a not-green-and-clean loop is a
    **dead-end** that parks the PR and waits for a human; with the invariant
-   satisfied, **L3–L4** auto-merge squash+delete-branch then prune inline —
-   **worktree-aware**: from a linked worktree it merges without `--delete-branch`,
-   deletes the remote branch via `git push origin --delete`, skips the local
-   `checkout main`, and treats a non-zero `gh pr merge` whose PR is in fact
-   `MERGED` as post-merge cleanup (not a dead-end) — **L1–L2** stop for a human
-   merge) → **label** `status/pr-pending` (remove `status/in-progress`) →
-   **comment**, **checkout main** (skipped in a linked worktree), **delete state
-   file**, **show the PR URL** → the **L2 completion summary** block. Squash by
-   default: single-issue PRs keep history linear.
+   satisfied, **L3–L4** auto-merge squash then prune inline —
+   **worktree-aware**: `--delete-branch` is withheld when **any worktree holds
+   the PR branch** (not merely when the session sits in one, #653); the PR's real
+   state is then read via `gh pr view --json state`, and **only on `MERGED`** is
+   the remote branch pruned via `git push origin --delete` and the result
+   **verified** rather than inferred from an exit code (a non-`MERGED` state is a
+   dead-end that touches no branch); the local `checkout main` is skipped in a
+   linked worktree — **L1–L2** stop for a human
+   merge) → **clear the in-flight labels** (remove `status/in-progress` **and**
+   `status/pr-pending`; the merge has landed, so adding pr-pending here would
+   stamp a closing issue, #654) → **comment**, **checkout main** (skipped in a
+   linked worktree), **delete state file**, **show the PR URL** → the **L2
+   completion summary** block. Squash by default: single-issue PRs keep history
+   linear.
 
 ### Options 2 & 3
 

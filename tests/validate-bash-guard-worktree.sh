@@ -61,7 +61,7 @@ GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
-test_suite "bash-guard.sh Rule B — main-session git into a worktree (#662)"
+test_suite "bash-guard.sh Rule B — main-session git into a worktree (#662, #665)"
 
 # --- Fixture: a main checkout + TWO linked worktrees ------------------------
 # Two worktrees, not one: the peer-to-peer case (a golem reaching into ANOTHER
@@ -228,6 +228,17 @@ test_deny_tilde_path_to_worktree() {
     assert_decision "$sb" "git -C ~/$rel reset --hard" allow \
         "a \`~/\` path at a PRIMARY checkout still ALLOWS (expansion is not a blanket deny)"
 
+    # #665: the same must hold for the POSITIONAL operand. That arm passes `~`
+    # forms through unexpanded by design — the caller gate owns the single $HOME
+    # expansion — so this pins that the operand actually reaches it rather than
+    # being glued onto a base and lost, which is the #662 bypass in a new
+    # spelling. Reuses this sandbox because a `~`-reachable worktree is the
+    # expensive part of the setup.
+    assert_decision "$sb" "git worktree remove --force ~/$rel/wt" deny \
+        "#665: a \`~/\`-prefixed POSITIONAL path resolves via \$HOME and is DENIED"
+    assert_decision "$sb" "git worktree remove --force ~/$rel" allow \
+        "#665: a \`~/\` positional path at a PRIMARY checkout still ALLOWS"
+
     command rm -rf "$sb"
 }
 test_deny_peer_to_peer() {
@@ -366,10 +377,16 @@ test_failopen_chain_poisoned_by_earlier_var() {
 test_all_three_verbs_share_target_resolution() {
     jq_required || return 0
     # `_rule_b_target` was extracted so the poison/chain rule lives in ONE place
-    # for all three Rule B verbs — the harden-one-knob-grep-every-sibling class.
-    # That invariant is only worth stating if it is checked: exercise `clean` and
-    # `checkout --` through the SAME shapes `reset --hard` is tested with, so a
-    # future edit that special-cases one verb's call site is caught.
+    # for the `-C`-targeted Rule B verbs — the harden-one-knob-grep-every-sibling
+    # class. That invariant is only worth stating if it is checked: exercise
+    # `clean` and `checkout --` through the SAME shapes `reset --hard` is tested
+    # with, so a future edit that special-cases one verb's call site is caught.
+    #
+    # #665's `worktree remove --force` is deliberately NOT in this loop: it takes
+    # its target POSITIONALLY, so it does not share these `-C` shapes at all. It
+    # falls back to `_rule_b_target` only when its positional operand is absent
+    # or unresolvable, which its own fixtures cover. Adding it here would assert
+    # a resolution path it does not use.
     local v
     for v in "clean -fd" "checkout -- seed.txt"; do
         run_guard "$MAIN_DIR" "git -C $WT_DIR $v"
@@ -621,6 +638,19 @@ test_worktree_rm_still_works() {
     br="$(git_clean -C "$sb" branch --list feature/issue-77)"
     assert_output_empty "$br" "worktree-rm.sh deleted the branch"
     assert_contains "$out" "removed worktree" "worktree-rm.sh reported the removal"
+
+    # #665 AC3 — the script's OWN `git worktree remove --force` is now a
+    # deny-set verb, so pin WHY the sanctioned path is still unaffected: this
+    # guard is a PreToolUse hook on the BASH TOOL, so it only ever inspects the
+    # command string a model submits. worktree-rm.sh is invoked as
+    # `bash .../worktree-rm.sh N`; the forced remove inside it is a SUBPROCESS of
+    # the script and never reaches the hook. Assert that directly — feed the hook
+    # the exact invocation shape and require ALLOW. This is the claim the #665
+    # decision rests on, so it is pinned by a test, not only by a header comment.
+    assert_decision "$MAIN_DIR" "bash $WT_RM 77" allow \
+        "#665 AC3: invoking worktree-rm.sh is ALLOWED (its forced remove is a subprocess, not a Bash-tool call)"
+    assert_decision "$MAIN_DIR" "$WT_RM 77" allow \
+        "#665 AC3: the bare-path invocation of worktree-rm.sh is ALLOWED too"
 }
 
 # --- Rule A regression: the subagent rule is untouched by the reordering ----
@@ -670,6 +700,219 @@ test_nojq_allows_main_reset() {
     out="$(printf '%s' "$payload" |
         /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     assert_output_empty "$out" "no-jq path still ALLOWS a main-checkout reset"
+}
+
+# ===========================================================================
+# #665 — `git worktree remove --force` joins the Rule B deny-set
+# ===========================================================================
+# The FORCED form only. Plain `git worktree remove` refuses a dirty tree on its
+# own, so it has no unrecoverable work to destroy; denying it would block a safe
+# verb and push operators toward `--force`, which is backwards.
+#
+# TARGET RESOLUTION IS THE WHOLE TEST. `worktree remove` names its target
+# POSITIONALLY, unlike the other three verbs which take `-C`. During
+# implementation the first draft dropped only ONE token before scanning operands,
+# so it read the literal word `remove` as the path — that resolves to a
+# nonexistent dir and FAIL-OPENS, i.e. every deny fixture below silently allowed
+# while the code looked right. A fixture set that only checked "safe things still
+# allow" would have passed that draft, which is why the deny cases are asserted
+# per-form rather than once.
+test_deny_worktree_remove_force() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git worktree remove --force $WT_DIR" deny \
+        "#665 deny: \`git worktree remove --force <peer-wt>\`"
+}
+test_deny_worktree_remove_f_short() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git worktree remove -f $WT_DIR" deny \
+        "#665 deny: the \`-f\` short form"
+}
+test_deny_worktree_remove_doubled_f() {
+    jq_required || return 0
+    # `-f -f` is what git demands when the worktree ALSO holds untracked files —
+    # i.e. the case with the most to lose, so it must not slip through.
+    assert_decision "$MAIN_DIR" "git worktree remove -f -f $WT_DIR" deny \
+        "#665 deny: the doubled \`-f -f\` form (untracked-files case)"
+    assert_decision "$MAIN_DIR" "git worktree remove --force --force $WT_DIR" deny \
+        "#665 deny: the doubled \`--force --force\` form"
+}
+test_deny_worktree_remove_quoted() {
+    jq_required || return 0
+    # The arm strips surrounding quotes off the scanned token, and quoting a path
+    # is the NORMAL way to write this command — so the branch is both reachable
+    # and the common case. Left unfixtured it could mis-strip into a bogus path
+    # that fails the `-d` test and silently fail-opens (#677 review, deferrable).
+    # NOTE the quoting: `run_guard` JSON-encodes the command with `jq --arg`, so
+    # the shell string here must already CONTAIN the literal `"` characters the
+    # operator would type. Writing `\\\"` instead yields backslash-quote in the
+    # payload — a token the parser rightly does not treat as a quoted path, which
+    # is a broken fixture rather than a caught bug (it failed exactly that way
+    # first, while the hook handled a genuine double-quoted command correctly).
+    assert_decision "$MAIN_DIR" 'git worktree remove --force "'"$WT_DIR"'"' deny \
+        "#665 deny: a DOUBLE-quoted positional path"
+    assert_decision "$MAIN_DIR" "git worktree remove --force '$WT_DIR'" deny \
+        "#665 deny: a SINGLE-quoted positional path"
+}
+test_deny_worktree_remove_relative() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git worktree remove --force .worktrees/issue-1" deny \
+        "#665 deny: a RELATIVE positional path resolves against cwd"
+}
+test_deny_worktree_remove_peer_to_peer() {
+    jq_required || return 0
+    assert_decision "$WT2_DIR" "git worktree remove --force $WT_DIR" deny \
+        "#665 deny: peer worktree -> peer worktree"
+}
+test_deny_worktree_remove_after_dashdash() {
+    jq_required || return 0
+    # `--` ends option parsing; the path still follows it and must still resolve.
+    assert_decision "$MAIN_DIR" "git worktree remove --force -- $WT_DIR" deny \
+        "#665 deny: path after a \`--\` separator"
+}
+test_deny_worktree_remove_chained_after_poll() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git worktree list && git worktree remove --force $WT_DIR" deny \
+        "#665 deny: chained after a benign poll"
+}
+test_deny_worktree_remove_reason_actionable() {
+    jq_required || return 0
+    run_guard "$MAIN_DIR" "git worktree remove --force $WT_DIR"
+    local reason
+    reason="$(printf '%s' "$GUARD_OUT" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)"
+    assert_contains "$reason" "worktree-rm.sh" \
+        "#665: the deny reason points at the sanctioned teardown script"
+    assert_contains "$reason" "$WT_DIR" \
+        "#665: the deny reason names the target worktree"
+}
+
+# --- #665 scope boundary: the UNforced verb stays allowed -------------------
+# This is the deliberate scope decision recorded in the hook header, so it gets a
+# fixture rather than only a comment.
+test_allow_worktree_remove_unforced() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git worktree remove $WT_DIR" allow \
+        "#665 scope: plain \`worktree remove\` (no --force) stays ALLOWED"
+}
+test_allow_worktree_remove_own_tree() {
+    jq_required || return 0
+    assert_decision "$WT_DIR" "git worktree remove --force $WT_DIR" allow \
+        "#665: a session force-removing its OWN worktree is allowed"
+}
+test_allow_worktree_remove_primary_target() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git worktree remove --force $MAIN_DIR" allow \
+        "#665: a PRIMARY-checkout target is allowed (not a linked worktree)"
+}
+test_allow_worktree_other_subcommands() {
+    jq_required || return 0
+    # Only `remove` is destructive. `list`/`prune`/`add` must not be swept in by a
+    # too-broad `worktree` arm — `list` in particular is what polling uses.
+    assert_decision "$MAIN_DIR" "git worktree list --porcelain" allow \
+        "#665 scope: \`worktree list\` (polling) stays allowed"
+    assert_decision "$MAIN_DIR" "git worktree prune" allow \
+        "#665 scope: \`worktree prune\` stays allowed"
+    assert_decision "$MAIN_DIR" "git worktree add -f $MAIN_DIR/.worktrees/issue-9" allow \
+        "#665 scope: \`worktree add -f\` is not a removal (the -f must not match alone)"
+}
+# --- #665: the positional path COMBINES with the -C/cd context --------------
+# Review cycle 1 of PR #677 found (and a live fixture confirmed) that the first
+# version of this arm assigned `matched_dir="$_wt_path"` outright, discarding any
+# `-C`/`cd` seen earlier. git resolves a RELATIVE operand against its effective
+# cwd, which both of those move — so `cd <peer-wt> && git worktree remove --force
+# .` deleted the peer worktree while the guard resolved `.` against the PAYLOAD
+# cwd, saw the primary checkout, and ALLOWED it.
+#
+# That is NOT the documented fail-open direction (decline to resolve → allow); it
+# computed a confidently WRONG target. Same class as #662's unexpanded-`~`
+# bypass, which is why every spelling of one target is asserted here: a guard is
+# only as good as its least-specific spelling.
+test_deny_worktree_remove_cd_dot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "cd $WT_DIR && git worktree remove --force ." deny \
+        "#665 deny: \`cd <peer-wt> && remove --force .\` (cycle-1 BLOCKING bypass)"
+}
+test_deny_worktree_remove_dashC_dot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "git -C $WT_DIR worktree remove --force ." deny \
+        "#665 deny: \`-C <peer-wt> … remove --force .\` (cycle-1 BLOCKING bypass)"
+}
+test_deny_worktree_remove_dashC_dotdot() {
+    jq_required || return 0
+    # `..` traversal from one peer to another: the relative operand only names the
+    # real target once joined onto the `-C` base.
+    assert_decision "$MAIN_DIR" "git -C $WT2_DIR worktree remove --force ../issue-1" deny \
+        "#665 deny: \`-C <peer-B> … remove --force ../<peer-A>\`"
+}
+test_deny_worktree_remove_cd_dotdot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "cd $WT2_DIR && git worktree remove --force ../issue-1" deny \
+        "#665 deny: \`cd <peer-B> && remove --force ../<peer-A>\`"
+}
+test_allow_worktree_remove_own_tree_dot() {
+    jq_required || return 0
+    # The other direction of the same mechanism: a golem force-removing ITS OWN
+    # worktree via a bare `.` must still be ALLOWED. This is the clause that keeps
+    # golems working, and a fix that merely denied everything relative would break
+    # it — so it is asserted alongside the denies rather than trusted.
+    assert_decision "$WT_DIR" "git worktree remove --force ." allow \
+        "#665 allow: a golem force-removing its OWN worktree via bare \`.\`"
+}
+test_allow_worktree_remove_cd_main_dot() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" "cd $MAIN_DIR && git worktree remove --force ." allow \
+        "#665 allow: \`cd <main> && remove --force .\` targets a primary checkout"
+}
+test_failopen_worktree_remove_dashled_basename() {
+    jq_required || return 0
+    # The OTHER documented gap (#677 review cycle 4). Its sibling above got a
+    # fixture and this one did not, which is the asymmetry worth removing: a gap
+    # asserted only in a comment drifts silently, and "documented" then means
+    # nothing. `-mytree` is read as a flag by the operand scanner, so the target
+    # falls back to the -C/cd/cwd base — here the MAIN checkout, a primary tree,
+    # hence allow. Asserting current behavior so a future scanner fix fails here
+    # and flips it deliberately.
+    assert_decision "$MAIN_DIR" "git worktree remove --force -mytree" allow \
+        "#665 documented gap: a dash-led basename is read as a flag (fail-open)"
+    # The `--`-separated spelling IS handled — the header claims this, so pin it.
+    # Without this the doc's "the -- form works" sentence is unverified prose.
+    assert_decision "$MAIN_DIR" "git worktree remove --force -- $WT_DIR" deny \
+        "#665: the \`--\`-separated spelling still resolves and DENIES"
+}
+test_failopen_worktree_remove_space_in_path() {
+    jq_required || return 0
+    # DOCUMENTED GAP (#677 review cycle 2), pinned so it stays a decision rather
+    # than drifting silently: operands are IFS-split like everywhere else in this
+    # hook, so a path containing a space yields only its first fragment, which
+    # resolves nowhere and fail-opens. Asserting the CURRENT behavior means a
+    # future change that closes the gap fails here loudly and gets to flip this
+    # to `deny` deliberately — the alternative (no fixture) lets it flip either
+    # way unnoticed.
+    local sb="$FIXTURE/spacerepo"
+    command mkdir -p "$sb"
+    git_clean -C "$sb" init -q
+    git_clean -C "$sb" config user.email "test@example.com"
+    git_clean -C "$sb" config user.name "Test"
+    printf 'x\n' >"$sb/f"
+    git_clean -C "$sb" add f
+    git_clean -C "$sb" -c commit.gpgsign=false commit -qm s
+    git_clean -C "$sb" worktree add -q -b spacewt "$sb/my wt" >/dev/null 2>&1
+    local sbc
+    sbc="$(cd "$sb" && pwd)"
+
+    # Control FIRST: the same worktree via a space-free path must DENY, so an
+    # allow below is attributable to the space and not to a broken sandbox.
+    git_clean -C "$sb" worktree add -q -b nospacewt "$sb/nospace" >/dev/null 2>&1
+    assert_decision "$sbc" "git worktree remove --force $sbc/nospace" deny \
+        "control: a space-FREE path in the same repo DENIES"
+    assert_decision "$sbc" "git worktree remove --force \"$sbc/my wt\"" allow \
+        "#665 documented gap: a path with a SPACE fail-opens (IFS split, not a shell parser)"
+}
+test_failopen_worktree_remove_unresolvable_path() {
+    jq_required || return 0
+    assert_decision "$MAIN_DIR" 'git worktree remove --force $wt' allow \
+        "#665 fail-open: an unresolvable \$var positional operand"
+    assert_decision "$MAIN_DIR" 'git worktree remove --force $(cat p)' allow \
+        "#665 fail-open: an unresolvable command-substitution operand"
 }
 
 # ===========================================================================
@@ -775,6 +1018,94 @@ test_mutation_forced_cross_tree() {
         "MUTATION: \`rm -rf <wt>\` still ALLOWS under mutant 2 (git-verbs-only scope is independent)"
 }
 
+# --- Mutant 3: neuter the #665 worktree-remove arm --------------------------
+# Mutants 1 and 2 predate #665 and CANNOT measure it: mutant 1 patches the caller
+# gate (so it flips the new fixtures for the OLD rule's reason) and mutant 2
+# patches the git-dir comparisons (shared by every verb). Neither would notice if
+# the `worktree` arm stopped matching entirely. Per this repo's
+# mutate-every-RULE lesson, the rule added by a change needs its OWN mutant —
+# the rule with zero failing mutants is exactly the one a mutation round exists
+# to find.
+#
+# The patch makes the arm fall through by breaking its `remove` subcommand test,
+# which is the arm's entry condition. Every #665 deny fixture must flip to allow;
+# the pre-existing verbs must NOT flip (proof the mutant is scoped to #665).
+test_mutation_neutered_worktree_arm() {
+    jq_required || return 0
+    local m
+    m="$(mutant_build wtarm 's#^                    \[ "$_wt_sub" = "remove" \] || continue$#                    continue#')"
+    assert_not_empty "$m" "mutant 3 built (the #665 worktree-arm anchor still matches the source)"
+    [ -n "$m" ] || return 0
+    assert_true "\"$REAL_BASH\" -n \"$m\"" "mutant 3 is syntactically valid (allows are real, not crashes)"
+
+    assert_decision "$MAIN_DIR" "git worktree remove --force $WT_DIR" allow \
+        "MUTATION: neutering the arm makes \`--force\` ALLOW (fixture is load-bearing)" "$m"
+    assert_decision "$MAIN_DIR" "git worktree remove -f $WT_DIR" allow \
+        "MUTATION: neutering the arm makes \`-f\` ALLOW" "$m"
+    assert_decision "$MAIN_DIR" "git worktree remove -f -f $WT_DIR" allow \
+        "MUTATION: neutering the arm makes \`-f -f\` ALLOW" "$m"
+    assert_decision "$MAIN_DIR" "git worktree remove --force .worktrees/issue-1" allow \
+        "MUTATION: neutering the arm makes the RELATIVE form ALLOW" "$m"
+    assert_decision "$WT2_DIR" "git worktree remove --force $WT_DIR" allow \
+        "MUTATION: neutering the arm makes PEER-to-PEER ALLOW" "$m"
+
+    # Scope proof: the three original verbs must survive mutant 3 untouched. If
+    # one of these flipped, the mutant is patching something shared and the
+    # assertions above would be measuring the wrong rule.
+    assert_decision "$MAIN_DIR" "git -C $WT_DIR reset --hard" deny \
+        "MUTATION: mutant 3 still denies \`reset --hard\` (it broke ONLY the #665 arm)"
+    assert_decision "$MAIN_DIR" "git -C $WT_DIR clean -fd" deny \
+        "MUTATION: mutant 3 still denies \`clean\` (it broke ONLY the #665 arm)"
+}
+
+# --- Mutant 4: drop the --force requirement ---------------------------------
+# The INVERSE direction. Mutant 3 proves the deny fixtures are load-bearing; this
+# proves the ALLOW fixture is. Making the arm match regardless of `--force` must
+# flip the unforced-remove allow to deny — otherwise that fixture is decoration
+# and the documented `--force`-only scope is untested (the
+# gate-and-evidence-converge tautology this repo has been bitten by).
+test_mutation_force_requirement_dropped() {
+    jq_required || return 0
+    local m
+    m="$(mutant_build wtforce 's#^                        \*" --force "\* | \*" -f "\*) ;;$#                        *) ;;#')"
+    assert_not_empty "$m" "mutant 4 built (the --force-test anchor still matches the source)"
+    [ -n "$m" ] || return 0
+    assert_true "\"$REAL_BASH\" -n \"$m\"" "mutant 4 is syntactically valid (denies are real, not crashes)"
+
+    assert_decision "$MAIN_DIR" "git worktree remove $WT_DIR" deny \
+        "MUTATION: dropping the --force test makes the UNFORCED remove DENY (allow-fixture is load-bearing)" "$m"
+    # And the forced form still denies — the mutant widened the rule, not broke it.
+    assert_decision "$MAIN_DIR" "git worktree remove --force $WT_DIR" deny \
+        "MUTATION: mutant 4 still denies the forced form (it only widened the match)" "$m"
+}
+
+# --- Mutant 5: restore the cycle-1 bypass -----------------------------------
+# Re-introduce the exact defect review cycle 1 found: assign the positional path
+# to `matched_dir` outright, discarding the `-C`/`cd` base. The relative-form
+# denies must flip to ALLOW; the ABSOLUTE form must NOT flip (it never needed the
+# base), which is what proves these fixtures measure the join specifically rather
+# than the arm as a whole — mutant 3 already covers the arm.
+test_mutation_positional_ignores_base() {
+    jq_required || return 0
+    local m
+    m="$(mutant_build wtbase 's#^                        \*) matched_dir="\${_wt_base:+\$_wt_base/}\$_wt_path" ;;$#                        *) matched_dir="$_wt_path" ;;#')"
+    assert_not_empty "$m" "mutant 5 built (the relative-join anchor still matches the source)"
+    [ -n "$m" ] || return 0
+    assert_true "\"$REAL_BASH\" -n \"$m\"" "mutant 5 is syntactically valid (allows are real, not crashes)"
+
+    assert_decision "$MAIN_DIR" "cd $WT_DIR && git worktree remove --force ." allow \
+        "MUTATION: dropping the base makes \`cd <wt> && remove .\` ALLOW (the cycle-1 bypass, fixture is load-bearing)" "$m"
+    assert_decision "$MAIN_DIR" "git -C $WT_DIR worktree remove --force ." allow \
+        "MUTATION: dropping the base makes \`-C <wt> … remove .\` ALLOW" "$m"
+    assert_decision "$MAIN_DIR" "git -C $WT2_DIR worktree remove --force ../issue-1" allow \
+        "MUTATION: dropping the base makes the \`../\` traversal ALLOW" "$m"
+
+    # The absolute form must SURVIVE the mutant — it does not depend on the base,
+    # so a flip here would mean these fixtures are measuring the arm, not the join.
+    assert_decision "$MAIN_DIR" "git worktree remove --force $WT_DIR" deny \
+        "MUTATION: mutant 5 still denies the ABSOLUTE form (the join is what these fixtures measure)"
+}
+
 # --- Registration integrity -------------------------------------------------
 test_hooks_registered() {
     jq_required || return 0
@@ -837,6 +1168,28 @@ run_test test_failopen_unresolvable_dashC_var "fail-open: unresolvable -C \$var"
 run_test test_failopen_unresolvable_dashC_cmdsubst "fail-open: unresolvable -C \$(...)"
 run_test test_failopen_tilde_user_form "fail-open: ~user/ is not expanded (accepted gap)"
 run_test test_allow_worktree_into_primary_checkout "scope boundary: worktree -> primary allows by design"
+run_test test_deny_worktree_remove_force "#665 deny: worktree remove --force <peer>"
+run_test test_deny_worktree_remove_f_short "#665 deny: -f short form"
+run_test test_deny_worktree_remove_doubled_f "#665 deny: doubled -f -f / --force --force"
+run_test test_deny_worktree_remove_quoted "#665 deny: quoted positional path"
+run_test test_deny_worktree_remove_relative "#665 deny: relative positional path"
+run_test test_deny_worktree_remove_peer_to_peer "#665 deny: peer -> peer"
+run_test test_deny_worktree_remove_after_dashdash "#665 deny: path after --"
+run_test test_deny_worktree_remove_chained_after_poll "#665 deny: chained after a poll"
+run_test test_deny_worktree_remove_reason_actionable "#665: deny reason is actionable"
+run_test test_allow_worktree_remove_unforced "#665 scope: unforced remove stays allowed"
+run_test test_allow_worktree_remove_own_tree "#665 allow: own worktree"
+run_test test_allow_worktree_remove_primary_target "#665 allow: primary-checkout target"
+run_test test_allow_worktree_other_subcommands "#665 scope: list/prune/add unaffected"
+run_test test_deny_worktree_remove_cd_dot "#665 deny: cd <wt> && remove --force . (cycle-1 BLOCKING)"
+run_test test_deny_worktree_remove_dashC_dot "#665 deny: -C <wt> remove --force . (cycle-1 BLOCKING)"
+run_test test_deny_worktree_remove_dashC_dotdot "#665 deny: -C <peer-B> remove --force ../<peer-A>"
+run_test test_deny_worktree_remove_cd_dotdot "#665 deny: cd <peer-B> && remove --force ../<peer-A>"
+run_test test_allow_worktree_remove_own_tree_dot "#665 allow: own worktree via bare ."
+run_test test_allow_worktree_remove_cd_main_dot "#665 allow: cd <main> && remove --force ."
+run_test test_failopen_worktree_remove_dashled_basename "#665 documented gap: dash-led basename"
+run_test test_failopen_worktree_remove_space_in_path "#665 documented gap: space in the worktree path"
+run_test test_failopen_worktree_remove_unresolvable_path "#665 fail-open: unresolvable positional operand"
 run_test test_worktree_rm_still_works "AC4: worktree-rm.sh teardown still works"
 run_test test_rule_a_subagent_still_denied "Rule A regression: subagent rm still denied"
 run_test test_rule_a_subagent_scratch_still_allowed "Rule A regression: scratch carve-out intact"
@@ -844,6 +1197,9 @@ run_test test_nojq_denies_worktree_reset "no-jq: still denies a worktree reset"
 run_test test_nojq_allows_main_reset "no-jq: still allows a main reset"
 run_test test_mutation_neutered_gate "AC5 MUTATION 1: neutered gate flips every DENY"
 run_test test_mutation_forced_cross_tree "AC5 MUTATION 2: forced cross-tree flips every own-tree ALLOW"
+run_test test_mutation_neutered_worktree_arm "#665 MUTATION 3: neutered worktree arm flips every new DENY"
+run_test test_mutation_force_requirement_dropped "#665 MUTATION 4: dropped --force test flips the unforced ALLOW"
+run_test test_mutation_positional_ignores_base "#665 MUTATION 5: positional path ignoring the -C/cd base restores the cycle-1 bypass"
 run_test test_hooks_registered "hooks.json registers the guard"
 
 generate_report

@@ -71,44 +71,105 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    With the invariant satisfied, dispatch by level:
 
    - **L3–L4 — auto-merge, then prune (worktree-aware).** Merge the PR yourself
-     (squash), then do the cleanup inline. First detect whether this run is in a
-     **linked worktree** — an `EnterWorktree` session or an `orchestrate`
-     per-golem worktree — because `main` is checked out in the **primary**
-     worktree and git refuses a second checkout of it. Use the same `git
-     rev-parse` idiom as `hooks/golem-notify.sh` and
-     `scripts/seed-worktree-trust.sh`: `git rev-parse --git-dir` != `git rev-parse
-     --git-common-dir` means a linked worktree (`IN_WORKTREE=1`); equal means the
-     primary checkout (`IN_WORKTREE=0`). Merge on that flag —
+     (squash), then do the cleanup inline.
 
-     **Primary checkout** — merge with `--delete-branch`; `gh` fast-forwards the
-     local `main`:
-
-     ```bash
-     gh pr merge "$PR_NUM" --squash --delete-branch
-     ```
-
-     **Linked worktree** — do NOT pass `--delete-branch` (it forces a local `git
-     checkout main` to prune, which fails with `'main' is already used by worktree
-     at …`). Merge without it, then delete the remote branch explicitly, which
-     needs no local checkout:
+     **Decide `--delete-branch` on whether a worktree HOLDS the branch — not on
+     where this session is (#653).** `--delete-branch` makes `gh` prune the local
+     branch, and git refuses to delete a branch that any worktree has checked
+     out. That is a fact about **the branch**, not about the caller: merging from
+     the **primary checkout** while the golem worktree still exists fails exactly
+     the same way. Keying off session location misses that combination — and it
+     is now the *routine* one, since #640 made golem Phase D park the session in
+     the main checkout (`ExitWorktree keep`) **before** `worktree-rm.sh` prunes.
 
      ```bash
-     gh pr merge "$PR_NUM" --squash
-     git push origin --delete "$BRANCH"   # remote prune; ignore "remote ref does not exist"
+     BRANCH="$(gh pr view "$PR_NUM" --json headRefName -q .headRefName)"
+
+     # Does ANY worktree hold this branch? (`--porcelain` prints one
+     # `branch refs/heads/<name>` line per worktree.) Match with `-F -x`, never a
+     # bare `-x`: `-x` anchors the whole line so `feature/issue-6` cannot match
+     # `feature/issue-65`, and `-F` makes the branch name a LITERAL. Git allows
+     # `.`, `[`, `*`, `^`, `$` in a branch name, all of which are regex
+     # metacharacters — an unescaped `fix/v1.2` would match `fix/v1X2` and could
+     # withhold `--delete-branch` on a branch no worktree actually holds.
+     if git worktree list --porcelain | command grep -qFx "branch refs/heads/$BRANCH"; then
+         gh pr merge "$PR_NUM" --squash              # a worktree holds it: local prune would fail
+     else
+         gh pr merge "$PR_NUM" --squash --delete-branch
+     fi
      ```
 
-     **If `gh pr merge` exits non-zero, classify before calling it a dead-end.** A
-     post-merge **cleanup** failure (the local `checkout main` in a worktree) is
-     NOT a merge refusal — the server-side merge already landed. Check the PR's
-     real state with `gh pr view "$PR_NUM" --json state -q .state`: a state of
-     **`MERGED`** means the merge succeeded and the non-zero was cleanup — this is
-     **not** a dead-end, so finish the remote-branch delete if it did not run
-     (`git push origin --delete "$BRANCH"`, ignore "remote ref does not exist")
-     and continue to the cleanup steps below. **Any other state** (`OPEN`, blank)
-     is a genuine refusal (branch protection needs a human approval the golem
-     can't supply, or merge is disabled): treat it as a **dead-end** — log the
-     error, leave the PR open + labeled, emit the dead-end summary, and STOP for a
-     human. Never loop-retry a merge the platform refused.
+     **Next, establish the PR's REAL state — before touching any branch.** Do
+     this whatever `gh pr merge` returned, because its exit code answers a
+     different question than "did the merge land":
+
+     ```bash
+     PR_STATE="$(gh pr view "$PR_NUM" --json state -q .state)"
+     ```
+
+     - **`MERGED`** — the merge landed. A non-zero exit here was a post-merge
+       **cleanup** failure (e.g. the local `checkout main` in a worktree), NOT a
+       merge refusal, so it is **not** a dead-end: proceed to the prune below and
+       the cleanup steps.
+     - **Any other state** (`OPEN`, blank) — a genuine refusal (branch protection
+       needs a human approval the golem can't supply, or merge is disabled).
+       Treat it as a **dead-end**: log the error, leave the PR open + labeled,
+       emit the dead-end summary, and STOP for a human. **Do NOT run the prune
+       below** — deleting the source branch of an unmerged PR is destructive and
+       hard to recover once `worktree-rm.sh` has torn the worktree down. Never
+       loop-retry a merge the platform refused.
+
+     **Then, on the `MERGED` path only, prune the remote and VERIFY it is gone
+     (#653 AC2 + AC3):**
+
+     ```bash
+     git push origin --delete "$BRANCH" 2>/dev/null || true   # tolerate "remote ref does not exist"
+
+     # AC3 — RC is not proof of cleanup. VERIFY, don't infer.
+     if [ -n "$(git ls-remote --heads origin "$BRANCH")" ]; then
+         echo "WARNING: remote branch $BRANCH still present after prune" >&2
+     fi
+     if [ -n "$(git branch --list "$BRANCH")" ]; then
+         # Do not ASSERT the reason — check it. A surviving local branch is
+         # benign only if a worktree actually holds it; after the
+         # `--delete-branch` arm it is the #652 bug itself.
+         if git worktree list --porcelain | command grep -qFx "branch refs/heads/$BRANCH"; then
+             echo "NOTE: local branch $BRANCH still present — a worktree holds it; worktree-rm.sh deletes it at teardown" >&2
+         else
+             echo "WARNING: local branch $BRANCH still present and NO worktree holds it — the local prune silently failed" >&2
+         fi
+     fi
+     ```
+
+     **"Unconditional" means "not gated on `gh`'s exit code" — not "regardless of
+     whether the merge landed".** Those differ, and only the first is safe. Within
+     the `MERGED` path the prune must **never** be gated on RC: when `gh` fails
+     the local branch delete it **aborts the rest of its cleanup** — including the
+     remote delete — while still **exiting 0**. Observed on PR #652:
+     `state: MERGED`, `RC=0`, and `feature/issue-640` still on the remote
+     afterward. A caller trusting `RC` alone concludes the branch was pruned when
+     it was not — which is exactly why AC3 demands a **verify** rather than an
+     inference, and why the check above reads the actual ref instead of an exit
+     code. The prune is idempotent: on the `--delete-branch` arm the ref is
+     already gone and the `|| true` absorbs the "remote ref does not exist".
+
+     A **local** branch surviving is expected only when a worktree still holds it
+     (the AC1 arm above) — `worktree-rm.sh` deletes it during teardown. So the
+     check **re-tests that condition** rather than assuming it: after the
+     `--delete-branch` arm no worktree holds the branch, and a survivor there is
+     the #652 bug on the local side, not a benign leftover. Reporting it as a
+     reassuring NOTE in both cases would tell the operator the one thing that
+     hides the failure — a message must not assert a cause it did not verify.
+
+     > **Why this block is prose and not a tested script.** It runs as the
+     > agent's own live `gh`/`git` calls against a real PR, so there is nothing
+     > for `tests/` to invoke — unlike `bash-guard.sh`, whose logic is a script
+     > and is pinned by `validate-bash-guard-worktree.sh`. That is a real
+     > tradeoff, not an oversight: a future edit that reorders the prune before
+     > the state check, or drops the `-F` from the `grep`, would not fail any
+     > test. Per this repo's convention for logic that cannot be exercised
+     > in-session, the backstop is `docs/verification/` evidence from a live run
+     > plus PR review. Treat edits here with the care that implies.
 
      The cleanup steps below run on **both** the clean-merge and the
      MERGED-after-cleanup-failure paths. Steps a and b hit the API, not the local
@@ -143,13 +204,19 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      b. Comment on the issue:
 
         ```bash
-        gh issue comment {N} --body "Fix merged in PR #{pr_number} (squash + delete-branch) after green CI + clean review."
+        gh issue comment {N} --body "Fix merged in PR #{pr_number} (squash) after green CI + clean review."
         ```
 
      c. **Primary checkout only:** `git checkout main` (then `git pull` to
-     fast-forward the merge). **Skip in a linked worktree** (`IN_WORKTREE=1`) —
-     its HEAD need not move and the golem worktree is torn down by
-     `worktree-rm.sh`.
+     fast-forward the merge). **Skip in a linked worktree** — its HEAD need not
+     move and the golem worktree is torn down by `worktree-rm.sh`. This is the
+     one step that genuinely turns on **session location**, so detect it here
+     with the repo-standard idiom (`git rev-parse --git-dir` != `git rev-parse
+     --git-common-dir` means a linked worktree; equal means the primary
+     checkout) — the same check `hooks/golem-notify.sh` and
+     `scripts/seed-worktree-trust.sh` use. Do **not** reuse it to decide
+     `--delete-branch` above: that is a question about the branch, not the
+     caller (#653).
      d. Delete the state file (`.claude/memory/tmp/next-issue-{N}.json`)
      e. Show the PR URL, then **exit** — skip the L1–L2 labeling/comment steps
      below and Step 5.
