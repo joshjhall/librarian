@@ -350,6 +350,39 @@ test_failopen_chain_poisoned_by_later_var() {
     assert_equals "allow" "$(decision "$GUARD_OUT")" \
         "an unresolvable LATER \`-C\` poisons the whole chain (fail-open, not a stale wrong-tree deny)"
 }
+test_failopen_chain_poisoned_by_earlier_var() {
+    jq_required || return 0
+    # The REVERSE operand order from the test above. `git_C_bad` is set on the
+    # unresolvable branch and never cleared, so an unresolvable FIRST operand must
+    # keep poisoning the invocation even though a literal follows it. Distinct
+    # code path from later-unresolvable (the flag must SURVIVE a subsequent
+    # successful capture rather than merely be set by the last one), and an
+    # off-by-one that only poisoned on the final operand would pass the sibling
+    # test while failing this one (#662 review cycle 4).
+    run_guard "$MAIN_DIR" 'git -C "$var" -C .worktrees/issue-1 reset --hard'
+    assert_equals "allow" "$(decision "$GUARD_OUT")" \
+        "an unresolvable EARLIER \`-C\` still poisons the chain (flag survives a later literal)"
+}
+test_all_three_verbs_share_target_resolution() {
+    jq_required || return 0
+    # `_rule_b_target` was extracted so the poison/chain rule lives in ONE place
+    # for all three Rule B verbs — the harden-one-knob-grep-every-sibling class.
+    # That invariant is only worth stating if it is checked: exercise `clean` and
+    # `checkout --` through the SAME shapes `reset --hard` is tested with, so a
+    # future edit that special-cases one verb's call site is caught.
+    local v
+    for v in "clean -fd" "checkout -- seed.txt"; do
+        run_guard "$MAIN_DIR" "git -C $WT_DIR $v"
+        assert_equals "deny" "$(decision "$GUARD_OUT")" \
+            "\`git $v\` into a peer worktree is DENIED (shares target resolution)"
+        run_guard "$MAIN_DIR" "git -C a/b -C \"\$var\" $v"
+        assert_equals "allow" "$(decision "$GUARD_OUT")" \
+            "\`git $v\` honors the poisoned chain (shares target resolution)"
+        run_guard "$WT_DIR" "git $v"
+        assert_equals "allow" "$(decision "$GUARD_OUT")" \
+            "\`git $v\` in its OWN worktree is ALLOWED (shares target resolution)"
+    done
+}
 test_deny_tilde_mid_chain() {
     jq_required || return 0
     # #662 review cycle 3 (BLOCKING, dynamically repro'd): once folded into the
@@ -769,6 +802,8 @@ run_test test_deny_tilde_path_to_worktree "AC1 deny: ~/-prefixed path (review BL
 run_test test_deny_peer_to_peer "AC1 deny: peer worktree -> peer worktree"
 run_test test_deny_repeated_dashC_chains "AC1 deny: chained -C a -C b names the REAL target (cycle-2 BLOCKING)"
 run_test test_failopen_chain_poisoned_by_later_var "fail-open: later unresolvable -C poisons the chain (cycle-3 BLOCKING)"
+run_test test_failopen_chain_poisoned_by_earlier_var "fail-open: EARLIER unresolvable -C poisons the chain (cycle-4)"
+run_test test_all_three_verbs_share_target_resolution "invariant: all three verbs share _rule_b_target (cycle-4)"
 run_test test_deny_tilde_mid_chain "AC1 deny: mid-chain ~/ expands and resets (cycle-3 BLOCKING)"
 run_test test_deny_bare_tilde_operand "targeting: bare ~ resolves to \$HOME"
 run_test test_failopen_git_dir_env_var "fail-open: GIT_DIR= env-var target (documented gap)"
