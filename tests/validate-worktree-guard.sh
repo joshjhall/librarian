@@ -36,7 +36,8 @@
 #      (/tmp, $HOME/...) or a relative target must be ALLOWED (not this guard's
 #      concern; a relative path resolves against the worktree cwd).
 #
-# Unlike bash-guard (which needs no git), the discriminator here is git-worktree
+# Unlike THIS suite's sibling validate-bash-guard.sh (whose Rule A discriminator
+# is the `agent_id` field, so it needs no git), the discriminator here is git-worktree
 # scope, so each case runs against a REAL on-disk fixture: a `git init` sandbox
 # (the "main" checkout) plus a real linked worktree via `git worktree add`. The
 # payload's `cwd` selects which side the call comes from. git's hook-exported

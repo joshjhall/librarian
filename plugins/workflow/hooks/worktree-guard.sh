@@ -69,11 +69,15 @@
 #     allow, so only a cross-tree target reaches this loud path.
 #
 # ACCEPTED OUT-OF-SCOPE GAPS (documented, deliberately not covered):
-#   - The `Bash` tool. Scanning arbitrary shell for a leaked write target is
-#     noisy (a mere `cat /workspace/<repo>/...` read is not a leak) and the
-#     sibling bash-guard already owns the Bash matcher for its own rule. The
-#     golem SKILL prompt guidance (always use worktree-relative / $PWD-anchored
-#     paths, never a bare /workspace/<repo>/... root) is the belt for Bash.
+#   - The `Bash` tool, for THIS guard's rule (golem -> main). Scanning arbitrary
+#     shell for a leaked write target is noisy (a mere `cat /workspace/<repo>/...`
+#     read is not a leak) and the sibling bash-guard already owns the Bash matcher.
+#     The golem SKILL prompt guidance (always use worktree-relative /
+#     $PWD-anchored paths, never a bare /workspace/<repo>/... root) is the belt for
+#     Bash. Note the OPPOSITE direction (main -> golem worktree) IS covered on the
+#     Bash surface, by bash-guard's Rule B (#662) — but only for the three
+#     destructive git verbs, where the target tree is decidable from `-C`/`cd`
+#     without parsing arbitrary write targets.
 #   - A symlink whose target escapes the worktree. Path resolution here is
 #     lexical (segment collapse of `.`/`..`), not a realpath() through symlinks.
 #   - A bare-host or EXOTIC gitdir (above) whose scope cannot be derived from the
@@ -89,8 +93,11 @@
 #     `git config`). The disarming Edit/Write to `$worktree/.git` is ALSO denied
 #     outright (defense in depth). The residual `Bash`-tool vector (a `printf` /
 #     `rm` from the golem's own MAIN loop) is neutralized by that re-derivation,
-#     not blocked — bash-guard only gates SUBAGENT commands, and the main loop must
-#     stay un-blocked. See the disguised-worktree detection below.
+#     not blocked — bash-guard does not gate a main-loop `rm`/`printf` (since #662
+#     it gates main-session commands too, but only the three destructive GIT verbs,
+#     and only when aimed at ANOTHER tree's linked worktree — a golem writing
+#     inside its OWN tree is exactly the allowed case), and the main loop must stay
+#     un-blocked. See the disguised-worktree detection below.
 #   A silent leak is the one outcome avoided everywhere.
 #
 # FAILURE MODE — fail-open, fail-LOUD on trouble (mirrors bash-guard, #448). On

@@ -1,5 +1,5 @@
 {
-  "description": "Records each golem's permission-gate / idle transitions to the central status feed (Notification); blocks destructive shell in read-only review/analysis subagents via a PreToolUse Bash guard (#448); and blocks worktree-escaping Edit/Write that would leak into the main checkout via a PreToolUse worktree-scope guard (#475).",
+  "description": "Records each golem's permission-gate / idle transitions to the central status feed (Notification); blocks destructive shell in read-only review/analysis subagents, and main-session destructive git aimed at another session's linked worktree, via a PreToolUse Bash guard (#448/#662); and blocks worktree-escaping Edit/Write that would leak into the main checkout via a PreToolUse worktree-scope guard (#475).",
   "hooks": {
     "Notification": [
       {

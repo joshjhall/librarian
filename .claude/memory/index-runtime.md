@@ -25,6 +25,7 @@ to every task, not just this topic.
 - [Devcontainer bash_env PATH reset](devcontainer-bash-env-path-reset.md) — /etc/bash_env resets $PATH; unset BASH_ENV for PATH-stub tests
 - [Scrub GIT_* in temp-repo tests](flaky-golem-gate-watch-test.md) — push exports GIT_DIR into hooks → tests hit the OUTER repo; reads as flake
 - [send-keys rc proves nothing](send-keys-rc-proves-nothing.md) — tmux exits 0 on an unknown key name and types it literally; assert the ARGUMENT (#659)
+- [local can't self-reference](local-declaration-cannot-self-reference.md) — `local a=$1 b=$a` aborts under set -u; shellcheck SC2318 catches it — lint before you debug
 
 ## Lint & format gates
 
