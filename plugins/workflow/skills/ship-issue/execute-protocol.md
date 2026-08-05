@@ -130,7 +130,14 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
          echo "WARNING: remote branch $BRANCH still present after prune" >&2
      fi
      if [ -n "$(git branch --list "$BRANCH")" ]; then
-         echo "NOTE: local branch $BRANCH still present (expected while a worktree holds it — worktree-rm.sh deletes it at teardown)" >&2
+         # Do not ASSERT the reason — check it. A surviving local branch is
+         # benign only if a worktree actually holds it; after the
+         # `--delete-branch` arm it is the #652 bug itself.
+         if git worktree list --porcelain | command grep -qFx "branch refs/heads/$BRANCH"; then
+             echo "NOTE: local branch $BRANCH still present — a worktree holds it; worktree-rm.sh deletes it at teardown" >&2
+         else
+             echo "WARNING: local branch $BRANCH still present and NO worktree holds it — the local prune silently failed" >&2
+         fi
      fi
      ```
 
@@ -146,9 +153,23 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      code. The prune is idempotent: on the `--delete-branch` arm the ref is
      already gone and the `|| true` absorbs the "remote ref does not exist".
 
-     A **local** branch surviving is expected, not an error, whenever a worktree
-     still holds it (the AC1 arm above) — `worktree-rm.sh` deletes it during
-     teardown. It is reported as a NOTE so the two cases stay distinguishable.
+     A **local** branch surviving is expected only when a worktree still holds it
+     (the AC1 arm above) — `worktree-rm.sh` deletes it during teardown. So the
+     check **re-tests that condition** rather than assuming it: after the
+     `--delete-branch` arm no worktree holds the branch, and a survivor there is
+     the #652 bug on the local side, not a benign leftover. Reporting it as a
+     reassuring NOTE in both cases would tell the operator the one thing that
+     hides the failure — a message must not assert a cause it did not verify.
+
+     > **Why this block is prose and not a tested script.** It runs as the
+     > agent's own live `gh`/`git` calls against a real PR, so there is nothing
+     > for `tests/` to invoke — unlike `bash-guard.sh`, whose logic is a script
+     > and is pinned by `validate-bash-guard-worktree.sh`. That is a real
+     > tradeoff, not an oversight: a future edit that reorders the prune before
+     > the state check, or drops the `-F` from the `grep`, would not fail any
+     > test. Per this repo's convention for logic that cannot be exercised
+     > in-session, the backstop is `docs/verification/` evidence from a live run
+     > plus PR review. Treat edits here with the care that implies.
 
      The cleanup steps below run on **both** the clean-merge and the
      MERGED-after-cleanup-failure paths. Steps a and b hit the API, not the local

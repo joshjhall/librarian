@@ -824,8 +824,14 @@ while IFS= read -r seg; do
                     # expansions — expansion happens in the caller gate, which is
                     # the single place that owns it.
                     case "$_wt_path" in
-                        # No positional operand: the `-C`/`cd` base IS the target
-                        # (git removes the worktree it is standing in).
+                        # No positional operand. NOT a real git usage — `git
+                        # worktree remove` requires a <worktree> argument and
+                        # exits with a usage error without one (verified), so
+                        # there is no "remove the tree I am standing in" form.
+                        # This is a defensive fallback for a degenerate or
+                        # mis-scanned invocation (e.g. the `-`-led basename gap
+                        # above): fall back to the `-C`/`cd` base rather than
+                        # leaving the target unset.
                         '') matched_dir="$_wt_base" ;;
                         # Absolute: self-contained, the base is irrelevant —
                         # exactly as an absolute operand resets a `-C` chain. The
