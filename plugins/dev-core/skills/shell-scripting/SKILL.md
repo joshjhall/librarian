@@ -97,6 +97,35 @@ gated by `tests/lint-shell-portability.sh`:
 For a worked flat-map + string-set example, see
 `plugins/workflow/scripts/golem-gate-watch.sh`.
 
+**GNU-only regex constructs are banned too** (same gate, `#679`). macOS ships
+**BSD** `grep`/`sed`, which do not implement the GNU regex extensions — and the
+failure mode is what makes this dangerous: they do **not** error, they silently
+**mismatch**.
+
+| Banned (GNU-only)         | Portable replacement                     |
+| ------------------------- | ---------------------------------------- |
+| `\s` / `\S`               | `[[:space:]]` / `[^[:space:]]`           |
+| `\w` / `\W`               | `[[:alnum:]_]` / `[^[:alnum:]_]`         |
+| `\|` alternation in a BRE | `grep -E` / `sed -E`, then a bare `\|`   |
+| `sed -n '/a/,/b/{x;y;p}'` | one `-e` per command, or newlines        |
+| `grep -P` (PCRE)          | `grep -E`, plus `tr`/`cut` for lookaround |
+
+A scanner pattern that silently stops matching emits **zero findings and still
+exits 0**, so a scan looks clean on macOS while seeing nothing. That is how #679
+went unnoticed: an indented `print(` was invisible to `^\s*print\(`, a project's
+`.claude/pre-review.yml` parsed to empty, and a `\|` in a BRE made every exported
+JS symbol report as untested. Only the `{…;…}` brace block fails loudly.
+
+Where a construct is genuinely deliberate — a GNU-only helper, or a line where
+the sequence is fixture **data** handed to another language rather than a shell
+pattern — mark it `# lint-allow-gnu-regex: <reason>`. The reason is required, so
+the exemption is justified rather than silent.
+
+When the input is a simple format (a flat list of scalars, `key: value`), prefer
+**parsing it in bash** over reaching for `sed` at all: parameter expansion and
+`case` have no dialect, so the question cannot come back. `read_yaml_list` in
+`plugins/workflow/skills/ship-issue/pre-review-gates.sh` is the worked example.
+
 **Runtime selection for code tools.** A pre-scan tool's primary implementation is
 Python **3.11+** (`patterns.py`); the same-dir `patterns.sh` is a thin selector
 that exec's it when a `python3>=3.11` is present and otherwise runs its own bash

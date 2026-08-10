@@ -73,7 +73,7 @@ while IFS= read -r file; do
     # so the single quote is a real quote char (#183; the old ["\x27] never
     # matched a single-quoted value because grep does not expand \x27 in a
     # bracket expression).
-    command grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)\s*[=:]\s*["'\''][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
+    command grep -niE '(api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token|secret[_-]?key|password|passwd|private[_-]?key)[[:space:]]*[=:][[:space:]]*["'\''][A-Za-z0-9+/=_-]{16,}' "$file" 2>/dev/null |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
@@ -102,7 +102,7 @@ while IFS= read -r file; do
             # ["'] written ["'\''] so a single-quoted f'...' also matches (#183;
             # the old ["\x27] missed f'... because \x27 is not expanded in a
             # bracket expression).
-            command grep -nE '(execute|cursor)\s*\(\s*f["'\'']' "$file" 2>/dev/null |
+            command grep -nE '(execute|cursor)[[:space:]]*\([[:space:]]*f["'\'']' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -114,7 +114,7 @@ while IFS= read -r file; do
             ;;
         *.ts | *.js | *.tsx | *.jsx)
             # Template literal SQL
-            command grep -nE '(query|execute)\s*\(\s*`[^`]*(SELECT|INSERT|UPDATE|DELETE)' "$file" 2>/dev/null |
+            command grep -nE '(query|execute)[[:space:]]*\([[:space:]]*`[^`]*(SELECT|INSERT|UPDATE|DELETE)' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -126,7 +126,7 @@ while IFS= read -r file; do
             ;;
         *.go)
             # fmt.Sprintf with SQL
-            command grep -nE '(Exec|Query|QueryRow)\s*\(\s*fmt\.Sprintf' "$file" 2>/dev/null |
+            command grep -nE '(Exec|Query|QueryRow)[[:space:]]*\([[:space:]]*fmt\.Sprintf' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -141,7 +141,7 @@ while IFS= read -r file; do
     # --- Category: dangerous-function ---
     # Functions that enable code injection or unsafe deserialization
     # Note: this script DETECTS these patterns for remediation, it does not use them
-    command grep -nE '\b(subprocess\.call\s*\(.*shell\s*=\s*True|child_process\.exec\s*\()' "$file" 2>/dev/null |
+    command grep -nE '\b(subprocess\.call[[:space:]]*\(.*shell[[:space:]]*=[[:space:]]*True|child_process\.exec[[:space:]]*\()' "$file" 2>/dev/null |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
@@ -157,8 +157,8 @@ while IFS= read -r file; do
     # yaml exclusion is a second `grep -v` on the line rather than an inline
     # `(?!...)` — the old inline lookahead never matched anything, disabling
     # yaml.load detection entirely (#183).
-    command grep -nE '\b(yaml\.load\s*\(|marshal\.loads?\s*\()' "$file" 2>/dev/null |
-        command grep -vE 'Loader\s*=' |
+    command grep -nE '\b(yaml\.load[[:space:]]*\(|marshal\.loads?[[:space:]]*\()' "$file" 2>/dev/null |
+        command grep -vE 'Loader[[:space:]]*=' |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
@@ -170,7 +170,7 @@ while IFS= read -r file; do
 
     # --- Category: denylist-validation ---
     # Input validation patterns using denylists (!=, not in [bad values])
-    command grep -niE '(blacklist|blocklist|denylist|banned|forbidden)\s*=\s*\[' "$file" 2>/dev/null |
+    command grep -niE '(blacklist|blocklist|denylist|banned|forbidden)[[:space:]]*=[[:space:]]*\[' "$file" 2>/dev/null |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}

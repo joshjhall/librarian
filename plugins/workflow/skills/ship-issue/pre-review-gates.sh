@@ -75,11 +75,89 @@ _TEST_PATTERN_REPO=""
 # Extracts the lines between `KEY:` and the next top-level key (or EOF), then
 # strips the YAML list prefix and surrounding quotes. Shared by all three keys
 # so they cannot drift in how they parse (#568).
+#
+# PURE BASH, no sed — deliberately (#679). The previous implementation opened
+# with a multi-command sed brace block (`{cmd;cmd;p}`), which is GNU-only: BSD
+# sed (the macOS default) rejects `;` as a command separator inside braces and
+# exits 1. Because the call carried `2>/dev/null`, that error was invisible:
+# every key parsed to EMPTY, the declared-convention path went inert, and the
+# scan still exited 0 — a project's .claude/pre-review.yml looked applied and
+# was not. The trailing quote strip compounded it with `\s`, a GNU regex
+# extension that BSD sed reads as a literal `s`.
+#
+# The format here is a flat list of scalars, so it needs no regex engine at all.
+# Parsing it in bash removes the dialect question entirely rather than trading
+# one sed dialect for another, and leaves no subprocess whose failure could be
+# swallowed. No `2>/dev/null`: an unreadable file is caught by the `[ -f ]`
+# guard, and there is nothing else here that can write to stderr.
 read_yaml_list() {
-    command sed -n "/^$1:/,/^[a-zA-Z_]/{/^$1:/d;/^[a-zA-Z_]/d;p}" "$2" 2>/dev/null |
-        command sed 's/^[[:space:]]*-[[:space:]]*//' |
-        command sed 's/^["'\'']//' | command sed 's/["'\'']\s*$//' |
-        command sed '/^$/d'
+    local key="$1" file="$2"
+    local line item in_section=false
+
+    [ -f "$file" ] || return 0
+
+    # `|| [ -n "$line" ]` so a final line with no trailing newline is not lost.
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            "${key}:"*)
+                in_section=true
+                continue
+                ;;
+            # Any other line starting in column 0 with a letter/underscore is
+            # the NEXT top-level key, which ends this section. Matches the old
+            # sed range terminator `/^[a-zA-Z_]/` exactly.
+            [a-zA-Z_]*)
+                in_section=false
+                continue
+                ;;
+        esac
+
+        $in_section || continue
+
+        item="$line"
+        # Strip the `- ` list marker: leading whitespace, the `-`, and the
+        # whitespace after it. Mirrors 's/^[[:space:]]*-[[:space:]]*//' — note
+        # that expression requires the `-`, so a line WITHOUT one keeps its
+        # leading whitespace verbatim. Only strip when the marker is actually
+        # present, or a malformed no-dash line would silently change shape.
+        local unindented="${item#"${item%%[![:space:]]*}"}"
+        case "$unindented" in
+            -*)
+                item="${unindented#-}"
+                item="${item#"${item%%[![:space:]]*}"}"
+                ;;
+        esac
+
+        # Strip ONE layer of surrounding quotes, leading side independent of
+        # trailing — matching the old two-expression pipeline
+        # (`s/^["']//` then `s/["']\s*$//`).
+        case "$item" in
+            \"*) item="${item#\"}" ;;
+            \'*) item="${item#\'}" ;;
+        esac
+
+        # Trailing side: remove a closing quote AND any whitespace after it.
+        # This is the `\s` site — GNU read `\s` as whitespace, BSD sed reads it
+        # as a literal `s`, so on macOS `- "a.py"  ` kept its closing quote and
+        # became a pattern matching nothing.
+        #
+        # The old expression is `["']\s*$`: the whitespace run only comes off
+        # when a QUOTE sits in front of it. So an unquoted `- a.py  ` keeps its
+        # trailing spaces on GNU today. That is very likely a latent bug (such
+        # a glob matches nothing), but fixing it here would be a silent
+        # behaviour change riding along on a portability fix — so this mirrors
+        # the old semantics exactly and the quirk is left for its own issue.
+        local trimmed="${item%"${item##*[![:space:]]}"}"
+        case "$trimmed" in
+            *\") item="${trimmed%\"}" ;;
+            *\') item="${trimmed%\'}" ;;
+        esac
+
+        # Drop blank lines, mirroring the old `sed '/^$/d'`.
+        [ -n "$item" ] || continue
+
+        command printf '%s\n' "$item"
+    done <"$file"
 }
 
 # filter_test_discovery LIST — the `test_discovery` entries that are actually
@@ -452,7 +530,7 @@ scan_debug_statements() {
     case "$file" in
         *.py)
             # Python: print() used as debug (not in logging context)
-            command grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*print\(' "$file" 2>/dev/null |
                 command grep -vE '(logging|logger|log\.)' |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
@@ -463,7 +541,7 @@ scan_debug_statements() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             # Python: breakpoint(), pdb
-            command grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -475,7 +553,7 @@ scan_debug_statements() {
             ;;
         *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
             # JavaScript/TypeScript: console.log, console.debug, console.warn
-            command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -485,7 +563,7 @@ scan_debug_statements() {
                         "Console debug statement: ${evidence}" "HIGH"
                 done || true
             # debugger keyword
-            command grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*debugger[[:space:]]*;?[[:space:]]*$' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -497,7 +575,7 @@ scan_debug_statements() {
             ;;
         *.rb)
             # Ruby: binding.pry, puts used as debug
-            command grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -509,7 +587,7 @@ scan_debug_statements() {
             ;;
         *.go)
             # Go: fmt.Println used as debug (not in main or test)
-            command grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -521,7 +599,7 @@ scan_debug_statements() {
             ;;
         *.java | *.kt)
             # Java/Kotlin: System.out.println, System.err.println
-            command grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -1311,7 +1389,12 @@ scan_untested_public_api() {
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    func_name=$(command printf '%s' "$content" | command sed 's/^export \(function\|const\|class\) \([a-zA-Z][a-zA-Z0-9_]*\).*/\2/')
+                    # `sed -E` (ERE), not the default BRE: `\|` alternation is a
+                    # GNU extension. Under BSD sed this substitution never
+                    # matched, so func_name fell through as the ENTIRE source
+                    # line — which the `\b${func_name}\b` grep below can never
+                    # match, reporting every exported symbol as untested (#679).
+                    func_name=$(command printf '%s' "$content" | command sed -E 's/^export (function|const|class) ([a-zA-Z][a-zA-Z0-9_]*).*/\2/')
                     found=false
                     for suffix in "test" "spec"; do
                         for test_path in \

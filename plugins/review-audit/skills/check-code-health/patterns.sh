@@ -136,7 +136,7 @@ while IFS= read -r file; do
         case "$file" in
             *.py)
                 # Python: print() used as debug (not in logging context)
-                command grep -nE -- '^\s*print\(' "$file" 2>/dev/null |
+                command grep -nE -- '^[[:space:]]*print\(' "$file" 2>/dev/null |
                     command grep -vE '(logging|logger|log\.)' |
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
@@ -147,7 +147,7 @@ while IFS= read -r file; do
                             "Debug print statement: ${evidence}" "HIGH"
                     done || true
                 # Python: breakpoint(), pdb
-                command grep -nE -- '^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
+                command grep -nE -- '^[[:space:]]*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
@@ -159,7 +159,7 @@ while IFS= read -r file; do
                 ;;
             *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
                 # JavaScript/TypeScript: console.log, console.debug, console.warn
-                command grep -nE -- '^\s*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
+                command grep -nE -- '^[[:space:]]*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
@@ -169,7 +169,7 @@ while IFS= read -r file; do
                             "Console debug statement: ${evidence}" "HIGH"
                     done || true
                 # debugger keyword
-                command grep -nE -- '^\s*debugger\s*;?\s*$' "$file" 2>/dev/null |
+                command grep -nE -- '^[[:space:]]*debugger[[:space:]]*;?[[:space:]]*$' "$file" 2>/dev/null |
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
@@ -181,7 +181,7 @@ while IFS= read -r file; do
                 ;;
             *.rb)
                 # Ruby: binding.pry, puts used as debug
-                command grep -nE -- '^\s*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
+                command grep -nE -- '^[[:space:]]*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
@@ -193,7 +193,7 @@ while IFS= read -r file; do
                 ;;
             *.go)
                 # Go: fmt.Println used as debug (not in main or test)
-                command grep -nE -- '^\s*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
+                command grep -nE -- '^[[:space:]]*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
@@ -205,7 +205,7 @@ while IFS= read -r file; do
                 ;;
             *.java | *.kt)
                 # Java/Kotlin: System.out.println, System.err.println
-                command grep -nE -- '^\s*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
+                command grep -nE -- '^[[:space:]]*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
                     while IFS= read -r raw; do
                         line_num=${raw%%:*}
                         content=${raw#*:}
@@ -224,13 +224,13 @@ while IFS= read -r file; do
     case "$file" in
         *.py)
             # Python: except with only pass
-            command grep -nE -- '^\s*except' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*except' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     next_line=$(command sed -n -- "$((line_num + 1)),\$p" "$file" |
-                        command grep -m1 -E '\S' | command head -1)
-                    if command printf '%s\n' "$next_line" | command grep -qE '^\s*pass\s*$' 2>/dev/null; then
+                        command grep -m1 -E '[^[:space:]]' | command head -1)
+                    if command printf '%s\n' "$next_line" | command grep -qE '^[[:space:]]*pass[[:space:]]*$' 2>/dev/null; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-handler" \
@@ -240,7 +240,7 @@ while IFS= read -r file; do
             ;;
         *.js | *.ts | *.jsx | *.tsx)
             # JS/TS: catch with empty body
-            command grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
+            command grep -nE -- 'catch[[:space:]]*\([^)]*\)[[:space:]]*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -252,7 +252,7 @@ while IFS= read -r file; do
             ;;
         *.java | *.kt)
             # Java/Kotlin: catch with empty body
-            command grep -nE -- 'catch\s*\([^)]*\)\s*\{\s*\}' "$file" 2>/dev/null |
+            command grep -nE -- 'catch[[:space:]]*\([^)]*\)[[:space:]]*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -264,13 +264,13 @@ while IFS= read -r file; do
             ;;
         *.rb)
             # Ruby: rescue with no body
-            command grep -nE -- '^\s*rescue\b' "$file" 2>/dev/null |
+            command grep -nE -- '^[[:space:]]*rescue\b' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     next_line=$(command sed -n -- "$((line_num + 1)),\$p" "$file" |
-                        command grep -m1 -E '\S' | command head -1)
-                    if command printf '%s\n' "$next_line" | command grep -qE '^\s*(end|rescue)\s*$' 2>/dev/null; then
+                        command grep -m1 -E '[^[:space:]]' | command head -1)
+                    if command printf '%s\n' "$next_line" | command grep -qE '^[[:space:]]*(end|rescue)[[:space:]]*$' 2>/dev/null; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-handler" \
@@ -280,7 +280,7 @@ while IFS= read -r file; do
             ;;
         *.go)
             # Go: if err != nil with empty body
-            command grep -nE -- 'if err != nil\s*\{\s*\}' "$file" 2>/dev/null |
+            command grep -nE -- 'if err != nil[[:space:]]*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}

@@ -87,7 +87,7 @@ while IFS= read -r file; do
                     if ! check_prev_lines "$file" "$line_num" '"""'; then
                         # Also check if function body starts with docstring
                         next_lines=$(command sed -n "$((line_num + 1)),$((line_num + 2))p" "$file" 2>/dev/null)
-                        if ! command echo "$next_lines" | command grep -qE '^\s+"""'; then
+                        if ! command echo "$next_lines" | command grep -qE '^[[:space:]]+"""'; then
                             evidence=$(truncate_chars 80 "$content")
                             command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-api" \
@@ -144,7 +144,7 @@ while IFS= read -r file; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     # Check for /// doc comment
-                    if ! check_prev_lines "$file" "$line_num" '^\s*///'; then
+                    if ! check_prev_lines "$file" "$line_num" '^[[:space:]]*///'; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
@@ -168,7 +168,7 @@ while IFS= read -r file; do
                         _* | "function _"*) continue ;;
                     esac
                     # Check for # comment on preceding line
-                    if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
+                    if ! check_prev_lines "$file" "$line_num" '^[[:space:]]*#'; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
@@ -179,11 +179,11 @@ while IFS= read -r file; do
 
         # --- Ruby ---
         *.rb)
-            command grep -nE '^\s*def [a-z]' "$file" 2>/dev/null |
+            command grep -nE '^[[:space:]]*def [a-z]' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    if ! check_prev_lines "$file" "$line_num" '^\s*#'; then
+                    if ! check_prev_lines "$file" "$line_num" '^[[:space:]]*#'; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "undocumented-public-api" \
@@ -194,7 +194,7 @@ while IFS= read -r file; do
 
         # --- Java/Kotlin ---
         *.java | *.kt)
-            command grep -nE '^\s*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
+            command grep -nE '^[[:space:]]*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}

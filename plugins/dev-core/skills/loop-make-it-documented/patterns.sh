@@ -106,7 +106,13 @@ while IFS= read -r file; do
             ;;
         ts | js | tsx | jsx)
             # --- TypeScript/JavaScript: exported functions without JSDoc ---
-            command grep -n '^export\s\+\(async\s\+\)\?function\s\+\w\+\|^export\s\+\(default\s\+\)\?class\s\+\w\+' "$file" 2>/dev/null |
+            # grep -nE, and POSIX classes rather than \s / \w (#679). As a BASIC
+            # regex this depended on THREE GNU extensions at once — `\|`
+            # alternation, `\s`, and `\w` — none of which BSD grep honors, so on
+            # macOS the whole arm matched nothing and silently found no
+            # undocumented exports. Mirrors patterns.py's JS_EXPORT_RE, which is
+            # already an ERE.
+            command grep -nE '^export[[:space:]]+(async[[:space:]]+)?function[[:space:]]+[[:alnum:]_]+|^export[[:space:]]+(default[[:space:]]+)?class[[:space:]]+[[:alnum:]_]+' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -114,7 +120,7 @@ while IFS= read -r file; do
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
                         prev_content=$(command sed -n "${prev_line}p" "$file")
-                        if ! command printf '%s' "$prev_content" | command grep -qE '^\s*\*/' 2>/dev/null; then
+                        if ! command printf '%s' "$prev_content" | command grep -qE '^[[:space:]]*\*/' 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
                             category="undocumented-export"
                             if command printf '%s' "$content" | command grep -q 'class' 2>/dev/null; then
@@ -151,14 +157,14 @@ while IFS= read -r file; do
             ;;
         sh | bash)
             # --- Shell: functions without usage comment ---
-            command grep -n '^\w\+()' "$file" 2>/dev/null |
+            command grep -nE '^[[:alnum:]_]+\(\)' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
                         prev_content=$(command sed -n "${prev_line}p" "$file")
-                        if ! command printf '%s' "$prev_content" | command grep -qE '^\s*#' 2>/dev/null; then
+                        if ! command printf '%s' "$prev_content" | command grep -qE '^[[:space:]]*#' 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
                             command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-function" \

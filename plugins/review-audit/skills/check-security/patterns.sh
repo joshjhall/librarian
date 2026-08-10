@@ -130,7 +130,7 @@ while IFS= read -r file; do
     # escaped ', and reopens. (Earlier this was `["\x27]`, but GNU grep does not
     # expand \x27 inside a bracket expression — it added literal \,x,2,7 to the
     # class, so any value containing x/2/7 was silently missed. Fixed in #168.)
-    command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)\s*[=:]\s*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
+    command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
         command grep -viE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_|#|//|/\*)' |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
@@ -185,7 +185,7 @@ while IFS= read -r file; do
     esac
 
     # String concatenation with SQL keywords (all languages)
-    command grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*' "$file" 2>/dev/null |
+    command grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"[[:space:]]*\+[[:space:]]*' "$file" 2>/dev/null |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
@@ -248,7 +248,7 @@ while IFS= read -r file; do
     # fired (the line always starts with a digit), so comment lines were flagged
     # too. `^[0-9]+:\s*(#|...)` skips a line whose first non-space code char opens
     # a comment. (Fixed in #168.)
-    command grep -nEi '\b(md5|sha1)\s*\(' "$file" 2>/dev/null |
+    command grep -nEi '\b(md5|sha1)[[:space:]]*\(' "$file" 2>/dev/null |
         command grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
         while IFS= read -r raw; do
             line_num=${raw%%:*}

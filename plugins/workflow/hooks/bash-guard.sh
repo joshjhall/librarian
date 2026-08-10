@@ -385,9 +385,15 @@ norm="$(printf '%s' "$command_str" |
 # statement-ORDER-aware, so the contrived reverse form `d=src; rm -rf $d;
 # d=$(mktemp -d)` (assign live, delete, THEN stage a scratch dir under the same
 # name) is not caught — the natural forms `d=$(mktemp -d); rm -rf "$d"` are.
+# `sed -E` (ERE), not the default BRE (#679): the `\|` alternation in `\(^\|…\)`
+# is a GNU extension. Under BSD sed the substitution never fired, mktemp_var came
+# back EMPTY, and the scratch-dir carve-out silently stopped recognizing its own
+# subject — the guard then over-blocks a legitimate `rm -rf "$d"`. That direction
+# is fail-safe, but it is still a macOS-only behaviour difference in a security
+# hook. Verified to select the same names as the BRE on both sed flavors.
 mktemp_var="$(printf '%s' "$norm" |
     "$TR" ';&|' '\n\n\n' |
-    "$SED" -n 's/.*\(^\|[^A-Za-z0-9_]\)\([A-Za-z_][A-Za-z0-9_]*\)=[`$]\{1\}[({]*mktemp[[:space:]].*/\2/p' |
+    "$SED" -E -n 's/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)=[`$]{1}[({]*mktemp[[:space:]].*/\2/p' |
     "$HEAD" -n1)"
 
 # `_rule_b_target` echoes the target directory frozen at a git-verb match: the

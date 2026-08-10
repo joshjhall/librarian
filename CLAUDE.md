@@ -101,7 +101,15 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   silently emit wrong/empty findings when its runtime is missing. (2) Every
   `*.sh` in `plugins/ tests/ bin/` must stay **bash-3.2 clean** — no `declare -A`,
   `mapfile`/`readarray`, namerefs, `${v,,}`/`${v^^}` case-conversion, or `;;&`.
-  `tests/lint-shell-portability.sh` enforces (2) and `tests/validate-python-ports.sh`
+  (3) No **GNU-only regex** either (#679): macOS ships **BSD** `grep`/`sed`, which
+  read `\s`/`\S`, `\w`/`\W`, and BRE `\|` as **literals** and lack `grep -P`
+  entirely — write `[[:space:]]`, `[[:alnum:]_]`, and `-E`. This one is dangerous
+  because it is **silent**: the pattern stops matching, the scanner emits zero
+  rows, and the scan still exits 0, so macOS sees a clean report of nothing.
+  Prefer a pure-bash parse over `sed` for simple formats (`read_yaml_list` in
+  `ship-issue/pre-review-gates.sh` is the worked example); mark a deliberate
+  exception `# lint-allow-gnu-regex: <reason>`.
+  `tests/lint-shell-portability.sh` enforces (2) and (3), and `tests/validate-python-ports.sh`
   pins the bash↔python TSV parity of every port (both run by `tests/run-all.sh`,
   so they gate CI and pre-push). The TSV contract
   (`file\tline\tcategory\tevidence\tcertainty`) is the language boundary — a port
@@ -182,8 +190,9 @@ just install-hooks
 for JSON/YAML/TOML/markdown is dprint/taplo/rumdl (via `just lint`). The two
 in-repo languages each have a `tests/run-all.sh` gate: **shell** →
 `tests/lint-shellcheck.sh` (`shellcheck --severity=warning` over `plugins/ tests/
-bin/`) plus `tests/lint-shell-portability.sh` (bans bash-4 constructs, macOS
-bash-3.2 target); **Python** → `tests/lint-python.sh` (`ruff check` +
+bin/`) plus `tests/lint-shell-portability.sh` (bans bash-4 constructs and
+GNU-only regex, macOS bash-3.2 + BSD grep/sed target); **Python** →
+`tests/lint-python.sh` (`ruff check` +
 `ruff format --check`, config in `ruff.toml`, py311 target). CI installs
 `shellcheck`/`ruff` (and asserts they are on PATH) so they genuinely run there —
 see `.github/workflows/ci.yml`. `ruff`, `shellcheck`, and `shfmt` also run in the

@@ -119,26 +119,26 @@ while IFS= read -r file; do
 
     case "$file" in
         *.swift)
-            emit_rows '\bProcess\s*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
-            emit_rows '\.terminate\s*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
-            emit_rows '=\s*FileHandle\s*\(' "unclosed-handle" "$L_HANDLE" "$file"
-            emit_rows '\.addObserver\s*\(|\bscheduledTimer\b' "unpaired-listener" "$L_LISTENER" "$file"
+            emit_rows '\bProcess[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
+            emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
+            emit_rows '=[[:space:]]*FileHandle[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
+            emit_rows '\.addObserver[[:space:]]*\(|\bscheduledTimer\b' "unpaired-listener" "$L_LISTENER" "$file"
             ;;
         *.py)
-            emit_rows '\b(subprocess\.)?Popen\s*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
-            emit_rows '\.terminate\s*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
-            emit_rows '=\s*open\s*\(' "unclosed-handle" "$L_HANDLE" "$file"
+            emit_rows '\b(subprocess\.)?Popen[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
+            emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
+            emit_rows '=[[:space:]]*open[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             ;;
         *.js | *.ts | *.jsx | *.tsx)
-            emit_rows '\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)\s*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
-            emit_rows '\.terminate\s*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
-            emit_rows '=\s*fs\.(openSync|createReadStream|createWriteStream)\s*\(' "unclosed-handle" "$L_HANDLE" "$file"
-            emit_rows '\.addEventListener\s*\(|\bsetInterval\s*\(|\.on\s*\(' "unpaired-listener" "$L_LISTENER" "$file"
+            emit_rows '\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
+            emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
+            emit_rows '=[[:space:]]*fs\.(openSync|createReadStream|createWriteStream)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
+            emit_rows '\.addEventListener[[:space:]]*\(|\bsetInterval[[:space:]]*\(|\.on[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
             ;;
         *.go)
-            emit_rows '\bexec\.Command\s*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
+            emit_rows '\bexec\.Command[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
             emit_rows '\bos\.Interrupt\b' "terminate-without-kill" "$L_TERMINATE" "$file"
-            emit_rows '\bos\.(Open|Create)\s*\(' "unclosed-handle" "$L_HANDLE" "$file"
+            emit_rows '\bos\.(Open|Create)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             ;;
     esac
 

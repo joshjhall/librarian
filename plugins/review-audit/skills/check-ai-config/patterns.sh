@@ -79,7 +79,7 @@ get_frontmatter() {
     command sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null |
         { command grep -E "^${key}:" || true; } |
         command sed "s/^${key}:[[:space:]]*//" |
-        command sed 's/^["'\'']//' | command sed 's/["'\'']\s*$//' |
+        command sed 's/^["'\'']//' | command sed 's/["'\''][[:space:]]*$//' |
         command head -1
 }
 
@@ -338,7 +338,7 @@ check_hook_safety() {
     esac
 
     # Destructive commands without guards
-    command grep -nE '(rm\s+-rf\s|git\s+reset\s+--hard|git\s+clean\s+-fd|docker\s+system\s+prune)' "$file" 2>/dev/null |
+    command grep -nE '(rm[[:space:]]+-rf[[:space:]]|git[[:space:]]+reset[[:space:]]+--hard|git[[:space:]]+clean[[:space:]]+-fd|docker[[:space:]]+system[[:space:]]+prune)' "$file" 2>/dev/null |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
