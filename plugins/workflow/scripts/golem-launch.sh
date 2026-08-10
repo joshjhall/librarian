@@ -42,8 +42,9 @@
 #                    bare host / macOS / OAuth setup (no cache, no `op`, no
 #                    OP_*_REF) resolution falls through SILENTLY and dispatches
 #                    exactly as before. Every probe is non-interactive and
-#                    time-bounded (`op read` is wrapped in `timeout` so a locked
-#                    op session can never wedge the launch); the token is only
+#                    time-bounded (`op read` is wrapped in bounded-run.sh's
+#                    coreutils-free watchdog so a locked op session can never
+#                    wedge the launch, on any host); the token is only
 #                    injected when actually resolved (never an empty value that
 #                    could override what the golem's own shell init would supply)
 #                    and is NEVER echoed to a pane or log.
@@ -106,6 +107,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./config.sh
 . "$SCRIPT_DIR/config.sh"
+# shellcheck source=./bounded-run.sh
+. "$SCRIPT_DIR/bounded-run.sh"
 
 # The three rules the documented golem launch path needs under auto mode.
 REQUIRED_RULES=(
@@ -116,23 +119,19 @@ REQUIRED_RULES=(
 
 # _bounded_op_read <ref> — print the op secret at <ref> on stdout, wall-clock
 # bounded so a locked/absent op session can NEVER hang the dispatch (we have seen
-# `op` block on "connecting to desktop app"). Uses `timeout` if present, else
-# `gtimeout` (coreutils on macOS/Homebrew); when NEITHER exists the probe is
-# SKIPPED entirely (prints nothing) rather than risk an unbounded `op read` — a
-# base-macOS host without coreutils authenticates some other way. Any non-zero /
-# empty result → prints nothing. Never prints diagnostics (would risk leaking).
+# `op` block on "connecting to desktop app"). Any non-zero / empty result → prints
+# nothing. Never prints diagnostics (would risk leaking).
+#
+# Bounded via bounded-run.sh (#543). This used to try `timeout`, then `gtimeout`,
+# and SKIP the probe entirely when neither existed — safe, but it silently
+# disabled op-based auth on exactly the base-macOS host the fallback was written
+# for. The pure-shell watchdog needs only sleep/kill/mktemp, so the probe now both
+# runs and stays bounded everywhere.
 _bounded_op_read() {
-    local ref="$1" to=""
+    local ref="$1"
     [ -n "$ref" ] || return 0
     command -v op >/dev/null 2>&1 || return 0
-    if command -v timeout >/dev/null 2>&1; then
-        to="timeout"
-    elif command -v gtimeout >/dev/null 2>&1; then
-        to="gtimeout"
-    else
-        return 0
-    fi
-    "$to" 5 op read "$ref" 2>/dev/null || true
+    bounded_run 5 op read "$ref" 2>/dev/null || true
 }
 
 # resolve_auth_token — set RESOLVED_AUTH_TOKEN (and RESOLVED_BASE_URL when it

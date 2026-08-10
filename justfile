@@ -46,8 +46,9 @@ lint:
     taplo fmt --check
     rumdl check .
     @RUFF_PIN="$(bash bin/ruff-version.sh)" || exit 1; \
+    . bin/bounded-run.sh; \
     if command -v ruff >/dev/null 2>&1; then RUFF="ruff"; \
-    elif command -v uvx >/dev/null 2>&1 && { if command -v timeout >/dev/null 2>&1; then timeout "${UVX_PROBE_TIMEOUT:-60}" uvx "ruff@$RUFF_PIN" --version; else uvx "ruff@$RUFF_PIN" --version; fi; } >/dev/null 2>&1; then RUFF="uvx ruff@$RUFF_PIN"; \
+    elif command -v uvx >/dev/null 2>&1 && bounded_run "${UVX_PROBE_TIMEOUT:-60}" uvx "ruff@$RUFF_PIN" --version >/dev/null 2>&1; then RUFF="uvx ruff@$RUFF_PIN"; \
     else echo "[skip] Python lint did NOT run — no ruff runner (install ruff, or uv for 'uvx ruff')"; exit 0; fi; \
     $RUFF check plugins && $RUFF format --check plugins
     node tests/validate-manifests.mjs
