@@ -47,6 +47,31 @@ test_launch_print_emits_new_session() {
     assert_not_contains "$RUN_OUT" "'/ship-issue" "never emits the bare (un-namespaced) /ship-issue"
 }
 
+# OPERATOR-FACING STDERR must namespace its slash-commands too (#584).
+#
+# The assertions above cover the LAUNCH LINE. The two refusal messages — the
+# tmux-permission wall and the version-skew refusal — are a different surface
+# with the same footgun: text a human reads and then TYPES. A bare `/orchestrate`
+# does not resolve as installed, so an operator following the remediation
+# literally types a command that fails.
+#
+# tests/lint-command-refs.sh cannot catch these: its corpus is markdown only.
+#
+# Asserted against the SOURCE rather than by driving both refusals, because each
+# needs a distinct hostile precondition (no tmux rules in either settings scope;
+# a version-skewed install registry) and this pins the property directly. The
+# regex targets a bare `/orchestrate` NOT preceded by `workflow:` — matching the
+# namespaced form would make the assertion tautological.
+test_launcher_stderr_namespaces_orchestrate() {
+    assert_true "! command grep -nE '(^|[^:])/orchestrate' '$LAUNCH' | command grep -v '^[0-9]*: *#'" \
+        "no operator-facing bare /orchestrate in golem-launch.sh (#584)"
+
+    # NON-VACUITY: the namespaced form must actually be present, or a file that
+    # simply dropped both messages would satisfy the assertion above.
+    assert_true "[ \"\$(command grep -c '/workflow:orchestrate' '$LAUNCH')\" -ge 2 ]" \
+        "both refusal messages carry the namespaced /workflow:orchestrate"
+}
+
 # `print` with a non-numeric argument → exit 2.
 test_launch_print_non_numeric_exits_2() {
     local sb

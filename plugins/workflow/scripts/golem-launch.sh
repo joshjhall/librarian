@@ -223,7 +223,7 @@ golem-launch: REQUIRED tmux launch permissions are NOT authorized in either scop
 
 Without them, a golem dispatch (\`tmux new-session …\`) is DENIED by the
 Claude Code auto-mode classifier ([Create Unsafe Agents]) — an opaque hard wall
-on the first \`/orchestrate dispatch\`.
+on the first \`/workflow:orchestrate dispatch\`.
 
 Add these rules to ONE scope's "permissions.allow":
 
@@ -333,7 +333,7 @@ command namespace the ACTIVE plugin no longer resolves — every golem would die
 \`Unknown command\` and idle silently (#230). Refusing so the skew is visible.
 
 Remediation (any one):
-  - Re-run /orchestrate after updating the plugin so the loaded skill and its
+  - Re-run /workflow:orchestrate after updating the plugin so the loaded skill and its
     helper are the SAME version (claude plugin update workflow@librarian).
   - Dispatch from the active install's helper directly.
   - If this skew is intentional (mid-release / worktree testing), re-run with

@@ -131,6 +131,7 @@ run_fragment_test test_launch_no_arg_exits_2 "golem-launch: no subcommand exits 
 run_fragment_test test_launch_bad_subcommand_exits_2 "golem-launch: unknown subcommand exits 2"
 run_fragment_test test_launch_print_emits_new_session "golem-launch: print <N> emits a tmux new-session line"
 run_fragment_test test_launch_print_non_numeric_exits_2 "golem-launch: print with a non-numeric issue exits 2"
+run_fragment_test test_launcher_stderr_namespaces_orchestrate "golem-launch: operator-facing stderr namespaces /orchestrate (#584)"
 run_fragment_test test_launch_print_level_flag_substituted "golem-launch: print <N> --level 3 substitutes the level, not hardcoded 4 (#301)"
 run_fragment_test test_launch_print_level_defaults_to_4 "golem-launch: print <N> with no level defaults to 4 (#301)"
 run_fragment_test test_launch_print_level_env_fallback "golem-launch: GOLEM_LEVEL is the env fallback for the level (#301)"
