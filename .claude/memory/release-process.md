@@ -5,19 +5,21 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
-  modified: 2026-08-02T15:01:26.936Z
+  modified: 2026-08-05T17:07:14.568Z
   status: stable
-  stale_after: 2026-10-31
-  stale_check: "the \"Latest: vX.Y.Z\" line — re-read from `gh api repos/joshjhall/librarian/releases/latest -q .tag_name`; the recipe below does not expire"
 ---
 
 Librarian has a repo-level semver release flow (added in PR #35, issue #31;
 first release v0.1.0 published 2026-06-28). For the current release, read it
 live — `gh api repos/joshjhall/librarian/releases/latest -q .tag_name` — rather
-than trusting a version written here (v0.8.4 was latest on 2026-08-02).
+than trusting any version written here.
 NOTE: always check the range's commit types before cutting — on v0.8.0
 `just release-patch` was requested but the range had 12 `feat` commits → semver
-says **minor**; flag the bump mismatch before cutting.
+says **minor**; flag the bump mismatch before cutting. This recurs: v0.9.0 was
+also requested as a patch, and the range's single `feat` (#674, a new skill +
+agent) made it a minor. **Treat "probably a patch" as an opening bid, not the
+decision — run `git log --oneline <lasttag>..HEAD` and let the commit types
+settle it.**
 
 **Pre-push runs the FULL suite (~165s), so a `git push` of the release branch
 exceeds a 2-minute Bash timeout and silently leaves nothing on the remote.**
@@ -27,6 +29,18 @@ Push with a 600s timeout and verify with `git ls-remote origin <branch>` — see
 **The `gh pr merge` of the release PR is blocked by the auto-mode classifier as
 self-authored** (see [[auto-mode-blocks-self-merge]]) — expect to park for the
 human to authorize the merge, then carry on to the tag. Do not work around it.
+Parking means *asking*, not refusing: on v0.9.0 the human answered "go ahead and
+merge", and the `gh pr merge` then succeeded. An explicit human go-ahead in the
+session IS the authorization the block exists to require.
+
+**Verify the signature, don't just list the assets.** Two present filenames say
+nothing about whether the bundle validates. Run the README recipe against the
+downloaded pair — `cosign verify-blob --bundle <t>.sigstore.json
+--certificate-identity 'https://github.com/joshjhall/librarian/.github/workflows/release.yml@refs/tags/vX.Y.Z'
+--certificate-oidc-issuer https://token.actions.githubusercontent.com <t>` →
+`Verified OK` — and confirm the *signed bytes* carry the new version
+(`tar -xzOf <t> librarian-X.Y.Z/VERSION`), since that archive is what a consumer
+actually installs.
 
 **Confirmed PR-then-tag recipe (v0.7.0, re-confirmed v0.8.0 and v0.8.4):** `just release-minor` (bumps
 VERSION/manifests/CHANGELOG, NO commit) → commit on a `release/vX.Y.Z` branch as
