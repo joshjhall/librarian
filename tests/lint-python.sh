@@ -14,7 +14,8 @@
 # with no install step; without it this gate sat inert on exactly such a host.
 # The uvx branch is PROBED (`uvx ruff --version`) before being selected — uvx can
 # be present but offline/uncached, and an unprobed `uvx ruff check` would turn a
-# graceful skip into a hard gate failure.
+# graceful skip into a hard gate failure. The probe is wall-clock bounded on
+# EVERY host via bin/bounded-run.sh (#543), not just where GNU `timeout` exists.
 #
 # When neither runner resolves the gate skips (bare host without the
 # devcontainer's tooling), mirroring the node/jq skips in run-all.sh — but it
@@ -31,6 +32,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
+
+# shellcheck source=bin/bounded-run.sh
+source "$REPO_ROOT/bin/bounded-run.sh"
 
 PLUGINS_DIR="$REPO_ROOT/plugins"
 
@@ -65,15 +69,13 @@ RUFF_PIN="$(bash "$REPO_ROOT/bin/ruff-version.sh")"
 # call was the cause. A hang is a worse failure than the inert pass this issue
 # fixes, so the bound lives here.
 #
-# `timeout` is GNU coreutils and absent on base macOS, so it is used only when
-# present; without it the probe runs unbounded (the pre-existing behaviour, and
-# no worse than not probing at all).
+# Bounded via bin/bounded-run.sh, NOT `timeout` (#543). `timeout` is GNU
+# coreutils and absent on base macOS — one of the three host classes this repo
+# targets — so the old `if command -v timeout` guard dropped the bound on exactly
+# the host most likely to have `uv` without coreutils. The pure-shell watchdog
+# needs only sleep/kill/mktemp, so the bound now holds everywhere.
 probe_uvx() {
-    if command -v timeout >/dev/null 2>&1; then
-        command timeout "$UVX_PROBE_TIMEOUT" uvx "ruff@$RUFF_PIN" --version >/dev/null 2>&1
-    else
-        command uvx "ruff@$RUFF_PIN" --version >/dev/null 2>&1
-    fi
+    bounded_run "$UVX_PROBE_TIMEOUT" uvx "ruff@$RUFF_PIN" --version >/dev/null 2>&1
 }
 
 # --- runner resolution: ruff on PATH → probed uvx ruff → skip ----------------

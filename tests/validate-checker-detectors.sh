@@ -175,6 +175,52 @@ test_agent_frontmatter() {
     list="$(list_of "$f")"
     assert_silent agent-frontmatter "$list" \
         "agent-frontmatter: a valid agent file is silent"
+
+    # --- FLAT agents: agents/<name>.md (#525) -------------------------------
+    #
+    # The layout Claude Code ACTUALLY uses for plugin agents, and the one this
+    # repo mandates (CLAUDE.md § "Agent files MUST be flat"). The detector gated
+    # on the nested-only `*/agents/*/*.md` glob, so every flat agent — the common
+    # case — got NO frontmatter validation at all. #494 fixed exactly this blind
+    # spot for the bloat detector and left the sibling detectors exposed.
+
+    # A flat agent missing every required field must be flagged. Before #525 this
+    # returned nothing at all.
+    command mkdir -p "$d/agents"
+    f="$d/agents/flatbare.md"
+    command printf '%s\n' "---" "unrelated: value" "---" "body" >"$f"
+    list="$(list_of "$f")"
+    assert_fires agent-frontmatter "$list" "field: name" \
+        "agent-frontmatter: flat agent missing name flagged (#525)"
+    assert_fires agent-frontmatter "$list" "field: description" \
+        "agent-frontmatter: flat agent missing description flagged (#525)"
+
+    # A flat agent with a bad model value.
+    f="$d/agents/flatbadmodel.md"
+    command printf '%s\n' "---" "name: x" "description: y" "tools: Read" "model: gpt4" "---" >"$f"
+    list="$(list_of "$f")"
+    assert_fires agent-frontmatter "$list" "Invalid model value: gpt4" \
+        "agent-frontmatter: flat agent invalid model flagged (#525)"
+
+    # A flat agent with no opening fence.
+    f="$d/agents/flatnofm.md"
+    command printf '%s\n' "# Just a heading" "no frontmatter here" >"$f"
+    list="$(list_of "$f")"
+    assert_fires agent-frontmatter "$list" "Missing YAML frontmatter" \
+        "agent-frontmatter: flat agent missing fence flagged (#525)"
+
+    # THE FALSE-POSITIVE GUARD, and the reason the widening is not a one-word
+    # glob swap. The naming rule is "the file matches its own directory" — for a
+    # flat agent the parent dir is always `agents/`, so applying it would demand
+    # `agents.md` and flag EVERY correctly-named flat agent in the repo. A
+    # widening that skipped this check would turn the detector into a noise
+    # generator, which is worse than the blind spot it replaced.
+    f="$d/agents/code-reviewer.md"
+    command printf '%s\n' "---" "name: code-reviewer" "description: A well-formed flat agent." \
+        "tools: Read, Grep" "model: sonnet" "---" "# Flat" "body" >"$f"
+    list="$(list_of "$f")"
+    assert_silent agent-frontmatter "$list" \
+        "agent-frontmatter: a valid FLAT agent is silent — no bogus 'should be named agents.md' (#525)"
 }
 
 # ============================================================================

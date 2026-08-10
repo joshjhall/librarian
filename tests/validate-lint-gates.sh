@@ -79,7 +79,13 @@ stub_dir() {
     # Absent, the reader dies inside the stub PATH and every case below would
     # fail for a reason that has nothing to do with what it tests — the same trap
     # class as the `timeout` symlink #544's review caught.
-    for tool in bash env find sort cat printf locale grep mktemp rm dirname basename tr awk; do
+    # `sleep` and `kill` are load-bearing for the #543 watchdog: lint-python.sh's
+    # uvx probe now bounds itself via bin/bounded-run.sh, which needs both. Absent,
+    # the probe cannot be bounded and every uvx case below fails for a reason
+    # unrelated to what it tests — the same trap the `timeout` and `awk` symlinks
+    # above were added for. NOT `timeout`: bounded_run deliberately does not use
+    # it, and test_hanging_uvx_bounded_without_gnu_timeout asserts its absence.
+    for tool in bash env find sort cat printf locale grep mktemp rm dirname basename tr awk sleep kill; do
         src="$(command -v "$tool" 2>/dev/null)" || continue
         command ln -sf "$src" "$dir/bin/$tool" 2>/dev/null || true
     done
@@ -214,6 +220,7 @@ test_hanging_uvx_is_bounded_not_wedged() {
     stub_dir sb || return 1
     command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
     command ln -sf "$(command -v timeout)" "$sb/bin/timeout" 2>/dev/null || true
+    command ln -sf "$(command -v kill)" "$sb/bin/kill" 2>/dev/null || true
 
     # A uvx whose --version probe never returns.
     {
@@ -240,6 +247,68 @@ test_hanging_uvx_is_bounded_not_wedged() {
     assert_true "[ \"$rc\" -ne 124 ]" "the gate returns on its own — a hanging uvx does not wedge it"
     assert_equals "$SKIP_SENTINEL" "$rc" "a hanging uvx degrades to the skip sentinel"
     assert_contains "$out" "GATE DID NOT RUN" "the bounded hang reports as a skip, not a pass"
+}
+
+# THE BRANCH #543 IS ABOUT: a hanging uvx on a host with NO GNU `timeout`.
+#
+# This is the case that had ZERO coverage. test_hanging_uvx_is_bounded_not_wedged
+# above skips itself when `timeout` is absent, and CI always HAS `timeout` — so
+# the arm that ran on base macOS was the one arm never exercised anywhere. The
+# old probe fell through to an UNBOUNDED `uvx --version` there, and the suite
+# wedged until CI's job timeout killed it.
+#
+# Rather than skipping when `timeout` is missing, this FORCES its absence: the
+# stub PATH is the entire PATH and `timeout`/`gtimeout` are deliberately not
+# planted. Verified A/B during #543: with the old probe this exits 124 (wedged,
+# killed by the outer bound); with bounded_run it returns on its own in ~the
+# UVX_PROBE_TIMEOUT and reports the skip sentinel.
+#
+# The outer `timeout` here runs on the TEST-RUNNER's real PATH, not the stub's,
+# so bounding this case does not reintroduce the dependency being tested.
+test_hanging_uvx_bounded_without_gnu_timeout() {
+    if ! command -v timeout >/dev/null 2>&1; then
+        skip_test "timeout(1) unavailable to bound the TEST itself (the gate under test needs none)"
+        return 0
+    fi
+
+    local sb
+    stub_dir sb || return 1
+    # bounded_run's own dependencies — POSIX, and all this fix needs.
+    command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
+    command ln -sf "$(command -v kill)" "$sb/bin/kill" 2>/dev/null || true
+
+    # THE POINT OF THE CASE. stub_dir does not plant these, but remove them
+    # explicitly so a future widening of stub_dir's symlink list cannot silently
+    # turn this back into a copy of the case above — the mutation that would make
+    # this test vacuous without failing.
+    command rm -f "$sb/bin/timeout" "$sb/bin/gtimeout"
+    assert_true "[ ! -e '$sb/bin/timeout' ] && [ ! -e '$sb/bin/gtimeout' ]" \
+        "the sandbox genuinely has no GNU timeout (the base-macOS condition)"
+
+    # A uvx whose --version probe never returns.
+    {
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'for a in "$@"; do\n'
+        command printf '    if [ "$a" = "--version" ]; then sleep 3600; fi\n'
+        command printf 'done\n'
+        command printf 'exit 0\n'
+    } >"$sb/bin/uvx"
+    command chmod +x "$sb/bin/uvx"
+
+    local rc=0 out
+    out="$(command timeout 30 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        --unset=BASH_ENV \
+        HOME="$sb" \
+        PATH="$sb/bin" \
+        UVX_PROBE_TIMEOUT=3 \
+        "$REAL_BASH" "$LINT_PYTHON" 2>&1)" || rc=$?
+
+    assert_true "[ \"$rc\" -ne 124 ]" \
+        "the probe is bounded WITHOUT GNU timeout — no coreutils, no wedge (#543)"
+    assert_equals "$SKIP_SENTINEL" "$rc" \
+        "a hanging uvx still degrades to the skip sentinel on a coreutils-free host"
+    assert_contains "$out" "GATE DID NOT RUN" \
+        "the bounded hang reports as a skip, not a pass"
 }
 
 # --- Resolution: nothing available → loud skip ------------------------------
@@ -1085,6 +1154,7 @@ run_test test_falls_back_to_uvx_when_ruff_absent "falls back to probed uvx when 
 run_test test_uvx_violation_fails_the_gate "a violation via uvx fails the gate"
 run_test test_unusable_uvx_skips_rather_than_fails "an unusable uvx skips rather than hard-failing"
 run_test test_hanging_uvx_is_bounded_not_wedged "a hanging uvx is bounded, not left to wedge the suite"
+run_test test_hanging_uvx_bounded_without_gnu_timeout "a hanging uvx is bounded WITHOUT GNU timeout (#543)"
 run_test test_no_runner_exits_skip_sentinel "no runner available exits the 77 skip sentinel"
 run_test test_skip_message_says_it_did_not_run "the skip message says the gate did not run"
 run_test test_run_stage_renders_skip_not_ok "run_stage renders a 77 stage as [SKIP], not [ok]"
