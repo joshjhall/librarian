@@ -36,6 +36,7 @@
 #  11c4. check-* deterministic coverage tool (tests/validate-patterns-coverage.sh)
 #  11d. Shellcheck — bundled shell scripts (tests/lint-shellcheck.sh)
 #  11e. Python lint + format — ruff (tests/lint-python.sh)
+#  11e2. Spell check — typos (tests/lint-typos.sh)
 #  11f. Lint-gate integrity — runner resolution + skip reporting (tests/validate-lint-gates.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
 #  13. seed-worktree-trust path validation (tests/validate-seed-worktree-trust.sh)
@@ -175,6 +176,7 @@ run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner
 run_stage "check-* deterministic coverage tool" bash "$SCRIPT_DIR/validate-patterns-coverage.sh"
 run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck.sh"
 run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
+run_stage "Spell check (typos)" bash "$SCRIPT_DIR/lint-typos.sh"
 run_stage "Lint-gate integrity (resolution + skip reporting)" bash "$SCRIPT_DIR/validate-lint-gates.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-worktree-trust.sh"
