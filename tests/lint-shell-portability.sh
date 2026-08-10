@@ -26,6 +26,19 @@
 # bypassing shell functions/aliases. Allowed: the `#!/usr/bin/env bash` shebang
 # and `/usr/bin/env` itself (env is the one tool with a stable path).
 #
+# Check 3 — GNU-only regex constructs (#679). BSD `grep`/`sed` (the macOS
+# default) do not implement the GNU regex extensions, and the failure mode is
+# what makes this worth a gate: they do NOT error, they silently MISMATCH.
+#   - `\s` / `\S`   whitespace class  -> BSD reads a literal `s` / `S`
+#   - `\w` / `\W`   word class        -> BSD reads a literal `w` / `W`
+#   - `\|` in a BRE alternation       -> BSD reads a literal `|`
+# A scanner pattern that silently stops matching emits zero findings and still
+# exits 0, so the scan looks clean on macOS while seeing nothing — which is
+# exactly how #679 went unnoticed (an indented `print(` was invisible, and a
+# project's .claude/pre-review.yml parsed to empty).
+# Portable replacements: `[[:space:]]`, `[[:alnum:]_]`, and `grep -E`/`sed -E`
+# where alternation is native. See dev-core's shell-scripting skill.
+#
 # Scope: `plugins/ tests/ bin/` only. The `containers/` submodule is a separate
 # repo that deliberately requires bash 5 — out of scope here.
 #
@@ -146,6 +159,78 @@ scan_file_paths() {
     done <"$file"
 }
 
+# --- GNU-only regex ban (#679) --------------------------------------------------
+# `\s`/`\S`, `\w`/`\W`, and BRE `\|` are GNU regex extensions. BSD grep/sed read
+# them as literals, so a pattern using them silently stops matching on macOS
+# rather than erroring — a scanner then reports zero findings and exits 0.
+#
+# SCOPED TO REGEX-BEARING LINES, on purpose. A bare repo-wide grep for `\s` would
+# also flag the two places where such a sequence is fixture DATA rather than a
+# shell pattern — a Python `re.search(r"^\s*…")` inside a heredoc
+# (validate-python-ports.sh) and a JS `console.log("…\\s…")` string
+# (validate-pre-review-gates.sh). Those are payloads handed to another language,
+# where `\s` is correct and must stay. They cannot carry a `lint-allow-` marker
+# either: both sit inside quoted heredocs, where an added comment would corrupt
+# the fixture the assertions depend on.
+#
+# So a line is only inspected when it actually invokes grep/sed/awk. That keeps
+# the check aimed at shell regexes and lets the fixtures alone WITHOUT an
+# exclusion list that would drift as tests move (and without carving the pattern
+# itself, per the `PATHLIT_RE` precedent above).
+GNURE_TOOL_RE='(^|[^A-Za-z0-9_-])(grep|egrep|fgrep|sed|awk)([^A-Za-z0-9_-]|$)'
+GNURE_BAD_RE='\\[sSwW]|\\\|'
+# `grep -P` (PCRE) is banned outright and needs no regex-bearing scoping: it is a
+# GNU BUILD OPTION, absent from BSD grep entirely and from some Linux builds,
+# where it exits 2 and the pipeline silently yields nothing. Matched separately
+# because the flag is the violation — the pattern beside it may be perfectly
+# portable. Written to catch `-P` both standalone and bundled (`-oP`).
+GNUP_FLAG_RE='(^|[^A-Za-z0-9_-])(grep|egrep|zgrep)([[:space:]]+-[A-Za-z]*P([[:space:]]|$))'
+
+# scan_file_gnu_regex <path> — populate CUR_GNURE_VIOLATIONS with `line N: <code>`
+# for each GNU-only regex construct on a line that invokes grep/sed/awk.
+CUR_GNURE_VIOLATIONS=""
+scan_file_gnu_regex() {
+    local file="$1"
+    CUR_GNURE_VIOLATIONS=""
+    local lineno=0 line code
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        code="$line"
+        case "$code" in
+            \#*) continue ;;
+        esac
+        # An explicit `# lint-allow-gnu-regex: <reason>` marker exempts a line
+        # where a GNU construct is deliberate and the script is known GNU-only.
+        # The reason is REQUIRED and enforced, not merely requested: a bare
+        # `lint-allow-gnu-regex:` with nothing after the colon does NOT exempt,
+        # so an exemption cannot be taken silently. `*[![:space:]]*` demands at
+        # least one non-whitespace character in the tail.
+        case "$line" in
+            *"lint-allow-gnu-regex:"*[![:space:]]*) continue ;;
+        esac
+        code="${code%%[[:space:]]#*}"
+        # Cheap bash prefilter before any subprocess. The overwhelming majority
+        # of lines contain no backslash at all, and this scan runs over the whole
+        # corpus on every pre-push — forking two greps per line made the gate
+        # take minutes. `case` is a builtin, so the greps below now run only on
+        # the handful of candidate lines.
+        case "$code" in
+            *'\'* | *-*P*) ;;
+            *) continue ;;
+        esac
+        # `grep -P` is flagged on its own — the FLAG is the violation, so this
+        # arm is deliberately not gated on the regex-bearing scoping below.
+        if printf '%s\n' "$code" | command grep -qE "$GNUP_FLAG_RE"; then
+            CUR_GNURE_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+            continue
+        fi
+        # Only regex-bearing lines (see the scoping rationale above).
+        printf '%s\n' "$code" | command grep -qE "$GNURE_TOOL_RE" || continue
+        printf '%s\n' "$code" | command grep -qE "$GNURE_BAD_RE" || continue
+        CUR_GNURE_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+    done <"$file"
+}
+
 # Per-file test body (reads CUR_FILE).
 CUR_FILE=""
 test_file_portable() {
@@ -159,6 +244,13 @@ test_file_no_hardcoded_paths() {
     scan_file_paths "$CUR_FILE"
     assert_equals "" "$CUR_PATH_VIOLATIONS" \
         "$(command basename "$CUR_FILE") must invoke coreutils via \`command <tool>\`, not a hardcoded /usr/bin//bin path (#443)"
+}
+
+# Per-file test body for the GNU-only regex ban (reads CUR_FILE).
+test_file_no_gnu_regex() {
+    scan_file_gnu_regex "$CUR_FILE"
+    assert_equals "" "$CUR_GNURE_VIOLATIONS" \
+        "$(command basename "$CUR_FILE") must use POSIX classes ([[:space:]], [[:alnum:]_]) and -E alternation, not GNU \\s/\\w/\\| (#679)"
 }
 
 # Negative case: scan_file's violation branch must actually fire on each
@@ -261,6 +353,74 @@ EOF
     assert_not_contains "$CUR_PATH_VIOLATIONS" "commentpath_ok" "A prose comment naming an absolute path is NOT flagged"
 }
 
+# Negative case for the GNU-only regex ban: scan_file_gnu_regex must fire on each
+# construct when a regex tool is invoked, and must NOT fire on the POSIX
+# equivalents, on prose, on an allow-marked line, or on a `\s` that is payload for
+# ANOTHER language rather than a shell pattern (the fixture case the scoping
+# exists for — see the rationale above scan_file_gnu_regex).
+test_negative_case_gnu_regex_fires() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/gnure.sh" <<'EOF'
+#!/usr/bin/env bash
+sgrep_hit="$(grep -nE '^\s*print\(' f)"
+wgrep_hit="$(grep -nE '^\w+\(\)' f)"
+altsed_hit="$(sed 's/^\(a\|b\)//' f)"
+capS_hit="$(grep -E '\S+' f)"
+capW_hit="$(grep -E '\W+' f)"
+awk_hit="$(awk '/^\s*x/ {print}' f)"
+pcre_hit="$(grep -P 'a+' f)"
+pcrebundled_hit="$(grep -oP 'a+' f)"
+okspace="$(grep -nE '^[[:space:]]*print\(' f)"
+okword="$(grep -nE '^[[:alnum:]_]+\(\)' f)"
+okalt="$(sed -E 's/^(a|b)//' f)"
+okmarked="$(grep -E '^\s*x' f)"  # lint-allow-gnu-regex: GNU-only helper
+bareMarker_hit="$(grep -E '^\s*y' f)"  # lint-allow-gnu-regex:
+okpayload="a python string r\"^\s*console\." handed to another language"
+# a prose comment naming \s and \w and \| is commentgnu_ok
+EOF
+
+    # The whitespace-only-reason fixture is appended with printf, NOT written in
+    # the heredoc above: its trailing spaces are the whole point, and a heredoc
+    # line ending in whitespace is silently stripped by formatters/editors —
+    # leaving a fixture byte-identical to the bare-marker one, which would test
+    # nothing while looking like it did.
+    command printf '%s\n' \
+        "wsMarker_hit=\"\$(grep -E '^\\s*z' f)\"  # lint-allow-gnu-regex:   " \
+        >>"$tmp/gnure.sh"
+
+    scan_file_gnu_regex "$tmp/gnure.sh"
+
+    assert_not_empty "$CUR_GNURE_VIOLATIONS" "scan_file_gnu_regex flags GNU constructs (violation branch fires)"
+    assert_contains "$CUR_GNURE_VIOLATIONS" "sgrep_hit" '\s in a grep pattern is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "wgrep_hit" '\w in a grep pattern is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "altsed_hit" '\| BRE alternation in sed is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "capS_hit" '\S is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "capW_hit" '\W is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "awk_hit" '\s in an awk pattern is flagged'
+    # `grep -P` is flagged on the FLAG alone — note both patterns above are
+    # portable EREs, so only the PCRE mode selection can be what fires here.
+    assert_contains "$CUR_GNURE_VIOLATIONS" "pcre_hit" 'grep -P (PCRE mode) is flagged'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "pcrebundled_hit" 'grep -oP (bundled PCRE flag) is flagged'
+    # POSIX / allowed forms must NOT surface.
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okspace" '[[:space:]] is NOT flagged'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okword" '[[:alnum:]_] is NOT flagged'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okalt" 'sed -E (a|b) alternation is NOT flagged'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okmarked" 'a lint-allow-gnu-regex line is NOT flagged'
+    # The reason is enforced, not just documented: a marker with an empty tail
+    # must NOT buy an exemption, or the escape hatch becomes a silent one.
+    assert_contains "$CUR_GNURE_VIOLATIONS" "bareMarker_hit" 'a REASONLESS lint-allow-gnu-regex marker does NOT exempt'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "wsMarker_hit" 'a whitespace-only reason does NOT exempt'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "okpayload" 'a non-shell regex payload (no grep/sed/awk) is NOT flagged'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "commentgnu_ok" "A prose comment naming the constructs is NOT flagged"
+}
+
 # Discover the corpus.
 scripts_list="$(list_shell_scripts)"
 
@@ -273,12 +433,14 @@ test_corpus_non_empty() {
 run_test test_corpus_non_empty "Shell-script corpus is non-empty (gate is not a no-op)"
 run_test test_negative_case_fires "scan_file flags every forbidden construct (violation path)"
 run_test test_negative_case_paths_fire "scan_file_paths flags hardcoded /usr/bin//bin paths (#443)"
+run_test test_negative_case_gnu_regex_fires "scan_file_gnu_regex flags GNU-only regex constructs (#679)"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
     CUR_FILE="$f"
     run_test test_file_portable "${f#"$REPO_ROOT"/}: bash-3.2 clean"
     run_test test_file_no_hardcoded_paths "${f#"$REPO_ROOT"/}: no hardcoded core-utility paths (#443)"
+    run_test test_file_no_gnu_regex "${f#"$REPO_ROOT"/}: no GNU-only regex constructs (#679)"
 done <<<"$scripts_list"
 
 generate_report

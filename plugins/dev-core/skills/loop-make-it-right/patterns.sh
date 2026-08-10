@@ -71,7 +71,7 @@ while IFS= read -r file; do
     case "$file" in
         *.py)
             # Python: count lines from def to next def/class or dedent
-            command grep -n '^\s*def \w\+' "$file" 2>/dev/null |
+            command grep -nE '^[[:space:]]*def [[:alnum:]_]+' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -96,13 +96,13 @@ while IFS= read -r file; do
             ;;
         *.ts | *.js | *.tsx | *.jsx | *.go | *.rs)
             # Brace-delimited languages: count from opening { to closing }
-            command grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' "$file" 2>/dev/null |
+            command grep -nE '^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+[[:alnum:]_]+|^func[[:space:]]+|^(pub[[:space:]]+)?fn[[:space:]]+' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     _content=${raw#*:}
                     # Simple heuristic: count lines from definition to next function
                     next_func=$(command sed -n "$((line_num + 1)),\$p" "$file" |
-                        command grep -nE '^\s*(export\s+)?(async\s+)?function\s+\w+|^func\s+|^(pub\s+)?fn\s+' |
+                        command grep -nE '^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+[[:alnum:]_]+|^func[[:space:]]+|^(pub[[:space:]]+)?fn[[:space:]]+' |
                         command head -1 | command cut -d: -f1)
                     if [ -n "$next_func" ]; then
                         func_lines=$((next_func))
@@ -154,8 +154,8 @@ while IFS= read -r file; do
     # Single-character variable names outside common loop patterns
     case "$file" in
         *.py)
-            command grep -nE '^\s+[a-zA-Z]\s*=' "$file" 2>/dev/null |
-                command grep -vE '^\s*(for|with)\s+[a-zA-Z]\s+in\b|_\s*=' |
+            command grep -nE '^[[:space:]]+[a-zA-Z][[:space:]]*=' "$file" 2>/dev/null |
+                command grep -vE '^[[:space:]]*(for|with)[[:space:]]+[a-zA-Z][[:space:]]+in\b|_[[:space:]]*=' |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}

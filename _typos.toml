@@ -26,3 +26,8 @@ styl = "styl"
 # golem-inbox / next-issue prose; typos splits on the hyphen and would misread
 # it as `miss`/`mist`. Not a typo.
 mis = "mis"
+# `BRE` is POSIX Basic Regular Expression — the counterpart to ERE, named
+# throughout the portability prose and the lint gate (#679). typos reads it as
+# `BE`/`BRIE`. The term is standard and cannot be reworded without losing
+# precision: BRE vs ERE is exactly the distinction that portability work turns on.
+BRE = "BRE"

@@ -51,6 +51,8 @@ lint:
     elif command -v uvx >/dev/null 2>&1 && bounded_run "${UVX_PROBE_TIMEOUT:-60}" uvx "ruff@$RUFF_PIN" --version >/dev/null 2>&1; then RUFF="uvx ruff@$RUFF_PIN"; \
     else echo "[skip] Python lint did NOT run — no ruff runner (install ruff, or uv for 'uvx ruff')"; exit 0; fi; \
     $RUFF check plugins && $RUFF format --check plugins
+    @if command -v typos >/dev/null 2>&1; then typos .; \
+    else echo "[skip] spell check did NOT run — typos is not installed (cargo install typos-cli)"; fi
     node tests/validate-manifests.mjs
 
 # Format JSON/YAML/TOML/Python (markdown via rumdl is opt-in here, review the diff)

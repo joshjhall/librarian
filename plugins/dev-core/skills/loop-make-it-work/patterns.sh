@@ -78,7 +78,7 @@ while IFS= read -r file; do
     # Python: function with only pass or ellipsis body
     case "$file" in
         *.py)
-            command grep -nE '^\s*def\s+\w+' "$file" 2>/dev/null |
+            command grep -nE '^[[:space:]]*def[[:space:]]+[[:alnum:]_]+' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -87,8 +87,8 @@ while IFS= read -r file; do
                     # the `^\s*(pass|...)` check never matched and this arm was
                     # dead (#183).
                     next_line=$(command sed -n "$((line_num + 1)),\$p" "$file" |
-                        command grep -m1 -E '\S' | command head -1)
-                    if echo "$next_line" | command grep -qE '^\s*(pass|\.\.\.)\s*$' 2>/dev/null; then
+                        command grep -m1 -E '[^[:space:]]' | command head -1)
+                    if echo "$next_line" | command grep -qE '^[[:space:]]*(pass|\.\.\.)[[:space:]]*$' 2>/dev/null; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-body" \
@@ -101,7 +101,7 @@ while IFS= read -r file; do
             # [[:space:]]* for the inner whitespace — the old `[\s]*` was a bracket
             # class of literal backslash/'s', not whitespace, so `{ }` (a real
             # space) was missed (#183).
-            command grep -nE '(function\s+\w+|=>\s*)\{[[:space:]]*\}' "$file" 2>/dev/null |
+            command grep -nE '(function[[:space:]]+[[:alnum:]_]+|=>[[:space:]]*)\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -113,7 +113,7 @@ while IFS= read -r file; do
             ;;
         *.go)
             # Go: function with empty braces ([[:space:]]* not [\s]*, see #183).
-            command grep -nE '^func\s+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
+            command grep -nE '^func[[:space:]]+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}

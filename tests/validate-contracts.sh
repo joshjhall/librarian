@@ -118,8 +118,15 @@ extract_json_from_markdown() {
 # Extract category slugs from a contract.md Categories table.
 extract_contract_categories() {
     local file="$1"
-    command grep -oP '`\K[a-z][a-z0-9-]+(?=`)' "$file" |
-        command grep -v '^version$\|^deterministic$\|^heuristic$\|^llm$\|^finding-schema\|^compatible' |
+    # `grep -oE` + `tr -d`, not `-oP` (#679): PCRE mode is a GNU build option,
+    # absent from BSD grep entirely and from some Linux builds, where `-oP` exits
+    # 2 and this extractor silently yields nothing. The `\K`/`(?=…)` lookaround
+    # it needed only stripped the surrounding backticks, which `tr -d` does
+    # portably. The filter below is likewise `-E` — `\|` alternation in a BASIC
+    # regex is a GNU extension that BSD grep reads as a literal.
+    command grep -oE '`[a-z][a-z0-9-]+`' "$file" |
+        command tr -d '`' |
+        command grep -vE '^version$|^deterministic$|^heuristic$|^llm$|^finding-schema|^compatible' |
         command sort -u
 }
 
@@ -132,9 +139,12 @@ extract_contract_categories() {
 extract_patterns_categories() {
     local sh_file="$1"
     local py_file="${sh_file%patterns.sh}patterns.py"
+    # `-oE`, not `-oP` (#679): this pattern uses no PCRE-only construct, so the
+    # portable ERE is a direct swap. See extract_contract_categories above for
+    # why `-oP` is avoided (absent on BSD grep and some Linux builds; exits 2).
     {
-        [ -f "$sh_file" ] && command grep -oP '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$sh_file"
-        [ -f "$py_file" ] && command grep -oP '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$py_file"
+        [ -f "$sh_file" ] && command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$sh_file"
+        [ -f "$py_file" ] && command grep -oE '"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"' "$py_file"
     } |
         command sed 's/"//g' |
         command sort -u
