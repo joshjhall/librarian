@@ -85,21 +85,34 @@ def get_frontmatter(lines: list[str], key: str) -> str:
 
 
 def check_agent_frontmatter(path: str, lines: list[str]) -> None:
-    if not _glob(path, "*/agents/*/*.md"):
+    # BOTH agent layouts (#525). Claude Code discovers PLUGIN agents only as flat
+    # `agents/<name>.md`; the nested `agents/<name>/<name>.md` form appears in
+    # project-local `.claude/agents/`. Gating on the nested glob alone — as this
+    # did — meant the layout this repo mandates got NO frontmatter validation at
+    # all, which is the blind spot #494 fixed for the bloat detector and left
+    # here.
+    nested = _glob(path, "*/agents/*/*.md")
+    if not (nested or _glob(path, "*/agents/*.md")):
         return
     basename = path.rsplit("/", 1)[-1]
     dirname = path.rsplit("/", 1)[0] if "/" in path else ""
     dirbase = dirname.rsplit("/", 1)[-1] if dirname else ""
 
-    expected = dirbase + ".md"
-    if basename != expected:
-        emit(
-            path,
-            "1",
-            "agent-frontmatter",
-            f"Agent file should be named {expected}, found {basename}",
-            "HIGH",
-        )
+    # NESTED ONLY. The convention being checked is "the file matches its own
+    # directory" — meaningless for a flat agent, whose parent dir is always
+    # `agents/`. Applying it there would demand `agents.md` and flag every
+    # correctly-named flat agent, turning a widened detector into a false-positive
+    # generator.
+    if nested:
+        expected = dirbase + ".md"
+        if basename != expected:
+            emit(
+                path,
+                "1",
+                "agent-frontmatter",
+                f"Agent file should be named {expected}, found {basename}",
+                "HIGH",
+            )
 
     if not lines or lines[0] != "---":
         emit(

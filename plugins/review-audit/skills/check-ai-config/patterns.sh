@@ -91,24 +91,36 @@ get_frontmatter() {
 check_agent_frontmatter() {
     local file="$1"
 
-    # Only check agent .md files (dirname/dirname.md pattern)
-    local basename dirname dirbase
+    # Only check agent .md files — BOTH layouts (#525)
+    local basename dirname dirbase nested
     basename=$(command basename "$file")
     dirname=$(command dirname "$file")
     dirbase=$(command basename "$dirname")
 
-    # Skip if not an agent definition file
+    # Skip if not an agent definition file. Claude Code discovers PLUGIN agents
+    # only as flat `agents/<name>.md`; the nested `agents/<name>/<name>.md` form
+    # appears in project-local `.claude/agents/`. Gating on the nested glob alone
+    # — as this did — meant the layout this repo mandates got NO frontmatter
+    # validation at all, the same blind spot #494 fixed for the bloat detector.
+    nested=0
     case "$file" in
-        */agents/*/*.md) ;;
+        */agents/*/*.md) nested=1 ;;
+        */agents/*.md) ;;
         *) return ;;
     esac
 
-    # Check naming convention: agent file should match directory name
-    local expected_name="${dirbase}.md"
-    if [ "$basename" != "$expected_name" ]; then
-        command printf '%s\t%s\t%s\t%s\t%s\n' \
-            "$file" "1" "agent-frontmatter" \
-            "Agent file should be named ${expected_name}, found ${basename}" "HIGH"
+    # Check naming convention: agent file should match directory name.
+    # NESTED ONLY — the convention is "the file matches its own directory", which
+    # is meaningless for a flat agent whose parent dir is always `agents/`.
+    # Applying it there would demand `agents.md` and flag every correctly-named
+    # flat agent, turning a widened detector into a false-positive generator.
+    if [ "$nested" -eq 1 ]; then
+        local expected_name="${dirbase}.md"
+        if [ "$basename" != "$expected_name" ]; then
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$file" "1" "agent-frontmatter" \
+                "Agent file should be named ${expected_name}, found ${basename}" "HIGH"
+        fi
     fi
 
     # Check for frontmatter existence
