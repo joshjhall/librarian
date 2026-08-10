@@ -201,9 +201,12 @@ scan_file_gnu_regex() {
         esac
         # An explicit `# lint-allow-gnu-regex: <reason>` marker exempts a line
         # where a GNU construct is deliberate and the script is known GNU-only.
-        # A reason is required so the exemption is justified, not silent.
+        # The reason is REQUIRED and enforced, not merely requested: a bare
+        # `lint-allow-gnu-regex:` with nothing after the colon does NOT exempt,
+        # so an exemption cannot be taken silently. `*[![:space:]]*` demands at
+        # least one non-whitespace character in the tail.
         case "$line" in
-            *"lint-allow-gnu-regex:"*) continue ;;
+            *"lint-allow-gnu-regex:"*[![:space:]]*) continue ;;
         esac
         code="${code%%[[:space:]]#*}"
         # Cheap bash prefilter before any subprocess. The overwhelming majority
@@ -378,9 +381,19 @@ okspace="$(grep -nE '^[[:space:]]*print\(' f)"
 okword="$(grep -nE '^[[:alnum:]_]+\(\)' f)"
 okalt="$(sed -E 's/^(a|b)//' f)"
 okmarked="$(grep -E '^\s*x' f)"  # lint-allow-gnu-regex: GNU-only helper
+bareMarker_hit="$(grep -E '^\s*y' f)"  # lint-allow-gnu-regex:
 okpayload="a python string r\"^\s*console\." handed to another language"
 # a prose comment naming \s and \w and \| is commentgnu_ok
 EOF
+
+    # The whitespace-only-reason fixture is appended with printf, NOT written in
+    # the heredoc above: its trailing spaces are the whole point, and a heredoc
+    # line ending in whitespace is silently stripped by formatters/editors —
+    # leaving a fixture byte-identical to the bare-marker one, which would test
+    # nothing while looking like it did.
+    command printf '%s\n' \
+        "wsMarker_hit=\"\$(grep -E '^\\s*z' f)\"  # lint-allow-gnu-regex:   " \
+        >>"$tmp/gnure.sh"
 
     scan_file_gnu_regex "$tmp/gnure.sh"
 
@@ -400,6 +413,10 @@ EOF
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okword" '[[:alnum:]_] is NOT flagged'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okalt" 'sed -E (a|b) alternation is NOT flagged'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okmarked" 'a lint-allow-gnu-regex line is NOT flagged'
+    # The reason is enforced, not just documented: a marker with an empty tail
+    # must NOT buy an exemption, or the escape hatch becomes a silent one.
+    assert_contains "$CUR_GNURE_VIOLATIONS" "bareMarker_hit" 'a REASONLESS lint-allow-gnu-regex marker does NOT exempt'
+    assert_contains "$CUR_GNURE_VIOLATIONS" "wsMarker_hit" 'a whitespace-only reason does NOT exempt'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "okpayload" 'a non-shell regex payload (no grep/sed/awk) is NOT flagged'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "commentgnu_ok" "A prose comment naming the constructs is NOT flagged"
 }

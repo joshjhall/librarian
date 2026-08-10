@@ -360,6 +360,49 @@ test_scratch_not_over_broad() {
     assert_deny "mktemp staged but rm targets a live literal"
 }
 
+# The mktemp_var extractor must be PORTABLE, not merely correct on this host
+# (#679). It previously used a BRE whose `\(^\|…\)` alternation is a GNU
+# extension: under BSD sed the substitution never fired, mktemp_var came back
+# EMPTY, and the scratch-dir carve-out stopped recognizing its own subject —
+# so the guard over-blocked a legitimate `rm -rf "$d"` (fail-safe, but wrong).
+#
+# The carve-out tests above cannot catch that: they run the extractor through
+# whatever sed is on PATH, which in CI is always GNU, so they passed BOTH before
+# and after the fix. This case pins the property directly instead — it runs the
+# extractor's own expression under `sed --posix`, which reproduces BSD's reading
+# of GNU regex extensions, and asserts the ERE selects the same variable name a
+# GNU-flavored run does.
+#
+# Mutating the shipped expression back to the BRE makes the --posix arm return
+# empty and this test fail, which is what makes it a real regression guard
+# rather than a restatement of the happy path.
+test_mktemp_extractor_is_sed_flavor_portable() {
+    local expr line gnu posix
+    # The exact expression bash-guard.sh uses (kept in sync by the assertion
+    # below, which fails loudly if the script's form drifts from this one).
+    expr='s/.*(^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)=[`$]{1}[({]*mktemp[[:space:]].*/\2/p'
+    line='d=$(mktemp -d)'
+
+    gnu="$(command printf '%s\n' "$line" | command sed -E -n "$expr")"
+    posix="$(command printf '%s\n' "$line" | command sed --posix -E -n "$expr" 2>/dev/null)"
+
+    assert_equals "d" "$gnu" "the ERE extractor selects the mktemp var under GNU sed (#679)"
+    # `sed --posix` is a GNU build flag; where it is unavailable the arm yields
+    # empty and the equivalence assertion below is skipped rather than failing
+    # for the wrong reason.
+    if [ -n "$posix" ]; then
+        assert_equals "$gnu" "$posix" \
+            "...and selects the SAME name under BSD-flavored regex semantics (#679)"
+    else
+        skip_test "sed --posix unavailable — cannot exercise BSD regex semantics"
+    fi
+
+    # Guard against drift: the expression asserted above must be the one the
+    # hook actually ships, or this test silently stops covering it.
+    assert_contains "$(command cat "$GUARD")" "$expr" \
+        "the expression under test is the one bash-guard.sh ships (anti-drift)"
+}
+
 # --- Parse-failure: fail-open + loud stderr ---------------------------------
 test_parse_empty_allows() {
     run_guard ""
@@ -471,6 +514,7 @@ run_test test_scratch_rm_vartmp "scratch: rm under /var/tmp allowed"
 run_test test_scratch_mktemp_var "scratch: mktemp -d then rm var allowed"
 run_test test_scratch_redirect_tmp "scratch: redirect into /tmp allowed"
 run_test test_scratch_not_over_broad "scratch carve-out is not over-broad"
+run_test test_mktemp_extractor_is_sed_flavor_portable "scratch: mktemp_var extractor is sed-flavor portable (#679)"
 run_test test_parse_empty_allows "parse-fail: empty stdin allows"
 run_test test_parse_empty_is_loud "parse-fail: empty stdin is loud"
 run_test test_parse_nonjson_allows "parse-fail: non-JSON allows"
