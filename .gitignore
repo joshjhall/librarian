@@ -107,3 +107,12 @@ coverage/
 # ============================================================================
 
 .codegraph/
+
+# ============================================================================
+# LOCAL SCRATCH TOOLING
+# ============================================================================
+
+# Ad-hoc local instrumentation (API capture proxy + reporter). Scoped to the
+# one subdirectory rather than a bare `tools/`, so a future tool the repo
+# genuinely wants tracked is not silently swallowed by the ignore.
+tools/api-capture/
