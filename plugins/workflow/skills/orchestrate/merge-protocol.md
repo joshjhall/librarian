@@ -321,7 +321,8 @@ for a squash merge in natural language.
 ## Review Protocol [OPT-IN LEGACY]
 
 In the default PR-per-golem topology, per-PR review is the **golem's** job (the
-`/workflow:ship-issue` adversarial review loop). This section applies only after a
+`/workflow:ship-issue` adversarial review loop — the **Workflow tool** with
+`ship-issue/workflow.js`, Step 3.5 item 6). This section applies only after a
 legacy local merge (`/workflow:orchestrate review`), reviewing the merged changes for
 correctness and quality.
 

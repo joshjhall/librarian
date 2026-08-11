@@ -84,7 +84,8 @@ else. Three workflow skills are the ones a human actually types:
   well-formed, auto-labeled issue ready for the pipeline below.
 - **`/workflow:golem <issue>`** — work **one** issue end-to-end, solo, in the current
   session: an isolated worktree, the full `next-issue` → `ship-issue` pipeline,
-  and the adversarial pre-PR review. No orchestrator, `tmux`, or containers.
+  and the adversarial pre-PR review (the **Workflow tool** with
+  `ship-issue/workflow.js`). No orchestrator, `tmux`, or containers.
 - **`/workflow:orchestrate`** — work **2+** issues in parallel, one golem (worktree +
   branch + PR) each, then land the batch with a single integration train.
 
@@ -103,8 +104,10 @@ it worked with full rigor in-session; reach for `/workflow:orchestrate` when you
 ```
 
 `/workflow:golem` creates the worktree, plans and implements the fix, runs the pre-PR
-review, opens the PR, and tears the worktree down — pausing only at the gates
-your chosen autonomy level (L1–L4) keeps.
+review — the **Workflow tool** with `ship-issue/workflow.js`, which fans five
+review dimensions out under one budget and judges them — opens the PR, and tears
+the worktree down, pausing only at the gates your chosen autonomy level (L1–L4)
+keeps.
 
 **Run several issues in parallel, then integrate:**
 

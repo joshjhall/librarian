@@ -30,6 +30,7 @@
 #  11b. Shell portability / bash-3.2 clean (tests/lint-shell-portability.sh)
 #  11b2. READONLY harness wording (tests/lint-readonly-harness.sh)
 #  11b3. Prose-vs-code env var drift (tests/lint-env-var-drift.sh)
+#  11b4. Adversarial-review harness refs (tests/lint-harness-refs.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
 #  11c2. Pre-scan bash<->python differential (tests/validate-prescan-differential.sh)
 #  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
@@ -172,6 +173,7 @@ run_stage "Namespaced slash-command refs" bash "$SCRIPT_DIR/lint-command-refs.sh
 run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"
 run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
 run_stage "Prose-vs-code env var drift" bash "$SCRIPT_DIR/lint-env-var-drift.sh"
+run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.sh"
 run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
 run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-prescan-differential.sh"
 run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner-category-parity.sh"
