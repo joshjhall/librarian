@@ -843,6 +843,41 @@ test_stdout_is_output_js_mirror() {
         "the debugger keyword STILL fires in a declared CLI file"
 }
 
+# The Go / Java arms, which have a print idiom but NO breakpoint idiom — so
+# they exist only in the print region. Worth asserting through the real
+# config-driven path: the sync gate's arm-shape check proves those arms are
+# PRESENT in the exemptible region, not that matches_declared_stdout_pattern
+# actually suppresses them. A per-language routing mistake would pass both the
+# py and js cases above.
+test_stdout_is_output_go_and_java() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/cmd"
+    command printf '%s\n' \
+        "stdout_is_output:" \
+        "  - 'cmd/**'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' 'fmt.Println("usage: tool [options]")' >"$sb/cmd/main.go"
+    command printf '%s\n' 'System.out.println("usage");' >"$sb/cmd/Main.java"
+    # Undeclared siblings: the controls proving the suppression is path-scoped
+    # and not "the go/java arms stopped firing".
+    command mkdir -p "$sb/internal"
+    command printf '%s\n' 'fmt.Println("left in by accident")' >"$sb/internal/svc.go"
+    command printf '%s\n' \
+        "$sb/cmd/main.go" "$sb/cmd/Main.java" "$sb/internal/svc.go" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_not_contains "$rows" "/main.go" \
+        "a declared CLI's fmt.Println is NOT flagged"
+    assert_not_contains "$rows" "/Main.java" \
+        "a declared CLI's System.out.println is NOT flagged"
+    assert_contains "$rows" "/svc.go" \
+        "an undeclared .go still fires — the go arm did not simply go silent"
+}
+
 # The control: the key exempts what it NAMES, not the language. Without this a
 # blanket "exempt every .py" bug would pass every assertion above.
 test_stdout_is_output_undeclared_file_still_fires() {
@@ -2311,6 +2346,7 @@ run_test test_hostile_basename_does_not_break_scan "a whitespace/glob-bearing ba
 run_test test_no_config_means_no_declared_behavior "with no pre-review.yml the declared-convention path is inert (#568)"
 run_test test_stdout_is_output_exempts_prints "stdout_is_output exempts print(), breakpoints STILL fire (#680)"
 run_test test_stdout_is_output_js_mirror "stdout_is_output exempts console.log, the debugger keyword STILL fires (#680)"
+run_test test_stdout_is_output_go_and_java "stdout_is_output exempts fmt.Println/System.out.println too (#680)"
 run_test test_stdout_is_output_undeclared_file_still_fires "stdout_is_output exempts only what it names (#680)"
 run_test test_stdout_is_output_inert_without_config "with no pre-review.yml stdout_is_output is inert (#680)"
 run_test test_stdout_is_output_does_not_leak_into_test_categories "stdout_is_output does not suppress missing-test-file (#680)"
