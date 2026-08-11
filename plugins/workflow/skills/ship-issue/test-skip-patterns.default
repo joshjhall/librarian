@@ -4,6 +4,24 @@
 #
 # Project overrides: .claude/pre-review.yml → test_skip_patterns section
 # Override patterns are appended after these defaults (so they win)
+#
+# Three sibling keys live in that same .claude/pre-review.yml. They are
+# DISTINCT claims — pick by what is actually true of the file, since each
+# suppresses a different thing:
+#
+#   test_skip_patterns  this file needs no test of its own
+#   test_patterns       this file IS a test (#568)
+#   stdout_is_output    this file's print()/console.log IS the program's
+#                       output, not a debug leftover — a CLI (#680).
+#                       Suppresses ONLY the print family; breakpoint(), pdb,
+#                       the `debugger` keyword, binding.pry and byebug keep
+#                       firing, since none of those is ever program output.
+#
+# Example:
+#
+#   stdout_is_output:
+#     - "scripts/*.py"
+#     - "src/cli/**"
 
 # --- Static assets and media ---
 *.gitkeep

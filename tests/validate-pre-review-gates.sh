@@ -776,6 +776,226 @@ test_test_discovery_works_without_patterns() {
         "test_discovery alone does NOT classify the smoke file as a test — that is test_patterns' job"
 }
 
+# --- #680: stdout_is_output — a CLI whose print() IS its output -------------
+
+# `scan_debug_statements` flags any line-start print/console.log as HIGH. For a
+# CLI that is the OUTPUT MECHANISM, and before #680 there was no way to say so:
+# a repo of stdlib-only Python CLIs reported the same 313 rows forever, could
+# never enable PRE_REVIEW_STRICT, and — the real cost — a genuinely stray
+# `print(x)` was indistinguishable from the 104 legitimate ones beside it.
+#
+# The exemption is scoped to the PRINT family only. The debugger assertions
+# below are the load-bearing half of every case here: the obvious
+# implementation (an early return at the top of scan_debug_statements) silences
+# breakpoints too, and would pass a fixture that only checked the print row was
+# gone.
+test_stdout_is_output_exempts_prints() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' \
+        "stdout_is_output:" \
+        "  - 'scripts/*.py'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' \
+        'print("=== migration report ===")' \
+        'breakpoint()' \
+        'import pdb' >"$sb/scripts/migrate.py"
+    command printf '%s\n' "$sb/scripts/migrate.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_not_contains "$rows" "Debug print statement" \
+        "a declared CLI's print() is NOT flagged — it is the program's output"
+    # AC3, asserted per-arm: both breakpoint idioms must survive the exemption.
+    assert_contains "$rows" "Debugger statement: breakpoint()" \
+        "breakpoint() STILL fires in a declared CLI file — never a program's output"
+    assert_contains "$rows" "Debugger statement: import pdb" \
+        "import pdb STILL fires in a declared CLI file"
+}
+
+# The JS mirror. Worth its own case rather than more files in the one above:
+# the two families sit in DIFFERENT language arms of the split regions, so a
+# per-language mistake (moving the `debugger` keyword into the print region)
+# shows up here and nowhere else.
+test_stdout_is_output_js_mirror() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/bin"
+    command printf '%s\n' \
+        "stdout_is_output:" \
+        "  - 'bin/**'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' \
+        'console.log("usage: tool [options]");' \
+        'debugger;' >"$sb/bin/cli.js"
+    command printf '%s\n' "$sb/bin/cli.js" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_not_contains "$rows" "Console debug statement" \
+        "a declared CLI's console.log is NOT flagged"
+    assert_contains "$rows" "Debugger keyword: debugger;" \
+        "the debugger keyword STILL fires in a declared CLI file"
+}
+
+# The Go / Java arms, which have a print idiom but NO breakpoint idiom — so
+# they exist only in the print region. Worth asserting through the real
+# config-driven path: the sync gate's arm-shape check proves those arms are
+# PRESENT in the exemptible region, not that matches_declared_stdout_pattern
+# actually suppresses them. A per-language routing mistake would pass both the
+# py and js cases above.
+test_stdout_is_output_go_and_java() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/cmd"
+    command printf '%s\n' \
+        "stdout_is_output:" \
+        "  - 'cmd/**'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' 'fmt.Println("usage: tool [options]")' >"$sb/cmd/main.go"
+    command printf '%s\n' 'System.out.println("usage");' >"$sb/cmd/Main.java"
+    # Undeclared siblings: the controls proving the suppression is path-scoped
+    # and not "the go/java arms stopped firing".
+    command mkdir -p "$sb/internal"
+    command printf '%s\n' 'fmt.Println("left in by accident")' >"$sb/internal/svc.go"
+    command printf '%s\n' 'System.out.println("left in by accident");' >"$sb/internal/Svc.java"
+    command printf '%s\n' \
+        "$sb/cmd/main.go" "$sb/cmd/Main.java" \
+        "$sb/internal/svc.go" "$sb/internal/Svc.java" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_not_contains "$rows" "/main.go" \
+        "a declared CLI's fmt.Println is NOT flagged"
+    assert_not_contains "$rows" "/Main.java" \
+        "a declared CLI's System.out.println is NOT flagged"
+    # One control per language: a routing bug that darkened ALL .go (or all
+    # .java) regardless of declaration is a different failure from a
+    # path-scoping bug, and only a same-language control catches it.
+    assert_contains "$rows" "/svc.go" \
+        "an undeclared .go still fires — the go arm did not simply go silent"
+    assert_contains "$rows" "/Svc.java" \
+        "an undeclared .java still fires — the java arm did not simply go silent"
+}
+
+# Every mktemp -d repo the gate creates must be reclaimed by the EXIT trap.
+#
+# BEHAVIOURAL, not structural: the gate runs with TMPDIR pointed at an empty
+# directory and the leftovers are counted afterwards. A grep for the variable
+# name in cleanup_skip_policy would pass on a branch that named the right
+# variable and removed the wrong path.
+#
+# The declaration below exercises ALL THREE repos in one run (skip-policy is
+# unconditional; test_patterns and stdout_is_output each need their key
+# present), so this covers the existing two as well as the new one — the leak
+# it was written for was a third repo added without a matching cleanup branch,
+# and the next key would repeat it.
+test_declared_pattern_repos_are_cleaned_up() {
+    local sb tmp leftovers
+    new_git_sandbox sb
+    tmp="$(command mktemp -d "$WORKDIR/tmphome.XXXXXX")"
+
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' \
+        "test_patterns:" \
+        "  - 'scripts/smoke-*.py'" \
+        "stdout_is_output:" \
+        "  - 'scripts/cli.py'" >"$sb/.claude/pre-review.yml"
+    command printf '%s\n' 'print("report")' >"$sb/scripts/cli.py"
+    command printf '%s\n' "$sb/scripts/cli.py" >"$sb/files.txt"
+
+    GATE_RC=0
+    GATE_OUT="$(cd "$sb" &&
+        TMPDIR="$tmp" /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$GATE" "$sb/files.txt" 2>/dev/null)" || GATE_RC=$?
+
+    assert_exit 0 "$GATE_RC" "the gate run itself succeeded (leak check is meaningful)"
+
+    # Every entry here is a temp dir the gate created and failed to reclaim.
+    leftovers="$(command find "$tmp" -mindepth 1 -maxdepth 1 | command wc -l | command tr -d '[:space:]')"
+    assert_equals "0" "$leftovers" \
+        "the EXIT trap reclaims every temp repo — no mktemp -d is left behind"
+}
+
+# The control: the key exempts what it NAMES, not the language. Without this a
+# blanket "exempt every .py" bug would pass every assertion above.
+test_stdout_is_output_undeclared_file_still_fires() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/scripts" "$sb/src"
+    command printf '%s\n' \
+        "stdout_is_output:" \
+        "  - 'scripts/*.py'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' 'print("report")' >"$sb/scripts/cli.py"
+    command printf '%s\n' 'print("left in by accident")' >"$sb/src/service.py"
+    command printf '%s\n' "$sb/scripts/cli.py" "$sb/src/service.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_contains "$rows" "/service.py" \
+        "an UNDECLARED file's print() still fires — the key is not a global off-switch"
+    assert_not_contains "$rows" "/cli.py" \
+        "...while the declared file beside it stays exempt"
+}
+
+# With no pre-review.yml the new lookup must be inert. Sibling of
+# test_no_config_means_no_declared_behavior, which guards the #568 keys the
+# same way: an empty pattern list that matched everything would silence the
+# whole category while the scan still exited 0.
+test_stdout_is_output_inert_without_config() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/scripts"
+    command printf '%s\n' 'print("report")' 'breakpoint()' >"$sb/scripts/cli.py"
+    command printf '%s\n' "$sb/scripts/cli.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_contains "$rows" "Debug print statement" \
+        "with no config, print() is flagged exactly as before #680"
+    assert_contains "$rows" "Debugger statement" \
+        "with no config, breakpoint() is flagged exactly as before #680"
+}
+
+# stdout_is_output must be its OWN claim, not an alias for the other two keys.
+# This is the assertion behind the issue's rejected alternatives: reusing
+# test_skip_patterns would silence missing-test-file as a side effect, and
+# sharing test_patterns' check-ignore repo would mark the CLI a TEST. Both
+# mistakes are invisible in the debug-statement category — they only surface
+# here, in the categories that must NOT have changed.
+test_stdout_is_output_does_not_leak_into_test_categories() {
+    local sb rows
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' \
+        "stdout_is_output:" \
+        "  - 'scripts/*.py'" >"$sb/.claude/pre-review.yml"
+
+    command printf '%s\n' \
+        'def build_report():' \
+        '    print("report")' >"$sb/scripts/cli.py"
+    command printf '%s\n' "$sb/scripts/cli.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_contains "$rows" "/cli.py" \
+        "stdout_is_output does NOT suppress missing-test-file — that is test_skip_patterns' claim"
+}
+
 # A source basename carrying whitespace and glob metacharacters must not break
 # the find OR-chain that js_test_find_args builds, nor abort the scan. The
 # scanner runs under `set -euo pipefail` over arbitrary repo paths, so a crash
@@ -2170,6 +2390,13 @@ run_test test_test_patterns_works_without_discovery "test_patterns works ALONE a
 run_test test_test_discovery_works_without_patterns "test_discovery works ALONE and does not classify the test file (#568)"
 run_test test_hostile_basename_does_not_break_scan "a whitespace/glob-bearing basename degrades cleanly, no abort (#568)"
 run_test test_no_config_means_no_declared_behavior "with no pre-review.yml the declared-convention path is inert (#568)"
+run_test test_stdout_is_output_exempts_prints "stdout_is_output exempts print(), breakpoints STILL fire (#680)"
+run_test test_stdout_is_output_js_mirror "stdout_is_output exempts console.log, the debugger keyword STILL fires (#680)"
+run_test test_stdout_is_output_go_and_java "stdout_is_output exempts fmt.Println/System.out.println too (#680)"
+run_test test_declared_pattern_repos_are_cleaned_up "the EXIT trap reclaims every declared-pattern temp repo (#680)"
+run_test test_stdout_is_output_undeclared_file_still_fires "stdout_is_output exempts only what it names (#680)"
+run_test test_stdout_is_output_inert_without_config "with no pre-review.yml stdout_is_output is inert (#680)"
+run_test test_stdout_is_output_does_not_leak_into_test_categories "stdout_is_output does not suppress missing-test-file (#680)"
 run_test test_mjs_recognized_as_source ".mjs/.cjs route through the js/ts arm, not the unknown-type arm (#568)"
 run_test test_mjs_debug_statement_parity "a .mjs/.cjs console.log is flagged like a .js one — no silent category gap (#568)"
 run_test test_cross_directory_untested_public_api "untested-public-api sees a repo-rooted test, and still checks the SYMBOL (#568)"

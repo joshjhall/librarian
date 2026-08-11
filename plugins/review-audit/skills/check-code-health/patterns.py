@@ -11,14 +11,20 @@ python3>=3.11 is present). Both emit byte-identical findings — the parity is
 pinned by tests/validate-python-ports.sh, and the classification behavior by
 tests/validate-scanner-classification.sh. See CLAUDE.md § Key conventions.
 
-Note on the shared bash regions: patterns.sh carries two `>>> shared:` blocks
-(`is-test-file`, `debug-statement-scan`) kept byte-identical with
+Note on the shared bash regions: patterns.sh carries three `>>> shared:` blocks
+(`is-test-file`, `debug-print-scan`, `debugger-scan`) kept byte-identical with
 ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh. Those
 blocks live in the BASH fallback; this file re-expresses the same logic in
 Python, and the parity test guarantees it stays equivalent to the bash (and thus
-to the shared copy). A third region, `scanner-pattern-line`, was retired from
+to the shared copy). A further region, `scanner-pattern-line`, was retired from
 this pair by #604 — the predicate now lives only in pre-review-gates.sh, whose
 unanchored ai-slop arms are the sole place it earns its keep.
+
+The debug detection is split into two families (#680), mirroring the bash:
+prints (stdout — a CLI's actual output) and debuggers (never output). Only
+pre-review-gates.sh acts on the distinction today, via its `stdout_is_output`
+declaration; this scanner has no config loader and runs both unconditionally.
+The split is kept here so the two impls stay structurally comparable.
 
 Input:  argv[1] = file containing paths to scan (one per line)
 Output: TSV to stdout: file<TAB>line<TAB>category<TAB>evidence<TAB>certainty
@@ -98,6 +104,56 @@ def _first_nonblank_after(lines: list[str], idx_1: int) -> str:
     return ""
 
 
+def _scan_debug_print(path: str, idx: int, line: str, ext: str) -> None:
+    """Emit debug-statement rows for the stdout-writing family.
+
+    Mirrors the `>>> shared:debug-print-scan` bash region. These are what a CLI
+    legitimately uses to produce its output, which is why pre-review-gates.sh
+    lets a project exempt them via `stdout_is_output` (#680). This scanner has
+    no config loader, so it always runs.
+
+    No scanner-pattern-literal skip, matching the bash copies after #604: every
+    pattern is `^\\s*`-anchored, so a scanner's own literal — always nested
+    inside an indented grep call — can never match line-start. The old guard
+    suppressed nothing real (measured: 0 rows) and silently dropped genuine
+    debug statements whose ARGUMENT looked like a regex, e.g.
+    `print(re.search(r"\\d+", data))`. Keep new patterns anchored.
+    """
+    if ext == "py":
+        if re.search(r"^\s*print\(", line) and not re.search(
+            r"(logging|logger|log\.)", line
+        ):
+            emit(path, idx, "debug-statement", "Debug print statement", line)
+    elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
+        if re.search(r"^\s*console\.(log|debug|warn|info|trace)\(", line):
+            emit(path, idx, "debug-statement", "Console debug statement", line)
+    elif ext == "go":
+        if re.search(r"^\s*fmt\.Print(ln|f)?\(", line):
+            emit(path, idx, "debug-statement", "Debug print statement", line)
+    elif ext in ("java", "kt"):
+        if re.search(r"^\s*System\.(out|err)\.print(ln)?\(", line):
+            emit(path, idx, "debug-statement", "Debug print statement", line)
+
+
+def _scan_debugger(path: str, idx: int, line: str, ext: str) -> None:
+    """Emit debug-statement rows for the breakpoint family.
+
+    Mirrors the `>>> shared:debugger-scan` bash region. NEVER exempted by any
+    declaration: a breakpoint is never a program's output, so exempting one
+    would be a real false negative (#680 AC3). Same anchoring rule as
+    _scan_debug_print.
+    """
+    if ext == "py":
+        if re.search(r"^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)", line):
+            emit(path, idx, "debug-statement", "Debugger statement", line)
+    elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
+        if re.search(r"^\s*debugger\s*;?\s*$", line):
+            emit(path, idx, "debug-statement", "Debugger keyword", line)
+    elif ext == "rb":
+        if re.search(r"^\s*(binding\.pry|binding\.irb|byebug)\b", line):
+            emit(path, idx, "debug-statement", "Ruby debugger", line)
+
+
 def scan_file(path: str, lines: list[str]) -> None:
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
     test_file = is_test_file(path)
@@ -108,37 +164,12 @@ def scan_file(path: str, lines: list[str]) -> None:
             emit(path, idx, "tech-debt-marker", "Tech debt marker", line)
 
         # --- Category: debug-statement (non-test files only) ---
-        # Mirrors the `>>> shared:debug-statement-scan` block, per-language.
-        #
-        # No scanner-pattern-literal skip here, matching the bash copies after
-        # #604: every pattern below is `^\s*`-anchored, so a scanner's own
-        # literal — always nested inside an indented grep call — can never match
-        # line-start. The old guard suppressed nothing real (measured: 0 rows)
-        # and silently dropped genuine debug statements whose ARGUMENT looked
-        # like a regex, e.g. `print(re.search(r"\d+", data))`. Keep new patterns
-        # anchored; see the bash region comment for the full rationale.
+        # Split into the same two families as the bash regions (#680); see the
+        # module docstring. Called in this order — prints then debuggers — to
+        # match the bash arms' emission order within a language.
         if not test_file:
-            if ext == "py":
-                if re.search(r"^\s*print\(", line) and not re.search(
-                    r"(logging|logger|log\.)", line
-                ):
-                    emit(path, idx, "debug-statement", "Debug print statement", line)
-                if re.search(r"^\s*(breakpoint\(\)|import pdb|pdb\.set_trace)", line):
-                    emit(path, idx, "debug-statement", "Debugger statement", line)
-            elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
-                if re.search(r"^\s*console\.(log|debug|warn|info|trace)\(", line):
-                    emit(path, idx, "debug-statement", "Console debug statement", line)
-                if re.search(r"^\s*debugger\s*;?\s*$", line):
-                    emit(path, idx, "debug-statement", "Debugger keyword", line)
-            elif ext == "rb":
-                if re.search(r"^\s*(binding\.pry|binding\.irb|byebug)\b", line):
-                    emit(path, idx, "debug-statement", "Ruby debugger", line)
-            elif ext == "go":
-                if re.search(r"^\s*fmt\.Print(ln|f)?\(", line):
-                    emit(path, idx, "debug-statement", "Debug print statement", line)
-            elif ext in ("java", "kt"):
-                if re.search(r"^\s*System\.(out|err)\.print(ln)?\(", line):
-                    emit(path, idx, "debug-statement", "Debug print statement", line)
+            _scan_debug_print(path, idx, line, ext)
+            _scan_debugger(path, idx, line, ext)
 
         # --- Category: empty-handler (all files) ---
         if ext == "py":
