@@ -864,8 +864,10 @@ test_stdout_is_output_go_and_java() {
     # and not "the go/java arms stopped firing".
     command mkdir -p "$sb/internal"
     command printf '%s\n' 'fmt.Println("left in by accident")' >"$sb/internal/svc.go"
+    command printf '%s\n' 'System.out.println("left in by accident");' >"$sb/internal/Svc.java"
     command printf '%s\n' \
-        "$sb/cmd/main.go" "$sb/cmd/Main.java" "$sb/internal/svc.go" >"$sb/files.txt"
+        "$sb/cmd/main.go" "$sb/cmd/Main.java" \
+        "$sb/internal/svc.go" "$sb/internal/Svc.java" >"$sb/files.txt"
 
     run_gate_in "$sb" "$sb/files.txt"
 
@@ -874,8 +876,52 @@ test_stdout_is_output_go_and_java() {
         "a declared CLI's fmt.Println is NOT flagged"
     assert_not_contains "$rows" "/Main.java" \
         "a declared CLI's System.out.println is NOT flagged"
+    # One control per language: a routing bug that darkened ALL .go (or all
+    # .java) regardless of declaration is a different failure from a
+    # path-scoping bug, and only a same-language control catches it.
     assert_contains "$rows" "/svc.go" \
         "an undeclared .go still fires — the go arm did not simply go silent"
+    assert_contains "$rows" "/Svc.java" \
+        "an undeclared .java still fires — the java arm did not simply go silent"
+}
+
+# Every mktemp -d repo the gate creates must be reclaimed by the EXIT trap.
+#
+# BEHAVIOURAL, not structural: the gate runs with TMPDIR pointed at an empty
+# directory and the leftovers are counted afterwards. A grep for the variable
+# name in cleanup_skip_policy would pass on a branch that named the right
+# variable and removed the wrong path.
+#
+# The declaration below exercises ALL THREE repos in one run (skip-policy is
+# unconditional; test_patterns and stdout_is_output each need their key
+# present), so this covers the existing two as well as the new one — the leak
+# it was written for was a third repo added without a matching cleanup branch,
+# and the next key would repeat it.
+test_declared_pattern_repos_are_cleaned_up() {
+    local sb tmp leftovers
+    new_git_sandbox sb
+    tmp="$(command mktemp -d "$WORKDIR/tmphome.XXXXXX")"
+
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' \
+        "test_patterns:" \
+        "  - 'scripts/smoke-*.py'" \
+        "stdout_is_output:" \
+        "  - 'scripts/cli.py'" >"$sb/.claude/pre-review.yml"
+    command printf '%s\n' 'print("report")' >"$sb/scripts/cli.py"
+    command printf '%s\n' "$sb/scripts/cli.py" >"$sb/files.txt"
+
+    GATE_RC=0
+    GATE_OUT="$(cd "$sb" &&
+        TMPDIR="$tmp" /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            "$REAL_BASH" "$GATE" "$sb/files.txt" 2>/dev/null)" || GATE_RC=$?
+
+    assert_exit 0 "$GATE_RC" "the gate run itself succeeded (leak check is meaningful)"
+
+    # Every entry here is a temp dir the gate created and failed to reclaim.
+    leftovers="$(command find "$tmp" -mindepth 1 -maxdepth 1 | command wc -l | command tr -d '[:space:]')"
+    assert_equals "0" "$leftovers" \
+        "the EXIT trap reclaims every temp repo — no mktemp -d is left behind"
 }
 
 # The control: the key exempts what it NAMES, not the language. Without this a
@@ -2347,6 +2393,7 @@ run_test test_no_config_means_no_declared_behavior "with no pre-review.yml the d
 run_test test_stdout_is_output_exempts_prints "stdout_is_output exempts print(), breakpoints STILL fire (#680)"
 run_test test_stdout_is_output_js_mirror "stdout_is_output exempts console.log, the debugger keyword STILL fires (#680)"
 run_test test_stdout_is_output_go_and_java "stdout_is_output exempts fmt.Println/System.out.println too (#680)"
+run_test test_declared_pattern_repos_are_cleaned_up "the EXIT trap reclaims every declared-pattern temp repo (#680)"
 run_test test_stdout_is_output_undeclared_file_still_fires "stdout_is_output exempts only what it names (#680)"
 run_test test_stdout_is_output_inert_without_config "with no pre-review.yml stdout_is_output is inert (#680)"
 run_test test_stdout_is_output_does_not_leak_into_test_categories "stdout_is_output does not suppress missing-test-file (#680)"

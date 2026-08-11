@@ -396,13 +396,22 @@ is_test_skipped() {
     command git -C "$_SKIP_POLICY_REPO" check-ignore -q --no-index "$relpath" 2>/dev/null
 }
 
-# Cleanup temp repos on exit
+# Cleanup temp repos on exit.
+#
+# ONE BRANCH PER mktemp -d ABOVE. Adding a declared-convention key means adding
+# a repo in load_test_skip_policy AND a branch here — the two go together, and
+# the omission is silent: the scan still exits 0 and only leaks a directory per
+# run. Keep this list in step with the `_*_REPO` declarations at the top of the
+# file.
 cleanup_skip_policy() {
     if [ -n "$_SKIP_POLICY_REPO" ]; then
         command rm -rf "$_SKIP_POLICY_REPO"
     fi
     if [ -n "$_TEST_PATTERN_REPO" ]; then
         command rm -rf "$_TEST_PATTERN_REPO"
+    fi
+    if [ -n "$_STDOUT_PATTERN_REPO" ]; then
+        command rm -rf "$_STDOUT_PATTERN_REPO"
     fi
 }
 trap cleanup_skip_policy EXIT
