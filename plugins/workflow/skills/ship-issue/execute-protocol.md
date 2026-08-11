@@ -295,7 +295,8 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
 
 ## Option 2 — Commit to main + push
 
-**Review gate — check BEFORE the push (#637).** The adversarial review runs on
+**Review gate — check BEFORE the push (#637).** The adversarial review — the
+**Workflow tool** with `ship-issue/workflow.js` — runs on
 Options 1, 2 and 3 alike (`pre-ship-validation.md` Step 3.5 item 6), so the
 "a skipped review is not a clean review" invariant binds here too — and binds
 *harder*, because this option has no PR to park: an ungated push puts unreviewed

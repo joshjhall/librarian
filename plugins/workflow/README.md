@@ -74,7 +74,8 @@ so this manual step is only for host / bare-Linux installs.
   front door to the issue-driven pipeline
 - `golem` — run **one** issue end-to-end solo in the current session: an isolated
   worktree, the full `next-issue` → `ship-issue` pipeline, and the adversarial
-  pre-PR review — no orchestrator, `tmux`, or containers (#410)
+  pre-PR review (the **Workflow tool** with `ship-issue/workflow.js`) — no
+  orchestrator, `tmux`, or containers (#410)
 - `orchestrate` — master orchestrator for **2+** issues in parallel: PR-per-golem
   dispatch, status monitoring, cross-PR rebase, and a one-approval integration
   train
@@ -156,7 +157,10 @@ Variables" section.
 ### Skill-level tunables (`ship-issue`)
 
 This is a quick reference; the skill's "Environment Variables" section is
-authoritative and documents the same vars in the same order.
+authoritative and documents the same vars in the same order. The review these
+tunables govern is the **Workflow tool** with `ship-issue/workflow.js`
+(`ship-issue` Step 3.5 item 6) — the cycle caps and token ceilings below are
+harness parameters, so they have no meaning for a hand-rolled substitute.
 
 **How a tunable takes effect differs by row, and the "Read by" column says
 which** (#588). A **helper-backed** var is read by a bundled script the skill

@@ -118,7 +118,9 @@ The harness-perm-mode row (L1 `acceptEdits` vs L2–L4 `auto`) is surfaced in th
         `${CLAUDE_PLUGIN_ROOT}/scripts/golem-attach.sh {N}`, reviews and refines
         the plan in the SAME session, then approves. Everything AFTER plan
         approval proceeds at the run's level (implement → test → adversarial
-        review → push/PR).
+        review → push/PR). That review step is the **Workflow tool** with
+        `ship-issue/workflow.js` (`ship-issue` Step 3.5 item 6), not a lone
+        `dev-core:code-reviewer` dispatch.
   ```
 
   This replaces the old effort-based rule: the level is the dial. Note the

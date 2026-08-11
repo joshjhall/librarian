@@ -1,12 +1,13 @@
 ---
-description: Run a single issue end-to-end as a solo "golem" in the current session — create an isolated git worktree, work the issue there through the next-issue → ship-issue pipeline at a chosen autonomy level (L1–L4), then tear the worktree down. Use when you want one issue worked with full golem rigor (including the adversarial pre-PR review) and worktree isolation, without an orchestrator, tmux, or containers. For 2+ parallel issues, use /workflow:orchestrate instead.
+description: Run a single issue end-to-end as a solo "golem" in the current session — create an isolated git worktree, work the issue there through the next-issue → ship-issue pipeline at a chosen autonomy level (L1–L4), then tear the worktree down. Use when you want one issue worked with full golem rigor (including the adversarial pre-PR review — the Workflow tool with ship-issue/workflow.js) and worktree isolation, without an orchestrator, tmux, or containers. For 2+ parallel issues, use /workflow:orchestrate instead.
 ---
 
 # Golem (solo, in-session)
 
 `/workflow:golem` runs **one** issue the way an orchestrated golem does — its own
 worktree, its own branch, the full `next-issue → ship-issue` pipeline, the same
-adversarial pre-PR review — but **in the primary session**, with no orchestrator,
+adversarial pre-PR review (the **Workflow tool** with `ship-issue/workflow.js`;
+see Phase C) — but **in the primary session**, with no orchestrator,
 no `tmux`, and no container. You are the golem; you monitor it by watching your
 own session. Every gate (plan approval, escalation, dead-end, permission) surfaces
 in-session as a normal prompt, so none of the detached-golem apparatus (feed,
@@ -125,14 +126,32 @@ Skill(next-issue)  with args:  N [--level M]
 the plan (human gate at L1–L3, auto at L4), implements, tests, and:
 
 - **L3–L4** — chains `/workflow:ship-issue` **in the same turn** → Branch + PR → wait for
-  CI + adversarial review → **auto-merge** on green + clean. Control returns here
-  for Phase D.
+  CI + adversarial review (the **Workflow tool** with `ship-issue/workflow.js`) →
+  **auto-merge** on green + clean. Control returns here for Phase D.
 - **L1–L2** — stops at the routine ship gates. The human runs `/workflow:ship-issue` (now
   or later); it stops again for the human to merge. `/workflow:golem` does not force it.
 
 The adversarial pre-PR review runs identically to an orchestrated golem's — that
 parity now holds across **all** shipping modes (see `ship-issue/pre-ship-validation.md`
 check #6), so a solo run cannot skip it by choosing commit-only.
+
+**"Adversarial pre-PR review" is a named artifact, not a description of a kind of
+review.** It means: invoke the **Workflow tool** with
+`ship-issue/workflow.js` — `ship-issue` **Step 3.5 item 6**. That harness fans
+**five** dimensions (security, correctness, tests, conventions, scope-drift) out as
+one parallel barrier under a shared budget, then runs a **fresh judge** whose ordered
+rule list computes blocking-vs-deferrable.
+
+A single **`dev-core:code-reviewer` dispatch is NOT a substitute** — it is *one
+dimension of five*, with no judge, no shared budget, and no pre-scan handoff. It is a
+tempting wrong answer precisely because the harness fans out that very agent
+(`ship-issue/workflow.js` sets `agentType: 'dev-core:code-reviewer'`), and because
+that agent's own description advertises itself for use "before creating pull
+requests". So the substitution looks like the right tool and fails silently rather
+than loudly, at real cost: **5.4 min** for a harness cycle versus **9–61 min** per
+serial subagent cycle (measured on PR #642). Reach for the harness by name; do not
+pattern-match on the adjective. `tests/lint-harness-refs.sh` enforces that every
+mention of this review names the harness beside it.
 
 ### Phase D — Teardown (auto after merge, prompt otherwise)
 
@@ -259,8 +278,9 @@ check #6), so a solo run cannot skip it by choosing commit-only.
 ## When to Use
 
 - One issue you want worked with **full golem rigor** — the adversarial pre-PR
-  review, the plan gate, the drift/pre-review checks — and **worktree isolation**,
-  but without standing up an orchestrator or containers.
+  review (the **Workflow tool** with `ship-issue/workflow.js`, never a lone
+  `dev-core:code-reviewer` dispatch), the plan gate, the drift/pre-review checks —
+  and **worktree isolation**, but without standing up an orchestrator or containers.
 - You want to **watch the work directly** in your own session instead of attaching
   to a detached `tmux`/container golem.
 - Keeping the **main checkout free** for your own edits (or another terminal's
