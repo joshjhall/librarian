@@ -60,7 +60,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 # block is introduced in both of that pair's files; add a whole line when a new
 # duplicated-logic pair appears.
 SHARED_PAIRS=(
-    "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-statement-scan is-test-file"
+    "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
 )
 
@@ -171,15 +171,57 @@ test_all_regions_match() {
     done
 }
 
-# The debug region must carry an arm for every language it claims to cover.
+# Each debug region must carry an arm for every language it claims to cover.
 # Guards against a copy silently losing a language arm (which the multiset
 # equality would still catch as drift, but this pins the shape independently and
 # makes the tamper fixture below meaningful for non-JS arms — see #133).
+#
+# The arm sets differ by family (#680) and that asymmetry is the point: only
+# languages with a stdout-writing idiom appear in the print region (go/java
+# have no breakpoint arm), and only languages with a breakpoint idiom appear in
+# the debugger region (ruby has no print arm here).
 test_debug_region_has_all_language_arms() {
     local body arm
-    body="$(extract_shared "$HEALTH_PATTERNS" debug-statement-scan)"
-    for arm in '*.py)' '*.js' '*.rb)' '*.go)' '*.java'; do
-        assert_contains "$body" "$arm" "debug region covers the ${arm} arm"
+    body="$(extract_shared "$HEALTH_PATTERNS" debug-print-scan)"
+    for arm in '*.py)' '*.js' '*.go)' '*.java'; do
+        assert_contains "$body" "$arm" "debug-print region covers the ${arm} arm"
+    done
+
+    body="$(extract_shared "$HEALTH_PATTERNS" debugger-scan)"
+    for arm in '*.py)' '*.js' '*.rb)'; do
+        assert_contains "$body" "$arm" "debugger region covers the ${arm} arm"
+    done
+}
+
+# The families must stay SEPARATED, which is the invariant #680 depends on:
+# pre-review-gates.sh exempts the print region for a declared `stdout_is_output`
+# file and always runs the debugger region. If a breakpoint pattern migrated
+# into the print region, that exemption would start silencing breakpoints — a
+# real false negative, and one the byte-identical drift check alone would NOT
+# catch (it only compares the two copies to each other, so the same mistake
+# made in both files passes).
+#
+# Asserted on BOTH copies: the pair could be internally consistent and still
+# wrong.
+test_debug_families_stay_separated() {
+    local file label print_body debugger_body pattern
+    for file in "$HEALTH_PATTERNS" "$PRE_REVIEW_GATES"; do
+        label="$(label_for "$file")"
+        print_body="$(extract_shared "$file" debug-print-scan)"
+        debugger_body="$(extract_shared "$file" debugger-scan)"
+
+        # No breakpoint idiom may appear in the exemptible print region.
+        for pattern in 'breakpoint' 'pdb' 'binding\.pry' 'byebug' 'debugger'; do
+            assert_not_contains "$print_body" "$pattern" \
+                "${label}: print region is free of the '${pattern}' idiom (stays exempt-safe)"
+        done
+
+        # ...and no stdout idiom may appear in the never-exempt debugger region,
+        # which would make it unreachable for a declared CLI file.
+        for pattern in 'print\(' 'console\.' 'fmt\.Print' 'System\.'; do
+            assert_not_contains "$debugger_body" "$pattern" \
+                "${label}: debugger region is free of the '${pattern}' idiom"
+        done
     done
 }
 
@@ -188,19 +230,33 @@ test_debug_region_has_all_language_arms() {
 # plain bash — NOT assert_true, which eval's its argument, and the regions hold
 # shell metacharacters ($(...), quotes, |) that eval would execute.
 test_detector_fires_on_drift() {
-    # Region 1: debug-statement-scan — tamper a Python (non-JS) evidence string.
+    # Region 1: debug-print-scan — tamper a Python (non-JS) evidence string.
     local dbg dbg_tampered
-    dbg="$(extract_shared "$HEALTH_PATTERNS" debug-statement-scan | normalize)"
-    dbg_tampered="$(extract_shared "$HEALTH_PATTERNS" debug-statement-scan |
+    dbg="$(extract_shared "$HEALTH_PATTERNS" debug-print-scan | normalize)"
+    dbg_tampered="$(extract_shared "$HEALTH_PATTERNS" debug-print-scan |
         command sed 's/Debug print statement/Debug print/' | normalize)"
-    assert_not_empty "$dbg_tampered" "tampered debug extract is non-empty (extract still works)"
+    assert_not_empty "$dbg_tampered" "tampered debug-print extract is non-empty (extract still works)"
     local dbg_changed="no" dbg_drift="none"
     [ "$dbg" != "$dbg_tampered" ] && dbg_changed="yes"
     [ "$dbg" != "$dbg_tampered" ] && dbg_drift="detected"
-    assert_equals "yes" "$dbg_changed" "the debug tamper actually changed the region (non-JS 'Debug print statement' present)"
-    assert_equals "detected" "$dbg_drift" "a one-line edit to the debug region is detected as drift"
+    assert_equals "yes" "$dbg_changed" "the debug-print tamper actually changed the region (non-JS 'Debug print statement' present)"
+    assert_equals "detected" "$dbg_drift" "a one-line edit to the debug-print region is detected as drift"
 
-    # Region 2: is-test-file — tamper one glob arm.
+    # Region 2: debugger-scan — tamper the Ruby arm, the one language that
+    # exists ONLY in this region. A tamper on a py/js line would not prove the
+    # split regions are extracted independently.
+    local brk brk_tampered
+    brk="$(extract_shared "$HEALTH_PATTERNS" debugger-scan | normalize)"
+    brk_tampered="$(extract_shared "$HEALTH_PATTERNS" debugger-scan |
+        command sed 's/Ruby debugger/Ruby dbg/' | normalize)"
+    assert_not_empty "$brk_tampered" "tampered debugger extract is non-empty (extract still works)"
+    local brk_changed="no" brk_drift="none"
+    [ "$brk" != "$brk_tampered" ] && brk_changed="yes"
+    [ "$brk" != "$brk_tampered" ] && brk_drift="detected"
+    assert_equals "yes" "$brk_changed" "the debugger tamper actually changed the region ('Ruby debugger' present)"
+    assert_equals "detected" "$brk_drift" "a one-line edit to the debugger region is detected as drift"
+
+    # Region 3: is-test-file — tamper one glob arm.
     local itf itf_tampered
     itf="$(extract_shared "$HEALTH_PATTERNS" is-test-file | normalize)"
     itf_tampered="$(extract_shared "$HEALTH_PATTERNS" is-test-file |
@@ -283,8 +339,9 @@ test_detector_fires_on_py_region_drift() {
 
 run_test test_all_regions_match "All shared regions match across every pinned pair"
 run_test test_label_for_disambiguates_the_pairs "label_for disambiguates the two same-named patterns.sh copies"
-run_test test_debug_region_has_all_language_arms "Debug region covers every advertised language arm"
-run_test test_detector_fires_on_drift "Drift detector fires on a tampered region (debug + is-test-file)"
+run_test test_debug_region_has_all_language_arms "Debug regions cover every advertised language arm"
+run_test test_debug_families_stay_separated "Print and debugger families stay in separate regions (#680)"
+run_test test_detector_fires_on_drift "Drift detector fires on a tampered region (print + debugger + is-test-file)"
 run_test test_detector_fires_on_py_region_drift "Drift detector fires across the py-public-symbols pair (#609)"
 
 generate_report

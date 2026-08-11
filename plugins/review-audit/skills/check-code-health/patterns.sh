@@ -90,6 +90,145 @@ is_test_file() {
 }
 # <<< shared:is-test-file
 
+# =============================================================================
+# Category: debug-statement — split into two families (#680).
+#
+# The per-language `case`s below are a DELIBERATE cross-plugin duplicate of
+# ship-issue/pre-review-gates.sh (review-audit and workflow install
+# independently, so neither can source the other). Both regions are kept
+# byte-identical by tests/validate-shared-scanner-sync.sh — edit both copies
+# together.
+#
+#   shared:debug-print-scan  — writes to stdout (print, console.*, fmt.Print*,
+#                              System.out/err.print*). In a CLI these ARE the
+#                              program's output, which is why pre-review-gates
+#                              lets a project declare them exempt via
+#                              `stdout_is_output`.
+#   shared:debugger-scan     — breakpoints (breakpoint(), pdb, the `debugger`
+#                              keyword, binding.pry, byebug). NEVER exempt:
+#                              none is ever a program's output.
+#
+# THIS copy has no .claude/pre-review.yml loader, so it calls both
+# unconditionally — the split here is structural parity with the other copy, not
+# a behaviour change. Wiring the declaration into this scanner is a follow-up;
+# until then check-code-health flags CLI prints exactly as it always has.
+#
+# NO is_scanner_pattern_line guard in either region, unlike pre-review-gates'
+# ai-slop arms (#604): every pattern is `^\s*`-anchored, and a scanner's own
+# pattern literal always sits INSIDE a grep invocation indented in a function,
+# so it can never match line-start. The guard suppressed nothing real (measured:
+# 0 rows) while silently dropping genuine debug statements whose ARGUMENT looked
+# like a regex, e.g. `print(re.search(r"\d+", data))`. Keep new patterns
+# anchored.
+# =============================================================================
+
+# scan_debug_prints FILE — the stdout-writing arms.
+scan_debug_prints() {
+    local file="$1"
+    local line_num content evidence
+
+    # >>> shared:debug-print-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
+    case "$file" in
+        *.py)
+            # Python: print() used as debug (not in logging context)
+            command grep -nE -- '^[[:space:]]*print\(' "$file" 2>/dev/null |
+                command grep -vE '(logging|logger|log\.)' |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
+            # JavaScript/TypeScript: console.log, console.debug, console.warn
+            command grep -nE -- '^[[:space:]]*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Console debug statement: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.go)
+            # Go: fmt.Println used as debug (not in main or test)
+            command grep -nE -- '^[[:space:]]*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.java | *.kt)
+            # Java/Kotlin: System.out.println, System.err.println
+            command grep -nE -- '^[[:space:]]*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
+    esac
+    # <<< shared:debug-print-scan
+}
+
+# scan_debugger_statements FILE — the breakpoint arms. Never exempted.
+scan_debugger_statements() {
+    local file="$1"
+    local line_num content evidence
+
+    # >>> shared:debugger-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
+    case "$file" in
+        *.py)
+            # Python: breakpoint(), pdb
+            command grep -nE -- '^[[:space:]]*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debugger statement: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
+            # debugger keyword
+            command grep -nE -- '^[[:space:]]*debugger[[:space:]]*;?[[:space:]]*$' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debugger keyword: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.rb)
+            # Ruby: binding.pry, puts used as debug
+            command grep -nE -- '^[[:space:]]*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Ruby debugger: ${evidence}" "HIGH"
+                done || true
+            ;;
+    esac
+    # <<< shared:debugger-scan
+}
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -116,107 +255,11 @@ while IFS= read -r file; do
         done || true
 
     # --- Category: debug-statement ---
-    # Only flag in non-test files
+    # Only flag in non-test files. Both families run unconditionally here: this
+    # scanner has no `stdout_is_output` loader (see the region header above).
     if [ "$is_test" -eq 0 ]; then
-        # >>> shared:debug-statement-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
-        # This case is a DELIBERATE cross-plugin duplicate: review-audit and
-        # workflow install independently, so pre-review-gates.sh cannot source
-        # it. Edit both copies together; the drift guard fails CI otherwise.
-        #
-        # NO is_scanner_pattern_line guard here, unlike the ai-slop arms (#604).
-        # Every pattern below is `^\s*`-anchored, and a scanner's own pattern
-        # literal always sits INSIDE a grep invocation indented in a function — so
-        # it can never match line-start. The guard therefore suppressed nothing on
-        # the real scanners (measured: 0 rows) while silently dropping genuine
-        # debug statements whose ARGUMENT happened to look like a regex, e.g.
-        # `print(re.search(r"\d+", data))` in ordinary source. Anchoring is what
-        # prevents self-matching in this region; keep it that way. Adding an
-        # UNANCHORED pattern below would reintroduce the self-match the guard was
-        # for — anchor it, or reconsider the guard for that arm alone.
-        case "$file" in
-            *.py)
-                # Python: print() used as debug (not in logging context)
-                command grep -nE -- '^[[:space:]]*print\(' "$file" 2>/dev/null |
-                    command grep -vE '(logging|logger|log\.)' |
-                    while IFS= read -r raw; do
-                        line_num=${raw%%:*}
-                        content=${raw#*:}
-                        evidence=$(truncate_chars 80 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "debug-statement" \
-                            "Debug print statement: ${evidence}" "HIGH"
-                    done || true
-                # Python: breakpoint(), pdb
-                command grep -nE -- '^[[:space:]]*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
-                    while IFS= read -r raw; do
-                        line_num=${raw%%:*}
-                        content=${raw#*:}
-                        evidence=$(truncate_chars 80 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "debug-statement" \
-                            "Debugger statement: ${evidence}" "HIGH"
-                    done || true
-                ;;
-            *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
-                # JavaScript/TypeScript: console.log, console.debug, console.warn
-                command grep -nE -- '^[[:space:]]*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
-                    while IFS= read -r raw; do
-                        line_num=${raw%%:*}
-                        content=${raw#*:}
-                        evidence=$(truncate_chars 80 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "debug-statement" \
-                            "Console debug statement: ${evidence}" "HIGH"
-                    done || true
-                # debugger keyword
-                command grep -nE -- '^[[:space:]]*debugger[[:space:]]*;?[[:space:]]*$' "$file" 2>/dev/null |
-                    while IFS= read -r raw; do
-                        line_num=${raw%%:*}
-                        content=${raw#*:}
-                        evidence=$(truncate_chars 80 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "debug-statement" \
-                            "Debugger keyword: ${evidence}" "HIGH"
-                    done || true
-                ;;
-            *.rb)
-                # Ruby: binding.pry, puts used as debug
-                command grep -nE -- '^[[:space:]]*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
-                    while IFS= read -r raw; do
-                        line_num=${raw%%:*}
-                        content=${raw#*:}
-                        evidence=$(truncate_chars 80 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "debug-statement" \
-                            "Ruby debugger: ${evidence}" "HIGH"
-                    done || true
-                ;;
-            *.go)
-                # Go: fmt.Println used as debug (not in main or test)
-                command grep -nE -- '^[[:space:]]*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
-                    while IFS= read -r raw; do
-                        line_num=${raw%%:*}
-                        content=${raw#*:}
-                        evidence=$(truncate_chars 80 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "debug-statement" \
-                            "Debug print statement: ${evidence}" "HIGH"
-                    done || true
-                ;;
-            *.java | *.kt)
-                # Java/Kotlin: System.out.println, System.err.println
-                command grep -nE -- '^[[:space:]]*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
-                    while IFS= read -r raw; do
-                        line_num=${raw%%:*}
-                        content=${raw#*:}
-                        evidence=$(truncate_chars 80 "$content")
-                        command printf '%s\t%s\t%s\t%s\t%s\n' \
-                            "$file" "$line_num" "debug-statement" \
-                            "Debug print statement: ${evidence}" "HIGH"
-                    done || true
-                ;;
-        esac
-        # <<< shared:debug-statement-scan
+        scan_debug_prints "$file"
+        scan_debugger_statements "$file"
     fi
 
     # --- Category: empty-handler ---
