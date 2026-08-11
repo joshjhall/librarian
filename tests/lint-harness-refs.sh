@@ -116,7 +116,7 @@ function flush(   i, two, hit, named, exempt, hitline) {
     hit = 0; named = 0; exempt = 0; hitline = 0
     for (i = 1; i <= nsec; i++) {
         two = sec[i] (i < nsec ? " " sec[i + 1] : "")
-        if (two ~ /[Aa]dversarial[[:space:]]+([A-Za-z-]+[[:space:]]+)?review/) {
+        if (two ~ /[Aa]dversarial[[:space:]]+([A-Za-z-]+[[:space:]]+)?[Rr]eview/) {
             if (!hit) {
                 hit = 1
                 # Report the line the word ADVERSARIAL is actually on, which on
@@ -324,6 +324,12 @@ Each cycle re-runs the adversarial review over the fix delta.
 
 ## Pointer is not the artifact
 The adversarial review runs at Step 3.5 (see pre-ship-validation.md).
+
+## Title Case both words
+**Adversarial Review**: run it before shipping.
+
+## Title case second word only
+Run the adversarial Review before the push.
 EOF
 
     scan_file "$tmp/fixture.md"
@@ -336,6 +342,16 @@ EOF
         "Plain 'adversarial review' with no artifact is flagged"
     assert_contains "$CUR_VIOLATIONS" "Pointer is not the artifact" \
         "A pointer to Step 3.5 / another file is NOT a satisfier (that is the #681 defect)"
+    # Case parity across BOTH words. An earlier draft matched `[Aa]dversarial`
+    # but only a lowercase `review`, so "Adversarial Review" — the natural
+    # Title-Case heading form, and the shape dev-core's skill-authoring already
+    # uses as `**Adversarial review**` — was invisible to the gate. A phrase the
+    # matcher cannot see is a silent hole of exactly the kind #681 is about, so
+    # both words are pinned here rather than left to the regex's good intentions.
+    assert_contains "$CUR_VIOLATIONS" "Title Case both words" \
+        "\"Adversarial Review\" (both words capitalized) is flagged"
+    assert_contains "$CUR_VIOLATIONS" "Title case second word only" \
+        "\"adversarial Review\" (second word capitalized) is flagged"
     # The reported line must be the PROSE line, not the heading above it —
     # otherwise the message points an author at a line carrying no phrase.
     assert_contains "$CUR_VIOLATIONS" ":2: " \
@@ -397,7 +413,7 @@ EOF
     # Guard the fixture: prove neither line matches alone, so the assertion
     # below can only pass because of the window.
     local single
-    single="$(command grep -cE '[Aa]dversarial[[:space:]]+([A-Za-z-]+[[:space:]]+)?review' \
+    single="$(command grep -cE '[Aa]dversarial[[:space:]]+([A-Za-z-]+[[:space:]]+)?[Rr]eview' \
         "$tmp/wrapped.md" || true)"
     assert_equals "0" "$single" \
         "Fixture guard: no single line carries the phrase (found $single)"
@@ -418,6 +434,65 @@ EOF
     scan_file "$tmp/straddle.md"
     assert_equals "" "$CUR_VIOLATIONS" \
         "The window does not join lines across a heading boundary"
+}
+
+# Pins the fence toggle. A `#`-prefixed line inside a ``` block is a shell
+# comment, not a markdown heading — README.md contains exactly that shape
+# (`# In a Claude Code session, at the repo root:`). Without the toggle, that
+# line splits the section, and the violation gets attributed to a "heading" the
+# reader sees as code. The real corpus exercises this only incidentally (it
+# asserts README.md is clean, not that the fence logic is what keeps it so), so
+# a regression that dropped the toggle could stay green. This drives it head-on.
+test_fence_suppresses_fake_heading() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/fenced.md" <<'EOF'
+## Real heading
+
+```bash
+# Not a heading — a shell comment inside a fence
+/workflow:golem 512
+```
+
+The adversarial pre-PR review runs here.
+EOF
+
+    scan_file "$tmp/fenced.md"
+    assert_contains "$CUR_VIOLATIONS" "Real heading" \
+        "The violation is attributed to the real heading, not the fenced comment"
+    assert_not_contains "$CUR_VIOLATIONS" "Not a heading" \
+        "A #-prefixed line inside a fence never becomes a section heading"
+
+    # The toggle must also CLOSE. If `fence` latched on at the first ``` and
+    # never flipped back, every later heading in the file would be swallowed and
+    # the whole remainder would collapse into one section — so a real heading
+    # AFTER a closed fence must still start its own section. Two sections, two
+    # separate violations, is the observable difference.
+    command cat >"$tmp/reopen.md" <<'EOF'
+## First real heading
+
+```bash
+# fenced comment
+```
+
+The adversarial pre-PR review runs here.
+
+## Second real heading
+
+Another adversarial pre-PR review mention with no harness named.
+EOF
+
+    scan_file "$tmp/reopen.md"
+    assert_contains "$CUR_VIOLATIONS" "First real heading" \
+        "The section before the fence is reported"
+    assert_contains "$CUR_VIOLATIONS" "Second real heading" \
+        "A heading AFTER a closed fence still starts its own section (toggle closed)"
 }
 
 # Drives build_detail's truncation branch, which no fixture reaches otherwise.
@@ -568,6 +643,7 @@ run_test test_corpus_non_empty "Corpus discovery is non-empty (gate is not a no-
 run_test test_exclusions_are_deliberate "CHANGELOG.md and docs/verification are excluded on purpose"
 run_test test_negative_case_fires "scan_file flags bare prose and honors every satisfier"
 run_test test_wrapped_phrase_is_detected "A phrase wrapped across two lines is detected (not single-line)"
+run_test test_fence_suppresses_fake_heading "A #-line inside a code fence is not treated as a heading"
 run_test test_harness_named_in_real_corpus "The harness is genuinely named in the real corpus"
 run_test test_detail_truncation "Violation detail truncates at MAX_DETAIL with an accurate remainder"
 run_test test_missing_readme_fails_loudly "A missing README.md aborts the gate instead of narrowing the corpus"
