@@ -576,6 +576,96 @@ test_health_dispatch_order_and_shape() {
         "the debugger call is NOT gated by the declaration (#680 AC3)"
 }
 
+# The FAIL-CLOSED contract, forced (#686).
+#
+# patterns.py bounds each git call and treats a timeout like an OSError. Every
+# other fixture here runs against a real, fast git, so the except-branch never
+# executes — and "fails closed" was only a claim in a comment. This forces it
+# with a stub `git` that sleeps well past _GIT_TIMEOUT_S.
+#
+# Three things must hold, and they are different failures:
+#   - the scan COMPLETES (a hang would take the whole audit down),
+#   - the declared file's print STILL fires — a call that could not answer must
+#     not grant an exemption, or a broken git silently deletes findings,
+#   - nothing is left in TMPDIR, covering the early-cleanup branch that runs
+#     when git fails BEFORE atexit is registered.
+#
+# Python only: the bash twin deliberately has no bound (see its comment — the
+# portable helper lives in another plugin), so there is no contract to test.
+test_health_stdout_git_failure_fails_closed() {
+    local d="" stub="" scratch="" out="" rc=0
+
+    if [ "$HAVE_PY" -ne 1 ]; then
+        skip_test "python3 unavailable (the bash fallback has no timeout to test)"
+        return 0
+    fi
+    if ! command -v timeout >/dev/null 2>&1; then
+        skip_test "timeout(1) unavailable to bound the TEST itself"
+        return 0
+    fi
+
+    stdout_sandbox d "stdout_is_output:" "  - src/cli.py"
+
+    # A git that never returns. PREPENDED to PATH so python3 itself still
+    # resolves — replacing PATH outright would break the interpreter, not the
+    # git call, and the case would pass for the wrong reason.
+    stub="$(fresh_dir)"
+    command printf '%s\n' '#!/usr/bin/env bash' 'sleep 60' >"$stub/git"
+    command chmod +x "$stub/git"
+
+    scratch="$(fresh_dir)"
+    # Outer bound well above _GIT_TIMEOUT_S (5s) but far below the stub's 60s:
+    # exit 124 here means the scanner did NOT honor its own timeout.
+    # `timeout env ...`, not `timeout command env ...`: `command` is a shell
+    # builtin, so timeout(1) would try to exec a binary named "command" and fail
+    # before reaching python — the scan would emit nothing and the fail-closed
+    # assertion would fail while the code was correct (which is what happened
+    # writing this).
+    out="$(cd "$d" && command timeout 30 env \
+        PATH="$stub:$PATH" TMPDIR="$scratch" \
+        python3 "$SK_HEALTH/patterns.py" "$STDOUT_LIST" 2>/dev/null)" || rc=$?
+
+    assert_true "[ \"$rc\" -ne 124 ]" \
+        "health: a hanging git does not wedge the scan — the timeout fires (#686)"
+    assert_contains "$out" 'print("real output")' \
+        "health: a git that cannot answer does NOT grant an exemption — fails CLOSED (#686)"
+    assert_equals "" "$(command ls -A "$scratch" 2>/dev/null)" \
+        "health: the early-failure path leaves no temp dir behind (#686)"
+
+    # The case above hangs git for the WHOLE run, so _load_stdout_policy never
+    # builds a match repo and the predicate returns at its empty-repo guard —
+    # the timeout branch inside _matches_declared_stdout is never reached. That
+    # makes the assertion above pass even with the branch flipped to fail OPEN
+    # (verified by mutation), so it does not cover what its name suggests.
+    #
+    # This second stub lets the LOADER succeed and hangs only afterwards, by
+    # counting invocations: rev-parse and init run for real, then check-ignore —
+    # the third call, and the one made per file — hangs. Now the branch under
+    # test is genuinely the one executing.
+    local stub2="" scratch2="" out2="" rc2=0
+    stub2="$(fresh_dir)"
+    {
+        command printf '%s\n' '#!/usr/bin/env bash'
+        command printf '%s\n' 'n="$(cat "$COUNTER" 2>/dev/null || echo 0)"'
+        command printf '%s\n' 'echo $((n + 1)) >"$COUNTER"'
+        # Hang from the third call on — rev-parse and init are calls 1 and 2.
+        command printf '%s\n' 'if [ "$n" -ge 2 ]; then sleep 60; fi'
+        command printf '%s\n' 'exec "$REAL_GIT" "$@"'
+    } >"$stub2/git"
+    command chmod +x "$stub2/git"
+
+    scratch2="$(fresh_dir)"
+    out2="$(cd "$d" && command timeout 30 env \
+        PATH="$stub2:$PATH" TMPDIR="$scratch2" \
+        COUNTER="$stub2/n" REAL_GIT="$(command -v git)" \
+        python3 "$SK_HEALTH/patterns.py" "$STDOUT_LIST" 2>/dev/null)" || rc2=$?
+
+    assert_true "[ \"$rc2\" -ne 124 ]" \
+        "health: a check-ignore that hangs does not wedge the scan (#686)"
+    assert_contains "$out2" 'print("real output")' \
+        "health: a TIMED-OUT check-ignore does not grant an exemption (#686)"
+}
+
 test_health_stdout_is_output() {
     local d=""
 
@@ -683,6 +773,7 @@ run_test test_health_debug "check-code-health: py/js/rb/go/java debug arms + log
 run_test test_health_empty_handler "check-code-health: py/js/rb/go empty-handler arms + handled negative"
 run_test test_health_test_file_and_skip "check-code-health: is_test_file segment anchoring + SKIP_GLOBS"
 run_test test_health_dispatch_order_and_shape "check-code-health: bash dispatcher gates prints only, in print-then-debugger order (#686)"
+run_test test_health_stdout_git_failure_fails_closed "check-code-health: a hanging git fails CLOSED and leaks nothing (#686)"
 run_test test_health_stdout_is_output "check-code-health: stdout_is_output exempts prints only, keeps breakpoints (#686/#680 AC3)"
 run_test test_health_stdout_repo_cleaned_up "check-code-health: the stdout match-repo is not leaked (#686)"
 
