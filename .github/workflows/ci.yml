@@ -250,11 +250,32 @@ jobs:
   # Fork PRs are skipped on the same trust boundary as quality-gates: checkout
   # pulls the PR HEAD, so tests/probe-bsd-regex.sh would be untrusted
   # contributor code executing on the runner.
+  #
+  # COST, ACCEPTED DELIBERATELY. macOS runners bill at a higher multiplier than
+  # Linux (~10x), and this job has no path filter, so it runs on every same-repo
+  # push/PR including ones touching only docs. That is a considered trade, not an
+  # oversight:
+  #
+  #   - A per-job `paths:` filter does not exist in Actions — `paths` is a
+  #     workflow-level `on:` key, so scoping this one job would mean splitting it
+  #     into its own workflow file. A step-level changed-files check would not
+  #     help either: billing starts at runner spin-up, which has already happened
+  #     by the time any step can decide to skip.
+  #   - The work is a handful of `grep`/`sed` invocations plus one parity gate —
+  #     seconds of compute. `timeout-minutes: 5` caps the exposure of a hang at
+  #     roughly a Linux job's typical run, and this repo is public (where GitHub
+  #     does not bill Actions minutes at all).
+  #   - Running it everywhere is also the point: a BSD regression can be
+  #     introduced by a change to any scanner, and a path filter narrow enough to
+  #     save meaningful minutes would be wide enough to miss one.
+  #
+  # If the cost ever does bite, the fix is a separate workflow file with
+  # `on.pull_request.paths` — not a step-level guard.
   bsd-probe:
     name: BSD/macOS regex probe (informational)
     runs-on: macos-latest
     needs: validate-manifests
-    timeout-minutes: 10
+    timeout-minutes: 5
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
