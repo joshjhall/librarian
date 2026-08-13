@@ -40,6 +40,7 @@ import atexit
 import os
 import re
 import shutil
+import string
 import subprocess
 import sys
 import tempfile
@@ -156,7 +157,20 @@ def _read_yaml_list(key: str, path: str) -> list[str]:
             continue
         # Any other line starting in column 0 with a letter/underscore is the
         # NEXT top-level key, which ends this section.
-        if line[:1].isalpha() or line[:1] == "_":
+        #
+        # ASCII-only, matching the bash glob `[a-zA-Z_]*` exactly. NOT
+        # `str.isalpha()`, which is Unicode-aware: `café:` in column 0 would end
+        # the section in Python and not in bash, so the two runtimes would read
+        # the same config differently. Narrow, but the parity contract's whole
+        # value is that neither impl gets to be slightly different — and a
+        # divergence here is a silent wrong answer, not an error.
+        #
+        # `line[:1]` is guarded against "" first: the empty string is a substring
+        # of every string, so `"" in string.ascii_letters` is TRUE and a BLANK
+        # line would end the section. bash's glob does not match an empty line,
+        # and a blank line inside a list is ordinary YAML.
+        first = line[:1]
+        if first and (first in string.ascii_letters or first == "_"):
             in_section = False
             continue
         if not in_section:

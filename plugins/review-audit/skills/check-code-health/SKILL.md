@@ -41,3 +41,18 @@ The pre-scan automatically skips:
 - Non-source files (markdown, JSON, YAML, TOML, config, lock files)
 - Test files for the `debug-statement` category (debug output in tests is
   expected)
+- Files a project declares under `stdout_is_output` in `.claude/pre-review.yml`
+  — for a CLI, `print()`/`console.log` **is** the program's output, not a debug
+  leftover (#686):
+
+  ```yaml
+  stdout_is_output:
+    - src/cli.py
+    - bin/*.js
+  ```
+
+  Values are gitignore-style patterns, matched relative to the repo root. The
+  exemption covers the **print family only**: a declared file's `breakpoint()`,
+  `debugger`, `binding.pry` and friends still fire, because none of those is
+  ever a program's output. With no config, or none of this key, behaviour is
+  unchanged.

@@ -483,12 +483,15 @@ test_health_test_file_and_skip() {
 # resolve THIS repo's config instead of the fixture's. Hence the local drivers.
 
 # health_rows_in DIR IMPL LIST CAT — like emit_rows, but cd'd into DIR first.
+# `command env`, not a hardcoded /usr/bin/env: CLAUDE.md bans absolute paths to
+# core utilities (#443). The sibling emit_rows above predates that rule and still
+# hardcodes one; new code should not add instances.
 health_rows_in() {
     local dir="$1" impl="$2" list="$3" cat="$4"
     if [ "$impl" = py ]; then
-        (cd "$dir" && /usr/bin/env python3 "$SK_HEALTH/patterns.py" "$list" 2>/dev/null)
+        (cd "$dir" && command env python3 "$SK_HEALTH/patterns.py" "$list" 2>/dev/null)
     else
-        (cd "$dir" && /usr/bin/env PATTERNS_FORCE_BASH=1 "$REAL_BASH" \
+        (cd "$dir" && command env PATTERNS_FORCE_BASH=1 "$REAL_BASH" \
             "$SK_HEALTH/patterns.sh" "$list" 2>/dev/null)
     fi | command awk -F '\t' -v c="$cat" '$3 == c'
 }
@@ -539,6 +542,40 @@ stdout_sandbox() {
     printf -v "$__out" '%s' "$dir"
 }
 
+# The bash dispatcher's SHAPE, mirroring the Python source-order assertion in
+# validate-python-ports.sh (#687). Both are source-level for the same reason:
+# every pattern in both families is `^\s*`-anchored, so no single line can match
+# both, and no input exists for which the call order changes the emitted bytes.
+# Behaviour cannot witness the order — only the source can.
+#
+# It also pins the exemption's SHAPE, which behaviour alone leaves ambiguous:
+# the two calls must be SEPARATE statements. Written as one `if`, a declaration
+# would suppress the debugger row too; written this way, no such control path
+# exists. That is #680 AC3 enforced structurally rather than asserted in prose.
+test_health_dispatch_order_and_shape() {
+    local block
+    # The dispatch block: from the debug-statement marker to the end of its `if`.
+    block="$(command awk '/--- Category: debug-statement ---/,/^    fi$/' \
+        "$SK_HEALTH/patterns.sh")"
+
+    assert_not_empty "$block" "the bash debug-statement dispatch block was found"
+
+    local print_ln dbg_ln
+    print_ln="$(command printf '%s\n' "$block" | command grep -n 'scan_debug_prints "\$file"' | command head -1 | command cut -d: -f1)"
+    dbg_ln="$(command printf '%s\n' "$block" | command grep -n 'scan_debugger_statements "\$file"' | command head -1 | command cut -d: -f1)"
+
+    assert_not_empty "$print_ln" "the dispatcher calls scan_debug_prints"
+    assert_not_empty "$dbg_ln" "the dispatcher calls scan_debugger_statements"
+    assert_true "[ \"${print_ln:-0}\" -lt \"${dbg_ln:-0}\" ]" \
+        "bash dispatch order is print-then-debugger, matching patterns.py (#686)"
+
+    # The print call is guarded by the predicate; the debugger call is NOT.
+    assert_contains "$block" 'matches_declared_stdout_pattern "$file" || scan_debug_prints "$file"' \
+        "the print call is gated by the stdout declaration (#686)"
+    assert_not_contains "$block" 'matches_declared_stdout_pattern "$file" || scan_debugger_statements' \
+        "the debugger call is NOT gated by the declaration (#680 AC3)"
+}
+
 test_health_stdout_is_output() {
     local d=""
 
@@ -585,21 +622,36 @@ test_health_stdout_is_output() {
 # without a cleanup branch and leaked one per run; the failure is silent (a
 # stray /tmp dir, no error, no wrong output), so it needs a behavioural check
 # rather than a code read.
+#
+# Each impl runs with TMPDIR pointed at a PRIVATE, EMPTY scratch dir, and the
+# assertion is that the dir is empty afterwards. Two reasons that beats counting
+# /tmp:
+#
+#   1. It is naming-agnostic. `mktemp -d` produces `tmp.XXXX` but Python's
+#      `tempfile.mkdtemp()` produces `tmpXXXX` with NO dot, so a `tmp.*` glob
+#      silently misses every Python leak — and Python is the PRIMARY runtime, so
+#      the check would have covered only the fallback while claiming both.
+#   2. Nothing else writes there, so a busy /tmp on the host cannot make it flap.
+#
+# Asserted per-impl rather than once at the end: a shared counter cannot say
+# WHICH runtime leaked, and "one of the two leaked" is the report you least want
+# at 2am.
 test_health_stdout_repo_cleaned_up() {
-    local d="" before after
-    before="$(command find /tmp -maxdepth 1 -type d -name 'tmp.*' 2>/dev/null | command wc -l)"
+    local d="" scratch=""
 
     stdout_sandbox d "stdout_is_output:" "  - src/cli.py"
-    health_rows_in "$d" sh "$STDOUT_LIST" debug-statement >/dev/null
-    if [ "$HAVE_PY" -eq 1 ]; then
-        health_rows_in "$d" py "$STDOUT_LIST" debug-statement >/dev/null
-    fi
 
-    after="$(command find /tmp -maxdepth 1 -type d -name 'tmp.*' 2>/dev/null | command wc -l)"
-    # Equality, not a bound: each impl creates exactly one match repo and must
-    # remove it, so a leak of even one is a failure worth naming.
-    assert_equals "$before" "$after" \
-        "health: the stdout match-repo is cleaned up, not leaked (#686)"
+    scratch="$(fresh_dir)"
+    TMPDIR="$scratch" health_rows_in "$d" sh "$STDOUT_LIST" debug-statement >/dev/null
+    assert_equals "" "$(command ls -A "$scratch" 2>/dev/null)" \
+        "health: the bash impl leaves no temp match-repo behind (#686)"
+
+    if [ "$HAVE_PY" -eq 1 ]; then
+        scratch="$(fresh_dir)"
+        TMPDIR="$scratch" health_rows_in "$d" py "$STDOUT_LIST" debug-statement >/dev/null
+        assert_equals "" "$(command ls -A "$scratch" 2>/dev/null)" \
+            "health: the python impl leaves no temp match-repo behind (#686)"
+    fi
 }
 
 run_test test_security_secrets "check-security: AWS/GitHub/Stripe/PEM secrets + credential denylist + env.example skip"
@@ -611,6 +663,7 @@ run_test test_health_debt "check-code-health: tech-debt marker"
 run_test test_health_debug "check-code-health: py/js/rb/go/java debug arms + logger negative + test-file suppression"
 run_test test_health_empty_handler "check-code-health: py/js/rb/go empty-handler arms + handled negative"
 run_test test_health_test_file_and_skip "check-code-health: is_test_file segment anchoring + SKIP_GLOBS"
+run_test test_health_dispatch_order_and_shape "check-code-health: bash dispatcher gates prints only, in print-then-debugger order (#686)"
 run_test test_health_stdout_is_output "check-code-health: stdout_is_output exempts prints only, keeps breakpoints (#686/#680 AC3)"
 run_test test_health_stdout_repo_cleaned_up "check-code-health: the stdout match-repo is not leaked (#686)"
 
