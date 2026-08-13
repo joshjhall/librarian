@@ -143,7 +143,15 @@ while IFS= read -r file; do
             fi
             ;;
         *_test.go)
-            if ! command grep -qE '\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)\b' "$file" 2>/dev/null; then
+            # NO trailing `\b` (#684). Go's dominant assertion idioms are the
+            # formatting variants — `t.Errorf`, `t.Fatalf`, `t.Logf` — and a
+            # trailing boundary after `(Error|Fatal|Log|…)` rejected exactly
+            # those, since `f` is a word character. A test file using only
+            # `t.Errorf` was reported as having NO assertions at HIGH: a false
+            # positive on ordinary, correct Go. Mirrored in patterns.py (the
+            # primary impl) — both carried the identical defect, which is why
+            # the parity gate stayed green through it.
+            if ! command grep -qE '\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)' "$file" 2>/dev/null; then
                 command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "1" "no-assertions" \
                     "Test file contains no assertion statements" "HIGH"

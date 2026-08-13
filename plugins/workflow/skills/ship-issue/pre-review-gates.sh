@@ -142,21 +142,36 @@ read_yaml_list() {
             \'*) item="${item#\'}" ;;
         esac
 
-        # Trailing side: remove a closing quote AND any whitespace after it.
-        # This is the `\s` site — GNU read `\s` as whitespace, BSD sed reads it
-        # as a literal `s`, so on macOS `- "a.py"  ` kept its closing quote and
-        # became a pattern matching nothing.
+        # Trailing side: strip whitespace UNCONDITIONALLY, then a closing quote.
+        # So `- a.py  ` and `- "a.py"  ` both land on `a.py`.
         #
-        # The old expression is `["']\s*$`: the whitespace run only comes off
-        # when a QUOTE sits in front of it. So an unquoted `- a.py  ` keeps its
-        # trailing spaces on GNU today. That is very likely a latent bug (such
-        # a glob matches nothing), but fixing it here would be a silent
-        # behaviour change riding along on a portability fix — so this mirrors
-        # the old semantics exactly and the quirk is left for its own issue.
-        local trimmed="${item%"${item##*[![:space:]]}"}"
-        case "$trimmed" in
-            *\") item="${trimmed%\"}" ;;
-            *\') item="${trimmed%\'}" ;;
+        # Whitespace INSIDE the quotes is preserved (`- "a.py  "` keeps its two
+        # spaces), mirroring the leading side, which likewise strips only up to
+        # the opening quote. An explicit quote is the one way to declare that
+        # the space is meant, so it stays the escape hatch rather than being
+        # stripped along with the accidental kind.
+        #
+        # This deliberately DIVERGES from the old GNU pipeline (#684). That
+        # expression was `["']\s*$` — the whitespace run only came off when a
+        # QUOTE sat in front of it, so an unquoted `- a.py  ` kept its trailing
+        # spaces. #679 mirrored the quirk byte-for-byte because its contract was
+        # identical GNU output and a silent behaviour change riding along on a
+        # portability fix is hard to attribute later. This is that quirk's own
+        # issue, so the change is made here on purpose and in isolation.
+        #
+        # It is load-bearing for exactly ONE key, which is why it is worth
+        # changing rather than pinning: `test_patterns`/`test_skip_patterns`/
+        # `stdout_is_output` become gitignore patterns, and git strips trailing
+        # whitespace from those itself — the quirk is invisible there. But
+        # `test_discovery` templates are resolved by `[ -f "$resolved" ]` (see
+        # declared_test_paths below), a literal path test where a trailing space
+        # simply MISSES. An unquoted template with a stray space silently
+        # resolved to nothing, so the declared test was never found and the
+        # source was reported as untested — a false finding with no visible cause.
+        item="${item%"${item##*[![:space:]]}"}"
+        case "$item" in
+            *\") item="${item%\"}" ;;
+            *\') item="${item%\'}" ;;
         esac
 
         # Drop blank lines, mirroring the old `sed '/^$/d'`.
@@ -499,8 +514,16 @@ scan_ai_slop() {
     is_test_file "$file" && return
     matches_declared_test_pattern "$file" && return
 
-    # Hedging phrases — strong indicators of unedited AI output
-    command grep -niE -- '\b(it.s worth noting that|it is worth noting that|importantly,|notably,|broadly speaking|in essence,|at its core,|fundamentally,)\b' "$file" 2>/dev/null |
+    # Hedging phrases — strong indicators of unedited AI output.
+    #
+    # NO trailing `\b` (#684). Five of these eight alternatives end in a comma,
+    # and `\b` after a non-word character asserts that the NEXT character is a
+    # word character — so `Importantly, the …` (comma then space) never matched
+    # and five phrases were silently unreachable. The leading `\b` is kept: it
+    # does the real work, stopping `notably,` from firing inside a longer word.
+    # Dropping the trailing one costs only theoretical over-matches
+    # (`broadly speakingly`), which these long multi-word phrases make moot.
+    command grep -niE -- '\b(it.s worth noting that|it is worth noting that|importantly,|notably,|broadly speaking|in essence,|at its core,|fundamentally,)' "$file" 2>/dev/null |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}
@@ -511,8 +534,13 @@ scan_ai_slop() {
                 "Hedging phrase: ${evidence}" "HIGH"
         done || true
 
-    # Buzzword inflation
-    command grep -niE -- '\b(enterprise[- ]grade|robust and scalable|seamlessly integrat|leverage the power of|cutting[- ]edge|state[- ]of[- ]the[- ]art|world[- ]class)\b' "$file" 2>/dev/null |
+    # Buzzword inflation.
+    #
+    # NO trailing `\b` (#684). `seamlessly integrat` is a STEM, written to catch
+    # integrates/integrated/integrating — but `\b` after `t` demanded a non-word
+    # character next, so every inflection failed and only a bare, ungrammatical
+    # `seamlessly integrat` could match. The alternative was effectively dead.
+    command grep -niE -- '\b(enterprise[- ]grade|robust and scalable|seamlessly integrat|leverage the power of|cutting[- ]edge|state[- ]of[- ]the[- ]art|world[- ]class)' "$file" 2>/dev/null |
         while IFS= read -r raw; do
             line_num=${raw%%:*}
             content=${raw#*:}

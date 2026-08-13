@@ -47,7 +47,13 @@ PY_ASSERT_RE = re.compile(
     r"\b(assert|assertEqual|assertTrue|assertFalse|assertRaises|assertIn|pytest\.raises)\b"
 )
 JS_ASSERT_RE = re.compile(r"\b(expect|assert|should)\b")
-GO_ASSERT_RE = re.compile(r"\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)\b")
+# No trailing `\b` (#684): it rejected `t.Errorf`/`t.Fatalf`/`t.Logf` — Go's
+# dominant assertion idioms — because `f` is a word character, so a test file
+# using only those was reported as having NO assertions at HIGH. Kept in lockstep
+# with the bash fallback in patterns.sh; both carried the identical defect, which
+# is why validate-python-ports.sh stayed green through it (it pins same-OUTPUT,
+# not same-intent).
+GO_ASSERT_RE = re.compile(r"\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)")
 
 
 def emit(path: str, line_no: str, category: str, evidence: str) -> None:

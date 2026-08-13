@@ -19,6 +19,28 @@
 # still exercises the bash path via validate-prescans.sh; parity can only be
 # asserted where both runtimes exist.
 #
+# WHAT PARITY DOES **NOT** PROVE (#684). The contract is same-OUTPUT-on-this-HOST,
+# not same-INTENT. Two consequences, both load-bearing when reading a green run:
+#
+#   1. A defect present in BOTH impls passes. Parity compares them to each other,
+#      never to what the pattern was meant to match, so an identical bug is
+#      invisible by construction. This is not hypothetical: the Go no-assertions
+#      pattern in loop-make-it-work carried a trailing `\b` in patterns.sh AND
+#      patterns.py that rejected `t.Errorf`/`t.Fatalf`/`t.Logf` — Go's dominant
+#      assertion idioms — so ordinary Go tests were reported as having NO
+#      assertions at HIGH. This gate stayed green through the entire lifetime of
+#      that bug and through #679. Only a fixture asserting the INTENDED match
+#      catches that class; those live in the per-detector suites
+#      (validate-loop-detectors.sh et al.), which is where such a case belongs.
+#
+#   2. Divergence that appears only under BSD semantics is out of reach here.
+#      Python `re` implements `\s`/`\w`/`\b` natively, while the bash fallback
+#      inherits the host's grep/sed dialect — so the two can agree perfectly on a
+#      GNU host and disagree on macOS, and this gate cannot tell. Closing that
+#      needs a BSD userland, which is what the `bsd-probe` job on macos-latest
+#      (ci.yml) and tests/probe-bsd-regex.sh provide; this suite runs there too,
+#      so a BSD-only parity break surfaces in that job rather than here.
+#
 # Pure bash + coreutils + python3; no network, no jq.
 
 set -euo pipefail

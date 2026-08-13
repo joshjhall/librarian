@@ -177,6 +177,26 @@ scan_file_paths() {
 # the check aimed at shell regexes and lets the fixtures alone WITHOUT an
 # exclusion list that would drift as tests move (and without carving the pattern
 # itself, per the `PATHLIT_RE` precedent above).
+# `\b` IS DELIBERATELY ABSENT FROM THIS BAN (#679, revisited in #684).
+#
+# It is a GNU extension like the others, but unlike them it is widely supported
+# by modern BSD `grep -E` — and 38 sites depend on it, so banning it would force
+# a 38-site rewrite. That is worth doing only against a real observed failure,
+# never against an assumption. #679 left it out on those grounds; #684 stopped
+# treating the reasoning as settled and made it measurable.
+#
+# THERE IS NO SINGLE PORTABLE SPELLING, which is why this cannot be resolved by
+# picking one: GNU accepts `\b` and REJECTS BSD's `[[:<:]]`/`[[:>:]]` outright
+# ("Invalid character class name", exit 2), so a blind rewrite in either
+# direction breaks the other platform. The portable escape hatch is the POSIX
+# FLAG `grep -w`, which sidesteps the dialect question entirely — that is the
+# fix for the 6 plain-`grep` (BRE) sites if `\b` proves unsafe there.
+#
+# The evidence comes from `tests/probe-bsd-regex.sh` running on the
+# `bsd-probe` macos-latest job (ci.yml) — the repo's only BSD userland. Read its
+# word-boundary rows before changing anything here; do not re-litigate this from
+# first principles on a GNU host, where every `\b` row reads SUPPORTED and proves
+# nothing about macOS.
 GNURE_TOOL_RE='(^|[^A-Za-z0-9_-])(grep|egrep|fgrep|sed|awk)([^A-Za-z0-9_-]|$)'
 GNURE_BAD_RE='\\[sSwW]|\\\|'
 # `grep -P` (PCRE) is banned outright and needs no regex-bearing scoping: it is a

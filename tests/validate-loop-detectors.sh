@@ -259,6 +259,26 @@ test_work_no_assertions() {
     list="$(make_list "$d/l" "$d/x_test.go")"
     assert_fires "$SK_WORK" no-assertions "no assertion statements" \
         "work: a Go _test.go with no t.Error fires" -- "$list"
+
+    # ...and the FORMATTING variants stay silent (#684). `t.Errorf`/`Fatalf`/
+    # `Logf` are Go's dominant assertion idioms, and the old trailing `\b`
+    # rejected all three (`f` is a word character) — so an ordinary, correct Go
+    # test was reported as having NO assertions at HIGH.
+    #
+    # This is the negative case the Go arm never had: the positive above fires
+    # whether or not the boundary is right, so nothing caught the defect. Each
+    # variant gets its own fixture rather than one file containing all three,
+    # or a single surviving alternative would mask the other two.
+    local variant
+    for variant in Errorf Fatalf Logf; do
+        d="$(fresh_dir)"
+        command printf '%s\n' 'package p' \
+            "func TestX(t *testing.T) { t.${variant}(\"boom: %v\", err) }" \
+            >"$d/x_test.go"
+        list="$(make_list "$d/l" "$d/x_test.go")"
+        assert_silent "$SK_WORK" no-assertions \
+            "work: a Go _test.go using t.${variant} stays silent (#684)" -- "$list"
+    done
 }
 
 # ============================================================================
