@@ -96,6 +96,7 @@ _STDOUT_PATTERN_REPO=""
 # one sed dialect for another, and leaves no subprocess whose failure could be
 # swallowed. No `2>/dev/null`: an unreadable file is caught by the `[ -f ]`
 # guard, and there is nothing else here that can write to stderr.
+# >>> shared:yaml-list-parser (kept in sync with check-code-health/patterns.sh by tests/validate-shared-scanner-sync.sh)
 read_yaml_list() {
     local key="$1" file="$2"
     local line item in_section=false
@@ -159,15 +160,15 @@ read_yaml_list() {
         # portability fix is hard to attribute later. This is that quirk's own
         # issue, so the change is made here on purpose and in isolation.
         #
-        # It is load-bearing for exactly ONE key, which is why it is worth
-        # changing rather than pinning: `test_patterns`/`test_skip_patterns`/
-        # `stdout_is_output` become gitignore patterns, and git strips trailing
-        # whitespace from those itself — the quirk is invisible there. But
-        # `test_discovery` templates are resolved by `[ -f "$resolved" ]` (see
-        # declared_test_paths below), a literal path test where a trailing space
-        # simply MISSES. An unquoted template with a stray space silently
-        # resolved to nothing, so the declared test was never found and the
-        # source was reported as untested — a false finding with no visible cause.
+        # It is load-bearing for exactly ONE consumer, which is why it is worth
+        # changing rather than pinning. A key whose values become gitignore
+        # patterns is unaffected — git strips trailing whitespace from those
+        # itself, so the quirk is invisible there. But a key whose values are
+        # resolved as literal paths (`[ -f "$resolved" ]`) is not: a trailing
+        # space names a file that does not exist, so the entry silently resolved
+        # to nothing and the finding it should have suppressed was reported
+        # anyway — a false finding with no visible cause. In this file that
+        # consumer is `test_discovery` (see declared_test_paths).
         item="${item%"${item##*[![:space:]]}"}"
         case "$item" in
             *\") item="${item%\"}" ;;
@@ -180,6 +181,7 @@ read_yaml_list() {
         command printf '%s\n' "$item"
     done <"$file"
 }
+# <<< shared:yaml-list-parser
 
 # filter_test_discovery LIST — the `test_discovery` entries that are actually
 # templates, dropping any that carry no `{name}` placeholder (#601).

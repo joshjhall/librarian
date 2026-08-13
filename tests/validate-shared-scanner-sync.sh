@@ -60,7 +60,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 # block is introduced in both of that pair's files; add a whole line when a new
 # duplicated-logic pair appears.
 SHARED_PAIRS=(
-    "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file"
+    "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
 )
 
@@ -267,6 +267,23 @@ test_detector_fires_on_drift() {
     [ "$itf" != "$itf_tampered" ] && itf_drift="detected"
     assert_equals "yes" "$itf_changed" "the is-test-file tamper actually changed the region (_spec. arm present)"
     assert_equals "detected" "$itf_drift" "a one-line edit to the is-test-file region is detected as drift"
+
+    # Region 4: yaml-list-parser (#686). Tampers the TRAILING-WHITESPACE strip,
+    # not an arbitrary line — that expression is the #684 fix, and it is the one
+    # place where a "harmless-looking" edit to either copy silently changes what
+    # a project's declared patterns resolve to. Registering a region without a
+    # tamper case would add it to SHARED_PAIRS and never prove the comparison
+    # actually reaches it.
+    local ylp ylp_tampered
+    ylp="$(extract_shared "$HEALTH_PATTERNS" yaml-list-parser | normalize)"
+    ylp_tampered="$(extract_shared "$HEALTH_PATTERNS" yaml-list-parser |
+        command sed 's/item="${item%"${item##\*\[!\[:space:\]\]}"}"/item="$item"/' | normalize)"
+    assert_not_empty "$ylp_tampered" "tampered yaml-list-parser extract is non-empty"
+    local ylp_changed="no" ylp_drift="none"
+    [ "$ylp" != "$ylp_tampered" ] && ylp_changed="yes"
+    [ "$ylp" != "$ylp_tampered" ] && ylp_drift="detected"
+    assert_equals "yes" "$ylp_changed" "the yaml-list-parser tamper actually changed the region (trailing-strip present)"
+    assert_equals "detected" "$ylp_drift" "a one-line edit to the yaml-list-parser region is detected as drift (#686)"
 }
 
 # label_for actually DISAMBIGUATES the two pairs. Both pairs' canonical file is
