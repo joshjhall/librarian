@@ -177,26 +177,38 @@ scan_file_paths() {
 # the check aimed at shell regexes and lets the fixtures alone WITHOUT an
 # exclusion list that would drift as tests move (and without carving the pattern
 # itself, per the `PATHLIT_RE` precedent above).
-# `\b` IS DELIBERATELY ABSENT FROM THIS BAN (#679, revisited in #684).
+# `\b` IS EXEMPT FROM THIS BAN — MEASURED, NOT ASSUMED (#679, settled in #684).
 #
-# It is a GNU extension like the others, but unlike them it is widely supported
-# by modern BSD `grep -E` — and 38 sites depend on it, so banning it would force
-# a 38-site rewrite. That is worth doing only against a real observed failure,
-# never against an assumption. #679 left it out on those grounds; #684 stopped
-# treating the reasoning as settled and made it measurable.
+# It is a GNU extension like the others, and 38 sites depend on it. #679 left it
+# out because modern BSD `grep -E` was *believed* to support it, and a 38-site
+# rewrite is worth doing only against an observed failure. #684 stopped treating
+# that belief as settled and measured it on a real BSD host.
 #
-# THERE IS NO SINGLE PORTABLE SPELLING, which is why this cannot be resolved by
-# picking one: GNU accepts `\b` and REJECTS BSD's `[[:<:]]`/`[[:>:]]` outright
-# ("Invalid character class name", exit 2), so a blind rewrite in either
-# direction breaks the other platform. The portable escape hatch is the POSIX
-# FLAG `grep -w`, which sidesteps the dialect question entirely — that is the
-# fix for the 6 plain-`grep` (BRE) sites if `\b` proves unsafe there.
+# THE FINDING (macos-latest, Darwin 25.5.0, "BSD grep 2.6.0-FreeBSD" — the
+# `bsd-probe` job in ci.yml running tests/probe-bsd-regex.sh):
 #
-# The evidence comes from `tests/probe-bsd-regex.sh` running on the
-# `bsd-probe` macos-latest job (ci.yml) — the repo's only BSD userland. Read its
-# word-boundary rows before changing anything here; do not re-litigate this from
-# first principles on a GNU host, where every `\b` row reads SUPPORTED and proves
-# nothing about macOS.
+#   \b under grep -E   (32 sites) ....... SUPPORTED
+#   \b under grep (BRE) (6 sites) ....... SUPPORTED
+#   \b under sed -E ..................... UNSUPPORTED   <-- the one real hazard
+#   [[:<:]] / [[:>:]] under grep -E ..... SUPPORTED     (GNU: ERROR, exit 2)
+#
+# So every `\b` in the tree is safe: all 38 sites are `grep`, and BSD grep honors
+# `\b` in BOTH dialects. **BSD `sed` does NOT** — but no site uses `\b` in a sed
+# expression, so nothing needed porting. That asymmetry is the reason the
+# exemption is scoped to grep rather than blanket: a future `sed -E 's/\bfoo\b/'`
+# would silently stop substituting on macOS, the exact #679 failure mode, and
+# this ban would not catch it. If you add one, port it or mark it.
+#
+# THERE IS NO SINGLE PORTABLE SPELLING — which is why the answer had to be
+# measured rather than reasoned. GNU accepts `\b` and REJECTS `[[:<:]]` outright;
+# BSD accepts both. Neither spelling is portable, so a blind tree-wide rewrite in
+# either direction breaks a platform. Had the BRE rows come back UNSUPPORTED, the
+# fix would have been the POSIX FLAG `grep -w` (verified working on both hosts by
+# the same probe), not a respelling.
+#
+# Before changing anything here, read the probe's rows from a macOS run — not
+# from a local one, where every `\b` row reads SUPPORTED and proves nothing about
+# BSD.
 GNURE_TOOL_RE='(^|[^A-Za-z0-9_-])(grep|egrep|fgrep|sed|awk)([^A-Za-z0-9_-]|$)'
 GNURE_BAD_RE='\\[sSwW]|\\\|'
 # `grep -P` (PCRE) is banned outright and needs no regex-bearing scoping: it is a
@@ -441,6 +453,51 @@ EOF
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "commentgnu_ok" "A prose comment naming the constructs is NOT flagged"
 }
 
+# The `\b` EXEMPTION, pinned (#684). Measured on macos-latest (BSD grep
+# 2.6.0-FreeBSD): `\b` is SUPPORTED under both `grep -E` and plain `grep` (BRE),
+# so all 38 sites in the tree are safe and the ban deliberately omits it. See the
+# rationale block above GNURE_BAD_RE for the full probe output.
+#
+# This is a pin, not a preference: without it, someone tightening GNURE_BAD_RE to
+# "also catch \b" would flag 38 working sites and force a rewrite the evidence
+# says is unnecessary — and the reasoning would have to be rediscovered from
+# scratch on a GNU host, where it cannot be.
+#
+# The `sed` half is the one thing the probe found that DOES break: BSD sed reads
+# `\b` as a literal. No site uses it there today, so nothing needed porting, and
+# that asymmetry is exactly what the last assertion records — a documented
+# KNOWN GAP rather than an oversight. If a `sed -E 's/\bfoo\b/'` is ever added it
+# will silently stop substituting on macOS and this ban will not catch it.
+test_word_boundary_exemption_is_pinned() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/wb.sh" <<'EOF'
+#!/usr/bin/env bash
+ereb_ok="$(grep -nE '\bfoo\b' f)"
+breb_ok="$(grep -n '\bfoo\b' f)"
+sedb_gap="$(sed -E 's/\bfoo\b/bar/' f)"
+EOF
+
+    scan_file_gnu_regex "$tmp/wb.sh"
+
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "ereb_ok" \
+        '\b under grep -E is NOT flagged — BSD-verified SUPPORTED, 32 sites (#684)'
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "breb_ok" \
+        '\b under plain grep (BRE) is NOT flagged — BSD-verified SUPPORTED, 6 sites (#684)'
+    # KNOWN GAP, asserted so it cannot be mistaken for coverage: BSD sed reads
+    # `\b` literally, but the ban is scoped to the constructs #679 swept and does
+    # not cover it. Zero sites use it, so this documents the hole rather than a
+    # regression.
+    assert_not_contains "$CUR_GNURE_VIOLATIONS" "sedb_gap" \
+        '\b in a sed expression is NOT flagged either — a KNOWN GAP: BSD sed reads it literally (#684)'
+}
+
 # Discover the corpus.
 scripts_list="$(list_shell_scripts)"
 
@@ -454,6 +511,7 @@ run_test test_corpus_non_empty "Shell-script corpus is non-empty (gate is not a 
 run_test test_negative_case_fires "scan_file flags every forbidden construct (violation path)"
 run_test test_negative_case_paths_fire "scan_file_paths flags hardcoded /usr/bin//bin paths (#443)"
 run_test test_negative_case_gnu_regex_fires "scan_file_gnu_regex flags GNU-only regex constructs (#679)"
+run_test test_word_boundary_exemption_is_pinned "\\b stays exempt — BSD-verified for grep, known gap for sed (#684)"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
