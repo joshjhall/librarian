@@ -54,6 +54,7 @@ test_suite "Regex-probe reporting integrity (#684)"
 # validate-pre-review-gates.sh's eval_read_yaml_list.
 eval_probe_helpers() {
     eval "$(command awk '/^probe_grep\(\) \{$/,/^\}$/' "$PROBE")"
+    eval "$(command awk '/^probe_grep_rejects\(\) \{$/,/^\}$/' "$PROBE")"
     eval "$(command awk '/^probe_sed\(\) \{$/,/^\}$/' "$PROBE")"
     eval "$(command awk '/^require\(\) \{$/,/^\}$/' "$PROBE")"
 }
@@ -109,6 +110,55 @@ test_probe_sed_requires_the_substitution_to_take_effect() {
     probe_sed V 'a  b' 's/zzz/_/' 'a_b'
     assert_equals "UNSUPPORTED" "$V" \
         "a no-op substitution is UNSUPPORTED even though sed exited 0 (#684)"
+}
+
+# The inverse probe, where a NON-match is the pass. Its BROKEN arm is the one
+# piece of the probe no real grep can reach — GNU and BSD `grep -w` both reject
+# partial words correctly — so without a stub it would ship permanently
+# unexecuted. That arm exists precisely to catch a `-w` that silently matches
+# substrings, which would make `grep -w` an unsafe replacement for `\b` at the
+# six BRE sites; shipping it unexercised would leave the safety check itself
+# unchecked.
+test_probe_grep_rejects_handles_all_three_outcomes() {
+    local V="" sb=""
+    eval_probe_helpers
+
+    # Real grep: correctly does NOT match a partial word -> SUPPORTED.
+    probe_grep_rejects V 'def my_func_extra():' 'my_func' -w
+    assert_equals "SUPPORTED" "$V" "a correct -w rejecting a partial word is SUPPORTED"
+
+    # A rejected pattern must stay ERROR, not be laundered into a pass by the
+    # inversion — a tool that could not answer has not demonstrated anything.
+    probe_grep_rejects V 'anything' '[[:<:]]x[[:>:]]' -E
+    assert_equals "ERROR" "$V" "an ERROR is not inverted into a pass (#684)"
+
+    # THE UNREACHABLE ARM: a grep that matches everything, i.e. a broken `-w`
+    # that happily matches a substring. exit 0 -> SUPPORTED -> inverted to BROKEN.
+    stub_dir sb || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $sb now, at trap-registration time
+    trap "command rm -rf '$sb'" RETURN
+
+    command printf '#!/usr/bin/env bash\nexit 0\n' >"$sb/bin/grep"
+    command chmod +x "$sb/bin/grep"
+
+    # The stub bin is PREPENDED to the real PATH rather than replacing it: it
+    # holds only `grep`, and probe_grep's own pipeline plus this file's trap
+    # still need the real coreutils. Replacing PATH outright makes the probe
+    # report ERROR (its grep ran, but the rest of the pipeline could not),
+    # which is a fixture artifact indistinguishable from a real finding.
+    #
+    # No subshell: probe_grep_rejects returns its verdict through a named
+    # variable, which a `$( )` capture would strand in the child.
+    local saved_path="$PATH"
+    PATH="$sb/bin:$PATH"
+    probe_grep_rejects V 'def my_func_extra():' 'my_func' -w
+    PATH="$saved_path"
+
+    assert_equals "BROKEN (matched a substring)" "$V" \
+        "a -w that matches a substring is reported BROKEN, not SUPPORTED (#684)"
 }
 
 # --- the fail-loud contract --------------------------------------------------
@@ -193,6 +243,7 @@ test_probe_exits_zero_on_a_healthy_host() {
 # --- registration ------------------------------------------------------------
 
 run_test test_probe_grep_classifies_all_three_verdicts "probe_grep separates SUPPORTED / UNSUPPORTED / ERROR (#684)"
+run_test test_probe_grep_rejects_handles_all_three_outcomes "probe_grep_rejects reports a substring-matching -w as BROKEN (#684)"
 run_test test_probe_sed_requires_the_substitution_to_take_effect "probe_sed rejects a no-op substitution that exited 0 (#684)"
 run_test test_require_failure_increments_failures "require() fails loudly on a non-SUPPORTED baseline (#684)"
 run_test test_probe_exits_nonzero_when_baseline_cannot_hold "a sabotaged grep makes the probe exit non-zero (#684)"

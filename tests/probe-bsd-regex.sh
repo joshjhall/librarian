@@ -94,6 +94,30 @@ probe_grep() {
     esac
 }
 
+# probe_grep_rejects <verdict-var> <input> <pattern> [flags...]
+#
+# The INVERSE probe: SUPPORTED when the pattern correctly does NOT match. Used
+# for the negative half of a check, where a non-match is the desired outcome
+# (e.g. `grep -w my_func` must not match `my_func_extra`).
+#
+# It is a named helper rather than an inline `if` at the call site so it can be
+# tested — the branch that reports a BROKEN tool is unreachable with any real
+# grep, so the only way to exercise it is to call this function with a stub.
+#
+# A rejected pattern (ERROR) is NOT a pass: the tool failed to answer, which
+# says nothing about whether it rejects partial words.
+probe_grep_rejects() {
+    local __out="$1"
+    shift
+    local __v=""
+    probe_grep __v "$@"
+    case "$__v" in
+        UNSUPPORTED) printf -v "$__out" '%s' "SUPPORTED" ;;
+        SUPPORTED) printf -v "$__out" '%s' "BROKEN (matched a substring)" ;;
+        *) printf -v "$__out" '%s' "$__v" ;;
+    esac
+}
+
 # probe_sed <verdict-var> <input> <expression> <expected>
 # SUPPORTED only when the substitution actually changed the input to <expected>;
 # a sed that reads the construct as a literal leaves the input untouched.
@@ -147,12 +171,8 @@ require "ERE alternation (a|b)" "$V"
 probe_grep V 'def my_func():' 'my_func' -w
 require "grep -w matches a whole word" "$V"
 
-probe_grep V 'def my_func_extra():' 'my_func' -w
-if [ "$V" = "UNSUPPORTED" ]; then
-    require "grep -w rejects a partial word" "SUPPORTED"
-else
-    require "grep -w rejects a partial word" "BROKEN (matched a substring)"
-fi
+probe_grep_rejects V 'def my_func_extra():' 'my_func' -w
+require "grep -w rejects a partial word" "$V"
 
 probe_sed V 'a  b' 's/[[:space:]]+/_/' 'a_b'
 require "[[:space:]] under sed -E" "$V"
