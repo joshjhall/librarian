@@ -331,6 +331,127 @@ PY
     assert_equals "OK" "$out" "patterns.py is_test_file: every arm matches its expected branch (#605)"
 }
 
+# --- the debug-family split, called DIRECTLY (#687) --------------------------
+#
+# #680 split patterns.py's inline debug logic into _scan_debug_print and
+# _scan_debugger. Until now they were exercised only INDIRECTLY, through this
+# file's bash<->python parity fixture, which has two blind spots:
+#
+#   1. Parity proves the two impls AGREE, not that either is CORRECT. A
+#      symmetrical mistake passes green — not hypothetical: a wrong trailing
+#      `\b` sat in both copies of the Go assertion pattern through the whole of
+#      #679, and this gate never noticed (#684).
+#   2. The parity suite skip_tests itself when no python3>=3.11 exists. On such
+#      a host the split had NO coverage — the #543 self-skipping shape, where
+#      the arm that does not run is the risky one.
+#
+# So this calls both functions directly, in Python, the same importlib shape as
+# test_py_is_test_file_direct above. Zero new dependencies; the module is
+# stdlib-only and main-guarded, so importing it does not run main().
+#
+# The ORDER assertion is the point of the adjacent-lines fixture. scan_file's
+# comment promises print-then-debugger emission, and the shared-region contract
+# is an ORDERED multiset — validate-shared-scanner-sync.sh treats a reordered
+# line as drift — but nothing pinned the order the two functions actually emit
+# in. Swapping the two calls in scan_file would have been invisible.
+test_py_debug_family_direct() {
+    local out rc=0
+    if [ ! -f "$HEALTH_PY" ]; then
+        skip_test "check-code-health/patterns.py not present"
+        return 0
+    fi
+    out="$(python3 - "$HEALTH_PY" <<'PY' 2>&1)" || rc=$?
+import importlib.util, io, sys
+from contextlib import redirect_stdout
+
+spec = importlib.util.spec_from_file_location("health_patterns", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+problems = []
+
+
+def rows(fn, path, idx, line, ext):
+    """The TSV rows one family function emits for a single line."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        fn(path, idx, line, ext)
+    return [r for r in buf.getvalue().splitlines() if r]
+
+
+# --- each family fires on its OWN input ---
+pr = rows(mod._scan_debug_print, "a.py", 1, 'print("x")', "py")
+if len(pr) != 1 or "Debug print statement" not in pr[0]:
+    problems.append("_scan_debug_print on print() -> %r" % (pr,))
+
+db = rows(mod._scan_debugger, "a.py", 1, "breakpoint()", "py")
+if len(db) != 1 or "Debugger statement" not in db[0]:
+    problems.append("_scan_debugger on breakpoint() -> %r" % (db,))
+
+# --- and NOT on the other's input: the families must not overlap ---
+# This is what makes the split meaningful. If either function widened to cover
+# both, the exemption in scan_file (#686) would silently reach the debugger.
+cross = rows(mod._scan_debug_print, "a.py", 1, "breakpoint()", "py")
+if cross:
+    problems.append("_scan_debug_print wrongly fired on breakpoint(): %r" % (cross,))
+
+cross = rows(mod._scan_debugger, "a.py", 1, 'print("x")', "py")
+if cross:
+    problems.append("_scan_debugger wrongly fired on print(): %r" % (cross,))
+
+# --- ADJACENT LINES, whole-file: both rows emit ---
+buf = io.StringIO()
+with redirect_stdout(buf):
+    mod.scan_file("cli.py", ['print("out")', "breakpoint()"])
+emitted = [r for r in buf.getvalue().splitlines() if "debug-statement" in r]
+
+if len(emitted) != 2:
+    problems.append("adjacent print+breakpoint emitted %d rows, want 2: %r" % (len(emitted), emitted))
+else:
+    if "Debug print statement" not in emitted[0]:
+        problems.append("row 1 is not the print row: %r" % (emitted[0],))
+    if "Debugger statement" not in emitted[1]:
+        problems.append("row 2 is not the debugger row: %r" % (emitted[1],))
+
+# --- ORDER: pinned at the SOURCE, because output cannot show it ---
+#
+# Worth stating plainly, because the obvious test does not work. The adjacent-
+# lines case above cannot observe call order: the two families sit on different
+# LINES, so scan_file's per-line loop emits them in line order whichever way it
+# calls them — that case passes with the calls swapped (verified by mutation).
+#
+# Nor can a single line carry both: every pattern in both families is
+# `^\s*`-anchored, so `print("x"); breakpoint()` matches the print family only.
+# There is NO input for which the call order changes the emitted bytes.
+#
+# That is not a gap in the test, it is a fact about the code — and it is exactly
+# why #687 asked for the order to be pinned: scan_file's comment promises
+# print-then-debugger, and the shared-region contract is an ORDERED multiset, so
+# the promise should not rest on a comment alone. Since behaviour cannot witness
+# it, assert on the SOURCE: the two calls appear in the documented order.
+import inspect
+
+src = inspect.getsource(mod.scan_file)
+i_print = src.find("_scan_debug_print(")
+i_dbg = src.find("_scan_debugger(")
+if i_print < 0 or i_dbg < 0:
+    problems.append("scan_file no longer calls both family functions by name")
+elif i_print > i_dbg:
+    problems.append(
+        "scan_file calls _scan_debugger BEFORE _scan_debug_print; "
+        "the documented emission order is print-then-debugger"
+    )
+
+for p in problems:
+    print("FAIL " + p)
+if not problems:
+    print("OK")
+PY
+    assert_equals "0" "$rc" "the direct debug-family probe ran without error"
+    assert_equals "OK" "$out" \
+        "patterns.py debug split: each family fires only on its own input, and scan_file emits print-then-debugger (#687)"
+}
+
 ports_list="$(list_python_ports)"
 
 test_corpus_non_empty() {
@@ -339,6 +460,7 @@ test_corpus_non_empty() {
 
 run_test test_corpus_non_empty "Python-port corpus is non-empty (gate is not a no-op)"
 run_test test_py_is_test_file_direct "check-code-health/patterns.py: is_test_file called directly, both branches (#605)"
+run_test test_py_debug_family_direct "check-code-health/patterns.py: debug families called directly + emission order (#687)"
 
 while IFS= read -r py; do
     [ -n "$py" ] || continue
