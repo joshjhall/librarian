@@ -170,6 +170,69 @@ test_ai_slop_fires() {
     assert_equals "HIGH" "$(field "$row" 5)" "hedging phrase is HIGH certainty"
 }
 
+# #684: the alternatives a trailing `\b` had made unreachable.
+#
+# The fixture above uses "It's worth noting that", which ends in a word character
+# and so matched all along — it passes with and without the fix. These are the
+# ones that did not:
+#
+#   - Five of the eight hedging phrases end in a COMMA. `\b` after a non-word
+#     character asserts the NEXT character is a word character, so
+#     `Importantly, the …` (comma then SPACE) never matched. Only the
+#     ungrammatical `Importantly,the` would have.
+#   - `seamlessly integrat` is a STEM, meant to catch integrates/integrated/
+#     integrating. The trailing `\b` demanded a non-word character right after
+#     `t`, killing every inflection the stem exists for.
+#
+# One phrase per fixture, so a single surviving alternative cannot mask the rest.
+test_ai_slop_comma_and_stem_alternatives_fire() {
+    local d rows phrase i=0
+    for phrase in \
+        "Importantly, this handles the edge case." \
+        "Notably, the parser is recursive." \
+        "In essence, it is a lookup table." \
+        "At its core, the design is a queue." \
+        "Fundamentally, this is a cache."; do
+        i=$((i + 1))
+        d="$(fresh_dir)"
+        command printf '# %s\n' "$phrase" >"$d/slop.py"
+        run_gate "$(make_list "$d" slop.py)"
+
+        rows="$(category_rows "$GATE_OUT" "ai-slop")"
+        assert_not_empty "$rows" \
+            "comma-terminated hedging phrase #${i} fires: ${phrase} (#684)"
+    done
+
+    # The `integrat` stem, across the inflections it was written for.
+    for phrase in \
+        "It seamlessly integrates with the queue." \
+        "The module seamlessly integrated with the queue." \
+        "We are seamlessly integrating the queue."; do
+        d="$(fresh_dir)"
+        command printf '# %s\n' "$phrase" >"$d/slop.py"
+        run_gate "$(make_list "$d" slop.py)"
+
+        rows="$(category_rows "$GATE_OUT" "ai-slop")"
+        assert_not_empty "$rows" \
+            "buzzword stem fires on an inflection: ${phrase} (#684)"
+    done
+}
+
+# Negative half of the pair: dropping the trailing boundary must not make the
+# leading one moot. A hedging phrase embedded INSIDE a longer word still must not
+# fire — that is what the surviving leading `\b` is for. Without this, the fix
+# could have been "delete both boundaries" and nothing would have objected.
+test_ai_slop_leading_boundary_still_guards() {
+    local d rows
+    d="$(fresh_dir)"
+    command printf '%s\n' "# unnotably, and disimportantly, are not real words" >"$d/ok.py"
+    run_gate "$(make_list "$d" ok.py)"
+
+    rows="$(category_rows "$GATE_OUT" "ai-slop")"
+    assert_not_contains "$rows" "ok.py" \
+        "a hedging phrase inside a longer word does NOT fire — leading \\b still guards (#684)"
+}
+
 # --- Category: debug-statement ----------------------------------------------
 
 # A top-level console.log in a .js source must produce a debug-statement row.
@@ -2814,6 +2877,57 @@ c.py" "$out" \
         "a later key is reachable — the section walk is per-key, not first-only (#679)"
 }
 
+# --- #684: UNQUOTED trailing whitespace ---------------------------------------
+#
+# The old GNU expression was `["']\s*$` — the whitespace run only came off when a
+# QUOTE sat in front of it, so an UNQUOTED `- a.py  ` kept its trailing spaces.
+# #679 mirrored that byte-for-byte (its contract was identical GNU output);
+# #684 fixes it, and these cases pin the new behaviour.
+#
+# The distinction matters for exactly one key, which is why the strip is worth
+# changing rather than pinning. `test_patterns`/`test_skip_patterns`/
+# `stdout_is_output` become gitignore patterns, and git strips trailing
+# whitespace from those itself — the quirk is invisible there. But
+# `test_discovery` templates are resolved by a literal `[ -f "$resolved" ]`,
+# where a trailing space simply misses. See the e2e case further below.
+test_read_yaml_list_strips_unquoted_trailing_whitespace() {
+    local d out
+    d="$(fresh_dir)"
+    # printf '%b' so the escapes materialize — literal trailing spaces here would
+    # be invisible in the source and stripped by any formatter, leaving a fixture
+    # that cannot exercise the bug at all.
+    command printf '%b' 'test_patterns:\n  - a.py   \n  - b.py\t\n  - c.py\n' \
+        >"$d/cfg.yml"
+
+    out="$(
+        eval_read_yaml_list
+        read_yaml_list test_patterns "$d/cfg.yml"
+    )"
+
+    assert_equals "a.py
+b.py
+c.py" "$out" \
+        "UNQUOTED entries lose trailing whitespace too — no quote required (#684)"
+}
+
+# The escape hatch: whitespace INSIDE the quotes is meant, and survives. This is
+# what keeps the fix from being a blunt trim — it mirrors the leading side, which
+# likewise strips only up to the opening quote. Without this case, tightening the
+# strip to also eat quoted whitespace would pass unnoticed.
+test_read_yaml_list_preserves_quoted_inner_whitespace() {
+    local d out
+    d="$(fresh_dir)"
+    command printf '%b' 'test_patterns:\n  - "a.py  "   \n' >"$d/cfg.yml"
+
+    out="$(
+        eval_read_yaml_list
+        read_yaml_list test_patterns "$d/cfg.yml"
+    )"
+
+    assert_equals "a.py  " "$out" \
+        "whitespace inside the quotes is deliberate and is preserved (#684)"
+}
+
 test_read_yaml_list_absent_key_is_empty() {
     local d out
     d="$(fresh_dir)"
@@ -2844,6 +2958,40 @@ test_config_with_trailing_whitespace_still_applies() {
     rows="$(category_rows "$GATE_OUT" "missing-test-file")"
     assert_not_contains "$rows" "app.py" \
         "a config whose values carry trailing whitespace still suppresses (#679 AC#1)"
+}
+
+# End-to-end for #684, and the case that justifies the behaviour change.
+#
+# write_bsd_sandbox's test_discovery entry is QUOTED, so it was always stripped —
+# the case above passes with and without the #684 fix. This sandbox declares the
+# template UNQUOTED with trailing whitespace, which the old strip left in place.
+#
+# test_discovery is the key where that MATTERS: unlike the gitignore-backed keys
+# (git strips pattern whitespace itself), a template is resolved by a literal
+# `[ -f "$resolved" ]`, so `scripts/smoke-app.py   ` names a file that does not
+# exist. The declared test went unfound and app.py was reported untested — a
+# false finding whose cause was invisible in the config.
+test_unquoted_test_discovery_with_trailing_whitespace_resolves() {
+    # NOT named `dir` — new_git_sandbox has its own `local dir`, which would
+    # shadow the caller's and swallow the `printf -v` writeback, leaving this
+    # empty and every path below rooted at `/`.
+    local rows sb=""
+    new_git_sandbox sb || return 1
+    command mkdir -p "$sb/.claude" "$sb/scripts"
+    command printf '%s\n' "def app_public():" "    return 1" >"$sb/app.py"
+    command printf '%s\n' "import app" "app.app_public()" >"$sb/scripts/smoke-app.py"
+    # UNQUOTED template, trailing spaces. printf '%b' so they survive the file.
+    {
+        command printf '%s\n' "test_discovery:"
+        command printf '%b' '  - scripts/smoke-{name}.py   \n'
+    } >"$sb/.claude/pre-review.yml"
+    command printf '%s\n' "$sb/app.py" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    rows="$(category_rows "$GATE_OUT" "missing-test-file")"
+    assert_not_contains "$rows" "app.py" \
+        "an UNQUOTED test_discovery template with trailing whitespace still resolves (#684)"
 }
 
 # AC#3: the parser must not swallow a failure. The pure-bash implementation has
@@ -2902,7 +3050,12 @@ run_test test_declared_config_suppresses_baseline "control: declared config supp
 run_test test_read_yaml_list_strips_trailing_whitespace "read_yaml_list strips trailing whitespace after the closing quote (#679 AC#1)"
 run_test test_read_yaml_list_handles_quotes_and_sections "read_yaml_list parses all quote forms and both key sections (#679)"
 run_test test_read_yaml_list_absent_key_is_empty "read_yaml_list is empty-and-quiet for an absent key or file (#679)"
+run_test test_ai_slop_comma_and_stem_alternatives_fire "comma-terminated hedging phrases and the integrat stem fire (#684)"
+run_test test_ai_slop_leading_boundary_still_guards "a hedging phrase inside a longer word still does not fire (#684)"
+run_test test_read_yaml_list_strips_unquoted_trailing_whitespace "read_yaml_list strips trailing whitespace with no quote in front (#684)"
+run_test test_read_yaml_list_preserves_quoted_inner_whitespace "read_yaml_list preserves whitespace inside the quotes (#684)"
 run_test test_config_with_trailing_whitespace_still_applies "a trailing-whitespace config still applies end-to-end (#679 AC#1)"
+run_test test_unquoted_test_discovery_with_trailing_whitespace_resolves "an unquoted test_discovery template with trailing whitespace resolves (#684)"
 run_test test_config_parse_emits_no_stdout_noise "config parsing never contaminates the TSV stdout (#679 AC#3)"
 run_test test_indented_debug_statements_are_found "INDENTED debug statements are found — POSIX class, not GNU \\s (#679 AC#2)"
 run_test test_exported_symbol_name_is_extracted "exported symbol name extracts correctly via ERE alternation (#679 AC#2)"

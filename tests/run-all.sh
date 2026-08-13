@@ -171,6 +171,16 @@ run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
 run_stage "Namespaced slash-command refs" bash "$SCRIPT_DIR/lint-command-refs.sh"
 run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"
+# Regex-dialect probe (#684). Here it asserts only the POSIX baseline — the
+# spellings #679 migrated TO — which must hold on every host; its word-boundary
+# rows are informational and never fail. The answer it exists to produce comes
+# from the macos-latest `bsd-probe` job in ci.yml, since this host is GNU. Run
+# locally too so the probe cannot rot unnoticed between macOS runs.
+run_stage "Regex dialect probe (POSIX baseline)" bash "$SCRIPT_DIR/probe-bsd-regex.sh"
+# ...and the probe's own reporting logic. Running the probe above exercises only
+# its SUPPORTED/require-pass paths on a GNU host; this forces the UNSUPPORTED,
+# ERROR and require-FAIL branches, which are the ones carrying the signal.
+run_stage "Regex-probe reporting integrity" bash "$SCRIPT_DIR/validate-regex-probe.sh"
 run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
 run_stage "Prose-vs-code env var drift" bash "$SCRIPT_DIR/lint-env-var-drift.sh"
 run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.sh"

@@ -217,6 +217,92 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # BSD/macOS regex probe (issue #684). INFORMATIONAL, never a merge gate:
+  # deliberately absent from merge-gate's `needs:` below, same posture as the
+  # coverage job.
+  #
+  # WHY IT EXISTS. #679 swept GNU-only regex out of the shell scanners because
+  # BSD grep/sed read `\s`/`\w`/BRE `\|` as literals — the pattern stops matching,
+  # the scanner emits zero rows, and the scan still exits 0, so macOS sees a clean
+  # report of nothing. One construct was left out of that ban on purpose: `\b`,
+  # used at 38 sites. The belief that modern BSD `grep -E` supports it had never
+  # been checked on a BSD host, only asserted, and #679 declined to change 38
+  # sites on an assumption. This job is what turns that into evidence: it is the
+  # repo's ONLY BSD userland, and its output decides whether `\b` becomes a
+  # documented exemption in lint-shell-portability.sh or those sites get ported
+  # to POSIX `grep -w`.
+  #
+  # WHY NOT THE FULL SUITE. Running tests/run-all.sh here would be the obvious
+  # move and is deliberately not done. Its ~60 stages have never run under BSD
+  # userland, and the test scripts themselves are not held to the portability
+  # rules they enforce on plugins/ — so a full leg would fail broadly on its own
+  # GNU-isms, plus missing shellcheck/ruff/typos, and the noise would bury the
+  # one signal this job exists to produce. Scope is the probe plus the python
+  # port parity gate (whose contract is bash<->python byte equality — worth
+  # confirming under a second userland, and the gate self-skips cleanly when its
+  # runtime is absent).
+  #
+  # NON-BLOCKING BY DESIGN, for now. This is the first BSD exposure in the repo's
+  # history; a surprise here must not red unrelated PRs. Once the `\b` question
+  # is settled and the probe has run clean for a while, promoting it into
+  # merge-gate's `needs:` is the natural follow-up.
+  #
+  # Fork PRs are skipped on the same trust boundary as quality-gates: checkout
+  # pulls the PR HEAD, so tests/probe-bsd-regex.sh would be untrusted
+  # contributor code executing on the runner.
+  #
+  # COST, ACCEPTED DELIBERATELY. macOS runners bill at a higher multiplier than
+  # Linux (~10x), and this job has no path filter, so it runs on every same-repo
+  # push/PR including ones touching only docs. That is a considered trade, not an
+  # oversight:
+  #
+  #   - A per-job `paths:` filter does not exist in Actions — `paths` is a
+  #     workflow-level `on:` key, so scoping this one job would mean splitting it
+  #     into its own workflow file. A step-level changed-files check would not
+  #     help either: billing starts at runner spin-up, which has already happened
+  #     by the time any step can decide to skip.
+  #   - The work is a handful of `grep`/`sed` invocations plus one parity gate —
+  #     seconds of compute. `timeout-minutes: 5` caps the exposure of a hang at
+  #     roughly a Linux job's typical run, and this repo is public (where GitHub
+  #     does not bill Actions minutes at all).
+  #   - Running it everywhere is also the point: a BSD regression can be
+  #     introduced by a change to any scanner, and a path filter narrow enough to
+  #     save meaningful minutes would be wide enough to miss one.
+  #
+  # If the cost ever does bite, the fix is a separate workflow file with
+  # `on.pull_request.paths` — not a step-level guard.
+  bsd-probe:
+    name: BSD/macOS regex probe (informational)
+    runs-on: macos-latest
+    needs: validate-manifests
+    timeout-minutes: 5
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Record which userland actually ran, so a future reader can tell whether a
+      # given result came from BSD or from a GNU coreutils that leaked onto PATH
+      # (homebrew's `gnubin`). BSD grep/sed have no --version and exit non-zero
+      # on it, which is itself the signal — hence the `|| true`.
+      - name: Identify the userland
+        run: |
+          sw_vers || true
+          echo "--- grep ---"; command -v grep; grep --version 2>&1 | head -1 || true
+          echo "--- sed  ---"; command -v sed;  sed  --version 2>&1 | head -1 || true
+
+      # The probe fails (exit 1) only if a POSIX baseline construct — the
+      # spellings #679 migrated TO — does not hold here. That would mean the
+      # sweep itself is broken on macOS and is worth failing this job over. The
+      # word-boundary rows are informational and never fail it.
+      - name: Probe regex dialects
+        run: bash tests/probe-bsd-regex.sh
+
+      - name: Python-port contract + bash parity
+        run: bash tests/validate-python-ports.sh
+
   # Aggregating gate (issue #53). A skipped step does not fail its job, and a
   # skipped JOB reports neither success nor failure — so without this, a fork PR
   # (quality-gates skipped) would leave no single check that means "everything
