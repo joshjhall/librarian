@@ -131,6 +131,16 @@ _STDOUT_POLICY_LOADED = False
 _PROJECT_ROOT = ""
 _STDOUT_PATTERN_REPO = ""
 
+# Wall-clock bound on every git call below. These are local, repo-metadata-only
+# operations that finish in milliseconds, so a multi-second wait already means
+# something is wrong — a credential prompt from a misconfigured remote, a
+# blocking hook, a stalled filesystem. Without a bound the scan would hang with
+# no diagnostic, and the check-ignore call runs once per scanned file, so the
+# stall would be per-file. On timeout each caller takes the same path as an
+# OSError: the scan continues with the exemption simply not applied, which is
+# the pre-#686 behaviour rather than a wrong answer.
+_GIT_TIMEOUT_S = 5
+
 
 def _read_yaml_list(key: str, path: str) -> list[str]:
     """The values of top-level list `key` in a flat YAML scalar list.
@@ -227,9 +237,10 @@ def _load_stdout_policy() -> None:
             ["git", "rev" + "-parse", "--show" + "-toplevel"],
             capture_output=True,
             text=True,
+            timeout=_GIT_TIMEOUT_S,
         )
         _PROJECT_ROOT = out.stdout.strip() or os.getcwd()
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         _PROJECT_ROOT = os.getcwd()
 
     config = os.path.join(_PROJECT_ROOT, ".claude", "pre-review.yml")
@@ -245,13 +256,19 @@ def _load_stdout_policy() -> None:
     repo = tempfile.mkdtemp()
     try:
         subprocess.run(
-            ["git", "init", "-q", repo], capture_output=True, text=True, check=False
+            ["git", "init", "-q", repo],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GIT_TIMEOUT_S,
         )
         with open(
             os.path.join(repo, ".git", "info", "exclude"), "w", encoding="utf-8"
         ) as fh:
             fh.write("\n".join(patterns) + "\n")
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # Remove the dir before returning: the atexit hook is registered below,
+        # so on this path nothing else would ever clean it up.
         shutil.rmtree(repo, ignore_errors=True)
         return
 
@@ -289,8 +306,12 @@ def _matches_declared_stdout(path: str) -> bool:
             ],
             capture_output=True,
             text=True,
+            timeout=_GIT_TIMEOUT_S,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # False, not True: a call that could not answer must not grant an
+        # exemption. Failing closed keeps a hung git from silently deleting
+        # findings — it costs a false positive, never a false negative.
         return False
     return res.returncode == 0
 

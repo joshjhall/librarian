@@ -228,6 +228,15 @@ trap cleanup_stdout_policy EXIT
 # under `stdout_is_output`. Always false when nothing was declared, so a repo
 # with no config keeps the pre-#686 behaviour exactly.
 #
+# NO wall-clock bound on the git calls here, unlike the python primary, which
+# passes `timeout=` to each subprocess. Deliberate: bounding a command portably
+# needs the `bounded_run` helper (a GNU `timeout` is not on base macOS), that
+# helper lives in the WORKFLOW plugin, and this plugin cannot source it — the
+# same boundary that forces the duplication above. Adding a third copy of it to
+# guard a path that only runs when python is absent is not a trade worth making.
+# The exposure is small and equal to the pre-#686 status quo: git here is local
+# and metadata-only, and a hang would stall a scan rather than corrupt one.
+#
 # Scoped to the PRINT family by its only caller — a declared file's breakpoints
 # still fire (#680 AC3). Deliberately a separate key from any test-related one:
 # "legitimately writes to stdout" and "needs no test of its own" are different

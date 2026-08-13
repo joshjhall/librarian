@@ -616,6 +616,25 @@ test_health_stdout_is_output() {
     stdout_sandbox otherkey "test_skip_patterns:" "  - vendor/**"
     assert_health_in "$otherkey" "$STDOUT_LIST" debug-statement fires 'print("real output")' \
         "health: a config without stdout_is_output leaves print() firing (#686)"
+
+    # --- a GLOB, not just a literal path ---
+    # SKILL.md documents these values as gitignore-style patterns and gives
+    # `bin/*.js` as the worked example, but every case above declares an exact
+    # path. Matching is delegated to `git check-ignore`, so a glob should work —
+    # "should" being the point: a documented example nothing exercises is how
+    # docs drift from behaviour.
+    #
+    # `src/*.py` matches BOTH fixture files, so this also shows the exemption
+    # applying to a file never named literally.
+    local globbed=""
+    stdout_sandbox globbed "stdout_is_output:" "  - src/*.py"
+    assert_health_in "$globbed" "$STDOUT_LIST" debug-statement absent 'print("real output")' \
+        "health: a glob pattern exempts the file it matches (#686)"
+    assert_health_in "$globbed" "$STDOUT_LIST" debug-statement absent 'print("debug leftover")' \
+        "health: a glob exempts a file never named literally (#686)"
+    # ...and the AC3 boundary holds under a glob too, not just a literal.
+    assert_health_in "$globbed" "$STDOUT_LIST" debug-statement fires "Debugger statement" \
+        "health: a glob-declared file's breakpoint() STILL fires (#680 AC3)"
 }
 
 # The temp match-repo must not leak. #680 added a repo to the reference impl
