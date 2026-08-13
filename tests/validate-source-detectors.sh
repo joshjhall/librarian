@@ -472,6 +472,136 @@ test_health_test_file_and_skip() {
         "health: a TODO inside a *.md is skipped (SKIP_GLOBS)"
 }
 
+# ============================================================================
+# check-code-health — declared `stdout_is_output` (#686)
+# ============================================================================
+#
+# The declaration is read from `<repo-root>/.claude/pre-review.yml`, and the
+# scanner finds that root with `git rev-parse --show-toplevel` at runtime. So
+# these fixtures need a real git sandbox AND the scanner has to run FROM INSIDE
+# it — the shared emit_rows driver does not cd, which would make every case here
+# resolve THIS repo's config instead of the fixture's. Hence the local drivers.
+
+# health_rows_in DIR IMPL LIST CAT — like emit_rows, but cd'd into DIR first.
+health_rows_in() {
+    local dir="$1" impl="$2" list="$3" cat="$4"
+    if [ "$impl" = py ]; then
+        (cd "$dir" && /usr/bin/env python3 "$SK_HEALTH/patterns.py" "$list" 2>/dev/null)
+    else
+        (cd "$dir" && /usr/bin/env PATTERNS_FORCE_BASH=1 "$REAL_BASH" \
+            "$SK_HEALTH/patterns.sh" "$list" 2>/dev/null)
+    fi | command awk -F '\t' -v c="$cat" '$3 == c'
+}
+
+# assert_health_in DIR LIST CAT MODE NEEDLE MSG — assert in BOTH impls, from
+# inside DIR. MODE is "fires" (rows contain NEEDLE) or "absent" (they do not).
+# Both impls are checked because python is the PRIMARY runtime and bash the
+# fallback: a fix landing in only one is the exact defect this pair invites.
+assert_health_in() {
+    local dir="$1" list="$2" cat="$3" mode="$4" needle="$5" msg="$6"
+    local out
+    out="$(health_rows_in "$dir" sh "$list" "$cat")"
+    if [ "$mode" = fires ]; then
+        assert_contains "$out" "$needle" "$msg (bash)"
+    else
+        assert_not_contains "$out" "$needle" "$msg (bash)"
+    fi
+    if [ "$HAVE_PY" -eq 1 ]; then
+        out="$(health_rows_in "$dir" py "$list" "$cat")"
+        if [ "$mode" = fires ]; then
+            assert_contains "$out" "$needle" "$msg (python)"
+        else
+            assert_not_contains "$out" "$needle" "$msg (python)"
+        fi
+    fi
+}
+
+# stdout_sandbox VARNAME [CONFIG_LINE...] — a git sandbox holding a declared CLI
+# file (cli.py: a print AND a breakpoint) plus an undeclared control
+# (other.py: a print). Writes .claude/pre-review.yml only when CONFIG_LINEs are
+# given, so the no-config case is the same fixture minus the declaration.
+STDOUT_LIST=""
+stdout_sandbox() {
+    local __out="$1" dir=""
+    shift
+    dir="$(fresh_dir)"
+    command git init -q "$dir" 2>/dev/null
+    command mkdir -p "$dir/src"
+    # cli.py carries BOTH families on purpose: the exemption must reach the
+    # print and NOT the breakpoint, and one file proves both halves at once.
+    command printf '%s\n' 'print("real output")' 'breakpoint()' >"$dir/src/cli.py"
+    command printf '%s\n' 'print("debug leftover")' >"$dir/src/other.py"
+    if [ "$#" -gt 0 ]; then
+        command mkdir -p "$dir/.claude"
+        command printf '%s\n' "$@" >"$dir/.claude/pre-review.yml"
+    fi
+    STDOUT_LIST="$(make_list "$dir/l" "$dir/src/cli.py" "$dir/src/other.py")"
+    printf -v "$__out" '%s' "$dir"
+}
+
+test_health_stdout_is_output() {
+    local d=""
+
+    # --- declared: the print is exempt ---
+    # The needle is the print's EVIDENCE TEXT, not the filename: cli.py still
+    # appears in this run via its breakpoint row (the next assertion), so
+    # "cli.py is absent" could never hold and would fail whatever the code did.
+    stdout_sandbox d "stdout_is_output:" "  - src/cli.py"
+    assert_health_in "$d" "$STDOUT_LIST" debug-statement absent 'print("real output")' \
+        "health: a declared file's print() is exempt (#686)"
+
+    # --- AC3: the SAME declared file's breakpoint still fires ---
+    # This is the boundary #680 AC3 asks for, and the reason the dispatcher uses
+    # two statements rather than an if/else. Without this case, widening the
+    # exemption to cover the debugger family would pass every other assertion.
+    assert_health_in "$d" "$STDOUT_LIST" debug-statement fires "Debugger statement" \
+        "health: a declared file's breakpoint() STILL fires (#680 AC3)"
+
+    # --- control: an undeclared sibling in the same run is untouched ---
+    # Proves the exemption is per-file, not a global off-switch. Keyed on the
+    # control's own print evidence for the same reason as above.
+    assert_health_in "$d" "$STDOUT_LIST" debug-statement fires 'print("debug leftover")' \
+        "health: an UNDECLARED file's print() still fires (#686)"
+
+    # --- no config at all: pre-#686 behaviour, exactly ---
+    # The common path. If the predicate ever defaulted true, every repo without
+    # a config would silently lose its print findings — so this is the case that
+    # would catch it.
+    local noconf=""
+    stdout_sandbox noconf
+    assert_health_in "$noconf" "$STDOUT_LIST" debug-statement fires 'print("real output")' \
+        "health: with NO .claude/pre-review.yml, print() fires as before (#686)"
+
+    # --- config present but key absent ---
+    # A repo declaring some OTHER key must not accidentally enable the
+    # exemption: the loader reads the file but finds no patterns.
+    local otherkey=""
+    stdout_sandbox otherkey "test_skip_patterns:" "  - vendor/**"
+    assert_health_in "$otherkey" "$STDOUT_LIST" debug-statement fires 'print("real output")' \
+        "health: a config without stdout_is_output leaves print() firing (#686)"
+}
+
+# The temp match-repo must not leak. #680 added a repo to the reference impl
+# without a cleanup branch and leaked one per run; the failure is silent (a
+# stray /tmp dir, no error, no wrong output), so it needs a behavioural check
+# rather than a code read.
+test_health_stdout_repo_cleaned_up() {
+    local d="" before after
+    before="$(command find /tmp -maxdepth 1 -type d -name 'tmp.*' 2>/dev/null | command wc -l)"
+
+    stdout_sandbox d "stdout_is_output:" "  - src/cli.py"
+    health_rows_in "$d" sh "$STDOUT_LIST" debug-statement >/dev/null
+    if [ "$HAVE_PY" -eq 1 ]; then
+        health_rows_in "$d" py "$STDOUT_LIST" debug-statement >/dev/null
+    fi
+
+    after="$(command find /tmp -maxdepth 1 -type d -name 'tmp.*' 2>/dev/null | command wc -l)"
+    # Equality, not a bound: each impl creates exactly one match repo and must
+    # remove it, so a leak of even one is a failure worth naming.
+    assert_equals "$before" "$after" \
+        "health: the stdout match-repo is cleaned up, not leaked (#686)"
+}
+
 run_test test_security_secrets "check-security: AWS/GitHub/Stripe/PEM secrets + credential denylist + env.example skip"
 run_test test_security_injection "check-security: py/js/rb SQL interpolation + concatenation + parameterized negative"
 run_test test_security_xss "check-security: React/Vue/safe-filter/Blade XSS arms"
@@ -481,5 +611,7 @@ run_test test_health_debt "check-code-health: tech-debt marker"
 run_test test_health_debug "check-code-health: py/js/rb/go/java debug arms + logger negative + test-file suppression"
 run_test test_health_empty_handler "check-code-health: py/js/rb/go empty-handler arms + handled negative"
 run_test test_health_test_file_and_skip "check-code-health: is_test_file segment anchoring + SKIP_GLOBS"
+run_test test_health_stdout_is_output "check-code-health: stdout_is_output exempts prints only, keeps breakpoints (#686/#680 AC3)"
+run_test test_health_stdout_repo_cleaned_up "check-code-health: the stdout match-repo is not leaked (#686)"
 
 generate_report

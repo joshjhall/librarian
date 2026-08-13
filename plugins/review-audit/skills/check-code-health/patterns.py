@@ -21,10 +21,10 @@ this pair by #604 — the predicate now lives only in pre-review-gates.sh, whose
 unanchored ai-slop arms are the sole place it earns its keep.
 
 The debug detection is split into two families (#680), mirroring the bash:
-prints (stdout — a CLI's actual output) and debuggers (never output). Only
-pre-review-gates.sh acts on the distinction today, via its `stdout_is_output`
-declaration; this scanner has no config loader and runs both unconditionally.
-The split is kept here so the two impls stay structurally comparable.
+prints (stdout — a CLI's actual output) and debuggers (never output). Both this
+scanner and pre-review-gates.sh act on the distinction (#686): a project's
+`.claude/pre-review.yml` may declare files under `stdout_is_output`, which
+exempts the PRINT family only — a declared file's breakpoints still fire.
 
 Input:  argv[1] = file containing paths to scan (one per line)
 Output: TSV to stdout: file<TAB>line<TAB>category<TAB>evidence<TAB>certainty
@@ -36,8 +36,13 @@ Exit codes:
 
 from __future__ import annotations
 
+import atexit
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from fnmatch import fnmatch
 
 CERTAINTY = "HIGH"
@@ -104,13 +109,185 @@ def _first_nonblank_after(lines: list[str], idx_1: int) -> str:
     return ""
 
 
+# --- declared `stdout_is_output` support (#686) ------------------------------
+#
+# A project declares, in its own .claude/pre-review.yml, the files whose
+# print()/console.log IS the program's output rather than a debug leftover
+# (#680). This is the PRIMARY runtime — patterns.sh exec's this file whenever a
+# python3>=3.11 exists — so the behaviour has to live here, not only in the bash
+# fallback.
+#
+# WHY SHELL OUT TO `git check-ignore` INSTEAD OF MATCHING IN PYTHON. The bash
+# copy delegates matching to git, and tests/validate-python-ports.sh pins the two
+# impls to byte-identical output. Reimplementing gitignore semantics here
+# (`**`, negation, directory-only patterns, anchoring) would make parity a thing
+# to maintain by hand, and any divergence is a silent wrong answer rather than an
+# error. Using the same engine makes agreement structural. Precedent for the
+# subprocess-to-git shape: check-docs-examples/patterns.py and
+# check-docs-organization/patterns.py already do it.
+
+_STDOUT_POLICY_LOADED = False
+_PROJECT_ROOT = ""
+_STDOUT_PATTERN_REPO = ""
+
+
+def _read_yaml_list(key: str, path: str) -> list[str]:
+    """The values of top-level list `key` in a flat YAML scalar list.
+
+    The Python twin of the bash `shared:yaml-list-parser` region. Deliberately
+    NOT a YAML library: the format is a flat list of scalars, the bash copy
+    parses it without one, and adding a dependency here would put the two impls
+    on different parsers — the one thing parity cannot absorb.
+
+    Trailing whitespace comes off unconditionally, whitespace inside quotes is
+    kept: the #684 rule, mirrored so a config resolves the same either side.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            raw = fh.read().splitlines()
+    except OSError:
+        return []
+
+    out: list[str] = []
+    in_section = False
+    for line in raw:
+        if line.startswith(key + ":"):
+            in_section = True
+            continue
+        # Any other line starting in column 0 with a letter/underscore is the
+        # NEXT top-level key, which ends this section.
+        if line[:1].isalpha() or line[:1] == "_":
+            in_section = False
+            continue
+        if not in_section:
+            continue
+
+        item = line
+        unindented = item.lstrip()
+        if unindented.startswith("-"):
+            item = unindented[1:].lstrip()
+
+        # One layer of surrounding quotes, each side independent.
+        if item.startswith('"'):
+            item = item[1:]
+        elif item.startswith("'"):
+            item = item[1:]
+        item = item.rstrip()
+        if item.endswith('"'):
+            item = item[:-1]
+        elif item.endswith("'"):
+            item = item[:-1]
+
+        if item:
+            out.append(item)
+    return out
+
+
+def _cleanup_stdout_policy() -> None:
+    """Remove the throwaway match repo. Registered with atexit the moment the
+    repo is created — the bash copy's 'one cleanup branch per mktemp' rule, whose
+    absence is silent (a stray /tmp dir, no error, no wrong output)."""
+    if _STDOUT_PATTERN_REPO:
+        shutil.rmtree(_STDOUT_PATTERN_REPO, ignore_errors=True)
+
+
+def _load_stdout_policy() -> None:
+    """Read `stdout_is_output` into a throwaway git repo, once per process."""
+    global _STDOUT_POLICY_LOADED, _PROJECT_ROOT, _STDOUT_PATTERN_REPO
+    if _STDOUT_POLICY_LOADED:
+        return
+    _STDOUT_POLICY_LOADED = True
+
+    # The git subcommand and flags below are written as SPLIT string literals on
+    # purpose. validate-scanner-category-parity.sh scrapes this file for
+    # double-quoted lowercase-kebab literals and treats each as a declared
+    # finding category; a hyphenated git flag matches that shape exactly and
+    # would be reported as a phantom category present in the python impl and
+    # missing from the bash one. Splitting the token keeps the flag out of the
+    # scrape. Same workaround, same reason, as check-docs-examples/patterns.py.
+    #
+    # The gate reads raw text, so this comment must not spell those flags out
+    # either — which is why they are described rather than quoted here.
+    try:
+        out = subprocess.run(
+            ["git", "rev" + "-parse", "--show" + "-toplevel"],
+            capture_output=True,
+            text=True,
+        )
+        _PROJECT_ROOT = out.stdout.strip() or os.getcwd()
+    except OSError:
+        _PROJECT_ROOT = os.getcwd()
+
+    config = os.path.join(_PROJECT_ROOT, ".claude", "pre-review.yml")
+    if not os.path.isfile(config):
+        return
+
+    patterns = _read_yaml_list("stdout_is_output", config)
+    # No declaration -> no repo -> the predicate is false for every file, and
+    # this scanner behaves exactly as it did before #686.
+    if not patterns:
+        return
+
+    repo = tempfile.mkdtemp()
+    try:
+        subprocess.run(
+            ["git", "init", "-q", repo], capture_output=True, text=True, check=False
+        )
+        with open(
+            os.path.join(repo, ".git", "info", "exclude"), "w", encoding="utf-8"
+        ) as fh:
+            fh.write("\n".join(patterns) + "\n")
+    except OSError:
+        shutil.rmtree(repo, ignore_errors=True)
+        return
+
+    _STDOUT_PATTERN_REPO = repo
+    atexit.register(_cleanup_stdout_policy)
+
+
+def _matches_declared_stdout(path: str) -> bool:
+    """True when the project declared `path` under `stdout_is_output`.
+
+    Always False when nothing was declared, so a repo with no config keeps the
+    pre-#686 behaviour exactly.
+    """
+    _load_stdout_policy()
+    if not _STDOUT_PATTERN_REPO:
+        return False
+
+    relpath = path
+    if _PROJECT_ROOT and _PROJECT_ROOT != ".":
+        prefix = _PROJECT_ROOT + os.sep
+        if relpath.startswith(prefix):
+            relpath = relpath[len(prefix) :]
+    relpath = relpath.lstrip("/")
+
+    try:
+        res = subprocess.run(
+            [
+                "git",
+                "-C",
+                _STDOUT_PATTERN_REPO,
+                "check" + "-ignore",
+                "-q",
+                "--no" + "-index",
+                relpath,
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return res.returncode == 0
+
+
 def _scan_debug_print(path: str, idx: int, line: str, ext: str) -> None:
     """Emit debug-statement rows for the stdout-writing family.
 
     Mirrors the `>>> shared:debug-print-scan` bash region. These are what a CLI
-    legitimately uses to produce its output, which is why pre-review-gates.sh
-    lets a project exempt them via `stdout_is_output` (#680). This scanner has
-    no config loader, so it always runs.
+    legitimately uses to produce its output, which is why a project may exempt
+    them via `stdout_is_output` (#680/#686). The caller applies that exemption
+    per FILE — see scan_file; this function itself is unconditional.
 
     No scanner-pattern-literal skip, matching the bash copies after #604: every
     pattern is `^\\s*`-anchored, so a scanner's own literal — always nested
@@ -157,6 +334,12 @@ def _scan_debugger(path: str, idx: int, line: str, ext: str) -> None:
 def scan_file(path: str, lines: list[str]) -> None:
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
     test_file = is_test_file(path)
+    # Resolved ONCE PER FILE, not per line (#686). The declaration is a property
+    # of the file, and the predicate shells out to `git check-ignore` — evaluating
+    # it inside the loop below would spawn one subprocess per line of every file
+    # scanned. Hoisted here alongside test_file, which is per-file for the same
+    # reason.
+    stdout_declared = not test_file and _matches_declared_stdout(path)
 
     for idx, line in enumerate(lines, start=1):
         # --- Category: tech-debt-marker (all source files) ---
@@ -167,8 +350,14 @@ def scan_file(path: str, lines: list[str]) -> None:
         # Split into the same two families as the bash regions (#680); see the
         # module docstring. Called in this order — prints then debuggers — to
         # match the bash arms' emission order within a language.
+        #
+        # The print family is skipped for a declared file; the debugger family
+        # is NOT (#680 AC3). Two separate statements, mirroring the bash
+        # dispatcher: there is no control path on which the declaration reaches
+        # the debugger call, which is the property AC3 asks for.
         if not test_file:
-            _scan_debug_print(path, idx, line, ext)
+            if not stdout_declared:
+                _scan_debug_print(path, idx, line, ext)
             _scan_debugger(path, idx, line, ext)
 
         # --- Category: empty-handler (all files) ---
