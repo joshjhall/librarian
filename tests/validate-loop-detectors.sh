@@ -279,6 +279,19 @@ test_work_no_assertions() {
         assert_silent "$SK_WORK" no-assertions \
             "work: a Go _test.go using t.${variant} stays silent (#684)" -- "$list"
     done
+
+    # ...and the accepted suffix is exactly `f`, not "anything". The fix spells
+    # out `(Error|Fatal|Log)f?` rather than dropping the trailing boundary,
+    # because a bare drop would treat ANY identifier with one of these prefixes
+    # as an assertion. Without this case, the looser pattern passes every test
+    # above and the tightening is only a claim in a comment.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'package p' \
+        'func TestX(t *testing.T) { _ = t.ErrorHandlerConfig }' \
+        >"$d/x_test.go"
+    list="$(make_list "$d/l" "$d/x_test.go")"
+    assert_fires "$SK_WORK" no-assertions "no assertion statements" \
+        "work: t.ErrorHandlerConfig is NOT an assertion — suffix is f?, not .* (#684)" -- "$list"
 }
 
 # ============================================================================

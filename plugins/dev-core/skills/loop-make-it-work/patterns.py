@@ -47,13 +47,22 @@ PY_ASSERT_RE = re.compile(
     r"\b(assert|assertEqual|assertTrue|assertFalse|assertRaises|assertIn|pytest\.raises)\b"
 )
 JS_ASSERT_RE = re.compile(r"\b(expect|assert|should)\b")
-# No trailing `\b` (#684): it rejected `t.Errorf`/`t.Fatalf`/`t.Logf` — Go's
-# dominant assertion idioms — because `f` is a word character, so a test file
-# using only those was reported as having NO assertions at HIGH. Kept in lockstep
-# with the bash fallback in patterns.sh; both carried the identical defect, which
-# is why validate-python-ports.sh stayed green through it (it pins same-OUTPUT,
-# not same-intent).
-GO_ASSERT_RE = re.compile(r"\b(t\.(Error|Fatal|Log|Run|Helper)|assert\.|require\.)")
+# The `f?` is the #684 fix: a flat trailing `\b` rejected `t.Errorf`/`t.Fatalf`/
+# `t.Logf` — Go's dominant assertion idioms — because `f` is a word character, so
+# a test file using only those was reported as having NO assertions at HIGH.
+#
+# The formatting variants are spelled out rather than the boundary simply being
+# dropped. Dropping it admits ANY identifier with one of these prefixes
+# (`t.ErrorHandlerConfig`), which is a wider match than the fix needs; `f?` plus
+# a kept `\b` accepts exactly the real idioms. `Run`/`Helper` have no `f` form
+# and so keep a bare boundary.
+#
+# Kept in lockstep with the bash fallback in patterns.sh — both carried the
+# identical original defect, which is why validate-python-ports.sh stayed green
+# through it (it pins same-OUTPUT, not same-intent).
+GO_ASSERT_RE = re.compile(
+    r"\b(t\.(Error|Fatal|Log)f?|t\.(Run|Helper)|assert\.|require\.)\b"
+)
 
 
 def emit(path: str, line_no: str, category: str, evidence: str) -> None:
