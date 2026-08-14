@@ -662,6 +662,56 @@ test_runbook_reports_unknowable_staleness() {
     assert_contains "$RUN_OUT" "gh unavailable" "the render names WHY the check did not run"
 }
 
+# A CORRUPT PLAN FAILS LOUDLY rather than rendering as an empty one.
+#
+# `[ -r ]` answers whether the file opens, not whether it parses. Without an
+# explicit validity check, a truncated write degrades through tr_jq's discarded
+# exit status into empty strings: 0 lanes, and a `dispatched` that is neither
+# "false" nor "true" so the header claims "already in flight" — a corrupt plan
+# announcing that everything is up, at exit 0. That is the single most dangerous
+# misread available here, which is why this is a hard failure and not a warning.
+test_runbook_corrupt_json_fails_loudly() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    # Truncated mid-write, exactly as an interrupted save would leave it.
+    command printf '%s' '{ "tracks": [ { "lane": 0, "issues": [42' \
+        >"$sb/.worktrees/.status/tracks.json"
+    run_runbook "$sb" render --no-staleness
+    assert_exit 3 "$RUN_RC" "a corrupt plan exits 3"
+    assert_contains "$RUN_OUT" "not valid JSON" "the failure names the cause"
+    assert_not_contains "$RUN_OUT" "already in flight" \
+        "it never claims the lanes are dispatched"
+    assert_not_contains "$RUN_OUT" "0 lane(s)" \
+        "it never renders a corrupt plan as an empty one"
+}
+
+# render_footer suppresses its sections when there is nothing to show. Asserting
+# the NEGATIVE arm: an empty `rationale` and an absent `deferred` (both legal)
+# must print no bare section headers.
+test_runbook_footer_suppresses_empty_sections() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": 3, "issues": [42], "dispatched": false } ],
+  "rationale": [], "dispatched": false }
+EOF
+    run_runbook "$sb" render --no-staleness
+    assert_exit 0 "$RUN_RC" "a plan with no rationale/deferred still renders"
+    assert_not_contains "$RUN_OUT" "WHY THESE LANES" "no empty rationale section"
+    assert_not_contains "$RUN_OUT" "DEFERRED" "no empty deferred section"
+    assert_contains "$RUN_OUT" "#42" "the lane itself still renders"
+}
+
 # jq is REQUIRED, and its absence fails loudly (exit 3) rather than rendering an
 # empty runbook. Every field is read through jq, so a silent no-jq path would
 # print a plan that looks like it has no lanes at all.

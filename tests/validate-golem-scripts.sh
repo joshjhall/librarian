@@ -347,6 +347,8 @@ run_fragment_test test_runbook_outside_git_repo_exits_3 "tracks-runbook: outside
 run_fragment_test test_runbook_malformed_numeric_fields_fall_back "tracks-runbook: malformed numeric fields fall back instead of breaking arithmetic (#673)"
 run_fragment_test test_runbook_reports_failed_staleness_query "tracks-runbook: a failed per-issue gh query is reported (gh present) (#673)"
 run_fragment_test test_runbook_reports_unknowable_staleness "tracks-runbook: an unavailable gh is reported, never a clean check (#673)"
+run_fragment_test test_runbook_corrupt_json_fails_loudly "tracks-runbook: a corrupt plan exits 3, never renders as an empty one (#673)"
+run_fragment_test test_runbook_footer_suppresses_empty_sections "tracks-runbook: empty rationale/deferred print no bare section headers (#673)"
 run_fragment_test test_runbook_without_jq_fails_loudly "tracks-runbook: a missing jq exits 3 rather than rendering an empty plan (#673)"
 
 generate_report

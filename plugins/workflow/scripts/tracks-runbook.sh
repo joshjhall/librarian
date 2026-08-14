@@ -403,6 +403,22 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 JQ="jq"
 
+# The plan must PARSE, not merely be readable. `[ -r ]` above answers the wrong
+# question: a truncated write, a full disk, or an editor caught mid-save leaves a
+# file that opens fine and parses not at all. Every read here goes through
+# `tr_jq`, which discards jq's exit status, so an unparsable plan degrades into
+# empty strings — `nlanes` falls back to 0, the lane loop runs zero times, and
+# `dispatched` reads as neither "false" nor "true", so the header announces
+# "dispatched — lanes below are already in flight" above no lanes at all, exit 0.
+# An operator would read that as their whole plan already being up.
+#
+# Validate once, here, where a single check covers every later read.
+if ! "$JQ" -e . "$TRACKS" >/dev/null 2>&1; then
+    command echo "tracks-runbook: $TRACKS is not valid JSON — refusing to render a partial plan" >&2
+    command echo "  a truncated or half-written plan can look like an empty one; inspect it with: jq . $TRACKS" >&2
+    exit 3
+fi
+
 # gh IS optional — its absence downgrades staleness checking, which is reported
 # in the header rather than passed off as a clean check.
 GH="gh"
