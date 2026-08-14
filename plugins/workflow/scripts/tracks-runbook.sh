@@ -110,6 +110,33 @@ tr_int() {
     esac
 }
 
+# tr_issue <filter> — read a filter expecting an ISSUE NUMBER, printing nothing
+# unless it is a plain non-negative integer.
+#
+# Deliberately takes NO default, which is the whole difference from tr_int. That
+# one fills in a display value or a loop bound, where any sane number keeps the
+# render usable; substituting a fallback ISSUE number would emit a launch command
+# aimed at the wrong issue — worse than emitting none. So a bad value yields the
+# empty string and the caller flags the entry as malformed.
+#
+# What this guards is narrower than it looks. These numbers reach `gh issue view`
+# and `golem-launch.sh print` as QUOTED argv elements, never `eval`'d and never
+# interpolated into a command string, so this is not an injection fix and must not
+# be read as the thing standing between the renderer and a shell escape — the
+# quoting discipline is. It is defense in depth for a corrupted plan: the up-front
+# `jq -e .` check below catches an UNPARSABLE tracks.json, while this catches the
+# narrower valid-JSON/wrong-type case (hand-edited, or written by a future caller
+# that does not honor the schema), so a non-numeric entry fails loudly instead of
+# reaching `gh` and rendering a confusing line.
+tr_issue() {
+    local v
+    v="$(tr_jq "$1")"
+    case "$v" in
+        '' | *[!0-9]*) return 0 ;;
+        *) command echo "$v" ;;
+    esac
+}
+
 # --- Staleness --------------------------------------------------------------
 #
 # STALE_MODE is one of:
@@ -124,6 +151,11 @@ STALE_NOTE=""
 # stale_flags_for <issue> — print a "  ! ..." annotation line per detected drift,
 # or nothing when the issue looks as planned. Never filters or drops an entry:
 # the caller renders the issue either way, and this only appends context.
+#
+# Expects an issue number already validated by `tr_issue`. Callers skip this
+# entirely for a malformed entry rather than passing one through: a `gh` query on
+# a non-number fails, and the resulting "could not check" line would blame a
+# flaky API for what is actually a corrupt plan.
 #
 # Checks: the issue closed; it picked up a status label that would make
 # next-issue skip it (someone else is already on it); it gained a dependency
@@ -214,6 +246,7 @@ render_header() {
 # queued remainder in serial order, and its honored dependency edges.
 render_lane() {
     local idx="$1" laneno head_issue level lane_dispatched nissues i issue edges
+    local prev prev_label
     laneno="$(tr_int ".tracks[$idx].lane // $idx" "$idx")"
     level="$(tr_int ".tracks[$idx].autonomy_level" 4)"
     lane_dispatched="$(tr_jq ".tracks[$idx].dispatched")"
@@ -227,20 +260,34 @@ render_lane() {
         return 0
     fi
 
-    head_issue="$(tr_jq ".tracks[$idx].issues[0]")"
+    head_issue="$(tr_issue ".tracks[$idx].issues[0]")"
 
-    # The head: a runnable command, unless this lane is already under way.
+    # The head: a runnable command, unless the plan is corrupt here or this lane
+    # is already under way.
     #
-    # POLARITY MATTERS, and it is the same one render_header uses: only an
-    # explicit `false` means pending. An ABSENT field reads as DISPATCHED, per
-    # the schema's back-compat contract — every tracks.json written before #673
-    # came from a dispatching setup flow and has no `dispatched` key at all.
-    # Testing `= "true"` instead would invert that (jq prints "null" for an
-    # absent key, which is not "true"), so a pre-#673 plan would render every
-    # already-running lane as freshly launchable — inviting the operator to
-    # double-launch a golem that is already up, while the header one line above
-    # correctly said "already in flight".
-    if [ "$lane_dispatched" != "false" ]; then
+    # A malformed head is FLAGGED AND KEPT, never silently dropped — the same
+    # rule the staleness checks follow. The operator may be midway through
+    # executing this plan, and a lane that quietly vanished from the render is
+    # indistinguishable from one they already finished.
+    #
+    # It does mean skipping both downstream uses: no `golem-launch.sh print`
+    # (there is no issue to launch) and no `stale_flags_for` (querying `gh` with
+    # a non-number yields a "could not check" line that would misattribute a
+    # corrupt plan to a flaky API). The remainder of the lane still renders below.
+    #
+    # POLARITY MATTERS on the dispatched arm, and it is the same one
+    # render_header uses: only an explicit `false` means pending. An ABSENT field
+    # reads as DISPATCHED, per the schema's back-compat contract — every
+    # tracks.json written before #673 came from a dispatching setup flow and has
+    # no `dispatched` key at all. Testing `= "true"` instead would invert that
+    # (jq prints "null" for an absent key, which is not "true"), so a pre-#673
+    # plan would render every already-running lane as freshly launchable —
+    # inviting the operator to double-launch a golem that is already up, while
+    # the header one line above correctly said "already in flight".
+    if [ -z "$head_issue" ]; then
+        command echo "  (head) — MALFORMED ISSUE NUMBER in the plan"
+        command echo "    ! lane $laneno's head is not a number — inspect it with: jq '.tracks[$idx].issues' $TRACKS"
+    elif [ "$lane_dispatched" != "false" ]; then
         command echo "  #$head_issue — IN FLIGHT (already launched; no command pending)"
     else
         # The launch shape comes from golem-launch.sh, never from this script.
@@ -273,14 +320,29 @@ render_lane() {
             command echo ""
         fi
     fi
-    stale_flags_for "$head_issue"
+    [ -n "$head_issue" ] && stale_flags_for "$head_issue"
 
     # The remainder is QUEUED, not parallel: each waits on the previous PR.
+    #
+    # Both reads are guarded, and for different failures: a malformed entry has
+    # no `gh` query worth making, while a malformed PREDECESSOR would render a
+    # wait-line pointing at nothing ("after #'s PR merges"). The predecessor
+    # falls back to a described placeholder rather than being dropped, so the
+    # serial ORDER — the thing this loop exists to convey — survives one bad
+    # entry in the middle of a lane.
     i=1
     while [ "$i" -lt "$nissues" ]; do
-        issue="$(tr_jq ".tracks[$idx].issues[$i]")"
-        command echo "  #$issue — after #$(tr_jq ".tracks[$idx].issues[$((i - 1))]")'s PR merges"
-        stale_flags_for "$issue"
+        issue="$(tr_issue ".tracks[$idx].issues[$i]")"
+        prev="$(tr_issue ".tracks[$idx].issues[$((i - 1))]")"
+        prev_label="#$prev"
+        [ -z "$prev" ] && prev_label="the previous (malformed) entry"
+        if [ -z "$issue" ]; then
+            command echo "  (position $i) — MALFORMED ISSUE NUMBER, queued after $prev_label"
+            command echo "    ! not a number — inspect it with: jq '.tracks[$idx].issues' $TRACKS"
+        else
+            command echo "  #$issue — after $prev_label's PR merges"
+            stale_flags_for "$issue"
+        fi
         i=$((i + 1))
     done
 

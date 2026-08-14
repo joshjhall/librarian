@@ -593,6 +593,113 @@ EOF
     assert_contains "$RUN_OUT" "--level 4" "a non-numeric autonomy_level falls back to the default"
 }
 
+# A NON-NUMERIC ISSUE NUMBER IS FLAGGED, never passed through to gh /
+# golem-launch.sh (#692).
+#
+# Sibling of the tr_int case above, for the tr_issue path — and the narrower half
+# of the corrupt-plan story: the up-front `jq -e .` check catches an UNPARSABLE
+# plan, this catches valid JSON with wrong types (hand-edited, or written by a
+# future caller that ignores the schema).
+#
+# NOT an injection test. These values reach `gh issue view` and `golem-launch.sh
+# print` as quoted argv, never `eval`'d, so the shell-ish fixture string is here
+# to be conspicuously non-numeric, not to escape anything — reading this as the
+# guard against a shell escape would misattribute what the quoting already does.
+#
+# The lane deliberately mixes a malformed HEAD with a VALID second issue, so the
+# assertions pin both halves: the bad entry is flagged and yields no command,
+# while its healthy sibling still renders. A guard that rejected the whole lane
+# would pass a flag-only assertion and silently drop real work from a plan the
+# operator is midway through.
+test_runbook_malformed_issue_number_flagged() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": 2,
+                "issues": ["42; rm -rf /", 43], "dispatched": false } ],
+  "dispatched": false }
+EOF
+    plant_gh_stub "$sb" OPEN "" ""
+    run_runbook "$sb" --path-dir "$sb/bin" render
+    assert_exit 0 "$RUN_RC" "a malformed issue number degrades rather than aborting the render"
+    assert_contains "$RUN_OUT" "MALFORMED ISSUE NUMBER" "the bad entry is flagged"
+    assert_not_contains "$RUN_OUT" "next-issue 42" \
+        "no launch command is built from a non-numeric issue number"
+    assert_not_contains "$RUN_OUT" "could not check" \
+        "the malformed entry is not queried against gh (which would blame the API)"
+    assert_contains "$RUN_OUT" "#43" "the lane's VALID issue still renders"
+}
+
+# A malformed entry MID-LANE keeps the serial order legible (#692).
+#
+# Distinct from the head case: here the predecessor of a valid entry is the
+# malformed one, which exercises the back-reference read that builds the "after
+# #N's PR merges" line. Unguarded, that renders as "after #'s PR merges" — a
+# wait-line pointing at nothing, in the output whose whole job is conveying
+# which issue waits on which.
+test_runbook_malformed_issue_number_midlane() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": 2,
+                "issues": [77, null, 79], "dispatched": false } ],
+  "dispatched": false }
+EOF
+    plant_gh_stub "$sb" OPEN "" ""
+    run_runbook "$sb" --path-dir "$sb/bin" render
+    assert_exit 0 "$RUN_RC" "a mid-lane malformed entry still renders the lane"
+    assert_contains "$RUN_OUT" "MALFORMED ISSUE NUMBER" "the mid-lane bad entry is flagged"
+    assert_contains "$RUN_OUT" "next-issue 77" "the valid head still offers its command"
+    assert_contains "$RUN_OUT" "the previous (malformed) entry" \
+        "the follower names its malformed predecessor rather than an empty #"
+    assert_not_contains "$RUN_OUT" "after #'s PR merges" \
+        "no wait-line points at an empty issue reference"
+    assert_not_contains "$RUN_OUT" "could not check" \
+        "the malformed mid-lane entry is not queried against gh either"
+}
+
+# PRECEDENCE: a malformed head beats the IN-FLIGHT arm (#692).
+#
+# render_lane tests `[ -z "$head_issue" ]` BEFORE the dispatched check, so a
+# malformed head renders MALFORMED even on a lane marked as launched. That
+# ordering is deliberate and worth pinning: the alternative prints
+# "# — IN FLIGHT" for an entry whose issue number is unusable, which reads as a
+# healthy running golem rather than a corrupt plan. Both other #692 fixtures use
+# `dispatched: false`, so without this case the precedence is unasserted.
+#
+# Driven on an ABSENT `dispatched` key, which is the stronger fixture: per the
+# schema's back-compat contract that reads as DISPATCHED, so this covers the
+# legacy shape and the precedence in one.
+test_runbook_malformed_head_beats_in_flight() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": 3, "issues": ["not-a-number", 43] } ] }
+EOF
+    plant_gh_stub "$sb" OPEN "" ""
+    run_runbook "$sb" --path-dir "$sb/bin" render
+    assert_exit 0 "$RUN_RC" "a malformed head on a dispatched lane still renders"
+    assert_contains "$RUN_OUT" "MALFORMED ISSUE NUMBER" "the malformed head is flagged"
+    assert_not_contains "$RUN_OUT" "— IN FLIGHT" \
+        "a malformed head does NOT render as a healthy in-flight golem"
+    assert_contains "$RUN_OUT" "#43" "the lane's valid follower still renders"
+}
+
 # THE SECOND could-not-look ARM: gh is PRESENT but the per-issue query FAILS.
 #
 # Distinct from the gh-absent case below, and a distinct code path: STALE_MODE

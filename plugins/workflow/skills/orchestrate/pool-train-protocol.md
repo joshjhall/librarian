@@ -369,6 +369,18 @@ train's batch approval is) — but the **critical cap still applies** (a critica
 track never dispatches at L4), and any genuine escalation still stops. The
 wait-indefinitely rule governs every non-autonomous run.
 
+**An autonomous orchestrator should not use `--runbook`** (#692). The variant's
+whole product is a plan handed back to a human to pace by hand — and unattended,
+that human is by definition not there, so the run banks a composition and stops
+with nothing to launch it. The two modes answer opposite questions: dispatch asks
+"start this work now", `--runbook` asks "let me start it later, one lane at a
+time". Combining them yields the cost of composing a plan and none of the work.
+An unattended run that wants to bound its burn should dispatch **fewer lanes**,
+which throttles the real dial (concurrent golems) rather than deferring
+everything to a session that will not come. This is a disposition, not an
+enforced guard: nothing in the tooling rejects the combination, so it is on the
+caller not to compose one.
+
 ## Phase T — Integration Train
 
 Land a **batch** of already-green, already-approved PRs end-to-end —
