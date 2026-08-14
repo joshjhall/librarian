@@ -256,6 +256,13 @@ render a runbook*, so the operator launches lanes by hand one at a time. Steps 2
 and 3 remain human gates that wait indefinitely, and the level is still chosen
 and persisted — see `pool-train-protocol.md` § *`--runbook`*.
 
+An **autonomous orchestrator should not use `--runbook`** (#692): banking a plan
+for a human to hand-launch is meaningless when no human is attending, so the run
+would compose a plan and stop with nothing to launch it. An unattended run bounds
+its burn by dispatching **fewer lanes**, not by deferring all of them. A
+disposition rather than an enforced guard — see `pool-train-protocol.md` §
+*Autonomous orchestrator*.
+
 ---
 
 ## Standing rule: wait indefinitely at a human gate
