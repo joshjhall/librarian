@@ -6,11 +6,11 @@ Running measurement for
 [#580](https://github.com/joshjhall/librarian/issues/580), which replaced an
 unsatisfiable prose policy with the `dispositionOf` rule list.
 
-**Status: OPEN — accumulating.** The instrument and method landed with the PR
-that created this file; the tally itself is **not complete** and carries **no
-verdict yet**. See § Status for the count and § Verdict for what is still
-missing. Adding rows over subsequent review cycles is the remaining work on the
-issue.
+**Status: OPEN — target count reached, verdict pending a second unrelated
+batch.** The row target (~10 cycles) is met at 11, and rows 6–10 supplied the
+missing ingredient rows 0–5 could not: cycles from an **unrelated** issue, and
+the first `R8` fires. See § Verdict for what the data now supports and the one
+thing it still does not.
 
 ## What is being measured, and why
 
@@ -67,9 +67,11 @@ than smoothing over.
 
 ## Status
 
-**Cycles tallied: 6 of ~10.** The instrument landed with this file, so the first
-rows are the review cycles of the PR that introduced it — which also means they
-are not a neutral sample (see § Reading these six rows together).
+**Cycles tallied: 11 of ~10.** Rows 0–5 are the review cycles of the PR that
+introduced the instrument — not a neutral sample (see § Reading these six rows
+together). Rows 6–10 are the **first batch from an unrelated issue** (#673),
+which is precisely what those notes said was needed before the `nature`
+distribution means anything.
 
 | # | issue | tier | files | +/- | cycle | total | blocking | `by_nature` | `by_rule` | deferred defect? |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -79,6 +81,71 @@ are not a neutral sample (see § Reading these six rows together).
 | 3 | 613 | (re-review, FULL) | 5 | +647 full | 4 | 1 | 0 | improvement 1 | R4 1 | **no** — but see below |
 | 4 | 613 | (re-review, narrow) | 2 delta | +149 delta | 5 | 0 | 0 | (none) | (none) | n/a — zero at 23% surface, `C1-cap` |
 | 5 | 613 | (confirmation, FULL) | 5 | +647 full | 6 | 0 | 0 | (none) | (none) | **no** — zero on a comparable surface |
+| 6 | 673 | medium code+test+docs | 8 | +869 full | 1 | 10 | **2** | defect-in-new-code 1, incomplete-work 1, improvement 8 | R2 2, R4 6, R6 1, R8 1 | **yes** — 2 deferrables were the same class as the confirmed blockers (see Row 6 notes) |
+| 7 | 673 | (re-review, delta) | 4 delta | +278 delta | 2 | 4 | **2** | defect-in-new-code 2, improvement 2 | R2 1, R4 1, R8 2 | **no** — both defects blocked correctly |
+| 8 | 673 | (re-review, FULL) | 8 | +1259 full | 3 | 3 | **1** | defect-in-new-code 1, improvement 2 | R4 2, R8 1 | **no** |
+| 9 | 673 | (re-review, FULL) | 8 | +1259 full | 4 | 2 | **1** | incomplete-work 1, improvement 1 | R2 1, R6 1 | **no** |
+| 10 | 673 | (re-review, FULL) | 8 | +1259 full | 5 | 4 | **1** | defect-in-new-code 1, improvement 3 | R4 3, R8 1 | **no** — but the cycle ended on `C1-cap` over `C8-novel` (see Row 10 notes) |
+
+### Rows 6-10 notes — the first non-self-referential batch, and the first `R8` fires
+
+**`R8` fired for the first time, four times, and every fire was a real defect.**
+Rows 0–5 could not test the rule that exists to catch what #580 missed, because no
+cycle produced a `defect-in-new-code`. This batch produced five across four
+cycles, each confirmed by reproduction before it was accepted:
+
+1. **C1** — a per-lane `dispatched` check tested `= "true"` while its sibling
+   header tested `= "false"`. Since `jq` prints `"null"` for an absent key, a
+   pre-existing plan file rendered already-running lanes as freshly launchable
+   *while the header one line above said "already in flight"*. Reproduced.
+2. **C2** — the fix for (1) added a documented recipe staging through a fixed
+   `/tmp/tracks.json`: symlink race plus a non-atomic cross-filesystem `mv`. The
+   codebase had hardened two sibling sites against exactly this.
+3. **C3** — the launch command was built inline in an `echo`, so a failed
+   subprocess rendered a blank line at exit 0. Reproduced with a failing stub.
+4. **C5** — a corrupt plan file rendered as an *empty* one: 0 lanes, "already in
+   flight", exit 0. Reproduced with a truncated file.
+
+**The blocking rate here is 7 blocking / 23 findings (30%)**, against 0/5 in rows
+0–5. That is the first data point suggesting the policy blocks when there is
+something to block on, rather than being uniformly permissive — the open question
+rows 0–5 explicitly could not answer.
+
+**Two cautions this batch confirms rather than merely repeats.**
+
+*A fix commit invalidates the prior cycle's read* — stated in § Verdict from
+the #567 batch, and demonstrated here twice: C2's blocking finding was in code C1's
+fix introduced, and C5's was in a file three fixes had already touched. Two of
+five defects were **created by the review loop itself**. The per-cycle row is not
+bookkeeping; it is the only way this is visible.
+
+*Row 6's deferred-defect check is a `yes`, and it is the informative one.* Two
+findings the judge put in the deferrable bucket — a documented "mark the lane
+dispatched" step with **no writer**, and three untested status-label arms
+including the padding boundary the code's own comment warns about — were the same
+class as the `--recompose` finding it had just called `incomplete-work` and
+blocked. Both were promoted and fixed on merit. The judge's `improvement` calls
+were defensible one at a time; the *pattern* across the bucket was not. This is
+the first row in the whole tally where reading deferrables on merit changed the
+outcome, which is precisely the standing rule's purpose.
+
+### Row 10 notes — `C1-cap` masked `C8-novel`, exactly as row 4 predicted
+
+Cycle 5 returned `verdict=stop`, `rule=C1-cap`, **`capped_over=C8-novel`**, with
+`novel=4`. Re-running the predicate uncapped (`--max-cycles 9`) returns
+**`continue` / `C8-novel` / `novel-material`**: the loop did not converge, it ran
+out of budget.
+
+Rows 4–5 flagged this masking as "worth carrying forward beyond this issue" and
+recommended the uncapped re-run as the cheap disambiguation. This is its first
+use on an unrelated issue, and it changed the disposition: the run was treated as
+a **dead-end** — PR parked for human review rather than merged — instead of
+reading `stop` as done. Every one of the five cycles found a blocking defect and
+the severity never reached zero, so "converged" was never a defensible reading.
+
+`capped_over` is now doing real work. It exists so a caller can tell a genuine
+stop from a budget artifact without re-deriving anything, and here it is the
+single field that separated "ready to merge" from "not reviewed to exhaustion".
 
 ### Row 0 notes
 
@@ -235,19 +302,46 @@ correctly suppressed spurious `incomplete-work` calls but also means this batch
 cannot speak to how `incomplete-work` is assigned in the general case. Rows from
 unrelated issues are needed before the `nature` distribution means much.
 
+> **Superseded by rows 6–10.** The paragraphs above are the reading of rows 0–5
+> and are left as written — they were accurate for that batch and the reasoning
+> is what makes rows 6–10 legible. But "`R8` has never fired" and "six of eight
+> rules have never fired" are **no longer current**: rows 6–10 fired `R8` four
+> times (every one a real defect) plus `R6`, and supplied the unrelated-issue
+> sample this caveat asks for. See § Rows 6-10 notes and § Verdict.
+
 ## Verdict
 
-**Not yet reached — deliberately.** Both ACs the verdict depends on are open:
+**Partial, and stated as such.** Rows 6–10 answer the first AC and turn the
+second from unanswerable into answered-once. What they cannot do is establish a
+*rate* from a single unrelated issue.
 
-- **Is the blocking rate plausible?** Needs enough rows to distinguish a rate
-  from noise. Neither extreme is healthy, and a handful of cycles cannot separate
-  "blocking fires appropriately" from "this batch happened to be clean".
-- **Did any cycle defer a confirmed new-code defect?** One `yes` is the signal;
-  a short run of `no` is not yet evidence of good recall.
+- **Is the blocking rate plausible? — Yes, on the evidence so far.** 0/5 blocking
+  across rows 0–5 and **7/23 (30%)** across rows 6–10. Neither extreme #613 warned
+  about appeared: not the ~1.5% that was the #580 bug, not the ~100% that would
+  dead-end every cycle at the cap. The policy blocked when there was something to
+  block on and deferred when there was not, and the difference between the two
+  batches tracks the diffs, not the policy.
+- **Did any cycle defer a confirmed new-code defect? — Yes, once (row 6),** and
+  the mechanism is more interesting than the count. No single deferral was
+  clearly miscalled; the *pattern* was. Two `improvement` findings sat in the
+  deferrable bucket while a third finding of the same class — prose asserting a
+  mechanism nothing implements — was correctly blocked as `incomplete-work` in
+  the same cycle. Reading the bucket on merit caught it; no aggregate would have.
+- **Is `nature` systematically miscalled? — No evidence of it.** `R8` fired four
+  times and every fire was a real, reproduced defect: no false positives. The one
+  boundary worth watching is `improvement` vs `incomplete-work` for
+  documentation-asserts-nonexistent-behavior, which row 6 shows landing on both
+  sides within a single cycle.
 
-A verdict from two or three rows would be exactly the error #613 was filed to
-correct — reasoning where measurement was called for. Two cautions carried
-forward from the #567 notes, both of which cost that batch time:
+**What is still missing** is breadth: one unrelated issue is one sample, and both
+batches were reviewed by the same author-plus-harness pairing. A second unrelated
+batch would test whether the 30% is a property of the policy or of this diff.
+Per AC 3, no follow-up on `judgePrompt` is filed, because the data does not show
+a systematic miscall to fix — filing one now would be guessing at a finding the
+measurement did not make.
+
+Two cautions carried forward from the #567 notes, both of which cost that batch
+time — and **both of which fired again in rows 6–10**, the second one twice:
 
 - **Zero-finding trivial cycles are not evidence.** A comment-only diff *should*
   find nothing. Recall gets tested on medium-tier diffs and on re-review cycles
