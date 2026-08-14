@@ -261,6 +261,65 @@ composition into running golems is the four-step **setup flow** from
    the golem as `--level {N}` on its `/workflow:next-issue` prompt so the run's state file
    records it (see `next-issue/autonomy.md` § *Level selection*).
 
+#### `--runbook`: bank the plan, dispatch by hand (#673)
+
+`/workflow:orchestrate tracks [N] --runbook` runs steps **1–3 unchanged** and
+replaces step 4's dispatch with **persist + render**. Dispatching N golems
+commits to N parallel burn rates at once; near a token cap — or late in a session
+— the useful move is to take the composed plan, bank it, and spin up **one**
+golem at a time, spreading the burn across days or sessions.
+
+What does **not** change: the two human gates. Approval and the L1–L4 question
+are still `AskUserQuestion` and still **wait indefinitely** (§ *Standing rule*).
+`--runbook` changes what happens *after* approval, never whether approval is
+waited for. The level is still chosen and still persisted — it is the run's
+single autonomy knob and every downstream gate reads it, so a banked plan without
+one is incomplete.
+
+Step 4 becomes:
+
+1. Write the approved composition to `.worktrees/.status/tracks.json` with
+   `dispatched: false` (top level and per lane), stamping each track's chosen
+   (capped) `autonomy_level` exactly as a dispatching run would, plus the
+   composer's `rationale`.
+2. Render the runbook — `${CLAUDE_PLUGIN_ROOT}/scripts/tracks-runbook.sh render`.
+   Per lane it emits the **head's** launch command, the lane's remaining issues in
+   **serial** order (each marked as waiting on the previous PR — a lane is serial
+   by construction, so listing them as parallel commands would be actively
+   wrong), the `deps_honored` build-order edges, and the `rationale` / `deferred`
+   / `cross_track_overlap` context the operator needs to choose *which* lane is
+   worth spending on.
+3. Stop. No `worktree-new.sh`, no `golem-launch.sh launch`, no `tmux`.
+
+The head command is produced by invoking `golem-launch.sh print {head} --level
+{N}` — **never hand-assembled**. That is one source of truth for the launch
+shape: a runbook line that drifts from what a real dispatch runs fails silently,
+and the operator pastes a command that no longer matches the pipeline.
+
+**Re-running re-renders.** `--runbook` against an existing `dispatched: false`
+plan **re-renders it** rather than recomposing — the backlog may have moved, and
+a plan the operator is halfway through executing must not be reshuffled
+underneath them. Recomposition is available but **explicit** (`--recompose`).
+
+**Staleness is surfaced, never acted on.** An issue that closed, gained a
+`status/*` label, or gained a dependency since composition is **flagged** in the
+re-render and still shown — never auto-dropped, since the operator may have
+closed it deliberately. When `gh` is unavailable the render says the check did
+not run, rather than reading as a clean bill of health.
+
+**A hand-launched golem is an ordinary golem.** It labels its issue
+`status/in-progress`, writes its status cache, and appears in `golem-status.sh`
+under its lane like any other — the whole value is that the operator drip-feeds
+the *same* pipeline. Mark that lane `dispatched: true` so the next render shows
+it in flight instead of re-offering its command; untouched lanes still render
+their pending command.
+
+**Non-goals.** No scheduling, throttling, or automatic drip-feed — the point is
+returning control to the human, not automating the pacing. No token estimation:
+per-issue burn is not predictable from an issue body, and a wrong estimate is
+worse than none because it would be trusted. `--checkpoint` already reports
+*actual* burn.
+
 **Autonomous orchestrator.** When the orchestrator itself runs unattended, the
 two `AskUserQuestion` gates are authorized by the autonomous invocation (as the
 train's batch approval is) — but the **critical cap still applies** (a critical

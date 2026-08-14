@@ -60,6 +60,7 @@ merge anything a golem leaves for them.
 | `/workflow:orchestrate dispatch <N…>` or `dispatch <count>` | Phase D — Dispatch golems |
 | `/workflow:orchestrate pool <N>` | Phase P — Worker pool (set size, refill from backlog) |
 | `/workflow:orchestrate tracks [N]` | Phase P — Compose 2–4 ordered, low-collision tracks, then run the setup flow (propose → approve → choose L1–L4 → dispatch) |
+| `/workflow:orchestrate tracks [N] --runbook` | Phase P — Same setup flow, stopping **before** dispatch: bank the plan and render an operator runbook to launch lanes by hand, one at a time (#673) |
 | `/workflow:orchestrate drain` / `pause` / `resume` | Phase P — Pool refill controls |
 | `/workflow:orchestrate` or `/workflow:orchestrate status` | Phase M — Monitor (one-shot status sweep, on demand) |
 | `/workflow:orchestrate monitor` / `watch` | Phase M — Monitor loop (event-driven push gate-watch by default; rolling sweep opt-in) |

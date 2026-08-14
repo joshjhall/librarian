@@ -38,6 +38,10 @@
             "minimum": 1,
             "description": "DISPLAY CACHE: the issue currently dispatched (or last dispatched) for this lane. The live golem set is authoritative via PR/label state; lane-aware refill advances this as each issue's PR merges."
           },
+          "dispatched": {
+            "type": "boolean",
+            "description": "Whether this lane's head has been dispatched. Written by the `--runbook` setup-flow variant (issue #673), which composes and banks a plan WITHOUT dispatching: every lane starts `false` and flips to `true` as the operator hand-launches that lane's head from the runbook. Absent means dispatched (back-compat: every tracks.json written before #673 came from a dispatching setup flow). What makes a partially-executed plan render correctly — an in-flight lane shows as such instead of re-offering its launch command."
+          },
           "deps_honored": {
             "type": "array",
             "description": "DISPLAY ONLY: build-order dependency edges (issue #462) co-located and ordered within this lane, e.g. [\"#19->#22\", \"#20->#22\"] meaning #19/#20 were placed ahead of #22 because #22 depends on them. Emitted by orchestrate/workflow.js `mode: \"tracks\"` (composeTracks), derived purely from each backlog item's `deps` array — the edges whose BOTH endpoints landed in this lane. (The setup flow resolves `deps` from `Depends on #N` / `Blocked by #N` / native blockedBy before calling the composer; composeTracks itself stays pure and only reads the resolved `deps`.) Shown so the operator sees why a lane is ordered as it is. Optional — a lane with no in-lane dependency edge omits it.",
@@ -55,6 +59,17 @@
       "items": {
         "type": "integer",
         "minimum": 1
+      }
+    },
+    "dispatched": {
+      "type": "boolean",
+      "description": "Whether this composition has been dispatched at all. `false` marks a PLANNED-NOT-DISPATCHED plan banked by the `--runbook` setup-flow variant (issue #673) for the operator to hand-launch one lane at a time. Absent means dispatched (back-compat). Re-running `/workflow:orchestrate tracks --runbook` against a `false` plan RE-RENDERS the banked runbook rather than recomposing — the backlog may have moved, and a plan the operator is halfway through executing must not be reshuffled underneath them; recomposition is available but explicit."
+    },
+    "rationale": {
+      "type": "array",
+      "description": "DISPLAY ONLY: short, deterministic, data-derived notes explaining the composition (lane count / sizes / co-located dependency clusters / any cycle or oversized-cluster split / out-of-backlog dep refs / deferred count / overlap). Emitted by orchestrate/workflow.js `mode: \"tracks\"` (composeTracks) and shown in the proposal the operator approves. Persisted so a banked `--runbook` plan can render it days later without recomposing — the operator decides WHICH lane is worth spending on, which needs the reasoning, not just the lane contents.",
+      "items": {
+        "type": "string"
       }
     },
     "cross_track_overlap": {

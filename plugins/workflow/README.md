@@ -117,6 +117,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `worktree-rm.sh <N>` | Remove issue N's worktree + branch |
 | `golem-status.sh` | Central golem status table + BLOCKED list (TTY-free) |
 | `golem-attach.sh <N>` | Attach to issue N's golem (worktree tmux or container) |
+| `tracks-runbook.sh render` | Render a banked (`dispatched: false`) track composition as an operator runbook — per-lane launch commands built via `golem-launch.sh print`, serial remainder, staleness flagged. Never dispatches (#673) |
 | `golem-watch.sh` | Stream proactive gate notifications until Ctrl-C |
 | `golem-gate-watch.sh` | Gate-detection engine shared by status + watch |
 | `golem-resolve.sh <N>` | Emit a `resolved` feed line to clear a golem's send-keys-resolved plan gate from the BLOCKED list on the next sweep (#422) |
