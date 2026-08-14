@@ -63,7 +63,7 @@
     },
     "dispatched": {
       "type": "boolean",
-      "description": "Whether this composition has been dispatched at all. `false` marks a PLANNED-NOT-DISPATCHED plan banked by the `--runbook` setup-flow variant (issue #673) for the operator to hand-launch one lane at a time. Absent means dispatched (back-compat). Re-running `/workflow:orchestrate tracks --runbook` against a `false` plan RE-RENDERS the banked runbook rather than recomposing — the backlog may have moved, and a plan the operator is halfway through executing must not be reshuffled underneath them; recomposition is available but explicit."
+      "description": "How this composition was DELIVERED, not how far it has progressed. `false` marks a plan banked by the `--runbook` setup-flow variant (issue #673) for the operator to hand-launch one lane at a time; it stays `false` for the plan's whole life, including after every lane has been launched, because it is what the re-render guard keys on. Per-lane `dispatched` is the sole record of what has actually been launched — the runbook header derives its progress line from the lanes rather than from this field, so the two cannot drift. Absent means dispatched (back-compat). Re-running `/workflow:orchestrate tracks --runbook` against a `false` plan RE-RENDERS the banked runbook rather than recomposing — the backlog may have moved, and a plan the operator is halfway through executing must not be reshuffled underneath them; recomposition is explicit (remove the plan and re-run)."
     },
     "rationale": {
       "type": "array",

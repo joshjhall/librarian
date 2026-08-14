@@ -331,6 +331,43 @@ test_runbook_absent_dispatched_reads_as_dispatched() {
     assert_not_contains "$RUN_OUT" "BANKED" "a legacy plan is not labelled banked"
 }
 
+# THE BANKED HEADER REPORTS PROGRESS, derived from lane state.
+#
+# The top-level `dispatched` flag answers "was this composition banked?" and
+# stays `false` for the plan's whole life — the re-render guard depends on that.
+# So it cannot also answer "has anything been launched yet?": reading it that way
+# would keep reporting "planned, not dispatched" after every lane was up. The
+# standard fixture has 1 of 3 lanes launched, which distinguishes all three
+# states; a header that ignored lane state would print the not-dispatched line
+# here and fail.
+test_runbook_banked_header_tracks_progress() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_tracks "$sb"
+    run_runbook "$sb" render --no-staleness
+    assert_contains "$RUN_OUT" "partly launched — 2 of 3 lane(s) still to launch" \
+        "a partly-executed banked plan reports how much is left"
+    assert_not_contains "$RUN_OUT" "planned, not dispatched" \
+        "it does not claim nothing has started"
+
+    # Every lane launched: still a banked plan, but nothing left to launch.
+    local sb2
+    new_sandbox sb2
+    command mkdir -p "$sb2/.worktrees/.status"
+    command cat >"$sb2/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": 3, "issues": [42], "dispatched": true },
+              { "lane": 1, "autonomy_level": 3, "issues": [77], "dispatched": true } ],
+  "dispatched": false }
+EOF
+    run_runbook "$sb2" render --no-staleness
+    assert_contains "$RUN_OUT" "fully launched" "a fully-launched banked plan says so"
+    assert_not_contains "$RUN_OUT" "still to launch" "and offers nothing further"
+}
+
 # The already-dispatched header branch, pinned on its own. Without this the
 # alternate branch of render_header's conditional has no assertion, so a flipped
 # condition or a typo'd string would ship unnoticed.
@@ -554,6 +591,40 @@ EOF
     assert_exit 0 "$RUN_RC" "a malformed numeric field still renders"
     assert_contains "$RUN_OUT" "#42" "the lane's issue is still listed"
     assert_contains "$RUN_OUT" "--level 4" "a non-numeric autonomy_level falls back to the default"
+}
+
+# THE SECOND could-not-look ARM: gh is PRESENT but the per-issue query FAILS.
+#
+# Distinct from the gh-absent case below, and a distinct code path: STALE_MODE
+# stays "on", so the header carries no note at all — the only signal is the
+# per-issue "query failed" line. A transient API error, a rate limit, or an
+# unauthenticated gh all land here, and without this line the render would look
+# exactly like a clean staleness check. Same fail-loud rule, one level down.
+test_runbook_reports_failed_staleness_query() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_tracks "$sb"
+    # A gh that IS on PATH (so STALE_MODE stays "on") but fails every query.
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: resolvable on PATH, but every query fails (rate limit / auth / API).
+command echo "gh: simulated API failure" >&2
+exit 1
+EOF
+    command chmod +x "$sb/bin/gh"
+    run_runbook "$sb" --path-dir "$sb/bin" render
+    assert_exit 0 "$RUN_RC" "a failed query does not abort the render"
+    assert_contains "$RUN_OUT" "could not check #77 against the live backlog" \
+        "the per-issue query failure is reported"
+    assert_not_contains "$RUN_OUT" "staleness: NOT CHECKED" \
+        "this is the gh-PRESENT arm — no header-level note is emitted"
+    assert_contains "$RUN_OUT" "next-issue 77" \
+        "the entry is still rendered with its command"
 }
 
 # COULD-NOT-LOOK IS NOT CLEAN: with gh unavailable the render says the staleness

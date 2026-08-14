@@ -187,7 +187,22 @@ render_header() {
     command echo "GOLEM RUNBOOK — $nlanes lane(s), cross-track overlap $overlap"
     command echo "  plan: $TRACKS"
     if [ "$dispatched" = "false" ]; then
-        command echo "  status: BANKED (planned, not dispatched) — launch lanes yourself, one at a time"
+        # A banked plan gets executed lane by lane, so report PROGRESS rather
+        # than re-reading the top-level flag. That flag answers "was this
+        # composition banked?" and stays `false` for the plan's whole life (the
+        # re-render guard depends on it), so treating it as "has anything been
+        # launched?" would keep printing "nothing started" after every lane was
+        # up. Lane state is the single source of truth for what has actually
+        # been launched; the header derives from it instead of duplicating it.
+        local pending
+        pending="$(tr_int "[.tracks[] | select(.dispatched == false)] | length" "$nlanes")"
+        if [ "$pending" -eq 0 ] && [ "$nlanes" -gt 0 ]; then
+            command echo "  status: BANKED, fully launched — every lane is in flight"
+        elif [ "$pending" -eq "$nlanes" ]; then
+            command echo "  status: BANKED (planned, not dispatched) — launch lanes yourself, one at a time"
+        else
+            command echo "  status: BANKED, partly launched — $pending of $nlanes lane(s) still to launch"
+        fi
     else
         command echo "  status: dispatched — lanes below are already in flight"
     fi

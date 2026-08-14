@@ -333,6 +333,7 @@ run_fragment_test test_runbook_renders_lane_serially "tracks-runbook: only the l
 run_fragment_test test_runbook_carries_composition_context "tracks-runbook: rationale/deferred/overlap/deps_honored reach the runbook (#673)"
 run_fragment_test test_runbook_partial_execution_stable "tracks-runbook: a partially-executed plan renders correctly (#673)"
 run_fragment_test test_runbook_absent_dispatched_reads_as_dispatched "tracks-runbook: an absent dispatched reads as dispatched at BOTH levels (#673)"
+run_fragment_test test_runbook_banked_header_tracks_progress "tracks-runbook: the banked header reports launch progress from lane state (#673)"
 run_fragment_test test_runbook_dispatched_plan_header "tracks-runbook: an already-dispatched plan renders the in-flight header (#673)"
 run_fragment_test test_runbook_flags_stale_without_dropping "tracks-runbook: a closed issue is flagged and STILL rendered (#673)"
 run_fragment_test test_runbook_flags_status_label_drift "tracks-runbook: a newly in-progress issue is flagged (#673)"
@@ -344,6 +345,7 @@ run_fragment_test test_runbook_flags_new_dependency "tracks-runbook: a dependenc
 run_fragment_test test_runbook_reports_failed_launch_print "tracks-runbook: a failed golem-launch print is reported, not a blank line (#673)"
 run_fragment_test test_runbook_outside_git_repo_exits_3 "tracks-runbook: outside a git repo with no --status-dir exits 3 (#673)"
 run_fragment_test test_runbook_malformed_numeric_fields_fall_back "tracks-runbook: malformed numeric fields fall back instead of breaking arithmetic (#673)"
+run_fragment_test test_runbook_reports_failed_staleness_query "tracks-runbook: a failed per-issue gh query is reported (gh present) (#673)"
 run_fragment_test test_runbook_reports_unknowable_staleness "tracks-runbook: an unavailable gh is reported, never a clean check (#673)"
 run_fragment_test test_runbook_without_jq_fails_loudly "tracks-runbook: a missing jq exits 3 rather than rendering an empty plan (#673)"
 

@@ -345,6 +345,13 @@ symlink that redirects the write, and a `/tmp` staging file is usually on a
 different filesystem, which makes the `mv` a copy rather than an atomic rename —
 so an interrupted write could leave a half-written plan.
 
+Flip only the **lane's** flag; leave the top-level `dispatched: false` alone. It
+records that this plan was banked, not how far it has got, and the re-render
+guard above keys on it — setting it would make the next `--runbook` recompose and
+reshuffle a plan mid-execution. The header derives its progress line ("2 of 3
+lanes still to launch") from the lanes themselves, so it stays accurate without a
+second flag to keep in sync.
+
 Keeping the renderer read-only is deliberate: a tool that mutated the plan while
 displaying it could not be run to *look* at a plan without changing it, and the
 whole point of banking one is that the operator stays in control of when
