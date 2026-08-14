@@ -215,7 +215,17 @@ render_lane() {
     head_issue="$(tr_jq ".tracks[$idx].issues[0]")"
 
     # The head: a runnable command, unless this lane is already under way.
-    if [ "$lane_dispatched" = "true" ]; then
+    #
+    # POLARITY MATTERS, and it is the same one render_header uses: only an
+    # explicit `false` means pending. An ABSENT field reads as DISPATCHED, per
+    # the schema's back-compat contract — every tracks.json written before #673
+    # came from a dispatching setup flow and has no `dispatched` key at all.
+    # Testing `= "true"` instead would invert that (jq prints "null" for an
+    # absent key, which is not "true"), so a pre-#673 plan would render every
+    # already-running lane as freshly launchable — inviting the operator to
+    # double-launch a golem that is already up, while the header one line above
+    # correctly said "already in flight".
+    if [ "$lane_dispatched" != "false" ]; then
         command echo "  #$head_issue — IN FLIGHT (already launched; no command pending)"
     else
         command echo "  #$head_issue — launch this:"

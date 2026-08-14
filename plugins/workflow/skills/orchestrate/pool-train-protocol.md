@@ -299,7 +299,19 @@ and the operator pastes a command that no longer matches the pipeline.
 **Re-running re-renders.** `--runbook` against an existing `dispatched: false`
 plan **re-renders it** rather than recomposing — the backlog may have moved, and
 a plan the operator is halfway through executing must not be reshuffled
-underneath them. Recomposition is available but **explicit** (`--recompose`).
+underneath them. Concretely: before composing, check for a banked plan and skip
+straight to the render when one exists —
+
+```bash
+jq -e '.dispatched == false' .worktrees/.status/tracks.json >/dev/null 2>&1 \
+  && "${CLAUDE_PLUGIN_ROOT}/scripts/tracks-runbook.sh" render
+```
+
+Recomposition is therefore **explicit by construction**: the operator deletes (or
+moves aside) `tracks.json` and re-runs `/workflow:orchestrate tracks --runbook`,
+which finds no banked plan and composes fresh. There is deliberately no
+`--recompose` flag — the plan is a file, and removing it is both the clearest way
+to say "start over" and impossible to trigger by accident.
 
 **Staleness is surfaced, never acted on.** An issue that closed, gained a
 `status/*` label, or gained a dependency since composition is **flagged** in the
@@ -310,9 +322,24 @@ not run, rather than reading as a clean bill of health.
 **A hand-launched golem is an ordinary golem.** It labels its issue
 `status/in-progress`, writes its status cache, and appears in `golem-status.sh`
 under its lane like any other — the whole value is that the operator drip-feeds
-the *same* pipeline. Mark that lane `dispatched: true` so the next render shows
+the *same* pipeline.
+
+After launching a lane head, mark that lane dispatched so the next render shows
 it in flight instead of re-offering its command; untouched lanes still render
-their pending command.
+their pending command. Nothing writes this automatically — `tracks-runbook.sh`
+only ever **reads** `tracks.json` — so it is one explicit edit, by the operator
+or the live session that launched the lane:
+
+```bash
+jq '.tracks |= map(if .lane == <LANE> then .dispatched = true else . end)' \
+  .worktrees/.status/tracks.json > /tmp/tracks.json \
+  && mv /tmp/tracks.json .worktrees/.status/tracks.json
+```
+
+Keeping the renderer read-only is deliberate: a tool that mutated the plan while
+displaying it could not be run to *look* at a plan without changing it, and the
+whole point of banking one is that the operator stays in control of when
+anything advances.
 
 **Non-goals.** No scheduling, throttling, or automatic drip-feed — the point is
 returning control to the human, not automating the pacing. No token estimation:

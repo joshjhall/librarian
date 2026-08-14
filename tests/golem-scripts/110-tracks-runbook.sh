@@ -23,6 +23,10 @@
 #   lane 2 (L4) pending, 1 issue
 # Exercises partial execution (one lane in flight, two pending), level threading
 # across three distinct levels, and every carry-through field in one fixture.
+#
+# The pending lanes carry an EXPLICIT `"dispatched": false`, matching what the
+# `--runbook` setup flow writes when it banks a plan. Absence means something
+# different (see plant_tracks_legacy) and is pinned separately.
 plant_tracks() {
     local sb="$1"
     command mkdir -p "$sb/.worktrees/.status"
@@ -31,13 +35,30 @@ plant_tracks() {
   "tracks": [
     { "lane": 0, "autonomy_level": 3, "issues": [42, 43, 44],
       "dispatched": true, "deps_honored": ["#42->#44"] },
-    { "lane": 1, "autonomy_level": 2, "issues": [77, 78] },
-    { "lane": 2, "autonomy_level": 4, "issues": [91] }
+    { "lane": 1, "autonomy_level": 2, "issues": [77, 78], "dispatched": false },
+    { "lane": 2, "autonomy_level": 4, "issues": [91], "dispatched": false }
   ],
   "deferred": [101, 102],
   "cross_track_overlap": 1,
   "dispatched": false,
   "rationale": ["composed 3 track(s) from 8 backlog issue(s)"]
+}
+EOF
+}
+
+# plant_tracks_legacy <sandbox> — a PRE-#673 composition: no `dispatched` key at
+# all, at either level, because the key did not exist before this change. Every
+# such file came from a setup flow that dispatched, which is what the schema's
+# "absent means dispatched" back-compat clause encodes.
+plant_tracks_legacy() {
+    local sb="$1"
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{
+  "tracks": [
+    { "lane": 0, "autonomy_level": 3, "issues": [42, 43] }
+  ],
+  "cross_track_overlap": 0
 }
 EOF
 }
@@ -282,6 +303,55 @@ test_runbook_partial_execution_stable() {
     assert_contains "$RUN_OUT" "BANKED" "the plan is labelled planned-not-dispatched"
 }
 
+# BACK-COMPAT: an ABSENT `dispatched` reads as DISPATCHED, at BOTH levels.
+#
+# The schema promises this for pre-#673 files, which have no `dispatched` key at
+# all. Getting the per-lane polarity backwards (testing `= "true"` rather than
+# `!= "false"`) produces output that CONTRADICTS ITSELF: the header says "already
+# in flight" while the next line offers a launch command for the same golem — and
+# an operator following it double-launches a running golem. Asserting both halves
+# together is what pins the two checks to the same polarity; the header alone was
+# already correct while the lane was not.
+test_runbook_absent_dispatched_reads_as_dispatched() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_tracks_legacy "$sb"
+    run_runbook "$sb" render --no-staleness
+    assert_exit 0 "$RUN_RC" "a pre-#673 tracks.json still renders"
+    assert_contains "$RUN_OUT" "already in flight" \
+        "an absent top-level dispatched reads as dispatched"
+    assert_contains "$RUN_OUT" "#42 — IN FLIGHT" \
+        "an absent PER-LANE dispatched also reads as dispatched"
+    assert_not_contains "$RUN_OUT" "next-issue 42" \
+        "no launch command is offered for an already-running golem"
+    assert_not_contains "$RUN_OUT" "BANKED" "a legacy plan is not labelled banked"
+}
+
+# The already-dispatched header branch, pinned on its own. Without this the
+# alternate branch of render_header's conditional has no assertion, so a flipped
+# condition or a typo'd string would ship unnoticed.
+test_runbook_dispatched_plan_header() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": 3, "issues": [42], "dispatched": true } ],
+  "cross_track_overlap": 0, "dispatched": true }
+EOF
+    run_runbook "$sb" render --no-staleness
+    assert_exit 0 "$RUN_RC" "a dispatched plan renders"
+    assert_contains "$RUN_OUT" "already in flight" "the dispatched header branch fires"
+    assert_not_contains "$RUN_OUT" "BANKED" "and the banked message does not"
+}
+
 # STALENESS FLAGGED, NEVER ACTED ON: a closed issue is annotated AND still
 # rendered. Auto-dropping it would silently rewrite a plan the operator may be
 # midway through — and they may have closed it deliberately.
@@ -314,6 +384,77 @@ test_runbook_flags_status_label_drift() {
     plant_gh_stub "$sb" OPEN "status/in-progress severity/medium" ""
     run_runbook "$sb" --path-dir "$sb/bin" render
     assert_contains "$RUN_OUT" "now status/in-progress" "a newly in-progress issue is flagged"
+}
+
+# The OTHER THREE status labels are flagged too.
+#
+# stale_flags_for matches four space-padded labels; only status/in-progress was
+# covered above. Each arm is its own glob, so a typo or a broken padding boundary
+# in one would ship silently — and the padding is exactly what the code comment
+# warns about. Driven one label per sandbox because the stub answers with a fixed
+# document for every issue.
+test_runbook_flags_remaining_status_labels() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb label
+    for label in status/pr-pending status/blocked status/on-hold; do
+        new_sandbox sb
+        plant_tracks "$sb"
+        plant_gh_stub "$sb" OPEN "$label" ""
+        run_runbook "$sb" --path-dir "$sb/bin" render
+        assert_contains "$RUN_OUT" "now $label" "$label is flagged"
+    done
+}
+
+# The space-padding boundary itself: a label that CONTAINS a watched label as a
+# prefix must not trip it. `status/blocked-by-design` is not `status/blocked`,
+# and matching it would flag a healthy issue on every render.
+test_runbook_status_label_match_is_exact() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_tracks "$sb"
+    plant_gh_stub "$sb" OPEN "status/blocked-by-design" ""
+    run_runbook "$sb" --path-dir "$sb/bin" render
+    assert_not_contains "$RUN_OUT" "now status/blocked" \
+        "a longer label sharing a watched prefix does not trip the match"
+}
+
+# An empty lane renders its placeholder and does not fall through to the head
+# lookup (which would read issues[0] of an empty array).
+test_runbook_empty_lane() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": 3, "issues": [], "dispatched": false } ],
+  "cross_track_overlap": 0, "dispatched": false }
+EOF
+    run_runbook "$sb" render --no-staleness
+    assert_exit 0 "$RUN_RC" "an empty lane renders without error"
+    assert_contains "$RUN_OUT" "(empty lane)" "the empty-lane placeholder is shown"
+    assert_not_contains "$RUN_OUT" "launch this" "no launch command is invented"
+}
+
+# `--status-dir` with no value is a usage error, distinct from an unknown flag.
+# Silently treating it as absent would fall back to repo_root and render a
+# DIFFERENT plan than the operator asked for.
+test_runbook_status_dir_without_value_exits_2() {
+    local sb
+    new_sandbox sb
+    plant_tracks "$sb"
+    run_runbook "$sb" render --status-dir
+    assert_exit 2 "$RUN_RC" "--status-dir with no value exits 2"
+    assert_contains "$RUN_OUT" "needs a directory" "the message names what is missing"
 }
 
 # A dependency declared after composition is flagged — the one drift that can
