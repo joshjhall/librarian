@@ -228,8 +228,6 @@ render_lane() {
     if [ "$lane_dispatched" != "false" ]; then
         command echo "  #$head_issue — IN FLIGHT (already launched; no command pending)"
     else
-        command echo "  #$head_issue — launch this:"
-        command echo ""
         # The launch shape comes from golem-launch.sh, never from this script.
         #
         # Its stderr is FORWARDED, not swallowed. `print` warns there when this
@@ -238,8 +236,27 @@ render_lane() {
         # and a banked runbook is pasted days later, which is precisely when that
         # has had time to happen. Suppressing the warning would hand the operator
         # a confident-looking command that silently fails.
-        command echo "    $("$LAUNCH" print "$head_issue" --level "$level")"
-        command echo ""
+        #
+        # Its EXIT STATUS is checked too, and separately from the substitution.
+        # Under `set -uo pipefail` (no `-e`) a failed `print` merely yields empty
+        # stdout, so inlining it into the echo would render "launch this:"
+        # followed by a blank line and still exit 0 — a runbook whose single most
+        # important line is missing, reported as success. That is precisely the
+        # "clean report of nothing" this file's header rules out, and the same
+        # standard already applied to the jq and gh paths.
+        local head_cmd head_rc
+        head_cmd="$("$LAUNCH" print "$head_issue" --level "$level")"
+        head_rc=$?
+        if [ "$head_rc" -ne 0 ] || [ -z "$head_cmd" ]; then
+            command echo "  #$head_issue — LAUNCH COMMAND UNAVAILABLE"
+            command echo "    ! golem-launch.sh print failed (exit $head_rc) — see stderr above."
+            command echo "    ! Do NOT hand-assemble this command; fix the launcher and re-render."
+        else
+            command echo "  #$head_issue — launch this:"
+            command echo ""
+            command echo "    $head_cmd"
+            command echo ""
+        fi
     fi
     stale_flags_for "$head_issue"
 

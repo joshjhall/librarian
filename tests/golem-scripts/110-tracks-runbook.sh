@@ -477,6 +477,85 @@ test_runbook_flags_new_dependency() {
     assert_contains "$RUN_OUT" "declares a dependency" "a newly-declared dependency is flagged"
 }
 
+# A FAILED `golem-launch.sh print` IS REPORTED, not rendered as a blank line.
+#
+# Under `set -uo pipefail` a failed print yields empty stdout, so inlining it in
+# the echo would print "launch this:" followed by nothing and still exit 0 — the
+# runbook's single most important line silently missing, reported as success.
+#
+# Driven against a COPY of the scripts dir whose golem-launch.sh is replaced by a
+# failing stub: the real one is hard to fail on demand, and the point is the
+# renderer's handling of a non-zero exit, whatever its cause (version-skew
+# refusal, bad config, missing file).
+test_runbook_reports_failed_launch_print() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_tracks "$sb"
+    command cp -r "$SCRIPTS" "$sb/scripts"
+    command cat >"$sb/scripts/golem-launch.sh" <<'EOF'
+#!/usr/bin/env bash
+# Test stub: fail the way a version-skew refusal would.
+command echo "golem-launch: simulated failure" >&2
+exit 3
+EOF
+    command chmod +x "$sb/scripts/golem-launch.sh"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" "$sb/scripts/tracks-runbook.sh" render --no-staleness 2>&1)" || RUN_RC=$?
+    assert_contains "$RUN_OUT" "LAUNCH COMMAND UNAVAILABLE" \
+        "a failed print is reported, not rendered as a blank line"
+    assert_contains "$RUN_OUT" "exit 3" "the failure carries the launcher's exit status"
+    assert_not_contains "$RUN_OUT" "#77 — launch this:" \
+        "the lane does not claim to offer a command it could not build"
+}
+
+# The default STATUS_DIR resolution's failure branch: outside a git repo, with no
+# --status-dir, there is nothing to resolve against. Exit 3 with a message that
+# names the missing input, rather than rendering against a guessed path.
+test_runbook_outside_git_repo_exits_3() {
+    local outside
+    outside="$(command mktemp -d "$WORKDIR/nogit.XXXXXX")"
+    RUN_RC=0
+    RUN_OUT="$(cd "$outside" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$outside" \
+            "$REAL_BASH" "$RUNBOOK" render 2>&1)" || RUN_RC=$?
+    assert_exit 3 "$RUN_RC" "running outside a git repo with no --status-dir exits 3"
+    assert_contains "$RUN_OUT" "not inside a git repository" "the message names the problem"
+}
+
+# tr_int's fallback: a malformed numeric field degrades to the default instead of
+# propagating an empty string into `-lt`/`-eq` arithmetic. Here `autonomy_level`
+# is a string and `cross_track_overlap` is absent; the render must still produce
+# a usable runbook rather than erroring out of the loop bounds.
+test_runbook_malformed_numeric_fields_fall_back() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (tracks-runbook reads tracks.json with jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command mkdir -p "$sb/.worktrees/.status"
+    command cat >"$sb/.worktrees/.status/tracks.json" <<'EOF'
+{ "tracks": [ { "lane": 0, "autonomy_level": "three", "issues": [42], "dispatched": false } ],
+  "dispatched": false }
+EOF
+    run_runbook "$sb" render --no-staleness
+    assert_exit 0 "$RUN_RC" "a malformed numeric field still renders"
+    assert_contains "$RUN_OUT" "#42" "the lane's issue is still listed"
+    assert_contains "$RUN_OUT" "--level 4" "a non-numeric autonomy_level falls back to the default"
+}
+
 # COULD-NOT-LOOK IS NOT CLEAN: with gh unavailable the render says the staleness
 # check did not run.
 #

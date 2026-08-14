@@ -341,6 +341,9 @@ run_fragment_test test_runbook_status_label_match_is_exact "tracks-runbook: a lo
 run_fragment_test test_runbook_empty_lane "tracks-runbook: an empty lane renders its placeholder (#673)"
 run_fragment_test test_runbook_status_dir_without_value_exits_2 "tracks-runbook: --status-dir with no value exits 2 (#673)"
 run_fragment_test test_runbook_flags_new_dependency "tracks-runbook: a dependency declared after composition is flagged (#673)"
+run_fragment_test test_runbook_reports_failed_launch_print "tracks-runbook: a failed golem-launch print is reported, not a blank line (#673)"
+run_fragment_test test_runbook_outside_git_repo_exits_3 "tracks-runbook: outside a git repo with no --status-dir exits 3 (#673)"
+run_fragment_test test_runbook_malformed_numeric_fields_fall_back "tracks-runbook: malformed numeric fields fall back instead of breaking arithmetic (#673)"
 run_fragment_test test_runbook_reports_unknowable_staleness "tracks-runbook: an unavailable gh is reported, never a clean check (#673)"
 run_fragment_test test_runbook_without_jq_fails_loudly "tracks-runbook: a missing jq exits 3 rather than rendering an empty plan (#673)"
 
