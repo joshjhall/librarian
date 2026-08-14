@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 33c5bf10-08a5-4c5a-8d5b-ce6c36897448
-  modified: 2026-07-29T23:05:36.123Z
+  modified: 2026-08-14T20:21:03.640Z
 ---
 
 Never pipe `git push` through `tail`/`head`, and never treat the pipeline's exit
@@ -25,6 +25,17 @@ inside a code comment.
 command — `[ "$(git ls-remote --heads origin <branch> | cut -f1)" = "$(git rev-parse HEAD)" ]`.
 When a push is slow (the pre-push suite takes minutes here), background it and
 poll the remote SHA; do not shorten the output to make it fit.
+
+**Background it from the FIRST attempt, not after a timeout.** The pre-push
+`quality-gates` stage is the whole `tests/run-all.sh` — measured at **353 s** on
+one branch, nearly 3x the Bash tool's 120 s default. So a foreground push here
+does not merely risk a timeout, it is *expected* to hit one, and the kill lands
+mid-suite with nothing pushed. Observed on #692: a foreground `git push | tail -5`
+died at 2 min and `git ls-remote` then showed no branch — which looks exactly like
+a rejected push but was simply a suite that had not finished. Re-run in background
+(`run_in_background: true`) and wait on the task; the same push exited 0. Diagnose
+a "missing" branch by re-running backgrounded before concluding anything was
+rejected.
 
 Generalizes: any tool's exit status read through a pipe is the pipe's, not the
 tool's — the same class as `grep -c` exiting 1 on a zero count, and as a failing

@@ -12,7 +12,7 @@
 ## Committing, merging & pushing
 
 - [Verify squash-merge landed](verify-squash-merge-landed.md) — confirm the diff landed on origin/main, not just the title
-- [Never tail a git push](never-tail-a-git-push.md) — `tail -2` hides the hook rejection; compare remote SHA to HEAD
+- [Never tail a git push](never-tail-a-git-push.md) — `tail -2` hides the hook rejection; compare remote SHA to HEAD. Background it from the first attempt: pre-push runs the whole suite (~353 s) and blows the 120 s default
 - [Git index corruption → partial commit](git-index-corruption-partial-commit.md) — committed 1 of ~384 files with NO error; verify `gh pr view --json files`
 - [L1-L2 self-merge also blocked](l2-selfmerge-blocked-by-classifier.md) — a stored merge preference is not per-instance approval
 
