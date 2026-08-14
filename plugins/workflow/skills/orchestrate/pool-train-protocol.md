@@ -331,10 +331,19 @@ only ever **reads** `tracks.json` — so it is one explicit edit, by the operato
 or the live session that launched the lane:
 
 ```bash
-jq '.tracks |= map(if .lane == <LANE> then .dispatched = true else . end)' \
-  .worktrees/.status/tracks.json > /tmp/tracks.json \
-  && mv /tmp/tracks.json .worktrees/.status/tracks.json
+plan=.worktrees/.status/tracks.json
+tmp="$(mktemp "${plan}.XXXXXX")" \
+  && jq '.tracks |= map(if .lane == <LANE> then .dispatched = true else . end)' \
+       "$plan" >"$tmp" \
+  && mv "$tmp" "$plan"
 ```
+
+`mktemp` **beside the plan**, not a predictable `/tmp/tracks.json` — the same
+idiom `golem-status.sh` and `seed-worktree-trust.sh` use, for the same two
+reasons. A fixed name in a world-writable directory can be pre-planted as a
+symlink that redirects the write, and a `/tmp` staging file is usually on a
+different filesystem, which makes the `mv` a copy rather than an atomic rename —
+so an interrupted write could leave a half-written plan.
 
 Keeping the renderer read-only is deliberate: a tool that mutated the plan while
 displaying it could not be run to *look* at a plan without changing it, and the
