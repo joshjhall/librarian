@@ -250,6 +250,12 @@ The same ceremony runs whether orchestrating twenty issues or planning one via
 The level chosen here is the run's single autonomy knob; it is persisted (see
 `autonomy_level` below) so every downstream gate reads the same disposition.
 
+**Step 4 has a no-dispatch variant.** `/workflow:orchestrate tracks --runbook`
+(#673) runs steps 1–3 unchanged and replaces dispatch with *bank the plan +
+render a runbook*, so the operator launches lanes by hand one at a time. Steps 2
+and 3 remain human gates that wait indefinitely, and the level is still chosen
+and persisted — see `pool-train-protocol.md` § *`--runbook`*.
+
 ---
 
 ## Standing rule: wait indefinitely at a human gate

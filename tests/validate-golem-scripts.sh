@@ -55,6 +55,7 @@ SCRIPTS="$REPO_ROOT/plugins/workflow/scripts"
     SCRAPE="$SCRIPTS/golem-token-scrape.sh"
     TRANSCRIPT_LIVENESS="$SCRIPTS/golem-transcript-liveness.sh"
     MODE_CHECK="$SCRIPTS/golem-mode-check.sh"
+    RUNBOOK="$SCRIPTS/tracks-runbook.sh"
     INBOX="$SCRIPTS/golem-inbox.sh"
     CONFIG="$SCRIPTS/config.sh"
     # The Mode-3 container entrypoint lives as a bash code block inside this skill
@@ -103,7 +104,8 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     70-status-checkpoint.sh \
     80-token-scrape.sh \
     90-transcript-liveness.sh \
-    100-mode-check.sh
+    100-mode-check.sh \
+    110-tracks-runbook.sh
 
 # --- Run all tests ----------------------------------------------------------
 
@@ -319,5 +321,34 @@ run_fragment_test test_mode_verify_send_detects_swallowed "golem-mode-check: ver
 run_fragment_test test_mode_missing_tmux_fails_loud "golem-mode-check: missing tmux fails loud (exit 2), never a clean no-drift (#659)"
 run_fragment_test test_mode_unknown_arg_exits_2 "golem-mode-check: an unknown argument exits 2 (#659)"
 run_fragment_test test_mode_bad_interval_exits_2 "golem-mode-check: a non-positive --interval exits 2 (#659)"
+
+run_fragment_test test_runbook_no_arg_exits_2 "tracks-runbook: no subcommand exits 2 (#673)"
+run_fragment_test test_runbook_bad_subcommand_exits_2 "tracks-runbook: unknown subcommand exits 2 (#673)"
+run_fragment_test test_runbook_bad_flag_exits_2 "tracks-runbook: an unknown flag exits 2 rather than being ignored (#673)"
+run_fragment_test test_runbook_missing_tracks_exits_3 "tracks-runbook: a missing tracks.json exits 3 with an actionable message (#673)"
+run_fragment_test test_runbook_render_dispatches_nothing "tracks-runbook: render dispatches NOTHING (instrumented tmux stub) (#673)"
+run_fragment_test test_runbook_head_command_matches_golem_launch_print "tracks-runbook: the head command is byte-identical to golem-launch.sh print (#673)"
+run_fragment_test test_runbook_threads_per_lane_level "tracks-runbook: each lane's own autonomy_level reaches its command (#673)"
+run_fragment_test test_runbook_renders_lane_serially "tracks-runbook: only the lane head is runnable; the rest queue behind it (#673)"
+run_fragment_test test_runbook_carries_composition_context "tracks-runbook: rationale/deferred/overlap/deps_honored reach the runbook (#673)"
+run_fragment_test test_runbook_partial_execution_stable "tracks-runbook: a partially-executed plan renders correctly (#673)"
+run_fragment_test test_runbook_absent_dispatched_reads_as_dispatched "tracks-runbook: an absent dispatched reads as dispatched at BOTH levels (#673)"
+run_fragment_test test_runbook_banked_header_tracks_progress "tracks-runbook: the banked header reports launch progress from lane state (#673)"
+run_fragment_test test_runbook_dispatched_plan_header "tracks-runbook: an already-dispatched plan renders the in-flight header (#673)"
+run_fragment_test test_runbook_flags_stale_without_dropping "tracks-runbook: a closed issue is flagged and STILL rendered (#673)"
+run_fragment_test test_runbook_flags_status_label_drift "tracks-runbook: a newly in-progress issue is flagged (#673)"
+run_fragment_test test_runbook_flags_remaining_status_labels "tracks-runbook: pr-pending/blocked/on-hold are each flagged (#673)"
+run_fragment_test test_runbook_status_label_match_is_exact "tracks-runbook: a longer label sharing a watched prefix does not trip the match (#673)"
+run_fragment_test test_runbook_empty_lane "tracks-runbook: an empty lane renders its placeholder (#673)"
+run_fragment_test test_runbook_status_dir_without_value_exits_2 "tracks-runbook: --status-dir with no value exits 2 (#673)"
+run_fragment_test test_runbook_flags_new_dependency "tracks-runbook: a dependency declared after composition is flagged (#673)"
+run_fragment_test test_runbook_reports_failed_launch_print "tracks-runbook: a failed golem-launch print is reported, not a blank line (#673)"
+run_fragment_test test_runbook_outside_git_repo_exits_3 "tracks-runbook: outside a git repo with no --status-dir exits 3 (#673)"
+run_fragment_test test_runbook_malformed_numeric_fields_fall_back "tracks-runbook: malformed numeric fields fall back instead of breaking arithmetic (#673)"
+run_fragment_test test_runbook_reports_failed_staleness_query "tracks-runbook: a failed per-issue gh query is reported (gh present) (#673)"
+run_fragment_test test_runbook_reports_unknowable_staleness "tracks-runbook: an unavailable gh is reported, never a clean check (#673)"
+run_fragment_test test_runbook_corrupt_json_fails_loudly "tracks-runbook: a corrupt plan exits 3, never renders as an empty one (#673)"
+run_fragment_test test_runbook_footer_suppresses_empty_sections "tracks-runbook: empty rationale/deferred print no bare section headers (#673)"
+run_fragment_test test_runbook_without_jq_fails_loudly "tracks-runbook: a missing jq exits 3 rather than rendering an empty plan (#673)"
 
 generate_report
