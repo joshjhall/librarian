@@ -102,10 +102,13 @@ distribution means anything.
 
 ### Rows 6-10 notes — the first non-self-referential batch, and the first `R8` fires
 
-**`R8` fired for the first time, four times, and every fire was a real defect.**
-Rows 0–5 could not test the rule that exists to catch what #580 missed, because no
-cycle produced a `defect-in-new-code`. This batch produced five across four
-cycles, each confirmed by reproduction before it was accepted:
+**`R8` fired for the first time — five times across four cycles — and every fire
+was a real defect.** Rows 0–5 could not test the rule that exists to catch the
+defects #580 missed, because no cycle produced a `defect-in-new-code`. Summing the
+`by_rule` column for rows 6–10 gives `R8` = 1 + 2 + 1 + 0 + 1 = **5**. Four are
+described below, each confirmed by reproduction before it was accepted; the fifth
+is row 7's second `R8` finding, which was blocked and fixed in the same cycle as
+C2 and was not written up separately:
 
 1. **C1** — a per-lane `dispatched` check tested `= "true"` while its sibling
    header tested `= "false"`. Since `jq` prints `"null"` for an absent key, a
@@ -341,7 +344,7 @@ into answered. The scope of that answer — one unrelated issue, not a general r
   deferrable bucket while a third finding of the same class — prose asserting a
   mechanism nothing implements — was correctly blocked as `incomplete-work` in
   the same cycle. Reading the bucket on merit caught it; no aggregate would have.
-- **Is `nature` systematically miscalled? — No evidence of it.** `R8` fired four
+- **Is `nature` systematically miscalled? — No evidence of it.** `R8` fired five
   times and every fire was a real, reproduced defect: no false positives. The one
   boundary worth watching is `improvement` vs `incomplete-work` for
   documentation-asserts-nonexistent-behavior, which row 6 shows landing on both
@@ -381,7 +384,7 @@ in `plugins/workflow/skills/ship-issue/workflow.js`, where the four definitions
 live) or validating `nature` against the changed-file list — the judge already
 receives that list, so that check was available without new plumbing.
 
-The condition was not met, so **neither was filed.** `R8` fired four times with no
+The condition was not met, so **neither was filed.** `R8` fired five times with no
 false positives, and the one boundary the data does show as genuinely contested —
 `improvement` vs `incomplete-work` for documentation asserting a mechanism nothing
 implements, which row 6 shows landing on both sides within a single cycle — is a
