@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-16
+
+### Added
+
+- Declare a CLI whose print() IS its output via stdout_is_output (#685)
+- Honor stdout_is_output in check-code-health (#690)
+- Bank a track composition as a runbook instead of dispatching (#691)
+
+### CI/CD
+
+- Bump github/codeql-action/upload-sarif (#650)
+
+### Documentation
+
+- Refresh the release-process memory after v0.9.0
+- Record the GNU-host-cannot-mutate-a-GNU-ism lesson (#679)
+- Add the parity-gate and curl-first memory lessons
+- Record that a foreground git push here is expected to time out (#694)
+- Record that a stop/C6-duplicate verdict can hold a live defect
+
+### Fixed
+
+- Coreutils-free bound, flat-agent frontmatter, two lint gaps (#682)
+- Purge GNU-only regex from the shell scanners (#683)
+- Name the review harness at every mention, and gate it (#688)
+
+### Miscellaneous
+
+- Ignore the local api-capture scratch tooling
+- Finish the BSD-portability pass left open by #679 (#689)
+
+### Testing
+
+- Numeric-guard tracks.json issue numbers and pin the malformed case (#693)
+- Close out the disposition-recall measurement (#702)
+
 ## [0.9.0] - 2026-08-05
 
 ### Added
@@ -589,6 +625,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.10.0]: https://github.com/joshjhall/librarian/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/joshjhall/librarian/compare/v0.8.4...v0.9.0
 [0.8.4]: https://github.com/joshjhall/librarian/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/joshjhall/librarian/compare/v0.8.2...v0.8.3
