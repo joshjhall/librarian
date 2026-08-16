@@ -34,7 +34,8 @@ docs/verification/                # evidence for issues that can't be fully
                                   #   Two shapes: a completed end-to-end report,
                                   #   <skill>-e2e-<issue>.md; or a running tally
                                   #   accumulating live data over many sessions,
-                                  #   <topic>-tally-<issue>.md (open until filled)
+                                  #   <topic>-tally-<issue>.md (open while it
+                                  #   fills, then closed with a verdict)
 containers/                       # pinned submodule — builds the devcontainer only
 ```
 
