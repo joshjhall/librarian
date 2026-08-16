@@ -321,7 +321,7 @@ unrelated issues are needed before the `nature` distribution means much.
 > **Superseded by rows 6–10.** The paragraphs above are the reading of rows 0–5
 > and are left as written — they were accurate for that batch and the reasoning
 > is what makes rows 6–10 legible. But "`R8` has never fired" and "six of eight
-> rules have never fired" are **no longer current**: rows 6–10 fired `R8` four
+> rules have never fired" are **no longer current**: rows 6–10 fired `R8` five
 > times (every one a real defect) plus `R6`, and supplied the unrelated-issue
 > sample this caveat asks for. See § Rows 6-10 notes and § Verdict.
 
