@@ -1,16 +1,22 @@
 # Disposition-policy recall tally — issue #613
 
-Running measurement for
+Completed measurement for
 [#613](https://github.com/joshjhall/librarian/issues/613)
 ("verify the new disposition policy's recall"). Follow-up to
 [#580](https://github.com/joshjhall/librarian/issues/580), which replaced an
 unsatisfiable prose policy with the `dispositionOf` rule list.
 
-**Status: OPEN — target count reached, verdict pending a second unrelated
-batch.** The row target (~10 cycles) is met at 11, and rows 6–10 supplied the
-missing ingredient rows 0–5 could not: cycles from an **unrelated** issue, and
-the first `R8` fires. See § Verdict for what the data now supports and the one
-thing it still does not.
+**Status: CLOSED — the measurement is complete and all three acceptance criteria
+are answered.** The row target (~10 cycles) is met at 11, and rows 6–10 supplied
+the ingredient rows 0–5 could not: cycles from an **unrelated** issue, and the
+first `R8` fires. See § Verdict for the finding.
+
+No further rows are being collected. The one thing the data does not establish is
+**breadth** — a single unrelated batch cannot turn the observed blocking rate into
+a general rate — and that is recorded in § Verdict as a limitation of the finding
+rather than as outstanding work. The reason this is a defensible stop rather than
+an abandonment: the instrument is permanent, so a second batch costs nothing to
+collect if a suspicion ever arises, and there is currently no suspicion to test.
 
 ## What is being measured, and why
 
@@ -67,7 +73,7 @@ than smoothing over.
 
 ## Status
 
-**Cycles tallied: 11 of ~10.** Rows 0–5 are the review cycles of the PR that
+**Cycles tallied: 11 — final.** Rows 0–5 are the review cycles of the PR that
 introduced the instrument — not a neutral sample (see § Reading these six rows
 together). Rows 6–10 are the **first batch from an unrelated issue** (#673),
 which is precisely what those notes said was needed before the `nature`
@@ -311,9 +317,10 @@ unrelated issues are needed before the `nature` distribution means much.
 
 ## Verdict
 
-**Partial, and stated as such.** Rows 6–10 answer the first AC and turn the
-second from unanswerable into answered-once. What they cannot do is establish a
-*rate* from a single unrelated issue.
+**No evidence of a systematic `nature` miscall; the policy is behaving as
+designed.** Rows 6–10 answer the first AC and turn the second from unanswerable
+into answered. The scope of that answer — one unrelated issue, not a general rate
+— is stated as a limitation below rather than left implicit.
 
 - **Is the blocking rate plausible? — Yes, on the evidence so far.** 0/5 blocking
   across rows 0–5 and **7/23 (30%)** across rows 6–10. Neither extreme #613 warned
@@ -333,12 +340,21 @@ second from unanswerable into answered-once. What they cannot do is establish a
   documentation-asserts-nonexistent-behavior, which row 6 shows landing on both
   sides within a single cycle.
 
-**What is still missing** is breadth: one unrelated issue is one sample, and both
-batches were reviewed by the same author-plus-harness pairing. A second unrelated
-batch would test whether the 30% is a property of the policy or of this diff.
-Per AC 3, no follow-up on `judgePrompt` is filed, because the data does not show
-a systematic miscall to fix — filing one now would be guessing at a finding the
-measurement did not make.
+**Limitation of this finding — breadth.** One unrelated issue is one sample, and
+both batches were reviewed by the same author-plus-harness pairing. So the 30%
+should be read as *this policy blocked proportionately on the diffs it was shown*,
+not as a rate that generalizes; a second unrelated batch is what would distinguish
+the two. Anyone citing this measurement should cite it at that width.
+
+**No follow-up is filed** — neither on `judgePrompt` (per AC 3) nor on the breadth
+gap, and for the same reason in both cases: the data does not show a defect to
+fix, and filing an issue now would be guessing at a finding the measurement did
+not make. The breadth gap in particular needs no ticket to stay actionable,
+because the instrument is **permanent** — every review cycle computes `by_nature`
+and `by_rule` whether or not anyone is tallying them. If a future cycle ever
+raises a real suspicion about how `nature` is being assigned, a second batch is
+already there to be collected. That is a better trigger than a standing reminder
+to re-measure something that currently looks correct.
 
 Two cautions carried forward from the #567 notes, both of which cost that batch
 time — and **both of which fired again in rows 6–10**, the second one twice:
@@ -350,21 +366,32 @@ time — and **both of which fired again in rows 6–10**, the second one twice:
   cycle-1 `blocking: []` was followed by a real defect *introduced by the cycle-1
   fix*. Each cycle is its own row for this reason.
 
-## What happens when the tally completes
+## What AC 3 asked for, and what happened
 
-Per AC 3, if `nature` turns out to be systematically miscalled, the follow-up is
-on the judge prompt (`judgePrompt` in
-`plugins/workflow/skills/ship-issue/workflow.js`, where the four definitions
-live) or on validating `nature` against the changed-file list — the judge already
-receives that list, so the check is available without new plumbing.
+AC 3 made the follow-up **conditional**: if `nature` turned out to be
+systematically miscalled, the fix would be either the judge prompt (`judgePrompt`
+in `plugins/workflow/skills/ship-issue/workflow.js`, where the four definitions
+live) or validating `nature` against the changed-file list — the judge already
+receives that list, so that check was available without new plumbing.
 
-That follow-up is **not** filed in advance. Which of the two it should be depends
-on what the data shows, and filing it now would be guessing at a finding the
-measurement has not made.
+The condition was not met, so **neither was filed.** `R8` fired four times with no
+false positives, and the one boundary the data does show as genuinely contested —
+`improvement` vs `incomplete-work` for documentation asserting a mechanism nothing
+implements, which row 6 shows landing on both sides within a single cycle — is a
+judgment call at the edge of two reasonable definitions, not a miscall a prompt
+edit would fix. Both remedies remain available and are recorded here so a future
+reader does not have to re-derive them.
 
-## Backstop while this runs
+## The standing rule this measurement corroborated
 
-The standing rule #580 documented — **`blocking: []` is not a merge signal** —
-holds regardless of what this measurement finds. It is stated at
-`ci-review-protocol.md` step (d) and is what protects the merge gate while recall
-is still unverified.
+The rule #580 documented — **`blocking: []` is not a merge signal** — was the
+backstop while recall was unverified. It does **not** retire now that the
+measurement is closed: it is permanent, and this batch is the strongest evidence
+for it rather than a reason to relax it.
+
+Row 6 is the case in point. Two findings the judge placed in the deferrable bucket
+were the same class as a third it had just blocked; no aggregate would have shown
+that, and no single deferral was clearly miscalled on its own. Reading the bucket
+on merit is what caught it. That read is stated at `ci-review-protocol.md` step
+(d) and remains mandatory on every cycle — a well-calibrated policy is exactly the
+condition under which a miscall is hardest to notice.

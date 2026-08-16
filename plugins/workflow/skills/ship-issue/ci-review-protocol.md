@@ -398,25 +398,23 @@ d. **Resolve or defer**:
 > was filed after a 26-cycle batch in which six cycles returned `blocking: []`
 > over a deferrable bucket holding a confirmed defect.
 
-**Record the cycle for the recall measurement** (#613). While the tally in
-`docs/verification/disposition-recall-tally-613.md` is still accumulating,
-append one row per cycle from the harness result — no re-derivation needed,
-since the summary reports both distributions directly:
+**The deferrable read is mandatory on every cycle.** Answer, explicitly: *does
+the deferrable bucket still hold a real defect in code this PR wrote?* This is
+the same manual read that caught all six misses in the #567 batch, and it is the
+one thing no aggregate can answer — a systematic `nature` miscall produces a
+perfectly healthy-looking set of counts. Fix anything it surfaces before merging.
 
-```bash
-jq '{cycle, by_nature: .summary.by_nature, by_rule: .summary.by_rule,
-     total: .summary.total_findings, blocking: .summary.by_disposition.blocking}' \
-  "$cycle_result_json"
-```
+The #613 recall measurement that this read was once tallied for is **complete**
+(`docs/verification/disposition-recall-tally-613.md`): no rows are collected any
+more, and nothing needs appending. Its finding is *no evidence of a systematic
+`nature` miscall* — which is a reason to keep doing this read, not to stop. A
+well-calibrated policy is precisely the condition under which a miscall is
+hardest to notice, and the measurement's own row 6 is a cycle where reading the
+bucket on merit changed the outcome.
 
-Then answer, in one line on the row, **the check the measurement actually turns
-on**: *does the deferrable bucket still hold a real defect in code this PR
-wrote?* That is the same manual read that caught all six misses in the #567
-batch, and it is the one thing no aggregate can answer — a systematic `nature`
-miscall produces a perfectly healthy-looking set of counts. You have already
-done this read as part of the standing rule above; the row just records what it
-found. A `yes` is the finding #613 exists to detect, and is worth surfacing
-immediately rather than at the end of the batch.
+The instrument itself is permanent: every harness result still reports
+`summary.by_nature` and `summary.by_rule`, so a fresh batch can be tallied at any
+time should a cycle ever raise a real suspicion about how `nature` is assigned.
 
 e. **If any fixes were applied this cycle**: commit
 `fix(review): address cycle {cycle} findings`, `git push`, and re-run the
