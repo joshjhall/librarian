@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: af4e0622-a491-43db-8f6a-124d215c769f
-  modified: 2026-07-19T23:05:09.258Z
+  modified: 2026-08-16T22:07:15.097Z
 ---
 
 On an L3–L4 `/ship-issue` run, `gh pr merge <N> --squash --delete-branch` is
@@ -24,6 +24,16 @@ issue `status/pr-pending` (remove `status/in-progress`), comment that the fix is
 ready + why auto-merge was declined, and STOP for a human to merge. The user can
 allow it in future via a Bash permission rule for `gh pr merge`.
 Related: [[verify-squash-merge-landed]].
+
+**A human "go ahead and merge" is not a key to this block.** The classifier
+decides per attempt; the conversation is not an input it reads. On v0.10.0 the
+human authorized the merge twice and both retries were denied, then a third
+attempt succeeded with nothing about the PR having changed (CI green throughout).
+So: ask, retry **at most once** after the go-ahead, and if it is still denied
+hand the keystroke over rather than grinding. Two things never to do — tell the
+human their approval has cleared the block (it has not, and saying so misreports
+a permission control as satisfied), and keep re-firing the merge hoping the
+verdict flips, which is loop-retrying the dead-end this memory exists to name.
 
 Re-confirmed on PR #316 (issue #299), L3, CI 5/5 green + pre-PR review clean
 (0 blocking). Re-confirmed again on PR #330 (issue #312), L3, CI 5/5 green +

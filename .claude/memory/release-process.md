@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 5ef35931-1874-450d-9431-6255128dc6e2
-  modified: 2026-08-05T17:07:14.568Z
+  modified: 2026-08-16T22:07:01.255Z
   status: stable
 ---
 
@@ -29,9 +29,21 @@ Push with a 600s timeout and verify with `git ls-remote origin <branch>` — see
 **The `gh pr merge` of the release PR is blocked by the auto-mode classifier as
 self-authored** (see [[auto-mode-blocks-self-merge]]) — expect to park for the
 human to authorize the merge, then carry on to the tag. Do not work around it.
-Parking means *asking*, not refusing: on v0.9.0 the human answered "go ahead and
-merge", and the `gh pr merge` then succeeded. An explicit human go-ahead in the
-session IS the authorization the block exists to require.
+Parking means *asking*, not refusing.
+
+**A human go-ahead does not reliably clear the block — the classifier decides,
+not the conversation.** An earlier version of this memory said an in-session
+"go ahead and merge" IS the authorization the block requires, generalizing from
+v0.9.0 where one retry after the go-ahead succeeded. v0.10.0 falsified that: the
+human said merge **twice** and both retries were still denied; a third attempt,
+after a further explicit instruction, went through. Same PR, same green CI —
+so the outcome varies between attempts and is not something a go-ahead
+guarantees. Practical consequence: never tell the human their approval has
+unblocked it, and never re-run the merge repeatedly hoping the verdict flips.
+Ask, retry **once**, and if it is still denied hand the keystroke to the human
+(the PR page, or `! gh pr merge <N> --squash --delete-branch` in-session) rather
+than looking for another route. The tag must point at the merge commit, so there
+is nothing to do but wait for a real merge.
 
 **Verify the signature, don't just list the assets.** Two present filenames say
 nothing about whether the bundle validates. Run the README recipe against the

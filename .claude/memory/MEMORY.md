@@ -51,7 +51,7 @@
 - [Conform scope enum](conform-scope-enum.md) — `fix(review):` is rejected; generic skill scopes ≠ this repo's enum
 - [Release process](release-process.md) — how to cut a repo-level vX.Y.Z release; what containers#608's LIBRARIAN_REF pins to
 - [Two-runtime model](two-runtime-model.md) — workflow.js is sandboxed (no shell/fs); only Bash-tool subagents reach host tools
-- [Auto-mode blocks self-merge](auto-mode-blocks-self-merge.md) — L3/L4 `gh pr merge` denied as self-authored; park for human merge
+- [Auto-mode blocks self-merge](auto-mode-blocks-self-merge.md) — `gh pr merge` denied as self-authored; a human go-ahead does NOT clear it — retry once, then hand over
 - [Edits landed in main not worktree](edits-landed-in-main-not-worktree.md) — main-checkout abs paths from a worktree land in MAIN
 
 ## Conventions for this directory
