@@ -6,8 +6,9 @@ Completed measurement for
 [#580](https://github.com/joshjhall/librarian/issues/580), which replaced an
 unsatisfiable prose policy with the `dispositionOf` rule list.
 
-**Status: CLOSED — the measurement is complete and all three acceptance criteria
-are answered.** The row target (~10 cycles) is met at 11, and rows 6–10 supplied
+**Status: CLOSED — all three acceptance criteria answered, on one unrelated
+batch; this does not establish a general blocking rate.** The row target
+(~10 cycles) is met at 11, and rows 6–10 supplied
 the ingredient rows 0–5 could not: cycles from an **unrelated** issue, and the
 first `R8` fires. See § Verdict for the finding.
 
@@ -37,10 +38,15 @@ because no one was counting.
 
 ## Method
 
-One row per **review cycle** (not per issue — a re-review cycle gets its own
+This is how the rows below **were** collected; it is a record of method, not a
+live instruction. The append step it describes was retired from
+`ci-review-protocol.md` step (d) when the measurement closed — that step now
+keeps only the deferrable-bucket read, which was never specific to this tally.
+
+One row per **review cycle** (not per issue — a re-review cycle got its own
 row), same shape as the #567 batch it follows.
 
-Every cycle's harness result reports both distributions directly, so no row is
+Every cycle's harness result reported both distributions directly, so no row was
 hand-derived:
 
 ```bash
@@ -49,8 +55,9 @@ jq '{cycle, by_nature: .summary.by_nature, by_rule: .summary.by_rule,
   "$cycle_result_json"
 ```
 
-`ci-review-protocol.md` step (d) directs the loop to append a row at the point
-the standing-rule read already happens.
+That command still works — the harness continues to emit both distributions on
+every cycle — so a future batch can be collected the same way without
+re-deriving anything.
 
 ### The four measures
 
