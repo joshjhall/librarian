@@ -335,6 +335,37 @@ def decline_reason(lines: list[str], m: dict) -> str:
     return "no low-coupling seam found — units are mutually referential"
 
 
+def numstat_path(field: str) -> str:
+    """The POST-rename path from a `git diff --numstat` path field.
+
+    git does not print a plain path for a renamed file — it prints the rename in
+    one of two shapes, and neither matches what `git diff --name-only` puts in
+    the caller's file list:
+
+        old.py => new.py          (whole path changed)
+        a/{x => y}/f.py           (one path segment changed)
+
+    Left unresolved, the sidecar is keyed by that literal arrow string, the
+    lookup for the real path misses, and the file's added-count silently reads 0
+    — so a renamed file can never be reported as crossing a threshold no matter
+    how much the diff added to it. A rename plus a large addition is exactly when
+    the size lens is worth having, and it was the one case guaranteed to be quiet.
+    """
+    if "=>" not in field:
+        return field
+    start = field.find("{")
+    if start != -1:
+        end = field.find("}", start)
+        if end != -1:
+            inner = field[start + 1 : end]
+            after = inner.split("=>", 1)[1].strip() if "=>" in inner else inner
+            # An empty side means the segment was dropped entirely
+            # (`a/{x => }/f.py`), which collapses the duplicated separator.
+            joined = field[:start] + after + field[end + 1 :]
+            return joined.replace("//", "/")
+    return field.split("=>", 1)[1].strip()
+
+
 def read_numstat(path: str) -> dict[str, int]:
     """Added-line counts per file from a `git diff --numstat` sidecar.
 
@@ -351,7 +382,7 @@ def read_numstat(path: str) -> dict[str, int]:
                     continue
                 added, _deleted, name = parts[0], parts[1], parts[2]
                 try:
-                    counts[name] = int(added)
+                    counts[numstat_path(name)] = int(added)
                 except ValueError:
                     continue
     except OSError:

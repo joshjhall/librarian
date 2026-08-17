@@ -1589,7 +1589,13 @@ done <"$FILE_LIST" || true
 # pre-scan, whose rows are already on stdout. Its own fail-loud exit 2 (no
 # python3, no awk) is surfaced on stderr by the caller's shell, not swallowed
 # into silence here — but it does not abort the gate.
-_SIZING="$(command dirname "$0")/sizing.sh"
+# SCRIPT_DIR, not `dirname "$0"`: the former is computed once above through
+# `readlink -f "${BASH_SOURCE[0]}"`, so it resolves symlinks and does not depend
+# on how the script was invoked. `$0` survives neither — under a symlink, a
+# relative invocation from another cwd, or a `source`, it can name a directory
+# that is not this plugin's, which at best skips sizing silently and at worst
+# runs a same-named script from wherever it did resolve.
+_SIZING="${SCRIPT_DIR}/sizing.sh"
 if [ -f "$_SIZING" ]; then
     if [ -n "$NUMSTAT_FILE" ] && [ -f "$NUMSTAT_FILE" ]; then
         command bash "$_SIZING" "$FILE_LIST" "$NUMSTAT_FILE" || true

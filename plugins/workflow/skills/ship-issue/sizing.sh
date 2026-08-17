@@ -91,13 +91,46 @@ REVIEW_LOC_HIGH_GO="${REVIEW_LOC_HIGH_GO:-700}"
 
 # added_for PATH — added-line count for PATH from the numstat sidecar, or 0.
 # Binary files render as `-` in numstat and are skipped rather than crashing.
+#
+# RENAME-AWARE (mirrors numstat_path() in sizing.py). git does not print a plain
+# path for a renamed file; it prints the rename in one of two shapes, and neither
+# matches what `git diff --name-only` gives the caller:
+#
+#     old.py => new.py          (whole path changed)
+#     a/{x => y}/f.py           (one path segment changed)
+#
+# An exact `$3 == want` match therefore misses every renamed file, its added
+# count silently reads 0, and it can never be reported as crossing a threshold
+# no matter how much the diff added — the one case the size lens most wants to
+# see. Each row's path field is normalized to its POST-rename form before the
+# comparison.
 added_for() {
     [ -n "$NUMSTAT" ] && [ -f "$NUMSTAT" ] || {
         echo 0
         return 0
     }
     LC_ALL=C command awk -F'\t' -v want="$1" '
-        NF >= 3 && $3 == want && $1 ~ /^[0-9]+$/ { print $1; found = 1; exit }
+        function post_rename(f,   ob, cb, inner, arrow, after) {
+            if (index(f, "=>") == 0) return f
+            ob = index(f, "{")
+            if (ob > 0) {
+                cb = index(f, "}")
+                if (cb > ob) {
+                    inner = substr(f, ob + 1, cb - ob - 1)
+                    arrow = index(inner, "=>")
+                    after = (arrow > 0) ? substr(inner, arrow + 2) : inner
+                    gsub(/^[ \t]+|[ \t]+$/, "", after)
+                    f = substr(f, 1, ob - 1) after substr(f, cb + 1)
+                    gsub(/\/\//, "/", f)
+                    return f
+                }
+            }
+            arrow = index(f, "=>")
+            after = substr(f, arrow + 2)
+            gsub(/^[ \t]+|[ \t]+$/, "", after)
+            return after
+        }
+        NF >= 3 && $1 ~ /^[0-9]+$/ && post_rename($3) == want { print $1; found = 1; exit }
         END { if (!found) print 0 }
     ' "$NUMSTAT"
 }

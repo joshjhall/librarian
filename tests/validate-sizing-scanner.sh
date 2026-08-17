@@ -249,6 +249,52 @@ test_decline_records_a_reason() {
     assert_contains "$out" "single cohesive unit" "the decline names WHY it declined"
 }
 
+# --- renamed files keep their growth signal ----------------------------------
+# `git diff --numstat` does NOT print a plain path for a renamed file. It prints
+# the rename, in one of two shapes:
+#
+#     old.py => new.py          (whole path changed)
+#     a/{x => y}/f.py           (one path segment changed)
+#
+# while `git diff --name-only` — the caller's file list — carries the plain
+# post-rename path. An exact string match between the two therefore MISSES every
+# renamed file: its added-count silently reads 0, `crossed`/`material` can never
+# fire, and it is reported at the quiet LOW disposition no matter how much the
+# diff actually added. A rename plus a large addition is exactly the case the
+# size lens exists for, and it was the one guaranteed to stay silent.
+#
+# Both shapes are asserted, because they are resolved by DIFFERENT code paths
+# (brace-splice vs after-the-arrow); a fixture for one proves nothing about the
+# other. The assertion is on "pushed it over" rather than merely on some row
+# being emitted — a row appears either way, and only the growth-graded evidence
+# distinguishes a resolved rename from an unresolved one.
+test_renamed_file_keeps_its_growth_signal() {
+    setup_over_threshold
+    local numstat="$WORKDIR/ns-rename.txt" out
+
+    # Shape 1: whole path changed.
+    command printf '600\t0\told-name.py => %s\n' "$OVER_FILE" >"$numstat"
+    run_scan "$LIST" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "pushed it over" \
+        "a plain-arrow rename resolves to its post-rename path (growth preserved)"
+    assert_not_contains "$out" "pre-existing size" \
+        "a renamed file is not misread as untouched"
+
+    # Shape 2: one path segment changed. Built from the fixture's own directory
+    # so the spliced result is genuinely the file on disk, not a lookalike.
+    local dir base
+    dir="${OVER_FILE%/*}"
+    base="${OVER_FILE##*/}"
+    command printf '600\t0\t%s/{oldsub => }%s\n' "$dir" "$base" >"$numstat"
+    run_scan "$LIST" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "pushed it over" \
+        "a brace-form rename resolves to its post-rename path (growth preserved)"
+}
+
 # --- AC5: the OTHER decline reasons ------------------------------------------
 # decline_reason() has four branches and only "single cohesive unit" was covered
 # above. The remaining three are NOT protected by any other gate: unlike the
@@ -487,6 +533,7 @@ run_test test_crossing_the_threshold_is_actionable "AC4: a diff that pushes a fi
 run_test test_material_growth_is_actionable "AC4: material growth on an already-over file is actionable"
 run_test test_materiality_floor_is_honored "AC4: REVIEW_GROWTH_MIN_ADDED is a real boundary"
 run_test test_decline_records_a_reason "AC5: a long-but-cohesive file yields a recorded decline reason"
+run_test test_renamed_file_keeps_its_growth_signal "A renamed file keeps its growth signal (both numstat rename shapes)"
 run_test test_generated_file_decline_reason "AC5: a generated file declines as generated"
 run_test test_majority_comment_decline_reason "AC5: a majority-comment file declines as documentation"
 run_test test_mutually_referential_decline_reason "AC5: a long multi-unit file declines as seam-less"
