@@ -257,6 +257,8 @@ printf '%s\n' '# Lessons' '' '## First Thing' t '' '## Second Thing' t \
     >"$DECOMPDIR/.claude/memory/two-lessons.md"
 # One section only -> the concept DECLINE arm (nothing to extract).
 printf '%s\n' '# One' '' 'text' 'more' >"$DECOMPDIR/.claude/memory/single.md"
+# An INDEX with no topic clusters -> the index DECLINE arm, the fourth outcome.
+printf '%s\n' '# Flat' '' one two three >"$DECOMPDIR/.claude/memory/index-flat.md"
 # Non-markdown inside the bundle: still code, still code-sized.
 printf '%s\n' 'def a(x):' '    return x' >"$DECOMPDIR/.claude/memory/helper.py"
 
@@ -281,6 +283,7 @@ for f in "$DECOMPDIR"/mod.py "$DECOMPDIR"/app.ts "$DECOMPDIR"/app.test.ts \
     "$DECOMPDIR"/docs/guide.md "$DECOMPDIR"/docs/under-budget.md \
     "$DECOMPDIR"/.claude/memory/MEMORY.md "$DECOMPDIR"/.claude/memory/index-golem.md \
     "$DECOMPDIR"/.claude/memory/two-lessons.md "$DECOMPDIR"/.claude/memory/single.md \
+    "$DECOMPDIR"/.claude/memory/index-flat.md \
     "$DECOMPDIR"/.claude/memory/helper.py \
     "$DECOMPDIR"/package-lock.json "$DECOMPDIR"/notes.txt "$DECOMPDIR"/README \
     "$DECOMP_UNREAD"; do

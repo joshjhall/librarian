@@ -1190,6 +1190,20 @@ test_memory_bundle_bloat() {
         "memory: leading-./ root normalizes to the same decision" \
         MEMORY_BUNDLE_ROOT=./knowledge MEMORY_INDEX_WARN=2 MEMORY_INDEX_HIGH=3
 
+    # A root carrying GLOB METACHARACTERS must be matched LITERALLY, and both
+    # impls must agree. Python matched it with fnmatch (which reads `[x]` as a
+    # character class and misses) while bash `case` matches a QUOTED expansion
+    # literally (and hit) — so the same file classified in one impl and not the
+    # other, silently, at exit 0. assert_fires runs BOTH impls, so it is the
+    # parity assertion as well as the behavior one.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/weird[x]root"
+    f="$d/weird[x]root/MEMORY.md"
+    command printf '%s\n' "# I" "" "## A" "- a" "" "## B" "- b" >"$f"
+    assert_fires "$(list_of "$f")" ai-file-bloat "memory index exceeds high threshold" \
+        "memory: a root with glob metacharacters matches literally in BOTH impls" \
+        "MEMORY_BUNDLE_ROOT=weird[x]root" MEMORY_INDEX_WARN=2 MEMORY_INDEX_HIGH=3
+
     # --- no bundle configured: no classification, NO error ------------------
     # An empty root disables memory classification entirely. The file then
     # takes the ordinary code path (it is no longer a bundle file at all), and
@@ -1293,6 +1307,17 @@ test_memory_split_guidance() {
     assert_fires "$(list_of "$f")" decomposition-seam "declined: single lesson" \
         "memory: a single-lesson concept declines with a reason" \
         MEMORY_CONCEPT_WARN=2 MEMORY_CONCEPT_HIGH=3
+
+    # The INDEX decline arm — the fourth of the bundle branch's four outcomes,
+    # and the one an index-kind fixture is needed for: an over-budget index with
+    # fewer than 2 topic clusters has nothing to split along. Without this the
+    # arm had no assertion in either the gate or the coverage corpus, which is
+    # the "rule with zero failing tests" shape the mutation round exists to find.
+    f="$d/.claude/memory/index-flat.md"
+    command printf '%s\n' "# Flat" "" "one" "two" "three" >"$f"
+    assert_fires "$(list_of "$f")" decomposition-seam "declined: index has no topic clusters" \
+        "memory: an index with no topic clusters declines with a reason" \
+        MEMORY_INDEX_WARN=2 MEMORY_INDEX_HIGH=3
 }
 
 # ============================================================================

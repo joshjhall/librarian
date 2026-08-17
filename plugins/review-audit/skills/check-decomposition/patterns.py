@@ -454,7 +454,16 @@ def bundle_kind(path: str) -> str:
     root = _bundle_root()
     if not root:
         return ""
-    if not (_glob(path, root + "/*") or _glob(path, "*/" + root + "/*")):
+    # LITERAL containment, deliberately NOT _glob(). The root is operator
+    # configuration, and routing it through fnmatch would interpret any glob
+    # metacharacter in it (`[`, `]`, `*`, `?`) as syntax. The bash mirror does
+    # NOT: a QUOTED expansion in a `case` pattern (`"$MEMORY_BUNDLE_ROOT"/*.md`)
+    # is matched literally by bash. So a root like `weird[x]root` made fnmatch
+    # read `[x]` as a character class and miss, while bash matched — the two
+    # impls disagreed on the same file, breaking the byte-identical TSV
+    # contract, silently and at exit 0. These two tests mirror bash's two arms:
+    # `"$ROOT"/*` (root at the start) and `*/"$ROOT"/*` (root nested anywhere).
+    if not (path.startswith(root + "/") or ("/" + root + "/") in path):
         return ""
     base = path.rsplit("/", 1)[-1]
     if not base.endswith(".md"):
