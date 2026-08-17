@@ -25,7 +25,7 @@ evidence grammar. See `thresholds.yml` for configurable sizes.
 | -------------------- | ------------------------------------------------------------ |
 | `file-length`        | Production LOC over the warning/high threshold                |
 | `god-module`         | Size **and** many top-level units **and** several concerns    |
-| `ai-file-bloat`      | CLAUDE.md / SKILL.md / agent md over its per-type threshold   |
+| `ai-file-bloat`      | CLAUDE.md / SKILL.md / agent md / **memory bundle** over its per-type threshold |
 | `doc-file-bloat`     | `docs/*.md` over its threshold                                |
 | `decomposition-seam` | A concrete cut point — or a **reasoned decline** to split     |
 
@@ -36,6 +36,40 @@ evidence grammar. See `thresholds.yml` for configurable sizes.
 that the generic code thresholds do not apply — running both produced two rows
 for one problem and flagged docs pages that were under their own budget.
 Segmentation is unchanged; only the verdict is exclusive.
+
+## Memory bundles
+
+A **memory bundle** — `.claude/memory/**` by default — is a first-class file
+type with two budgets, because it holds two distinct things (#700):
+
+- **index** (`MEMORY.md`, `index-*.md`, `index.md`) — loaded every session, so
+  it is budgeted as a **read limit**: the failure mode is "too long to read",
+  not "too long to maintain".
+- **concept** (every other bundle `.md`) — budgeted by what one recalled fact
+  should cost to load.
+
+Before #700 a bundle file matched no arm here and fell through to the
+**production-LOC code thresholds** — prose silently sized by a rule written for
+source. Only `*.md` under the root is bundle prose; a `.sh`/`.py` sitting in a
+bundle is code and keeps the code thresholds.
+
+The root is **configurable** (`memory_bundle.root` / `MEMORY_BUNDLE_ROOT`), not
+hardcoded. An **empty** root disables memory classification entirely — no
+findings, no error — which is how a consuming repo opts out.
+
+`thresholds.yml` is the **single authoritative source** for these budgets: the
+audit lens, #695's review lens, and #669's index health all read the one table
+rather than forking their own.
+
+**Split guidance is bundle-shaped, and the generic markdown heading seam is
+suppressed** — a `seam 40-96:` row would be actively wrong advice here:
+
+- An oversized **index** splits into **topic clusters** (its `##` sections),
+  each becoming an `index-<topic>.md` with the root keeping one pointer line per
+  sub-index — never a line range.
+- An oversized **concept** usually holds two lessons; the guidance extracts the
+  second **and requires it get an index line in the same breath**. A split that
+  omits that produces an orphan — an extracted concept nothing ever recalls.
 
 ## What it measures
 

@@ -83,6 +83,27 @@ AGENT_WARN="${AGENT_WARN:-250}"
 AGENT_HIGH="${AGENT_HIGH:-400}"
 DOC_WARN="${DOC_WARN:-500}"
 DOC_HIGH="${DOC_HIGH:-800}"
+# Memory-bundle budgets (#700) — index is a READ limit, concept is the cost of
+# one recalled fact. Before #700 a bundle file matched no bloat arm and fell
+# through to DECOMP_LOC_*, the code thresholds.
+MEMORY_INDEX_WARN="${MEMORY_INDEX_WARN:-150}"
+MEMORY_INDEX_HIGH="${MEMORY_INDEX_HIGH:-250}"
+MEMORY_CONCEPT_WARN="${MEMORY_CONCEPT_WARN:-200}"
+MEMORY_CONCEPT_HIGH="${MEMORY_CONCEPT_HIGH:-350}"
+
+# Bundle root — configurable, EMPTY disables memory classification entirely
+# (no bundle configured -> no findings, no error). Normalized so `.claude/memory`,
+# `./.claude/memory` and `.claude/memory/` all decide alike; an unnormalized
+# root would miss the glob, fall back to the code thresholds, and still exit 0.
+# Mirrors _bundle_root() in patterns.py.
+MEMORY_BUNDLE_ROOT="${MEMORY_BUNDLE_ROOT-.claude/memory}"
+while :; do
+    case "$MEMORY_BUNDLE_ROOT" in
+        ./*) MEMORY_BUNDLE_ROOT="${MEMORY_BUNDLE_ROOT#./}" ;;
+        */) MEMORY_BUNDLE_ROOT="${MEMORY_BUNDLE_ROOT%/}" ;;
+        *) break ;;
+    esac
+done
 
 while IFS= read -r file; do
     [ -f "$file" ] || continue
@@ -107,13 +128,44 @@ while IFS= read -r file; do
         *.md | *.markdown) lang="md" ;;
     esac
 
+    # Memory-bundle classification (#700) — mirrors bundle_kind() in
+    # patterns.py. Only *.md under the root is bundle prose; a .sh or .py in a
+    # bundle is code and keeps the code thresholds. Computed BEFORE the bloat
+    # case below because the bundle arm is first in the chain.
+    b_kind=""
+    if [ -n "$MEMORY_BUNDLE_ROOT" ]; then
+        case "$file" in
+            "$MEMORY_BUNDLE_ROOT"/*.md | */"$MEMORY_BUNDLE_ROOT"/*.md)
+                case "${file##*/}" in
+                    MEMORY.md | index.md | index-*) b_kind="index" ;;
+                    *) b_kind="concept" ;;
+                esac
+                ;;
+        esac
+    fi
+
     # Bloat spec — mirrors bloat_spec() in patterns.py, in the same order (the
-    # first matching arm wins, so */agents/*.md never reaches the docs arm).
+    # first matching arm wins, so */agents/*.md never reaches the docs arm, and
+    # the memory-bundle arm above pre-empts all four).
     b_warn=0
     b_high=0
     b_type=""
     b_cat=""
-    case "$file" in
+    case "$b_kind" in
+        index)
+            b_warn=$MEMORY_INDEX_WARN
+            b_high=$MEMORY_INDEX_HIGH
+            b_type="memory index"
+            b_cat="ai-file-bloat"
+            ;;
+        concept)
+            b_warn=$MEMORY_CONCEPT_WARN
+            b_high=$MEMORY_CONCEPT_HIGH
+            b_type="memory concept"
+            b_cat="ai-file-bloat"
+            ;;
+    esac
+    [ -n "$b_kind" ] || case "$file" in
         */CLAUDE.md | */AGENTS.md)
             b_warn=$CLAUDE_MD_WARN
             b_high=$CLAUDE_MD_HIGH
@@ -149,7 +201,8 @@ while IFS= read -r file; do
         -v god_units="$DECOMP_GOD_UNITS" -v god_concerns="$DECOMP_GOD_CONCERNS" \
         -v cohesive_max="$DECOMP_COHESIVE_MAX_UNITS" \
         -v b_warn="$b_warn" -v b_high="$b_high" \
-        -v b_type="$b_type" -v b_cat="$b_cat" '
+        -v b_type="$b_type" -v b_cat="$b_cat" \
+        -v b_kind="$b_kind" -v b_root="$MEMORY_BUNDLE_ROOT" '
     # ---- helpers -----------------------------------------------------------
     # family_prefix: snake_case splits at the first underscore; camel/Pascal at
     # the first internal A-Z. Lowercased. Mirrors family_prefix() in patterns.py
@@ -364,6 +417,55 @@ while IFS= read -r file; do
         } else if (production > loc_warn) {
             over = 1
             emit(1, "file-length", sprintf("%d production LOC (>%d warning); %s", production, loc_warn, metrics), "MEDIUM")
+        }
+
+        # ---- bundle-aware split guidance (#700) -----------------------------
+        # Mirrors the bundle branch in scan_file() (patterns.py). A memory
+        # bundle gets its own split shape and the generic markdown
+        # heading-cluster seam is SUPPRESSED for it — a `seam 40-96:` row would
+        # be actively wrong guidance: an index splits by TOPIC CLUSTER, not by
+        # line range, and a concept split with no index line orphans the
+        # extracted half (#669 memory-orphan). Gated on `over`, so a bundle
+        # file inside its budget emits nothing.
+        if (b_kind != "") {
+            if (over) {
+                # Topic clusters — mirrors bundle_sections() in patterns.py, NOT
+                # the un[] top-level units: those are the shallowest depth, which
+                # for a `# Title` + `## topics` file is the lone title, so every
+                # index would decline. Pick the shallowest depth with >= 2
+                # headings, falling back to the shallowest.
+                bchosen = 0
+                for (d = 1; d <= 6; d++) {
+                    bn = 0
+                    for (i = 1; i <= nh; i++) if (hd[i] == d) bn++
+                    if (bn > 0 && bchosen == 0) bchosen = d
+                    if (bn >= 2) { bchosen = d; break }
+                }
+                bns = 0
+                for (i = 1; i <= nh; i++) {
+                    if (hd[i] != bchosen) continue
+                    s = md_slug(ht[i]); if (s == "") s = "section"
+                    bns++; bsec[bns] = s
+                }
+                clist = ""
+                for (i = 1; i <= bns && i <= 5; i++) clist = (i == 1) ? bsec[i] : clist ", " bsec[i]
+                if (b_kind == "index") {
+                    if (bns >= 2) {
+                        emit(1, "decomposition-seam", sprintf("index split: %d topic clusters (%s) -> index-<topic>.md; root keeps one pointer line per sub-index", \
+                            bns, clist), "HIGH")
+                    } else {
+                        emit(1, "decomposition-seam", sprintf("declined: index has no topic clusters to split on (%d sections) — trim entries instead", \
+                            bns), "LOW")
+                    }
+                } else if (bns >= 2) {
+                    emit(1, "decomposition-seam", sprintf("concept split: extract %s to %s/%s.md AND add its index line (an extracted concept with no index line is an orphan)", \
+                        bsec[2], b_root, bsec[2]), "HIGH")
+                } else {
+                    emit(1, "decomposition-seam", sprintf("declined: single lesson — no second concept to extract (%d sections); tighten the prose instead", \
+                        bns), "LOW")
+                }
+            }
+            exit 0
         }
 
         if (lang == "") exit 0

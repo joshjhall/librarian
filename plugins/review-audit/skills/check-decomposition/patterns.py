@@ -422,11 +422,106 @@ def target_path(path: str, prefix: str) -> str:
     return (directory + "/" + inner) if directory else inner
 
 
+def _bundle_root() -> str:
+    """The configured memory-bundle root, normalized for glob matching (#700).
+
+    Configurable rather than hardcoded, defaulting to `.claude/memory`. An
+    EMPTY value means no bundle is configured: memory classification is off and
+    nothing errors.
+
+    Normalization strips a leading `./` and any trailing `/` so that every
+    spelling of the same root — `.claude/memory`, `./.claude/memory`,
+    `.claude/memory/` — decides alike. An unnormalized root would make the
+    glob miss, the file would fall back to the code thresholds, and the scan
+    would still exit 0 — the silent fail-open this issue exists to close."""
+    root = os.environ.get("MEMORY_BUNDLE_ROOT", ".claude/memory").strip()
+    while root.startswith("./"):
+        root = root[2:]
+    while root.endswith("/"):
+        root = root[:-1]
+    return root
+
+
+def bundle_kind(path: str) -> str:
+    """Which half of the memory bundle PATH is: "index", "concept", or "" when
+    it is not a bundle markdown file (#700).
+
+    Only `*.md` under the root is bundle prose — a `.sh` or `.py` sitting in a
+    bundle is code and keeps the code thresholds.
+
+    An index is the file loaded every session to route recall: the root
+    `MEMORY.md`, a topic sub-index `index-*.md`, or OKF's `index.md`."""
+    root = _bundle_root()
+    if not root:
+        return ""
+    if not (_glob(path, root + "/*") or _glob(path, "*/" + root + "/*")):
+        return ""
+    base = path.rsplit("/", 1)[-1]
+    if not base.endswith(".md"):
+        return ""
+    if base == "MEMORY.md" or base == "index.md" or base.startswith("index-"):
+        return "index"
+    return "concept"
+
+
+def bundle_sections(lines: list[str]) -> list[str]:
+    """The topic clusters of a bundle markdown file (#700).
+
+    NOT the same as `find_units`' top-level units. `find_units` takes the
+    SHALLOWEST heading depth present, which for a normal bundle file is the
+    lone `# Title` — so the `##` topic sections, which are exactly what an
+    index splits along, would be invisible and every index would decline.
+
+    The rule here is the shallowest depth that has at least TWO headings: a
+    `# Title` + `## topics` file clusters by its `##`, and a file written with
+    all-`##` sections and no title clusters by those same `##`. Falls back to
+    the shallowest depth when nothing repeats (a genuinely unsplittable file)."""
+    heads: list[tuple[int, str]] = []
+    fenced = False
+    for line in lines:
+        if line.startswith("```") or line.startswith("~~~"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        m = re.match(r"^(#{1,6})[ \t]+(.*)$", line)
+        if m:
+            heads.append((len(m.group(1)), md_slug(m.group(2)) or "section"))
+    if not heads:
+        return []
+    depths = sorted(set(d for d, _ in heads))
+    chosen = depths[0]
+    for d in depths:
+        if sum(1 for hd, _ in heads if hd == d) >= 2:
+            chosen = d
+            break
+    return [name for d, name in heads if d == chosen]
+
+
 def bloat_spec(path: str) -> tuple[int, int, str, str] | None:
     """The per-file-type bloat thresholds, migrated verbatim from
     check-ai-config so the move is behavior-preserving. Returns
     (warn, high, file-type label, category) or None when the path is not an
-    AI-instruction or documentation file."""
+    AI-instruction or documentation file.
+
+    The memory-bundle arm is FIRST (#700): inside a configured bundle, bundle
+    rules apply, so a `docs/` or `agents/` directory nested in the bundle
+    cannot escape to the arms below and be sized by the wrong budget."""
+    kind = bundle_kind(path)
+    if kind == "index":
+        return (
+            _int_env("MEMORY_INDEX_WARN", 150),
+            _int_env("MEMORY_INDEX_HIGH", 250),
+            "memory index",
+            "ai-file-bloat",
+        )
+    if kind == "concept":
+        return (
+            _int_env("MEMORY_CONCEPT_WARN", 200),
+            _int_env("MEMORY_CONCEPT_HIGH", 350),
+            "memory concept",
+            "ai-file-bloat",
+        )
     if _glob(path, "*/CLAUDE.md") or _glob(path, "*/AGENTS.md"):
         return (
             _int_env("CLAUDE_MD_WARN", 400),
@@ -547,6 +642,63 @@ def scan_file(path: str, lines: list[str]) -> None:
             "%d production LOC (>%d warning); %s" % (m["production"], warn, metrics),
             "MEDIUM",
         )
+
+    # --- Bundle-aware split guidance (#700) --------------------------------
+    # A memory bundle gets its OWN split shape, and the generic markdown
+    # heading-cluster seam is SUPPRESSED for it — the same one-verdict move
+    # #701 made for size, applied to the seam. Emitting a `seam 40-96:` row for
+    # an index would be actively wrong guidance: an index splits by TOPIC
+    # CLUSTER, not by line range, and a concept split that does not also add an
+    # index line silently orphans the extracted half (#669's `memory-orphan`,
+    # the never-recalled failure).
+    #
+    # Gated on `over`, so a bundle file inside its budget emits NOTHING.
+    kind = bundle_kind(path)
+    if kind:
+        if over:
+            names = bundle_sections(lines)
+            if kind == "index":
+                if len(names) >= 2:
+                    emit(
+                        path,
+                        1,
+                        "decomposition-seam",
+                        "index split: %d topic clusters (%s) -> index-<topic>.md; "
+                        "root keeps one pointer line per sub-index"
+                        % (len(names), ", ".join(names[:5])),
+                        "HIGH",
+                    )
+                else:
+                    emit(
+                        path,
+                        1,
+                        "decomposition-seam",
+                        "declined: index has no topic clusters to split on "
+                        "(%d sections) — trim entries instead" % len(names),
+                        "LOW",
+                    )
+            elif len(names) >= 2:
+                # Two lessons in one file: extract the second, and REQUIRE its
+                # index line in the same breath.
+                emit(
+                    path,
+                    1,
+                    "decomposition-seam",
+                    "concept split: extract %s to %s/%s.md AND add its index "
+                    "line (an extracted concept with no index line is an orphan)"
+                    % (names[1], _bundle_root(), names[1]),
+                    "HIGH",
+                )
+            else:
+                emit(
+                    path,
+                    1,
+                    "decomposition-seam",
+                    "declined: single lesson — no second concept to extract "
+                    "(%d sections); tighten the prose instead" % len(names),
+                    "LOW",
+                )
+        return
 
     if not lang:
         return

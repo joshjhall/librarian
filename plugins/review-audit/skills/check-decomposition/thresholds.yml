@@ -80,6 +80,38 @@ bloat_thresholds:
   doc_md: # docs/*.md — not auto-loaded, but hard to navigate when huge
     warning: 500 # DOC_WARN
     high: 800 # DOC_HIGH
+  # Memory-bundle markdown (#700). A bundle file is neither code nor a docs
+  # page, and before #700 it matched no arm here — so it fell through to the
+  # production-LOC code thresholds above (300/500), silently sized by a rule
+  # written for source. These two arms are what stop that.
+  #
+  # The bundle splits into two budgets because it holds two distinct things:
+  memory_index: # MEMORY.md / index-*.md — loaded EVERY session
+    # Budgeted as a READ LIMIT, not a maintenance limit: an index's job is to be
+    # scannable, so the failure mode is "too long to read", not "too long to
+    # maintain". Hence a tighter budget than any concept.
+    warning: 150 # MEMORY_INDEX_WARN
+    high: 250 # MEMORY_INDEX_HIGH
+  memory_concept: # every other bundle .md — one recalled fact
+    # Budgeted by what a single recalled fact should cost to load into context.
+    warning: 200 # MEMORY_CONCEPT_WARN
+    high: 350 # MEMORY_CONCEPT_HIGH
+
+# Where the memory bundle lives. CONFIGURABLE, not hardcoded (#700) — the same
+# portability rule every OKF slice carries, so a consuming repo whose bundle is
+# elsewhere is classified correctly rather than not at all.
+#
+# An EMPTY value disables memory classification entirely: no bundle configured
+# means no memory findings and NO error. That is also how a repo opts out.
+memory_bundle:
+  root: .claude/memory # MEMORY_BUNDLE_ROOT
+
+# THIS TABLE IS AUTHORITATIVE FOR MEMORY SIZING — three consumers read it: the
+# audit lens, #695's review lens, and #669's index health. #669 must read
+# memory_index/memory_concept FROM HERE rather than defining its own
+# `memory-index-bloat` config: two threshold tables over the same files that
+# must agree is exactly the duplicated-prose failure #663 was filed to
+# eliminate, and the same argument already recorded on #589 for plugin prose.
 
 min_confidence:
   deterministic: 0.9

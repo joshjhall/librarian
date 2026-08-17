@@ -170,6 +170,8 @@ while IFS= read -r py; do
             DECOMP_LOC_WARN=5 DECOMP_SEAM_MIN_LINES=8 \
                 CLAUDE_MD_WARN=2 CLAUDE_MD_HIGH=3 SKILL_WARN=2 SKILL_HIGH=3 \
                 AGENT_WARN=2 AGENT_HIGH=3 DOC_WARN=2 DOC_HIGH=3 \
+                MEMORY_INDEX_WARN=2 MEMORY_INDEX_HIGH=3 \
+                MEMORY_CONCEPT_WARN=2 MEMORY_CONCEPT_HIGH=3 \
                 python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$DECOMP_LIST" >/dev/null 2>&1 || true
             # Second pass on the WARNING-only side of each bloat branch
@@ -177,6 +179,14 @@ while IFS= read -r py; do
             DECOMP_LOC_WARN=900 \
                 CLAUDE_MD_WARN=3 CLAUDE_MD_HIGH=99 SKILL_WARN=3 SKILL_HIGH=99 \
                 AGENT_WARN=3 AGENT_HIGH=99 DOC_WARN=3 DOC_HIGH=99 \
+                MEMORY_INDEX_WARN=3 MEMORY_INDEX_HIGH=99 \
+                MEMORY_CONCEPT_WARN=3 MEMORY_CONCEPT_HIGH=99 \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$DECOMP_LIST" >/dev/null 2>&1 || true
+            # Third pass with NO bundle configured (#700) — drives the empty-root
+            # early return in _bundle_root()/bundle_kind(), the "a consuming repo
+            # opts out" path, which neither pass above reaches.
+            MEMORY_BUNDLE_ROOT='' DECOMP_LOC_WARN=5 \
                 python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$DECOMP_LIST" >/dev/null 2>&1 || true
             python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
