@@ -26,15 +26,38 @@ threshold and **MEDIUM** over the warning threshold. `decomposition-seam` emits
 
 **The three size categories are mutually exclusive — a file receives exactly one
 size verdict** (#701). A file whose path matches a `bloat_thresholds` type
-(CLAUDE.md/AGENTS.md, `skills/*/SKILL.md`, `agents/*.md`, `docs/*.md`) is judged
-**only** against that per-type budget, on **total lines**; `file-length` is
-skipped for it. Every other file is judged **only** by `file-length`, on
-production LOC. Consumers can therefore treat a size row as one problem rather
-than deduplicating two rows carrying two different numbers.
+(CLAUDE.md/AGENTS.md, `skills/*/SKILL.md`, `agents/*.md`, `docs/*.md`, or a
+**memory-bundle** `*.md`) is judged **only** against that per-type budget, on
+**total lines**; `file-length` is skipped for it. Every other file is judged
+**only** by `file-length`, on production LOC. Consumers can therefore treat a
+size row as one problem rather than deduplicating two rows carrying two
+different numbers.
 
 `god-module` and `decomposition-seam` are unaffected: this splits the size
 *verdict*, not the segmentation. An oversized `SKILL.md` still yields a seam, and
 the seam-or-decline pairing holds for whichever size category fired.
+
+### Memory-bundle rows (#700)
+
+A bundle file under the configured root (`MEMORY_BUNDLE_ROOT`, default
+`.claude/memory`) emits `ai-file-bloat` with the file-type label **`memory
+index`** or **`memory concept`** — two budgets, because an index is loaded every
+session (a read limit) and a concept is the cost of one recalled fact. An empty
+root disables the classification: no rows, no error.
+
+The bundle is the one type whose `decomposition-seam` row is **not** a line-range
+seam. The generic markdown seam is suppressed and replaced by bundle-shaped
+guidance, so consumers must not assume the `seam <start>-<end>:` grammar below
+for a bundle path:
+
+```text
+.claude/memory/MEMORY.md	1	decomposition-seam	index split: 3 topic clusters (golem, review, release) -> index-<topic>.md; root keeps one pointer line per sub-index	HIGH
+.claude/memory/two-lessons.md	1	decomposition-seam	concept split: extract second_thing to .claude/memory/second_thing.md AND add its index line (an extracted concept with no index line is an orphan)	HIGH
+```
+
+The index-line clause is unconditional on the concept arm: a split that omits it
+orphans the extracted half. Unsplittable bundle files decline at `LOW` with a
+reason, exactly like the code path.
 
 ## TSV row format
 

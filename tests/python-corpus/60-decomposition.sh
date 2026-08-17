@@ -242,6 +242,26 @@ printf '%s\n' l1 l2 l3 l4 l5 >"$DECOMPDIR/docs/guide.md"
 # disposition-recall-tally-613.md shape from the issue.
 printf '%s\n' 'Short tally.' >"$DECOMPDIR/docs/under-budget.md"
 
+# --- Memory bundle (#700) ----------------------------------------------------
+# Drives bundle_kind()'s index/concept/non-md arms, bundle_sections()'s
+# "shallowest depth with >= 2 headings" pick, and all four guidance branches
+# (index split / index decline / concept split / concept decline). Before #700
+# these paths did not exist and a bundle file fell through to the CODE
+# thresholds. Kept in lockstep with tests/validate-decomposition-detectors.sh.
+mkdir -p "$DECOMPDIR/.claude/memory"
+printf '%s\n' '# Index' '' '## Golem' '- a' '' '## Review' '- b' \
+    >"$DECOMPDIR/.claude/memory/MEMORY.md"
+printf '%s\n' '# Golem' '' '## A' x '' '## B' y \
+    >"$DECOMPDIR/.claude/memory/index-golem.md"
+printf '%s\n' '# Lessons' '' '## First Thing' t '' '## Second Thing' t \
+    >"$DECOMPDIR/.claude/memory/two-lessons.md"
+# One section only -> the concept DECLINE arm (nothing to extract).
+printf '%s\n' '# One' '' 'text' 'more' >"$DECOMPDIR/.claude/memory/single.md"
+# An INDEX with no topic clusters -> the index DECLINE arm, the fourth outcome.
+printf '%s\n' '# Flat' '' one two three >"$DECOMPDIR/.claude/memory/index-flat.md"
+# Non-markdown inside the bundle: still code, still code-sized.
+printf '%s\n' 'def a(x):' '    return x' >"$DECOMPDIR/.claude/memory/helper.py"
+
 # --- Skip globs + unknown extension (metrics-only, no segmenter) -------------
 printf '%s\n' '{"a": 1}' >"$DECOMPDIR/package-lock.json"
 printf '%s\n' 'plain data' >"$DECOMPDIR/notes.txt"
@@ -261,6 +281,10 @@ for f in "$DECOMPDIR"/mod.py "$DECOMPDIR"/app.ts "$DECOMPDIR"/app.test.ts \
     "$DECOMPDIR"/CLAUDE.md "$DECOMPDIR"/skills/big/SKILL.md \
     "$DECOMPDIR"/agents/rev.md "$DECOMPDIR"/agents/nested/nested.md \
     "$DECOMPDIR"/docs/guide.md "$DECOMPDIR"/docs/under-budget.md \
+    "$DECOMPDIR"/.claude/memory/MEMORY.md "$DECOMPDIR"/.claude/memory/index-golem.md \
+    "$DECOMPDIR"/.claude/memory/two-lessons.md "$DECOMPDIR"/.claude/memory/single.md \
+    "$DECOMPDIR"/.claude/memory/index-flat.md \
+    "$DECOMPDIR"/.claude/memory/helper.py \
     "$DECOMPDIR"/package-lock.json "$DECOMPDIR"/notes.txt "$DECOMPDIR"/README \
     "$DECOMP_UNREAD"; do
     printf '%s\n' "$f" >>"$DECOMP_LIST"
