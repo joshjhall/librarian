@@ -2,9 +2,14 @@
 # ship-issue — Pre-Review Gates (Deterministic Pre-Scan)
 #
 # Scans changed files for mechanical issues before PR creation:
-# AI slop patterns, debug statements, missing tests, untested public APIs.
+# AI slop patterns, debug statements, missing tests, untested public APIs, and
+# review-lens file sizing (#695, delegated to the sibling sizing.sh).
 #
 # Input:  $1 = file containing paths to scan (one per line)
+#         $2 = OPTIONAL numstat sidecar (`git diff --numstat` rows) forwarded to
+#              sizing.sh. Without it sizing still runs but has no growth signal,
+#              so every over-threshold file is reported LOW/informational — which
+#              is the safe direction (it cannot manufacture a blocking finding).
 # Output: TSV to stdout: file\tline\tcategory\tevidence\tcertainty
 #
 # Exit codes:
@@ -14,7 +19,8 @@
 # Note: Uses full paths for commands per project shell-scripting conventions.
 set -euo pipefail
 
-FILE_LIST="${1:?Usage: pre-review-gates.sh <file-list>}"
+FILE_LIST="${1:?Usage: pre-review-gates.sh <file-list> [numstat-file]}"
+NUMSTAT_FILE="${2:-}"
 
 if [ ! -f "$FILE_LIST" ]; then
     echo "Error: file list not found: $FILE_LIST" >&2
@@ -1570,3 +1576,30 @@ while IFS= read -r file; do
     scan_untested_public_api "$file"
 
 done <"$FILE_LIST" || true
+
+# --- review-lens sizing (#695) ----------------------------------------------
+# Delegated to the sibling sizing.{py,sh} pair rather than inlined here: it owns
+# the growth-aware disposition and shares its production-LOC engine with
+# check-decomposition through pinned sentinel regions, neither of which belongs
+# in this file. It is invoked ONCE over the whole list (not per-file) because it
+# does its own iteration and reads the numstat sidecar once.
+#
+# GRACEFUL DEGRADATION, matching pre-ship-validation.md's contract for this whole
+# scanner: a missing or failing sizing tool must never take down the rest of the
+# pre-scan, whose rows are already on stdout. Its own fail-loud exit 2 (no
+# python3, no awk) is surfaced on stderr by the caller's shell, not swallowed
+# into silence here — but it does not abort the gate.
+# SCRIPT_DIR, not `dirname "$0"`: the former is computed once above through
+# `readlink -f "${BASH_SOURCE[0]}"`, so it resolves symlinks and does not depend
+# on how the script was invoked. `$0` survives neither — under a symlink, a
+# relative invocation from another cwd, or a `source`, it can name a directory
+# that is not this plugin's, which at best skips sizing silently and at worst
+# runs a same-named script from wherever it did resolve.
+_SIZING="${SCRIPT_DIR}/sizing.sh"
+if [ -f "$_SIZING" ]; then
+    if [ -n "$NUMSTAT_FILE" ] && [ -f "$NUMSTAT_FILE" ]; then
+        command bash "$_SIZING" "$FILE_LIST" "$NUMSTAT_FILE" || true
+    else
+        command bash "$_SIZING" "$FILE_LIST" || true
+    fi
+fi

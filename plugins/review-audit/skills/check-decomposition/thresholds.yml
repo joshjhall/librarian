@@ -30,10 +30,75 @@ severity:
 #
 # These apply ONLY to files that bloat_thresholds below does not classify (#701).
 # A classified file gets its per-type budget instead — see that section.
+#
+# THIS IS THE AUDIT LENS. It is consumed by /review-audit:codebase-audit, which
+# sweeps a WHOLE REPO on a periodic cadence. See review_size_thresholds below for
+# the per-PR review lens, which is deliberately looser — the two are reconciled
+# on purpose, not by accident (#695).
+#
+# The two scopings are orthogonal and both apply: #701 decides WHICH files this
+# section governs (the unclassified ones), #695 decides which LENS reads it (the
+# audit sweep, not the per-PR review).
 size_thresholds:
   production_loc:
     warning: 300 # DECOMP_LOC_WARN
     high: 500 # DECOMP_LOC_HIGH
+
+# THE REVIEW LENS (#695) — consumed by ship-issue's sizing.{py,sh} during the
+# adversarial pre-PR review, NOT by the audit sweep above.
+#
+# WHY IT IS LOOSER THAN THE AUDIT LENS. The two lenses ask different questions.
+# An audit sweeps a whole repo, produces a backlog, and can afford to nag: a
+# 300-LOC warning there costs one more item on a list somebody triages later. A
+# per-PR gate spends a reviewer's attention on every single PR, and one that
+# fires at 300 production LOC fires on a large share of them — at which point it
+# gets turned off, and then it catches nothing at all. The looser pair buys a
+# lens that survives.
+#
+# The review lens is also GROWTH-AWARE, which the audit lens is not and cannot
+# be: it reads a `git diff --numstat` sidecar so a one-line touch to a
+# pre-existing oversized file is informational rather than blocking. The
+# thresholds below therefore gate a *different question* ("did this diff make it
+# worse?"), not merely the same question at a higher number.
+review_size_thresholds:
+  production_loc:
+    warning: 500 # REVIEW_LOC_WARN
+    high: 800 # REVIEW_LOC_HIGH
+  # Minimum added lines before growth on an ALREADY-over file counts as this
+  # PR's business. Below this the row is emitted at LOW/informational.
+  growth_min_added: 50 # REVIEW_GROWTH_MIN_ADDED
+  # A file at or under this many top-level units declines as "single cohesive
+  # unit" rather than being reported as splittable.
+  cohesive_max_units: 2 # REVIEW_COHESIVE_MAX_UNITS
+
+  # Per-language overrides on top of the default pair above. A 500-line Rust file
+  # and a 500-line shell script are not the same claim: shell and markdown are
+  # line-hungry by nature (one statement per line; prose wraps), while Rust and Go
+  # pack more meaning per line and turn over harder when long.
+  #
+  # A language ABSENT here falls through to the default pair — adding one is a
+  # one-line edit, and an unlisted language is still sized rather than silently
+  # skipped.
+  per_language:
+    sh:
+      warning: 700 # REVIEW_LOC_WARN_SH
+      high: 1000 # REVIEW_LOC_HIGH_SH
+    md:
+      warning: 700 # REVIEW_LOC_WARN_MD
+      high: 1000 # REVIEW_LOC_HIGH_MD
+    rs:
+      warning: 400 # REVIEW_LOC_WARN_RS
+      high: 700 # REVIEW_LOC_HIGH_RS
+    go:
+      warning: 400 # REVIEW_LOC_WARN_GO
+      high: 700 # REVIEW_LOC_HIGH_GO
+
+# Non-lossy split verification (#695 AC8), consumed by ship-issue's
+# split-verify.{py,sh}. Tolerance for the import/`mod`/`__init__` boilerplate a
+# split legitimately adds — the check exists to catch a LOST HALF, not to police
+# a few scaffold lines, so it is deliberately generous.
+split_verification:
+  loc_tolerance: 40 # SPLIT_LOC_TOLERANCE
 
 # What makes a candidate span worth reporting as a seam.
 seam:

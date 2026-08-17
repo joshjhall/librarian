@@ -1,7 +1,7 @@
 export const meta = {
   name: 'next-issue-review',
   description:
-    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND characterizes its nature, from which an ordered rule list computes blocking-vs-deferrable for the skill to resolve-or-defer. On a re-review cycle (cycle > 1) with a caller-supplied fix-commit delta, narrows the delta-local dimensions to that delta while scope-drift keeps the full diff. One cycle per invocation — the skill owns the cycle loop and the cap.',
+    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/decomposition/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND characterizes its nature, from which an ordered rule list computes blocking-vs-deferrable for the skill to resolve-or-defer. On a re-review cycle (cycle > 1) with a caller-supplied fix-commit delta, narrows the delta-local dimensions to that delta while scope-drift keeps the full diff. One cycle per invocation — the skill owns the cycle loop and the cap.',
   phases: [
     { title: 'Manifest', detail: 'build + classify the changed-file manifest, decide specialists' },
     { title: 'Review', detail: 'review dimensions run as one parallel barrier under one budget' },
@@ -78,7 +78,7 @@ export const meta = {
 //
 // The dimensions reuse the code-reviewer agent's discriminated modes (`manifest`,
 // `reviewer:<name>`) for security + correctness; the NEW dimensions (tests,
-// conventions, scope-drift) supply their instructions inline here so no edit to
+// conventions, decomposition, scope-drift) supply their instructions inline here so no edit to
 // code-reviewer.md is needed (coordinate-free with #498). The certainty re-score
 // AND blocking/deferrable classification are a single custom `judge` mode (also
 // inline instructions, like the other custom dimensions) rather than the agent's
@@ -342,6 +342,47 @@ const NEW_DIMENSIONS = [
       'just-recipe usage, conventional-commit scopes). Cite the convention you ' +
       'are applying in the description. Skip generic style preferences not ' +
       'backed by a documented convention.',
+  },
+  {
+    name: 'decomposition',
+    category: 'decomposition',
+    instructions:
+      'You are a file-size / decomposition reviewer (#695). The pre-scan has ' +
+      'already computed production LOC and growth for the changed files — read ' +
+      'its `file-length` and `decomposition-seam` candidates and judge what the ' +
+      'numbers cannot: whether a proposed seam is SEMANTICALLY coherent (do those ' +
+      'lines actually belong together, and does the destination name describe ' +
+      'them?), and whether a declined file was RIGHTLY declined.\n' +
+      'GROWTH-AWARE, NOT ABSOLUTE. Never flag a file for size this diff did not ' +
+      'meaningfully change: a one-line touch to a pre-existing 1,200-line file is ' +
+      'not this PR\'s debt, and the pre-scan already marks that case LOW/' +
+      'informational. Flag when the diff PUSHES a file over a threshold, or adds ' +
+      'materially to one already over.\n' +
+      'DEFERRABLE-LEANING. The right outcome is usually a follow-up issue, not a ' +
+      'blocked PR. Only treat size as blocking when the growth is both large and ' +
+      'plainly severable in this change.\n' +
+      'EVERY FINDING MUST NAME A CONCRETE SEAM — which lines move, and where to. ' +
+      'A finding that says only "this file is long" or "consider splitting" is ' +
+      'worthless and must not be filed; if you cannot name the cut, say the file ' +
+      'was examined and declined, and why.\n' +
+      'Split guidance is LANGUAGE-SHAPED: Rust -> new subdir module with mod.rs ' +
+      're-exporting; Python -> package dir with __init__.py re-exporting the ' +
+      'public surface; JS/TS -> sibling modules + a barrel index.ts; Go -> more ' +
+      'files in the same package (no import churn); Shell -> a sourced fragment ' +
+      'plus an explicit ordered list; Markdown -> PROGRESSIVE DISCLOSURE, moving ' +
+      'detail into linked files and leaving a one-line pointer behind. For ' +
+      'markdown especially, a split that moves prose out with NO link left behind ' +
+      'has lost content, not decomposed it — say so.\n' +
+      'Long-and-correct is a real answer: a generated file, a lookup table, one ' +
+      'exhaustive match arm are legitimately long. Do not manufacture findings.\n' +
+      'WHEN THE DIFF ITSELF PERFORMS A SPLIT — a file shrank sharply and sibling ' +
+      'files appeared, or prose moved into new linked docs — do not eyeball ' +
+      'whether it lost anything. Say so in your finding and cite ' +
+      '`ship-issue/split-verify.sh <pre-split-snapshot> <post-split-original> ' +
+      '[<destination> ...]`, which proves it mechanically: production-LOC ' +
+      'conservation, every top-level unit preserved, no dangling callers, and ' +
+      'for markdown every moved heading still reachable by a link. That is the ' +
+      'difference between suggesting a split and accepting one.',
   },
   {
     name: 'scope-drift',
@@ -795,7 +836,9 @@ const manifestPrompt = () => {
   return (
     `Mode: manifest.\n${scopeHeader(mFiles, mDiff)}\n` +
     `Follow Steps 1-2 of your instructions: build the changed-file manifest, read each ` +
-    `file for context, and classify every file's type(s). Decide which conditional ` +
+    `file for context, and classify every file's type(s) — including \`docs\` for ` +
+    `markdown/rst/adoc prose, which is a first-class type, not an absence of one. ` +
+    `Decide which conditional ` +
     `specialists are needed: set needs.database=true if any file is type database, and ` +
     `needs.devops=true if any file is type ci or docker. Return the typed manifest ` +
     `(files, per-file classifications, needs) — do NOT echo the diff back. ` +
@@ -889,7 +932,7 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   `your instructions. Set category=${dim.category} on every finding and return ` +
   `the typed findings array (empty if none).`
 
-// New dimensions (tests, conventions, scope-drift): instructions supplied inline.
+// New dimensions (tests, conventions, decomposition, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
@@ -1200,11 +1243,21 @@ const narrowingActive = (cycle, deltaDiff, deltaFiles) =>
 // both generic dimensions unless one of them blocked the previous cycle (#529).
 // `tests` is deliberately NOT widened: a ci/docker-only delta needs no
 // test-coverage lens.
+// `decomposition` (#695) is delta-local and sizes anything with a segmenter:
+// source, test and docs files all have production-LOC rules and a language-shaped
+// split guidance arm. It is deliberately NARROWER than security/correctness —
+// `config`/`ci`/`docker` are excluded because a JSON/YAML/Dockerfile is not a
+// decomposition candidate (the scanner skips those extensions outright), so
+// including them would re-run the dimension on deltas it can say nothing about.
+// `docs` is INCLUDED and is the entry that matters most here: prose is this
+// repo's largest and fastest-churning surface (#589), and the markdown
+// progressive-disclosure case is the one the dimension is least redundant on.
 const DIMENSION_RELEVANT_TYPES = {
   security: ['source', 'database', 'config', 'ci', 'docker'],
   correctness: ['source', 'database', 'config', 'ci', 'docker'],
   tests: ['source', 'test'],
   conventions: ['*'],
+  decomposition: ['source', 'test', 'docs'],
 }
 
 // True when the delta's classified file types intersect the dimension's relevant
@@ -1309,7 +1362,7 @@ const selectReviewDimensions = ({
     })
   }
 
-  // NEW dimensions (tests, conventions, scope-drift). scope-drift is a
+  // NEW dimensions (tests, conventions, decomposition, scope-drift). scope-drift is a
   // whole-change lens: always included, always reading the FULL diff, never
   // narrowing-skipped. The others are delta-local (include test + per-inclusion
   // diff). Budget-floor gating is preserved for every new dimension that WOULD run.

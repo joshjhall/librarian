@@ -11,8 +11,11 @@
 // collect-all (they record, never throw), so a failure here does not mask any
 // sibling area — see tests/lib/mjs-assert.mjs.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { ok, eq, resolves } from "../lib/mjs-assert.mjs";
-import { extractHelpers, harnessSource, SHIP } from "../lib/extract-helpers.mjs";
+import { extractHelpers, harnessSource, repoRoot, SHIP } from "../lib/extract-helpers.mjs";
 
 // async because the #646 area exercises `attempt`, an async guard. The entry
 // point awaits every run(), so a synchronous area is unaffected.
@@ -925,6 +928,7 @@ export async function run() {
       diffForInclusion,
       REUSED_DIMENSIONS,
       NEW_DIMENSIONS,
+      DIMENSION_RELEVANT_TYPES,
     } = extractHelpers(
       SHIP,
       [
@@ -936,6 +940,7 @@ export async function run() {
         "diffForInclusion",
         "REUSED_DIMENSIONS",
         "NEW_DIMENSIONS",
+        "DIMENSION_RELEVANT_TYPES",
       ],
       { cycle: 2, phase: "pr-cycle", files: ["x.js"] },
     );
@@ -1001,7 +1006,7 @@ export async function run() {
     const fullNames = full.entries.map((e) => e.dim.name).sort();
     eq(
       JSON.stringify(fullNames),
-      JSON.stringify(["conventions", "correctness", "scope-drift", "security", "tests"]),
+      JSON.stringify(["conventions", "correctness", "decomposition", "scope-drift", "security", "tests"]),
       "selectReviewDimensions: full cycle runs every dimension",
     );
     ok(full.entries.every((e) => e.diff === fullDiff), "selectReviewDimensions: full cycle every entry reads the full diff");
@@ -1010,7 +1015,7 @@ export async function run() {
     eq(full.dimensionsSkipped.length, 0, "selectReviewDimensions: full cycle skips nothing");
 
     // Budget-floor branch: when the shared budget is below the floor, every NEW
-    // dimension (tests/conventions/scope-drift) is skipped into dimensionsSkipped and
+    // dimension (tests/conventions/decomposition/scope-drift) is skipped into dimensionsSkipped and
     // budgetExhausted flips true — the genuine partial-cycle signal (distinct from a
     // narrowing drop). Reused dimensions (security/correctness) have no budget gate.
     const lowBudget = { total: 100000, remaining: () => 1000, spent: () => 99000 };
@@ -1018,7 +1023,7 @@ export async function run() {
     eq(starved.budgetExhausted, true, "selectReviewDimensions: sub-floor budget flips budgetExhausted true");
     eq(
       JSON.stringify(starved.dimensionsSkipped.sort()),
-      JSON.stringify(["conventions", "scope-drift", "tests"]),
+      JSON.stringify(["conventions", "decomposition", "scope-drift", "tests"]),
       "selectReviewDimensions: sub-floor budget skips every NEW dimension into dimensionsSkipped",
     );
     eq(
@@ -1030,13 +1035,13 @@ export async function run() {
     // Missing delta on cycle > 1 ⇒ non-narrowed fallback (same as cycle 1).
     const noDelta = call({ deltaDiff: "" });
     eq(noDelta.narrowed, false, "selectReviewDimensions: cycle>1 without a delta falls back to full");
-    eq(noDelta.entries.length, 5, "selectReviewDimensions: fallback runs all five dimensions");
+    eq(noDelta.entries.length, 6, "selectReviewDimensions: fallback runs all six dimensions");
     ok(noDelta.entries.every((e) => e.diff === fullDiff), "selectReviewDimensions: fallback reads the full diff");
 
-    // Narrowed, source-only delta: security/correctness/tests/conventions all touch
-    // source and run against the DELTA diff; scope-drift always runs against the FULL
-    // diff. (Here every delta-local dim happens to be relevant, so all five appear —
-    // the drop case is asserted next.)
+    // Narrowed, source-only delta: security/correctness/tests/conventions/decomposition
+    // all touch source and run against the DELTA diff; scope-drift always runs against
+    // the FULL diff. (Here every delta-local dim happens to be relevant, so all six
+    // appear — the drop case is asserted next.)
     const src = call({});
     eq(src.narrowed, true, "selectReviewDimensions: source-delta cycle is narrowed");
     const byName = Object.fromEntries(src.entries.map((e) => [e.dim.name, e]));
@@ -1061,6 +1066,79 @@ export async function run() {
     );
     eq(cfg.dimensionsSkipped.length, 0, "selectReviewDimensions: a narrowing DROP is not a partial-cycle signal");
     eq(cfg.budgetExhausted, false, "selectReviewDimensions: a narrowing DROP does not force budget_exhausted");
+
+    // #695 — the `decomposition` dimension's own narrowing behavior. The three
+    // properties are asserted SEPARATELY rather than being left implicit in the
+    // dimension-name lists above, because each can regress independently:
+    //
+    //   (a) it DROPS on a config-only delta. A .json/.yaml/Dockerfile is not a
+    //       decomposition candidate — the scanner skips those extensions outright
+    //       — so running it there would spend a reviewer on a delta it can say
+    //       nothing about. This is the entry that distinguishes its relevant-types
+    //       row from security/correctness, so a copy-paste of their row (the
+    //       obvious wrong edit) fails HERE.
+    eq(
+      cfg.entries.some((e) => e.dim.name === "decomposition"),
+      false,
+      "selectReviewDimensions: config-only delta drops decomposition (config files are not sizeable) (#695)",
+    );
+
+    //   (b) it RUNS on a docs-only delta, reading the DELTA diff. Prose is this
+    //       repo's largest and fastest-churning surface (#589) and the markdown
+    //       progressive-disclosure case is where the dimension is least redundant,
+    //       so a `docs` type dropping out of its row is a real coverage loss.
+    //       `?.diff` (not a bare `.diff`) so a missing entry RECORDS a failure
+    //       instead of throwing and aborting the collect-all run.
+    // THE FIXTURE BELOW HAND-BUILDS A MANIFEST, so on its own it proves only
+    // that the selector reacts to a `docs` type IF one arrives — not that the
+    // upstream manifest agent ever emits one. That gap was real: `docs` was
+    // absent from code-reviewer.md's Step 2 classification table, so a
+    // markdown-only delta classified as NO type at all and the decomposition
+    // dimension was silently dropped on exactly the case it exists for.
+    //
+    // So assert the two ends agree. This is a cross-artifact check — the
+    // selector's relevant-types row lives in workflow.js, the vocabulary that
+    // can satisfy it lives in a different plugin's agent prose — and nothing
+    // else in the suite spans that boundary. Without it, a future edit dropping
+    // `docs` from the table restores a dead code path with every test green.
+    const reviewerAgent = readFileSync(
+      join(repoRoot, "plugins/dev-core/agents/code-reviewer.md"),
+      "utf8",
+    );
+    for (const t of DIMENSION_RELEVANT_TYPES.decomposition) {
+      ok(
+        new RegExp(`^\\|\\s*${t}\\s*\\|`, "m").test(reviewerAgent),
+        `DIMENSION_RELEVANT_TYPES.decomposition type '${t}' is a real manifest type in code-reviewer.md Step 2 (#695)`,
+      );
+    }
+
+    const docsOnly = call({
+      deltaFiles: ["docs/guide.md"],
+      manifest: { classifications: [{ file: "docs/guide.md", types: ["docs"] }] },
+    });
+    const docsByName = Object.fromEntries(docsOnly.entries.map((e) => [e.dim.name, e]));
+    eq(
+      docsByName["decomposition"]?.diff,
+      deltaDiff,
+      "selectReviewDimensions: docs-only delta RUNS decomposition against the delta diff (#589/#695)",
+    );
+
+    //   (c) the prior-blocking carry-over reaches it: a decomposition finding
+    //       whose fix touched only config must still be re-confirmed, and against
+    //       the FULL diff — the finding it re-checks may live outside the fix
+    //       delta. Without this, a size finding could silently vanish from
+    //       `blocking` and read as resolved.
+    const decompPrior = call({
+      deltaFiles: ["config.yaml"],
+      manifest: { classifications: [{ file: "config.yaml", types: ["config"] }] },
+      priorBlocking: ["decomposition"],
+    });
+    const priorByName = Object.fromEntries(decompPrior.entries.map((e) => [e.dim.name, e]));
+    eq(
+      priorByName["decomposition"]?.diff,
+      fullDiff,
+      "selectReviewDimensions: prior-blocking decomposition re-runs against the FULL diff even on an irrelevant delta (#695)",
+    );
 
     // #529 — narrowed, docker-only delta: before the fix, security + correctness both
     // dropped here (neither listed `docker`), leaving coverage solely to the `devops`
@@ -1110,7 +1188,7 @@ export async function run() {
     const testOnlyNames = testOnly.entries.map((e) => e.dim.name).sort();
     eq(
       JSON.stringify(testOnlyNames),
-      JSON.stringify(["conventions", "scope-drift", "tests"]),
+      JSON.stringify(["conventions", "decomposition", "scope-drift", "tests"]),
       "selectReviewDimensions: test-only delta drops security/correctness (the saving)",
     );
 
