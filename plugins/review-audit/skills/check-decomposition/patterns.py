@@ -488,9 +488,48 @@ def scan_file(path: str, lines: list[str]) -> None:
         )
     )
 
-    # --- Category: file-length -------------------------------------------
+    # --- Size verdict: EXACTLY ONE per file (#701) -------------------------
+    # A classified file gets its per-type budget and NOT the generic
+    # production-LOC one: bloat_spec() returning a spec IS the statement "this
+    # file type has its own budget", and applying the code thresholds on top
+    # contradicts it. Before #701 both ran, so classified markdown produced two
+    # rows for one problem (two categories, two different numbers), and a docs
+    # page UNDER its own doc_md budget was still flagged at the 300 code
+    # threshold — a threshold calibrated against a different meaning of "line"
+    # (markdown has no comment/test exclusion, so production LOC degenerates
+    # into "lines minus blanks").
+    #
+    # `over` is set by whichever branch fires, NOT by file-length alone: it
+    # drives the reasoned-decline emit below, which is what backs
+    # audit-decomposition.md's "every size finding pairs with a seam or a
+    # recorded decline" contract. Keying it to one branch would silently drop
+    # the decline for every classified file.
     over = False
-    if m["production"] > high:
+    spec = bloat_spec(path)
+    if spec is not None:
+        # Per-type budget, measured on TOTAL lines — the deliberate choice
+        # recorded in thresholds.yml § bloat_thresholds (#701).
+        b_warn, b_high, ftype, category = spec
+        n = m["total"]
+        if n > b_high:
+            over = True
+            emit(
+                path,
+                1,
+                category,
+                "%s exceeds high threshold: %d lines (>%d)" % (ftype, n, b_high),
+                "HIGH",
+            )
+        elif n > b_warn:
+            over = True
+            emit(
+                path,
+                1,
+                category,
+                "%s exceeds warning threshold: %d lines (>%d)" % (ftype, n, b_warn),
+                "MEDIUM",
+            )
+    elif m["production"] > high:
         over = True
         emit(
             path,
@@ -508,28 +547,6 @@ def scan_file(path: str, lines: list[str]) -> None:
             "%d production LOC (>%d warning); %s" % (m["production"], warn, metrics),
             "MEDIUM",
         )
-
-    # --- Categories: ai-file-bloat / doc-file-bloat ------------------------
-    spec = bloat_spec(path)
-    if spec is not None:
-        b_warn, b_high, ftype, category = spec
-        n = m["total"]
-        if n > b_high:
-            emit(
-                path,
-                1,
-                category,
-                "%s exceeds high threshold: %d lines (>%d)" % (ftype, n, b_high),
-                "HIGH",
-            )
-        elif n > b_warn:
-            emit(
-                path,
-                1,
-                category,
-                "%s exceeds warning threshold: %d lines (>%d)" % (ftype, n, b_warn),
-                "MEDIUM",
-            )
 
     if not lang:
         return

@@ -336,22 +336,34 @@ while IFS= read -r file; do
         metrics = sprintf("%d total, %d comment (%d%%), %d blank, %d test-excluded, max nesting %d, %d top-level units", \
             total, comment, comment_pct, blank, test_excluded, max_depth, prod_units)
 
-        # ---- category: file-length ----------------------------------------
+        # ---- size verdict: EXACTLY ONE per file (#701) ---------------------
+        # Mirrors the same branch in patterns.py scan_file(). A classified file
+        # (b_cat != "") gets its per-type budget and NOT the generic
+        # production-LOC one: a bloat spec IS the statement "this file type has
+        # its own budget". Before #701 both ran, so classified markdown emitted
+        # two rows for one problem, and a docs page UNDER its own doc_md budget
+        # was still flagged at the 300 code threshold.
+        #
+        # `over` is set by whichever branch fires, NOT by file-length alone —
+        # it drives the reasoned-decline emit below, so keying it to one branch
+        # would silently drop the decline for every classified file.
         over = 0
-        if (production > loc_high) {
+        if (b_cat != "") {
+            # Per-type budget, measured on TOTAL lines — the deliberate choice
+            # recorded in thresholds.yml § bloat_thresholds (#701).
+            if (total > b_high) {
+                over = 1
+                emit(1, b_cat, sprintf("%s exceeds high threshold: %d lines (>%d)", b_type, total, b_high), "HIGH")
+            } else if (total > b_warn) {
+                over = 1
+                emit(1, b_cat, sprintf("%s exceeds warning threshold: %d lines (>%d)", b_type, total, b_warn), "MEDIUM")
+            }
+        } else if (production > loc_high) {
             over = 1
             emit(1, "file-length", sprintf("%d production LOC (>%d high); %s", production, loc_high, metrics), "HIGH")
         } else if (production > loc_warn) {
             over = 1
             emit(1, "file-length", sprintf("%d production LOC (>%d warning); %s", production, loc_warn, metrics), "MEDIUM")
-        }
-
-        # ---- categories: ai-file-bloat / doc-file-bloat --------------------
-        if (b_cat != "") {
-            if (total > b_high)
-                emit(1, b_cat, sprintf("%s exceeds high threshold: %d lines (>%d)", b_type, total, b_high), "HIGH")
-            else if (total > b_warn)
-                emit(1, b_cat, sprintf("%s exceeds warning threshold: %d lines (>%d)", b_type, total, b_warn), "MEDIUM")
         }
 
         if (lang == "") exit 0
