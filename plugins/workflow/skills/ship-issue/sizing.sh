@@ -208,6 +208,7 @@ while IFS= read -r file; do
         sub(/^_+/, "", out); sub(/_+$/, "", out)
         return out
     }
+    # >>> shared:unit-segmenters-awk (kept in sync with ship-issue/split-verify.sh by tests/validate-shared-scanner-sync.sh)
     function is_unit_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
@@ -241,6 +242,7 @@ while IFS= read -r file; do
         if (lang == "js" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
+    # <<< shared:unit-segmenters-awk
     function nest_unit(lang) {
         if (lang == "js" || lang == "md") return 2
         return 4

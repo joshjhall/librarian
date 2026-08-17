@@ -98,6 +98,25 @@ behavior is noted inline per check; environment variables referenced here
    | `file-length`         | Production LOC over the **review-lens** threshold | HIGH/MED/LOW |
    | `decomposition-seam`  | A language-shaped split shape, or a reasoned decline | MED/LOW   |
 
+   **Verifying a split mechanically.** When a diff *performs* a decomposition —
+   a file shrank sharply and siblings appeared, or prose moved into new linked
+   docs — `split-verify.sh` proves it lost nothing, rather than leaving a
+   reviewer to eyeball it:
+
+   ```bash
+   git show origin/main:path/to/file.md > /tmp/before.md
+   bash split-verify.sh /tmp/before.md path/to/file.md path/to/detail.md
+   ```
+
+   The first argument is the **pre-split snapshot**, the second the **post-split
+   original**, and the rest are the files content moved **into**. It checks
+   production-LOC conservation, unit preservation, dangling callers, and — for
+   markdown — that every moved heading is still reachable by a link from the
+   original. A `split-verified` row means the split is provably non-lossy; the
+   `split-*` rows name exactly what went missing otherwise. This is what makes a
+   suggested split cheap enough to accept, so cite it in the finding rather than
+   asserting the split looks fine.
+
    The last two come from the sizing scanner (#695) and are **growth-graded**,
    which is the whole point of the review lens: `HIGH`/`MEDIUM` means *this diff*
    pushed the file over a threshold or added materially to one already over;

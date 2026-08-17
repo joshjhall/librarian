@@ -71,6 +71,7 @@ SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
     "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk"
+    "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
 )
 
 # Pair-specific paths used by the targeted tests below (the language-arm shape
@@ -81,16 +82,26 @@ TESTED_PATTERNS="$REPO_ROOT/plugins/dev-core/skills/loop-make-it-tested/patterns
 PRE_REVIEW_GATES="$REPO_ROOT/plugins/workflow/skills/ship-issue/pre-review-gates.sh"
 DECOMP_PATTERNS="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/patterns.sh"
 SIZING="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.sh"
+SPLIT_VERIFY="$REPO_ROOT/plugins/workflow/skills/ship-issue/split-verify.sh"
 
 test_suite "shared scanner sync (#89/#132/#133/#609)"
 
 # extract_shared FILE REGION — the lines strictly between the sentinel comments
 # for REGION. The sentinel lines themselves are excluded: their text names the
 # *other* file, so it differs between copies and must not be compared.
+#
+# EVERY sentinel line is dropped, not just this region's. Regions may NEST — a
+# subset of one region can itself be shared with a different file, which is the
+# case for `unit-segmenters-awk` sitting inside `loc-helpers-awk` (#695). An
+# inner sentinel is a comment naming a third file, so it is present in one copy
+# of the outer region and absent from the other; comparing it would report drift
+# on two copies that are in fact identical code.
 extract_shared() {
     command awk -v region="$2" '
         index($0, "# >>> shared:" region) { in_region = 1; next }
         index($0, "# <<< shared:" region) { in_region = 0 }
+        in_region && index($0, "# >>> shared:") { next }
+        in_region && index($0, "# <<< shared:") { next }
         in_region { print }
     ' "$1"
 }
@@ -449,6 +460,47 @@ test_detector_fires_on_loc_region_drift() {
     assert_equals "detected" "$drift" "a one-line edit to sizing's loc-measure copy is detected as drift"
 }
 
+# The detector FIRES on drift in the unit-segmenter pair — sizing.sh's proposal
+# side vs split-verify.sh's verification side (#695). This pair is a NESTED
+# region: `unit-segmenters-awk` sits inside `loc-helpers-awk`, which is itself
+# shared with check-decomposition. That nesting is why extract_shared drops every
+# sentinel line rather than only its own region's, and this fixture is what
+# proves the inner region is still extracted independently rather than being
+# swallowed by the outer one.
+#
+# It matters beyond bookkeeping: sizing.sh decides a file should be split and
+# split-verify.sh decides whether the split lost anything. If their segmenters
+# disagree about what a unit IS, the verifier can bless a split that dropped a
+# function the sizer counted — silently, and only on the bash fallback path.
+#
+# Tampered on the `sh` arm of is_unit_header: split-verify's own suite is shell,
+# so that arm is the one a careless edit is most likely to touch.
+test_detector_fires_on_segmenter_region_drift() {
+    local canonical duplicate tampered baseline tamper_took drift
+
+    canonical="$(extract_shared "$SIZING" unit-segmenters-awk | normalize)"
+    duplicate="$(extract_shared "$SPLIT_VERIFY" unit-segmenters-awk | normalize)"
+
+    assert_not_empty "$canonical" "sizing unit-segmenters-awk extract is non-empty"
+    assert_not_empty "$duplicate" "split-verify unit-segmenters-awk extract is non-empty"
+
+    baseline="differs"
+    [ "$canonical" = "$duplicate" ] && baseline="matches"
+    assert_equals "matches" "$baseline" "the untampered unit-segmenters-awk pair matches (tamper is the only variable)"
+
+    tampered="$(extract_shared "$SPLIT_VERIFY" unit-segmenters-awk |
+        command sed 's/if (lang == "sh") return line ~/if (0) return line ~/' | normalize)"
+    assert_not_empty "$tampered" "tampered unit-segmenters-awk extract is non-empty (extract still works)"
+
+    tamper_took="no"
+    [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+    assert_equals "yes" "$tamper_took" "the tamper actually changed the region (the sh arm is present)"
+
+    drift="none"
+    [ "$canonical" != "$tampered" ] && drift="detected"
+    assert_equals "detected" "$drift" "a one-line edit to split-verify's segmenter copy is detected as drift"
+}
+
 run_test test_all_regions_match "All shared regions match across every pinned pair"
 run_test test_label_for_disambiguates_the_pairs "label_for disambiguates the two same-named patterns.sh copies"
 run_test test_debug_region_has_all_language_arms "Debug regions cover every advertised language arm"
@@ -456,5 +508,6 @@ run_test test_debug_families_stay_separated "Print and debugger families stay in
 run_test test_detector_fires_on_drift "Drift detector fires on a tampered region (print + debugger + is-test-file)"
 run_test test_detector_fires_on_py_region_drift "Drift detector fires across the py-public-symbols pair (#609)"
 run_test test_detector_fires_on_loc_region_drift "Drift detector fires across the LOC-engine pair (#695)"
+run_test test_detector_fires_on_segmenter_region_drift "Drift detector fires across the unit-segmenter pair (#695)"
 
 generate_report

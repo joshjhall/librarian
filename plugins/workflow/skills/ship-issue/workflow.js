@@ -374,7 +374,15 @@ const NEW_DIMENSIONS = [
       'markdown especially, a split that moves prose out with NO link left behind ' +
       'has lost content, not decomposed it — say so.\n' +
       'Long-and-correct is a real answer: a generated file, a lookup table, one ' +
-      'exhaustive match arm are legitimately long. Do not manufacture findings.',
+      'exhaustive match arm are legitimately long. Do not manufacture findings.\n' +
+      'WHEN THE DIFF ITSELF PERFORMS A SPLIT — a file shrank sharply and sibling ' +
+      'files appeared, or prose moved into new linked docs — do not eyeball ' +
+      'whether it lost anything. Say so in your finding and cite ' +
+      '`ship-issue/split-verify.sh <pre-split-snapshot> <post-split-original> ' +
+      '[<destination> ...]`, which proves it mechanically: production-LOC ' +
+      'conservation, every top-level unit preserved, no dangling callers, and ' +
+      'for markdown every moved heading still reachable by a link. That is the ' +
+      'difference between suggesting a split and accepting one.',
   },
   {
     name: 'scope-drift',

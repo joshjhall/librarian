@@ -94,6 +94,7 @@ lang_of() {
 # the three modes cannot disagree about what a unit is.
 awk_lib() {
     command cat <<'AWKLIB'
+    # >>> shared:unit-segmenters-awk (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
     function is_unit_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
@@ -102,6 +103,9 @@ awk_lib() {
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         return 0
     }
+    # unit_name: the captured identifier. POSIX awk has no capture groups, so the
+    # keyword prefix is stripped and the leading identifier read off directly —
+    # equivalent to patterns.py group(1) for every arm above.
     function unit_name(line, lang,   s) {
         s = line
         if (lang == "py") { sub(/^(async[ \t]+)?(def|class)[ \t]+/, "", s) }
@@ -124,6 +128,7 @@ awk_lib() {
         if (lang == "js" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
+    # <<< shared:unit-segmenters-awk
 AWKLIB
 }
 
@@ -287,29 +292,21 @@ if [ "$ORIG_LANG" = "md" ]; then
     # content reachable. Only files content moved INTO count as destinations: a
     # file linking to itself proves nothing.
     LINKS="$(LC_ALL=C command grep -oE '\]\([^)]+\)' "$POST_ORIGINAL" 2>/dev/null | command sed 's/^](//; s/)$//' || true)"
-    MOVED_INTO=""
-    first=1
-    for f in "${RESULTS[@]}"; do
-        if [ "$first" = "1" ]; then
-            first=0
-            continue
-        fi
-        MOVED_INTO="${MOVED_INTO} ${f##*/}"
-    done
 
-    have_file_link=0
-    for base in $MOVED_INTO; do
-        command printf '%s\n' "$LINKS" | command grep -qF -- "$base" && have_file_link=1
-    done
-
-    # Headings that actually SURVIVED somewhere in the moved-into files. This set
-    # is load-bearing and its absence was a real bug: without it, a heading
-    # dropped from EVERY result file was reported reachable merely because the
-    # post-split original happened to link to some other moved-into file. That is
-    # the exact case this check exists to catch, and it passed as `split-verified`
-    # in bash while python correctly flagged it — a divergence invisible on any
-    # host with python3, i.e. everywhere except the fallback path.
-    RESULT_HEADINGS_FILE="$(command mktemp)"
+    # PER-HEADING DESTINATIONS, not a flattened "does any link point at any
+    # moved-into file?" flag. Reachability is a claim about ONE heading and the
+    # ONE file it landed in, so it is resolved per heading: which file received
+    # it, and does the post-split original link to THAT file?
+    #
+    # The flattened form passes a split where heading A moved into a linked file
+    # and heading B moved into a file nothing points at — A's link vouches for B
+    # and the tool reports `split-verified` while B is genuinely unreachable. It
+    # needed TWO destination files to appear, which no fixture had, and BOTH
+    # impls had it, so parity was green on a shared defect.
+    #
+    # `heading<TAB>destination-basename` rows; results[0] is the post-split
+    # original itself and is excluded — a file linking to itself proves nothing.
+    HEADING_DEST_FILE="$(command mktemp)"
     first=1
     for f in "${RESULTS[@]}"; do
         if [ "$first" = "1" ]; then
@@ -317,7 +314,11 @@ if [ "$ORIG_LANG" = "md" ]; then
             continue
         fi
         case "$(lang_of "$f")" in
-            md) md_headings "$f" >>"$RESULT_HEADINGS_FILE" ;;
+            md)
+                md_headings "$f" | while IFS= read -r h; do
+                    [ -n "$h" ] && command printf '%s\t%s\n' "$h" "${f##*/}"
+                done >>"$HEADING_DEST_FILE"
+                ;;
         esac
     done
 
@@ -325,11 +326,11 @@ if [ "$ORIG_LANG" = "md" ]; then
     while IFS= read -r heading; do
         [ -n "$heading" ] || continue
         command printf '%s\n' "$SURVIVING" | command grep -qxF -- "$heading" && continue
-        # Two conditions, BOTH required (mirrors split-verify.py): the heading
-        # must still EXIST in a result file, and it must be REACHABLE from the
-        # post-split original by a file link or its anchor. A heading that exists
-        # nowhere is lost no matter how many links point elsewhere.
-        if ! command grep -qxF -- "$heading" "$RESULT_HEADINGS_FILE" 2>/dev/null; then
+        # Which file received this heading? The FIRST match wins, mirroring
+        # python's setdefault.
+        dest="$(LC_ALL=C command awk -F'\t' -v h="$heading" '$1 == h { print $2; exit }' "$HEADING_DEST_FILE" 2>/dev/null || true)"
+        if [ -z "$dest" ]; then
+            # Present in no result file at all — lost outright.
             UNREACH_N=$((UNREACH_N + 1))
             if [ -z "$UNREACHABLE" ]; then
                 UNREACHABLE="$heading"
@@ -340,7 +341,8 @@ if [ "$ORIG_LANG" = "md" ]; then
         fi
         anchor="$(command printf '%s' "$heading" | LC_ALL=C command tr '[:upper:]' '[:lower:]' |
             LC_ALL=C command sed 's/[^a-z0-9 -]//g; s/^[ ]*//; s/[ ]*$//; s/ /-/g')"
-        if [ "$have_file_link" = "1" ]; then
+        # Reachable only via a link to ITS OWN destination, or its anchor.
+        if command printf '%s\n' "$LINKS" | command grep -qF -- "$dest"; then
             continue
         fi
         if command printf '%s\n' "$LINKS" | command grep -qF -- "#${anchor}"; then
@@ -355,7 +357,7 @@ if [ "$ORIG_LANG" = "md" ]; then
     done <<EOF
 $(md_headings "$ORIGINAL")
 EOF
-    command rm -f "$RESULT_HEADINGS_FILE"
+    command rm -f "$HEADING_DEST_FILE"
 
     if [ "$UNREACH_N" -gt 0 ]; then
         FINDINGS=$((FINDINGS + 1))

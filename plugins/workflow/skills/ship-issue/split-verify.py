@@ -148,7 +148,6 @@ def main(argv: list[str]) -> int:
     result_production = 0
     result_names: set[str] = set()
     result_tokens: set[str] = set()
-    result_headings: set[str] = set()
     for path in results:
         lines = read_lines(path)
         lang = lang_of(path)
@@ -156,8 +155,6 @@ def main(argv: list[str]) -> int:
         result_production += measure(lines, lang, units)["production"]
         result_names |= unit_names(lines, lang)
         result_tokens |= referenced_tokens(lines)
-        if lang == "md":
-            result_headings |= set(md_headings(lines))
 
     findings = 0
 
@@ -245,23 +242,43 @@ def main(argv: list[str]) -> int:
                 os.path.basename(t.split("#")[0]) for t in link_targets if t
             )
             linked_anchors = set(t.split("#", 1)[1] for t in link_targets if "#" in t)
-            # Only the files content MOVED INTO count as link destinations —
-            # results[0] is the post-split original itself, and a file linking to
-            # itself proves nothing about reachability.
-            result_basenames = set(os.path.basename(p) for p in results[1:])
+
+            # PER-HEADING DESTINATIONS, not a flattened set. Reachability is a
+            # claim about ONE heading and the ONE file it landed in, so it must
+            # be resolved per heading: which file received it, and does the
+            # post-split original link to THAT file?
+            #
+            # The flattened form — "does the original link to any moved-into
+            # file at all?" — passes a split where heading A moved into a linked
+            # file and heading B moved into a file nothing points at: A's link
+            # vouches for B, and the tool reports `split-verified` while B's
+            # content is genuinely unreachable. That is precisely the loss this
+            # check exists to catch, and it needed two destination files to
+            # appear, which no fixture had.
+            #
+            # results[0] is the post-split original itself and is excluded: a
+            # file linking to itself proves nothing about reachability.
+            heading_dest = {}
+            for path in results[1:]:
+                if lang_of(path) != "md":
+                    continue
+                base = os.path.basename(path)
+                for h in md_headings(read_lines(path)):
+                    heading_dest.setdefault(h, base)
 
             unreachable = []
             for heading in moved:
-                if heading in result_headings:
-                    # It exists somewhere — but is it REACHABLE from the original?
-                    anchor = md_anchor(heading)
-                    if anchor in linked_anchors:
-                        continue
-                    if linked_files & result_basenames:
-                        continue
+                dest = heading_dest.get(heading)
+                if dest is None:
+                    # Present in no result file at all — lost outright.
                     unreachable.append(heading)
-                else:
-                    unreachable.append(heading)
+                    continue
+                # It survived — but is it REACHABLE from the post-split original?
+                if md_anchor(heading) in linked_anchors:
+                    continue
+                if dest in linked_files:
+                    continue
+                unreachable.append(heading)
             if unreachable:
                 findings += 1
                 shown = "; ".join(unreachable[:3])

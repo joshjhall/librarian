@@ -299,6 +299,64 @@ test_dropped_heading_is_unreachable_despite_a_link() {
     assert_not_contains "$VERIFY_OUT" "split-verified" "a split that lost a section is not verified"
 }
 
+# MULTI-DESTINATION reachability, the gap that let a shared defect ship.
+#
+# Every markdown fixture above passes exactly ONE moved-into file, so "is this
+# heading's own destination linked?" and "is any destination linked?" are the
+# same question and no fixture could tell them apart. With TWO destinations they
+# diverge: a link to A wrongly vouched for content in B, and the tool reported
+# `split-verified` while B was unreachable. BOTH impls had it, so the parity
+# assertion was green throughout — the parity-gate-hides-a-shared-defect class,
+# which only a fixture asserting the INTENDED behavior can catch.
+#
+# The pair differs solely in whether the second destination is linked.
+setup_multi_dest_fixtures() {
+    MULTI_ORIG="$WORKDIR/multi.md"
+    {
+        command printf '# Guide\n\nIntro.\n\n'
+        command printf '## Alpha\n\nAlpha body.\n\n'
+        command printf '## Beta\n\nBeta body.\n'
+    } >"$MULTI_ORIG"
+    MULTI_A="$WORKDIR/multi-a.md"
+    command printf '# A\n\n## Alpha\n\nAlpha body.\n' >"$MULTI_A"
+    MULTI_B="$WORKDIR/multi-b.md"
+    command printf '# B\n\n## Beta\n\nBeta body.\n' >"$MULTI_B"
+}
+
+test_second_destination_needs_its_own_link() {
+    setup_multi_dest_fixtures
+    local post="$WORKDIR/multi-post-bad.md"
+    # Links ONLY to multi-a.md; nothing points at multi-b.md.
+    {
+        command printf '# Guide\n\nIntro.\n\n'
+        command printf 'See [Alpha](multi-a.md) for details.\n'
+    } >"$post"
+
+    run_verify "$MULTI_ORIG" "$post" "$MULTI_A" "$MULTI_B"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-heading-unreachable" \
+        "a link to one destination does not vouch for a heading in another"
+    assert_contains "$VERIFY_OUT" "Beta" "the report names the heading whose destination is unlinked"
+    assert_not_contains "$VERIFY_OUT" "Alpha" "the properly-linked heading is not falsely reported"
+    assert_not_contains "$VERIFY_OUT" "split-verified" "a partially-linked split is not verified"
+}
+
+test_all_destinations_linked_verifies() {
+    setup_multi_dest_fixtures
+    local post="$WORKDIR/multi-post-good.md"
+    {
+        command printf '# Guide\n\nIntro.\n\n'
+        command printf 'See [Alpha](multi-a.md) and [Beta](multi-b.md) for details.\n'
+    } >"$post"
+
+    run_verify "$MULTI_ORIG" "$post" "$MULTI_A" "$MULTI_B"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-verified" \
+        "linking every destination makes a multi-file split sound"
+    assert_not_contains "$VERIFY_OUT" "split-heading-unreachable" \
+        "no heading is reported unreachable when each destination is linked"
+}
+
 test_linked_moved_heading_passes() {
     setup_md_fixtures
     run_verify "$MD_ORIG" "$MD_GOOD" "$MD_DETAIL"
@@ -346,6 +404,8 @@ run_test test_boilerplate_does_not_trip_loc_check "Check 1 counter: re-export bo
 run_test test_dangling_reference_is_detected "Check 3: a dangling call site is detected and named"
 run_test test_unreachable_moved_heading_is_detected "Check 4: prose moved with no link left behind is detected"
 run_test test_dropped_heading_is_unreachable_despite_a_link "Check 4: a heading in NO result file is unreachable despite an unrelated link"
+run_test test_second_destination_needs_its_own_link "Check 4: a link to one destination does not vouch for another (multi-file)"
+run_test test_all_destinations_linked_verifies "Check 4 counter: every destination linked verifies (multi-file)"
 run_test test_linked_moved_heading_passes "Check 4 counter: a one-line pointer makes the move sound"
 run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"
 run_test test_usage_contract "Usage / missing-file contract"
