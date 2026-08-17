@@ -828,7 +828,9 @@ const manifestPrompt = () => {
   return (
     `Mode: manifest.\n${scopeHeader(mFiles, mDiff)}\n` +
     `Follow Steps 1-2 of your instructions: build the changed-file manifest, read each ` +
-    `file for context, and classify every file's type(s). Decide which conditional ` +
+    `file for context, and classify every file's type(s) — including \`docs\` for ` +
+    `markdown/rst/adoc prose, which is a first-class type, not an absence of one. ` +
+    `Decide which conditional ` +
     `specialists are needed: set needs.database=true if any file is type database, and ` +
     `needs.devops=true if any file is type ci or docker. Return the typed manifest ` +
     `(files, per-file classifications, needs) — do NOT echo the diff back. ` +

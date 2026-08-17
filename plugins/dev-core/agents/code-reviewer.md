@@ -85,9 +85,16 @@ Assign each file one or more types:
 | ci       | `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, `.circleci/`    |
 | docker   | `Dockerfile*`, `docker-compose*`, `.dockerignore`                      |
 | database | `migrations/`, `*.sql`, `**/models.py`, `**/schema.*`                  |
+| docs     | `.md`, `.markdown`, `.rst`, `.adoc`, `docs/`                           |
 
 A file may match multiple types (e.g., a SQL migration is both `database`
 and `source`).
+
+`docs` exists because prose is reviewable work, not inert text: the
+`decomposition` dimension sizes markdown and judges whether a doc split left a
+pointer behind (#695), and a markdown-only change that classified as *no type at
+all* would silently drop out of every delta-relevance test on a narrowed
+re-review cycle.
 
 ### Step 3: Sub-Reviewer Mode (`reviewer:<name>`)
 

@@ -197,24 +197,31 @@ def main(argv: list[str]) -> int:
         )
 
     # --- 3. fan-in resolution ------------------------------------------------
-    # A unit that the ORIGINAL referenced must still be defined or referenced
-    # somewhere in the result set, or its call site now dangles.
-    orig_tokens = referenced_tokens(orig_lines)
+    # A unit that is still CALLED in the result set but no longer DEFINED there
+    # has a dangling call site: the caller survived the split, the callee did not.
+    #
+    # THE PREDICATE IS "referenced AND NOT defined", not "neither defined nor
+    # referenced" (the shape this started as, which could never fire). A name that
+    # is neither defined nor referenced after the split is simply GONE — real, but
+    # already reported by check 2 as a lost unit, with nothing dangling behind it.
+    # The genuinely dangerous case is the opposite: live callers pointing at a
+    # definition that no longer exists, which is a broken split rather than an
+    # incomplete one. It is reported IN ADDITION to check 2's lost-unit row,
+    # because the two say different things to whoever fixes it.
     for name in sorted(orig_names):
         if name in result_names:
             continue
-        if name not in orig_tokens:
-            continue
         if name not in result_tokens:
-            findings += 1
-            emit(
-                original,
-                1,
-                "split-fanin-dangling",
-                f"unit '{name}' was referenced before the split but is neither "
-                f"defined nor referenced in any result file — its callers dangle",
-                "HIGH",
-            )
+            continue
+        findings += 1
+        emit(
+            original,
+            1,
+            "split-fanin-dangling",
+            f"unit '{name}' is still referenced after the split but is no longer "
+            f"defined in any result file — its callers dangle",
+            "HIGH",
+        )
 
     # --- 4. markdown reachability -------------------------------------------
     # The case the issue calls out: a split that moves prose out but leaves no

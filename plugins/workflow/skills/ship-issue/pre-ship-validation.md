@@ -147,7 +147,7 @@ behavior is noted inline per check; environment variables referenced here
    `[{file, line, category, evidence, certainty}]` and pass them to the review
    harness as `args.preScan` — including any auto-fixed ones, which the reviewer
    can then confirm as resolved. Without this the scan runs, its output is
-   discarded, and five reviewers re-derive the same mechanical findings by
+   discarded, and six reviewers re-derive the same mechanical findings by
    shelling out (the single largest source of duplicated work in the fan-out).
    The harness logs `pre-scan: none supplied` when the handoff is missing.
 
@@ -258,7 +258,7 @@ behavior is noted inline per check; environment variables referenced here
    `conventionsDigest`, `deltaDiff`, `deltaFiles`, `priorBlockingDimensions`.
    Every one is read by name with an empty-default fallback, so a mistyped key
    was previously **dropped in silence** and its input simply went missing —
-   which on `diff` meant five reviewers scanning an empty diff and returning
+   which on `diff` meant six reviewers scanning an empty diff and returning
    `clean: true`, a vacuous pass byte-identical to a real one (measured on #567,
    where an `argsFile` key dropped `diff`, `preScan` **and**
    `conventionsDigest`). Since `clean` is half the merge invariant, that would

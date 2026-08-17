@@ -213,11 +213,9 @@ ORIG_PROD="$(production_loc "$ORIGINAL" "$ORIG_LANG")"
 ORIG_UNITS_FILE="$(command mktemp)"
 RESULT_UNITS_FILE="$(command mktemp)"
 RESULT_TOKENS_FILE="$(command mktemp)"
-ORIG_TOKENS_FILE="$(command mktemp)"
-trap 'command rm -f "$ORIG_UNITS_FILE" "$RESULT_UNITS_FILE" "$RESULT_TOKENS_FILE" "$ORIG_TOKENS_FILE"' EXIT
+trap 'command rm -f "$ORIG_UNITS_FILE" "$RESULT_UNITS_FILE" "$RESULT_TOKENS_FILE"' EXIT
 
 unit_names "$ORIGINAL" "$ORIG_LANG" | command sort -u >"$ORIG_UNITS_FILE"
-tokens "$ORIGINAL" | command sort -u >"$ORIG_TOKENS_FILE"
 
 RESULT_PROD=0
 RESULT_COUNT=0
@@ -257,16 +255,23 @@ if [ -n "$LOST" ]; then
 fi
 
 # --- 3. fan-in resolution ----------------------------------------------------
+# A unit still CALLED in the result set but no longer DEFINED there has a
+# dangling call site: the caller survived the split, the callee did not.
+#
+# THE PREDICATE IS "referenced AND NOT defined", not "neither defined nor
+# referenced" (the shape this started as, which could never fire). A name that is
+# neither defined nor referenced after the split is simply GONE — already
+# reported by check 2 as a lost unit, with nothing dangling behind it. The
+# dangerous case is the opposite: live callers pointing at a definition that no
+# longer exists. Reported IN ADDITION to check 2's row; they say different things.
 while IFS= read -r name; do
     [ -n "$name" ] || continue
     command grep -qxF -- "$name" "$RESULT_UNITS_FILE" && continue
-    command grep -qxF -- "$name" "$ORIG_TOKENS_FILE" || continue
-    if ! command grep -qxF -- "$name" "$RESULT_TOKENS_FILE"; then
-        FINDINGS=$((FINDINGS + 1))
-        emit "split-fanin-dangling" \
-            "unit '${name}' was referenced before the split but is neither defined nor referenced in any result file — its callers dangle" \
-            "HIGH"
-    fi
+    command grep -qxF -- "$name" "$RESULT_TOKENS_FILE" || continue
+    FINDINGS=$((FINDINGS + 1))
+    emit "split-fanin-dangling" \
+        "unit '${name}' is still referenced after the split but is no longer defined in any result file — its callers dangle" \
+        "HIGH"
 done <"$ORIG_UNITS_FILE"
 
 # --- 4. markdown reachability ------------------------------------------------

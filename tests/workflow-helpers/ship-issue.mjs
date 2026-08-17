@@ -11,8 +11,11 @@
 // collect-all (they record, never throw), so a failure here does not mask any
 // sibling area — see tests/lib/mjs-assert.mjs.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { ok, eq, resolves } from "../lib/mjs-assert.mjs";
-import { extractHelpers, harnessSource, SHIP } from "../lib/extract-helpers.mjs";
+import { extractHelpers, harnessSource, repoRoot, SHIP } from "../lib/extract-helpers.mjs";
 
 // async because the #646 area exercises `attempt`, an async guard. The entry
 // point awaits every run(), so a synchronous area is unaffected.
@@ -925,6 +928,7 @@ export async function run() {
       diffForInclusion,
       REUSED_DIMENSIONS,
       NEW_DIMENSIONS,
+      DIMENSION_RELEVANT_TYPES,
     } = extractHelpers(
       SHIP,
       [
@@ -936,6 +940,7 @@ export async function run() {
         "diffForInclusion",
         "REUSED_DIMENSIONS",
         "NEW_DIMENSIONS",
+        "DIMENSION_RELEVANT_TYPES",
       ],
       { cycle: 2, phase: "pr-cycle", files: ["x.js"] },
     );
@@ -1084,6 +1089,29 @@ export async function run() {
     //       so a `docs` type dropping out of its row is a real coverage loss.
     //       `?.diff` (not a bare `.diff`) so a missing entry RECORDS a failure
     //       instead of throwing and aborting the collect-all run.
+    // THE FIXTURE BELOW HAND-BUILDS A MANIFEST, so on its own it proves only
+    // that the selector reacts to a `docs` type IF one arrives — not that the
+    // upstream manifest agent ever emits one. That gap was real: `docs` was
+    // absent from code-reviewer.md's Step 2 classification table, so a
+    // markdown-only delta classified as NO type at all and the decomposition
+    // dimension was silently dropped on exactly the case it exists for.
+    //
+    // So assert the two ends agree. This is a cross-artifact check — the
+    // selector's relevant-types row lives in workflow.js, the vocabulary that
+    // can satisfy it lives in a different plugin's agent prose — and nothing
+    // else in the suite spans that boundary. Without it, a future edit dropping
+    // `docs` from the table restores a dead code path with every test green.
+    const reviewerAgent = readFileSync(
+      join(repoRoot, "plugins/dev-core/agents/code-reviewer.md"),
+      "utf8",
+    );
+    for (const t of DIMENSION_RELEVANT_TYPES.decomposition) {
+      ok(
+        new RegExp(`^\\|\\s*${t}\\s*\\|`, "m").test(reviewerAgent),
+        `DIMENSION_RELEVANT_TYPES.decomposition type '${t}' is a real manifest type in code-reviewer.md Step 2 (#695)`,
+      );
+    }
+
     const docsOnly = call({
       deltaFiles: ["docs/guide.md"],
       manifest: { classifications: [{ file: "docs/guide.md", types: ["docs"] }] },

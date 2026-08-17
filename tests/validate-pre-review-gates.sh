@@ -3046,6 +3046,88 @@ test_exported_symbol_name_is_extracted() {
         "a tested export is not flagged — the symbol name extracts via ERE alternation (#679 AC#2)"
 }
 
+# --- sizing delegation (#695) ------------------------------------------------
+# The gate grew an optional `$2` numstat sidecar and a tail block delegating to
+# the sibling sizing.sh. Three behaviors are pinned HERE, through the real gate,
+# because validate-sizing-scanner.sh exercises sizing.sh DIRECTLY and so cannot
+# see the wiring: whether the delegation happens at all, whether the sidecar is
+# forwarded, and whether a missing sizing.sh degrades gracefully.
+#
+# run_gate() takes a single argument, so these call the gate directly.
+
+# gate_with_numstat FILE_LIST NUMSTAT — run the real gate with both arguments.
+gate_with_numstat() {
+    GATE_RC=0
+    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$GATE" "$1" "$2" 2>/dev/null)" || GATE_RC=$?
+}
+
+# A file comfortably over the shell review threshold (700 production LOC).
+make_big_sh() {
+    local path="$1" i=0
+    : >"$path"
+    while [ "$i" -lt 400 ]; do
+        command printf 'fn_%d() {\n    echo %d\n}\n' "$i" "$i" >>"$path"
+        i=$((i + 1))
+    done
+}
+
+# WITH a sidecar the rows are growth-graded: a big add is actionable.
+test_sizing_rows_reach_the_gate_output() {
+    local d rows
+    d="$(fresh_dir)"
+    make_big_sh "$d/big.sh"
+    command printf '900\t0\t%s\n' "$d/big.sh" >"$d/numstat.txt"
+    gate_with_numstat "$(make_list "$d" big.sh)" "$d/numstat.txt"
+
+    rows="$(category_rows "$GATE_OUT" "file-length")"
+    assert_contains "$rows" "big.sh" "the gate delegates to sizing and emits file-length rows (#695)"
+    assert_contains "$rows" "pushed it over" "the numstat sidecar is FORWARDED (growth-graded evidence)"
+    assert_equals "0" "$GATE_RC" "the gate still exits 0 with sizing wired in"
+}
+
+# WITHOUT a sidecar sizing still runs, but every row degrades to informational —
+# the safe direction, since it cannot manufacture a blocking finding. Pinning
+# both arms is what stops the forwarding being silently dropped: a gate that
+# ignored $2 entirely would still pass the previous test's first assertion.
+test_sizing_without_numstat_degrades_to_informational() {
+    local d rows
+    d="$(fresh_dir)"
+    make_big_sh "$d/big.sh"
+    run_gate "$(make_list "$d" big.sh)"
+
+    rows="$(category_rows "$GATE_OUT" "file-length")"
+    assert_contains "$rows" "big.sh" "sizing still runs with no sidecar"
+    assert_contains "$rows" "no diff growth data supplied" "with no sidecar the row is informational"
+    assert_not_contains "$rows" "pushed it over" "with no sidecar nothing claims the diff crossed a threshold"
+}
+
+# GRACEFUL DEGRADATION: the gate's own contract is that a missing scanner is
+# skipped with a note, never a hard-fail. Asserted by pointing the gate at a copy
+# of itself with no sizing.sh sibling — forcing the absent arm rather than
+# trusting the `[ -f ]` guard by inspection (the self-skipping-test lesson).
+test_missing_sizing_does_not_abort_the_scan() {
+    local d rows
+    d="$(fresh_dir)"
+    command mkdir -p "$d/gatedir"
+    command cp "$GATE" "$d/gatedir/pre-review-gates.sh"
+    make_big_sh "$d/big.sh"
+    command printf '%s\n' "def f():" "    print('debug')" >"$d/app.py"
+
+    GATE_RC=0
+    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$d/gatedir/pre-review-gates.sh" "$(make_list "$d" big.sh app.py)" 2>/dev/null)" || GATE_RC=$?
+
+    assert_equals "0" "$GATE_RC" "a missing sizing.sh does not fail the gate"
+    rows="$(category_rows "$GATE_OUT" "file-length")"
+    assert_equals "" "$rows" "no sizing rows when the sibling scanner is absent"
+    rows="$(category_rows "$GATE_OUT" "debug-statement")"
+    assert_contains "$rows" "app.py" "the OTHER scanners still ran (degradation is graceful, not fatal)"
+}
+
+run_test test_sizing_rows_reach_the_gate_output "sizing rows reach the gate output with a forwarded numstat sidecar (#695)"
+run_test test_sizing_without_numstat_degrades_to_informational "sizing without a sidecar degrades to informational (#695)"
+run_test test_missing_sizing_does_not_abort_the_scan "a missing sizing.sh degrades gracefully (#695)"
 run_test test_declared_config_suppresses_baseline "control: declared config suppresses the finding (#679)"
 run_test test_read_yaml_list_strips_trailing_whitespace "read_yaml_list strips trailing whitespace after the closing quote (#679 AC#1)"
 run_test test_read_yaml_list_handles_quotes_and_sections "read_yaml_list parses all quote forms and both key sections (#679)"

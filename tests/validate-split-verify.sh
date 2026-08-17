@@ -211,6 +211,39 @@ test_boilerplate_does_not_trip_loc_check() {
         "import/re-export boilerplate does not count as lost content"
 }
 
+# --- check 3: fan-in resolution ----------------------------------------------
+# The positive fixture for the one check that would otherwise appear ONLY as a
+# negative assertion inside the sound-split case. Per this suite's own rule,
+# a check asserted only silent is indistinguishable from a check that never
+# fires — so this engineers a genuinely dangling call site.
+#
+# The shape matters: `helper` must be DROPPED from the result set while a
+# SURVIVING unit still calls it by name. A fixture that merely deleted an
+# unreferenced unit would trip check 2 (unit preservation) instead and prove
+# nothing about fan-in.
+test_dangling_reference_is_detected() {
+    local orig="$WORKDIR/fanin-orig.py" kept="$WORKDIR/fanin-kept.py" moved="$WORKDIR/fanin-moved.py"
+    {
+        command printf 'def helper(x):\n    return x * 2\n\n'
+        command printf 'def compute(x):\n    return helper(x) + 1\n\n'
+        command printf 'def report(x):\n    return compute(x)\n'
+    } >"$orig"
+    # The post-split original keeps report + compute — and compute STILL calls
+    # helper by name...
+    {
+        command printf 'def compute(x):\n    return helper(x) + 1\n\n'
+        command printf 'def report(x):\n    return compute(x)\n'
+    } >"$kept"
+    # ...but the destination file never received helper. The call now dangles.
+    command printf 'def unrelated(x):\n    return x\n' >"$moved"
+
+    run_verify "$orig" "$kept" "$moved"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-fanin-dangling" "a dangling call site is reported"
+    assert_contains "$VERIFY_OUT" "helper" "the report NAMES the unit whose callers dangle"
+    assert_not_contains "$VERIFY_OUT" "split-verified" "a split with a dangling reference is not verified"
+}
+
 # --- check 4: markdown reachability ------------------------------------------
 # THE pair the issue calls out. Same content moved in both; only the pointer
 # differs. A check that merely noticed "content moved" would pass both.
@@ -268,6 +301,7 @@ run_test test_lost_unit_is_detected "Check 2: a dropped top-level unit is detect
 run_test test_sound_split_verifies "Check 2 counter: a sound split verifies clean"
 run_test test_loc_drift_is_detected "Check 1: a large content drop is detected as LOC drift"
 run_test test_boilerplate_does_not_trip_loc_check "Check 1 counter: re-export boilerplate is tolerated"
+run_test test_dangling_reference_is_detected "Check 3: a dangling call site is detected and named"
 run_test test_unreachable_moved_heading_is_detected "Check 4: prose moved with no link left behind is detected"
 run_test test_linked_moved_heading_passes "Check 4 counter: a one-line pointer makes the move sound"
 run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"
