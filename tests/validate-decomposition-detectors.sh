@@ -1208,6 +1208,26 @@ test_memory_bundle_bloat() {
     # An empty root disables memory classification entirely. The file then
     # takes the ordinary code path (it is no longer a bundle file at all), and
     # the scan still succeeds.
+    #
+    # THE FIXTURE MUST SIT AT THE DEFAULT ROOT. An earlier draft reused the
+    # `knowledge/` fixture above, which is only ever a bundle file when
+    # MEMORY_BUNDLE_ROOT=knowledge is passed explicitly — so with an empty root
+    # it was never going to be classified whether the disable path worked or
+    # not, and the assertion passed either way. Proven: making an empty root
+    # fall back to the default instead of disabling left the suite GREEN.
+    # A file UNDER `.claude/memory` is what makes the silence mean something:
+    # it WOULD be classified with the default root in effect, so silence here
+    # can only come from the disable actually firing.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/.claude/memory"
+    f="$d/.claude/memory/MEMORY.md"
+    command printf '%s\n' "# I" "" "## A" "- a" "" "## B" "- b" >"$f"
+    list="$(list_of "$f")"
+    # Control: with the DEFAULT root this same file IS classified. Without this
+    # the silence below could come from the fixture rather than from the disable.
+    assert_fires "$list" ai-file-bloat "memory index exceeds high threshold" \
+        "memory: the empty-root fixture IS classified under the default root" \
+        MEMORY_INDEX_WARN=2 MEMORY_INDEX_HIGH=3
     assert_silent "$list" ai-file-bloat \
         "memory: empty root disables memory classification" \
         MEMORY_BUNDLE_ROOT= MEMORY_INDEX_WARN=2 MEMORY_INDEX_HIGH=3
@@ -1215,6 +1235,18 @@ test_memory_bundle_bloat() {
     /usr/bin/env MEMORY_BUNDLE_ROOT= PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SH" "$list" \
         >/dev/null 2>&1 || rc=$?
     assert_exit 0 "$rc" "memory: no bundle configured exits 0, not an error"
+
+    # A bundle root NESTED below the tree root — the second match arm
+    # (`*/root/*` in bash, the `"/" + root + "/" in path` disjunct in python).
+    # Every root fixture above puts the root at the START of the path, so that
+    # arm had no coverage and a "simplification" to prefix-only would not fail.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/proj/sub/.claude/memory"
+    f="$d/proj/sub/.claude/memory/MEMORY.md"
+    command printf '%s\n' "# I" "" "## A" "- a" "" "## B" "- b" >"$f"
+    assert_fires "$(list_of "$f")" ai-file-bloat "memory index exceeds high threshold" \
+        "memory: a bundle root nested below the tree root still classifies" \
+        MEMORY_INDEX_WARN=2 MEMORY_INDEX_HIGH=3
 
     # --- healthy bundle produces ZERO findings ------------------------------
     # Realistic sizes under the shipped defaults; nothing at all is emitted.
