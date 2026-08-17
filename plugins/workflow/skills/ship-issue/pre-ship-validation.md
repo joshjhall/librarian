@@ -104,9 +104,14 @@ behavior is noted inline per check; environment variables referenced here
    reviewer to eyeball it:
 
    ```bash
-   git show origin/main:path/to/file.md > /tmp/before.md
-   bash split-verify.sh /tmp/before.md path/to/file.md path/to/detail.md
+   WORK=$(mktemp -d)
+   git show origin/main:path/to/file.md > "$WORK/before.md"
+   bash split-verify.sh "$WORK/before.md" path/to/file.md path/to/detail.md
    ```
+
+   `mktemp -d`, not a fixed `/tmp` name: a predictable path in a world-writable
+   directory is a symlink race, and `split-verify.sh` itself uses `mktemp` for
+   every scratch file it creates.
 
    The first argument is the **pre-split snapshot**, the second the **post-split
    original**, and the rest are the files content moved **into**. It checks

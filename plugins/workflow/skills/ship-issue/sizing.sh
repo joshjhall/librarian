@@ -375,11 +375,39 @@ while IFS= read -r file; do
         if (production <= loc_warn) exit 0
 
         # Production LOC before this diff, approximated by removing the added
-        # lines. Honest approximation: numstat counts RAW added lines while
-        # `production` excludes blanks/comments, so `prior` is an UPPER bound on
-        # the pre-diff size. Erring high under-claims "the diff crossed it",
-        # failing toward the quieter, non-blocking disposition.
-        prior = (have_growth == 1) ? production - added : production
+        # lines.
+        #
+        # THE APPROXIMATION ERRS LOW, NOT HIGH. numstat counts RAW insertions —
+        # blanks and comments included — while `production` excludes them, so
+        # subtracting one from the other over-subtracts and `prior` is a LOWER
+        # bound on the pre-diff size. (An earlier comment claimed the opposite
+        # and reasoned that erring high fails toward the quiet disposition; it
+        # fails toward the LOUD one.) A reformat bundled with a small real change
+        # — 900 blank lines and 5 production lines added to an already-851-LOC
+        # file — drove `prior` negative, satisfied `prior <= loc_warn`, and
+        # produced a HIGH "this diff pushed it over" on a file that was already
+        # far past the threshold: the loudest disposition for exactly the case
+        # AC4 exists to keep quiet.
+        #
+        # So `crossed` is CLAMPED: the added count cannot exceed the total
+        # non-production content of the file, because those lines had to go
+        # somewhere. (No apostrophes in this awk program — it is single-quoted,
+        # so one would terminate the quote and break the script.)
+        # `added` minus the blanks/comments/test lines present is a floor on how
+        # many insertions were production; anything above it is what the diff
+        # genuinely contributed to `production`.
+        #
+        # For the 900-blank reformat: non_production is 900, so at most 5 of the
+        # 905 insertions were production, `prior` lands at 851 — the real value —
+        # and the row takes the quiet `material` path instead of claiming a HIGH
+        # crossing. For an ordinary diff, where insertions are mostly production,
+        # non_production is small and the clamp changes nothing. `prior` floors
+        # at 0: a negative value can never describe a real file.
+        non_production = total - production
+        added_production = added - non_production
+        if (added_production < 0) added_production = 0
+        prior = (have_growth == 1) ? production - added_production : production
+        if (prior < 0) prior = 0
         crossed = (have_growth == 1 && prior <= loc_warn) ? 1 : 0
         material = (have_growth == 1 && added >= min_added) ? 1 : 0
 
@@ -407,9 +435,17 @@ while IFS= read -r file; do
 
         # The split SHAPE, so the finding names a concrete destination rather
         # than bare advice. Only for dispositions a reviewer should act on.
-        if ((crossed || material) && lang != "") {
-            emit(1, "decomposition-seam", sprintf("split shape for %s: %s", lang, split_shape(lang)), "MEDIUM")
-        } else if (!crossed && !material) {
+        #
+        # NO `lang != ""` GUARD. A file whose extension has no segmenter (.rb,
+        # .java, .c, .cpp, .kt — scanned, since none are skipped) yields an empty
+        # lang, and gating on it dropped BOTH arms: the first false for want of a
+        # language, the second false for want of a quiet disposition, so an
+        # actionable over-threshold file emitted a file-length row and NO seam
+        # row — withholding from the review dimension the one thing it consumes.
+        if (crossed || material) {
+            emit(1, "decomposition-seam", sprintf("split shape for %s: %s", \
+                (lang != "" ? lang : "this file"), split_shape(lang)), "MEDIUM")
+        } else {
             # ---- reasoned decline ------------------------------------------
             # A file over threshold with no actionable growth is a RESULT, not a
             # silence. Reasons reused verbatim from check-decomposition/contract.md

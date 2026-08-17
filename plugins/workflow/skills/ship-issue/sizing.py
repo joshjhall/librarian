@@ -415,11 +415,35 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
 
     min_added = _int_env("REVIEW_GROWTH_MIN_ADDED", 50)
     # Production LOC before this diff, approximated by removing the added lines.
-    # An approximation is honest here: numstat counts raw added lines while
-    # `production` excludes blanks/comments, so `prior` is an UPPER bound on the
-    # pre-diff size. Erring high means we under-claim "the diff crossed it",
-    # which fails toward the quieter, non-blocking disposition.
-    prior = production - added if have_growth else production
+    #
+    # THE APPROXIMATION ERRS LOW, NOT HIGH. numstat counts RAW insertions —
+    # blanks and comments included — while `production` excludes them, so
+    # subtracting one from the other over-subtracts and `prior` is a LOWER bound
+    # on the true pre-diff size. (An earlier comment here claimed the opposite
+    # and reasoned that erring high fails toward the quiet disposition; it fails
+    # toward the LOUD one.) A reformat bundled with a small real change — 900
+    # blank lines and 5 production lines added to an already-851-LOC file —
+    # drove `prior` negative, satisfied `prior <= warn`, and produced a HIGH
+    # "this diff pushed it over" on a file that was far over the threshold to
+    # begin with: the loudest possible disposition for exactly the case AC4
+    # exists to keep quiet.
+    #
+    # So `crossed` is CLAMPED: the added count cannot exceed the file's total
+    # non-production content, because those lines had to go somewhere. `added`
+    # minus the blanks/comments/test lines present is a floor on how many of the
+    # insertions were production; anything above that floor is what the diff
+    # genuinely contributed to `production`.
+    #
+    # For the 900-blank reformat: non_production is 900, so at most 5 of the 905
+    # insertions were production, `prior` lands at 851 — the real value — and the
+    # row correctly takes the quiet `material` path instead of claiming a HIGH
+    # crossing. For an ordinary diff, where insertions are mostly production,
+    # non_production is small and the clamp changes nothing.
+    #
+    # `prior` also floors at 0: a negative value can never describe a real file.
+    non_production = m["total"] - production
+    added_production = max(0, added - non_production)
+    prior = max(0, production - added_production) if have_growth else production
     crossed = have_growth and prior <= warn
     material = have_growth and added >= min_added
 
@@ -463,16 +487,27 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
 
     # The split SHAPE, so the finding names a concrete destination rather than
     # bare advice. Only for the dispositions a reviewer should act on.
-    if (crossed or material) and lang:
+    #
+    # NO `and lang` GUARD. A file whose extension has no segmenter (.rb, .java,
+    # .c, .cpp, .kt — scanned, since none are in SKIP_EXTS) yields lang == "",
+    # and gating on it dropped BOTH arms: the first was false for want of a
+    # language and the second false for want of a quiet disposition, so an
+    # actionable over-threshold file emitted a file-length row and NO seam row —
+    # silently withholding from the review dimension the one thing it consumes.
+    # The generic fallback is weaker advice than a language-shaped one but it is
+    # a real destination, and every blocking-eligible file now yields exactly one
+    # seam row.
+    if crossed or material:
         shape = SPLIT_SHAPE.get(lang, "extract a cohesive unit into a sibling module")
+        label = lang if lang else "this file"
         emit(
             path,
             1,
             "decomposition-seam",
-            f"split shape for {lang}: {shape}",
+            f"split shape for {label}: {shape}",
             "MEDIUM",
         )
-    elif not (crossed or material):
+    else:
         emit(
             path,
             1,

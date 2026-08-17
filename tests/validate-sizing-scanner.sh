@@ -249,6 +249,77 @@ test_decline_records_a_reason() {
     assert_contains "$out" "single cohesive unit" "the decline names WHY it declined"
 }
 
+# --- a whitespace-heavy diff cannot fake a threshold crossing ----------------
+# `prior = production - added` compares two different units: numstat counts RAW
+# insertions (blanks and comments included) while `production` excludes them. So
+# the subtraction over-subtracts, `prior` errs LOW, and the error pushes toward
+# the LOUDEST disposition — the opposite of what the code comment claimed.
+#
+# The fixture is a reformat bundled with a small real change: a file already far
+# past the HIGH threshold receives ~900 blank lines and a handful of production
+# lines. Before the clamp, `prior` went negative, `crossed` fired, and the
+# scanner reported a HIGH "this diff pushed it over" against a file that was
+# already 851 LOC — the exact case AC4 exists to keep quiet, reported in the
+# loudest voice available.
+#
+# Asserts the EVIDENCE STRING, not merely the certainty: "already over before
+# this diff" and "pushed it over" are the two arms in question, and a certainty
+# check alone would pass if the row were demoted for some unrelated reason.
+test_whitespace_heavy_diff_does_not_fake_a_crossing() {
+    local f="$WORKDIR/reformat.py" list="$WORKDIR/reformat-list.txt" numstat="$WORKDIR/ns-reformat.txt"
+    local out i
+    : >"$f"
+    i=0
+    # ~856 production LOC — already well past the 800 py HIGH threshold.
+    while [ "$i" -lt 428 ]; do
+        command printf 'def u_%d(x):\n    return %d\n' "$i" "$i" >>"$f"
+        i=$((i + 1))
+    done
+    # ...plus 900 blank lines the reformat introduced.
+    i=0
+    while [ "$i" -lt 900 ]; do
+        command printf '\n' >>"$f"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$f" >"$list"
+    make_numstat "$numstat" "$f" 905
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "already over before this diff" \
+        "a whitespace-heavy diff on an already-oversized file takes the quiet arm"
+    assert_not_contains "$out" "pushed it over" \
+        "raw insertion count cannot manufacture a threshold crossing"
+}
+
+# --- an over-threshold file with no segmenter still gets a seam row ----------
+# `.rb`/`.java`/`.c` are scanned (none are in SKIP_EXTS) but have no segmenter,
+# so `lang` is empty. Gating the split-shape emit on a truthy `lang` dropped BOTH
+# arms for such a file — the shape arm for want of a language, the decline arm
+# for want of a quiet disposition — so an ACTIONABLE oversized file produced a
+# file-length row and no decomposition-seam row at all, withholding from the
+# review dimension the one thing it consumes.
+test_unknown_language_still_emits_a_seam_row() {
+    local f="$WORKDIR/big.rb" list="$WORKDIR/rb-list.txt" numstat="$WORKDIR/ns-rb.txt" out i
+    : >"$f"
+    i=0
+    while [ "$i" -lt 700 ]; do
+        command printf 'def unit_%d\n  %d\nend\n' "$i" "$i" >>"$f"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$f" >"$list"
+    make_numstat "$numstat" "$f" 1500
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "file-length" "an unsegmented language is still sized"
+    assert_contains "$out" "decomposition-seam" \
+        "an actionable file always yields a seam row, segmenter or not"
+    assert_contains "$out" "sibling module" "the generic fallback names a real destination"
+}
+
 # --- renamed files keep their growth signal ----------------------------------
 # `git diff --numstat` does NOT print a plain path for a renamed file. It prints
 # the rename, in one of two shapes:
@@ -533,6 +604,8 @@ run_test test_crossing_the_threshold_is_actionable "AC4: a diff that pushes a fi
 run_test test_material_growth_is_actionable "AC4: material growth on an already-over file is actionable"
 run_test test_materiality_floor_is_honored "AC4: REVIEW_GROWTH_MIN_ADDED is a real boundary"
 run_test test_decline_records_a_reason "AC5: a long-but-cohesive file yields a recorded decline reason"
+run_test test_whitespace_heavy_diff_does_not_fake_a_crossing "A whitespace-heavy diff cannot fake a threshold crossing"
+run_test test_unknown_language_still_emits_a_seam_row "An over-threshold file with no segmenter still gets a seam row"
 run_test test_renamed_file_keeps_its_growth_signal "A renamed file keeps its growth signal (both numstat rename shapes)"
 run_test test_generated_file_decline_reason "AC5: a generated file declines as generated"
 run_test test_majority_comment_decline_reason "AC5: a majority-comment file declines as documentation"
