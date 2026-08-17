@@ -118,9 +118,15 @@ reason is on record and can be argued with. A dropped one is not.
 - Consume the pre-scan's production LOC. Do not re-count.
 - Warning (medium): over the `production_loc.warning` threshold.
 - High: over `production_loc.high`.
+- **Only for files the bloat table does not classify** (#701). A CLAUDE.md,
+  `SKILL.md`, `agents/*.md` or `docs/*.md` is judged by its own per-type budget
+  instead, and the pre-scan emits no `file-length` row for it — so a missing
+  `file-length` row on such a file is correct, not a gap to fill in by
+  re-counting.
 - Always pair with a `decomposition-seam` finding — either a proposed cut or a
   recorded decline. A `file-length` finding on its own is the generic advice
-  this agent replaces.
+  this agent replaces. The same pairing applies to a classified file's
+  `ai-file-bloat`/`doc-file-bloat` row, which is *its* size verdict.
 - Evidence: the pre-scan metrics string (production LOC, total, comment ratio,
   test lines excluded, nesting depth, unit count).
 
@@ -141,7 +147,13 @@ reason is on record and can be argued with. A dropped one is not.
 - AI instruction files are loaded into context on every conversation or
   dispatch; oversized ones waste context and risk limits. Documentation files
   are not auto-loaded but become unnavigable.
-- Thresholds are per file type and live in `check-decomposition/thresholds.yml`.
+- Thresholds are per file type and live in `check-decomposition/thresholds.yml`,
+  measured on **total lines** (deliberately — these files load whole into
+  context, so blanks and frontmatter are real cost).
+- This is the file's **only** size verdict (#701): the generic production-LOC
+  `file-length` check is skipped for anything the bloat table classifies. Report
+  the per-type row on its own; do not supplement it with a line count against the
+  code thresholds.
 - For markdown, the seam is a **heading cluster** — the pre-scan segments by
   heading hierarchy, so the recommendation names sections, not functions.
 - Suggestion: specific extraction, e.g. "Move the MCP server table to

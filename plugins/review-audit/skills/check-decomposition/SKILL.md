@@ -29,6 +29,14 @@ evidence grammar. See `thresholds.yml` for configurable sizes.
 | `doc-file-bloat`     | `docs/*.md` over its threshold                                |
 | `decomposition-seam` | A concrete cut point — or a **reasoned decline** to split     |
 
+**One size verdict per file** (#701). A file matched by the per-type
+`bloat_thresholds` table gets `ai-file-bloat`/`doc-file-bloat` (measured on
+**total lines**) and **not** `file-length`; everything else gets `file-length`
+(measured on **production LOC**). Having a per-type budget *is* the statement
+that the generic code thresholds do not apply — running both produced two rows
+for one problem and flagged docs pages that were under their own budget.
+Segmentation is unchanged; only the verdict is exclusive.
+
 ## What it measures
 
 **Generic layer** (every file): total LOC, blank lines, comment lines and

@@ -27,6 +27,9 @@ severity:
 
 # Production-LOC thresholds. Production LOC excludes blank lines, comment lines,
 # and test units (per-language, computed from unit spans).
+#
+# These apply ONLY to files that bloat_thresholds below does not classify (#701).
+# A classified file gets its per-type budget instead — see that section.
 size_thresholds:
   production_loc:
     warning: 300 # DECOMP_LOC_WARN
@@ -52,6 +55,18 @@ cohesive:
 # Per-file-type line thresholds for AI-instruction and documentation files.
 # Migrated from check-ai-config (issue #663) with the env var names intact, so
 # an operator's existing overrides keep working across the move.
+#
+# MEASURED ON TOTAL LINES, deliberately (#701) — unlike size_thresholds above,
+# NOTHING is excluded: not blanks, not frontmatter, not fenced blocks. These
+# files are loaded WHOLE into context, so every line is real cost. (Production
+# LOC would be the wrong metric here anyway: markdown has no comment or test
+# exclusion, so it degenerates into "lines minus blanks".)
+#
+# This is also the ONLY size verdict a classified file receives — the
+# production-LOC file-length check above is SKIPPED for it. A spec here IS the
+# statement "this file type has its own budget", so judging it a second time
+# against code-derived thresholds contradicts that: it produced duplicate rows,
+# and flagged docs pages that were under their own configured budget.
 bloat_thresholds:
   claude_md: # CLAUDE.md / AGENTS.md — loaded every conversation
     warning: 400 # CLAUDE_MD_WARN

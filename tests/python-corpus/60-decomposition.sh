@@ -234,6 +234,14 @@ printf '%s\n' l1 l2 l3 l4 l5 >"$DECOMPDIR/agents/rev.md"
 printf '%s\n' l1 l2 l3 l4 l5 >"$DECOMPDIR/agents/nested/nested.md"
 printf '%s\n' l1 l2 l3 l4 l5 >"$DECOMPDIR/docs/guide.md"
 
+# A CLASSIFIED file UNDER its own budget (#701). Since the size verdict became
+# exclusive, this is a distinct branch: bloat_spec() matches, neither threshold
+# trips, and the file gets NO size row — where before it fell through to the
+# production-LOC file-length check. One line keeps it under even the tuned-down
+# DOC_WARN=2 of the driver's first pass. This is the
+# disposition-recall-tally-613.md shape from the issue.
+printf '%s\n' 'Short tally.' >"$DECOMPDIR/docs/under-budget.md"
+
 # --- Skip globs + unknown extension (metrics-only, no segmenter) -------------
 printf '%s\n' '{"a": 1}' >"$DECOMPDIR/package-lock.json"
 printf '%s\n' 'plain data' >"$DECOMPDIR/notes.txt"
@@ -252,7 +260,7 @@ for f in "$DECOMPDIR"/mod.py "$DECOMPDIR"/app.ts "$DECOMPDIR"/app.test.ts \
     "$DECOMPDIR"/web.go "$DECOMPDIR"/god.py \
     "$DECOMPDIR"/CLAUDE.md "$DECOMPDIR"/skills/big/SKILL.md \
     "$DECOMPDIR"/agents/rev.md "$DECOMPDIR"/agents/nested/nested.md \
-    "$DECOMPDIR"/docs/guide.md \
+    "$DECOMPDIR"/docs/guide.md "$DECOMPDIR"/docs/under-budget.md \
     "$DECOMPDIR"/package-lock.json "$DECOMPDIR"/notes.txt "$DECOMPDIR"/README \
     "$DECOMP_UNREAD"; do
     printf '%s\n' "$f" >>"$DECOMP_LIST"

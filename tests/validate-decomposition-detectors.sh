@@ -881,6 +881,148 @@ test_doc_file_bloat() {
 }
 
 # ============================================================================
+# Size-verdict exclusivity (#701) — a classified file gets its per-type budget
+# and NOT the generic production-LOC file-length verdict.
+#
+# Before #701 both size checks ran unconditionally, so classified markdown got
+# TWO rows for one problem (two categories, two different numbers), and a docs
+# page comfortably UNDER its own doc_md budget was still flagged against the
+# code thresholds. BASE_ENV pins DECOMP_LOC_WARN=5, so every fixture here is
+# far over the code threshold — that is what makes each "file-length silent"
+# assertion sharp rather than vacuous: pre-fix it fired on all of them.
+# ============================================================================
+test_size_verdict_exclusivity() {
+    local d f list i
+
+    # --- Classified AND over its own budget: exactly ONE row ----------------
+    # Pre-fix this file emitted ai-file-bloat AND file-length together.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/skills/big"
+    f="$d/skills/big/SKILL.md"
+    command printf '%s\n' "---" "description: d" "---" "## Workflow" "a" "b" "c" >"$f"
+    list="$(list_of "$f")"
+    assert_fires "$list" ai-file-bloat "skill definition exceeds high threshold" \
+        "exclusivity: a classified file still gets its per-type verdict" \
+        SKILL_WARN=2 SKILL_HIGH=3
+    assert_silent "$list" file-length \
+        "exclusivity: a classified file does NOT also get the code file-length verdict (#701)" \
+        SKILL_WARN=2 SKILL_HIGH=3
+
+    # --- Classified and UNDER its own budget: NO size row at all ------------
+    # The disposition-recall-tally-613.md shape from the issue: a docs page
+    # under doc_md warn that the code lens flagged anyway. Both categories must
+    # be silent — the type budget is the only verdict, and it says "fine".
+    command mkdir -p "$d/docs"
+    f="$d/docs/tally.md"
+    : >"$f"
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        command printf 'Row %s of a running tally that is supposed to grow.\n' "$i" >>"$f"
+    done
+    list="$(list_of "$f")"
+    assert_silent "$list" doc-file-bloat \
+        "exclusivity: a docs page under its own budget gets no bloat row" \
+        DOC_WARN=500 DOC_HIGH=800
+    assert_silent "$list" file-length \
+        "exclusivity: a docs page under its own budget is NOT flagged by the code lens (#701)" \
+        DOC_WARN=500 DOC_HIGH=800
+
+    # --- Unclassified files are UNAFFECTED ----------------------------------
+    # The fix must narrow only the classified path. Three languages, because a
+    # regression that keyed off "is markdown" rather than "is classified" would
+    # still pass on a single .py fixture.
+    f="$d/mid.py"
+    command cat >"$f" <<'EOF'
+def alpha(x):
+    return x
+
+def beta(x):
+    return x
+
+def gamma(x):
+    return x
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "production LOC" \
+        "exclusivity: an unclassified .py still gets file-length"
+
+    f="$d/tool.sh"
+    command cat >"$f" <<'EOF'
+run_alpha() {
+    do_work
+}
+
+run_beta() {
+    do_work
+}
+
+run_gamma() {
+    do_work
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "production LOC" \
+        "exclusivity: an unclassified .sh still gets file-length"
+
+    # Unclassified MARKDOWN specifically: a README is not matched by any
+    # bloat_spec() arm, so the code lens remains its ONLY size lens. That is
+    # the #700 case and is deliberately out of scope here — pinning it stops a
+    # future widening of bloat_spec() from silently changing this file's
+    # behavior without a test going red.
+    f="$d/README.md"
+    : >"$f"
+    for i in 1 2 3 4 5 6 7 8; do
+        command printf '## Section %s\n\nProse.\n\n' "$i" >>"$f"
+    done
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "production LOC" \
+        "exclusivity: unclassified markdown (README) keeps the code lens (#700 scope)"
+
+    # --- Segmentation still runs on classified markdown ---------------------
+    # This is about the size VERDICT, not the analysis: an oversized SKILL.md
+    # must still yield a decomposition seam naming the sections to extract.
+    f="$d/skills/big/SKILL.md"
+    command cat >"$f" <<'EOF'
+## Overview
+
+Text.
+
+## Install on Linux
+
+Steps.
+
+## Install on Mac
+
+Steps.
+
+## Install on Windows
+
+Steps.
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "section install_* family (3 units," \
+        "exclusivity: seam analysis still runs on classified markdown" \
+        SKILL_WARN=2 SKILL_HIGH=3
+
+    # --- The size finding still pairs with a seam-or-decline ----------------
+    # `over` is now set by the BLOAT verdict, so the reasoned-decline emit must
+    # still fire for a classified file with no cuttable seam. If `over` had
+    # been left keyed to file-length, this row would vanish silently and
+    # audit-decomposition.md's pairing contract would lose its coverage for the
+    # bloat categories.
+    f="$d/skills/big/SKILL.md"
+    command printf '%s\n' "## Only Section" "" "One cohesive block." "" "More prose." >"$f"
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "declined:" \
+        "exclusivity: a classified over-budget file still records a decline (over-flag pairing)" \
+        SKILL_WARN=2 SKILL_HIGH=3
+    # Counter: UNDER budget -> not over -> no decline row either. Pins that the
+    # decline follows the verdict rather than firing on every classified file.
+    assert_silent "$list" decomposition-seam \
+        "exclusivity: an under-budget classified file records no decline" \
+        SKILL_WARN=500 SKILL_HIGH=800
+}
+
+# ============================================================================
 # god-module — size AND many units AND several concerns (never size alone)
 # ============================================================================
 test_god_module() {
@@ -960,6 +1102,7 @@ run_test test_adjacency_required "adjacency: interleaved family rejected, contig
 run_test test_decline_reasons "decline: generated / cohesive / mutually-referential, each with a reason"
 run_test test_ai_file_bloat "ai-file-bloat: warn/high arms, flat+nested agent globs (moved from #204 gate)"
 run_test test_doc_file_bloat "doc-file-bloat: docs/*.md arms, not ai-file-bloat (moved from #204 gate)"
+run_test test_size_verdict_exclusivity "exclusivity: one size verdict per file — type budget XOR file-length (#701)"
 run_test test_god_module "god-module: concern spread required, size alone insufficient"
 run_test test_skips_and_thresholds "skips: lock files; thresholds: project-overridable"
 

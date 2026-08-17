@@ -24,6 +24,18 @@ compatible_with: "finding-schema.md >= 1.0"
 threshold and **MEDIUM** over the warning threshold. `decomposition-seam` emits
 **HIGH** for a proposed cut and **LOW** for a reasoned decline (see below).
 
+**The three size categories are mutually exclusive — a file receives exactly one
+size verdict** (#701). A file whose path matches a `bloat_thresholds` type
+(CLAUDE.md/AGENTS.md, `skills/*/SKILL.md`, `agents/*.md`, `docs/*.md`) is judged
+**only** against that per-type budget, on **total lines**; `file-length` is
+skipped for it. Every other file is judged **only** by `file-length`, on
+production LOC. Consumers can therefore treat a size row as one problem rather
+than deduplicating two rows carrying two different numbers.
+
+`god-module` and `decomposition-seam` are unaffected: this splits the size
+*verdict*, not the segmentation. An oversized `SKILL.md` still yields a seam, and
+the seam-or-decline pairing holds for whichever size category fired.
+
 ## TSV row format
 
 The shared five-column contract is unchanged:
