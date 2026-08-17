@@ -162,6 +162,7 @@ while IFS= read -r file; do
         while (i <= n && substr(name, i, 1) !~ /[A-Z]/) i++
         return tolower(substr(name, 1, i - 1))
     }
+    # >>> shared:loc-helpers-awk (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
     # md_slug: heading text -> identifier-shaped slug, so family_prefix applies
     # unchanged. Mirrors md_slug() in patterns.py.
     function md_slug(text,   i, ch, out, prev_us, n) {
@@ -222,6 +223,7 @@ while IFS= read -r file; do
         if (lang == "md") return "section"
         return "unit"
     }
+    # <<< shared:loc-helpers-awk
     # target_path: sibling module named for the family, under a directory named
     # for the file it came from. Mirrors target_path() in patterns.py.
     # NB: `i` is declared LOCAL here (the extra-parameter idiom). awk has no
@@ -252,6 +254,8 @@ while IFS= read -r file; do
         total = NR
         nu = 0            # unit count
         min_head = 99     # markdown: shallowest heading depth present
+
+        # >>> shared:loc-measure-awk (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
 
         if (lang == "md") {
             fenced = 0
@@ -335,6 +339,7 @@ while IFS= read -r file; do
 
         metrics = sprintf("%d total, %d comment (%d%%), %d blank, %d test-excluded, max nesting %d, %d top-level units", \
             total, comment, comment_pct, blank, test_excluded, max_depth, prod_units)
+        # <<< shared:loc-measure-awk
 
         # ---- size verdict: EXACTLY ONE per file (#701) ---------------------
         # Mirrors the same branch in patterns.py scan_file(). A classified file

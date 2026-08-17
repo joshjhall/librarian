@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+# ship-issue review-lens sizing scanner behavioral gate (issue #695).
+#
+# The adversarial pre-PR review had no size lens: a PR could add 900 lines to an
+# already-oversized file and pass clean. sizing.{py,sh} supplies those
+# candidates. This gate pins the behavior that makes the lens survivable.
+#
+# THE CENTRAL PROPERTY (AC4) is GROWTH-AWARENESS, and it is the reason this is a
+# new scanner rather than a call into check-decomposition. An audit lens asks "is
+# this file too long?"; a per-PR lens must ask "did THIS diff make it worse?",
+# because a one-line touch to a pre-existing 1,200-line file is not the author's
+# debt. A reviewer that blocks on pre-existing size gets turned off within a week,
+# and then catches nothing at all. So the disposition table is the contract:
+#
+#   crossed a threshold because of this diff -> MEDIUM/HIGH, blocking-eligible
+#   already over, material growth (>= 50)    -> MEDIUM,      blocking-eligible
+#   already over, trivial growth             -> LOW,         informational only
+#   no numstat supplied at all               -> LOW,         informational only
+#
+# Every case is asserted against BOTH the Python primary (sizing.py) and the bash
+# fallback (SIZING_FORCE_BASH=1 sizing.sh) — free parity reinforcement on top of
+# validate-python-ports.sh's whole-corpus diff, and the only place the two impls
+# are compared on the GROWTH branch specifically.
+#
+# MUTATION-VERIFIED (the #221/#663 precedent). Each rule below was proven to be
+# genuinely tested by transiently breaking it and confirming this gate goes red,
+# then reverting. Per the mutation-round-finds-the-untested-rule lesson the round
+# targets every RULE, not merely every test — the rule with zero failures is the
+# one the round exists to find. The mutations checked:
+#   growth guard  — `crossed` forced True unconditionally  -> red (10 -> 9)
+#   growth guard  — `material` forced True unconditionally -> red (10 -> 9)
+#   per-language  — PER_LANG_THRESHOLDS lookup disabled    -> red (10 -> 9)
+#   decline path  — decline reason arm swapped             -> red (10 -> 9)
+#   split shape   — split_shape() collapsed to "split it"  -> red (10 -> 6)
+#
+# THE ROUND PAID FOR ITSELF. The decline-reason mutation initially SURVIVED, and
+# the reason was a defect in this file rather than a missing case: `run_scan` was
+# called in a command substitution, so the bash-vs-python assertion inside it ran
+# in a SUBSHELL and could never flip the parent's TEST_STATUS. The parity check
+# was inert — it could not fail, which reads identically to always passing. See
+# the `run_scan`/`assert_parity` split below, which is what makes it real.
+#
+# Pure bash + coreutils; no node/jq. Full /usr/bin/* paths per project shell
+# convention. Uses the shared harness assertions.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=tests/lib/harness.sh
+source "$SCRIPT_DIR/lib/harness.sh"
+
+SIZING_SH="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.sh"
+SIZING_PY="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.py"
+
+WORKDIR="$(command mktemp -d)"
+trap 'command rm -rf "$WORKDIR"' EXIT
+
+test_suite "ship-issue review-lens sizing scanner (#695)"
+
+HAVE_PY=0
+if command -v python3 >/dev/null 2>&1 &&
+    python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    HAVE_PY=1
+fi
+
+# make_py_file PATH NDEFS — a Python file with NDEFS trivial top-level defs.
+# Each def contributes 2 production lines, so production LOC ~= 2 * NDEFS. Sized
+# by parameter rather than by a fixed fixture so a threshold change here is a
+# one-number edit rather than a fixture rewrite.
+make_py_file() {
+    local path="$1" ndefs="$2" i
+    : >"$path"
+    i=0
+    while [ "$i" -lt "$ndefs" ]; do
+        command printf 'def unit_%d(x):\n    return x + %d\n' "$i" "$i" >>"$path"
+        i=$((i + 1))
+    done
+}
+
+# make_numstat PATH FILE ADDED — a one-row `git diff --numstat` sidecar.
+make_numstat() {
+    command printf '%s\t0\t%s\n' "$3" "$2" >"$1"
+}
+
+# run_scan FILE_LIST [NUMSTAT] — run BOTH impls and leave the output in the
+# GLOBAL `SCAN_OUT`, with parity recorded in `SCAN_PARITY` ("ok" | "drift").
+#
+# WHY A GLOBAL AND NOT AN ECHO. The obvious shape — capturing the helper in a
+# command substitution, with the parity assertion inside it — is BROKEN here:
+# command substitution runs the helper in a SUBSHELL, so an assertion that flips
+# TEST_STATUS flips it in a child process that then exits. The parent's counters
+# never see it and the parity check is silently inert — it can never fail, which
+# is indistinguishable from always passing. (Found by the mutation round: a
+# tampered decline-reason produced genuine bash/python drift and this suite
+# stayed green.) Assigning to a global keeps every assertion in the caller's
+# shell, where TEST_STATUS is real.
+run_scan() {
+    local list="$1" numstat="${2:-}" py_out
+    SCAN_PARITY="ok"
+    SCAN_OUT="$(SIZING_FORCE_BASH=1 command bash "$SIZING_SH" "$list" $numstat 2>&1 || true)"
+    if [ "$HAVE_PY" = "1" ]; then
+        py_out="$(command python3 "$SIZING_PY" "$list" $numstat 2>&1 || true)"
+        [ "$SCAN_OUT" = "$py_out" ] || SCAN_PARITY="drift"
+        SCAN_PY_OUT="$py_out"
+    fi
+}
+
+# assert_parity — every case asserts bash==python for free. Called in the test
+# body (NOT inside run_scan) so the failure lands in the caller's TEST_STATUS.
+assert_parity() {
+    [ "$HAVE_PY" = "1" ] || return 0
+    if [ "$SCAN_PARITY" != "ok" ]; then
+        _fail "bash and python impls disagree (parity drift)" \
+            "The TSV contract is the language boundary — a port is a drop-in only while the output matches." \
+            "bash: $SCAN_OUT" "python: $SCAN_PY_OUT"
+    fi
+}
+
+# A file that is comfortably over the 500-LOC default warning threshold.
+setup_over_threshold() {
+    OVER_FILE="$WORKDIR/big.py"
+    make_py_file "$OVER_FILE" 320 # ~640 production LOC
+    LIST="$WORKDIR/files.txt"
+    command printf '%s\n' "$OVER_FILE" >"$LIST"
+}
+
+# --- AC4: a one-line touch to a pre-existing oversized file does NOT block ----
+# THE headline acceptance criterion. Asserted on the CERTAINTY, not merely on
+# "some row was emitted": the scanner is SUPPOSED to speak here (silence would be
+# indistinguishable from "not examined"), it just must not speak in a
+# blocking-eligible voice. Checking only for the absence of a row would pass if
+# the whole scanner were deleted.
+test_trivial_touch_is_not_blocking() {
+    setup_over_threshold
+    local numstat="$WORKDIR/ns-trivial.txt" out
+    make_numstat "$numstat" "$OVER_FILE" 1
+    run_scan "$LIST" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "file-length" "a trivial touch still reports the file (not silence)"
+    assert_contains "$out" "pre-existing size" "the evidence names the size as pre-existing"
+    assert_contains "$out" "not this PR" "the evidence says whose debt it is not"
+
+    # The load-bearing assertion: the file-length row is LOW, never MEDIUM/HIGH.
+    local row
+    row="$(command printf '%s\n' "$out" | command grep -F 'file-length' || true)"
+    assert_not_empty "$row" "a file-length row exists to check the certainty of"
+    case "$row" in
+        *"	LOW") : ;;
+        *) _fail "trivial touch produced a blocking-eligible file-length row" \
+            "A one-line touch to a pre-existing oversized file must be LOW/informational (AC4)." \
+            "$row" ;;
+    esac
+}
+
+# --- AC4: a diff that PUSHES a file over the threshold IS actionable ----------
+# The counter-case. Without it the previous test passes trivially by having the
+# scanner rate everything LOW — the gate-and-evidence-converge tautology.
+test_crossing_the_threshold_is_actionable() {
+    setup_over_threshold
+    local numstat="$WORKDIR/ns-cross.txt" out row
+    # 600 added lines: prior = 640 - 600 = 40, comfortably under the 500 warning,
+    # so this diff is what pushed it over.
+    make_numstat "$numstat" "$OVER_FILE" 600
+    run_scan "$LIST" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "pushed it over" "the evidence says the diff crossed the threshold"
+    row="$(command printf '%s\n' "$out" | command grep -F 'file-length' || true)"
+    assert_not_empty "$row" "a file-length row exists"
+    case "$row" in
+        *"	LOW") _fail "a threshold-crossing diff was rated LOW" \
+            "A diff that pushes a file over the review threshold must be blocking-eligible (MEDIUM/HIGH)." \
+            "$row" ;;
+        *) : ;;
+    esac
+}
+
+# --- AC4: material growth on an already-over file is actionable ---------------
+test_material_growth_is_actionable() {
+    setup_over_threshold
+    local numstat="$WORKDIR/ns-material.txt" out row
+    # 120 added: over the 50-line materiality floor, but prior (640-120=520) was
+    # already over the 500 warning — so this is the "already over" arm, NOT the
+    # crossing arm. Asserting the distinct evidence string keeps the two arms
+    # from silently collapsing into one.
+    make_numstat "$numstat" "$OVER_FILE" 120
+    run_scan "$LIST" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "already over before this diff" "the evidence names the already-over arm"
+    row="$(command printf '%s\n' "$out" | command grep -F 'file-length' || true)"
+    case "$row" in
+        *"	MEDIUM") : ;;
+        *) _fail "material growth on an already-over file was not MEDIUM" \
+            "Adding 120 lines to an oversized file is this PR's business (AC4)." "$row" ;;
+    esac
+}
+
+# --- the materiality floor is a real boundary, not decoration ----------------
+# Pins REVIEW_GROWTH_MIN_ADDED as the thing that separates the two dispositions.
+# Without this, removing the floor entirely would still pass every test above.
+test_materiality_floor_is_honored() {
+    setup_over_threshold
+    local numstat="$WORKDIR/ns-floor.txt" out
+    make_numstat "$numstat" "$OVER_FILE" 10
+    REVIEW_GROWTH_MIN_ADDED=5 run_scan "$LIST" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "already over before this diff" \
+        "lowering the floor below the added count promotes the row to actionable"
+
+    REVIEW_GROWTH_MIN_ADDED=500 run_scan "$LIST" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "pre-existing size" \
+        "raising the floor above the added count demotes the row to informational"
+}
+
+# --- AC5: declining is preserved end-to-end ----------------------------------
+# A long-but-cohesive file yields a RECORDED REASON, not silence and not a nag.
+test_decline_records_a_reason() {
+    local f="$WORKDIR/cohesive.py" list="$WORKDIR/cohesive-list.txt" out
+    # One class, many methods: over threshold, but a single cohesive top-level
+    # unit — the case where "split it" is the wrong advice.
+    {
+        command printf 'class OneBigThing:\n'
+        i=0
+        while [ "$i" -lt 320 ]; do
+            command printf '    def m_%d(self):\n        return %d\n' "$i" "$i"
+            i=$((i + 1))
+        done
+    } >"$f"
+    command printf '%s\n' "$f" >"$list"
+
+    local numstat="$WORKDIR/ns-decline.txt"
+    make_numstat "$numstat" "$f" 1
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "decomposition-seam" "a declined file still emits a seam row"
+    assert_contains "$out" "declined:" "the decline is explicit"
+    assert_contains "$out" "single cohesive unit" "the decline names WHY it declined"
+}
+
+# --- AC7: split guidance is language-shaped ----------------------------------
+# The advice must match how the segmenters already work, or it is generic noise.
+test_split_shape_is_language_shaped() {
+    local f="$WORKDIR/grow.sh" list="$WORKDIR/sh-list.txt" numstat="$WORKDIR/ns-sh.txt" out
+    : >"$f"
+    i=0
+    while [ "$i" -lt 400 ]; do
+        command printf 'fn_%d() {\n    echo %d\n}\n' "$i" "$i" >>"$f"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$f" >"$list"
+    make_numstat "$numstat" "$f" 900
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "split shape for sh" "the seam row names the language"
+    assert_contains "$out" "sourced fragment" "shell guidance is the repo's split-suite convention (#564)"
+    assert_not_contains "$out" "barrel index.ts" "shell guidance is not the JS shape"
+}
+
+# --- per-language thresholds actually differ ---------------------------------
+# A 500-line Rust file and a 500-line shell script are not the same claim. This
+# pins that the per-language table is CONSULTED, not merely present: the same
+# production LOC must be over the Rust threshold and under the shell one.
+test_per_language_thresholds_differ() {
+    local rs="$WORKDIR/mid.rs" sh="$WORKDIR/mid.sh"
+    local list="$WORKDIR/lang-list.txt" out
+    # 600 production LOC each (200 units x 3 lines): over the Rust 400 warning,
+    # under the shell 700 warning. The size is chosen to sit BETWEEN the two
+    # per-language pairs — that gap is the whole property under test, so a
+    # fixture over both (or under both) would pass with the table gutted.
+    : >"$rs"
+    : >"$sh"
+    i=0
+    while [ "$i" -lt 200 ]; do
+        command printf 'fn unit_%d() {\n    let _ = %d;\n}\n' "$i" "$i" >>"$rs"
+        command printf 'fn_%d() {\n    echo %d\n}\n' "$i" "$i" >>"$sh"
+        i=$((i + 1))
+    done
+    command printf '%s\n%s\n' "$rs" "$sh" >"$list"
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "mid.rs" "the Rust file is over its (stricter) 400 threshold"
+    assert_not_contains "$out" "mid.sh" "the same size shell file is under its 700 threshold"
+}
+
+# --- a file UNDER threshold stays silent -------------------------------------
+# The counter-fixture. Without it every assertion above could pass by emitting a
+# row for literally every file.
+test_small_file_stays_silent() {
+    local f="$WORKDIR/small.py" list="$WORKDIR/small-list.txt" out
+    make_py_file "$f" 10
+    command printf '%s\n' "$f" >"$list"
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_equals "" "$out" "a small file produces no rows at all"
+}
+
+# --- the TSV contract is exactly five tab-separated columns ------------------
+# The language boundary every check-* skill and all three parity gates depend on.
+test_tsv_contract_is_five_columns() {
+    setup_over_threshold
+    local out line cols
+    run_scan "$LIST"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_not_empty "$out" "there is output to check the shape of"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        cols="$(command printf '%s' "$line" | command awk -F'\t' '{print NF}')"
+        assert_equals "5" "$cols" "row has exactly 5 tab-separated columns"
+    done <<EOF
+$out
+EOF
+}
+
+# --- usage + missing-file contract -------------------------------------------
+# Mirrors what validate-prescans.sh pins for every other scanner entry point.
+test_usage_contract() {
+    local rc=0
+    command bash "$SIZING_SH" >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "no argument exits 1"
+
+    rc=0
+    command bash "$SIZING_SH" "$WORKDIR/does-not-exist.txt" >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "a missing file list exits 1"
+
+    local empty="$WORKDIR/empty.txt" out
+    : >"$empty"
+    rc=0
+    out="$(command bash "$SIZING_SH" "$empty" 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "an empty file list exits 0"
+    assert_equals "" "$out" "an empty file list emits nothing"
+}
+
+run_test test_trivial_touch_is_not_blocking "AC4: a one-line touch to an oversized file is informational, never blocking"
+run_test test_crossing_the_threshold_is_actionable "AC4: a diff that pushes a file over the threshold is actionable"
+run_test test_material_growth_is_actionable "AC4: material growth on an already-over file is actionable"
+run_test test_materiality_floor_is_honored "AC4: REVIEW_GROWTH_MIN_ADDED is a real boundary"
+run_test test_decline_records_a_reason "AC5: a long-but-cohesive file yields a recorded decline reason"
+run_test test_split_shape_is_language_shaped "AC7: split guidance matches the file's language"
+run_test test_per_language_thresholds_differ "Per-language thresholds are consulted, not merely present"
+run_test test_small_file_stays_silent "A file under threshold produces no rows"
+run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"
+run_test test_usage_contract "Usage / missing-file / empty-list contract"
+
+generate_report

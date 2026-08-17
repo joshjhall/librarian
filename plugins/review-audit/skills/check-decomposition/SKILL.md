@@ -75,3 +75,22 @@ the cross-file coupling half of `god-module`.
 The pre-scan skips lock files and non-source data files (JSON/YAML/TOML/INI).
 Markdown is deliberately **not** skipped — it is segmented by heading hierarchy
 and owns `doc-file-bloat`.
+
+## Two lenses on the same engine
+
+This skill is the **audit lens**: a whole-repo sweep at `300/500` production LOC.
+`ship-issue`'s `sizing.{py,sh}` is the **review lens**, running per-PR at
+`500/800` with per-language overrides (#695).
+
+They share the LOC engine — the per-language comment/test/blank exclusion rules —
+through `# >>> shared:loc-*` sentinel regions kept byte-identical by
+`tests/validate-shared-scanner-sync.sh`, because the two plugins install
+independently and a sourced library is impossible across that boundary.
+
+The thresholds differ **on purpose**, and `thresholds.yml` records why: an audit
+produces a backlog somebody triages later and can afford to nag; a per-PR gate
+spends a reviewer's attention every time and gets switched off if it fires on
+most PRs. The review lens is also **growth-aware** — it reads a
+`git diff --numstat` sidecar, so a one-line touch to a pre-existing oversized
+file is informational rather than blocking. That is a different question ("did
+this diff make it worse?"), not the same question at a higher number.

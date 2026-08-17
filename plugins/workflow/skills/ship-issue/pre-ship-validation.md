@@ -64,29 +64,48 @@ behavior is noted inline per check; environment variables referenced here
 1. **Pre-review gates** (advisory by default) — run deterministic quality
    scanning on changed files to catch mechanical issues before review:
 
-   a. Generate file list from the diff:
+   a. Generate the file list AND the growth sidecar from the diff:
 
    ```bash
    git diff --name-only origin/main...HEAD > /tmp/pre-review-files.txt
+   git diff --numstat   origin/main...HEAD > /tmp/pre-review-numstat.txt
    ```
+
+   The `--numstat` sidecar is what makes the sizing scanner **growth-aware**
+   (#695): it carries added/deleted counts per file, so a one-line touch to a
+   pre-existing oversized file is reported as informational rather than as this
+   PR's debt. Omitting it does not break the scan — sizing still runs, but with
+   no growth signal every over-threshold file is reported LOW/informational, so
+   the size lens silently stops finding anything actionable. Generate it.
 
    b. Run the pre-review scanner (locate `pre-review-gates.sh` in the same
    directory as the skill file):
 
    ```bash
-   bash pre-review-gates.sh /tmp/pre-review-files.txt
+   bash pre-review-gates.sh /tmp/pre-review-files.txt /tmp/pre-review-numstat.txt
    ```
 
    c. Parse TSV output — each line: `file\tline\tcategory\tevidence\tcertainty`
 
    **Categories detected:**
 
-   | Category              | What it catches                                  | Certainty |
-   | --------------------- | ------------------------------------------------ | --------- |
-   | `ai-slop`             | Hedging phrases, buzzword inflation, filler text | HIGH      |
-   | `debug-statement`     | print(), console.log, debugger, breakpoint       | HIGH      |
-   | `missing-test-file`   | Source files with no corresponding test file     | HIGH      |
-   | `untested-public-api` | Public functions not referenced in any test file | HIGH      |
+   | Category              | What it catches                                   | Certainty    |
+   | --------------------- | ------------------------------------------------- | ------------ |
+   | `ai-slop`             | Hedging phrases, buzzword inflation, filler text  | HIGH         |
+   | `debug-statement`     | print(), console.log, debugger, breakpoint        | HIGH         |
+   | `missing-test-file`   | Source files with no corresponding test file      | HIGH         |
+   | `untested-public-api` | Public functions not referenced in any test file  | HIGH         |
+   | `file-length`         | Production LOC over the **review-lens** threshold | HIGH/MED/LOW |
+   | `decomposition-seam`  | A language-shaped split shape, or a reasoned decline | MED/LOW   |
+
+   The last two come from the sizing scanner (#695) and are **growth-graded**,
+   which is the whole point of the review lens: `HIGH`/`MEDIUM` means *this diff*
+   pushed the file over a threshold or added materially to one already over;
+   `LOW` means pre-existing size the diff barely touched. Treat a `LOW` sizing
+   row as informational — never ask the author to split a file their PR merely
+   brushed against. A `decomposition-seam` row reading `declined: <reason>` is a
+   **result**, not a problem: it records that the file was examined and found
+   legitimately long.
 
    **Handling findings:**
 
@@ -168,7 +187,8 @@ behavior is noted inline per check; environment variables referenced here
    adversarial review of the changes **before** they are pushed/merged, so the
    delivered code is review-clean regardless of how it ships. This complements the
    deterministic pre-review gates above with LLM reviewers (security, correctness,
-   tests, CLAUDE.md conventions, scope-drift) plus a fresh judge and gatekeeper.
+   tests, CLAUDE.md conventions, decomposition, scope-drift) plus a fresh judge
+   and gatekeeper.
 
    **Runs on Options 1, 2, and 3 alike** — the review is a property of the
    *change*, not the delivery mechanism, so a commit-only (Option 3) or
@@ -217,7 +237,7 @@ behavior is noted inline per check; environment variables referenced here
      diff: "<diff text, FULL scope>",
      issue: { number: {N}, title: "{title}" },
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
-     preScan: [<pre-review-gates.sh TSV rows + lint-gate rows from item 5>],
+     preScan: [<pre-review-gates.sh TSV rows (incl. growth-graded sizing rows) + lint-gate rows from item 5>],
      conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>"
    }
    ```
@@ -305,7 +325,7 @@ behavior is noted inline per check; environment variables referenced here
      diff: "<diff text, FULL scope>",          // unchanged — scope-drift reads this
      issue: { number: {N}, title: "{title}" },
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
-     preScan: [<pre-review-gates.sh TSV rows + lint-gate rows from item 5>],
+     preScan: [<pre-review-gates.sh TSV rows (incl. growth-graded sizing rows) + lint-gate rows from item 5>],
      conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
      // Omit ALL THREE unless the PREVIOUS cycle advised next_scope=narrow
      // (#656); cycle 1 always omits them:

@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Shared-scanner drift gate (issues #89, #132, #133, #609).
+# Shared-scanner drift gate (issues #89, #132, #133, #609, #695).
 #
 # Pre-scan scripts living in SEPARATE, independently-installed plugins share
-# regions of logic by DELIBERATE duplication. Two such PAIRS are pinned here:
+# regions of logic by DELIBERATE duplication. Three such PAIRS are pinned here:
 #
 #   check-code-health/patterns.sh   <-> ship-issue/pre-review-gates.sh
 #   loop-make-it-tested/patterns.sh <-> ship-issue/pre-review-gates.sh   (#609)
+#   check-decomposition/patterns.sh <-> ship-issue/sizing.sh             (#695)
+#
+# The third pair shares the production-LOC ENGINE — the per-language
+# comment/test/blank exclusion rules that decide what "production LOC" means —
+# between the audit lens and the per-PR review lens. Its regions carry AWK source
+# rather than bash, which works unchanged because nothing in extract_shared or
+# normalize is language-aware; the tamper fixtures below keep that from being an
+# untested assumption.
 #
 # They cannot share a sourced library: CLAUDE_PLUGIN_ROOT is plugin-scoped, the
 # plugins declare no dependency on each other, and a user may install `workflow`
@@ -62,6 +70,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
+    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk"
 )
 
 # Pair-specific paths used by the targeted tests below (the language-arm shape
@@ -70,6 +79,8 @@ SHARED_PAIRS=(
 HEALTH_PATTERNS="$REPO_ROOT/plugins/review-audit/skills/check-code-health/patterns.sh"
 TESTED_PATTERNS="$REPO_ROOT/plugins/dev-core/skills/loop-make-it-tested/patterns.sh"
 PRE_REVIEW_GATES="$REPO_ROOT/plugins/workflow/skills/ship-issue/pre-review-gates.sh"
+DECOMP_PATTERNS="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/patterns.sh"
+SIZING="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.sh"
 
 test_suite "shared scanner sync (#89/#132/#133/#609)"
 
@@ -354,11 +365,96 @@ test_detector_fires_on_py_region_drift() {
     assert_equals "detected" "$drift" "a one-line edit to pre-review-gates' copy is detected as drift against patterns.sh"
 }
 
+# The detector FIRES on drift in the THIRD pair's regions (#695) — the
+# check-decomposition <-> ship-issue/sizing LOC engine. Shaped as a genuine
+# CROSS-FILE comparison like the py-public-symbols fixture above: the tamper is
+# applied to the DUPLICATE (sizing.sh) and compared against the UNTAMPERED
+# CANONICAL (check-decomposition/patterns.sh), because a fixture that tampered
+# one file against itself would pass even if the two files were never paired.
+#
+# This pair is the first whose shared regions carry AWK source rather than bash.
+# Nothing in extract_shared/normalize is language-aware, so that works unchanged
+# — but it is exactly the kind of assumption that deserves a live fixture rather
+# than a comment, which is what these tampers are.
+#
+# BOTH regions are tampered, on BEHAVIORAL lines:
+#   loc-helpers-awk — the `is_comment` py/sh arm, which decides what counts as a
+#     comment line and therefore what production LOC IS. A prose tamper would
+#     prove less; this is the line a real one-sided bug fix would touch.
+#   loc-measure-awk — the production subtraction itself, the single expression
+#     every sizing finding in both lenses is computed from.
+#
+# The untampered-match assertion keeps each honest: it proves the two extracts
+# are equal to begin with, so the inequality below can only come from the tamper.
+# Without it a broken extract returning empty for one side would make BOTH
+# branches report "detected" and the fixture would pass vacuously.
+#
+# Comparison is plain bash, NOT assert_true — the regions hold shell
+# metacharacters that assert_true's eval would execute.
+test_detector_fires_on_loc_region_drift() {
+    local canonical duplicate tampered baseline tamper_took drift
+
+    # --- region 1: loc-helpers-awk ------------------------------------------
+    canonical="$(extract_shared "$DECOMP_PATTERNS" loc-helpers-awk | normalize)"
+    duplicate="$(extract_shared "$SIZING" loc-helpers-awk | normalize)"
+
+    assert_not_empty "$canonical" "check-decomposition loc-helpers-awk extract is non-empty"
+    assert_not_empty "$duplicate" "sizing loc-helpers-awk extract is non-empty"
+
+    baseline="differs"
+    [ "$canonical" = "$duplicate" ] && baseline="matches"
+    assert_equals "matches" "$baseline" "the untampered loc-helpers-awk pair matches (tamper is the only variable)"
+
+    # The tamper targets the `is_comment` py/sh arm — the line that decides what
+    # counts as a comment and therefore what production LOC IS. Matched on the
+    # distinctive `return 0` terminator of that function rather than on the arm
+    # itself: the arm contains a `||`, and a sed BRE `\|` is a GNU extension that
+    # BSD sed reads as a LITERAL, so an alternation-bearing pattern would silently
+    # match nothing on macOS and the tamper would be a no-op there (#679 — and
+    # exactly the silent class that lint catches). `s/…/…/` on a plain fixed
+    # string is dialect-neutral.
+    tampered="$(extract_shared "$SIZING" loc-helpers-awk |
+        command sed 's/if (lang == "js" || lang == "rs" || lang == "go") return line ~/if (0) return line ~/' | normalize)"
+    assert_not_empty "$tampered" "tampered loc-helpers-awk extract is non-empty (extract still works)"
+
+    tamper_took="no"
+    [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+    assert_equals "yes" "$tamper_took" "the tamper actually changed the region (the is_comment py/sh arm is present)"
+
+    drift="none"
+    [ "$canonical" != "$tampered" ] && drift="detected"
+    assert_equals "detected" "$drift" "a one-line edit to sizing's loc-helpers copy is detected as drift"
+
+    # --- region 2: loc-measure-awk ------------------------------------------
+    canonical="$(extract_shared "$DECOMP_PATTERNS" loc-measure-awk | normalize)"
+    duplicate="$(extract_shared "$SIZING" loc-measure-awk | normalize)"
+
+    assert_not_empty "$canonical" "check-decomposition loc-measure-awk extract is non-empty"
+    assert_not_empty "$duplicate" "sizing loc-measure-awk extract is non-empty"
+
+    baseline="differs"
+    [ "$canonical" = "$duplicate" ] && baseline="matches"
+    assert_equals "matches" "$baseline" "the untampered loc-measure-awk pair matches (tamper is the only variable)"
+
+    tampered="$(extract_shared "$SIZING" loc-measure-awk |
+        command sed 's/production = total - blank - comment - test_excluded/production = total/' | normalize)"
+    assert_not_empty "$tampered" "tampered loc-measure-awk extract is non-empty (extract still works)"
+
+    tamper_took="no"
+    [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+    assert_equals "yes" "$tamper_took" "the tamper actually changed the region (the production subtraction is present)"
+
+    drift="none"
+    [ "$canonical" != "$tampered" ] && drift="detected"
+    assert_equals "detected" "$drift" "a one-line edit to sizing's loc-measure copy is detected as drift"
+}
+
 run_test test_all_regions_match "All shared regions match across every pinned pair"
 run_test test_label_for_disambiguates_the_pairs "label_for disambiguates the two same-named patterns.sh copies"
 run_test test_debug_region_has_all_language_arms "Debug regions cover every advertised language arm"
 run_test test_debug_families_stay_separated "Print and debugger families stay in separate regions (#680)"
 run_test test_detector_fires_on_drift "Drift detector fires on a tampered region (print + debugger + is-test-file)"
 run_test test_detector_fires_on_py_region_drift "Drift detector fires across the py-public-symbols pair (#609)"
+run_test test_detector_fires_on_loc_region_drift "Drift detector fires across the LOC-engine pair (#695)"
 
 generate_report

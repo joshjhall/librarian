@@ -63,9 +63,40 @@ if ! command -v python3 >/dev/null 2>&1 ||
     return 0 2>/dev/null || exit 0
 fi
 
-# List every patterns.py across all plugins (absolute paths, sorted).
+# List every ported tool across all plugins (absolute paths, sorted).
+#
+# DISCOVERY IS BY PAIR NAME, NOT BY THE LITERAL `patterns.py` (#695). The
+# original form globbed `-name 'patterns.py'`, which silently EXCLUDED any port
+# whose pair is named anything else — and a tool this gate does not see is a tool
+# whose bash and python halves can drift apart freely, which is the one thing
+# this gate exists to prevent. ship-issue's sizing.{py,sh} is exactly that case:
+# it lives beside a 1,572-line bash pre-review-gates.sh that is NOT ported, so
+# naming its pair `patterns.*` would have been actively misleading.
+#
+# PORT_BASENAMES is the explicit list of pair stems. Add a stem here when a new
+# <stem>.py / <stem>.sh port appears; the sibling-resolution below keys off the
+# same list, so one edit covers discovery, the edge-case contract, and parity.
+#
+# SCOPE: this gate's contract is FILE-LIST shaped (argv[1] is a list of paths to
+# scan; no args -> exit 1 + Usage; empty list -> exit 0 + no output). A port with
+# a different CLI shape does not belong here and must be pinned by its own suite
+# instead of being bent to fit. ship-issue's split-verify.{py,sh} is that case —
+# its argv is `<original> <post-split-original> [results...]`, for which "empty
+# file list exits 0" is meaningless — so its bash<->python parity is asserted
+# per-case in tests/validate-split-verify.sh rather than over this corpus.
+PORT_BASENAMES="patterns sizing"
+
 list_python_ports() {
-    command find "$PLUGINS_DIR" -type f -name 'patterns.py' 2>/dev/null | command sort
+    local stem
+    for stem in $PORT_BASENAMES; do
+        command find "$PLUGINS_DIR" -type f -name "${stem}.py" 2>/dev/null
+    done | command sort
+}
+
+# sibling_sh PY — the bash fallback paired with PY, by stem substitution.
+# Derived rather than hardcoded so a new stem in PORT_BASENAMES needs no edit here.
+sibling_sh() {
+    command printf '%s' "${1%.py}.sh"
 }
 
 # A shared fixture tree exercising the categories/dispatch a security-style
@@ -239,21 +270,27 @@ test_python_edgecases() {
 # --- bash<->python parity ----------------------------------------------------
 
 test_python_bash_parity() {
-    local py="$CUR_PY"
-    local sh="${py%patterns.py}patterns.sh"
+    local py="$CUR_PY" sh
+    sh="$(sibling_sh "$py")"
 
     if [ ! -f "$sh" ]; then
-        skip_test "no sibling patterns.sh for $(command basename "$(command dirname "$py")") — parity needs both impls"
+        skip_test "no sibling .sh for $(command basename "$py") — parity needs both impls"
         return 0
     fi
 
+    # EVERY force-bash variable is exported, not just PATTERNS_FORCE_BASH. Each
+    # shim reads its OWN var (sizing.sh reads SIZING_FORCE_BASH), so setting only
+    # the patterns one would let a non-patterns shim exec its python primary —
+    # and the "parity" assertion would compare python against python and pass
+    # unconditionally. Setting all of them is safe: a shim ignores the vars it
+    # does not read. The self-check below proves the bash body actually ran.
     local py_out sh_out
     if port_is_two_arg "$py"; then
         py_out="$(python3 "$py" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
-        sh_out="$(PATTERNS_FORCE_BASH=1 bash "$sh" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
+        sh_out="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 bash "$sh" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
     else
         py_out="$(python3 "$py" "$FILE_LIST" 2>/dev/null | command sort)"
-        sh_out="$(PATTERNS_FORCE_BASH=1 bash "$sh" "$FILE_LIST" 2>/dev/null | command sort)"
+        sh_out="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 bash "$sh" "$FILE_LIST" 2>/dev/null | command sort)"
     fi
 
     assert_equals "$sh_out" "$py_out" \
@@ -553,10 +590,66 @@ PY
 ports_list="$(list_python_ports)"
 
 test_corpus_non_empty() {
-    assert_not_empty "$ports_list" "At least one patterns.py must be present to validate"
+    assert_not_empty "$ports_list" "At least one ported tool must be present to validate"
+}
+
+# Every discovered port's force-bash variable is actually SET by the parity test.
+#
+# WHY THIS EXISTS. The parity assertion runs the `.sh` half expecting the bash
+# BODY; each shim decides that by reading its own `*_FORCE_BASH` variable. If a
+# port's variable is not in the parity call, its shim exec's the PYTHON primary
+# and the assertion compares python against python — passing unconditionally,
+# forever, while the bash fallback rots untested. That failure is invisible: the
+# gate stays green and reports the port as covered.
+#
+# So this greps each shim for the variable it reads and asserts that EVERY line
+# of the parity test which invokes the `.sh` sets that exact name. A future port
+# that introduces a third variable fails HERE with an actionable message, instead
+# of silently opting out of parity.
+#
+# PER-INVOCATION, NOT PER-BODY. Checking that the variable appears ANYWHERE in
+# the test body is too weak: the parity test has TWO invocation arms (one-arg and
+# two-arg), and a variable present in only one of them leaves the other arm
+# comparing python to python. Verified by mutation — dropping SIZING_FORCE_BASH
+# from just the one-arg arm passed a body-scoped check and fails this one.
+test_every_force_bash_var_is_set() {
+    local py sh var parity_body invocations line n_inv=0
+    parity_body="$(command sed -n '/^test_python_bash_parity()/,/^}/p' "$SCRIPT_DIR/validate-python-ports.sh")"
+    assert_not_empty "$parity_body" "the parity test body was located (self-inspection works)"
+
+    # Every line that actually runs the bash sibling.
+    invocations="$(command printf '%s\n' "$parity_body" | command grep -F 'bash "$sh"' || true)"
+    assert_not_empty "$invocations" "the parity test's bash invocations were located"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        n_inv=$((n_inv + 1))
+    done <<EOF
+$invocations
+EOF
+    # Both arms must be present, or the loop below could vacuously pass by
+    # finding a single compliant invocation.
+    assert_equals "2" "$n_inv" "the parity test has both invocation arms (one-arg and two-arg)"
+
+    while IFS= read -r py; do
+        [ -n "$py" ] || continue
+        sh="$(sibling_sh "$py")"
+        [ -f "$sh" ] || continue
+        # The shim line looks like: [ "${SOMETHING_FORCE_BASH:-0}" != "1" ]
+        var="$(command grep -oE '[A-Z_]+_FORCE_BASH' "$sh" | command head -1 || true)"
+        assert_not_empty "$var" "$(command basename "$sh"): declares a *_FORCE_BASH shim variable"
+        [ -n "$var" ] || continue
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            assert_contains "$line" "$var" \
+                "$(command basename "$sh"): every parity invocation sets ${var} (else that arm compares python to python)"
+        done <<EOF
+$invocations
+EOF
+    done <<<"$ports_list"
 }
 
 run_test test_corpus_non_empty "Python-port corpus is non-empty (gate is not a no-op)"
+run_test test_every_force_bash_var_is_set "Every port's *_FORCE_BASH var is set by the parity test (#695)"
 run_test test_py_is_test_file_direct "check-code-health/patterns.py: is_test_file called directly, both branches (#605)"
 run_test test_py_debug_family_direct "check-code-health/patterns.py: debug families called directly + emission order (#687)"
 run_test test_py_read_yaml_list_direct "check-code-health/patterns.py: _read_yaml_list quote/whitespace/section rules match the bash twin (#686)"

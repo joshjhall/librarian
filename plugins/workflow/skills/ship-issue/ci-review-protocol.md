@@ -303,7 +303,9 @@ args: {
   // since a too-low ceiling truncates every cycle and dead-ends the PR:
   tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
   // Pre-scan candidates (#556) — reviewers confirm-or-dismiss instead of
-  // re-deriving them. Re-run pre-review-gates.sh on the current scope:
+  // re-deriving them. Re-run pre-review-gates.sh on the current scope, passing
+  // the `git diff --numstat` sidecar as its 2nd arg so the sizing rows stay
+  // growth-graded (#695) rather than degrading to informational-only:
   preScan: [<pre-review-gates.sh TSV rows + lint-gate rows>],
   // Conventions digest (#557) — distilled ONCE by the caller so five reviewers
   // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
