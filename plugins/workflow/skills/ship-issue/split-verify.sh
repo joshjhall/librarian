@@ -60,9 +60,14 @@ fi
 ORIGINAL="$1"
 shift
 POST_ORIGINAL="$1"
-RESULTS="$*"
+# An ARRAY, not a space-joined string: a result path containing a space or glob
+# character (`docs/getting started.md` is entirely plausible for prose, which is
+# what this tool's markdown arm exists for) would otherwise word-split into two
+# nonexistent paths. bash 3.2 has indexed arrays — only ASSOCIATIVE arrays are
+# off-limits under the portability policy.
+RESULTS=("$@")
 
-for f in "$ORIGINAL" $RESULTS; do
+for f in "$ORIGINAL" "${RESULTS[@]}"; do
     if [ ! -f "$f" ]; then
         echo "Error: file not found: $f" >&2
         exit 1
@@ -219,7 +224,7 @@ unit_names "$ORIGINAL" "$ORIG_LANG" | command sort -u >"$ORIG_UNITS_FILE"
 
 RESULT_PROD=0
 RESULT_COUNT=0
-for f in $RESULTS; do
+for f in "${RESULTS[@]}"; do
     flang="$(lang_of "$f")"
     p="$(production_loc "$f" "$flang")"
     RESULT_PROD=$((RESULT_PROD + p))
@@ -284,7 +289,7 @@ if [ "$ORIG_LANG" = "md" ]; then
     LINKS="$(LC_ALL=C command grep -oE '\]\([^)]+\)' "$POST_ORIGINAL" 2>/dev/null | command sed 's/^](//; s/)$//' || true)"
     MOVED_INTO=""
     first=1
-    for f in $RESULTS; do
+    for f in "${RESULTS[@]}"; do
         if [ "$first" = "1" ]; then
             first=0
             continue
@@ -297,11 +302,42 @@ if [ "$ORIG_LANG" = "md" ]; then
         command printf '%s\n' "$LINKS" | command grep -qF -- "$base" && have_file_link=1
     done
 
+    # Headings that actually SURVIVED somewhere in the moved-into files. This set
+    # is load-bearing and its absence was a real bug: without it, a heading
+    # dropped from EVERY result file was reported reachable merely because the
+    # post-split original happened to link to some other moved-into file. That is
+    # the exact case this check exists to catch, and it passed as `split-verified`
+    # in bash while python correctly flagged it — a divergence invisible on any
+    # host with python3, i.e. everywhere except the fallback path.
+    RESULT_HEADINGS_FILE="$(command mktemp)"
+    first=1
+    for f in "${RESULTS[@]}"; do
+        if [ "$first" = "1" ]; then
+            first=0
+            continue
+        fi
+        case "$(lang_of "$f")" in
+            md) md_headings "$f" >>"$RESULT_HEADINGS_FILE" ;;
+        esac
+    done
+
     SURVIVING="$(md_headings "$POST_ORIGINAL")"
     while IFS= read -r heading; do
         [ -n "$heading" ] || continue
         command printf '%s\n' "$SURVIVING" | command grep -qxF -- "$heading" && continue
-        # Present in a result file AND reachable by a file link or its anchor?
+        # Two conditions, BOTH required (mirrors split-verify.py): the heading
+        # must still EXIST in a result file, and it must be REACHABLE from the
+        # post-split original by a file link or its anchor. A heading that exists
+        # nowhere is lost no matter how many links point elsewhere.
+        if ! command grep -qxF -- "$heading" "$RESULT_HEADINGS_FILE" 2>/dev/null; then
+            UNREACH_N=$((UNREACH_N + 1))
+            if [ -z "$UNREACHABLE" ]; then
+                UNREACHABLE="$heading"
+            elif [ "$UNREACH_N" -le 3 ]; then
+                UNREACHABLE="${UNREACHABLE}; ${heading}"
+            fi
+            continue
+        fi
         anchor="$(command printf '%s' "$heading" | LC_ALL=C command tr '[:upper:]' '[:lower:]' |
             LC_ALL=C command sed 's/[^a-z0-9 -]//g; s/^[ ]*//; s/[ ]*$//; s/ /-/g')"
         if [ "$have_file_link" = "1" ]; then
@@ -319,6 +355,7 @@ if [ "$ORIG_LANG" = "md" ]; then
     done <<EOF
 $(md_headings "$ORIGINAL")
 EOF
+    command rm -f "$RESULT_HEADINGS_FILE"
 
     if [ "$UNREACH_N" -gt 0 ]; then
         FINDINGS=$((FINDINGS + 1))

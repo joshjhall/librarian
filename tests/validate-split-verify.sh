@@ -257,6 +257,48 @@ test_unreachable_moved_heading_is_detected() {
     assert_not_contains "$VERIFY_OUT" "split-verified" "a lossy prose split is not verified"
 }
 
+# A heading dropped from EVERY result file is unreachable no matter how many
+# links the original carries. This is the bash/python divergence cycle 2 caught:
+# the bash port checked only "does the original link to a moved-into file?" and
+# never "did the heading survive anywhere?", so a genuinely LOST section passed
+# as `split-verified` while python flagged it.
+#
+# The fixture is shaped to make link-presence and heading-survival DISAGREE — the
+# original links to detail.md (real, and it did receive Configuration) while
+# Troubleshooting exists nowhere. The MD_BAD/MD_GOOD pair above cannot catch this:
+# both put every moved heading in MD_DETAIL, so survival is always true there and
+# the two conditions never separate. That is precisely why this fixture is its own
+# case rather than an assertion bolted onto an existing one.
+test_dropped_heading_is_unreachable_despite_a_link() {
+    local orig="$WORKDIR/drop-orig.md" post="$WORKDIR/drop-post.md" detail="$WORKDIR/drop-detail.md"
+    {
+        command printf '# Guide\n\nIntro text.\n\n'
+        command printf '## Installation\n\nInstall steps here.\n\n'
+        command printf '## Configuration\n\nConfig details here.\n\n'
+        command printf '## Troubleshooting\n\nTrouble details here.\n'
+    } >"$orig"
+    # A real, resolvable link to the moved-into file...
+    {
+        command printf '# Guide\n\nIntro text.\n\n'
+        command printf '## Installation\n\nInstall steps here.\n\n'
+        command printf 'See [Details](drop-detail.md) for configuration.\n'
+    } >"$post"
+    # ...which received Configuration but NOT Troubleshooting.
+    {
+        command printf '# Details\n\n'
+        command printf '## Configuration\n\nConfig details here.\n'
+    } >"$detail"
+
+    run_verify "$orig" "$post" "$detail"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-heading-unreachable" \
+        "a heading present in NO result file is unreachable even when the original links elsewhere"
+    assert_contains "$VERIFY_OUT" "Troubleshooting" "the report names the genuinely lost heading"
+    assert_not_contains "$VERIFY_OUT" "Configuration" \
+        "the heading that DID survive and is linked is not falsely reported"
+    assert_not_contains "$VERIFY_OUT" "split-verified" "a split that lost a section is not verified"
+}
+
 test_linked_moved_heading_passes() {
     setup_md_fixtures
     run_verify "$MD_ORIG" "$MD_GOOD" "$MD_DETAIL"
@@ -303,6 +345,7 @@ run_test test_loc_drift_is_detected "Check 1: a large content drop is detected a
 run_test test_boilerplate_does_not_trip_loc_check "Check 1 counter: re-export boilerplate is tolerated"
 run_test test_dangling_reference_is_detected "Check 3: a dangling call site is detected and named"
 run_test test_unreachable_moved_heading_is_detected "Check 4: prose moved with no link left behind is detected"
+run_test test_dropped_heading_is_unreachable_despite_a_link "Check 4: a heading in NO result file is unreachable despite an unrelated link"
 run_test test_linked_moved_heading_passes "Check 4 counter: a one-line pointer makes the move sound"
 run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"
 run_test test_usage_contract "Usage / missing-file contract"
