@@ -268,6 +268,19 @@ VIOLATIONS=""
 OVER_BUDGET=""
 # `<relative-path>\t<count>` per file, fed to the report's awk on stdin so it
 # never has to run `wc` on an attacker-influenced path. See the report block.
+#
+# KNOWN LIMIT, deliberately not defended: a filename containing a literal TAB or
+# NEWLINE would confuse this field/record split and misattribute a row in the
+# per-skill report. Three reasons it stops there rather than growing an escape
+# layer. (1) BLAST RADIUS: FILE_COUNTS feeds only the cosmetic top-10 report.
+# The ratchet, the violation list and the exit code all come from the scan loop
+# above, which handles the path as a single quoted shell word and is unaffected
+# — so the worst case is a wrong line in a table, never a wrong verdict.
+# (2) It is NOT the security bug: no shell parses this data, so a corrupted
+# split misprints, it does not execute. (3) Such a path cannot reach the corpus
+# in practice — this gate walks a git working tree, and git quotes/rejects those
+# bytes in a path. Revisit if FILE_COUNTS ever feeds a decision instead of a
+# display.
 FILE_COUNTS=""
 
 CORPUS="$(collect_corpus)"
