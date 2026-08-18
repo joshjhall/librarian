@@ -421,10 +421,20 @@ if [ "$REGEN" -eq 1 ]; then
     # ledger on disk — while the handler deletes the snapshot that could have
     # recovered it. Staging plus an atomic rename means an interrupted regen
     # leaves the previous baseline exactly as it was.
-    REGEN_NEW="$(command mktemp)" || REGEN_NEW=""
+    # COLOCATED with the baseline, deliberately — not a bare `mktemp`.
+    #
+    # `mv` is only atomic when source and destination share a filesystem, since
+    # only then is it a rename(2). A bare mktemp lands in $TMPDIR, and the repo
+    # checkout is routinely on a different filesystem: in this project's own
+    # devcontainer /tmp is the overlay root while the repo is a separate mount,
+    # and CI runners with a tmpfs /tmp behave the same. Across filesystems `mv`
+    # degrades to copy-then-unlink, which reopens the partial-write window this
+    # staging file exists to close. Creating it beside the target guarantees the
+    # rename path.
+    REGEN_NEW="$(command mktemp "${BASELINE_FILE}.XXXXXX")" || REGEN_NEW=""
     if [ -z "$REGEN_NEW" ] || [ ! -f "$REGEN_NEW" ]; then
-        command printf 'lint-prose-budget: FATAL — could not create a staging file for\n' >&2
-        command printf '  the regenerated baseline. Refusing to write in place.\n' >&2
+        command printf 'lint-prose-budget: FATAL — could not create a staging file beside\n' >&2
+        command printf '  %s. Refusing to write the baseline in place.\n' "$BASELINE_FILE" >&2
         command rm -f "$REGEN_PREV"
         exit 2
     fi
@@ -472,6 +482,22 @@ if [ "$REGEN" -eq 1 ]; then
             fi
         done
     } >"$REGEN_NEW"
+
+    # Restore a normal file mode before installing. `mktemp` creates 0600 and
+    # `mv` PRESERVES the source mode, so without this the regenerated baseline
+    # lands 0600 — a committed, world-readable file silently becoming
+    # owner-only.
+    #
+    # FAIL LOUD rather than `|| true`: swallowing the failure would install the
+    # 0600 file anyway and produce exactly the silent permission regression this
+    # line exists to prevent, one step later. Nothing has been installed yet, so
+    # aborting here leaves the previous baseline untouched.
+    if ! command chmod "a+r,u+w" "$REGEN_NEW"; then
+        command printf 'lint-prose-budget: FATAL — could not set a readable mode on the\n' >&2
+        command printf '  staging file. Refusing to install, since mv preserves the mode and\n' >&2
+        command printf '  the baseline would silently become owner-only.\n' >&2
+        exit 2
+    fi
 
     # Atomic swap. Only now does the on-disk baseline change; up to this point
     # every failure path above leaves it untouched.

@@ -575,6 +575,77 @@ test_regen_aborts_when_snapshot_copy_fails() {
         "The ledger is left intact when the snapshot copy fails"
 }
 
+# The regenerated baseline must stay readable. The atomic-install path builds
+# into `mktemp` (mode 0600) and `mv`s it over the target, and `mv` PRESERVES the
+# source mode — so without an explicit chmod the committed, world-readable
+# baseline silently becomes owner-only after any --regen. Caught in review;
+# pinned here because nothing else would notice (the gate still passes, the file
+# still parses, and git records the mode change as a separate 100644->100600
+# line most readers skim past).
+test_regen_leaves_the_baseline_readable() {
+    local sb="$WORKDIR/rat8" bl="$WORKDIR/rat8.baseline" mode
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # mode check\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # mode check\n' "$sb" >>"$bl"
+    command chmod 644 "$bl"
+
+    run_gate "$sb/plugins" "$bl" --regen
+    assert_exit 0 "$GATE_RC" "The regen succeeds"
+
+    # Group/other read bits must survive the install. `ls` rather than `stat`:
+    # BSD and GNU stat take different flags for the mode.
+    mode="$(command ls -l "$bl" | command cut -c1-10)"
+    assert_contains "$mode" "r--r--" \
+        "The regenerated baseline keeps group/other read (mktemp 0600 not carried over)"
+}
+
+# A read-only parent directory must abort the regen with the ledger intact.
+#
+# WHICH branch this hits is a consequence of the colocation fix: the staging
+# file is now created beside the baseline (so the install is a same-filesystem
+# rename), which means a read-only directory fails at `mktemp` — covering the
+# staging-file branch, whose message names that specific failure. Before
+# colocation the same fixture would have reached the `mv` branch instead.
+#
+# Either way the guarantee under test is the same, and it is the one the whole
+# staging design exists to provide: a failure anywhere before the rename costs
+# nothing, so the pre-existing ledger survives byte-for-byte. Asserted on
+# CONTENT rather than on which message fired, so the test keeps pinning the real
+# property instead of an implementation detail.
+#
+# Skipped as root, where a read-only directory does not deny writes.
+test_regen_readonly_dir_leaves_baseline_intact() {
+    local sb="$WORKDIR/rat9" dir="$WORKDIR/rat9-dir" bl out rc=0 before after
+    bl="$dir/rat9.baseline"
+
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — a read-only directory does not deny writes"
+        return 0
+    fi
+
+    command mkdir -p "$dir"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # install-failure guard\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # install-failure guard\n' "$sb" >>"$bl"
+    before="$(command cat "$bl")"
+
+    command chmod 555 "$dir"
+    out="$(
+        PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
+            PROSE_BUDGET_BASELINE="$bl" \
+            PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \
+            command bash "$GATE" --regen 2>&1
+    )" || rc=$?
+    command chmod 755 "$dir"
+
+    after="$(command cat "$bl")"
+
+    assert_true "[ $rc -ne 0 ]" "A read-only baseline directory aborts the regen"
+    assert_contains "$out" "FATAL" "The abort is loud"
+    assert_equals "$before" "$after" \
+        "The previous baseline is byte-for-byte unchanged when the regen cannot install"
+}
+
 # --- The shipped baseline ----------------------------------------------------
 
 # The committed baseline must describe the tree it ships with: every entry names
@@ -622,6 +693,8 @@ run_test test_rationale_entry_still_ratchets "A rationaled baseline entry still 
 run_test test_rationale_is_reported "Each exception's rationale is reported"
 run_test test_missing_rationale_is_named "An exception with no rationale is named"
 run_test test_regen_preserves_rationale "--regen preserves rationales while tightening"
+run_test test_regen_leaves_the_baseline_readable "--regen leaves the baseline world-readable"
+run_test test_regen_readonly_dir_leaves_baseline_intact "A read-only dir aborts with the baseline intact"
 run_test test_regen_aborts_when_snapshot_fails "--regen aborts loudly if the snapshot fails"
 run_test test_regen_aborts_when_snapshot_copy_fails "--regen aborts loudly if the snapshot COPY fails"
 run_test test_regen_signal_traps_exit "The regen INT/TERM traps exit rather than resume"
