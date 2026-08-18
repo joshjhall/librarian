@@ -20,7 +20,7 @@
 # `just test` (validate-lint-gates.sh pins the consumers) and `just fmt` in case
 # the new release formats differently. No dependabot ecosystem covers it.
 # Must stay TOP-LEVEL — under [format] ruff rejects it as an unknown field.
-required-version = "==0.16.0"
+required-version = "==0.16.3"
 
 target-version = "py311"
 line-length = 88
