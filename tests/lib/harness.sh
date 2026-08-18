@@ -279,6 +279,168 @@ assert_file_not_contains() {
     return 0
 }
 
+# --- Contract-block extraction ----------------------------------------------
+#
+# LLM-followed prose (checker.md, the ship-issue protocols) carries guarantees
+# that have no runtime to unit-test, so several gates pin them as PROSE
+# CONTRACTS: extract the region that states a guarantee, assert the operative
+# tokens are in it. The question is how a gate ADDRESSES that region.
+#
+# The original approach anchored on a pair of HEADING strings
+# (`extract_between FILE '#### Step 3a:' '### Step 4:'`). That couples every
+# assertion to where the prose sits and what its headings are called, which
+# fails in three ways an in-place edit never reveals:
+#
+#   1. Moving the block to a companion file breaks every assertion pinning it,
+#      even though the guarantee is unchanged — so a size-driven extraction
+#      (#503) has to rewrite the gate in order to move prose.
+#   2. Renaming a heading silently RE-ANCHORS rather than failing: a region can
+#      run to the wrong END sentinel and quietly swallow unrelated prose. The
+#      old helper needed a hand-maintained MAX_LINES bound per region purely to
+#      notice that.
+#   3. One block's heading was another region's END sentinel, so moving it
+#      expanded a neighbouring region as a side effect.
+#
+# extract_contract addresses a block by a STABLE ID embedded in the prose:
+#
+#     <!-- contract: agnix-trust-config-pinning -->
+#
+# The region runs from that marker to the next `<!-- contract:` marker or EOF.
+# The block may then be reworded, re-headed, or moved to another file without
+# touching a single assertion — only deleting the marker breaks the gate, which
+# is exactly the change that SHOULD break it.
+#
+# Fails LOUD, never vacuous: an ID that resolves to no marker, or to more than
+# one, is a hard error rather than an empty region every assert_contains would
+# then pass against. That vacuous-pass mode is the specific way a prose gate
+# rots into sitting inert while reporting green.
+
+# CONTRACT_SEARCH_ROOT — where extract_contract searches when given no file.
+# Overridable so a gate can narrow the search; a gate that sets it can pin a
+# block wherever it lives.
+CONTRACT_SEARCH_ROOT="${CONTRACT_SEARCH_ROOT:-}"
+
+# extract_contract <id> [file]
+#
+# Print the contract block for <id>. With <file>, search only that file; without
+# it, search CONTRACT_SEARCH_ROOT (so a block that MOVES between files needs no
+# gate edit). Exits non-zero with a diagnostic when the ID is missing or
+# duplicated — callers run under `set -e`, so that aborts the suite rather than
+# yielding an empty string.
+extract_contract() {
+    local id="$1" file="${2:-}"
+    local marker="<!-- contract: ${id} -->"
+
+    if [ -z "$id" ]; then
+        command printf 'extract_contract: FATAL — called with an empty contract id\n' >&2
+        return 2
+    fi
+
+    local files
+    if [ -n "$file" ]; then
+        files="$file"
+    else
+        if [ -z "$CONTRACT_SEARCH_ROOT" ]; then
+            command printf 'extract_contract: FATAL — no file given and CONTRACT_SEARCH_ROOT is unset\n' >&2
+            return 2
+        fi
+        # Line-initial only (see the extraction awk below): a prose mention of
+        # the marker syntax must not make an id look present — or, worse,
+        # duplicated across files, which would abort the suite.
+        #
+        # FIXED-STRING, not a regex. The marker is always a literal, and ids are
+        # author-supplied, so building a pattern out of one means escaping it —
+        # and a backslash-escaped `+ ? | ( ) { }` means OPPOSITE things in BRE
+        # and ERE (GNU-only operators in BRE, literals on BSD/macOS). That is
+        # the silent GNU-vs-BSD divergence CLAUDE.md singles out: the pattern
+        # quietly stops matching, zero files come back, and the id then reports
+        # as "not found". `grep -F` sidesteps the whole class — there is no
+        # pattern to escape — and `-l` + the awk index()==1 check below enforce
+        # the line-initial requirement that the `^` anchor used to.
+        files="$(command grep -rlF "$marker" "$CONTRACT_SEARCH_ROOT" \
+            --include='*.md' 2>/dev/null |
+            while IFS= read -r _f; do
+                # Keep only files where the marker STARTS a line.
+                command awk -v m="$marker" 'index($0, m) == 1 { found = 1; exit }
+                    END { exit !found }' "$_f" && command printf '%s\n' "$_f"
+            done || true)"
+    fi
+
+    if [ -z "$files" ]; then
+        command printf 'extract_contract: FATAL — contract id "%s" not found\n' "$id" >&2
+        command printf '  Looked for the literal marker: %s\n' "$marker" >&2
+        command printf '  A contract block was deleted or its id was renamed. The gate\n' >&2
+        command printf '  pins a guarantee by id precisely so the prose can move freely —\n' >&2
+        command printf '  restore the marker rather than re-anchoring the assertions.\n' >&2
+        return 1
+    fi
+
+    local count
+    count="$(command printf '%s\n' "$files" | command grep -c . || true)"
+    if [ "$count" -ne 1 ]; then
+        command printf 'extract_contract: FATAL — contract id "%s" found in %s files:\n' \
+            "$id" "$count" >&2
+        command printf '%s\n' "$files" | command sed 's/^/    /' >&2
+        command printf '  Contract ids must be unique: two blocks claiming one id means an\n' >&2
+        command printf '  assertion silently pins whichever file sorted first.\n' >&2
+        return 1
+    fi
+
+    # Duplicate markers WITHIN one file are caught too — a second occurrence of
+    # this same id would have ended the first region, so count before extracting.
+    local occurrences
+    occurrences="$(command grep -cF "$marker" "$files" || true)"
+    if [ "$occurrences" -ne 1 ]; then
+        command printf 'extract_contract: FATAL — contract id "%s" appears %s times in %s\n' \
+            "$id" "$occurrences" "$files" >&2
+        return 1
+    fi
+
+    # Emit from the line AFTER the marker up to (not including) the next
+    # contract marker, or EOF.
+    #
+    # A delimiter must START the line. Prose that *mentions* the marker syntax
+    # mid-sentence (the companion files explain these markers to their readers)
+    # would otherwise terminate a region early — silently truncating it, so
+    # assertions on the tail half fail with no hint why. Anchoring at column 0
+    # keeps documentation about the mechanism from breaking the mechanism.
+    command awk -v m="$marker" '
+        index($0, m) == 1 { grab = 1; next }
+        grab && index($0, "<!-- contract:") == 1 { exit }
+        grab { print }
+    ' "$files"
+}
+
+# assert_contract_carries <id> <region> <token> [label]
+#
+# The shared "this contract states this guarantee" assertion: the region is
+# non-empty AND carries the operative token AND the token is genuinely present
+# (stripping it changes the region). The tamper half is what stops an assertion
+# passing against prose that never contained the token.
+#
+# Prefer OPERATIVE tokens — the literals a reader must obey (`AGNIX_CONFIG`,
+# `--fix-unsafe`, a log-line format) — over rationale sentences. Rationale
+# should be free to be reworded; an enforced instruction should not.
+assert_contract_carries() {
+    local id="$1" region="$2" token="$3"
+    # Separate `local`: $id is not yet in effect within the declaration above,
+    # so a default referencing it there would silently expand to empty (SC2318).
+    local label="${4:-contract $id}"
+
+    assert_not_empty "$region" "$label: contract '$id' region is non-empty"
+    assert_contains "$region" "$token" "$label: carries '$token'"
+
+    # Plain bash comparison (NOT assert_true, which eval's its argument — the
+    # region holds shell metacharacters eval would execute).
+    local tampered changed="no"
+    tampered="$(command printf '%s\n' "$region" | command grep -vF "$token" || true)"
+    [ "$region" != "$tampered" ] && changed="yes"
+    assert_not_contains "$tampered" "$token" \
+        "$label: stripping the line removes '$token' (assertion targets real prose)"
+    assert_equals "yes" "$changed" \
+        "$label: '$token' is genuinely present (tamper changed the region)"
+}
+
 # --- Reporting --------------------------------------------------------------
 
 # generate_report prints a summary and exits non-zero if any test failed.

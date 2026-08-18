@@ -383,6 +383,269 @@ test_thresholds_are_actually_read() {
         "With agent_md.high lowered to 100 the same file now fails — thresholds are read, not hardcoded"
 }
 
+# --- The exceptions ledger: rationales ---------------------------------------
+#
+# The budgets are TARGETS, not laws — a file that is genuinely better long stays
+# long. The risk is not any single exception but exceptions ACCUMULATING
+# UNNOTICED until the budget means nothing, so each baseline entry carries an
+# optional trailing `# why` and the gate surfaces the ledger on every run.
+#
+# Three properties worth pinning, because each has a silent failure mode:
+#   1. an entry WITH a rationale still parses its count (a naive `${rest##* }`
+#      returns the empty string once a trailing space precedes the `#`, which
+#      would stop ratcheting that file entirely while the run still looked fine);
+#   2. --regen PRESERVES rationales (a regen that dropped them would erase every
+#      justification on a routine shrink, keeping the numbers and losing the
+#      reasons);
+#   3. an entry WITHOUT a rationale is named, so an unjustified exception cannot
+#      blend into a count.
+
+# A rationaled entry must ratchet exactly like a bare one: at its entry it
+# passes, one line above it fails.
+test_rationale_entry_still_ratchets() {
+    local sb="$WORKDIR/rat1"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    # Both path spellings — see test_at_baseline_passes: a sandbox outside the
+    # repo root keeps its absolute path, while the shipped baseline is relative.
+    command printf 'plugins/p/agents/big.md 500 # deliberately whole, see #503\n' \
+        >"$WORKDIR/rat1.baseline"
+    command printf '%s/plugins/p/agents/big.md 500 # deliberately whole, see #503\n' \
+        "$sb" >>"$WORKDIR/rat1.baseline"
+    run_gate "$sb/plugins" "$WORKDIR/rat1.baseline"
+    assert_exit 0 "$GATE_RC" "A rationaled entry passes at its recorded count"
+
+    # One line above the entry must fail — proves the count was really parsed
+    # and not silently read as empty.
+    make_md "$sb/plugins/p/agents/big.md" 501
+    run_gate "$sb/plugins" "$WORKDIR/rat1.baseline"
+    assert_exit 1 "$GATE_RC" "A rationaled entry still fails on growth"
+}
+
+# The rationale is echoed in the report, so the ledger is readable on every run.
+test_rationale_is_reported() {
+    local sb="$WORKDIR/rat2"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # cohesive by design\n' \
+        >"$WORKDIR/rat2.baseline"
+    command printf '%s/plugins/p/agents/big.md 500 # cohesive by design\n' \
+        "$sb" >>"$WORKDIR/rat2.baseline"
+    run_gate "$sb/plugins" "$WORKDIR/rat2.baseline"
+    assert_contains "$GATE_OUT" "cohesive by design" \
+        "The report prints each exception's rationale"
+}
+
+# An exception with no rationale is named, not merely counted.
+test_missing_rationale_is_named() {
+    local sb="$WORKDIR/rat3"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500\n' >"$WORKDIR/rat3.baseline"
+    command printf '%s/plugins/p/agents/big.md 500\n' "$sb" >>"$WORKDIR/rat3.baseline"
+    run_gate "$sb/plugins" "$WORKDIR/rat3.baseline"
+    assert_contains "$GATE_OUT" "NO RATIONALE RECORDED" \
+        "An unjustified exception is called out by name"
+    assert_exit 0 "$GATE_RC" \
+        "A missing rationale REPORTS but does not fail (the ratchet already guards growth)"
+}
+
+# --regen must carry existing rationales forward. Without this a routine shrink
+# silently erases every justification in the ledger.
+test_regen_preserves_rationale() {
+    local sb="$WORKDIR/rat4" bl="$WORKDIR/rat4.baseline"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # keep me across regen\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # keep me across regen\n' "$sb" >>"$bl"
+
+    # Shrink the file, then regen: the entry tightens, the reason survives.
+    make_md "$sb/plugins/p/agents/big.md" 450
+    run_gate "$sb/plugins" "$bl" --regen
+
+    assert_true "command grep -q 'keep me across regen' '$bl'" \
+        "--regen preserves an existing rationale"
+    assert_true "command grep -q 'big.md 450' '$bl'" \
+        "--regen tightens the entry to the new count"
+}
+
+# A snapshot that cannot be taken must ABORT, not quietly regen. Without this
+# the mktemp-failure path re-creates the very data loss the snapshot prevents:
+# an empty REGEN_PREV sends every rationale lookup at `[ -f "" ]`, so the new
+# baseline is written with every `# why` note dropped — silently, which this
+# gate's header explicitly rules out.
+#
+# TMPDIR is pointed at a non-existent path to force mktemp to fail; the real
+# temp dir is untouched.
+test_regen_aborts_when_snapshot_fails() {
+    local sb="$WORKDIR/rat5" bl="$WORKDIR/rat5.baseline" out rc=0
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # must survive or abort\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # must survive or abort\n' "$sb" >>"$bl"
+
+    out="$(
+        TMPDIR="$WORKDIR/no-such-dir" \
+            PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
+            PROSE_BUDGET_BASELINE="$bl" \
+            PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \
+            command bash "$GATE" --regen 2>&1
+    )" || rc=$?
+
+    assert_true "[ $rc -ne 0 ]" "A failed snapshot aborts the regen (never a silent drop)"
+    assert_contains "$out" "FATAL" "The abort is loud, naming the failure"
+    # The load-bearing half: the ledger on disk is untouched, rationale intact.
+    assert_true "command grep -q 'must survive or abort' '$bl'" \
+        "The existing baseline is left intact when the snapshot fails"
+}
+
+# A trapped INT/TERM must ABORT the regen, not merely clean up and continue.
+#
+# bash resumes at the next statement after a trapped signal UNLESS the handler
+# exits. So a cleanup-only handler (`trap 'rm -f "$SNAP"' INT`) would delete the
+# snapshot and then fall through into the rationale loop below, reading a
+# deleted file and writing a baseline with every `# why` note dropped — this
+# fix's own data loss, reached by the signal path.
+#
+# Asserted STRUCTURALLY rather than by firing a real signal. Driving SIGINT from
+# inside run_test proved genuinely flaky: the suite has its own signal
+# disposition and job control, so the signal can land before the child has even
+# exec'd, and the observable outcome varies run to run. A flaky test is worse
+# than no test — it teaches people to ignore red. The property here is a fixed
+# fact about the script's trap wiring, so read the wiring.
+test_regen_signal_traps_exit() {
+    local int_trap term_trap
+    int_trap="$(command grep -E "^ *trap .* INT$" "$GATE" || true)"
+    term_trap="$(command grep -E "^ *trap .* TERM$" "$GATE" || true)"
+
+    assert_not_empty "$int_trap" "An INT trap is armed for the regen snapshot"
+    assert_not_empty "$term_trap" "A TERM trap is armed for the regen snapshot"
+
+    # The load-bearing half: each signal handler must exit. Without it the
+    # handler returns and execution continues past the signal.
+    #
+    # Pinned to the EXACT code, not a bare "exit": `trap 'exit 0' INT` also
+    # contains the substring, exits, and would satisfy a loose assertion — while
+    # reporting an interrupted regen as a clean success to any caller that reads
+    # the status, and dropping the cleanup. 130/143 are the conventional
+    # 128+signum codes.
+    assert_contains "$int_trap" "exit 130" \
+        "The INT handler exits 130 (bash would otherwise resume into the regen)"
+    assert_contains "$term_trap" "exit 143" \
+        "The TERM handler exits 143 (bash would otherwise resume into the regen)"
+
+    # Exit AND clean up have to travel together, on the SAME line. Asserting
+    # cleanup only for the EXIT trap would leave a handler narrowed to
+    # `trap 'exit 130' INT` green while it leaks the snapshot on every Ctrl-C.
+    assert_contains "$int_trap" "rm -f" \
+        "The INT handler still removes the snapshot before exiting"
+    assert_contains "$term_trap" "rm -f" \
+        "The TERM handler still removes the snapshot before exiting"
+
+    # And a plain EXIT trap still handles the normal path.
+    assert_true "command grep -qE \"^ *trap .* EXIT\$\" '$GATE'" \
+        "An EXIT trap cleans up the snapshot on the normal path"
+}
+
+# The snapshot `cat` is a SECOND, independently-guarded failure branch: mktemp
+# can succeed and the copy still fail. Drive it by making the source baseline
+# unreadable, so only that branch can fire.
+#
+# Skipped when running as root, where chmod 000 does not deny reads.
+test_regen_aborts_when_snapshot_copy_fails() {
+    local sb="$WORKDIR/rat7" bl="$WORKDIR/rat7.baseline" out rc=0
+
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — chmod 000 does not deny reads"
+        return 0
+    fi
+
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # unreadable-source guard\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # unreadable-source guard\n' "$sb" >>"$bl"
+    command chmod 000 "$bl"
+
+    out="$(
+        PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
+            PROSE_BUDGET_BASELINE="$bl" \
+            PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \
+            command bash "$GATE" --regen 2>&1
+    )" || rc=$?
+
+    command chmod 644 "$bl"
+
+    assert_true "[ $rc -ne 0 ]" "An unreadable baseline aborts the regen"
+    assert_contains "$out" "FATAL" "The copy-failure abort is loud"
+    assert_true "command grep -q 'unreadable-source guard' '$bl'" \
+        "The ledger is left intact when the snapshot copy fails"
+}
+
+# The regenerated baseline must stay readable. The atomic-install path builds
+# into `mktemp` (mode 0600) and `mv`s it over the target, and `mv` PRESERVES the
+# source mode — so without an explicit chmod the committed, world-readable
+# baseline silently becomes owner-only after any --regen. Caught in review;
+# pinned here because nothing else would notice (the gate still passes, the file
+# still parses, and git records the mode change as a separate 100644->100600
+# line most readers skim past).
+test_regen_leaves_the_baseline_readable() {
+    local sb="$WORKDIR/rat8" bl="$WORKDIR/rat8.baseline" mode
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # mode check\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # mode check\n' "$sb" >>"$bl"
+    command chmod 644 "$bl"
+
+    run_gate "$sb/plugins" "$bl" --regen
+    assert_exit 0 "$GATE_RC" "The regen succeeds"
+
+    # Group/other read bits must survive the install. `ls` rather than `stat`:
+    # BSD and GNU stat take different flags for the mode.
+    mode="$(command ls -l "$bl" | command cut -c1-10)"
+    assert_contains "$mode" "r--r--" \
+        "The regenerated baseline keeps group/other read (mktemp 0600 not carried over)"
+}
+
+# A read-only parent directory must abort the regen with the ledger intact.
+#
+# WHICH branch this hits is a consequence of the colocation fix: the staging
+# file is now created beside the baseline (so the install is a same-filesystem
+# rename), which means a read-only directory fails at `mktemp` — covering the
+# staging-file branch, whose message names that specific failure. Before
+# colocation the same fixture would have reached the `mv` branch instead.
+#
+# Either way the guarantee under test is the same, and it is the one the whole
+# staging design exists to provide: a failure anywhere before the rename costs
+# nothing, so the pre-existing ledger survives byte-for-byte. Asserted on
+# CONTENT rather than on which message fired, so the test keeps pinning the real
+# property instead of an implementation detail.
+#
+# Skipped as root, where a read-only directory does not deny writes.
+test_regen_readonly_dir_leaves_baseline_intact() {
+    local sb="$WORKDIR/rat9" dir="$WORKDIR/rat9-dir" bl out rc=0 before after
+    bl="$dir/rat9.baseline"
+
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — a read-only directory does not deny writes"
+        return 0
+    fi
+
+    command mkdir -p "$dir"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # install-failure guard\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # install-failure guard\n' "$sb" >>"$bl"
+    before="$(command cat "$bl")"
+
+    command chmod 555 "$dir"
+    out="$(
+        PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
+            PROSE_BUDGET_BASELINE="$bl" \
+            PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \
+            command bash "$GATE" --regen 2>&1
+    )" || rc=$?
+    command chmod 755 "$dir"
+
+    after="$(command cat "$bl")"
+
+    assert_true "[ $rc -ne 0 ]" "A read-only baseline directory aborts the regen"
+    assert_contains "$out" "FATAL" "The abort is loud"
+    assert_equals "$before" "$after" \
+        "The previous baseline is byte-for-byte unchanged when the regen cannot install"
+}
+
 # --- The shipped baseline ----------------------------------------------------
 
 # The committed baseline must describe the tree it ships with: every entry names
@@ -426,6 +689,16 @@ run_test test_missing_thresholds_fails_loudly "A missing thresholds file fails l
 run_test test_missing_key_fails_loudly "A thresholds file missing a key fails loudly"
 run_test test_thresholds_are_actually_read "Thresholds are parsed from the table, not hardcoded"
 run_test test_shipped_baseline_is_current "Every shipped baseline entry names a real file"
+run_test test_rationale_entry_still_ratchets "A rationaled baseline entry still ratchets"
+run_test test_rationale_is_reported "Each exception's rationale is reported"
+run_test test_missing_rationale_is_named "An exception with no rationale is named"
+run_test test_regen_preserves_rationale "--regen preserves rationales while tightening"
+run_test test_regen_leaves_the_baseline_readable "--regen leaves the baseline world-readable"
+run_test test_regen_readonly_dir_leaves_baseline_intact "A read-only dir aborts with the baseline intact"
+run_test test_regen_aborts_when_snapshot_fails "--regen aborts loudly if the snapshot fails"
+run_test test_regen_aborts_when_snapshot_copy_fails "--regen aborts loudly if the snapshot COPY fails"
+run_test test_regen_signal_traps_exit "The regen INT/TERM traps exit rather than resume"
+
 run_test test_real_tree_passes "The gate is green against the committed tree (AC2)"
 
 generate_report

@@ -8,6 +8,72 @@ main + push; Option 3 — commit only). The merge invariant and the level-aware
 merge dispatch are authoritative in `orchestrate/autonomy-levels.md` and
 summarized in SKILL.md `## Autonomy Level`.
 
+## Option 1 — Branch + PR: opening the PR
+
+The mechanical half of Option 1 — branch, commit, verify, push, open the PR.
+Moved here from `SKILL.md` in #503 so the whole of Option 1 reads as one
+procedure in one file instead of breaking mid-sequence across two.
+
+1. **Ensure on a feature branch**:
+
+   - If currently on `main` (or the default branch), create and switch to a
+     new branch using the naming convention from `next-issue/state-format.md`:
+
+     ```bash
+     git fetch origin main
+     git checkout -b {prefix}/issue-{N}-{slug} origin/main
+     ```
+
+   - If already on a feature branch, stay on it
+
+1. **Stage and commit**. The commit message MUST include `Closes #{N}` in
+   the body:
+
+   ```text
+   {type}({scope}): {description}
+
+   {optional body explaining the change}
+
+   Closes #{N}
+   ```
+
+   Where `{type}` matches the branch prefix: `fix/` → `fix:`,
+   `feature/` → `feat:`, `docs/` → `docs:`, `test/` → `test:`,
+   `refactor/` → `refactor:`, `chore/` → `chore:`.
+
+1. **Verify** the commit message: run `git log -1 --format=%B` and confirm
+   `Closes #{N}` is present. If missing, amend to add it.
+
+1. **Push** the branch:
+
+   ```bash
+   git push -u origin HEAD
+   ```
+
+1. **Create a PR**:
+
+   - GitHub:
+
+     ```bash
+     gh pr create --title "{type}({scope}): {description}" --body "$(cat <<'EOF'
+     ## Summary
+     - {what changed and why}
+
+     ## Test plan
+     - {how this was tested}
+
+     Closes #{N}
+     EOF
+     )"
+     ```
+
+   - GitLab:
+
+     ```bash
+     glab mr create --title "{type}({scope}): {description}" \
+       --description "## Summary\n- {what changed and why}\n\n## Test plan\n- {how this was tested}\n\nCloses #{N}"
+     ```
+
 ## Option 1 — Branch + PR: after the PR is open
 
 Continue here once `gh pr create` / `glab mr create` has opened the PR.

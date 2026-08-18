@@ -240,22 +240,71 @@ rel() {
 
 # --- Baseline ----------------------------------------------------------------
 #
-# Format: `<repo-relative-path> <line-count>`, one per line, `#` comments
-# ignored. Flat text rather than JSON so a raise is a one-line reviewable diff
-# and needs no parser beyond the shell.
+# Format: `<repo-relative-path> <line-count> [# rationale]`, one per line, `#`
+# comment lines ignored. Flat text rather than JSON so a raise is a one-line
+# reviewable diff and needs no parser beyond the shell.
+#
+# THE BUDGETS ARE TARGETS, NOT LAWS. A file that is genuinely better long stays
+# long — a contract gate's assertion list, a protocol that would only become
+# harder to follow split across two files. What must not happen is exceptions
+# accumulating silently until the budget means nothing. So this file is the
+# EXCEPTIONS LEDGER: every entry is a file consciously over budget, the ratchet
+# stops it growing further, and the trailing `#` rationale says why it is
+# allowed. An entry without a rationale is an exception nobody has justified —
+# reported (not failed) so the list stays honest without blocking a shrink.
+#
+# The rationale is stripped before the count is parsed, so an entry with or
+# without one behaves identically to the ratchet.
 baseline_for() {
-    local want="$1" line path count
+    local want="$1" line rest path count
     [ -f "$BASELINE_FILE" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
             '#'* | '') continue ;;
         esac
-        path="${line%% *}"
-        count="${line##* }"
+        # Strip an inline rationale before parsing, so `path 676 # why` and
+        # `path 676` parse the same.
+        rest="${line%%#*}"
+        # Trim trailing whitespace BEFORE splitting: `path 556 # why` leaves
+        # `path 556 ` here, and `${rest##* }` on that yields the empty string —
+        # the entry would parse as having no count and silently stop ratcheting.
+        while :; do
+            case "$rest" in
+                *' ' | *"$(command printf '\t')") rest="${rest%?}" ;;
+                *) break ;;
+            esac
+        done
+        path="${rest%% *}"
+        count="${rest##* }"
         if [ "$path" = "$want" ]; then
             command printf '%s\n' "$count"
             return 0
         fi
+    done <"$BASELINE_FILE"
+    return 0
+}
+
+# baseline_rationale <path> — the trailing `# ...` note for an entry, if any.
+# Empty when the entry carries no rationale (or does not exist).
+baseline_rationale() {
+    local want="$1" line rest path note
+    [ -f "$BASELINE_FILE" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            '#'* | '') continue ;;
+        esac
+        rest="${line%%#*}"
+        path="${rest%% *}"
+        [ "$path" = "$want" ] || continue
+        case "$line" in
+            *'#'*)
+                note="${line#*#}"
+                # Trim one leading space; keep interior spacing.
+                note="${note# }"
+                command printf '%s\n' "$note"
+                ;;
+        esac
+        return 0
     done <"$BASELINE_FILE"
     return 0
 }
@@ -341,6 +390,66 @@ EOF
 # --- --regen -----------------------------------------------------------------
 
 if [ "$REGEN" -eq 1 ]; then
+    # Snapshot the OLD baseline before writing. The `> "$BASELINE_FILE"`
+    # redirection below truncates the file the moment the block opens — before a
+    # single command inside it runs — so a baseline_rationale lookup against the
+    # live path would read an empty file and silently drop every rationale,
+    # which is the exact data loss the preservation exists to prevent.
+    # FAIL LOUD if the snapshot cannot be taken. This script runs under
+    # `set -uo pipefail` with no `set -e`, so an unchecked mktemp failure would
+    # leave REGEN_PREV empty, make the redirect below a no-op, and send every
+    # later baseline_rationale lookup at `[ -f "" ]` — silently dropping every
+    # rationale, i.e. re-creating the exact data loss this snapshot exists to
+    # prevent. Per this gate's own header, a broken environment is a hard
+    # failure, never a quiet degrade.
+    REGEN_PREV="$(command mktemp)" || REGEN_PREV=""
+    if [ -z "$REGEN_PREV" ] || [ ! -f "$REGEN_PREV" ]; then
+        command printf 'lint-prose-budget: FATAL — could not create a temp file for the\n' >&2
+        command printf '  baseline snapshot. Refusing to regen: without it every existing\n' >&2
+        command printf '  rationale would be silently dropped from the ledger.\n' >&2
+        exit 2
+    fi
+    # Clean up on every exit path. The signal handler MUST exit: bash resumes at
+    # the next statement after a trapped INT/TERM unless the handler exits, so a
+    # cleanup-only handler would delete the snapshot and then fall through into
+    # the rationale loop below — reading a now-deleted file and writing a
+    # baseline with every rationale dropped. That is this fix's own failure mode
+    # reached by the signal path, so the handler aborts rather than continues.
+    # The new baseline is BUILT into a staging file and renamed over the target
+    # only once it is complete. `>"$BASELINE_FILE"` would truncate on open and
+    # stream entries out one at a time, so a signal mid-write leaves a partial
+    # ledger on disk — while the handler deletes the snapshot that could have
+    # recovered it. Staging plus an atomic rename means an interrupted regen
+    # leaves the previous baseline exactly as it was.
+    # COLOCATED with the baseline, deliberately — not a bare `mktemp`.
+    #
+    # `mv` is only atomic when source and destination share a filesystem, since
+    # only then is it a rename(2). A bare mktemp lands in $TMPDIR, and the repo
+    # checkout is routinely on a different filesystem: in this project's own
+    # devcontainer /tmp is the overlay root while the repo is a separate mount,
+    # and CI runners with a tmpfs /tmp behave the same. Across filesystems `mv`
+    # degrades to copy-then-unlink, which reopens the partial-write window this
+    # staging file exists to close. Creating it beside the target guarantees the
+    # rename path.
+    REGEN_NEW="$(command mktemp "${BASELINE_FILE}.XXXXXX")" || REGEN_NEW=""
+    if [ -z "$REGEN_NEW" ] || [ ! -f "$REGEN_NEW" ]; then
+        command printf 'lint-prose-budget: FATAL — could not create a staging file beside\n' >&2
+        command printf '  %s. Refusing to write the baseline in place.\n' "$BASELINE_FILE" >&2
+        command rm -f "$REGEN_PREV"
+        exit 2
+    fi
+    trap 'command rm -f "$REGEN_PREV" "$REGEN_NEW"' EXIT
+    trap 'command rm -f "$REGEN_PREV" "$REGEN_NEW"; exit 130' INT
+    trap 'command rm -f "$REGEN_PREV" "$REGEN_NEW"; exit 143' TERM
+    if [ -f "$BASELINE_FILE" ]; then
+        if ! command cat "$BASELINE_FILE" >"$REGEN_PREV"; then
+            command printf 'lint-prose-budget: FATAL — could not snapshot %s before regen.\n' \
+                "$BASELINE_FILE" >&2
+            command printf '  Refusing to regen rather than write a ledger with every\n' >&2
+            command printf '  rationale dropped.\n' >&2
+            exit 2
+        fi
+    fi
     {
         command printf '# Prose-budget ratchet baseline — issue #589.\n'
         command printf '#\n'
@@ -353,9 +462,50 @@ if [ "$REGEN" -eq 1 ]; then
         command printf '# RAISING an entry is a deliberate, reviewable decision — a bigger file\n'
         command printf '# needs a reason in the commit message, not a silent regen.\n'
         command printf '#\n'
-        command printf '# Format: <repo-relative-path> <line-count>\n'
-        command printf '%s' "$OVER_BUDGET"
-    } >"$BASELINE_FILE"
+        command printf '# THE BUDGETS ARE TARGETS, NOT LAWS. Some files are genuinely better long.\n'
+        command printf '# This file is the EXCEPTIONS LEDGER: each entry is consciously over\n'
+        command printf '# budget, the ratchet stops it growing, and the trailing `#` note says WHY\n'
+        command printf '# it is allowed. Add a rationale when you add an entry — --regen preserves\n'
+        command printf '# existing ones, and the report lists any entry still missing one.\n'
+        command printf '#\n'
+        command printf '# Format: <repo-relative-path> <line-count> [# why this exception stands]\n'
+        # Re-attach each entry's existing rationale. A regen that dropped them
+        # would silently erase every justification on a routine shrink — the
+        # ledger would keep its numbers and lose its reasons.
+        command printf '%s' "$OVER_BUDGET" | while IFS=' ' read -r _path _count; do
+            [ -n "$_path" ] || continue
+            _note="$(BASELINE_FILE="$REGEN_PREV" baseline_rationale "$_path")"
+            if [ -n "$_note" ]; then
+                command printf '%s %s # %s\n' "$_path" "$_count" "$_note"
+            else
+                command printf '%s %s\n' "$_path" "$_count"
+            fi
+        done
+    } >"$REGEN_NEW"
+
+    # Restore a normal file mode before installing. `mktemp` creates 0600 and
+    # `mv` PRESERVES the source mode, so without this the regenerated baseline
+    # lands 0600 — a committed, world-readable file silently becoming
+    # owner-only.
+    #
+    # FAIL LOUD rather than `|| true`: swallowing the failure would install the
+    # 0600 file anyway and produce exactly the silent permission regression this
+    # line exists to prevent, one step later. Nothing has been installed yet, so
+    # aborting here leaves the previous baseline untouched.
+    if ! command chmod "a+r,u+w" "$REGEN_NEW"; then
+        command printf 'lint-prose-budget: FATAL — could not set a readable mode on the\n' >&2
+        command printf '  staging file. Refusing to install, since mv preserves the mode and\n' >&2
+        command printf '  the baseline would silently become owner-only.\n' >&2
+        exit 2
+    fi
+
+    # Atomic swap. Only now does the on-disk baseline change; up to this point
+    # every failure path above leaves it untouched.
+    if ! command mv -f "$REGEN_NEW" "$BASELINE_FILE"; then
+        command printf 'lint-prose-budget: FATAL — could not install the regenerated\n' >&2
+        command printf '  baseline at %s. The previous one is unchanged.\n' "$BASELINE_FILE" >&2
+        exit 2
+    fi
     command printf 'lint-prose-budget: baseline written to %s (%s entries)\n' \
         "$(rel "$BASELINE_FILE")" \
         "$(command printf '%s' "$OVER_BUDGET" | command grep -c . || true)"
@@ -403,6 +553,36 @@ command printf '%s' "$FILE_COUNTS" | LC_ALL=C command awk -F '\t' '
 over_count="$(command printf '%s' "$OVER_BUDGET" | command grep -c . || true)"
 command printf '\n  %s file(s) over their type budget (ratcheted by tests/prose-budget.baseline)\n' \
     "$over_count"
+
+# List the exceptions with their rationale. The budgets are targets, not laws —
+# a file that is genuinely better long stays long. The risk is not any single
+# exception, it is exceptions ACCUMULATING UNNOTICED until the budget means
+# nothing. Printing the ledger on every run (pass or fail) is what keeps that
+# visible: an unjustified entry is called out by name rather than blending into
+# a count. This reports, never fails — the ratchet already prevents growth, and
+# failing a green tree over a missing note would just get the gate turned off.
+if [ "$over_count" -gt 0 ]; then
+    command printf '\n  Exceptions (over budget by choice — ratcheted at their current size):\n'
+    command printf '%s' "$OVER_BUDGET" | while IFS=' ' read -r _path _count; do
+        [ -n "$_path" ] || continue
+        _note="$(baseline_rationale "$_path")"
+        if [ -n "$_note" ]; then
+            command printf '    %s (%s) — %s\n' "$_path" "$_count" "$_note"
+        else
+            command printf '    %s (%s) — NO RATIONALE RECORDED\n' "$_path" "$_count"
+        fi
+    done
+    # Count unjustified entries in the parent shell (the loop above runs in a
+    # subshell, so its increments would not survive).
+    _unjustified=0
+    for _p in $(command printf '%s' "$OVER_BUDGET" | LC_ALL=C command awk '{ print $1 }'); do
+        [ -n "$(baseline_rationale "$_p")" ] || _unjustified=$((_unjustified + 1))
+    done
+    if [ "$_unjustified" -gt 0 ]; then
+        command printf '\n  %s exception(s) carry no rationale. Add one as a trailing\n' "$_unjustified"
+        command printf '  `# why` in tests/prose-budget.baseline so the ledger stays reviewable.\n'
+    fi
+fi
 
 if [ -n "$VIOLATIONS" ]; then
     command printf '\n[FAIL] Prose budget exceeded:\n\n'

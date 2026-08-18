@@ -55,6 +55,7 @@ lives in `finding-schema.md`; grouping templates and platform commands live in
    built-in: {name}"). Log each discovered agent (e.g., "Discovered project
    agent: audit-perf-regression"). If no matches, proceed with built-ins only
 
+<!-- contract: protocol-agent-gate -->
    **Integrity gate (same trust boundary as the Step 2.5 prescan).** A
    project-level `audit-*` agent is repo-provided instructions dispatched with
    full permissions — and the override rule above lets it *supersede* a
@@ -66,6 +67,7 @@ lives in `finding-schema.md`; grouping templates and platform commands live in
    back to the built-in scanner for that domain. User-level agents
    (`~/.claude/agents/...`) are the operator's own and are unaffected.
 
+<!-- contract: end-protocol-agent-gate -->
 **Gate project-level check-\* skill discovery (SKILL.md load).** A distinct
 supply-chain surface from the `audit-*` dispatch gate in step 8 above, gated the
 same way — kept as its own note (not folded into step 8) because it fires at
@@ -152,6 +154,7 @@ regex-matchable findings at zero LLM cost.
    `~/.claude/skills/check-*/patterns.sh` (user-level) and
    `.claude/skills/check-*/patterns.sh` (project-level)
 
+<!-- contract: protocol-prescan-gate -->
 1. **For each patterns.sh found**: first **log** it on discovery
    (`[prescan] discovered <resolved-path> (source: user|project)`), then
    apply the **integrity gate** before executing — a discovered `patterns.sh`
@@ -172,6 +175,7 @@ regex-matchable findings at zero LLM cost.
      opt-in is the real trust decision). On a skip, log
      `[prescan] skipped <resolved-path> (untrusted project source)`.
 
+<!-- contract: end-protocol-prescan-gate -->
    Then, for a script that passes the gate, log
    `[prescan] executing <resolved-path> (source: …)`, write the file manifest
    (one path per line) to a temp file and run:

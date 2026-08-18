@@ -248,65 +248,11 @@ for the per-check commands, tables, and per-level rules.
 
 ### Option 1 — Branch + PR
 
-1. **Ensure on a feature branch**:
-
-   - If currently on `main` (or the default branch), create and switch to a
-     new branch using the naming convention from `next-issue/state-format.md`:
-
-     ```bash
-     git fetch origin main
-     git checkout -b {prefix}/issue-{N}-{slug} origin/main
-     ```
-
-   - If already on a feature branch, stay on it
-
-1. **Stage and commit**. The commit message MUST include `Closes #{N}` in
-   the body:
-
-   ```text
-   {type}({scope}): {description}
-
-   {optional body explaining the change}
-
-   Closes #{N}
-   ```
-
-   Where `{type}` matches the branch prefix: `fix/` → `fix:`,
-   `feature/` → `feat:`, `docs/` → `docs:`, `test/` → `test:`,
-   `refactor/` → `refactor:`, `chore/` → `chore:`.
-
-1. **Verify** the commit message: run `git log -1 --format=%B` and confirm
-   `Closes #{N}` is present. If missing, amend to add it.
-
-1. **Push** the branch:
-
-   ```bash
-   git push -u origin HEAD
-   ```
-
-1. **Create a PR**:
-
-   - GitHub:
-
-     ```bash
-     gh pr create --title "{type}({scope}): {description}" --body "$(cat <<'EOF'
-     ## Summary
-     - {what changed and why}
-
-     ## Test plan
-     - {how this was tested}
-
-     Closes #{N}
-     EOF
-     )"
-     ```
-
-   - GitLab:
-
-     ```bash
-     glab mr create --title "{type}({scope}): {description}" \
-       --description "## Summary\n- {what changed and why}\n\n## Test plan\n- {how this was tested}\n\nCloses #{N}"
-     ```
+**Companion file**: `execute-protocol.md` § *Option 1 — Branch + PR: opening the
+PR* carries the mechanical sequence — ensure a feature branch (naming convention
+in `next-issue/state-format.md`), stage and commit with `Closes #{N}` in the
+body, **verify** the trailer landed, push, and open the PR. Load it now; the
+same file continues straight into the post-PR half below.
 
 1. **After the PR is open — Companion file**: the rest of Option 1 lives in
    `execute-protocol.md` § *Option 1 — Branch + PR: after the PR is open* — load
