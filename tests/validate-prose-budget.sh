@@ -494,6 +494,73 @@ test_regen_aborts_when_snapshot_fails() {
         "The existing baseline is left intact when the snapshot fails"
 }
 
+# A trapped INT/TERM must ABORT the regen, not merely clean up and continue.
+#
+# bash resumes at the next statement after a trapped signal UNLESS the handler
+# exits. So a cleanup-only handler (`trap 'rm -f "$SNAP"' INT`) would delete the
+# snapshot and then fall through into the rationale loop below, reading a
+# deleted file and writing a baseline with every `# why` note dropped — this
+# fix's own data loss, reached by the signal path.
+#
+# Asserted STRUCTURALLY rather than by firing a real signal. Driving SIGINT from
+# inside run_test proved genuinely flaky: the suite has its own signal
+# disposition and job control, so the signal can land before the child has even
+# exec'd, and the observable outcome varies run to run. A flaky test is worse
+# than no test — it teaches people to ignore red. The property here is a fixed
+# fact about the script's trap wiring, so read the wiring.
+test_regen_signal_traps_exit() {
+    local int_trap term_trap
+    int_trap="$(command grep -E "^ *trap .* INT$" "$GATE" || true)"
+    term_trap="$(command grep -E "^ *trap .* TERM$" "$GATE" || true)"
+
+    assert_not_empty "$int_trap" "An INT trap is armed for the regen snapshot"
+    assert_not_empty "$term_trap" "A TERM trap is armed for the regen snapshot"
+
+    # The load-bearing half: each signal handler must exit. Without it the
+    # handler returns and execution continues past the signal.
+    assert_contains "$int_trap" "exit" \
+        "The INT handler exits (bash would otherwise resume into the regen)"
+    assert_contains "$term_trap" "exit" \
+        "The TERM handler exits (bash would otherwise resume into the regen)"
+
+    # And a plain EXIT trap still handles the normal path.
+    assert_true "command grep -qE \"^ *trap .* EXIT\$\" '$GATE'" \
+        "An EXIT trap cleans up the snapshot on the normal path"
+}
+
+# The snapshot `cat` is a SECOND, independently-guarded failure branch: mktemp
+# can succeed and the copy still fail. Drive it by making the source baseline
+# unreadable, so only that branch can fire.
+#
+# Skipped when running as root, where chmod 000 does not deny reads.
+test_regen_aborts_when_snapshot_copy_fails() {
+    local sb="$WORKDIR/rat7" bl="$WORKDIR/rat7.baseline" out rc=0
+
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — chmod 000 does not deny reads"
+        return 0
+    fi
+
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # unreadable-source guard\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # unreadable-source guard\n' "$sb" >>"$bl"
+    command chmod 000 "$bl"
+
+    out="$(
+        PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
+            PROSE_BUDGET_BASELINE="$bl" \
+            PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \
+            command bash "$GATE" --regen 2>&1
+    )" || rc=$?
+
+    command chmod 644 "$bl"
+
+    assert_true "[ $rc -ne 0 ]" "An unreadable baseline aborts the regen"
+    assert_contains "$out" "FATAL" "The copy-failure abort is loud"
+    assert_true "command grep -q 'unreadable-source guard' '$bl'" \
+        "The ledger is left intact when the snapshot copy fails"
+}
+
 # --- The shipped baseline ----------------------------------------------------
 
 # The committed baseline must describe the tree it ships with: every entry names
@@ -542,6 +609,8 @@ run_test test_rationale_is_reported "Each exception's rationale is reported"
 run_test test_missing_rationale_is_named "An exception with no rationale is named"
 run_test test_regen_preserves_rationale "--regen preserves rationales while tightening"
 run_test test_regen_aborts_when_snapshot_fails "--regen aborts loudly if the snapshot fails"
+run_test test_regen_aborts_when_snapshot_copy_fails "--regen aborts loudly if the snapshot COPY fails"
+run_test test_regen_signal_traps_exit "The regen INT/TERM traps exit rather than resume"
 
 run_test test_real_tree_passes "The gate is green against the committed tree (AC2)"
 

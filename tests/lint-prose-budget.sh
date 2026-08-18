@@ -409,8 +409,15 @@ if [ "$REGEN" -eq 1 ]; then
         command printf '  rationale would be silently dropped from the ledger.\n' >&2
         exit 2
     fi
-    # Clean up on every exit path, including SIGINT/SIGTERM.
-    trap 'command rm -f "$REGEN_PREV"' EXIT INT TERM
+    # Clean up on every exit path. The signal handler MUST exit: bash resumes at
+    # the next statement after a trapped INT/TERM unless the handler exits, so a
+    # cleanup-only handler would delete the snapshot and then fall through into
+    # the rationale loop below — reading a now-deleted file and writing a
+    # baseline with every rationale dropped. That is this fix's own failure mode
+    # reached by the signal path, so the handler aborts rather than continues.
+    trap 'command rm -f "$REGEN_PREV"' EXIT
+    trap 'command rm -f "$REGEN_PREV"; exit 130' INT
+    trap 'command rm -f "$REGEN_PREV"; exit 143' TERM
     if [ -f "$BASELINE_FILE" ]; then
         if ! command cat "$BASELINE_FILE" >"$REGEN_PREV"; then
             command printf 'lint-prose-budget: FATAL — could not snapshot %s before regen.\n' \
