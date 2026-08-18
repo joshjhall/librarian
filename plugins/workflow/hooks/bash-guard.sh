@@ -34,6 +34,20 @@
 #   3. Not scratch-confined: allow when the command stages a mktemp sandbox or the
 #      destructive target resolves under /tmp, $TMPDIR, or /var/tmp (the
 #      sandbox carve-out those same prose constants grant).
+#   4. (#720) Not a WRITER subagent redirecting: a subagent whose agent_type is on
+#      the Edit/Write allowlist is exempt from the REDIRECTION match only. See
+#      the carve-out near the end of this file for why it is redirect-only and
+#      allowlist-keyed; the deny-set verbs still apply to it in full.
+#
+# Two #720 corrections underpin Rule A, both narrowing FALSE POSITIVES rather
+# than the deny set: (a) only an UNQUOTED `>` is a redirect — a `>` inside a
+# quoted string, an escape, or an arithmetic expansion is neutralized before the
+# redirect scan (see "Quoted-`>` neutralization"); (b) an agent holding
+# Edit/Write is not "read-only review/analysis" and is neither denied its
+# redirects nor told it is read-only. Together they addressed 296 denials
+# measured across 110 agents in a single run, 90 of them against Edit/Write
+# holders. The motivating harm was not the noise: an agent that cannot run its
+# own read-only verification can report success on a file it never changed.
 #
 # RULE B (#662) — MAIN-SESSION destructive git aimed at ANOTHER tree's worktree.
 # The main session (no agent_id) was historically an UNCONDITIONAL allow, on the
@@ -229,6 +243,7 @@ CAT="$(_bin cat)"
 SED="$(_bin sed)"
 HEAD="$(_bin head)"
 TR="$(_bin tr)"
+AWK="$(_bin awk)"
 
 # `_emit_deny_reason <reason>` writes the PreToolUse deny envelope (jq when
 # present, a sanitized hand-roll otherwise) and exits 0 — the decision travels in
@@ -285,6 +300,7 @@ fi
 # relative `git -C <path>` / `cd <path>` resolves against. Rule A ignores it, so
 # an absent cwd costs Rule A nothing and merely fails Rule B open.
 agent_id=""
+agent_type=""
 command_str=""
 cwd=""
 have_fields=0
@@ -300,6 +316,9 @@ if command -v jq >/dev/null 2>&1; then
         # `// empty` yields "" for absent/null. agentId is read as a defensive
         # alternate spelling (the verified field is snake_case agent_id).
         agent_id="$(printf '%s' "$payload" | jq -r '(.agent_id // .agentId) // empty' 2>/dev/null || true)"
+        # agent_type (#720): same snake/camel alternates as agent_id. Read for
+        # the writer-agent carve-out below; absent for a main-session call.
+        agent_type="$(printf '%s' "$payload" | jq -r '(.agent_type // .agentType) // empty' 2>/dev/null || true)"
         command_str="$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null || true)"
         cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null || true)"
         # A parsed payload with no command is not a Bash call we can evaluate —
@@ -324,6 +343,17 @@ if [ "$have_fields" -eq 0 ]; then
     if [ -z "$agent_id" ]; then
         agent_id="$(printf '%s' "$payload" |
             "$SED" -n 's/.*"agentId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+            "$HEAD" -n1)"
+    fi
+    # agent_type (#720), both spellings — mirrors the agent_id scrape above. A
+    # miss only costs the writer carve-out (the agent keeps today's stricter
+    # enforcement), so this scrape can never relax the guard.
+    agent_type="$(printf '%s' "$payload" |
+        "$SED" -n 's/.*"agent_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        "$HEAD" -n1)"
+    if [ -z "$agent_type" ]; then
+        agent_type="$(printf '%s' "$payload" |
+            "$SED" -n 's/.*"agentType"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
             "$HEAD" -n1)"
     fi
     # command: value of "command":"..." inside tool_input. A command string may
@@ -433,16 +463,230 @@ is_scratch() {
     return 1
 }
 
+# --- Quoted-`>` neutralization (#720) ---------------------------------------
+# Only an UNQUOTED `>` is a redirect. The scan below used to read EVERY `>` in
+# the command as one, so an ASCII arrow in a string (`echo "a -> b"`), an HTML
+# pattern (`grep -o "<li><p>x</p></li>"`), a JS arrow fn (`()=>1`), or an
+# arithmetic comparison (`$((5 > 3))`) all denied as "output redirection to a
+# tracked path". Measured on one real run: 296 denials across 110 agents. The
+# damage is not just noise — it denies the READ-ONLY verification commands an
+# agent uses to confirm its own edit, so an agent whose Grep tool is unavailable
+# can find every route to checking its work blocked and report success on a file
+# it never changed (#720's downstream data-integrity case).
+#
+# NEUTRALIZE rather than STRIP. #720 proposed stripping quoted spans outright;
+# that also deletes a quoted redirect TARGET's name, and the target text is
+# exactly what is_scratch must read to tell `> "/tmp/log"` from `> "tracked.py"`.
+# So replace each quoted `>` with a sentinel byte and leave every other byte
+# alone: the scan cannot see the neutralized ones, and nothing else changes.
+# `grep -o "<b>" f.json > tracked.py` is the case that pins the difference — the
+# quoted `>` goes, the real redirect stays and still denies.
+#
+# The result feeds the redirect scan ONLY. `$norm` is deliberately left untouched
+# for the deny-head segment walk and mktemp_var detection: those split on
+# `;`/`&&`/`|` and have no quoting defect, so widening the change to them would
+# be blast radius with no defect behind it.
+#
+# SENTINEL CHOICE: \001, applied to a copy built from `command_str` directly
+# rather than from `$norm`. `$norm` is piped through `tr '[:cntrl:]' ' '`, which
+# would silently eat a \001 — the neutralization would appear to work while
+# actually collapsing to a space. Building this pass separately keeps the
+# sentinel's consumption deliberate. Newlines are folded to `;` first, matching
+# $norm's own first step, so a multi-line command still presents as one line.
+#
+# UNBALANCED QUOTE (`echo "unterminated > tracked.py`) reads as quoted through
+# end-of-string, so the `>` is neutralized and the command allows. Accepted, and
+# recorded as a DECISION rather than an oversight: an unbalanced quote is not a
+# runnable command, so there is no redirect for it to actually perform.
+#
+# BACKSLASH-ESCAPED `\>` is neutralized too, quoted or not — the shell passes it
+# to the command as a literal `>` argument and performs no redirection, so it is
+# the same false positive as the quoted forms, just spelled differently. Note
+# this is the ONE place the escape handling is not a pure pass-through: the
+# backslash itself is preserved, only the escaped `>` becomes a sentinel. This
+# applies INSIDE double quotes as well as at top level — the two are separate
+# branches, and the dq one originally leaked a raw `>` (caught in pre-PR review;
+# `echo "a \> b"` denied while performing no redirection at all).
+#
+# BARE `(( … ))` (arithmetic COMMAND, no leading `$`) is deliberately NOT treated
+# as arithmetic context, even though `if ((5 > 3)); then` is a genuine remaining
+# false positive. DO NOT "fix" it by also opening on a bare `((`: that spelling
+# is ambiguous with NESTED SUBSHELLS, and the counter cannot tell them apart.
+# Measured on this exact change before it was reverted — `((echo hi) > tracked.py)`,
+# `((cat f) > tracked.py)` and `(( echo x ) > tracked.py )` all flipped to ALLOW,
+# because the `((` opened a fake arithmetic span that swallowed the REAL redirect
+# operator. That trades a false positive for a security FALSE NEGATIVE, which is
+# strictly the worse direction for this guard. Distinguishing the two needs real
+# shell parsing (`((` is arithmetic only in command position, and even then bash
+# itself resolves the ambiguity by parse context), which the DETECTION SCOPE
+# section above rules out as a non-goal. Recorded as an accepted gap with its
+# evidence so the next reader does not re-derive the trap.
+#
+# RUNTIME: awk primary, pure-bash fallback (repo runtime policy). awk leads
+# because this hook fires before EVERY Bash call in the session and the bash
+# char-loop degrades superlinearly — measured 13ms at 1k chars, 114ms at 4k,
+# 1294ms at 16k, versus a flat 2-5ms for awk. The fallback is a correctness
+# equal, only slower, so an awk-less host stays fully guarded (this is NOT a
+# fail-loud gate: silently guarding correctly-but-slower is the right outcome
+# here, unlike a scanner that would emit wrong findings). Neither impl uses any
+# regex, which keeps both clear of the GNU-only-regex ban (#679) by construction.
+_neutralize_quoted_gt_awk() {
+    printf '%s' "$1" | "$AWK" '
+    {
+        line = $0; out = ""; n = length(line)
+        sq = 0; dq = 0; arith = 0; i = 1
+        while (i <= n) {
+            c = substr(line, i, 1)
+            if (sq) {
+                if (c == "\047") sq = 0
+                out = out (c == ">" ? "\001" : c); i++; continue
+            }
+            if (dq) {
+                # An escaped char inside double quotes is still QUOTED content,
+                # so an escaped `>` here is no more a redirect than a bare one.
+                # Must sentinel it exactly as the top-level branch does, or the
+                # scan sees a raw `>` and denies (verified: `echo "a \> b"`
+                # performs no redirection in real bash, yet denied).
+                if (c == "\\" && i < n) {
+                    nx = substr(line, i+1, 1)
+                    out = out c (nx == ">" ? "\001" : nx)
+                    i += 2; continue
+                }
+                if (c == "\"") dq = 0
+                out = out (c == ">" ? "\001" : c); i++; continue
+            }
+            if (c == "\\" && i < n) {
+                nx = substr(line, i+1, 1)
+                out = out c (nx == ">" ? "\001" : nx)
+                i += 2; continue
+            }
+            if (c == "\047") { sq = 1; out = out c; i++; continue }
+            if (c == "\"") { dq = 1; out = out c; i++; continue }
+            if (substr(line, i, 3) == "$((") { arith++; out = out "$(("; i += 3; continue }
+            if (arith > 0 && substr(line, i, 2) == "))") { arith--; out = out "))"; i += 2; continue }
+            if (arith > 0 && c == ">") { out = out "\001"; i++; continue }
+            out = out c; i++
+        }
+        print out
+    }' 2>/dev/null
+}
+
+# Pure-bash equivalent of the awk pass above. bash-3.2 clean: `${v:i:1}` slicing
+# and arithmetic only, no arrays, no case-conversion, no regex.
+_neutralize_quoted_gt_bash() {
+    _nq_in="$1"
+    _nq_out=""
+    _nq_sq=0
+    _nq_dq=0
+    _nq_ar=0
+    _nq_i=0
+    _nq_n=${#_nq_in}
+    while [ "$_nq_i" -lt "$_nq_n" ]; do
+        _nq_c="${_nq_in:$_nq_i:1}"
+        if [ "$_nq_sq" -eq 1 ]; then
+            [ "$_nq_c" = "'" ] && _nq_sq=0
+            [ "$_nq_c" = ">" ] && _nq_c=$'\001'
+            _nq_out="$_nq_out$_nq_c"
+            _nq_i=$((_nq_i + 1))
+            continue
+        fi
+        if [ "$_nq_dq" -eq 1 ]; then
+            # Same as the awk arm: an escaped `>` inside double quotes is quoted
+            # CONTENT, never a redirect operator, so it takes the sentinel too.
+            if [ "$_nq_c" = "\\" ] && [ $((_nq_i + 1)) -lt "$_nq_n" ]; then
+                _nq_nx="${_nq_in:$((_nq_i + 1)):1}"
+                [ "$_nq_nx" = ">" ] && _nq_nx=$'\001'
+                _nq_out="$_nq_out$_nq_c$_nq_nx"
+                _nq_i=$((_nq_i + 2))
+                continue
+            fi
+            [ "$_nq_c" = '"' ] && _nq_dq=0
+            [ "$_nq_c" = ">" ] && _nq_c=$'\001'
+            _nq_out="$_nq_out$_nq_c"
+            _nq_i=$((_nq_i + 1))
+            continue
+        fi
+        if [ "$_nq_c" = "\\" ] && [ $((_nq_i + 1)) -lt "$_nq_n" ]; then
+            _nq_nx="${_nq_in:$((_nq_i + 1)):1}"
+            [ "$_nq_nx" = ">" ] && _nq_nx=$'\001'
+            _nq_out="$_nq_out$_nq_c$_nq_nx"
+            _nq_i=$((_nq_i + 2))
+            continue
+        fi
+        case "$_nq_c" in
+            "'")
+                _nq_sq=1
+                _nq_out="$_nq_out$_nq_c"
+                _nq_i=$((_nq_i + 1))
+                continue
+                ;;
+            '"')
+                _nq_dq=1
+                _nq_out="$_nq_out$_nq_c"
+                _nq_i=$((_nq_i + 1))
+                continue
+                ;;
+        esac
+        if [ "${_nq_in:$_nq_i:3}" = '$((' ]; then
+            _nq_ar=$((_nq_ar + 1))
+            _nq_out="$_nq_out\$(("
+            _nq_i=$((_nq_i + 3))
+            continue
+        fi
+        if [ "$_nq_ar" -gt 0 ] && [ "${_nq_in:$_nq_i:2}" = '))' ]; then
+            _nq_ar=$((_nq_ar - 1))
+            _nq_out="$_nq_out))"
+            _nq_i=$((_nq_i + 2))
+            continue
+        fi
+        if [ "$_nq_ar" -gt 0 ] && [ "$_nq_c" = ">" ]; then
+            _nq_out="$_nq_out"$'\001'
+            _nq_i=$((_nq_i + 1))
+            continue
+        fi
+        _nq_out="$_nq_out$_nq_c"
+        _nq_i=$((_nq_i + 1))
+    done
+    printf '%s' "$_nq_out"
+}
+
+# Fold newlines to `;` (as $norm does) BEFORE neutralizing, so a multi-line
+# command is one line to the char walk and awk's record-splitting cannot drop
+# statements. Prefer awk; fall back to the bash walk when awk is unusable
+# (missing, or it produced nothing for a non-empty input).
+#
+# `BASH_GUARD_FORCE_BASH=1` forces the fallback arm. It exists because the
+# fallback is otherwise UNTESTABLE: `_bin` deliberately scans /usr/bin, /bin and
+# friends when PATH lacks a tool, so the usual "run it under a stripped PATH"
+# trick still resolves /usr/bin/awk and silently exercises the awk arm TWICE —
+# a parity test written that way passes while comparing awk against itself.
+# Mirrors the PATTERNS_FORCE_BASH knob the skill code tools use for the same
+# reason.
+_redir_src="$(printf '%s' "$command_str" | "$TR" '\n\r' ';;')"
+norm_redir=""
+if [ "${BASH_GUARD_FORCE_BASH:-0}" != "1" ] && command -v "$AWK" >/dev/null 2>&1; then
+    norm_redir="$(_neutralize_quoted_gt_awk "$_redir_src")"
+fi
+if [ -z "$norm_redir" ] && [ -n "$_redir_src" ]; then
+    norm_redir="$(_neutralize_quoted_gt_bash "$_redir_src")"
+fi
+
 # Redirection to a NON-scratch path is destructive regardless of the command
 # head (e.g. `echo x > tracked.py`). Check EVERY `>` target, not just the last:
 # a command can pair an early destructive redirect with a trailing scratch one
 # (`cmd 2> tracked.py > /tmp/log`) — inspecting only the final `>` would miss the
 # first (#448 review). Split on `>` and test each following token. (Defined after
 # is_scratch — shell functions must exist before this scan runs.)
+#
+# Scans `norm_redir` (#720), NOT `norm`: quoted `>`s have been neutralized there,
+# so only a real redirect operator is visible.
 redir_bad=1
-case "$norm" in
+case "$norm_redir" in
     *">"*)
-        _rest="$norm"
+        # `norm_redir`, not `norm` (#720) — the loop must walk the SAME
+        # neutralized string the case above matched, or every quoted `>` comes
+        # straight back as a redirect and the fix is a no-op.
+        _rest="$norm_redir"
         while :; do
             case "$_rest" in
                 *">"*) ;;
@@ -969,6 +1213,62 @@ if [ -z "$agent_id" ]; then
     _emit_deny_reason "$reason"
 fi
 
+# --- Rule A writer-agent carve-out (#720) -----------------------------------
+# Rule A's deny message asserts the caller is a "read-only review/analysis
+# subagent". For a subagent whose tool grant includes Edit/Write that claim is
+# simply false — and it was not merely cosmetic: of the 296 denials #720
+# measured in one run, 90 hit agents holding Edit/Write. Writing files IS their
+# job, so denying their redirects blocks sanctioned work and (worse) blocks the
+# read-only commands they use to VERIFY that work, which is how #720's
+# downstream agent came to report success on a file it never changed.
+#
+# Deliberately narrow, because this is the one half of #720 that RELAXES a
+# security control:
+#
+#   1. REDIRECTION ONLY. A writer agent is exempt from the redirect deny
+#      (`>`/`>>` to a tracked path) and NOTHING else. It stays fully subject to
+#      the destructive deny-set — rm / mv / truncate / git clean / git reset
+#      --hard / git checkout --. "May edit files" is not "may delete the working
+#      tree", and #426's origin case was precisely a review agent running
+#      `rm -rf` against the live checkout.
+#   2. NAME ALLOWLIST, not a self-asserted capability. The exemption keys off a
+#      fixed list of agent types this marketplace ships whose frontmatter grants
+#      Edit or Write, NOT off a payload field claiming its own privilege. An
+#      unknown or absent agent_type keeps today's full enforcement, so this can
+#      only ever narrow the deny set for agents the repo itself defines and can
+#      never open a hole for an unrecognized caller. Keep in sync with the
+#      `tools:` frontmatter of plugins/*/agents/*.md — validate-bash-guard.sh
+#      pins the list against those files so drift fails CI rather than silently
+#      exempting the wrong agent (or silently dropping a real one).
+#
+# The `*:name` matches tolerate the plugin-namespaced spelling (`workflow:
+# ci-fixer`) as well as a bare one, since the payload's exact form is the
+# harness's choice and both are in use across agentType call sites.
+is_writer_agent=1
+case "$agent_type" in
+    agent-author | *:agent-author | \
+        artifact-writer | *:artifact-writer | \
+        ci-fixer | *:ci-fixer | \
+        debugger | *:debugger | \
+        rebase-agent | *:rebase-agent | \
+        refactorer | *:refactorer | \
+        skill-author | *:skill-author | \
+        test-writer | *:test-writer)
+        is_writer_agent=0
+        ;;
+esac
+
+if [ "$is_writer_agent" -eq 0 ] && [ "$matched" = "output redirection to a tracked path" ]; then
+    exit 0
+fi
+
 # --- Deny (Rule A: subagent) ------------------------------------------------
-reason="Blocked destructive shell (\`$matched\`) in read-only review/analysis subagent ${agent_id}: this agent must not delete or mutate the live working tree (#426/#448). If you must reproduce something, do it inside a fresh \`mktemp -d\` sandbox, never against the checkout."
+# The wording splits on the carve-out above: only an agent NOT on the writer
+# allowlist is described as read-only, so the message can no longer assert a role
+# the caller demonstrably does not have (#720).
+if [ "$is_writer_agent" -eq 0 ]; then
+    reason="Blocked destructive shell (\`$matched\`) in subagent ${agent_id} (${agent_type}): this agent may write files, but it must not delete or mutate the live working tree (#426/#448/#720). Editing files via Edit/Write, and redirecting output to a tracked path, are both allowed. If you must remove or reset something, do it inside a fresh \`mktemp -d\` sandbox, never against the checkout."
+else
+    reason="Blocked destructive shell (\`$matched\`) in read-only review/analysis subagent ${agent_id}: this agent must not delete or mutate the live working tree (#426/#448). If you must reproduce something, do it inside a fresh \`mktemp -d\` sandbox, never against the checkout."
+fi
 _emit_deny_reason "$reason"

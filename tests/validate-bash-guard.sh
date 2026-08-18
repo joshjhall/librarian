@@ -305,6 +305,196 @@ test_allow_reset_soft() {
     assert_allow "git reset HEAD (no --hard)"
 }
 
+# --- Quoted `>` is not a redirect (#720) ------------------------------------
+# The redirect scan used to read EVERY `>` as a redirect operator, so an ASCII
+# arrow, an HTML pattern, a JS arrow fn or an arithmetic comparison inside a
+# QUOTED string denied as "output redirection to a tracked path" — 296 denials
+# across 110 agents in one measured run, including the read-only commands agents
+# use to verify their own edits. Each allow_cmd below FAILS without the
+# neutralizer (verified by reverting it); each deny_cmd is the over-reach guard
+# that fails if the neutralizer eats too much.
+test_quoted_arrow() { allow_cmd 'echo "a -> b"' "a quoted ASCII arrow is not a redirect"; }
+test_quoted_html() { allow_cmd 'grep -o "<li><p>x</p></li>" f.json' "an HTML pattern is not a redirect"; }
+test_arith_compare() { allow_cmd 'x=$((5 > 3)); echo $x' "an arithmetic comparison is not a redirect"; }
+test_quoted_numeric_gt() { allow_cmd 'echo "5 > 3"' "a quoted comparison is not a redirect"; }
+test_js_arrow() { allow_cmd 'node -e "const f=()=>1"' "a JS arrow fn is not a redirect"; }
+test_squote_gt() { allow_cmd "echo 'single > quoted'" "a single-quoted > is not a redirect"; }
+test_escaped_gt() { allow_cmd 'echo x \> y' "a backslash-escaped > is not a redirect"; }
+
+# An escaped `>` INSIDE double quotes. Distinct from test_escaped_gt above,
+# which only covers the TOP-LEVEL (unquoted) form — the two are handled by
+# different branches of the neutralizer, and the dq branch originally copied the
+# escaped char through verbatim, leaking a raw `>` into the scan. Verified
+# against real bash: `echo "a \> b"` prints `a \> b` and creates no file, so
+# there is no redirection to deny. Caught by pre-PR review, not by the parity
+# tests below — BOTH impls shared the omission, so they agreed with each other
+# while both being wrong (the parity-gate-hides-a-shared-defect class), which is
+# why these assert BEHAVIOR rather than agreement.
+test_dq_escaped_gt() { allow_cmd 'echo "a \> b"' "an escaped > inside double quotes is not a redirect"; }
+test_dq_escaped_gt_with_scratch() { allow_cmd 'echo "a \> b" > /tmp/log' "an escaped > in dquotes does not poison a scratch redirect"; }
+test_dq_escaped_gt_real_redirect() { deny_cmd 'echo "a \> b" > tracked.py' "an escaped > in dquotes does not mask a real redirect"; }
+
+# The arithmetic arm tracks `$((`/`))` with a flat counter rather than true paren
+# depth, so a nested-paren body could in principle close LATER than real bash
+# does — which would swallow a following real `>` and hide a redirect (a
+# FALSE NEGATIVE, the worst direction for a security control). Raised as a
+# LOW-certainty finding in pre-PR review with no live repro; probed adversarially
+# across nested, doubled and mixed bodies and every real redirect still denied
+# (the flat counter closes EARLY or identically — the safe direction). Pinned
+# here so a future refactor of the arithmetic handling cannot introduce the
+# bypass silently.
+test_arith_nested_paren_redirect() { deny_cmd 'x=$(( (1+1) )) > tracked.py' "a nested-paren arithmetic body does not hide a real redirect"; }
+test_arith_deep_paren_redirect() { deny_cmd 'x=$(( (1+(2*3)) )) > tracked.py' "a deeply nested arithmetic body does not hide a real redirect"; }
+test_arith_gt_inside_then_redirect() { deny_cmd 'echo $(( (5 > 3) )) > tracked.py' "an arithmetic > does not hide the following real redirect"; }
+
+# NESTED SUBSHELL, not arithmetic. These pin the reason bare `(( … ))` is NOT
+# treated as an arithmetic context: `((` is ambiguous between the arithmetic
+# command and two nested subshells, and opening a span on it makes the scan
+# swallow a REAL redirect. Each of these was measured flipping to ALLOW when
+# that "fix" was attempted — a security false negative, strictly worse than the
+# `if ((5 > 3))` false positive it removed. They fail loudly if anyone retries it.
+test_subshell_redirect_not_arithmetic() { deny_cmd '((echo hi) > tracked.py)' "nested subshells are not an arithmetic span"; }
+test_subshell_redirect_spaced() { deny_cmd '(( echo x ) > tracked.py )' "spaced nested subshells are not an arithmetic span"; }
+test_subshell_cat_redirect() { deny_cmd '((cat f) > tracked.py)' "a subshell redirect to a tracked path still denies"; }
+
+# Multi-line commands: newlines are folded to `;` BEFORE neutralization, so a
+# quoted `>` on one line must not shadow a real redirect or a destructive verb
+# on another. (The fold also stops awk's record splitting from dropping lines.)
+test_multiline_quoted_then_clean() { allow_cmd 'echo "a -> b"
+grep -n foo bar.json' "a quoted arrow does not taint a later clean line"; }
+test_multiline_quoted_then_redirect() { deny_cmd 'echo "a -> b"
+echo x > tracked.py' "a quoted arrow does not mask a real redirect on a later line"; }
+test_multiline_second_line_destructive() { deny_cmd 'echo hi
+rm -rf src/' "a destructive verb on a later line is still caught"; }
+
+# Over-reach guards: a real redirect must survive alongside a quoted `>`.
+test_quoted_gt_plus_real_redirect() { deny_cmd 'grep -o "<b>" f.json > tracked.py' "a real redirect beside a quoted > still denies"; }
+test_quoted_literal_gt_redirect() { deny_cmd 'echo ">" > tracked.py' "a quoted > as CONTENT still denies its real redirect"; }
+test_quoted_then_append() { deny_cmd 'echo "a -> b" >> tracked.py' "a quoted arrow does not mask a real >> append"; }
+
+# The scan LOOP must walk the same neutralized string its `case` guard matched.
+# Walking the raw `$norm` while guarding on `$norm_redir` looks correct and
+# passes every test above — the guard only lets the loop run when a REAL
+# redirect exists, and a real redirect to a TRACKED path denies either way. The
+# divergence is visible only when the real redirect targets a SCRATCH path: the
+# raw walk hits the QUOTED `>` first, reads the following word as the target,
+# finds it is not under /tmp, and denies. These two cases are the ones that
+# catch it (verified: both flip to DENY when the loop is reverted to `$norm`).
+test_quoted_gt_with_scratch_redirect() { allow_cmd 'grep -o "<b>" f.json > /tmp/log' "a quoted > does not poison a scratch redirect"; }
+test_quoted_arrow_with_scratch_redirect() { allow_cmd 'echo "a -> b" > /tmp/out.txt' "a quoted arrow does not poison a scratch redirect"; }
+
+# The pure-bash fallback must decide IDENTICALLY to the awk primary. Forced via
+# BASH_GUARD_FORCE_BASH, NOT a stripped PATH: the guard's `_bin` helper scans
+# /usr/bin and friends when PATH lacks a tool, so a stripped-PATH run resolves
+# /usr/bin/awk anyway and would compare the awk arm against ITSELF — a parity
+# test that passes without ever executing the code it claims to cover.
+forced_bash_decision() {
+    local out
+    out="$(printf '%s' "$(jq -cn --arg c "$1" '{tool_name:"Bash",agent_id:"a1",tool_input:{command:$c}}')" |
+        BASH_GUARD_FORCE_BASH=1 "$REAL_BASH" "$GUARD" 2>/dev/null)"
+    decision "$out"
+}
+test_fallback_parity_quoted_arrow() {
+    jq_required || return 0
+    assert_equals "allow" "$(forced_bash_decision 'echo "a -> b"')" "bash fallback allows a quoted arrow"
+}
+test_fallback_parity_html() {
+    jq_required || return 0
+    assert_equals "allow" "$(forced_bash_decision 'grep -o "<li><p>x</p></li>" f.json')" "bash fallback allows an HTML pattern"
+}
+test_fallback_parity_real_redirect() {
+    jq_required || return 0
+    assert_equals "deny" "$(forced_bash_decision 'echo x > tracked.py')" "bash fallback still denies a real redirect"
+}
+test_fallback_parity_mixed() {
+    jq_required || return 0
+    assert_equals "deny" "$(forced_bash_decision 'grep -o "<b>" f.json > tracked.py')" "bash fallback denies a real redirect beside a quoted >"
+}
+# Asserts the fallback's ABSOLUTE expected decision for the dq-escape case, not
+# merely that it matches awk — the shared-omission bug above proved agreement is
+# not evidence of correctness.
+test_fallback_dq_escaped_gt() {
+    jq_required || return 0
+    assert_equals "allow" "$(forced_bash_decision 'echo "a \> b"')" "bash fallback allows an escaped > inside double quotes"
+}
+
+# --- Writer subagents are not "read-only review/analysis" (#720) -------------
+# A subagent holding Edit/Write is exempt from the REDIRECT deny only; it stays
+# fully subject to the destructive deny-set. `typed_decision`/`typed_reason`
+# carry an agent_type the plain helpers do not.
+typed_payload() { jq -cn --arg c "$2" --arg t "$1" '{tool_name:"Bash",agent_id:"a1",agent_type:$t,tool_input:{command:$c}}'; }
+typed_decision() {
+    local out
+    out="$(printf '%s' "$(typed_payload "$1" "$2")" | "$REAL_BASH" "$GUARD" 2>/dev/null)"
+    decision "$out"
+}
+typed_reason() {
+    printf '%s' "$(typed_payload "$1" "$2")" | "$REAL_BASH" "$GUARD" 2>/dev/null |
+        jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null
+}
+
+test_writer_redirect_allowed() {
+    jq_required || return 0
+    assert_equals "allow" "$(typed_decision 'workflow:ci-fixer' 'echo x > tracked.py')" "a writer agent may redirect to a tracked path"
+}
+test_writer_bare_name_allowed() {
+    jq_required || return 0
+    assert_equals "allow" "$(typed_decision 'test-writer' 'echo x >> src/app.py')" "the un-namespaced agent_type spelling is honored"
+}
+test_writer_rm_still_denied() {
+    jq_required || return 0
+    assert_equals "deny" "$(typed_decision 'workflow:ci-fixer' 'rm -rf src/')" "a writer agent may NOT rm the live tree"
+}
+test_writer_reset_still_denied() {
+    jq_required || return 0
+    assert_equals "deny" "$(typed_decision 'workflow:ci-fixer' 'git reset --hard')" "a writer agent may NOT git reset --hard"
+}
+test_readonly_redirect_still_denied() {
+    jq_required || return 0
+    assert_equals "deny" "$(typed_decision 'review-audit:checker' 'echo x > tracked.py')" "a read-only agent's redirect still denies"
+}
+test_unknown_type_redirect_denied() {
+    jq_required || return 0
+    assert_equals "deny" "$(typed_decision 'some-unknown-agent' 'echo x > tracked.py')" "an UNKNOWN agent_type keeps full enforcement"
+}
+test_writer_reason_omits_readonly() {
+    jq_required || return 0
+    local reason
+    reason="$(typed_reason 'workflow:ci-fixer' 'rm -rf src/')"
+    assert_not_contains "$reason" "read-only" "a writer agent's deny reason does not call it read-only"
+}
+test_readonly_reason_keeps_wording() {
+    jq_required || return 0
+    local reason
+    reason="$(typed_reason 'review-audit:checker' 'rm -rf src/')"
+    assert_contains "$reason" "read-only" "a genuinely read-only agent keeps the original wording"
+}
+
+# DRIFT GUARD — the guard's writer allowlist must match the agents whose
+# frontmatter actually grants Edit or Write. Without this, adding a writer agent
+# (or removing Edit from an existing one) silently desynchronizes the carve-out:
+# the new agent keeps getting false denials, or a now-read-only agent keeps an
+# exemption it no longer earns. Derives the expected set from the .md files
+# rather than restating it, so the test cannot drift in lockstep with the bug.
+test_writer_allowlist_matches_frontmatter() {
+    local expected actual
+    # `-E` alternation, not BRE `\|` (#679): BSD grep reads `\|` as a LITERAL, so
+    # on macOS the BRE spelling matches nothing, `expected` comes back empty and
+    # the drift guard silently stops guarding — the exact silent-macOS-no-op
+    # class #679 exists to prevent.
+    expected="$(command grep -lE '^tools:.*(Edit|Write)' "$REPO_ROOT"/plugins/*/agents/*.md 2>/dev/null |
+        while IFS= read -r f; do command basename "$f" .md; done | command sort -u)"
+    assert_true "[ -n \"$expected\" ]" "found writer agents to check against"
+    # Take only the ALTERNATION names inside the case arms — the bare
+    # `name |` / `*:name |` patterns — never the `case`/`esac` keywords that
+    # bound the block.
+    actual="$(command sed -n '/^is_writer_agent=1/,/^esac/p' "$GUARD" |
+        command tr '|' '\n' |
+        command sed -n 's/^[[:space:]]*\**:*\([a-z][a-z-]*\)[[:space:]]*\\*[[:space:]]*)*[[:space:]]*$/\1/p' |
+        command grep -Ev '^(case|esac)$' | command sort -u)"
+    assert_equals "$expected" "$actual" "guard's writer allowlist matches the Edit/Write agent frontmatter"
+}
+
 # --- Main-session safety (no agent_id) --------------------------------------
 # Since #662 the main session is no longer an UNCONDITIONAL allow: a destructive
 # GIT verb aimed at ANOTHER session's linked worktree is denied (Rule B). These
@@ -507,6 +697,44 @@ run_test test_allow_wc "allow: wc"
 run_test test_allow_patterns "allow: patterns.sh prescan"
 run_test test_allow_checkout_branch "allow: git checkout <branch>"
 run_test test_allow_reset_soft "allow: git reset HEAD (no --hard)"
+run_test test_quoted_arrow "720: quoted ASCII arrow allowed"
+run_test test_quoted_html "720: HTML pattern allowed"
+run_test test_arith_compare "720: arithmetic comparison allowed"
+run_test test_quoted_numeric_gt "720: quoted numeric comparison allowed"
+run_test test_js_arrow "720: JS arrow fn allowed"
+run_test test_squote_gt "720: single-quoted > allowed"
+run_test test_escaped_gt "720: backslash-escaped > allowed"
+run_test test_dq_escaped_gt "720: escaped > inside double quotes allowed"
+run_test test_dq_escaped_gt_with_scratch "720: escaped > in dquotes does not poison a scratch redirect"
+run_test test_dq_escaped_gt_real_redirect "720: escaped > in dquotes does not mask a real redirect"
+run_test test_arith_nested_paren_redirect "720: nested-paren arithmetic does not hide a redirect"
+run_test test_arith_deep_paren_redirect "720: deep-nested arithmetic does not hide a redirect"
+run_test test_arith_gt_inside_then_redirect "720: arithmetic > does not hide the following redirect"
+run_test test_subshell_redirect_not_arithmetic "720: nested subshell redirect still denied"
+run_test test_subshell_redirect_spaced "720: spaced nested subshell redirect still denied"
+run_test test_subshell_cat_redirect "720: subshell cat redirect still denied"
+run_test test_multiline_quoted_then_clean "720: multi-line quoted arrow then clean line allowed"
+run_test test_multiline_quoted_then_redirect "720: multi-line quoted arrow then real redirect denied"
+run_test test_multiline_second_line_destructive "720: multi-line second-line destructive denied"
+run_test test_quoted_gt_plus_real_redirect "720: real redirect beside quoted > denied"
+run_test test_quoted_literal_gt_redirect "720: quoted > as content still denies its redirect"
+run_test test_quoted_then_append "720: quoted arrow does not mask a >> append"
+run_test test_quoted_gt_with_scratch_redirect "720: quoted > does not poison a scratch redirect"
+run_test test_quoted_arrow_with_scratch_redirect "720: quoted arrow does not poison a scratch redirect"
+run_test test_fallback_parity_quoted_arrow "720: bash fallback allows quoted arrow"
+run_test test_fallback_parity_html "720: bash fallback allows HTML pattern"
+run_test test_fallback_parity_real_redirect "720: bash fallback denies real redirect"
+run_test test_fallback_parity_mixed "720: bash fallback denies mixed case"
+run_test test_fallback_dq_escaped_gt "720: bash fallback allows escaped > in double quotes"
+run_test test_writer_redirect_allowed "720: writer agent may redirect"
+run_test test_writer_bare_name_allowed "720: bare agent_type spelling honored"
+run_test test_writer_rm_still_denied "720: writer agent rm still denied"
+run_test test_writer_reset_still_denied "720: writer agent git reset --hard still denied"
+run_test test_readonly_redirect_still_denied "720: read-only agent redirect still denied"
+run_test test_unknown_type_redirect_denied "720: unknown agent_type keeps enforcement"
+run_test test_writer_reason_omits_readonly "720: writer deny reason omits 'read-only'"
+run_test test_readonly_reason_keeps_wording "720: read-only deny reason unchanged"
+run_test test_writer_allowlist_matches_frontmatter "720: writer allowlist matches agent frontmatter"
 run_test test_main_rm "main-session: teardown rm allowed"
 run_test test_main_git_clean "main-session: git clean allowed"
 run_test test_scratch_rm_tmp "scratch: rm under /tmp allowed"
