@@ -334,6 +334,28 @@ test_extract_contract_regex_special_id_is_literal() {
     command rm -rf "$d"
 }
 
+# The other half of the mention guard. The test above proves a mid-line mention
+# does not TRUNCATE a region; this proves it does not make an id RESOLVE.
+#
+# Both halves are needed because the two guards are separate code: `grep -rlF`
+# selects files by substring (so it matches a mention), and only the awk
+# `index($0, m) == 1` filter rejects it. Drop that filter and the region test
+# above still passes while `extract_contract beta` starts succeeding on prose
+# that never declared a contract — or, worse, counts toward a false duplicate.
+test_extract_contract_mention_only_id_is_not_found() {
+    local d rc=0
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md \
+        '<!-- contract: alpha -->' \
+        'before' \
+        'Use the `<!-- contract: beta -->` marker to pin a block.' \
+        'after'
+    CONTRACT_SEARCH_ROOT="$d" extract_contract beta >/dev/null 2>&1 || rc=$?
+    assert_true "[ $rc -ne 0 ]" \
+        "extract_contract: an id only MENTIONED mid-line does not resolve"
+    command rm -rf "$d"
+}
+
 # --- assert_contract_carries ------------------------------------------------
 
 test_assert_contract_carries_present_is_silent() {
@@ -390,6 +412,7 @@ run_test test_extract_contract_duplicate_across_files_fails "extract_contract: i
 run_test test_extract_contract_duplicate_within_file_fails "extract_contract: id twice in one file fails loud"
 run_test test_extract_contract_empty_id_fails "extract_contract: empty id fails loud"
 run_test test_extract_contract_inline_mention_is_not_a_delimiter "extract_contract: prose mention is not a delimiter"
+run_test test_extract_contract_mention_only_id_is_not_found "extract_contract: mention-only id does not resolve"
 run_test test_extract_contract_regex_special_id_is_literal "extract_contract: regex-special id matches literally"
 
 run_test test_assert_contract_carries_present_is_silent "assert_contract_carries: present token is silent"

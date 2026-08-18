@@ -465,6 +465,35 @@ test_regen_preserves_rationale() {
         "--regen tightens the entry to the new count"
 }
 
+# A snapshot that cannot be taken must ABORT, not quietly regen. Without this
+# the mktemp-failure path re-creates the very data loss the snapshot prevents:
+# an empty REGEN_PREV sends every rationale lookup at `[ -f "" ]`, so the new
+# baseline is written with every `# why` note dropped — silently, which this
+# gate's header explicitly rules out.
+#
+# TMPDIR is pointed at a non-existent path to force mktemp to fail; the real
+# temp dir is untouched.
+test_regen_aborts_when_snapshot_fails() {
+    local sb="$WORKDIR/rat5" bl="$WORKDIR/rat5.baseline" out rc=0
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # must survive or abort\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # must survive or abort\n' "$sb" >>"$bl"
+
+    out="$(
+        TMPDIR="$WORKDIR/no-such-dir" \
+            PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
+            PROSE_BUDGET_BASELINE="$bl" \
+            PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \
+            command bash "$GATE" --regen 2>&1
+    )" || rc=$?
+
+    assert_true "[ $rc -ne 0 ]" "A failed snapshot aborts the regen (never a silent drop)"
+    assert_contains "$out" "FATAL" "The abort is loud, naming the failure"
+    # The load-bearing half: the ledger on disk is untouched, rationale intact.
+    assert_true "command grep -q 'must survive or abort' '$bl'" \
+        "The existing baseline is left intact when the snapshot fails"
+}
+
 # --- The shipped baseline ----------------------------------------------------
 
 # The committed baseline must describe the tree it ships with: every entry names
@@ -512,6 +541,7 @@ run_test test_rationale_entry_still_ratchets "A rationaled baseline entry still 
 run_test test_rationale_is_reported "Each exception's rationale is reported"
 run_test test_missing_rationale_is_named "An exception with no rationale is named"
 run_test test_regen_preserves_rationale "--regen preserves rationales while tightening"
+run_test test_regen_aborts_when_snapshot_fails "--regen aborts loudly if the snapshot fails"
 
 run_test test_real_tree_passes "The gate is green against the committed tree (AC2)"
 

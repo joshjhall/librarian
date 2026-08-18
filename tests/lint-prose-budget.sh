@@ -395,9 +395,30 @@ if [ "$REGEN" -eq 1 ]; then
     # single command inside it runs — so a baseline_rationale lookup against the
     # live path would read an empty file and silently drop every rationale,
     # which is the exact data loss the preservation exists to prevent.
-    REGEN_PREV="$(command mktemp)"
+    # FAIL LOUD if the snapshot cannot be taken. This script runs under
+    # `set -uo pipefail` with no `set -e`, so an unchecked mktemp failure would
+    # leave REGEN_PREV empty, make the redirect below a no-op, and send every
+    # later baseline_rationale lookup at `[ -f "" ]` — silently dropping every
+    # rationale, i.e. re-creating the exact data loss this snapshot exists to
+    # prevent. Per this gate's own header, a broken environment is a hard
+    # failure, never a quiet degrade.
+    REGEN_PREV="$(command mktemp)" || REGEN_PREV=""
+    if [ -z "$REGEN_PREV" ] || [ ! -f "$REGEN_PREV" ]; then
+        command printf 'lint-prose-budget: FATAL — could not create a temp file for the\n' >&2
+        command printf '  baseline snapshot. Refusing to regen: without it every existing\n' >&2
+        command printf '  rationale would be silently dropped from the ledger.\n' >&2
+        exit 2
+    fi
+    # Clean up on every exit path, including SIGINT/SIGTERM.
+    trap 'command rm -f "$REGEN_PREV"' EXIT INT TERM
     if [ -f "$BASELINE_FILE" ]; then
-        command cat "$BASELINE_FILE" >"$REGEN_PREV"
+        if ! command cat "$BASELINE_FILE" >"$REGEN_PREV"; then
+            command printf 'lint-prose-budget: FATAL — could not snapshot %s before regen.\n' \
+                "$BASELINE_FILE" >&2
+            command printf '  Refusing to regen rather than write a ledger with every\n' >&2
+            command printf '  rationale dropped.\n' >&2
+            exit 2
+        fi
     fi
     {
         command printf '# Prose-budget ratchet baseline — issue #589.\n'
@@ -431,7 +452,6 @@ if [ "$REGEN" -eq 1 ]; then
             fi
         done
     } >"$BASELINE_FILE"
-    command rm -f "$REGEN_PREV"
     command printf 'lint-prose-budget: baseline written to %s (%s entries)\n' \
         "$(rel "$BASELINE_FILE")" \
         "$(command printf '%s' "$OVER_BUDGET" | command grep -c . || true)"
