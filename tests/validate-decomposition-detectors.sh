@@ -847,6 +847,61 @@ test_ai_file_bloat() {
 }
 
 # ============================================================================
+# companion_md (#589) — skills/<name>/<other>.md, the reference prose a SKILL.md
+# loads on demand. Before this arm a companion matched NO bloat glob and fell
+# through to the production-LOC CODE thresholds — sized by a rule written for
+# source, on the largest prose files in the repo. Same defect #700 fixed for the
+# memory bundle.
+#
+# THE ORDERING CASE IS THE POINT. `*/skills/*/*.md` also matches a SKILL.md, so
+# the narrower SKILL.md arm must come FIRST in both impls (`case` takes the first
+# match; the Python arms are sequential ifs). A fixture must therefore straddle
+# the two budgets — over SKILL_HIGH but under COMPANION_HIGH — because that band
+# is the ONLY place a hoisted companion arm is observable. Sized under both, or
+# over both, the test passes with and without the bug.
+# ============================================================================
+test_companion_md_bloat() {
+    local d f list
+    d="$(fresh_dir)"
+
+    command mkdir -p "$d/skills/orch"
+    f="$d/skills/orch/mode-protocol.md"
+    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
+    list="$(list_of "$f")"
+
+    # High arm.
+    assert_fires "$list" ai-file-bloat "skill companion exceeds high threshold" \
+        "companion_md: companion over high threshold flagged" \
+        COMPANION_WARN=2 COMPANION_HIGH=3
+
+    # Warning arm.
+    assert_fires "$list" ai-file-bloat "skill companion exceeds warning threshold" \
+        "companion_md: companion over warning threshold flagged" \
+        COMPANION_WARN=3 COMPANION_HIGH=99
+
+    # Counter: under both -> silent (the arm must not over-fire).
+    assert_silent "$list" ai-file-bloat \
+        "companion_md: companion under thresholds is silent" \
+        COMPANION_WARN=50 COMPANION_HIGH=99
+
+    # ORDERING: a SKILL.md in the band between the two budgets must be judged as
+    # a SKILL definition, never as a companion. With SKILL_HIGH=3 and
+    # COMPANION_HIGH=99, a 5-line SKILL.md is over the skill budget and under the
+    # companion one — so a hoisted companion arm would report nothing here.
+    command mkdir -p "$d/skills/big"
+    f="$d/skills/big/SKILL.md"
+    command printf '%s\n' "l1" "l2" "l3" "l4" "l5" >"$f"
+    list="$(list_of "$f")"
+    assert_fires "$list" ai-file-bloat "skill definition exceeds high threshold" \
+        "companion_md: SKILL.md keeps its own tighter budget (arm ordering)" \
+        SKILL_WARN=2 SKILL_HIGH=3 COMPANION_WARN=50 COMPANION_HIGH=99
+    # And it must not ALSO be reported as a companion — one file, one verdict.
+    assert_silent "$list" doc-file-bloat \
+        "companion_md: a SKILL.md emits no doc-file-bloat row" \
+        SKILL_WARN=2 SKILL_HIGH=3 COMPANION_WARN=50 COMPANION_HIGH=99
+}
+
+# ============================================================================
 # doc-file-bloat — MOVED from validate-checker-detectors.sh by #663.
 # */docs/*.md over DOC_WARN/DOC_HIGH; a docs file must emit doc-file-bloat and
 # NOT ai-file-bloat (the #222 split).
@@ -1400,6 +1455,7 @@ run_test test_fanin_over_cap "fan-in: bare-count shape (over cap, and module-lev
 run_test test_adjacency_required "adjacency: interleaved family rejected, contiguous family accepted"
 run_test test_decline_reasons "decline: generated / cohesive / mutually-referential, each with a reason"
 run_test test_ai_file_bloat "ai-file-bloat: warn/high arms, flat+nested agent globs (moved from #204 gate)"
+run_test test_companion_md_bloat "companion_md: skills/*/other.md arms + SKILL.md ordering (#589)"
 run_test test_doc_file_bloat "doc-file-bloat: docs/*.md arms, not ai-file-bloat (moved from #204 gate)"
 run_test test_size_verdict_exclusivity "exclusivity: one size verdict per file — type budget XOR file-length (#701)"
 run_test test_god_module "god-module: concern spread required, size alone insufficient"

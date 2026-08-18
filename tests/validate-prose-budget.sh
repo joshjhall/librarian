@@ -249,6 +249,66 @@ test_reports_when_passing() {
     assert_contains "$GATE_OUT" "total lines" "Reports the aggregate size even when passing"
 }
 
+# --- Hostile filenames (no shell-out from awk) -------------------------------
+
+# The report block must never build a shell command from a corpus path. Git
+# permits almost any byte in a filename except `/` and NUL — including `"`, `$`,
+# backticks and `;` — and this gate walks all of plugins/ under CI and pre-push,
+# so a path is attacker-influenced by anyone who can add a file in a PR. An
+# earlier revision ran `cmd = "wc -l < \"" $0 "\""; cmd | getline` inside awk,
+# where such a name escapes the quoting and executes.
+#
+# The canary is what makes this a real test rather than a smoke test: the
+# injected payload would CREATE a file if the substitution were ever evaluated
+# by a shell. Asserting merely that the gate "still exits 0" would pass just as
+# well against the vulnerable version, since the injected command succeeds
+# quietly — that is the tautological-fixture shape this repo has been bitten by.
+test_hostile_filename_is_not_executed() {
+    local sb="$WORKDIR/case12" canary_name="case12-canary-589"
+    # Two constraints on the payload, BOTH verified empirically — a fixture that
+    # merely looks hostile is the tautological shape this repo keeps getting bitten
+    # by, and both mistakes were made and caught while writing this test:
+    #
+    # (1) NO `/`. That is the one byte a filename cannot hold, so an absolute
+    #     canary path makes the fixture unrepresentable and the test skips
+    #     itself — hiding the very branch it exists to cover. A bare relative
+    #     name lands in the awk process's cwd (the gate's cwd) instead.
+    # (2) NO leading `"`. Inside `wc -l < "<path>"` a `"` CLOSES the quote and
+    #     `sh` dies on "Unterminated quoted string" BEFORE reaching the
+    #     substitution — so a quote-bearing payload passes against the
+    #     vulnerable code and proves nothing. `$(...)` alone inside the intact
+    #     quotes is what actually executes (verified: it created the canary
+    #     against the pre-fix implementation).
+    local hostile='ok$(touch '"$canary_name"').md'
+    local landed="$REPO_ROOT/$canary_name"
+
+    command mkdir -p "$sb/plugins/p/skills/s"
+    if ! command touch "$sb/plugins/p/skills/s/$hostile" 2>/dev/null; then
+        skip_test "filesystem rejects the hostile filename"
+        return 0
+    fi
+    make_md "$sb/plugins/p/skills/s/$hostile" 10
+    command rm -f "$landed"
+
+    run_gate "$sb/plugins" "$WORKDIR/case12.baseline"
+
+    assert_exit 0 "$GATE_RC" "A hostile filename does not crash the gate"
+    assert_true "[ ! -e '$landed' ]" \
+        "The injected \$(touch …) never executed — no shell-out from awk"
+    command rm -f "$landed"
+}
+
+# Structural backstop for the same rule. The canary above proves the CURRENT
+# code does not execute the payload; this pins that the mechanism cannot come
+# back, since a future edit could reintroduce a `cmd | getline` with a filename
+# that happens not to trip the canary fixture.
+test_no_shellout_from_awk() {
+    assert_file_not_contains "$GATE" 'cmd | getline' \
+        "The report awk never pipes a built command through getline"
+    assert_file_not_contains "$GATE" 'wc -l < \"' \
+        "No shell wc invocation is built from an interpolated awk field"
+}
+
 # --- Fail loud, never 77 (AC4) -----------------------------------------------
 
 # The repo's degradation policy reserves 77 for an absent LINTER. This gate's
@@ -360,6 +420,8 @@ run_test test_scanner_agrees_on_companion "check-decomposition agrees on the com
 run_test test_verification_docs_out_of_scope "docs/verification is out of scope by construction"
 run_test test_real_corpus_non_empty "The real corpus is non-empty (gate is not a no-op)"
 run_test test_reports_when_passing "Size is reported on a passing run too (AC1)"
+run_test test_hostile_filename_is_not_executed "A hostile filename is never executed (no awk shell-out)"
+run_test test_no_shellout_from_awk "The report awk builds no shell command (structural)"
 run_test test_missing_thresholds_fails_loudly "A missing thresholds file fails loudly, not 77"
 run_test test_missing_key_fails_loudly "A thresholds file missing a key fails loudly"
 run_test test_thresholds_are_actually_read "Thresholds are parsed from the table, not hardcoded"

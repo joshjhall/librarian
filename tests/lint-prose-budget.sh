@@ -266,6 +266,9 @@ TOTAL_LINES=0
 TOTAL_FILES=0
 VIOLATIONS=""
 OVER_BUDGET=""
+# `<relative-path>\t<count>` per file, fed to the report's awk on stdin so it
+# never has to run `wc` on an attacker-influenced path. See the report block.
+FILE_COUNTS=""
 
 CORPUS="$(collect_corpus)"
 
@@ -279,6 +282,8 @@ while IFS= read -r file; do
 
     TOTAL_FILES=$((TOTAL_FILES + 1))
     TOTAL_LINES=$((TOTAL_LINES + count))
+    FILE_COUNTS="$FILE_COUNTS$relpath	$count
+"
 
     [ "$count" -gt "$budget" ] || continue
 
@@ -350,12 +355,22 @@ command printf '\n=== Plugin prose size (plugins/**/*.md + README.md) ===\n\n'
 command printf '  %s files, %s total lines\n\n' "$TOTAL_FILES" "$TOTAL_LINES"
 
 command printf '  Per-skill / per-directory totals (top 10):\n'
-command printf '%s\n' "$CORPUS" | LC_ALL=C command awk '
-  NF == 0 { next }
+# awk receives `<relative-path>\t<count>` pairs on STDIN and never runs a
+# command. It deliberately does NOT shell out to `wc` with an interpolated
+# path: git allows almost any byte in a filename except `/` and NUL, so a file
+# named with a `"` or `$(...)` would escape the quoting and be executed by the
+# shell awk spawns. This gate walks all of plugins/ and runs in CI and pre-push,
+# so that path is reachable by anyone who can add a file in a PR. The counts are
+# already computed in the scan loop above, which makes passing them in both
+# safer and cheaper than recomputing — there is no tradeoff to weigh here.
+command printf '%s' "$FILE_COUNTS" | LC_ALL=C command awk -F '\t' '
+  NF < 2 { next }
   {
-    n = split($0, p, "/")
+    path = $1
+    c = $2 + 0
+    n = split(path, p, "/")
     # Group a skill by its directory, an agents/ file by its plugin.
-    key = $0
+    key = path
     for (i = 1; i < n; i++) {
       if (p[i] == "skills" || p[i] == "agents") {
         key = ""
@@ -364,18 +379,13 @@ command printf '%s\n' "$CORPUS" | LC_ALL=C command awk '
         break
       }
     }
-    cmd = "wc -l < \"" $0 "\""
-    cmd | getline c
-    close(cmd)
     sum[key] += c
     cnt[key]++
   }
   END {
     for (k in sum) printf "%8d  %3d files  %s\n", sum[k], cnt[k], k
   }
-' | command sort -rn | command head -10 | LC_ALL=C command awk -v root="$REPO_ROOT/" '
-  { sub(root, "", $0); print "  " $0 }
-'
+' | command sort -rn | command head -10 | LC_ALL=C command awk '{ print "  " $0 }'
 
 over_count="$(command printf '%s' "$OVER_BUDGET" | command grep -c . || true)"
 command printf '\n  %s file(s) over their type budget (ratcheted by tests/prose-budget.baseline)\n' \
