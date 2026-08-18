@@ -16,6 +16,18 @@
 # the report lists any entry still missing one.
 #
 # Format: <repo-relative-path> <line-count> [# why this exception stands]
-plugins/review-audit/agents/checker.md 580 # 7-step pipeline the pre-scan calls "mutually referential"; #503 moved the one separable block (Step 3a) to check-ai-config/agnix-prescan.md — further cuts tracked separately
+#
+# #503 slice 1 — what was deliberately NOT done, so it is not re-derived:
+#   * checker.md stops at 580, still over the 400 agent bar. Its 7 steps are
+#     "mutually referential" per the pre-scan, so Step 3a was the one separable
+#     block. Remaining cuts: #717.
+#   * audit-ai-config.md (273) is 23 over its 250 warn with 11-22 line sections;
+#     extraction would cost more indirection than it saves. Justified in place,
+#     which #503 AC2 explicitly permits ("or an explicit justification why not").
+#     It is under its 400 high bar, so it is not a ledger entry.
+#   * The four workflow.js harnesses (#503 AC3) are untouched here: they have no
+#     module system and cannot be split into importable files (#90, #91). The
+#     per-harness structurable-vs-irreducible decision is #718.
+plugins/review-audit/agents/checker.md 580 # 7-step pipeline the pre-scan calls "mutually referential"; #503 moved the one separable block (Step 3a) to check-ai-config/agnix-prescan.md — remaining cuts tracked in #717
 plugins/workflow/skills/orchestrate/mode-protocol.md 877 # carries all orchestration modes; splitting per-mode would scatter one decision table an operator reads end-to-end
 plugins/workflow/skills/ship-issue/ci-review-protocol.md 749 # the CI-wait + multi-cycle review contract; its length is the protocol, and every ship path loads it whole

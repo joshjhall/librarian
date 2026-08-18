@@ -383,6 +383,88 @@ test_thresholds_are_actually_read() {
         "With agent_md.high lowered to 100 the same file now fails — thresholds are read, not hardcoded"
 }
 
+# --- The exceptions ledger: rationales ---------------------------------------
+#
+# The budgets are TARGETS, not laws — a file that is genuinely better long stays
+# long. The risk is not any single exception but exceptions ACCUMULATING
+# UNNOTICED until the budget means nothing, so each baseline entry carries an
+# optional trailing `# why` and the gate surfaces the ledger on every run.
+#
+# Three properties worth pinning, because each has a silent failure mode:
+#   1. an entry WITH a rationale still parses its count (a naive `${rest##* }`
+#      returns the empty string once a trailing space precedes the `#`, which
+#      would stop ratcheting that file entirely while the run still looked fine);
+#   2. --regen PRESERVES rationales (a regen that dropped them would erase every
+#      justification on a routine shrink, keeping the numbers and losing the
+#      reasons);
+#   3. an entry WITHOUT a rationale is named, so an unjustified exception cannot
+#      blend into a count.
+
+# A rationaled entry must ratchet exactly like a bare one: at its entry it
+# passes, one line above it fails.
+test_rationale_entry_still_ratchets() {
+    local sb="$WORKDIR/rat1"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    # Both path spellings — see test_at_baseline_passes: a sandbox outside the
+    # repo root keeps its absolute path, while the shipped baseline is relative.
+    command printf 'plugins/p/agents/big.md 500 # deliberately whole, see #503\n' \
+        >"$WORKDIR/rat1.baseline"
+    command printf '%s/plugins/p/agents/big.md 500 # deliberately whole, see #503\n' \
+        "$sb" >>"$WORKDIR/rat1.baseline"
+    run_gate "$sb/plugins" "$WORKDIR/rat1.baseline"
+    assert_exit 0 "$GATE_RC" "A rationaled entry passes at its recorded count"
+
+    # One line above the entry must fail — proves the count was really parsed
+    # and not silently read as empty.
+    make_md "$sb/plugins/p/agents/big.md" 501
+    run_gate "$sb/plugins" "$WORKDIR/rat1.baseline"
+    assert_exit 1 "$GATE_RC" "A rationaled entry still fails on growth"
+}
+
+# The rationale is echoed in the report, so the ledger is readable on every run.
+test_rationale_is_reported() {
+    local sb="$WORKDIR/rat2"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # cohesive by design\n' \
+        >"$WORKDIR/rat2.baseline"
+    command printf '%s/plugins/p/agents/big.md 500 # cohesive by design\n' \
+        "$sb" >>"$WORKDIR/rat2.baseline"
+    run_gate "$sb/plugins" "$WORKDIR/rat2.baseline"
+    assert_contains "$GATE_OUT" "cohesive by design" \
+        "The report prints each exception's rationale"
+}
+
+# An exception with no rationale is named, not merely counted.
+test_missing_rationale_is_named() {
+    local sb="$WORKDIR/rat3"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500\n' >"$WORKDIR/rat3.baseline"
+    command printf '%s/plugins/p/agents/big.md 500\n' "$sb" >>"$WORKDIR/rat3.baseline"
+    run_gate "$sb/plugins" "$WORKDIR/rat3.baseline"
+    assert_contains "$GATE_OUT" "NO RATIONALE RECORDED" \
+        "An unjustified exception is called out by name"
+    assert_exit 0 "$GATE_RC" \
+        "A missing rationale REPORTS but does not fail (the ratchet already guards growth)"
+}
+
+# --regen must carry existing rationales forward. Without this a routine shrink
+# silently erases every justification in the ledger.
+test_regen_preserves_rationale() {
+    local sb="$WORKDIR/rat4" bl="$WORKDIR/rat4.baseline"
+    make_md "$sb/plugins/p/agents/big.md" 500
+    command printf 'plugins/p/agents/big.md 500 # keep me across regen\n' >"$bl"
+    command printf '%s/plugins/p/agents/big.md 500 # keep me across regen\n' "$sb" >>"$bl"
+
+    # Shrink the file, then regen: the entry tightens, the reason survives.
+    make_md "$sb/plugins/p/agents/big.md" 450
+    run_gate "$sb/plugins" "$bl" --regen
+
+    assert_true "command grep -q 'keep me across regen' '$bl'" \
+        "--regen preserves an existing rationale"
+    assert_true "command grep -q 'big.md 450' '$bl'" \
+        "--regen tightens the entry to the new count"
+}
+
 # --- The shipped baseline ----------------------------------------------------
 
 # The committed baseline must describe the tree it ships with: every entry names
@@ -426,6 +508,11 @@ run_test test_missing_thresholds_fails_loudly "A missing thresholds file fails l
 run_test test_missing_key_fails_loudly "A thresholds file missing a key fails loudly"
 run_test test_thresholds_are_actually_read "Thresholds are parsed from the table, not hardcoded"
 run_test test_shipped_baseline_is_current "Every shipped baseline entry names a real file"
+run_test test_rationale_entry_still_ratchets "A rationaled baseline entry still ratchets"
+run_test test_rationale_is_reported "Each exception's rationale is reported"
+run_test test_missing_rationale_is_named "An exception with no rationale is named"
+run_test test_regen_preserves_rationale "--regen preserves rationales while tightening"
+
 run_test test_real_tree_passes "The gate is green against the committed tree (AC2)"
 
 generate_report

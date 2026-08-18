@@ -320,14 +320,6 @@ assert_file_not_contains() {
 # block wherever it lives.
 CONTRACT_SEARCH_ROOT="${CONTRACT_SEARCH_ROOT:-}"
 
-# escape_ere <string> — quote ERE metacharacters so a literal can be used in an
-# anchored `grep` pattern. Contract markers contain `-` and `!` and are wrapped
-# in `<!-- -->`; none of those are ERE-special today, but ids are author-supplied
-# and a future one containing `.` or `+` would otherwise match too loosely.
-escape_ere() {
-    command printf '%s' "$1" | command sed 's/[][\\.^$*+?(){}|\/]/\\&/g'
-}
-
 # extract_contract <id> [file]
 #
 # Print the contract block for <id>. With <file>, search only that file; without
@@ -355,8 +347,23 @@ extract_contract() {
         # Line-initial only (see the extraction awk below): a prose mention of
         # the marker syntax must not make an id look present — or, worse,
         # duplicated across files, which would abort the suite.
-        files="$(command grep -rl "^$(escape_ere "$marker")" "$CONTRACT_SEARCH_ROOT" \
-            --include='*.md' 2>/dev/null || true)"
+        #
+        # FIXED-STRING, not a regex. The marker is always a literal, and ids are
+        # author-supplied, so building a pattern out of one means escaping it —
+        # and a backslash-escaped `+ ? | ( ) { }` means OPPOSITE things in BRE
+        # and ERE (GNU-only operators in BRE, literals on BSD/macOS). That is
+        # the silent GNU-vs-BSD divergence CLAUDE.md singles out: the pattern
+        # quietly stops matching, zero files come back, and the id then reports
+        # as "not found". `grep -F` sidesteps the whole class — there is no
+        # pattern to escape — and `-l` + the awk index()==1 check below enforce
+        # the line-initial requirement that the `^` anchor used to.
+        files="$(command grep -rlF "$marker" "$CONTRACT_SEARCH_ROOT" \
+            --include='*.md' 2>/dev/null |
+            while IFS= read -r _f; do
+                # Keep only files where the marker STARTS a line.
+                command awk -v m="$marker" 'index($0, m) == 1 { found = 1; exit }
+                    END { exit !found }' "$_f" && command printf '%s\n' "$_f"
+            done || true)"
     fi
 
     if [ -z "$files" ]; then

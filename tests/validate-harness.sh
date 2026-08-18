@@ -221,6 +221,142 @@ test_skip_test_increments_counter() {
     assert_contains "$out" "STATUS=skipped" "skip_test sets TEST_STATUS=skipped"
 }
 
+# --- extract_contract -------------------------------------------------------
+#
+# extract_contract is shared infrastructure two prose-contract gates now depend
+# on, and its whole value proposition is that it fails LOUD rather than handing
+# back an empty region every assert_contains would then pass against. That
+# vacuous-pass mode is the specific way a prose gate rots into sitting inert
+# while reporting green, so the failure branches are the ones worth pinning —
+# the success path is already exercised by both consuming gates on every run.
+#
+# Each probe builds a throwaway fixture tree under mktemp -d, so nothing here
+# depends on the repo's real contract ids.
+
+# contract_fixture <dir> <file> <body...> — write a fixture markdown file.
+contract_fixture() {
+    local dir="$1" name="$2"
+    shift 2
+    command mkdir -p "$dir"
+    command printf '%s\n' "$@" >"$dir/$name"
+}
+
+test_extract_contract_happy_path() {
+    local d out
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md \
+        'intro line' \
+        '<!-- contract: alpha -->' \
+        'alpha body one' \
+        'alpha body two' \
+        '<!-- contract: beta -->' \
+        'beta body'
+    out="$(CONTRACT_SEARCH_ROOT="$d" extract_contract alpha)"
+    assert_contains "$out" "alpha body one" "extract_contract: returns the block body"
+    assert_not_contains "$out" "beta body" \
+        "extract_contract: stops at the next marker (does not run to EOF)"
+    assert_not_contains "$out" "intro line" \
+        "extract_contract: starts after its own marker"
+    command rm -rf "$d"
+}
+
+test_extract_contract_missing_id_fails() {
+    local d rc=0
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md '<!-- contract: alpha -->' 'body'
+    CONTRACT_SEARCH_ROOT="$d" extract_contract nope >/dev/null 2>&1 || rc=$?
+    assert_true "[ $rc -ne 0 ]" \
+        "extract_contract: a missing id exits non-zero (never an empty region)"
+    command rm -rf "$d"
+}
+
+test_extract_contract_duplicate_across_files_fails() {
+    local d rc=0
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md '<!-- contract: dup -->' 'body a'
+    contract_fixture "$d" b.md '<!-- contract: dup -->' 'body b'
+    CONTRACT_SEARCH_ROOT="$d" extract_contract dup >/dev/null 2>&1 || rc=$?
+    assert_true "[ $rc -ne 0 ]" \
+        "extract_contract: an id in two files exits non-zero (ambiguous target)"
+    command rm -rf "$d"
+}
+
+test_extract_contract_duplicate_within_file_fails() {
+    local d rc=0
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md \
+        '<!-- contract: dup -->' 'first' '<!-- contract: dup -->' 'second'
+    CONTRACT_SEARCH_ROOT="$d" extract_contract dup >/dev/null 2>&1 || rc=$?
+    assert_true "[ $rc -ne 0 ]" \
+        "extract_contract: an id twice in one file exits non-zero"
+    command rm -rf "$d"
+}
+
+test_extract_contract_empty_id_fails() {
+    local d rc=0
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md '<!-- contract: alpha -->' 'body'
+    CONTRACT_SEARCH_ROOT="$d" extract_contract "" >/dev/null 2>&1 || rc=$?
+    assert_true "[ $rc -ne 0 ]" "extract_contract: an empty id exits non-zero"
+    command rm -rf "$d"
+}
+
+# A prose MENTION of the marker syntax must not act as a delimiter — the
+# companion files explain these markers to their readers, and an inline mention
+# that truncated a region would silently drop the tail half of a contract.
+test_extract_contract_inline_mention_is_not_a_delimiter() {
+    local d out
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md \
+        '<!-- contract: alpha -->' \
+        'before' \
+        'Use the `<!-- contract: beta -->` marker to pin a block.' \
+        'after'
+    out="$(CONTRACT_SEARCH_ROOT="$d" extract_contract alpha)"
+    assert_contains "$out" "after" \
+        "extract_contract: a mid-line marker mention does not end the region"
+    command rm -rf "$d"
+}
+
+# Regex-special characters in an id must be matched LITERALLY. The marker search
+# is fixed-string precisely so a `+`/`(` in an id cannot be reinterpreted as a
+# BRE-vs-ERE operator — the silent GNU/BSD divergence CLAUDE.md warns about,
+# where the pattern stops matching and the id just reports as "not found".
+test_extract_contract_regex_special_id_is_literal() {
+    local d out rc=0
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md '<!-- contract: a+b(c) -->' 'special body'
+    out="$(CONTRACT_SEARCH_ROOT="$d" extract_contract 'a+b(c)')" || rc=$?
+    assert_true "[ $rc -eq 0 ]" \
+        "extract_contract: an id with regex metacharacters resolves"
+    assert_contains "$out" "special body" \
+        "extract_contract: metacharacter id matches literally, not as a pattern"
+    command rm -rf "$d"
+}
+
+# --- assert_contract_carries ------------------------------------------------
+
+test_assert_contract_carries_present_is_silent() {
+    local out
+    out="$(capture_assert assert_contract_carries id 'the AGNIX_CONFIG rule' 'AGNIX_CONFIG')"
+    assert_equals "" "$out" "assert_contract_carries: a present token is silent"
+}
+
+# The tamper half: an absent token must FAIL rather than pass vacuously. Without
+# this probe the detector is only ever driven with tokens that are genuinely
+# present, so a broken tamper check would look identical to a working one.
+test_assert_contract_carries_absent_token_fails() {
+    local out
+    out="$(capture_assert assert_contract_carries id 'some unrelated prose' 'AGNIX_CONFIG')"
+    assert_contains "$out" "FAIL" "assert_contract_carries: an absent token fails"
+}
+
+test_assert_contract_carries_empty_region_fails() {
+    local out
+    out="$(capture_assert assert_contract_carries id '' 'AGNIX_CONFIG')"
+    assert_contains "$out" "FAIL" "assert_contract_carries: an empty region fails"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 run_test test_assert_true_whitespace_is_message "assert_true: whitespace last-arg is the message"
@@ -247,5 +383,17 @@ run_test test_assert_valid_json_fail_reports "assert_valid_json: malformed JSON 
 run_test test_assert_valid_json_jq_absent_skips "assert_valid_json: jq-absent path is silent"
 
 run_test test_skip_test_increments_counter "skip_test: increments TESTS_SKIPPED and sets TEST_STATUS"
+
+run_test test_extract_contract_happy_path "extract_contract: returns the marked block"
+run_test test_extract_contract_missing_id_fails "extract_contract: missing id fails loud"
+run_test test_extract_contract_duplicate_across_files_fails "extract_contract: id in two files fails loud"
+run_test test_extract_contract_duplicate_within_file_fails "extract_contract: id twice in one file fails loud"
+run_test test_extract_contract_empty_id_fails "extract_contract: empty id fails loud"
+run_test test_extract_contract_inline_mention_is_not_a_delimiter "extract_contract: prose mention is not a delimiter"
+run_test test_extract_contract_regex_special_id_is_literal "extract_contract: regex-special id matches literally"
+
+run_test test_assert_contract_carries_present_is_silent "assert_contract_carries: present token is silent"
+run_test test_assert_contract_carries_absent_token_fails "assert_contract_carries: absent token fails"
+run_test test_assert_contract_carries_empty_region_fails "assert_contract_carries: empty region fails"
 
 generate_report

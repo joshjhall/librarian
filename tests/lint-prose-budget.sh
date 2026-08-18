@@ -390,6 +390,15 @@ EOF
 # --- --regen -----------------------------------------------------------------
 
 if [ "$REGEN" -eq 1 ]; then
+    # Snapshot the OLD baseline before writing. The `> "$BASELINE_FILE"`
+    # redirection below truncates the file the moment the block opens — before a
+    # single command inside it runs — so a baseline_rationale lookup against the
+    # live path would read an empty file and silently drop every rationale,
+    # which is the exact data loss the preservation exists to prevent.
+    REGEN_PREV="$(command mktemp)"
+    if [ -f "$BASELINE_FILE" ]; then
+        command cat "$BASELINE_FILE" >"$REGEN_PREV"
+    fi
     {
         command printf '# Prose-budget ratchet baseline — issue #589.\n'
         command printf '#\n'
@@ -414,7 +423,7 @@ if [ "$REGEN" -eq 1 ]; then
         # ledger would keep its numbers and lose its reasons.
         command printf '%s' "$OVER_BUDGET" | while IFS=' ' read -r _path _count; do
             [ -n "$_path" ] || continue
-            _note="$(baseline_rationale "$_path")"
+            _note="$(BASELINE_FILE="$REGEN_PREV" baseline_rationale "$_path")"
             if [ -n "$_note" ]; then
                 command printf '%s %s # %s\n' "$_path" "$_count" "$_note"
             else
@@ -422,6 +431,7 @@ if [ "$REGEN" -eq 1 ]; then
             fi
         done
     } >"$BASELINE_FILE"
+    command rm -f "$REGEN_PREV"
     command printf 'lint-prose-budget: baseline written to %s (%s entries)\n' \
         "$(rel "$BASELINE_FILE")" \
         "$(command printf '%s' "$OVER_BUDGET" | command grep -c . || true)"
