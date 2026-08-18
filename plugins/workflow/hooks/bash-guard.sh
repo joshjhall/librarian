@@ -503,7 +503,24 @@ is_scratch() {
 # to the command as a literal `>` argument and performs no redirection, so it is
 # the same false positive as the quoted forms, just spelled differently. Note
 # this is the ONE place the escape handling is not a pure pass-through: the
-# backslash itself is preserved, only the escaped `>` becomes a sentinel.
+# backslash itself is preserved, only the escaped `>` becomes a sentinel. This
+# applies INSIDE double quotes as well as at top level — the two are separate
+# branches, and the dq one originally leaked a raw `>` (caught in pre-PR review;
+# `echo "a \> b"` denied while performing no redirection at all).
+#
+# BARE `(( … ))` (arithmetic COMMAND, no leading `$`) is deliberately NOT treated
+# as arithmetic context, even though `if ((5 > 3)); then` is a genuine remaining
+# false positive. DO NOT "fix" it by also opening on a bare `((`: that spelling
+# is ambiguous with NESTED SUBSHELLS, and the counter cannot tell them apart.
+# Measured on this exact change before it was reverted — `((echo hi) > tracked.py)`,
+# `((cat f) > tracked.py)` and `(( echo x ) > tracked.py )` all flipped to ALLOW,
+# because the `((` opened a fake arithmetic span that swallowed the REAL redirect
+# operator. That trades a false positive for a security FALSE NEGATIVE, which is
+# strictly the worse direction for this guard. Distinguishing the two needs real
+# shell parsing (`((` is arithmetic only in command position, and even then bash
+# itself resolves the ambiguity by parse context), which the DETECTION SCOPE
+# section above rules out as a non-goal. Recorded as an accepted gap with its
+# evidence so the next reader does not re-derive the trap.
 #
 # RUNTIME: awk primary, pure-bash fallback (repo runtime policy). awk leads
 # because this hook fires before EVERY Bash call in the session and the bash
@@ -525,7 +542,16 @@ _neutralize_quoted_gt_awk() {
                 out = out (c == ">" ? "\001" : c); i++; continue
             }
             if (dq) {
-                if (c == "\\" && i < n) { out = out c substr(line, i+1, 1); i += 2; continue }
+                # An escaped char inside double quotes is still QUOTED content,
+                # so an escaped `>` here is no more a redirect than a bare one.
+                # Must sentinel it exactly as the top-level branch does, or the
+                # scan sees a raw `>` and denies (verified: `echo "a \> b"`
+                # performs no redirection in real bash, yet denied).
+                if (c == "\\" && i < n) {
+                    nx = substr(line, i+1, 1)
+                    out = out c (nx == ">" ? "\001" : nx)
+                    i += 2; continue
+                }
                 if (c == "\"") dq = 0
                 out = out (c == ">" ? "\001" : c); i++; continue
             }
@@ -565,8 +591,12 @@ _neutralize_quoted_gt_bash() {
             continue
         fi
         if [ "$_nq_dq" -eq 1 ]; then
+            # Same as the awk arm: an escaped `>` inside double quotes is quoted
+            # CONTENT, never a redirect operator, so it takes the sentinel too.
             if [ "$_nq_c" = "\\" ] && [ $((_nq_i + 1)) -lt "$_nq_n" ]; then
-                _nq_out="$_nq_out$_nq_c${_nq_in:$((_nq_i + 1)):1}"
+                _nq_nx="${_nq_in:$((_nq_i + 1)):1}"
+                [ "$_nq_nx" = ">" ] && _nq_nx=$'\001'
+                _nq_out="$_nq_out$_nq_c$_nq_nx"
                 _nq_i=$((_nq_i + 2))
                 continue
             fi

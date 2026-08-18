@@ -321,6 +321,52 @@ test_js_arrow() { allow_cmd 'node -e "const f=()=>1"' "a JS arrow fn is not a re
 test_squote_gt() { allow_cmd "echo 'single > quoted'" "a single-quoted > is not a redirect"; }
 test_escaped_gt() { allow_cmd 'echo x \> y' "a backslash-escaped > is not a redirect"; }
 
+# An escaped `>` INSIDE double quotes. Distinct from test_escaped_gt above,
+# which only covers the TOP-LEVEL (unquoted) form — the two are handled by
+# different branches of the neutralizer, and the dq branch originally copied the
+# escaped char through verbatim, leaking a raw `>` into the scan. Verified
+# against real bash: `echo "a \> b"` prints `a \> b` and creates no file, so
+# there is no redirection to deny. Caught by pre-PR review, not by the parity
+# tests below — BOTH impls shared the omission, so they agreed with each other
+# while both being wrong (the parity-gate-hides-a-shared-defect class), which is
+# why these assert BEHAVIOR rather than agreement.
+test_dq_escaped_gt() { allow_cmd 'echo "a \> b"' "an escaped > inside double quotes is not a redirect"; }
+test_dq_escaped_gt_with_scratch() { allow_cmd 'echo "a \> b" > /tmp/log' "an escaped > in dquotes does not poison a scratch redirect"; }
+test_dq_escaped_gt_real_redirect() { deny_cmd 'echo "a \> b" > tracked.py' "an escaped > in dquotes does not mask a real redirect"; }
+
+# The arithmetic arm tracks `$((`/`))` with a flat counter rather than true paren
+# depth, so a nested-paren body could in principle close LATER than real bash
+# does — which would swallow a following real `>` and hide a redirect (a
+# FALSE NEGATIVE, the worst direction for a security control). Raised as a
+# LOW-certainty finding in pre-PR review with no live repro; probed adversarially
+# across nested, doubled and mixed bodies and every real redirect still denied
+# (the flat counter closes EARLY or identically — the safe direction). Pinned
+# here so a future refactor of the arithmetic handling cannot introduce the
+# bypass silently.
+test_arith_nested_paren_redirect() { deny_cmd 'x=$(( (1+1) )) > tracked.py' "a nested-paren arithmetic body does not hide a real redirect"; }
+test_arith_deep_paren_redirect() { deny_cmd 'x=$(( (1+(2*3)) )) > tracked.py' "a deeply nested arithmetic body does not hide a real redirect"; }
+test_arith_gt_inside_then_redirect() { deny_cmd 'echo $(( (5 > 3) )) > tracked.py' "an arithmetic > does not hide the following real redirect"; }
+
+# NESTED SUBSHELL, not arithmetic. These pin the reason bare `(( … ))` is NOT
+# treated as an arithmetic context: `((` is ambiguous between the arithmetic
+# command and two nested subshells, and opening a span on it makes the scan
+# swallow a REAL redirect. Each of these was measured flipping to ALLOW when
+# that "fix" was attempted — a security false negative, strictly worse than the
+# `if ((5 > 3))` false positive it removed. They fail loudly if anyone retries it.
+test_subshell_redirect_not_arithmetic() { deny_cmd '((echo hi) > tracked.py)' "nested subshells are not an arithmetic span"; }
+test_subshell_redirect_spaced() { deny_cmd '(( echo x ) > tracked.py )' "spaced nested subshells are not an arithmetic span"; }
+test_subshell_cat_redirect() { deny_cmd '((cat f) > tracked.py)' "a subshell redirect to a tracked path still denies"; }
+
+# Multi-line commands: newlines are folded to `;` BEFORE neutralization, so a
+# quoted `>` on one line must not shadow a real redirect or a destructive verb
+# on another. (The fold also stops awk's record splitting from dropping lines.)
+test_multiline_quoted_then_clean() { allow_cmd 'echo "a -> b"
+grep -n foo bar.json' "a quoted arrow does not taint a later clean line"; }
+test_multiline_quoted_then_redirect() { deny_cmd 'echo "a -> b"
+echo x > tracked.py' "a quoted arrow does not mask a real redirect on a later line"; }
+test_multiline_second_line_destructive() { deny_cmd 'echo hi
+rm -rf src/' "a destructive verb on a later line is still caught"; }
+
 # Over-reach guards: a real redirect must survive alongside a quoted `>`.
 test_quoted_gt_plus_real_redirect() { deny_cmd 'grep -o "<b>" f.json > tracked.py' "a real redirect beside a quoted > still denies"; }
 test_quoted_literal_gt_redirect() { deny_cmd 'echo ">" > tracked.py' "a quoted > as CONTENT still denies its real redirect"; }
@@ -363,6 +409,13 @@ test_fallback_parity_real_redirect() {
 test_fallback_parity_mixed() {
     jq_required || return 0
     assert_equals "deny" "$(forced_bash_decision 'grep -o "<b>" f.json > tracked.py')" "bash fallback denies a real redirect beside a quoted >"
+}
+# Asserts the fallback's ABSOLUTE expected decision for the dq-escape case, not
+# merely that it matches awk — the shared-omission bug above proved agreement is
+# not evidence of correctness.
+test_fallback_dq_escaped_gt() {
+    jq_required || return 0
+    assert_equals "allow" "$(forced_bash_decision 'echo "a \> b"')" "bash fallback allows an escaped > inside double quotes"
 }
 
 # --- Writer subagents are not "read-only review/analysis" (#720) -------------
@@ -651,6 +704,18 @@ run_test test_quoted_numeric_gt "720: quoted numeric comparison allowed"
 run_test test_js_arrow "720: JS arrow fn allowed"
 run_test test_squote_gt "720: single-quoted > allowed"
 run_test test_escaped_gt "720: backslash-escaped > allowed"
+run_test test_dq_escaped_gt "720: escaped > inside double quotes allowed"
+run_test test_dq_escaped_gt_with_scratch "720: escaped > in dquotes does not poison a scratch redirect"
+run_test test_dq_escaped_gt_real_redirect "720: escaped > in dquotes does not mask a real redirect"
+run_test test_arith_nested_paren_redirect "720: nested-paren arithmetic does not hide a redirect"
+run_test test_arith_deep_paren_redirect "720: deep-nested arithmetic does not hide a redirect"
+run_test test_arith_gt_inside_then_redirect "720: arithmetic > does not hide the following redirect"
+run_test test_subshell_redirect_not_arithmetic "720: nested subshell redirect still denied"
+run_test test_subshell_redirect_spaced "720: spaced nested subshell redirect still denied"
+run_test test_subshell_cat_redirect "720: subshell cat redirect still denied"
+run_test test_multiline_quoted_then_clean "720: multi-line quoted arrow then clean line allowed"
+run_test test_multiline_quoted_then_redirect "720: multi-line quoted arrow then real redirect denied"
+run_test test_multiline_second_line_destructive "720: multi-line second-line destructive denied"
 run_test test_quoted_gt_plus_real_redirect "720: real redirect beside quoted > denied"
 run_test test_quoted_literal_gt_redirect "720: quoted > as content still denies its redirect"
 run_test test_quoted_then_append "720: quoted arrow does not mask a >> append"
@@ -660,6 +725,7 @@ run_test test_fallback_parity_quoted_arrow "720: bash fallback allows quoted arr
 run_test test_fallback_parity_html "720: bash fallback allows HTML pattern"
 run_test test_fallback_parity_real_redirect "720: bash fallback denies real redirect"
 run_test test_fallback_parity_mixed "720: bash fallback denies mixed case"
+run_test test_fallback_dq_escaped_gt "720: bash fallback allows escaped > in double quotes"
 run_test test_writer_redirect_allowed "720: writer agent may redirect"
 run_test test_writer_bare_name_allowed "720: bare agent_type spelling honored"
 run_test test_writer_rm_still_denied "720: writer agent rm still denied"
