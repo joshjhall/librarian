@@ -83,6 +83,11 @@ AGENT_WARN="${AGENT_WARN:-250}"
 AGENT_HIGH="${AGENT_HIGH:-400}"
 DOC_WARN="${DOC_WARN:-500}"
 DOC_HIGH="${DOC_HIGH:-800}"
+# Skill companion prose (#589) — the reference files a SKILL.md loads on demand.
+# Before this arm they matched nothing and fell through to DECOMP_LOC_*, the code
+# thresholds; same defect #700 fixed for the memory bundle.
+COMPANION_WARN="${COMPANION_WARN:-400}"
+COMPANION_HIGH="${COMPANION_HIGH:-650}"
 # Memory-bundle budgets (#700) — index is a READ limit, concept is the cost of
 # one recalled fact. Before #700 a bundle file matched no bloat arm and fell
 # through to DECOMP_LOC_*, the code thresholds.
@@ -182,6 +187,15 @@ while IFS= read -r file; do
             b_warn=$AGENT_WARN
             b_high=$AGENT_HIGH
             b_type="agent definition"
+            b_cat="ai-file-bloat"
+            ;;
+        # Skill COMPANION prose (#589). MUST stay below the */skills/*/SKILL.md
+        # arm above, which is the narrower pattern: `case` takes the FIRST match,
+        # so hoisting this would swallow every SKILL.md into the looser budget.
+        */skills/*/*.md)
+            b_warn=$COMPANION_WARN
+            b_high=$COMPANION_HIGH
+            b_type="skill companion"
             b_cat="ai-file-bloat"
             ;;
         */docs/*.md)

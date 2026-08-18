@@ -175,6 +175,32 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   (run by `tests/run-all.sh`, so it gates CI and pre-push) enforces the
   pinned-SHA + version-comment **format** offline. Dependabot's PRs commit as
   `ci(deps): …` to satisfy the `conform` scope enum (`.conform.yaml`).
+- **Plugin prose has a size budget, ratcheted** (#589). Markdown is the largest
+  surface here (~20.6k lines, more than the shell and JS combined) and grows
+  faster than either, so `tests/lint-prose-budget.sh` (run by `tests/run-all.sh`,
+  so it gates CI and pre-push) budgets every `plugins/**/*.md` by file type.
+  Three rules to know:
+  (1) **One threshold table.** The budgets are
+  `check-decomposition/thresholds.yml`'s `bloat_thresholds` — the same table the
+  audit lens, the review lens, and index health read. The gate **parses** it; it
+  keeps no copy. Never hardcode a prose threshold in a consumer, for the reason
+  stated in that file: two tables over the same files that must agree is exactly
+  the duplication #663 was filed to eliminate.
+  (2) **The ceiling is `max(type budget, baseline entry)`,** where the baseline
+  is `tests/prose-budget.baseline`. This is what lets the gate land green on a
+  tree that already exceeds its budgets while still failing on **growth** — a
+  fixed constant cannot do both. A file may shrink freely
+  (`tests/lint-prose-budget.sh --regen` then **tightens** the entry); **raising**
+  an entry is a deliberate one-line diff that wants a reason in the commit
+  message. A brand-new file gets its real type budget, never the loosest number
+  in the repo.
+  (3) **`docs/verification/**` is exempt**, by construction rather than by a
+  filter — the gate's root is `plugins/`, so those dated transcripts are simply
+  never walked. Same reason `lint-command-refs.sh` exempts them: their length is
+  evidence, and a budget over them would pressure someone to edit a session log
+  to fit. Note this gate **fails loud** on a missing runtime rather than
+  returning the 77 sentinel — 77 is for an absent *linter*, and coreutils being
+  gone is a broken environment, not an unavailable optional tool.
 
 ## Common commands
 

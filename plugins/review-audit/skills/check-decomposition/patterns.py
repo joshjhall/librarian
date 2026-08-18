@@ -554,6 +554,22 @@ def bloat_spec(path: str) -> tuple[int, int, str, str] | None:
             "agent definition",
             "ai-file-bloat",
         )
+    if _glob(path, "*/skills/*/*.md"):
+        # Skill COMPANION prose (#589) — a reference file a SKILL.md tells the
+        # agent to load. MUST stay below the SKILL.md arm above, which is the
+        # narrower pattern: these arms are sequential, so hoisting this one
+        # would swallow every SKILL.md into the looser companion budget.
+        #
+        # Before this arm existed, a companion matched NOTHING here and fell
+        # through to the production-LOC code thresholds (300/500) — sized by a
+        # rule written for source. Exactly the defect #700 fixed for memory
+        # bundles, on the repo's LARGEST prose files.
+        return (
+            _int_env("COMPANION_WARN", 400),
+            _int_env("COMPANION_HIGH", 650),
+            "skill companion",
+            "ai-file-bloat",
+        )
     if _glob(path, "*/docs/*.md"):
         return (
             _int_env("DOC_WARN", 500),

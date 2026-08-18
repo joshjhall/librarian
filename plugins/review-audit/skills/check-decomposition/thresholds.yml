@@ -145,6 +145,20 @@ bloat_thresholds:
   doc_md: # docs/*.md — not auto-loaded, but hard to navigate when huge
     warning: 500 # DOC_WARN
     high: 800 # DOC_HIGH
+  # Skill companion prose (#589) — skills/<name>/<other>.md, the reference files
+  # a SKILL.md tells the agent to load ("load state-format.md at the start of
+  # every invocation"). Before this arm they matched NOTHING here and fell
+  # through to the production-LOC code thresholds above — sized by a rule
+  # written for source, on the largest prose files in the repo. Same defect the
+  # memory arms below were added to fix.
+  #
+  # Budgeted BETWEEN skill_md and doc_md, and the ordering is the argument:
+  # looser than a SKILL.md because a companion is loaded on demand rather than
+  # on every activation, tighter than a docs page because it IS auto-loaded
+  # when its SKILL.md says so, which a docs page never is.
+  companion_md:
+    warning: 400 # COMPANION_WARN
+    high: 650 # COMPANION_HIGH
   # Memory-bundle markdown (#700). A bundle file is neither code nor a docs
   # page, and before #700 it matched no arm here — so it fell through to the
   # production-LOC code thresholds above (300/500), silently sized by a rule
