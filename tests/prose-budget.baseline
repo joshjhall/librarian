@@ -1,0 +1,15 @@
+# Prose-budget ratchet baseline — issue #589.
+#
+# Files currently OVER their type budget in
+# check-decomposition/thresholds.yml (bloat_thresholds). The gate fails a
+# file above max(its type budget, its entry here), so these are frozen at
+# their present size: they may shrink freely, and any growth fails.
+#
+# Regenerate with: tests/lint-prose-budget.sh --regen
+# RAISING an entry is a deliberate, reviewable decision — a bigger file
+# needs a reason in the commit message, not a silent regen.
+#
+# Format: <repo-relative-path> <line-count>
+plugins/review-audit/agents/checker.md 676
+plugins/workflow/skills/orchestrate/mode-protocol.md 877
+plugins/workflow/skills/ship-issue/ci-review-protocol.md 749
