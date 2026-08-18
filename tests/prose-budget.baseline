@@ -9,7 +9,13 @@
 # RAISING an entry is a deliberate, reviewable decision — a bigger file
 # needs a reason in the commit message, not a silent regen.
 #
-# Format: <repo-relative-path> <line-count>
-plugins/review-audit/agents/checker.md 676
-plugins/workflow/skills/orchestrate/mode-protocol.md 877
-plugins/workflow/skills/ship-issue/ci-review-protocol.md 749
+# THE BUDGETS ARE TARGETS, NOT LAWS. Some files are genuinely better long. This
+# file is the EXCEPTIONS LEDGER: each entry is consciously over budget, the
+# ratchet stops it growing, and the trailing `#` note says WHY it is allowed.
+# Add a rationale when you add an entry — --regen preserves existing ones, and
+# the report lists any entry still missing one.
+#
+# Format: <repo-relative-path> <line-count> [# why this exception stands]
+plugins/review-audit/agents/checker.md 580 # 7-step pipeline the pre-scan calls "mutually referential"; #503 moved the one separable block (Step 3a) to check-ai-config/agnix-prescan.md — further cuts tracked separately
+plugins/workflow/skills/orchestrate/mode-protocol.md 877 # carries all orchestration modes; splitting per-mode would scatter one decision table an operator reads end-to-end
+plugins/workflow/skills/ship-issue/ci-review-protocol.md 749 # the CI-wait + multi-cycle review contract; its length is the protocol, and every ship path loads it whole

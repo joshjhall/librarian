@@ -48,73 +48,68 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 CHECKER="$REPO_ROOT/plugins/review-audit/agents/checker.md"
 
-# Mis-anchor bound for the Step 6 region (see assert_wired). Step 6 carries the
-# precedence rule plus #470's two drop guards and the within-skill merge
-# exemption, so it is legitimately longer than the 90-line default sized for
-# Step 3a. Raise this deliberately when Step 6 gains contract text — it exists to
-# catch an extract that ran away past its END sentinel, not to budget prose.
-STEP6_MAX_LINES=110
+# Contract blocks are addressed BY ID and resolved anywhere under plugins/, so
+# this gate does not care which file carries them. #503 moved the whole agnix
+# sub-step out of checker.md into
+# plugins/review-audit/skills/check-ai-config/agnix-prescan.md without a single
+# assertion below changing — that is the property this addressing buys.
+# shellcheck disable=SC2034  # read by extract_contract in the sourced harness
+CONTRACT_SEARCH_ROOT="$REPO_ROOT/plugins"
 
-# Mis-anchor bound for the Step 3a region, same purpose as STEP6_MAX_LINES above
-# (NOT a prose budget). Step 3a carries the enforced trust-gate branches plus
-# #471's always-pin-the-config posture (the per-file discovery rationale, both
-# opted-in sub-branches, and the truth table), so it outgrew assert_wired's
-# 90-line default. Raise this deliberately when Step 3a gains contract text —
-# Step 3a is a named extraction candidate in #503, so this bound should come
-# back DOWN when that prose moves to a companion file.
-STEP3A_MAX_LINES=135
+# WHY IDS, NOT HEADING PAIRS. This gate previously anchored each region on two
+# heading strings (`extract_between "$CHECKER" '#### Step 3a:' '### Step 4:'`)
+# and asserted ~40 English prose fragments inside them. That coupled every
+# assertion to where the prose sat and how it was worded:
+#
+#   * moving the block broke all 81 assertions though the guarantee was intact;
+#   * renaming a heading silently RE-ANCHORED instead of failing, so a region
+#     could run past its intended end and swallow unrelated prose — which is why
+#     the old code needed hand-maintained STEP3A_MAX_LINES / STEP6_MAX_LINES
+#     bounds purely to notice;
+#   * Step 3a's heading was ALSO the END sentinel of a region in
+#     validate-audit-trust-gate.sh, so moving it expanded that gate's region as
+#     a side effect.
+#
+# extract_contract (tests/lib/harness.sh) addresses a block by an id embedded in
+# the prose, and both MAX_LINES bounds are gone with it: an id-delimited span
+# cannot run away, so there is nothing to bound. Assertions now target OPERATIVE
+# tokens — the literals a reader must obey (`AGNIX_CONFIG`, `--fix-unsafe`, the
+# `[prescan]` log formats) — rather than rationale sentences, so the reasoning
+# prose is free to be rewritten while the enforced instruction stays pinned.
 
 test_suite "agnix → checker wiring (#401)"
 
-# extract_between FILE START END — lines strictly between the first line
-# containing the fixed string START and the next line containing END (both
-# sentinel lines excluded). Same helper as validate-audit-trust-gate.sh: the END
-# sentinel is REQUIRED, so a renamed downstream heading discards the region
-# rather than silently expanding it to EOF (which would let assertions pass on
-# unrelated later prose).
-extract_between() {
-    command awk -v s="$2" -v e="$3" '
-        index($0, s) { grab = 1; next }
-        grab && index($0, e) { closed = 1; exit }
-        grab { buf = buf $0 "\n" }
-        END { if (closed) printf "%s", buf }
-    ' "$1"
+# assert_wired LABEL REGION TOKEN — the region carries TOKEN and TOKEN is
+# genuinely present (stripping it changes the region). Now a thin alias over the
+# shared assert_contract_carries in tests/lib/harness.sh; kept so the assertion
+# bodies below read unchanged.
+#
+# The old MAX_LINES parameter is gone. It existed to detect a heading anchor that
+# had matched the wrong place and run away past its END sentinel — a failure mode
+# an id-delimited region cannot have, since a region ends at the next marker or
+# EOF by construction. Callers that passed a bound no longer do.
+assert_wired() {
+    assert_contract_carries "region" "$2" "$3" "$1"
 }
 
-# assert_wired LABEL REGION TOKEN [MAX_LINES] — the region is a real, bounded,
-# single section that carries TOKEN, and TOKEN is genuinely present (stripping it
-# changes the region). Mirrors validate-audit-trust-gate.sh's assert_surface
-# tamper pattern. MAX_LINES defaults to 90 (see the bound's purpose below).
-assert_wired() {
-    local label="$1" region="$2" token="$3" max_lines="${4:-90}"
-
-    assert_not_empty "$region" "$label: region extracted (section anchors intact)"
-
-    # Single-section upper bound — an anchor that matched the wrong place (or an
-    # EOF expansion past extract_between's END guard) yields a bloated region;
-    # catch it here rather than letting a later assertion pass on stray prose.
-    # This is a MIS-ANCHOR detector, not a section-length budget: the bound is
-    # per-region and sized a little above that section's real length. Step 3a
-    # carries the enforced trust-gate branches (~87 lines); Step 6 carries the
-    # precedence rule plus its two #470 drop guards and the merge exemption, so it
-    # gets its own larger bound at the call site.
-    local line_count
-    line_count="$(printf '%s\n' "$region" | command wc -l | command tr -d ' ')"
-    assert_true "[ \"$line_count\" -le $max_lines ]" \
-        "$label: extracted region is a single section ($line_count lines, expected <= $max_lines)"
-
-    assert_contains "$region" "$token" "$label: carries '$token'"
-
-    # Tamper: dropping every line containing TOKEN must remove it AND change the
-    # region. Plain bash comparison (NOT assert_true, which eval's its argument —
-    # the region holds shell metacharacters eval would execute).
-    local tampered changed="no"
-    tampered="$(printf '%s\n' "$region" | command grep -vF "$token" || true)"
-    [ "$region" != "$tampered" ] && changed="yes"
-    assert_not_contains "$tampered" "$token" \
-        "$label: stripping the wired line removes '$token' (extract targets the real region)"
-    assert_equals "yes" "$changed" \
-        "$label: the wired line is genuinely present (tamper changed the region)"
+# agnix_prescan_region — the whole agnix pre-scan contract, as one string.
+#
+# What used to be a single heading-delimited "Step 3a" is now five separately
+# addressable contract blocks (invocation, trust posture, observe-only, owned
+# categories, graceful degrade). Assertions that pin a token anywhere in the
+# sub-step concatenate them; assertions that must prove a token sits in a
+# SPECIFIC block address that block by id directly.
+#
+# Concatenation is deliberate for the broad ones: their claim is "this guarantee
+# is stated somewhere in the agnix contract", and splitting them across five
+# ids would assert a prose LAYOUT the gate has no business fixing.
+agnix_prescan_region() {
+    extract_contract agnix-prescan-framing
+    extract_contract agnix-prescan-invocation
+    extract_contract agnix-trust-posture
+    extract_contract agnix-observe-only
+    extract_contract agnix-owned-categories
+    extract_contract agnix-graceful-degrade
 }
 
 # AC1 — Step 3a invokes agnix-normalize as a second pre-scan source over the same
@@ -122,8 +117,8 @@ assert_wired() {
 test_step3a_invocation() {
     assert_file_exists "$CHECKER" "checker.md exists"
     local region
-    region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a invocation" "$region" 'agnix-normalize.sh <tempfile>' "$STEP3A_MAX_LINES"
+    region="$(agnix_prescan_region)"
+    assert_wired "Step 3a invocation" "$region" 'agnix-normalize.sh <tempfile>'
     assert_contains "$region" 'second' \
         "Step 3a invocation: framed as a SECOND pre-scan source"
     # Discovery log line — pinned like every other pre-scan surface in
@@ -142,8 +137,8 @@ test_step3a_invocation() {
 # the patterns.sh failure path (continue without pre-scan results, do not drop).
 test_step3a_graceful_degrade() {
     local region
-    region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a graceful degrade" "$region" 'skip its contribution' "$STEP3A_MAX_LINES"
+    region="$(extract_contract agnix-graceful-degrade)"
+    assert_wired "Step 3a graceful degrade" "$region" 'skip its contribution'
     assert_contains "$region" 'identical to today' \
         "Step 3a graceful degrade: absent agnix => output identical to today"
     assert_contains "$region" 'do NOT drop the skill' \
@@ -155,8 +150,8 @@ test_step3a_graceful_degrade() {
 # agnix — else agnix discovers the audited repo's own .agnix.toml.
 test_step3a_trust() {
     local region
-    region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a trust" "$region" 'AGNIX_CONFIG' "$STEP3A_MAX_LINES"
+    region="$(extract_contract agnix-trust-posture)"
+    assert_wired "Step 3a trust" "$region" 'AGNIX_CONFIG'
     assert_contains "$region" 'untrusted input' \
         "Step 3a trust: the audited repo .agnix.toml is untrusted input"
     assert_contains "$region" 'CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1' \
@@ -188,11 +183,11 @@ test_step3a_trust() {
 # safe but silently leaves every nested planted config live.
 test_step3a_config_pinning() {
     local region
-    region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
+    region="$(extract_contract agnix-trust-posture)"
     # Single-line fragments throughout: the prose wraps, so anchor on the half
     # that fits one source line.
     assert_wired "Step 3a config pinning" "$region" \
-        'agnix ALWAYS runs with an' "$STEP3A_MAX_LINES"
+        'agnix ALWAYS runs with an'
 
     # The mechanism — why a repo-root-only check is insufficient.
     assert_contains "$region" 'walks up from each scanned' \
@@ -287,8 +282,8 @@ test_step3a_config_pinning() {
 # agree. Extract the tokens from both regions and compare the sets.
 test_owned_category_parity() {
     local step3a step6 cats_3a cats_6 expected
-    step3a="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    step6="$(extract_between "$CHECKER" '### Step 6: Merge' '### Step 7:')"
+    step3a="$(agnix_prescan_region)"
+    step6="$(extract_contract agnix-step6-precedence)"
     assert_not_empty "$step3a" "owned-category parity: Step 3a region extracted"
     assert_not_empty "$step6" "owned-category parity: Step 6 region extracted"
 
@@ -343,7 +338,7 @@ test_owned_category_parity() {
 # naming all three flags.
 test_observe_only_restriction() {
     local region
-    region="$(extract_between "$CHECKER" 'MUST NOT:' '## Tool Rationale')"
+    region="$(extract_contract checker-must-not)"
     assert_wired "observe-only restriction" "$region" 'Run agnix in any autofix mode'
     assert_contains "$region" '--fix-unsafe' \
         "observe-only restriction: names the --fix-unsafe autofix flag"
@@ -362,8 +357,8 @@ test_observe_only_restriction() {
 # before within-skill dedup.
 test_step6_precedence_dedup() {
     local region
-    region="$(extract_between "$CHECKER" '### Step 6: Merge' '### Step 7:')"
-    assert_wired "Step 6 precedence dedup" "$region" 'agnix precedence dedup' "$STEP6_MAX_LINES"
+    region="$(extract_contract agnix-step6-precedence)"
+    assert_wired "Step 6 precedence dedup" "$region" 'agnix precedence dedup'
     # #402: the dedup KEY is same-file + same-category matched PER ISSUE, NOT
     # file:line and NOT whole-category — a file:line key silently misses the floor's
     # line-1-anchored frontmatter overlap, while a whole-category sweep would delete
@@ -419,10 +414,10 @@ test_step6_precedence_dedup() {
 # supersede a higher-severity floor finding — the lowered-CC-HK-009 scenario.
 test_step6_drop_guards() {
     local region
-    region="$(extract_between "$CHECKER" '### Step 6: Merge' '### Step 7:')"
+    region="$(extract_contract agnix-step6-precedence)"
 
     # Guard 1 — operator-config restriction.
-    assert_wired "Step 6 guard 1" "$region" 'requires an operator-controlled agnix config' "$STEP6_MAX_LINES"
+    assert_wired "Step 6 guard 1" "$region" 'requires an operator-controlled agnix config'
     assert_contains "$region" 'CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS=1' \
         "Step 6 guard 1: names the trust opt-in whose branch loses the drop"
     assert_contains "$region" 'fall back to keep-both' \
@@ -430,7 +425,7 @@ test_step6_drop_guards() {
 
     # Guard 2 — severity comparison. The severity must be read from the evidence
     # prefix, since certainty is now a fixed MEDIUM and is NOT a severity.
-    assert_wired "Step 6 guard 2" "$region" 'never let a lower-severity agnix row' "$STEP6_MAX_LINES"
+    assert_wired "Step 6 guard 2" "$region" 'never let a lower-severity agnix row'
     assert_contains "$region" 'rule_severity` from the `evidence` prefix' \
         "Step 6 guard 2: reads agnix severity from the evidence prefix"
     assert_contains "$region" 'empty/unparseable' \
@@ -460,8 +455,8 @@ test_step6_drop_guards() {
 # falls through and gets BLENDED, re-opening by merge what #402 closed by key.
 test_step6_within_skill_exemption() {
     local region
-    region="$(extract_between "$CHECKER" '### Step 6: Merge' '### Step 7:')"
-    assert_wired "Step 6 merge exemption" "$region" 'exempt from this merge' "$STEP6_MAX_LINES"
+    region="$(extract_contract agnix-step6-precedence)"
+    assert_wired "Step 6 merge exemption" "$region" 'exempt from this merge'
     assert_contains "$region" 'never blend' \
         "Step 6 merge exemption: forbids blending an agnix row into a floor finding"
     # The #402 per-issue key and this exemption must COMPOSE — the near-miss case
@@ -479,8 +474,8 @@ test_step6_within_skill_exemption() {
 # report via the certainty=HIGH auto-include fast path without LLM confirmation.
 test_step3a_certainty_tier() {
     local region
-    region="$(extract_between "$CHECKER" '#### Step 3a:' '### Step 4:')"
-    assert_wired "Step 3a certainty tier" "$region" 'fixed `MEDIUM`' "$STEP3A_MAX_LINES"
+    region="$(agnix_prescan_region)"
+    assert_wired "Step 3a certainty tier" "$region" 'fixed `MEDIUM`'
     assert_contains "$region" '[<RULE-ID>|<SEVERITY>] <message>' \
         "Step 3a certainty tier: pins the evidence prefix carrying the severity"
     assert_contains "$region" 'auto-include fast path' \

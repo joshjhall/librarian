@@ -42,24 +42,26 @@ ENV_VAR="CODEBASE_AUDIT_TRUST_PROJECT_SCRIPTS"
 
 test_suite "audit project-source integrity gate (#124/#125)"
 
-# extract_between FILE START END — the lines strictly between the first line
-# containing the fixed string START and the next line containing END (both
-# sentinel lines excluded). Fixed-string index() matching, so backtick/`\*`/em-dash
-# in the surrounding headings need no escaping.
+# Contract blocks are addressed BY ID, resolved anywhere under plugins/, so this
+# gate no longer names the file a surface lives in.
+# shellcheck disable=SC2034  # read by extract_contract in the sourced harness
+CONTRACT_SEARCH_ROOT="$REPO_ROOT/plugins"
+
+# WHY IDS, NOT ANCHOR PAIRS. Each surface used to be extracted between two
+# literal strings — a heading, or worse an English sentence
+# (`'Integrity gate — branch on'` .. `'Integrity gate for project-level'`). Every
+# such pair is a hidden coupling: rewording a sentence that happens to be some
+# other test's sentinel silently re-anchors that test, and moving a section
+# breaks assertions whose guarantee never changed. Surface 3 depended on
+# `'#### Step 3a:'` — a heading belonging to an unrelated sub-step, which #503
+# then moved — so a prose extraction elsewhere would have silently expanded this
+# region to swallow it.
 #
-# The END sentinel is REQUIRED: if it is never found (e.g. a heading was
-# renamed), the buffered region is discarded and nothing is printed, rather than
-# silently expanding to EOF. Without this, a renamed downstream heading would
-# grow the region to the rest of the file, and the env-var/log-line assertions
-# could pass on unrelated later sections while the gate prose was actually gone.
-extract_between() {
-    command awk -v s="$2" -v e="$3" '
-        index($0, s) { grab = 1; next }
-        grab && index($0, e) { closed = 1; exit }
-        grab { buf = buf $0 "\n" }
-        END { if (closed) printf "%s", buf }
-    ' "$1"
-}
+# extract_contract (tests/lib/harness.sh) addresses a block by an id embedded in
+# the prose. It fails LOUD on a missing or duplicated id rather than returning an
+# empty region every assert_contains would then pass against. See that helper for
+# the full rationale; the local extract_between copy this file used to carry is
+# gone in favour of the shared one.
 
 # assert_surface LABEL REGION LOGLINE — one gated surface carries the whole
 # contract: the opt-in env var, its exact-value-`1` semantics, and the
@@ -71,15 +73,13 @@ assert_surface() {
 
     assert_not_empty "$region" "$label: region extracted (section anchors intact)"
 
-    # Upper-bound the region size. Any single gated section is well under 60
-    # lines; a much larger region means an anchor matched the wrong place (or,
-    # defensively, an EOF-expansion that slipped past extract_between's END
-    # guard). Catch it here rather than letting the assertions below pass on a
-    # bloated region that happens to contain the tokens somewhere.
-    local line_count
-    line_count="$(printf '%s\n' "$region" | command wc -l | command tr -d ' ')"
-    assert_true "[ \"$line_count\" -le 60 ]" \
-        "$label: extracted region is a single section ($line_count lines, expected <= 60)"
+    # The <=60-line single-section bound that used to sit here is gone. It
+    # existed to catch an anchor that had matched the wrong place and run past
+    # its END sentinel — a failure an id-delimited region cannot have, since it
+    # ends at the next contract marker or EOF by construction. Keeping it would
+    # have meant a prose budget masquerading as a correctness check: a gated
+    # section that legitimately grew past 60 lines would fail a test that never
+    # had anything to say about length.
 
     assert_contains "$region" "$ENV_VAR" "$label: carries the $ENV_VAR opt-in"
     assert_contains "$region" "$logline" "$label: logs '$logline' on skip"
@@ -107,8 +107,7 @@ assert_surface() {
 test_checker_skill_discovery_gate() {
     assert_file_exists "$CHECKER" "checker.md exists"
     local region
-    region="$(extract_between "$CHECKER" \
-        'Integrity gate — branch on' 'Integrity gate for project-level')"
+    region="$(extract_contract checker-skill-discovery-gate)"
     assert_surface "checker Step 2 skill discovery" \
         "$region" '[discovery] skipped project skill'
 }
@@ -116,51 +115,42 @@ test_checker_skill_discovery_gate() {
 # Surface 2 — checker.md Step 2: project audit-* AGENT discovery gate (#124-A).
 test_checker_agent_discovery_gate() {
     local region
-    region="$(extract_between "$CHECKER" \
-        'Integrity gate for project-level' 'Domain override rule')"
+    region="$(extract_contract checker-agent-discovery-gate)"
     assert_surface "checker Step 2 agent discovery" \
         "$region" '[map] skipped project agent'
 }
 
-# Surface 3 — checker.md Step 3: project patterns.sh execution gate. The END
-# anchor is the `#### Step 3a:` sub-heading (the agnix second-source sub-step,
-# issue #401), NOT `### Step 4:`: Step 3a sits between the patterns.sh gate and
-# Step 4, so anchoring to it keeps this region scoped to the original
-# `[prescan] skipped` gate section and under the <=60-line single-section guard.
+# Surface 3 — checker.md Step 3: project patterns.sh execution gate.
+# Previously ended at the `#### Step 3a:` heading — a borrowed sentinel owned by
+# an unrelated sub-step, which #503 then moved to a companion file. The contract
+# id ends the region on its own terms, so that coupling is gone.
 test_checker_prescan_gate() {
     local region
-    region="$(extract_between "$CHECKER" '### Step 3:' '#### Step 3a:')"
+    region="$(extract_contract checker-prescan-gate)"
     assert_surface "checker Step 3 prescan" "$region" '[prescan] skipped'
 }
 
 # Surface 4 — checker.md Backward-Compat: audit-* dispatch gate (#124-B).
 test_checker_backcompat_dispatch_gate() {
     local region
-    region="$(extract_between "$CHECKER" \
-        '## Backward Compatibility' '## Error Handling')"
+    region="$(extract_contract checker-backcompat-dispatch)"
     assert_surface "checker Backward-Compat dispatch" \
         "$region" '[map] skipped project agent'
 }
 
 # Surface 5 — orchestration-protocol.md Step 1.8: project audit-* agent gate.
-# Anchored to the gate paragraph itself (not the whole ## Step span) so the
-# region is the single gated section the <=60-line guard expects.
 test_protocol_agent_gate() {
     assert_file_exists "$PROTOCOL" "orchestration-protocol.md exists"
     local region
-    region="$(extract_between "$PROTOCOL" \
-        'Integrity gate (same trust boundary' 'Gate project-level check-')"
+    region="$(extract_contract protocol-agent-gate)"
     assert_surface "protocol Step 1.8 agent gate" \
         "$region" '[map] skipped project agent'
 }
 
 # Surface 6 — orchestration-protocol.md Step 2.5: project patterns.sh prescan gate.
-# Anchored to the "For each patterns.sh" gate item through the "passes the gate"
-# line that closes it, for the same single-section reason as surface 5.
 test_protocol_prescan_gate() {
     local region
-    region="$(extract_between "$PROTOCOL" \
-        'For each patterns.sh found' 'for a script that passes the gate')"
+    region="$(extract_contract protocol-prescan-gate)"
     assert_surface "protocol Step 2.5 prescan gate" "$region" '[prescan] skipped'
 }
 
@@ -175,8 +165,7 @@ test_checker_source_classification() {
     # Span the precedence-list item (which names the discovery glob) through the
     # `source:` classification note, up to the first gate anchor.
     local region
-    region="$(extract_between "$CHECKER" \
-        'Backward-compatible audit agents' 'Integrity gate — branch on')"
+    region="$(extract_contract checker-source-classification)"
     assert_not_empty "$region" "source classification: region extracted (anchors intact)"
     assert_contains "$region" '.claude/agents/audit-' \
         "source classification: names the project-level audit-* discovery glob"

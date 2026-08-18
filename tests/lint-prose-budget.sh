@@ -240,22 +240,71 @@ rel() {
 
 # --- Baseline ----------------------------------------------------------------
 #
-# Format: `<repo-relative-path> <line-count>`, one per line, `#` comments
-# ignored. Flat text rather than JSON so a raise is a one-line reviewable diff
-# and needs no parser beyond the shell.
+# Format: `<repo-relative-path> <line-count> [# rationale]`, one per line, `#`
+# comment lines ignored. Flat text rather than JSON so a raise is a one-line
+# reviewable diff and needs no parser beyond the shell.
+#
+# THE BUDGETS ARE TARGETS, NOT LAWS. A file that is genuinely better long stays
+# long — a contract gate's assertion list, a protocol that would only become
+# harder to follow split across two files. What must not happen is exceptions
+# accumulating silently until the budget means nothing. So this file is the
+# EXCEPTIONS LEDGER: every entry is a file consciously over budget, the ratchet
+# stops it growing further, and the trailing `#` rationale says why it is
+# allowed. An entry without a rationale is an exception nobody has justified —
+# reported (not failed) so the list stays honest without blocking a shrink.
+#
+# The rationale is stripped before the count is parsed, so an entry with or
+# without one behaves identically to the ratchet.
 baseline_for() {
-    local want="$1" line path count
+    local want="$1" line rest path count
     [ -f "$BASELINE_FILE" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
             '#'* | '') continue ;;
         esac
-        path="${line%% *}"
-        count="${line##* }"
+        # Strip an inline rationale before parsing, so `path 676 # why` and
+        # `path 676` parse the same.
+        rest="${line%%#*}"
+        # Trim trailing whitespace BEFORE splitting: `path 556 # why` leaves
+        # `path 556 ` here, and `${rest##* }` on that yields the empty string —
+        # the entry would parse as having no count and silently stop ratcheting.
+        while :; do
+            case "$rest" in
+                *' ' | *"$(command printf '\t')") rest="${rest%?}" ;;
+                *) break ;;
+            esac
+        done
+        path="${rest%% *}"
+        count="${rest##* }"
         if [ "$path" = "$want" ]; then
             command printf '%s\n' "$count"
             return 0
         fi
+    done <"$BASELINE_FILE"
+    return 0
+}
+
+# baseline_rationale <path> — the trailing `# ...` note for an entry, if any.
+# Empty when the entry carries no rationale (or does not exist).
+baseline_rationale() {
+    local want="$1" line rest path note
+    [ -f "$BASELINE_FILE" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            '#'* | '') continue ;;
+        esac
+        rest="${line%%#*}"
+        path="${rest%% *}"
+        [ "$path" = "$want" ] || continue
+        case "$line" in
+            *'#'*)
+                note="${line#*#}"
+                # Trim one leading space; keep interior spacing.
+                note="${note# }"
+                command printf '%s\n' "$note"
+                ;;
+        esac
+        return 0
     done <"$BASELINE_FILE"
     return 0
 }
@@ -353,8 +402,25 @@ if [ "$REGEN" -eq 1 ]; then
         command printf '# RAISING an entry is a deliberate, reviewable decision — a bigger file\n'
         command printf '# needs a reason in the commit message, not a silent regen.\n'
         command printf '#\n'
-        command printf '# Format: <repo-relative-path> <line-count>\n'
-        command printf '%s' "$OVER_BUDGET"
+        command printf '# THE BUDGETS ARE TARGETS, NOT LAWS. Some files are genuinely better long.\n'
+        command printf '# This file is the EXCEPTIONS LEDGER: each entry is consciously over\n'
+        command printf '# budget, the ratchet stops it growing, and the trailing `#` note says WHY\n'
+        command printf '# it is allowed. Add a rationale when you add an entry — --regen preserves\n'
+        command printf '# existing ones, and the report lists any entry still missing one.\n'
+        command printf '#\n'
+        command printf '# Format: <repo-relative-path> <line-count> [# why this exception stands]\n'
+        # Re-attach each entry's existing rationale. A regen that dropped them
+        # would silently erase every justification on a routine shrink — the
+        # ledger would keep its numbers and lose its reasons.
+        command printf '%s' "$OVER_BUDGET" | while IFS=' ' read -r _path _count; do
+            [ -n "$_path" ] || continue
+            _note="$(baseline_rationale "$_path")"
+            if [ -n "$_note" ]; then
+                command printf '%s %s # %s\n' "$_path" "$_count" "$_note"
+            else
+                command printf '%s %s\n' "$_path" "$_count"
+            fi
+        done
     } >"$BASELINE_FILE"
     command printf 'lint-prose-budget: baseline written to %s (%s entries)\n' \
         "$(rel "$BASELINE_FILE")" \
@@ -403,6 +469,36 @@ command printf '%s' "$FILE_COUNTS" | LC_ALL=C command awk -F '\t' '
 over_count="$(command printf '%s' "$OVER_BUDGET" | command grep -c . || true)"
 command printf '\n  %s file(s) over their type budget (ratcheted by tests/prose-budget.baseline)\n' \
     "$over_count"
+
+# List the exceptions with their rationale. The budgets are targets, not laws —
+# a file that is genuinely better long stays long. The risk is not any single
+# exception, it is exceptions ACCUMULATING UNNOTICED until the budget means
+# nothing. Printing the ledger on every run (pass or fail) is what keeps that
+# visible: an unjustified entry is called out by name rather than blending into
+# a count. This reports, never fails — the ratchet already prevents growth, and
+# failing a green tree over a missing note would just get the gate turned off.
+if [ "$over_count" -gt 0 ]; then
+    command printf '\n  Exceptions (over budget by choice — ratcheted at their current size):\n'
+    command printf '%s' "$OVER_BUDGET" | while IFS=' ' read -r _path _count; do
+        [ -n "$_path" ] || continue
+        _note="$(baseline_rationale "$_path")"
+        if [ -n "$_note" ]; then
+            command printf '    %s (%s) — %s\n' "$_path" "$_count" "$_note"
+        else
+            command printf '    %s (%s) — NO RATIONALE RECORDED\n' "$_path" "$_count"
+        fi
+    done
+    # Count unjustified entries in the parent shell (the loop above runs in a
+    # subshell, so its increments would not survive).
+    _unjustified=0
+    for _p in $(command printf '%s' "$OVER_BUDGET" | LC_ALL=C command awk '{ print $1 }'); do
+        [ -n "$(baseline_rationale "$_p")" ] || _unjustified=$((_unjustified + 1))
+    done
+    if [ "$_unjustified" -gt 0 ]; then
+        command printf '\n  %s exception(s) carry no rationale. Add one as a trailing\n' "$_unjustified"
+        command printf '  `# why` in tests/prose-budget.baseline so the ledger stays reviewable.\n'
+    fi
+fi
 
 if [ -n "$VIOLATIONS" ]; then
     command printf '\n[FAIL] Prose budget exceeded:\n\n'
