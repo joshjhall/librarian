@@ -415,9 +415,22 @@ if [ "$REGEN" -eq 1 ]; then
     # the rationale loop below — reading a now-deleted file and writing a
     # baseline with every rationale dropped. That is this fix's own failure mode
     # reached by the signal path, so the handler aborts rather than continues.
-    trap 'command rm -f "$REGEN_PREV"' EXIT
-    trap 'command rm -f "$REGEN_PREV"; exit 130' INT
-    trap 'command rm -f "$REGEN_PREV"; exit 143' TERM
+    # The new baseline is BUILT into a staging file and renamed over the target
+    # only once it is complete. `>"$BASELINE_FILE"` would truncate on open and
+    # stream entries out one at a time, so a signal mid-write leaves a partial
+    # ledger on disk — while the handler deletes the snapshot that could have
+    # recovered it. Staging plus an atomic rename means an interrupted regen
+    # leaves the previous baseline exactly as it was.
+    REGEN_NEW="$(command mktemp)" || REGEN_NEW=""
+    if [ -z "$REGEN_NEW" ] || [ ! -f "$REGEN_NEW" ]; then
+        command printf 'lint-prose-budget: FATAL — could not create a staging file for\n' >&2
+        command printf '  the regenerated baseline. Refusing to write in place.\n' >&2
+        command rm -f "$REGEN_PREV"
+        exit 2
+    fi
+    trap 'command rm -f "$REGEN_PREV" "$REGEN_NEW"' EXIT
+    trap 'command rm -f "$REGEN_PREV" "$REGEN_NEW"; exit 130' INT
+    trap 'command rm -f "$REGEN_PREV" "$REGEN_NEW"; exit 143' TERM
     if [ -f "$BASELINE_FILE" ]; then
         if ! command cat "$BASELINE_FILE" >"$REGEN_PREV"; then
             command printf 'lint-prose-budget: FATAL — could not snapshot %s before regen.\n' \
@@ -458,7 +471,15 @@ if [ "$REGEN" -eq 1 ]; then
                 command printf '%s %s\n' "$_path" "$_count"
             fi
         done
-    } >"$BASELINE_FILE"
+    } >"$REGEN_NEW"
+
+    # Atomic swap. Only now does the on-disk baseline change; up to this point
+    # every failure path above leaves it untouched.
+    if ! command mv -f "$REGEN_NEW" "$BASELINE_FILE"; then
+        command printf 'lint-prose-budget: FATAL — could not install the regenerated\n' >&2
+        command printf '  baseline at %s. The previous one is unchanged.\n' "$BASELINE_FILE" >&2
+        exit 2
+    fi
     command printf 'lint-prose-budget: baseline written to %s (%s entries)\n' \
         "$(rel "$BASELINE_FILE")" \
         "$(command printf '%s' "$OVER_BUDGET" | command grep -c . || true)"

@@ -356,6 +356,34 @@ test_extract_contract_mention_only_id_is_not_found() {
     command rm -rf "$d"
 }
 
+# extract_contract <id> [file] — the two-argument form scopes the search to one
+# file instead of walking CONTRACT_SEARCH_ROOT. Worth its own case because the
+# fixture plants the SAME id in a sibling file: under the root-walking form that
+# is a fatal duplicate, so if the file argument were ignored (or fell back to a
+# repo-wide search) this call would fail instead of returning the block.
+test_extract_contract_explicit_file_scopes_the_search() {
+    local d out rc=0
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md '<!-- contract: scoped -->' 'body from a'
+    contract_fixture "$d" b.md '<!-- contract: scoped -->' 'body from b'
+
+    out="$(CONTRACT_SEARCH_ROOT="$d" extract_contract scoped "$d/a.md")" || rc=$?
+    assert_true "[ $rc -eq 0 ]" \
+        "extract_contract: an explicit file resolves even when the id is duplicated elsewhere"
+    assert_contains "$out" "body from a" \
+        "extract_contract: the explicit file's block is returned"
+    assert_not_contains "$out" "body from b" \
+        "extract_contract: the unsearched sibling is ignored"
+
+    # And the contrast that proves the scoping did the work: without the file
+    # argument the same fixture is a fatal duplicate.
+    local rc2=0
+    CONTRACT_SEARCH_ROOT="$d" extract_contract scoped >/dev/null 2>&1 || rc2=$?
+    assert_true "[ $rc2 -ne 0 ]" \
+        "extract_contract: the same id without a file argument is a fatal duplicate"
+    command rm -rf "$d"
+}
+
 # --- assert_contract_carries ------------------------------------------------
 
 test_assert_contract_carries_present_is_silent() {
@@ -414,6 +442,7 @@ run_test test_extract_contract_empty_id_fails "extract_contract: empty id fails 
 run_test test_extract_contract_inline_mention_is_not_a_delimiter "extract_contract: prose mention is not a delimiter"
 run_test test_extract_contract_mention_only_id_is_not_found "extract_contract: mention-only id does not resolve"
 run_test test_extract_contract_regex_special_id_is_literal "extract_contract: regex-special id matches literally"
+run_test test_extract_contract_explicit_file_scopes_the_search "extract_contract: explicit file scopes the search"
 
 run_test test_assert_contract_carries_present_is_silent "assert_contract_carries: present token is silent"
 run_test test_assert_contract_carries_absent_token_fails "assert_contract_carries: absent token fails"

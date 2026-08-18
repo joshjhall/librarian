@@ -17,6 +17,10 @@
 #
 # Format: <repo-relative-path> <line-count> [# why this exception stands]
 #
+# NOTE: --regen rewrites this header from the script and preserves only the
+# PER-ENTRY `# why` notes. Free-form header prose like the block below is not
+# carried across a regen — re-add it, or move it into the entries themselves.
+#
 # #503 slice 1 — what was deliberately NOT done, so it is not re-derived:
 #   * checker.md stops at 580, still over the 400 agent bar. Its 7 steps are
 #     "mutually referential" per the pre-scan, so Step 3a was the one separable

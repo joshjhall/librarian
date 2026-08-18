@@ -518,10 +518,24 @@ test_regen_signal_traps_exit() {
 
     # The load-bearing half: each signal handler must exit. Without it the
     # handler returns and execution continues past the signal.
-    assert_contains "$int_trap" "exit" \
-        "The INT handler exits (bash would otherwise resume into the regen)"
-    assert_contains "$term_trap" "exit" \
-        "The TERM handler exits (bash would otherwise resume into the regen)"
+    #
+    # Pinned to the EXACT code, not a bare "exit": `trap 'exit 0' INT` also
+    # contains the substring, exits, and would satisfy a loose assertion — while
+    # reporting an interrupted regen as a clean success to any caller that reads
+    # the status, and dropping the cleanup. 130/143 are the conventional
+    # 128+signum codes.
+    assert_contains "$int_trap" "exit 130" \
+        "The INT handler exits 130 (bash would otherwise resume into the regen)"
+    assert_contains "$term_trap" "exit 143" \
+        "The TERM handler exits 143 (bash would otherwise resume into the regen)"
+
+    # Exit AND clean up have to travel together, on the SAME line. Asserting
+    # cleanup only for the EXIT trap would leave a handler narrowed to
+    # `trap 'exit 130' INT` green while it leaks the snapshot on every Ctrl-C.
+    assert_contains "$int_trap" "rm -f" \
+        "The INT handler still removes the snapshot before exiting"
+    assert_contains "$term_trap" "rm -f" \
+        "The TERM handler still removes the snapshot before exiting"
 
     # And a plain EXIT trap still handles the normal path.
     assert_true "command grep -qE \"^ *trap .* EXIT\$\" '$GATE'" \
