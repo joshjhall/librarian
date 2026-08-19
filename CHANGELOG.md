@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-08-19
+
+### Added
+
+- Add a growth-aware decomposition dimension to ship-issue review (#711)
+
+### CI/CD
+
+- Bump github/codeql-action/upload-sarif from 4.37.6 to 4.37.7 (#716)
+
+### Changed
+
+- Anchor prose contracts by id, extract the agnix pre-scan (#719)
+
+### Documentation
+
+- Correct the claim that a go-ahead clears the self-merge block
+- Record that a surviving mutation may be a real no-op
+- Add two review-lesson memories and index them
+
+### Fixed
+
+- Give a classified file exactly one size verdict (#710)
+- Size memory-bundle files by their own budgets, not code thresholds (#714)
+- Treat only an unquoted `>` as a redirect in bash-guard (#721)
+
+### Miscellaneous
+
+- Bump ruff 0.16.0 -> 0.16.3
+- Bump containers submodule v4.19.22 -> v4.19.24
+- Drop SKIP_CASE_CHECK from the compose environment
+- Bump containers submodule v4.19.24 -> v4.19.25
+
+### Testing
+
+- Add a ratcheted prose budget for plugins/**/*.md (#715)
+
 ## [0.10.0] - 2026-08-16
 
 ### Added
@@ -625,6 +662,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.10.1]: https://github.com/joshjhall/librarian/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/joshjhall/librarian/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/joshjhall/librarian/compare/v0.8.4...v0.9.0
 [0.8.4]: https://github.com/joshjhall/librarian/compare/v0.8.3...v0.8.4
