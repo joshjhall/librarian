@@ -78,7 +78,6 @@ services:
     environment:
       CLAUDE_MCPS: "filesystem,codegraph"
       MEMORY_FILE_PATH: "/workspace/librarian/.claude/memory"
-      SKIP_CASE_CHECK: "true"
     # tini as PID 1 for zombie reaping (belt-and-suspenders with the Dockerfile).
     init: true
     # CAP_SYS_ADMIN + /dev/fuse are the documented MINIMUM for the bindfs FUSE
