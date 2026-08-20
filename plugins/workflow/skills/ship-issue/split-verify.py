@@ -51,6 +51,15 @@ import sys
 # the tool that PROPOSES a split and the tool that VERIFIES one. Importing the
 # sibling is safe here (same directory, same plugin) — unlike the cross-plugin
 # case, which is why THAT sharing uses sentinel regions instead.
+#
+# ASSESSED AND KEPT AS AN IMPORT (#730 AC6). Sentinel regions are a workaround
+# for a constraint that does not exist here: CLAUDE_PLUGIN_ROOT is plugin-scoped
+# and the plugins declare no dependency on each other, so check-decomposition and
+# ship-issue genuinely cannot share a module. These two files can. Deliberate
+# duplication is strictly worse than an import whenever an import is available —
+# it needs a gate, tamper fixtures, and a reviewer who remembers both copies
+# exist. So this pair must NOT acquire `# >>> shared:` regions; the .sh halves
+# use them only because bash has no import.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -105,15 +114,18 @@ def md_anchor(text: str) -> str:
 def unit_names(lines: list[str], lang: str) -> set[str]:
     """Non-test top-level unit names.
 
-    Markdown is EXCLUDED deliberately: `find_units` names every md unit
-    "section", so a set of them carries no identity and would make the
-    unit-preservation check vacuously true (one "section" in, one out, regardless
-    of how many headings were actually lost). Markdown content is verified by the
-    heading-reachability check instead, which compares real heading TEXT.
+    Markdown is EXCLUDED deliberately, and the reason OUTLIVED its original
+    wording (#730). It used to be "find_units names every md unit 'section', so
+    a set of them carries no identity"; md units are now slugged from their
+    heading text, so they DO carry identity. The exclusion stands on the stronger
+    ground underneath it: a heading that was reworded rather than lost would read
+    as a lost unit here, and a set of slugs still cannot distinguish "moved" from
+    "deleted". Markdown content is verified by the heading-reachability check
+    instead, which compares real heading TEXT against the links left behind.
     """
     if lang == "md":
         return set()
-    return set(n for n, _s, _e, is_test in find_units(lines, lang) if not is_test)
+    return set(u.name for u in find_units(lines, lang) if not u.is_test)
 
 
 def referenced_tokens(lines: list[str]) -> set[str]:

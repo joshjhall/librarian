@@ -2,11 +2,12 @@
 # Shared-scanner drift gate (issues #89, #132, #133, #609, #695).
 #
 # Pre-scan scripts living in SEPARATE, independently-installed plugins share
-# regions of logic by DELIBERATE duplication. Three such PAIRS are pinned here:
+# regions of logic by DELIBERATE duplication. Four such PAIRS are pinned here:
 #
 #   check-code-health/patterns.sh   <-> ship-issue/pre-review-gates.sh
 #   loop-make-it-tested/patterns.sh <-> ship-issue/pre-review-gates.sh   (#609)
 #   check-decomposition/patterns.sh <-> ship-issue/sizing.sh             (#695)
+#   check-decomposition/patterns.py <-> ship-issue/sizing.py             (#730)
 #
 # The third pair shares the production-LOC ENGINE — the per-language
 # comment/test/blank exclusion rules that decide what "production LOC" means —
@@ -14,6 +15,38 @@
 # rather than bash, which works unchanged because nothing in extract_shared or
 # normalize is language-aware; the tamper fixtures below keep that from being an
 # untested assumption.
+#
+# The FOURTH pair is the same engine's PYTHON primaries — the halves that
+# actually execute whenever a python3>=3.11 is present, i.e. nearly always. Until
+# #730 only the awk fallbacks were pinned, so the two Python copies could drift
+# freely and every gate stayed green: validate-python-ports.sh compares each
+# patterns.py to ITS OWN patterns.sh sibling and never one plugin's Python to
+# another's. Same-output parity WITHIN a pair cannot see a divergence ACROSS
+# pairs.
+#
+# ---------------------------------------------------------------------------
+# PYTHON REGIONS: MODULE-TOP-LEVEL DEFINITIONS ONLY.
+#
+# `normalize` below strips leading whitespace. In awk and bash that is free —
+# indentation is not semantic, and the copies genuinely nest at different depths.
+# In PYTHON INDENTATION IS SEMANTIC, so the strip can hide a real divergence:
+#
+#     def f():          def f():
+#         if x:         if x:
+#             return 1  return 1
+#
+# Those two bodies normalize to identical text. The first is valid and the second
+# is a SyntaxError — and a subtler pair (a `return` inside vs. outside a loop)
+# would be two different working behaviors comparing equal.
+#
+# The rule that closes this: a `# >>> shared:*-py` region contains only
+# COLUMN-ZERO definitions — `def`s, classes, module-level table literals — never
+# an indented fragment of a function body. Every line's canonical indent is then
+# already 0 relative to the region, so the strip removes nothing meaningful, and
+# an indentation change INSIDE a shared def still alters the line sequence. Both
+# copies are also parsed by Python itself on every run, so a region that violated
+# the rule would fail loudly rather than silently compare equal.
+# ---------------------------------------------------------------------------
 #
 # They cannot share a sourced library: CLAUDE_PLUGIN_ROOT is plugin-scoped, the
 # plugins declare no dependency on each other, and a user may install `workflow`
@@ -72,7 +105,18 @@ SHARED_PAIRS=(
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
     "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk"
     "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
+    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py"
 )
+
+# The Python pair's regions, in the order they appear above. Used by the
+# per-region tamper fixture so adding a region to SHARED_PAIRS without a tamper
+# case is caught rather than silently unproven (#730).
+#
+# NOT every shared symbol is listed: UNIT_NOUN, TOKEN_RE and _glob stay
+# audit-lens-only on purpose. Copying them into sizing.py to make the files look
+# more alike would add lookups nothing there reads — deliberate duplication is
+# only worth its cost for logic BOTH lenses execute.
+PY_REGIONS="loc-tables-py loc-helpers-py loc-unit-py loc-measure-py"
 
 # Pair-specific paths used by the targeted tests below (the language-arm shape
 # check and the two tamper fixtures). Kept as consts so a path edit above is a
@@ -83,6 +127,8 @@ PRE_REVIEW_GATES="$REPO_ROOT/plugins/workflow/skills/ship-issue/pre-review-gates
 DECOMP_PATTERNS="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/patterns.sh"
 SIZING="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.sh"
 SPLIT_VERIFY="$REPO_ROOT/plugins/workflow/skills/ship-issue/split-verify.sh"
+DECOMP_PATTERNS_PY="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/patterns.py"
+SIZING_PY="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.py"
 
 test_suite "shared scanner sync (#89/#132/#133/#609)"
 
@@ -501,6 +547,161 @@ test_detector_fires_on_segmenter_region_drift() {
     assert_equals "detected" "$drift" "a one-line edit to split-verify's segmenter copy is detected as drift"
 }
 
+# The detector FIRES on drift in EACH region of the FOURTH pair — the Python
+# primaries (#730). Same cross-file shape as the awk fixtures above: the tamper
+# is applied to the DUPLICATE (sizing.py) and compared against the UNTAMPERED
+# CANONICAL (check-decomposition/patterns.py), because a fixture that tampered
+# one file against itself would pass even if the two were never paired.
+#
+# Every tamper targets a BEHAVIORAL line, one per region, chosen as the line a
+# real one-sided bug fix would touch:
+#
+#   loc-tables-py   — the `md` entry of NEST_UNIT. Markdown's indent unit is 2
+#                     where almost everything else is 4, so a copy that "tidied"
+#                     it to 4 would change max-nesting in every markdown metrics
+#                     string while looking like a consistency cleanup.
+#   loc-helpers-py  — _int_env's ValueError fallback. This is what makes a
+#                     malformed threshold env var fall back to the default
+#                     instead of crashing the scan; a copy that dropped it would
+#                     fail only on malformed input, i.e. rarely and loudly.
+#   loc-unit-py     — md_slug's slugging arm. THE #730 fork: sizing.py used to
+#                     hardcode "section" here while patterns.py slugged the
+#                     heading text.
+#   loc-measure-py  — the production subtraction, the single expression every
+#                     sizing finding in BOTH lenses is computed from.
+#
+# Each is a fixed-string sed with no alternation: BSD sed reads BRE `\|` as a
+# LITERAL, so an alternation-bearing pattern would match nothing on macOS and the
+# tamper would be a silent no-op there (#679).
+#
+# The untampered-match assertion per region is what keeps each honest — it proves
+# the two extracts are equal to begin with, so the inequality can only come from
+# the tamper. Without it a broken extract returning empty for one side would make
+# BOTH branches report "detected" and the fixture would pass vacuously.
+#
+# Comparison is plain bash, NOT assert_true: the regions hold Python source with
+# shell metacharacters (quotes, backslashes, parens) that assert_true's eval
+# would execute.
+test_detector_fires_on_python_primary_drift() {
+    local region canonical duplicate tampered baseline tamper_took drift sed_expr
+
+    for region in $PY_REGIONS; do
+        case "$region" in
+            loc-tables-py)
+                sed_expr='s/"md": 2}/"md": 4}/'
+                ;;
+            loc-helpers-py)
+                sed_expr='s/        return default/        return 0/'
+                ;;
+            loc-unit-py)
+                sed_expr='s/            out.append(ch)/            out.append("x")/'
+                ;;
+            loc-measure-py)
+                sed_expr='s/    production = total - blank - comment - test_excluded/    production = total/'
+                ;;
+            *)
+                _fail "no tamper case for region ${region}" \
+                    "Every region in PY_REGIONS needs a tamper, or its registration is unproven."
+                continue
+                ;;
+        esac
+
+        canonical="$(extract_shared "$DECOMP_PATTERNS_PY" "$region" | normalize)"
+        duplicate="$(extract_shared "$SIZING_PY" "$region" | normalize)"
+
+        assert_not_empty "$canonical" "patterns.py ${region} extract is non-empty"
+        assert_not_empty "$duplicate" "sizing.py ${region} extract is non-empty"
+
+        baseline="differs"
+        [ "$canonical" = "$duplicate" ] && baseline="matches"
+        assert_equals "matches" "$baseline" \
+            "the untampered ${region} pair matches (tamper is the only variable)"
+
+        tampered="$(extract_shared "$SIZING_PY" "$region" |
+            command sed "$sed_expr" | normalize)"
+        assert_not_empty "$tampered" "tampered ${region} extract is non-empty (extract still works)"
+
+        tamper_took="no"
+        [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+        assert_equals "yes" "$tamper_took" \
+            "the ${region} tamper actually changed the region (the targeted line is present)"
+
+        drift="none"
+        [ "$canonical" != "$tampered" ] && drift="detected"
+        assert_equals "detected" "$drift" \
+            "a one-line edit to sizing.py's ${region} copy is detected as drift"
+    done
+}
+
+# Every region registered for the Python pair has a tamper case, and vice versa.
+#
+# Guarded by NAME SETS rather than counts: a count check passes when one region
+# is added and another dropped in the same edit, which is exactly the bookkeeping
+# error this catches. The failure mode it prevents is a region sitting in
+# SHARED_PAIRS with no fixture ever proving the comparison reaches it — green,
+# and unproven.
+test_py_regions_and_tampers_agree() {
+    local entry canonical_rel duplicate_rel regions declared r r2 found
+
+    declared=""
+    for entry in "${SHARED_PAIRS[@]}"; do
+        IFS='|' read -r canonical_rel duplicate_rel regions <<<"$entry"
+        case "$canonical_rel" in
+            *.py) declared="$regions" ;;
+        esac
+    done
+
+    assert_not_empty "$declared" "a .py pair is registered in SHARED_PAIRS"
+
+    for r in $declared; do
+        found="no"
+        for r2 in $PY_REGIONS; do
+            [ "$r" = "$r2" ] && found="yes"
+        done
+        assert_equals "yes" "$found" "region ${r} from SHARED_PAIRS has a tamper case"
+    done
+    for r in $PY_REGIONS; do
+        found="no"
+        for r2 in $declared; do
+            [ "$r" = "$r2" ] && found="yes"
+        done
+        assert_equals "yes" "$found" "tampered region ${r} is actually registered in SHARED_PAIRS"
+    done
+}
+
+# The Python regions obey the column-zero rule stated in the header — the rule
+# that makes `normalize`'s whitespace strip safe for a language where
+# indentation is semantic.
+#
+# Asserted on BOTH copies: the pair could be internally consistent and still
+# both wrong, which the byte-identical drift check alone cannot see
+# ([[parity-gate-hides-shared-defect]]). Checked against the RAW extract, before
+# normalize — normalize is precisely what would erase the evidence.
+#
+# The property: every non-blank, non-continuation line in a shared Python region
+# starts at column 0 or is part of a def/class body, and the region never OPENS
+# at an indented line. A region opening indented would mean a fragment of a
+# function body had been shared, which is the shape the rule forbids.
+test_py_regions_start_at_column_zero() {
+    local file label region first col0
+    for file in "$DECOMP_PATTERNS_PY" "$SIZING_PY"; do
+        label="$(label_for "$file")"
+        for region in $PY_REGIONS; do
+            # First non-blank line of the raw (un-normalized) extract.
+            first="$(extract_shared "$file" "$region" |
+                command grep -v '^[[:space:]]*$' | command head -1)"
+            assert_not_empty "$first" "${label}: ${region} has a non-blank first line"
+
+            col0="no"
+            case "$first" in
+                [!\ ]*) col0="yes" ;;
+            esac
+            assert_equals "yes" "$col0" \
+                "${label}: ${region} opens at column zero (no shared function-body fragment)"
+        done
+    done
+}
+
 run_test test_all_regions_match "All shared regions match across every pinned pair"
 run_test test_label_for_disambiguates_the_pairs "label_for disambiguates the two same-named patterns.sh copies"
 run_test test_debug_region_has_all_language_arms "Debug regions cover every advertised language arm"
@@ -509,5 +710,8 @@ run_test test_detector_fires_on_drift "Drift detector fires on a tampered region
 run_test test_detector_fires_on_py_region_drift "Drift detector fires across the py-public-symbols pair (#609)"
 run_test test_detector_fires_on_loc_region_drift "Drift detector fires across the LOC-engine pair (#695)"
 run_test test_detector_fires_on_segmenter_region_drift "Drift detector fires across the unit-segmenter pair (#695)"
+run_test test_detector_fires_on_python_primary_drift "Drift detector fires across every region of the Python-primary pair (#730)"
+run_test test_py_regions_and_tampers_agree "Every registered Python region has a tamper case, and vice versa (#730)"
+run_test test_py_regions_start_at_column_zero "Python regions open at column zero, so normalize's strip is safe (#730)"
 
 generate_report
