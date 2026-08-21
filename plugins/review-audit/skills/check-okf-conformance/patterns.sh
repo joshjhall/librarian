@@ -64,9 +64,20 @@ fi
 # a pure-bash parse for simple formats; read_yaml_list in ship-issue's
 # pre-review-gates.sh is the worked example).
 read_pinned_version() {
-    local file="$1" line stripped val in_okf=0 first
-    if [ -n "${OKF_PINNED_VERSION:-}" ]; then
-        command printf '%s' "$OKF_PINNED_VERSION"
+    local file="$1" line stripped val in_okf=0 first env_val
+    # TRIM BEFORE THE EMPTINESS TEST, mirroring patterns.py's
+    # os.environ.get(...).strip(). Testing the RAW value would make a
+    # whitespace-only override (a CI template that expanded to nothing, a
+    # stray `export OKF_PINNED_VERSION=" "`) non-empty here and empty in
+    # python: bash would return the blank, fail the <major>.<minor> check, and
+    # exit 1 "malformed pin", while python fell through to thresholds.yml and
+    # scanned normally. Same environment, opposite verdicts — and on exactly
+    # the fail-loud/permissive boundary this skill exists to keep straight.
+    env_val="${OKF_PINNED_VERSION:-}"
+    env_val="${env_val#"${env_val%%[![:space:]]*}"}"
+    env_val="${env_val%"${env_val##*[![:space:]]}"}"
+    if [ -n "$env_val" ]; then
+        command printf '%s' "$env_val"
         return 0
     fi
     [ -f "$file" ] || return 0

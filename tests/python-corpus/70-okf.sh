@@ -86,6 +86,11 @@ printf -- '---\ntype: user\n' >"$OKFDIR/unterminated.md"
 printf -- '---\ntype: project\n---\n\nNested body.\n' >"$OKFDIR/sub/nested.md"
 printf -- '---\ntitle: Not allowed here\n---\n\n# Sub index\n' >"$OKFDIR/sub/index.md"
 
+# A nested index.md whose block OPENS but never closes — scan_index's OWN
+# parse_frontmatter error path, which no scan_concept fixture reaches.
+mkdir -p "$OKFDIR/broken"
+printf -- '---\nokf_version: "0.2"\n' >"$OKFDIR/broken/index.md"
+
 # A non-markdown file inside the bundle (skipped) and a markdown file OUTSIDE it
 # (skipped) — the two early-continue arms in main().
 printf -- 'type = not markdown\n' >"$OKFDIR/notes.txt"
@@ -105,6 +110,7 @@ OKF_LIST="$WORKDIR/okf-list.txt"
     printf '%s\n' "$OKFDIR/unterminated.md"
     printf '%s\n' "$OKFDIR/sub/nested.md"
     printf '%s\n' "$OKFDIR/sub/index.md"
+    printf '%s\n' "$OKFDIR/broken/index.md"
     printf '%s\n' "$OKFDIR/notes.txt"
     printf '%s\n' "$FIXDIR/okf/README.md"
     # A ghost path inside the bundle — drives the per-file OSError continue.

@@ -252,6 +252,35 @@ test_unparseable_frontmatter() {
     assert_fires "$list" okf-unparseable-frontmatter "Concept has no frontmatter block" \
         "okf: an empty concept file fires"
 
+    # scan_index has its OWN parse_frontmatter call and its OWN unparseable
+    # emit, reached only when an index.md OPENS a block (first line `---`) that
+    # then fails to parse. Every fixture above routes through scan_concept, so
+    # without these two the index-side error path is unexecuted in both impls —
+    # including whether the bad-line LINE NUMBER is reported correctly there.
+    b="$(fresh_bundle)"
+    command printf -- '---\nokf_version: "0.2"\n' >"$b/index.md"
+    list="$(make_list "$b/../../../l" "$b/index.md")"
+    assert_fires "$list" okf-unparseable-frontmatter "Frontmatter block is not terminated" \
+        "okf: an index.md with an unterminated block fires via scan_index"
+
+    b="$(fresh_bundle)"
+    command printf -- '---\nokf_version: "0.2"\nTHIS LINE HAS NO COLON\n---\n\n# Index\n' >"$b/index.md"
+    list="$(make_list "$b/../../../l" "$b/index.md")"
+    assert_fires "$list" okf-unparseable-frontmatter "Frontmatter line is not parseable" \
+        "okf: an index.md with a bad interior line fires via scan_index"
+    # ...at the offending line (3), not at line 1 — the index path passes
+    # FM_ERR_LINE through just as the concept path does.
+    assert_contains "$(emit_rows sh "$list" okf-unparseable-frontmatter)" "	3	" \
+        "okf: the index.md bad-line finding points at the offending line (bash)"
+
+    # An unparseable index.md reports ONLY the parse error — the structure and
+    # drift rules downstream of the parse must not also fire on a block that
+    # could not be read.
+    assert_silent "$list" okf-reserved-file-structure \
+        "okf: an unparseable index.md does not also emit a structure finding"
+    assert_silent "$list" okf-version-drift \
+        "okf: an unparseable index.md does not also emit a drift finding"
+
     # NEGATIVE: comments, list items, and nested mappings inside the block are
     # all parseable and must NOT fire. Without this, tightening the grammar to
     # "keys only" would pass every positive case above.
@@ -644,6 +673,84 @@ test_evidence_truncation_parity() {
     fi
 }
 
+# ============================================================================
+# PIN RESOLUTION PARITY — the two impls must resolve the pin IDENTICALLY
+#
+# Both cases here were live parity breaks found in pre-PR review. Neither is
+# reachable through the ordinary fixtures: every other test either sets a
+# well-formed OKF_PINNED_VERSION or leaves it unset, and the real thresholds.yml
+# always parses. They matter because the pin decides which SIDE of the
+# fail-loud/permissive split a run lands on, so a divergence here means the same
+# environment scans clean under one runtime and dies under the other.
+#
+# Asserted on EXIT STATUS as well as output: the whole failure mode is one impl
+# exiting 0 while the other exits 1, which a rows-only assertion cannot see.
+# ============================================================================
+test_pin_resolution_parity() {
+    local b list rc_sh rc_py out_sh out_py cfg
+
+    b="$(fresh_bundle)"
+    command printf -- '---\ntype: user\n---\n\nBody.\n' >"$b/ok.md"
+    list="$(make_list "$b/../../../l" "$b/ok.md")"
+
+    # A WHITESPACE-ONLY override must be treated as unset by BOTH impls, so both
+    # fall through to thresholds.yml. Bash tested the RAW value with `-n` (a
+    # space is non-empty) while python applied .strip() first — so bash exited 1
+    # "malformed pin" where python scanned normally. A CI template expanding to
+    # nothing produces exactly this value.
+    rc_sh=0
+    out_sh="$(OKF_PINNED_VERSION=" " OKF_BUNDLE_ROOT="$FIXTURE_ROOT" \
+        /usr/bin/env PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null)" || rc_sh=$?
+    assert_exit 0 "$rc_sh" "okf: a whitespace-only pin override falls through to thresholds.yml (bash)"
+    assert_output_empty "$out_sh" "okf: ...and the conformant fixture stays silent (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        rc_py=0
+        out_py="$(OKF_PINNED_VERSION=" " OKF_BUNDLE_ROOT="$FIXTURE_ROOT" \
+            python3 "$SK/patterns.py" "$list" 2>/dev/null)" || rc_py=$?
+        assert_exit 0 "$rc_py" "okf: a whitespace-only pin override falls through to thresholds.yml (python)"
+        assert_output_empty "$out_py" "okf: ...and the conformant fixture stays silent (python)"
+        assert_equals "$rc_sh" "$rc_py" "okf: both impls agree on a whitespace-only pin override"
+        assert_equals "$out_sh" "$out_py" "okf: ...and both emit identical output under it"
+    fi
+
+    # A top-level LIST ITEM in thresholds.yml ends the `okf:` block in both
+    # impls. Bash reset in_okf on its `-` case arm; python's guard skipped the
+    # whole assignment for a `-` line and kept the PRIOR value — so python read
+    # an indented pinned_version that bash had already stepped out of. The
+    # config is documented as consumer-overridable, so its parse is a real
+    # surface, and the two runtimes must not read one file differently.
+    cfg="$WORKDIR/pin-parity"
+    command mkdir -p "$cfg"
+    command cp "$SK/patterns.py" "$SK/patterns.sh" "$cfg/"
+    command printf -- 'okf:\n  other: x\n- a top-level list item\n  pinned_version: "9.9"\n' \
+        >"$cfg/thresholds.yml"
+    rc_sh=0
+    /usr/bin/env -u OKF_PINNED_VERSION PATTERNS_FORCE_BASH=1 \
+        "$REAL_BASH" "$cfg/patterns.sh" "$list" >/dev/null 2>&1 || rc_sh=$?
+    assert_exit 1 "$rc_sh" "okf: a top-level list item ends the okf: block — pin unresolvable (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        rc_py=0
+        /usr/bin/env -u OKF_PINNED_VERSION python3 "$cfg/patterns.py" "$list" >/dev/null 2>&1 || rc_py=$?
+        assert_exit 1 "$rc_py" "okf: a top-level list item ends the okf: block — pin unresolvable (python)"
+        assert_equals "$rc_sh" "$rc_py" "okf: both impls step out of the okf: block at the same line"
+    fi
+
+    # ...and the SAME config WITHOUT the stray list item resolves in both, so the
+    # two assertions above fail for the list item specifically rather than
+    # because the copied skill is broken in some unrelated way.
+    command printf -- 'okf:\n  other: x\n  pinned_version: "9.9"\n' >"$cfg/thresholds.yml"
+    rc_sh=0
+    /usr/bin/env -u OKF_PINNED_VERSION OKF_BUNDLE_ROOT="$FIXTURE_ROOT" PATTERNS_FORCE_BASH=1 \
+        "$REAL_BASH" "$cfg/patterns.sh" "$list" >/dev/null 2>&1 || rc_sh=$?
+    assert_exit 0 "$rc_sh" "okf: without the stray list item the same config resolves (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        rc_py=0
+        /usr/bin/env -u OKF_PINNED_VERSION OKF_BUNDLE_ROOT="$FIXTURE_ROOT" \
+            python3 "$cfg/patterns.py" "$list" >/dev/null 2>&1 || rc_py=$?
+        assert_exit 0 "$rc_py" "okf: without the stray list item the same config resolves (python)"
+    fi
+}
+
 run_test test_healthy_bundle_is_silent "check-okf-conformance: a conformant bundle produces ZERO findings"
 run_test test_missing_type "check-okf-conformance: absent / empty / whitespace-only type"
 run_test test_unparseable_frontmatter "check-okf-conformance: absent, unterminated, and malformed frontmatter"
@@ -652,6 +759,7 @@ run_test test_version_drift "check-okf-conformance: drift is LOW at exit 0, and 
 run_test test_permissive_conformance "check-okf-conformance: §11 MUST-NOTs stay silent (unknown type, extra keys, broken links)"
 run_test test_bundle_discovery "check-okf-conformance: root override, normalization, precedence, no-bundle exit 0"
 run_test test_fail_loud_runtime "check-okf-conformance: unresolvable pin / usage / missing list fail LOUD and non-zero"
+run_test test_pin_resolution_parity "check-okf-conformance: bash/python resolve the version pin identically"
 run_test test_evidence_truncation_parity "check-okf-conformance: >80-char multibyte evidence truncation parity"
 
 generate_report

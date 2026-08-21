@@ -176,8 +176,14 @@ def read_pinned_version(path: str) -> str:
     for line in lines:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        # A top-level key (column 0, not a list item) opens or closes the block.
-        if not line[0].isspace() and not line.startswith("-"):
+        # A column-0 line ends the `okf:` block. A top-level KEY may also open
+        # it; a top-level LIST ITEM (`- ...`) only closes it, matching the bash
+        # twin's three `case` arms exactly. Leaving `in_okf` untouched on the
+        # list-item arm would let python keep reading an indented
+        # `pinned_version:` that bash had already stepped out of — same file,
+        # different pin, and on the config a consumer repo is invited to
+        # override (thresholds.yml § "place a modified copy").
+        if not line[0].isspace():
             in_okf = line.startswith("okf:")
             continue
         if not in_okf:
