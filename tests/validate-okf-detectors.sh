@@ -272,6 +272,10 @@ test_unparseable_frontmatter() {
     # FM_ERR_LINE through just as the concept path does.
     assert_contains "$(emit_rows sh "$list" okf-unparseable-frontmatter)" "	3	" \
         "okf: the index.md bad-line finding points at the offending line (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_contains "$(emit_rows py "$list" okf-unparseable-frontmatter)" "	3	" \
+            "okf: the index.md bad-line finding points at the offending line (python)"
+    fi
 
     # An unparseable index.md reports ONLY the parse error — the structure and
     # drift rules downstream of the parse must not also fire on a block that
