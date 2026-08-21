@@ -699,6 +699,37 @@ cases = [
 ]
 
 bad = 0
+
+# The CALL SITE, not just the function. md_slug agreeing in isolation does not
+# prove find_units actually uses it: a wrong variable passed at the call site
+# would leave every case above green while markdown units came out misnamed.
+# This drives find_units(lines, "md") in BOTH lenses and reads Unit.name back.
+#
+# It is NOT a test-that-cannot-fail: reverting sizing.py's md arm to the old
+# hardcoded "section" fails this immediately. What IS unreachable is the
+# EMITTED output (this lens reports unit counts, never names) — recorded as
+# such in sizing.py rather than asserted here.
+md_lines = [
+    "# Install on Linux",
+    "body",
+    "# Configure the Daemon",
+    "body",
+]
+for label, mod in (("audit", audit), ("review", review)):
+    got = [u.name for u in mod.find_units(md_lines, "md")]
+    want = ["install_on_linux", "configure_the_daemon"]
+    if got != want:
+        bad += 1
+        print("FAIL %s find_units(md) names -> %r, expected %r" % (label, got, want))
+
+# A heading that slugs to empty must still yield the "section" fallback rather
+# than an empty name — the `or "section"` half of the expression.
+for label, mod in (("audit", audit), ("review", review)):
+    got = [u.name for u in mod.find_units(["# ---", "body"], "md")]
+    if got != ["section"]:
+        bad += 1
+        print("FAIL %s find_units(md) empty-slug fallback -> %r" % (label, got))
+
 for text, expected in cases:
     a = audit.md_slug(text)
     r = review.md_slug(text)
