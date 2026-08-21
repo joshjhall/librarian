@@ -26,6 +26,16 @@ styl = "styl"
 # golem-inbox / next-issue prose; typos splits on the hyphen and would misread
 # it as `miss`/`mist`. Not a typo.
 mis = "mis"
+# `unparseable` is the -eable variant, and it is the spelling the OKF
+# conformance category is NAMED with: `okf-unparseable-frontmatter` (#668). Both
+# spellings are standard English and typos merely prefers the shorter one, but a
+# category slug is an identifier — it appears in contract.md, in the emitted TSV,
+# in the finding schema, and in the issue that specified it, so renaming it to
+# satisfy a preference would break the contract for a cosmetic gain.
+unparseable = "unparseable"
+Unparseable = "Unparseable"
+UNPARSEABLE = "UNPARSEABLE"
+
 # `BRE` is POSIX Basic Regular Expression — the counterpart to ERE, named
 # throughout the portability prose and the lint gate (#679). typos reads it as
 # `BE`/`BRIE`. The term is standard and cannot be reworded without losing

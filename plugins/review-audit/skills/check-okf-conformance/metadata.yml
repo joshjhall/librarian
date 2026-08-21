@@ -1,0 +1,9 @@
+name: check-okf-conformance
+version: "1.0"
+labels: []
+required_tools:
+  - name: grep
+    purpose: "Version-pin and ISO-date shape matching in the bash fallback"
+    install_hint: "Included in base container image"
+required_permissions: []
+required_mcps: []
