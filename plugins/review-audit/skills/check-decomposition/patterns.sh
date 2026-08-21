@@ -310,6 +310,25 @@ while IFS= read -r file; do
         if (dir != "") return dir "/" stem "/" prefix ext
         return stem "/" prefix ext
     }
+    # concept_dir: which directory an extracted bundle concept belongs in — the
+    # OWN directory of the source file, not b_root. Mirrors concept_dir() in
+    # patterns.py; see that docstring for why (a root-anchored target silently
+    # drops the subdirectory of a nested concept). NOT target_path(): an
+    # extracted lesson is a flat SIBLING of its source, never a child of it.
+    # The b_root fallback is defensive — unreachable from the only call site,
+    # which requires a slash in the path for b_kind to be set at all.
+    #
+    # NB: `i` is LOCAL (the extra-parameter idiom) for the same reason
+    # target_path declares it — awk has no block scope, and this is called from
+    # inside the bundle branch, which uses `i` as a loop counter.
+    # NB: no apostrophes in this comment — the awk program is one single-quoted
+    # shell word, so one apostrophe ends it and the script dies at load.
+    function concept_dir(p,   slash, i) {
+        slash = 0
+        for (i = length(p); i >= 1; i--) if (substr(p, i, 1) == "/") { slash = i; break }
+        if (slash) return substr(p, 1, slash - 1)
+        return b_root
+    }
     function emit(line_no, category, evidence, certainty) {
         printf "%s\t%d\t%s\t%s\t%s\n", path, line_no, category, evidence, certainty
     }
@@ -478,7 +497,7 @@ while IFS= read -r file; do
                     }
                 } else if (bns >= 2) {
                     emit(1, "decomposition-seam", sprintf("concept split: extract %s to %s/%s.md AND add its index line (an extracted concept with no index line is an orphan)", \
-                        bsec[2], b_root, bsec[2]), "HIGH")
+                        bsec[2], concept_dir(path), bsec[2]), "HIGH")
                 } else {
                     emit(1, "decomposition-seam", sprintf("declined: single lesson — no second concept to extract (%d sections); tighten the prose instead", \
                         bns), "LOW")
