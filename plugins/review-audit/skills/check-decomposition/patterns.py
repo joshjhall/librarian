@@ -63,6 +63,7 @@ GENERATED_RE = re.compile(
     re.IGNORECASE,
 )
 
+# >>> shared:loc-tables-py (sync: ship-issue/sizing.py)
 # Per-language unit headers. Each maps a language key to the regex that starts a
 # TOP-LEVEL unit. Anchored at line start (no leading indent) so nested defs are
 # not mistaken for top-level ones — that anchoring is what makes a unit span a
@@ -123,21 +124,6 @@ NEST_UNIT = {"py": 4, "js": 2, "rs": 4, "go": 4, "sh": 4, "md": 2}
 # byte-identical on a file with exotic whitespace.
 BLANK_RE = re.compile(r"^[ \t]*$")
 INDENT_RE = re.compile(r"^[ \t]*")
-# Identifier tokens for the fan-in scan. A MAXIMAL run is what makes membership
-# equivalent to a \bNAME\b regex — and, unlike an escaped alternation, it is
-# reproducible verbatim in the awk fallback, so the two impls agree by
-# construction rather than by two hand-matched regex dialects.
-TOKEN_RE = re.compile(r"[A-Za-z0-9_$]+")
-
-# Noun used in seam evidence, per language.
-UNIT_NOUN = {
-    "py": "def",
-    "js": "function",
-    "rs": "fn",
-    "go": "func",
-    "sh": "function",
-    "md": "section",
-}
 
 EXT_LANG = {
     "py": "py",
@@ -154,8 +140,31 @@ EXT_LANG = {
     "md": "md",
     "markdown": "md",
 }
+# <<< shared:loc-tables-py
+
+# Identifier tokens for the fan-in scan. A MAXIMAL run is what makes membership
+# equivalent to a \bNAME\b regex — and, unlike an escaped alternation, it is
+# reproducible verbatim in the awk fallback, so the two impls agree by
+# construction rather than by two hand-matched regex dialects.
+#
+# NOT shared with sizing.py: the fan-in scan is an audit-lens concern, and the
+# review lens has no cluster coupling analysis to run it over.
+TOKEN_RE = re.compile(r"[A-Za-z0-9_$]+")
+
+# Noun used in seam evidence, per language. NOT shared with sizing.py — the
+# review lens names a split SHAPE rather than a unit noun, so copying this table
+# there would add a lookup nothing reads (#730).
+UNIT_NOUN = {
+    "py": "def",
+    "js": "function",
+    "rs": "fn",
+    "go": "func",
+    "sh": "function",
+    "md": "section",
+}
 
 
+# >>> shared:loc-helpers-py (sync: ship-issue/sizing.py)
 def _int_env(name: str, default: int) -> int:
     """Read an integer threshold from the environment, falling back to DEFAULT.
     Mirrors _int_env in check-ai-config/patterns.py (and the ${VAR:-N} defaults
@@ -175,12 +184,6 @@ def emit(path: str, line_no: int, category: str, evidence: str, certainty: str) 
     )
 
 
-def _glob(path: str, pattern: str) -> bool:
-    """`case "$path" in <pattern>)` — an unanchored shell glob over the full
-    path. fnmatchcase's `*` crosses '/', matching bash `case` glob semantics."""
-    return _fnmatch.fnmatchcase(path, pattern)
-
-
 def lang_of(path: str) -> str:
     """Language key from the file extension, or '' when unrecognized (metrics
     only, no segmenter)."""
@@ -189,6 +192,19 @@ def lang_of(path: str) -> str:
     return EXT_LANG.get(path.rsplit(".", 1)[-1].lower(), "")
 
 
+# <<< shared:loc-helpers-py
+
+
+def _glob(path: str, pattern: str) -> bool:
+    """`case "$path" in <pattern>)` — an unanchored shell glob over the full
+    path. fnmatchcase's `*` crosses '/', matching bash `case` glob semantics.
+
+    NOT shared with sizing.py: the review lens has no bloat_spec classification
+    to glob paths for."""
+    return _fnmatch.fnmatchcase(path, pattern)
+
+
+# >>> shared:loc-unit-py (sync: ship-issue/sizing.py)
 def family_prefix(name: str) -> str:
     """The family key a unit name belongs to — the shared stem that makes
     `parse_entry` / `parse_header` / `parse_body` one cluster.
@@ -222,17 +238,25 @@ def md_slug(text: str) -> str:
 
 
 class Unit:
-    """One top-level declaration: its name, family, header line and span."""
+    """One top-level declaration: its name, family, header line and span.
 
-    __slots__ = ("name", "prefix", "start", "end", "is_test", "depth")
+    THE shared representation for both lenses (#730). The review lens
+    (ship-issue/sizing.py) previously carried a parallel 4-tuple shape, which was
+    the structural reason the two `find_units` bodies could never be compared
+    byte-for-byte — and so the reason the Python halves drifted while their awk
+    twins stayed pinned. `prefix` is what the audit lens clusters on; the review
+    lens does not cluster, but carrying one field it ignores is far cheaper than
+    two representations neither gate can align.
+    """
 
-    def __init__(self, name: str, start: int, depth: int = 0) -> None:
+    __slots__ = ("name", "prefix", "start", "end", "is_test")
+
+    def __init__(self, name: str, start: int) -> None:
         self.name = name
         self.prefix = family_prefix(name)
         self.start = start
         self.end = start
         self.is_test = False
-        self.depth = depth
 
 
 def find_units(lines: list[str], lang: str) -> list[Unit]:
@@ -260,7 +284,7 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
         top = min(h[0] for h in heads)
         for depth, line_no, text in heads:
             if depth == top:
-                units.append(Unit(md_slug(text) or "section", line_no, depth))
+                units.append(Unit(md_slug(text) or "section", line_no))
     else:
         rx = UNIT_RE.get(lang)
         if rx is None:
@@ -293,9 +317,18 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
     return units
 
 
+# <<< shared:loc-unit-py
+
+
+# >>> shared:loc-measure-py (sync: ship-issue/sizing.py)
 def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
     """The generic sizing layer: total / blank / comment / test-excluded /
-    production LOC, max nesting depth, and top-level unit count."""
+    production LOC, max nesting depth, and top-level unit count.
+
+    The audit lens (check-decomposition/patterns.py) and the review lens
+    (ship-issue/sizing.py) carry byte-identical copies, pinned by
+    tests/validate-shared-scanner-sync.sh; the same computation is transcribed
+    into awk in the shared:loc-measure-awk region of both bash fallbacks."""
     total = len(lines)
     comment_rx = COMMENT_RE.get(lang)
     region_rx = TEST_REGION_RE.get(lang)
@@ -341,6 +374,9 @@ def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
         "units": len([u for u in units if not u.is_test]),
         "comment_pct": (comment * 100 // total) if total else 0,
     }
+
+
+# <<< shared:loc-measure-py
 
 
 class Cluster:

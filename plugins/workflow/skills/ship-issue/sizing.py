@@ -18,7 +18,10 @@ with check-decomposition through `# >>> shared:loc-*` sentinel regions pinned
 byte-for-byte by tests/validate-shared-scanner-sync.sh — the plugins install
 independently (workflow without review-audit), so a sourced library is
 impossible and a third drifting copy of the LOC rules is exactly what #663 was
-filed to kill.
+filed to kill. Both the Python primaries (`shared:loc-*-py`) and the awk
+fallbacks (`shared:loc-*-awk`) are pinned; before #730 only the awk half was,
+so the two Python halves — the ones that actually run whenever a python3>=3.11
+is present — could drift freely while every gate stayed green.
 
 Python 3.11+ primary behind the language-agnostic TSV contract; the sibling
 sizing.sh is the portable bash fallback (it exec's this file when a python3>=3.11
@@ -66,6 +69,11 @@ GENERATED_RE = re.compile(
     re.IGNORECASE,
 )
 
+# >>> shared:loc-tables-py (sync: check-decomposition/patterns.py)
+# Per-language unit headers. Each maps a language key to the regex that starts a
+# TOP-LEVEL unit. Anchored at line start (no leading indent) so nested defs are
+# not mistaken for top-level ones — that anchoring is what makes a unit span a
+# genuine cut point.
 UNIT_RE = {
     "py": re.compile(r"^(?:async[ \t]+)?(?:def|class)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"),
     "js": re.compile(
@@ -83,6 +91,7 @@ UNIT_RE = {
     ),
 }
 
+# Comment-line shapes per language (used for the comment/production split).
 COMMENT_RE = {
     "py": re.compile(r"^[ \t]*#"),
     "sh": re.compile(r"^[ \t]*#"),
@@ -91,6 +100,10 @@ COMMENT_RE = {
     "go": re.compile(r"^[ \t]*(?://|/\*|\*)"),
 }
 
+# A unit header that marks the unit as TEST code. Replaces the per-language
+# exclusion prose the three agents each carried a drifting copy of. Because unit
+# SPANS are already computed, exclusion is per-unit and exact rather than the
+# "to end of file" approximation the prose specified.
 TEST_UNIT_RE = {
     "py": re.compile(r"^(?:async[ \t]+)?def[ \t]+test_|^class[ \t]+Test"),
     "js": re.compile(r"^[ \t]*(?:describe|it|test)[ \t]*\("),
@@ -99,22 +112,24 @@ TEST_UNIT_RE = {
     "sh": re.compile(r"^(?:function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)"),
 }
 
+# Whole-file test-region markers: everything from the match to EOF is test code.
+# Kept for the two cases the prose named that are genuinely region-scoped rather
+# than unit-scoped.
 TEST_REGION_RE = {
     "py": re.compile(r"^if[ \t]+__name__"),
     "rs": re.compile(r"^[ \t]*#\[cfg\(test\)\]"),
     "sh": re.compile(r"^#[ \t]*-+[ \t]*tests?[ \t]*-+"),
 }
 
-# Blankness/indent by REGEX, not str.strip(): the latter is unicode-aware while
-# the awk fallback under LC_ALL=C is not. Pinning both to [ \t] is what keeps the
-# TSV byte-identical on a file with exotic whitespace.
+# Indent width used to convert leading whitespace into a nesting depth.
+NEST_UNIT = {"py": 4, "js": 2, "rs": 4, "go": 4, "sh": 4, "md": 2}
+
+# Blankness and indent are defined by REGEX, not str.strip()/str.lstrip(): the
+# latter are unicode-aware (\x0b, \x0c, \x85, NBSP...) while the awk fallback
+# under LC_ALL=C is not. Pinning both impls to [ \t] is what keeps the TSV
+# byte-identical on a file with exotic whitespace.
 BLANK_RE = re.compile(r"^[ \t]*$")
 INDENT_RE = re.compile(r"^[ \t]*")
-
-# Indent width used to convert leading whitespace into a nesting depth. Mirrors
-# NEST_UNIT in check-decomposition/patterns.py and nest_unit() in the shared
-# awk region, so the metrics string is byte-identical across all three.
-NEST_UNIT = {"py": 4, "js": 2, "rs": 4, "go": 4, "sh": 4, "md": 2}
 
 EXT_LANG = {
     "py": "py",
@@ -131,6 +146,7 @@ EXT_LANG = {
     "md": "md",
     "markdown": "md",
 }
+# <<< shared:loc-tables-py
 
 # Language-shaped split guidance (AC7). Keyed by the same language keys the
 # segmenters use, so advice and measurement can never disagree about what a file
@@ -161,11 +177,12 @@ PER_LANG_THRESHOLDS = {
 }
 
 
+# >>> shared:loc-helpers-py (sync: check-decomposition/patterns.py)
 def _int_env(name: str, default: int) -> int:
     """Read an integer threshold from the environment, falling back to DEFAULT.
-    Mirrors _int_env across the patterns.py family and the ${VAR:-N} defaults in
-    every patterns.sh, so thresholds.yml values pass through without either impl
-    diverging."""
+    Mirrors _int_env in check-ai-config/patterns.py (and the ${VAR:-N} defaults
+    in every patterns.sh) so thresholds.yml values can be passed through by the
+    orchestrator without either impl diverging."""
     val = os.environ.get(name, "")
     try:
         return int(val)
@@ -181,10 +198,14 @@ def emit(path: str, line_no: int, category: str, evidence: str, certainty: str) 
 
 
 def lang_of(path: str) -> str:
-    """Language key from the file extension, or '' when unrecognized."""
+    """Language key from the file extension, or '' when unrecognized (metrics
+    only, no segmenter)."""
     if "." not in path:
         return ""
     return EXT_LANG.get(path.rsplit(".", 1)[-1].lower(), "")
+
+
+# <<< shared:loc-helpers-py
 
 
 def thresholds_for(lang: str) -> tuple[int, int]:
@@ -204,16 +225,71 @@ def thresholds_for(lang: str) -> tuple[int, int]:
     return warn, high
 
 
-def find_units(lines: list[str], lang: str) -> list[tuple[str, int, int, bool]]:
-    """Top-level units as (name, start, end, is_test), each spanning from its
-    header line to the line before the next header (or EOF).
+# >>> shared:loc-unit-py (sync: check-decomposition/patterns.py)
+def family_prefix(name: str) -> str:
+    """The family key a unit name belongs to — the shared stem that makes
+    `parse_entry` / `parse_header` / `parse_body` one cluster.
+
+    snake_case splits at the first underscore; camelCase and PascalCase split at
+    the first internal uppercase letter. The result is lowercased so `ParseEntry`
+    and `parse_entry` land in the same family.
+    """
+    cut = name.find("_")
+    if cut > 0:
+        return name[:cut].lower()
+    i = 1
+    while i < len(name) and not ("A" <= name[i] <= "Z"):
+        i += 1
+    return name[:i].lower()
+
+
+def md_slug(text: str) -> str:
+    """Markdown heading text -> an identifier-shaped slug so family_prefix()
+    applies unchanged ('Install on Linux' -> 'install_on_linux')."""
+    out = []
+    prev_us = False
+    for ch in INDENT_RE.sub("", text.rstrip()).lower():
+        if ("a" <= ch <= "z") or ("0" <= ch <= "9"):
+            out.append(ch)
+            prev_us = False
+        elif not prev_us:
+            out.append("_")
+            prev_us = True
+    return "".join(out).strip("_")
+
+
+class Unit:
+    """One top-level declaration: its name, family, header line and span.
+
+    THE shared representation for both lenses (#730). The review lens
+    (ship-issue/sizing.py) previously carried a parallel 4-tuple shape, which was
+    the structural reason the two `find_units` bodies could never be compared
+    byte-for-byte — and so the reason the Python halves drifted while their awk
+    twins stayed pinned. `prefix` is what the audit lens clusters on; the review
+    lens does not cluster, but carrying one field it ignores is far cheaper than
+    two representations neither gate can align.
+    """
+
+    __slots__ = ("name", "prefix", "start", "end", "is_test")
+
+    def __init__(self, name: str, start: int) -> None:
+        self.name = name
+        self.prefix = family_prefix(name)
+        self.start = start
+        self.end = start
+        self.is_test = False
+
+
+def find_units(lines: list[str], lang: str) -> list[Unit]:
+    """Top-level units in file order, each spanning from its header line to the
+    line before the next header (or EOF).
 
     For markdown, 'top-level' means the shallowest heading depth present, so a
-    doc whose sections are all `##` segments by `##` rather than by a lone `#`.
-    """
-    raw: list[tuple[str, int, bool]] = []
+    doc whose sections are all `##` segments by `##` rather than by a lone `#`
+    title."""
+    units: list[Unit] = []
     if lang == "md":
-        heads: list[tuple[int, int]] = []
+        heads: list[tuple[int, int, str]] = []  # (depth, line_no, text)
         fenced = False
         for idx, line in enumerate(lines, start=1):
             if line.startswith("```") or line.startswith("~~~"):
@@ -223,13 +299,13 @@ def find_units(lines: list[str], lang: str) -> list[tuple[str, int, int, bool]]:
                 continue
             m = re.match(r"^(#{1,6})[ \t]+(.*)$", line)
             if m:
-                heads.append((len(m.group(1)), idx))
+                heads.append((len(m.group(1)), idx, m.group(2)))
         if not heads:
             return []
         top = min(h[0] for h in heads)
-        for depth, line_no in heads:
+        for depth, line_no, text in heads:
             if depth == top:
-                raw.append(("section", line_no, False))
+                units.append(Unit(md_slug(text) or "section", line_no))
     else:
         rx = UNIT_RE.get(lang)
         if rx is None:
@@ -237,7 +313,7 @@ def find_units(lines: list[str], lang: str) -> list[tuple[str, int, int, bool]]:
         test_rx = TEST_UNIT_RE.get(lang)
         pending_test = False
         for idx, line in enumerate(lines, start=1):
-            # A Rust attribute line marks the NEXT unit as test code.
+            # An attribute line (Rust #[test]) marks the NEXT unit as test code.
             if lang == "rs" and test_rx is not None and test_rx.search(line):
                 pending_test = True
                 continue
@@ -249,36 +325,40 @@ def find_units(lines: list[str], lang: str) -> list[tuple[str, int, int, bool]]:
                 name = m.group(2)
             if not name:
                 continue
-            is_test = False
+            u = Unit(name, idx)
             if pending_test:
-                is_test = True
+                u.is_test = True
                 pending_test = False
             elif test_rx is not None and lang != "rs" and test_rx.search(line):
-                is_test = True
-            raw.append((name, idx, is_test))
+                u.is_test = True
+            units.append(u)
 
-    out: list[tuple[str, int, int, bool]] = []
-    for i, (name, start, is_test) in enumerate(raw):
-        end = raw[i + 1][1] - 1 if i + 1 < len(raw) else len(lines)
-        out.append((name, start, end, is_test))
-    return out
+    for i, u in enumerate(units):
+        u.end = units[i + 1].start - 1 if i + 1 < len(units) else len(lines)
+    return units
 
 
-def measure(
-    lines: list[str], lang: str, units: list[tuple[str, int, int, bool]]
-) -> dict:
+# <<< shared:loc-unit-py
+
+
+# >>> shared:loc-measure-py (sync: check-decomposition/patterns.py)
+def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
     """The generic sizing layer: total / blank / comment / test-excluded /
-    production LOC and top-level unit count. Byte-equivalent to
-    check-decomposition's `measure` — the shared:loc-measure-awk region is the
-    same computation transcribed into awk."""
+    production LOC, max nesting depth, and top-level unit count.
+
+    The audit lens (check-decomposition/patterns.py) and the review lens
+    (ship-issue/sizing.py) carry byte-identical copies, pinned by
+    tests/validate-shared-scanner-sync.sh; the same computation is transcribed
+    into awk in the shared:loc-measure-awk region of both bash fallbacks."""
     total = len(lines)
     comment_rx = COMMENT_RE.get(lang)
     region_rx = TEST_REGION_RE.get(lang)
 
-    test_lines: set[int] = set()
-    for _name, start, end, is_test in units:
-        if is_test:
-            test_lines.update(range(start, end + 1))
+    # Lines inside a test unit, or after a whole-file test-region marker.
+    test_lines = set()
+    for u in units:
+        if u.is_test:
+            test_lines.update(range(u.start, u.end + 1))
     if region_rx is not None:
         for idx, line in enumerate(lines, start=1):
             if region_rx.search(line):
@@ -312,11 +392,28 @@ def measure(
         "test_excluded": test_excluded,
         "production": production,
         "max_depth": max_depth,
-        "units": len([u for u in units if not u[3]]),
+        "units": len([u for u in units if not u.is_test]),
         "comment_pct": (comment * 100 // total) if total else 0,
     }
 
 
+# <<< shared:loc-measure-py
+
+
+# UNIT NAMES ARE CURRENTLY UNREACHABLE IN THIS LENS (#730). `find_units` above is
+# shared verbatim with check-decomposition, so a markdown unit is now named by
+# `md_slug(text) or "section"` rather than the hardcoded "section" this file used
+# to carry. That fork was real but LATENT: nothing here surfaces a unit *name* —
+# `decline_reason` and every seam row below read `m["units"]`, a COUNT — so the
+# unification changes no output today, which is why the differential over a
+# markdown fixture stays byte-identical.
+#
+# Recorded as unreachable rather than given a test that cannot fail. What would
+# make it live: any seam row in this lens that names its markdown sections (the
+# direction #725's unified split shape and #729's bundle guidance move toward).
+# At that moment the two lenses would have named the same heading differently —
+# which is the bug this unification pre-empts. The reachable half (md_slug's own
+# slugging rules) IS fixtured, in tests/validate-python-ports.sh.
 def decline_reason(lines: list[str], m: dict) -> str:
     """WHY a long file was not flagged as splittable.
 

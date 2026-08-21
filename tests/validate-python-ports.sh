@@ -648,11 +648,155 @@ EOF
     done <<<"$ports_list"
 }
 
+# md_slug, called directly in BOTH runtimes and compared (#730).
+#
+# WHY THIS IS NOT COVERED BY THE CORPUS PARITY ABOVE. sizing.py used to hardcode
+# a markdown unit's name to "section" while its own awk twin — and the audit lens
+# — slugged the heading text. That fork produced NO output difference, so corpus
+# parity was green and correct to be: this lens never surfaces a unit NAME, only
+# a COUNT. #730 unified the code; per [[surviving-mutation-may-be-a-real-no-op]]
+# the unreachable half is recorded as unreachable in sizing.py rather than given
+# a test that cannot fail, and THIS test covers the half that IS reachable —
+# md_slug's own slugging rules, exercised by calling it.
+#
+# Both runtimes are driven from one case table so a rule can never be asserted
+# of one and not the other. The awk side is invoked through the same
+# `function md_slug` living in the shared:loc-helpers-awk region, so this is a
+# genuine cross-language check rather than python-vs-python.
+DECOMP_PY="$PLUGINS_DIR/review-audit/skills/check-decomposition/patterns.py"
+SIZING_PY_PORT="$PLUGINS_DIR/workflow/skills/ship-issue/sizing.py"
+SIZING_SH_PORT="$PLUGINS_DIR/workflow/skills/ship-issue/sizing.sh"
+
+test_py_md_slug_direct() {
+    local out rc=0 awk_out
+    if [ ! -f "$DECOMP_PY" ] || [ ! -f "$SIZING_PY_PORT" ]; then
+        skip_test "check-decomposition/patterns.py or ship-issue/sizing.py not present"
+        return 0
+    fi
+
+    # --- both Python copies, driven from one table --------------------------
+    out="$(python3 - "$DECOMP_PY" "$SIZING_PY_PORT" <<'PY' 2>&1)" || rc=$?
+import importlib.util, sys
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+audit = load("decomp_patterns", sys.argv[1])
+review = load("sizing_py", sys.argv[2])
+
+cases = [
+    ("Install on Linux", "install_on_linux"),
+    ("  Leading space", "leading_space"),
+    ("Trailing space   ", "trailing_space"),
+    ("MiXeD CaSe", "mixed_case"),
+    ("punctuation!!! here", "punctuation_here"),
+    ("digits 123 kept", "digits_123_kept"),
+    ("---", ""),
+    ("", ""),
+]
+
+bad = 0
+
+# The CALL SITE, not just the function. md_slug agreeing in isolation does not
+# prove find_units actually uses it: a wrong variable passed at the call site
+# would leave every case above green while markdown units came out misnamed.
+# This drives find_units(lines, "md") in BOTH lenses and reads Unit.name back.
+#
+# It is NOT a test-that-cannot-fail: reverting sizing.py's md arm to the old
+# hardcoded "section" fails this immediately. What IS unreachable is the
+# EMITTED output (this lens reports unit counts, never names) — recorded as
+# such in sizing.py rather than asserted here.
+md_lines = [
+    "# Install on Linux",
+    "body",
+    "# Configure the Daemon",
+    "body",
+]
+for label, mod in (("audit", audit), ("review", review)):
+    got = [u.name for u in mod.find_units(md_lines, "md")]
+    want = ["install_on_linux", "configure_the_daemon"]
+    if got != want:
+        bad += 1
+        print("FAIL %s find_units(md) names -> %r, expected %r" % (label, got, want))
+
+# A heading that slugs to empty must still yield the "section" fallback rather
+# than an empty name — the `or "section"` half of the expression.
+for label, mod in (("audit", audit), ("review", review)):
+    got = [u.name for u in mod.find_units(["# ---", "body"], "md")]
+    if got != ["section"]:
+        bad += 1
+        print("FAIL %s find_units(md) empty-slug fallback -> %r" % (label, got))
+
+for text, expected in cases:
+    a = audit.md_slug(text)
+    r = review.md_slug(text)
+    if a != expected:
+        bad += 1
+        print("FAIL audit md_slug(%r) -> %r, expected %r" % (text, a, expected))
+    if r != expected:
+        bad += 1
+        print("FAIL review md_slug(%r) -> %r, expected %r" % (text, r, expected))
+    if a != r:
+        bad += 1
+        print("FAIL md_slug(%r): audit %r != review %r" % (text, a, r))
+if bad == 0:
+    print("OK")
+PY
+    assert_equals "0" "$rc" "the direct md_slug probe ran without error"
+    assert_equals "OK" "$out" \
+        "md_slug: both Python lenses agree with the expected slug for every rule (#730)"
+
+    # --- the awk twin, same table -------------------------------------------
+    # Extracts the shared awk md_slug from sizing.sh and drives it directly, so a
+    # Python-only unification cannot pass while the bash fallback still differs.
+    if [ ! -f "$SIZING_SH_PORT" ]; then
+        skip_test "ship-issue/sizing.sh not present"
+        return 0
+    fi
+    # Extract just the md_slug function from the shared region. The region also
+    # holds the NESTED unit-segmenters-awk block; taking only md_slug keeps the
+    # driver minimal and independent of that nesting.
+    #
+    # The terminator is the closing brace at the FUNCTION's own indent (4
+    # spaces), not any `}` — md_slug contains a `for` loop whose brace closes at
+    # a deeper indent, and stopping there would emit an unbalanced fragment.
+    command awk '
+        /^    function md_slug\(/ { in_f = 1 }
+        in_f { print }
+        in_f && /^    }[[:space:]]*$/ { exit }
+    ' "$SIZING_SH_PORT" >"$WORKDIR/md_slug.awk"
+
+    # Cases are TAB-separated `input<TAB>expected` rows fed on stdin, so the
+    # driver needs no ternary and no -v quoting games (POSIX awk, BSD-safe).
+    {
+        command cat "$WORKDIR/md_slug.awk"
+        command printf '%s\n' 'BEGIN { FS = "\t"; bad = 0 }'
+        command printf '%s\n' '{ got = md_slug($1); if (got != $2) { bad++; printf "FAIL awk md_slug(<%s>) -> <%s>, expected <%s>\n", $1, got, $2 } }'
+        command printf '%s\n' 'END { if (bad == 0) print "OK" }'
+    } >"$WORKDIR/md_slug_drive.awk"
+
+    awk_out="$(command printf '%s\n' \
+        "Install on Linux	install_on_linux" \
+        "  Leading space	leading_space" \
+        "Trailing space   	trailing_space" \
+        "MiXeD CaSe	mixed_case" \
+        "punctuation!!! here	punctuation_here" \
+        "digits 123 kept	digits_123_kept" \
+        "---	" |
+        LC_ALL=C command awk -f "$WORKDIR/md_slug_drive.awk")"
+    assert_equals "OK" "$awk_out" \
+        "md_slug: the shared awk twin produces the same slug for every rule (#730)"
+}
+
 run_test test_corpus_non_empty "Python-port corpus is non-empty (gate is not a no-op)"
 run_test test_every_force_bash_var_is_set "Every port's *_FORCE_BASH var is set by the parity test (#695)"
 run_test test_py_is_test_file_direct "check-code-health/patterns.py: is_test_file called directly, both branches (#605)"
 run_test test_py_debug_family_direct "check-code-health/patterns.py: debug families called directly + emission order (#687)"
 run_test test_py_read_yaml_list_direct "check-code-health/patterns.py: _read_yaml_list quote/whitespace/section rules match the bash twin (#686)"
+run_test test_py_md_slug_direct "md_slug: both Python lenses and the shared awk twin agree (#730)"
 
 while IFS= read -r py; do
     [ -n "$py" ] || continue
