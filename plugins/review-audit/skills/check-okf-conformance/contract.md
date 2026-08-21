@@ -40,7 +40,7 @@ Each finding extends the standard finding-schema.md:
   "severity": "medium",
   "title": "Concept has no type field",
   "description": "OKF §4.1 makes `type` the sole always-required frontmatter key: consumers use it for routing, filtering, and presentation. A concept without one cannot be routed, though a concept carrying only `type` is fully conformant. Any short descriptive string is valid — values are not registered centrally and consumers must tolerate unfamiliar ones.",
-  "file": ".claude/memory/some-concept.md",
+  "file": "<bundle-root>/some-concept.md",
   "line_start": 1,
   "line_end": 1,
   "evidence": "Concept frontmatter has no type key",
@@ -58,6 +58,11 @@ Each finding extends the standard finding-schema.md:
   "skill": "check-okf-conformance"
 }
 ```
+
+The `file` path is shown as `<bundle-root>/...` rather than a concrete root.
+The root is resolved from the environment with a configurable default (see
+`SKILL.md` § Bundle discovery), so a concrete path in a portable tool's contract
+would read as though it were fixed. Emitted findings carry the real path.
 
 ## Evidence
 
