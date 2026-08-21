@@ -26,6 +26,7 @@
 #   9e. check-security + check-code-health detector fixtures (tests/validate-source-detectors.sh)
 #   9e2. check-lifecycle detector fixtures (tests/validate-lifecycle-detectors.sh)
 #   9e3. check-decomposition detector fixtures (tests/validate-decomposition-detectors.sh)
+#   9e4. check-okf-conformance detector fixtures (tests/validate-okf-detectors.sh)
 #   9f. dev-core loop-* + drift-detect detector fixtures (tests/validate-loop-detectors.sh)
 #  10. golem-gate-watch feed snapshot (tests/golem-gate-watch.sh)
 #  11. Action pin format (tests/lint-action-pins.sh)
@@ -172,6 +173,7 @@ run_stage "check-docs-* detector fixtures" bash "$SCRIPT_DIR/validate-docs-detec
 run_stage "check-security + check-code-health detector fixtures" bash "$SCRIPT_DIR/validate-source-detectors.sh"
 run_stage "check-lifecycle detector fixtures" bash "$SCRIPT_DIR/validate-lifecycle-detectors.sh"
 run_stage "check-decomposition detector fixtures" bash "$SCRIPT_DIR/validate-decomposition-detectors.sh"
+run_stage "check-okf-conformance detector fixtures" bash "$SCRIPT_DIR/validate-okf-detectors.sh"
 run_stage "dev-core loop-* + drift-detect detector fixtures" bash "$SCRIPT_DIR/validate-loop-detectors.sh"
 run_stage "golem-gate-watch feed snapshot" bash "$SCRIPT_DIR/golem-gate-watch.sh"
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"

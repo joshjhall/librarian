@@ -71,7 +71,7 @@ trap 'rm -rf "$WORKDIR"' EXIT
 # tests/ suites this script has no run_test counters, so an unwired fragment
 # surfaces immediately as an unbound path-list variable under `set -u` rather
 # than as a silently smaller pass count.
-for _frag in 10-ai-config 20-source 30-lifecycle 40-loop-drift 50-docs 60-decomposition; do
+for _frag in 10-ai-config 20-source 30-lifecycle 40-loop-drift 50-docs 60-decomposition 70-okf; do
     _frag_path="$SCRIPT_DIR/python-corpus/${_frag}.sh"
     if [ ! -f "$_frag_path" ]; then
         printf '[FAIL] python-coverage — corpus fragment missing: %s\n' "$_frag_path" >&2
@@ -197,6 +197,47 @@ while IFS= read -r py; do
             # File-list-not-found arm (a list PATH that does not exist -> OSError).
             python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$DECOMP_NOFILE_LIST" >/dev/null 2>&1 || true
+            ;;
+        */check-okf-conformance/patterns.py)
+            # Drive the OKF conformance arms over a BUNDLE-SHAPED corpus (#668).
+            # The bundle root must be passed explicitly: the fixtures live under
+            # $WORKDIR, so the default `.claude/memory` only matches because the
+            # root is accepted when nested anywhere in the path. The generic
+            # FILE_LIST keeps the outside-the-bundle early-continue covered.
+            OKF_BUNDLE_ROOT="$OKF_ROOT_REL" \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            # Second pass with the pin overridden so the SAME fixtures flip from
+            # drift to match, driving both sides of the version comparison.
+            OKF_BUNDLE_ROOT="$OKF_ROOT_REL" OKF_PINNED_VERSION="9.9" \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            # Third pass with NO bundle configured — the empty-root early return
+            # in bundle_root()/in_bundle(), the "consuming repo opts out" path.
+            OKF_BUNDLE_ROOT='' \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            # MEMORY_BUNDLE_ROOT fallback arm (OKF_BUNDLE_ROOT unset).
+            env -u OKF_BUNDLE_ROOT MEMORY_BUNDLE_ROOT="$OKF_ROOT_REL" \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$FILE_LIST" >/dev/null 2>&1 || true
+            # Fail-loud arms: a malformed pin, and an UNRESOLVABLE pin (a copy of
+            # the port beside a thresholds.yml carrying none) — the branch the
+            # real skill directory can never reach.
+            OKF_PINNED_VERSION="not-a-version" \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            env -u OKF_PINNED_VERSION \
+                python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$OKF_NOPIN_PY" "$OKF_LIST" >/dev/null 2>&1 || true
+            # Usage-error arm (no argument -> exit 1).
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" >/dev/null 2>&1 || true
+            # File-list-not-found arm (a list PATH that does not exist -> OSError).
+            python3 -m coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_NOFILE_LIST" >/dev/null 2>&1 || true
             ;;
         */check-lifecycle/patterns.py)
             # Drive the per-language arms (swift/py/js/go spawn/terminate/handle/

@@ -1,0 +1,64 @@
+# check-okf-conformance — Configurable Thresholds
+#
+# Override by placing a modified copy in your project's
+# .claude/skills/check-okf-conformance/thresholds.yml.
+
+# THE OKF VERSION PIN — the single source, read by every consumer.
+#
+# `pinned_version` is the OKF spec revision this validator targets. Both
+# patterns.py and patterns.sh read it FROM HERE; neither carries a literal
+# version of its own, and neither may. This mirrors the ruff pin rule in
+# CLAUDE.md ("The ruff version is pinned in exactly one place"): a hand-copied
+# constant in each consumer is exactly how versions drift apart.
+#
+# Resolution order in both impls: $OKF_PINNED_VERSION -> this file -> FAIL LOUD.
+# The env var exists for tests and for a consumer repo pinning a different
+# revision without editing a vendored file; it is not a second source of truth.
+#
+# UNRESOLVABLE IS A HARD ERROR, NOT A SKIP. Without a pin there is nothing to
+# compare a bundle's declared okf_version against, so an exit-0-with-no-findings
+# would report a bundle clean that was never actually checked — the silent
+# fail-open the runtime policy exists to prevent (#538/#571). This is the
+# TOOL-side failure, and it is deliberately the opposite posture from the
+# BUNDLE-side permissiveness below.
+#
+# `spec_checked` records when the spec was last re-read against this pin. The
+# epic (#664) requires re-reading the spec each slice and recording both facts.
+# Spec source: github.com/openknowledge-sh/openknowledge Wiki/SPEC.md, itself a
+# pinned upstream copy of GoogleCloudPlatform/knowledge-catalog okf/SPEC.md.
+okf:
+  pinned_version: "0.2" # OKF_PINNED_VERSION
+  spec_checked: "2026-08-19"
+
+# THE BUNDLE ROOT is NOT configured here — it is an environment variable, so one
+# setting can move every bundle-aware scanner at once. Resolution order:
+#
+#   $OKF_BUNDLE_ROOT -> $MEMORY_BUNDLE_ROOT -> .claude/memory
+#
+# MEMORY_BUNDLE_ROOT is check-decomposition's existing convention (#700);
+# sharing it means the two scanners cannot disagree about which files are bundle
+# files. OKF_BUNDLE_ROOT is the escape hatch for a repo whose OKF bundle is not
+# its memory bundle. An EMPTY value means no bundle is configured: no findings,
+# no error.
+
+# Per-category severity. Every one of these is a FINDING AT EXIT 0 — see the
+# permissive-conformance rule in SKILL.md. A non-conformant bundle is reported,
+# never rejected.
+severity:
+  okf-missing-type:
+    absent_or_empty: medium
+  okf-unparseable-frontmatter:
+    unparseable: medium
+  okf-version-drift:
+    # LOW on purpose, and it exits 0. Spec §12: a consumer meeting an
+    # unfamiliar declared version SHOULD attempt best-effort consumption rather
+    # than refusing the bundle. Drift is worth surfacing, never worth failing.
+    declared_differs: low
+  okf-reserved-file-structure:
+    index_frontmatter: medium
+    log_date_format: medium
+
+min_confidence:
+  deterministic: 0.9
+  heuristic: 0.7
+  llm: 0.5
