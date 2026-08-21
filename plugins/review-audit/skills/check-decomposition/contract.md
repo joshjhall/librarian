@@ -55,6 +55,12 @@ for a bundle path:
 .claude/memory/two-lessons.md	1	decomposition-seam	concept split: extract second_thing to .claude/memory/second_thing.md AND add its index line (an extracted concept with no index line is an orphan)	HIGH
 ```
 
+The concept arm's extraction target is a **sibling of the source file** — its own
+directory, not the bundle root (#713). The two coincide for a flat bundle, as
+above; for a concept nested below the root
+(`.claude/memory/topics/two-lessons.md`) the target is
+`.claude/memory/topics/second_thing.md`, so a consumer must not assume the root.
+
 The index-line clause is unconditional on the concept arm: a split that omits it
 orphans the extracted half. Unsplittable bundle files decline at `LOW` with a
 reason, exactly like the code path.

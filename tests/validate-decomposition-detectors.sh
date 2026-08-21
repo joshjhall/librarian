@@ -1374,9 +1374,14 @@ test_memory_split_guidance() {
     assert_fires "$list" decomposition-seam "orphan" \
         "memory: concept guidance names the orphan failure it prevents" \
         MEMORY_CONCEPT_WARN=2 MEMORY_CONCEPT_HIGH=3
-    # The extraction target sits under the CONFIGURED root, not a hardcoded one.
-    assert_fires "$list" decomposition-seam "to .claude/memory/second_thing.md" \
-        "memory: extraction target is rooted at the configured bundle root" \
+    # The extraction target sits under the bundle root, not a hardcoded one.
+    # For a FLAT bundle the source file's own directory IS the root, so #713's
+    # fix leaves the relative shape of this case unmoved — it is now derived
+    # rather than assumed. `$d`-anchored like every other target assertion here
+    # (`> $d/mod/parse.py`): a target is spelled the way its source was, which
+    # is what makes it a path the reader can actually act on.
+    assert_fires "$list" decomposition-seam "to $d/.claude/memory/second_thing.md" \
+        "memory: extraction target sits beside a flat concept, in the bundle root" \
         MEMORY_CONCEPT_WARN=2 MEMORY_CONCEPT_HIGH=3
 
     # --- guidance is gated on being OVER budget -----------------------------
@@ -1385,6 +1390,35 @@ test_memory_split_guidance() {
     assert_silent "$list" decomposition-seam \
         "memory: an in-budget concept gets no split guidance" \
         MEMORY_CONCEPT_WARN=99 MEMORY_CONCEPT_HIGH=99
+
+    # --- NESTED concept: the target is a SIBLING, not a root refugee (#713) --
+    # bundle_kind() supports a concept nested below the root (its `*/root/*`
+    # arm), and the guidance used to anchor the target at the bundle root
+    # unconditionally — silently dropping the `topics/` segment, which followed
+    # literally moves the extracted lesson OUT of its subdirectory. Both impls
+    # shared that defect, so the same-output parity gate could never catch it;
+    # assert_fires runs both, making this the parity assertion as well.
+    f="$d/.claude/memory/topics/two-lessons.md"
+    command mkdir -p "$d/.claude/memory/topics"
+    command printf '%s\n' "# Lessons" "" "## First Thing" "text" "" \
+        "## Second Thing" "text" >"$f"
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "to $d/.claude/memory/topics/second_thing.md" \
+        "memory: a nested concept extracts beside itself, not to the bundle root" \
+        MEMORY_CONCEPT_WARN=2 MEMORY_CONCEPT_HIGH=3
+    # Asserted negatively too: the root-anchored target must be GONE, not merely
+    # accompanied. The positive assertion above is a SUBSTRING check, and
+    # `.../topics/second_thing.md` does not contain `.../memory/second_thing.md`
+    # — but an emit that named both targets would still satisfy it. This pins
+    # that the wrong one is absent rather than merely outvoted.
+    assert_not_contains "$(emit_rows sh "$list" decomposition-seam MEMORY_CONCEPT_WARN=2 MEMORY_CONCEPT_HIGH=3)" \
+        "to $d/.claude/memory/second_thing.md" \
+        "memory: nested concept does not propose the root-anchored target (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" decomposition-seam MEMORY_CONCEPT_WARN=2 MEMORY_CONCEPT_HIGH=3)" \
+            "to $d/.claude/memory/second_thing.md" \
+            "memory: nested concept does not propose the root-anchored target (python)"
+    fi
 
     # --- unsplittable bundle files decline with a reason --------------------
     # One lesson, one section: nothing to extract. A decline is a RESULT, not

@@ -255,6 +255,12 @@ printf '%s\n' '# Golem' '' '## A' x '' '## B' y \
     >"$DECOMPDIR/.claude/memory/index-golem.md"
 printf '%s\n' '# Lessons' '' '## First Thing' t '' '## Second Thing' t \
     >"$DECOMPDIR/.claude/memory/two-lessons.md"
+# A NESTED concept (#713) — drives concept_dir()'s source-directory arm, the one
+# a flat bundle can never reach because there the source directory and the bundle
+# root are the same string.
+mkdir -p "$DECOMPDIR/.claude/memory/topics"
+printf '%s\n' '# Lessons' '' '## First Thing' t '' '## Second Thing' t \
+    >"$DECOMPDIR/.claude/memory/topics/two-lessons.md"
 # One section only -> the concept DECLINE arm (nothing to extract).
 printf '%s\n' '# One' '' 'text' 'more' >"$DECOMPDIR/.claude/memory/single.md"
 # An INDEX with no topic clusters -> the index DECLINE arm, the fourth outcome.
@@ -282,7 +288,9 @@ for f in "$DECOMPDIR"/mod.py "$DECOMPDIR"/app.ts "$DECOMPDIR"/app.test.ts \
     "$DECOMPDIR"/agents/rev.md "$DECOMPDIR"/agents/nested/nested.md \
     "$DECOMPDIR"/docs/guide.md "$DECOMPDIR"/docs/under-budget.md \
     "$DECOMPDIR"/.claude/memory/MEMORY.md "$DECOMPDIR"/.claude/memory/index-golem.md \
-    "$DECOMPDIR"/.claude/memory/two-lessons.md "$DECOMPDIR"/.claude/memory/single.md \
+    "$DECOMPDIR"/.claude/memory/two-lessons.md \
+    "$DECOMPDIR"/.claude/memory/topics/two-lessons.md \
+    "$DECOMPDIR"/.claude/memory/single.md \
     "$DECOMPDIR"/.claude/memory/index-flat.md \
     "$DECOMPDIR"/.claude/memory/helper.py \
     "$DECOMPDIR"/package-lock.json "$DECOMPDIR"/notes.txt "$DECOMPDIR"/README \

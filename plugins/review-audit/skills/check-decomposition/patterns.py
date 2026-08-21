@@ -458,6 +458,32 @@ def target_path(path: str, prefix: str) -> str:
     return (directory + "/" + inner) if directory else inner
 
 
+def concept_dir(path: str) -> str:
+    """Which directory an extracted memory-bundle concept belongs in (#713).
+
+    The source file's OWN directory, not the bundle root. `bundle_kind()`
+    explicitly supports a concept nested below the root (its `*/root/*` arm), and
+    for `<root>/topics/two-lessons.md` a root-anchored target silently drops the
+    `topics/` segment — advice that, followed literally, moves the extracted
+    lesson out of its subdirectory instead of alongside the sibling it was
+    extracted from. Deriving from the source path is what every other
+    seam-target computation here does (`target_path()`).
+
+    Deliberately NOT `target_path()` itself, which builds `dir/stem/prefix.ext`
+    — a subdirectory named for the source file. That is right for a code family
+    and wrong for a bundle: an extracted lesson is a flat SIBLING of the file it
+    came from, never a child of it.
+
+    A flat-bundle file already HAS the root as its own directory, so the common
+    case is unchanged by this derivation — only a nested concept moves. The
+    bundle-root fallback is therefore defensive and unreachable from the only
+    call site: `bundle_kind()` sets a kind only for a path matching
+    `<root>/...` or `.../<root>/...`, both of which contain a slash."""
+    if "/" in path:
+        return path.rsplit("/", 1)[0]
+    return _bundle_root()
+
+
 def _bundle_root() -> str:
     """The configured memory-bundle root, normalized for glob matching (#700).
 
@@ -747,7 +773,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                     "decomposition-seam",
                     "concept split: extract %s to %s/%s.md AND add its index "
                     "line (an extracted concept with no index line is an orphan)"
-                    % (names[1], _bundle_root(), names[1]),
+                    % (names[1], concept_dir(path), names[1]),
                     "HIGH",
                 )
             else:
