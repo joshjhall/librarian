@@ -197,6 +197,40 @@ console.log('left in by accident');
 module.exports.thing = function () {};
 EOF
 
+# TypeScript coverage (#726). `ts` became its OWN language key rather than a js
+# alias, and app.ts above reaches the ts arm of every port only through content
+# that is ALSO valid js — so the type-level forms this issue added were asserted
+# vacuously, the same trap the .mjs/.cjs and .sh comments above record.
+#
+# Every new unit form appears here, and the ORDER-SENSITIVE ones earn their
+# place: python re is leftmost-FIRST while POSIX awk ERE is leftmost-LONGEST, so
+# `export const enum` captures the name `enum` under one dialect and `Mode`
+# under the other unless the two-word alternatives are listed first. That
+# divergence is invisible in any single-runtime test and shows up HERE, as a
+# TSV parity diff, which is exactly what this gate is for.
+command cat >"$FIXDIR/model.ts" <<'EOF'
+export interface AlphaShape { a: string }
+export interface BetaShape { b: number }
+export type GammaUnion = AlphaShape | BetaShape
+export enum DeltaKind { X, Y }
+export const enum Mode { On, Off }
+export namespace EpsUtil { export const z = 1 }
+export declare function declaredFn(x: string): string
+export abstract class AbstractBase { abstract run(): void }
+export module LegacyModule { }
+export const realFn = () => 1
+EOF
+
+# A .d.ts, whose decline reason and seam suppression are new in #726 and are
+# decided per-PATH. Without a `.d.ts` in the corpus that branch never runs.
+command cat >"$FIXDIR/api.d.ts" <<'EOF'
+export declare interface ApiUser { id: string }
+export declare interface ApiOrder { id: string }
+export declare interface ApiCart { id: string }
+export declare function apiFetch(u: string): Promise<string>
+export declare function apiPost(u: string): Promise<string>
+EOF
+
 # Shell coverage (#598). The fixture tree carried NO .sh at all, so every
 # shell-handling branch in every port was asserted vacuously — the same trap the
 # .mjs/.cjs comment above records, and the reason #568's lesson was "a fixture
@@ -256,6 +290,7 @@ FILE_LIST="$WORKDIR/list.txt"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
+    "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
     "$FIXDIR/prose/skills/demo/reference.md" "$FIXDIR/prose/docs/guide.md" \
     "$FIXDIR/prose/CLAUDE.md" "$FIXDIR/prose/notes.md" \

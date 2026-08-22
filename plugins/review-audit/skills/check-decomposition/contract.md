@@ -104,9 +104,16 @@ declined: <reason> (<n> production LOC, <m> top-level units)
 ```
 
 Emitted at **LOW** certainty when a file is over threshold but has no seam.
-Reasons: `generated file — regenerate rather than split`, `single cohesive unit
-— no internal seam to cut`, `majority prose/comment — length is documentation,
-not logic`, `no low-coupling seam found — units are mutually referential`.
+Reasons: `type declaration file — no runtime units to extract` (a `*.d.ts`, which
+is type-level by construction), `generated file — regenerate rather than split`,
+`single cohesive unit — no internal seam to cut`, `majority prose/comment —
+length is documentation, not logic`, `no low-coupling seam found — units are
+mutually referential`.
+
+The declaration-file reason is tested **first**, ahead of `generated`: a `.d.ts`
+is frequently banner-marked as generated too, and naming it a declaration file
+is the more specific fact — it explains why there is nothing to extract even
+from a hand-maintained one.
 
 A decline is a **result**, not a silence — it records that the file was examined
 and found legitimately long, and it is what a `baseline=` acknowledgment cites.
