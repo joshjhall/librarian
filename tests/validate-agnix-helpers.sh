@@ -145,6 +145,7 @@ load_fn() {
 load_fn agnix_ver_lt
 load_fn agnix_pin_in
 load_fn agnix_files_checked
+load_fn agnix_corpus_reached
 
 # The extraction guards above are load-bearing, so they get their own assertions
 # rather than only ever running as invisible preconditions. Both drive the real
@@ -582,6 +583,54 @@ test_files_checked_first_occurrence_wins_over_a_later_one() {
         "unquoted lookalike prose in a message never matches the field pattern"
 }
 
+# --- agnix_corpus_reached ----------------------------------------------------
+
+# The floor comparison the whole #739 guard turns on. It lives in the gate as a
+# separate function specifically so this suite can drive its BOUNDARY, which the
+# live gate cannot reach: a real run only ever presents the real corpus size, so
+# it can never supply the exactly-at-the-floor input.
+#
+# Mutation-verified, and the result is why these tests exist rather than being
+# assumed necessary: of the three plausible regressions, `-le` and a swapped
+# operand order BOTH fail the live gate instantly (110 is not <= 60) — the live
+# gate already covers those. Only `-ge` -> `-gt` survives it. So the boundary row
+# below is the one carrying real weight; the others pin the obvious behaviour so
+# a rewrite cannot drift.
+test_corpus_reached_boundary_is_inclusive() {
+    # THE case the live gate cannot produce: exactly at the floor must COUNT as
+    # reached. This is the row that dies under `-ge` -> `-gt` and survives every
+    # test that existed before it.
+    assert_equals "1" "$(agnix_corpus_reached 60 60)" \
+        "a scan exactly at the floor has met it (inclusive) — the -gt off-by-one dies here"
+
+    # One below and one above, bracketing that boundary.
+    assert_equals "0" "$(agnix_corpus_reached 59 60)" \
+        "one file below the floor is not reached"
+    assert_equals "1" "$(agnix_corpus_reached 61 60)" \
+        "one file above the floor is reached"
+}
+
+test_corpus_reached_on_realistic_magnitudes() {
+    # The real shapes this decides between: a full scan (110 on this tree) and a
+    # collapsed one where a target stopped matching (1-2 files).
+    assert_equals "1" "$(agnix_corpus_reached 110 60)" \
+        "a full-corpus scan is reached"
+    assert_equals "0" "$(agnix_corpus_reached 1 60)" \
+        "a scan that walked a single file is NOT reached (the shrinking-corpus case)"
+    assert_equals "0" "$(agnix_corpus_reached 0 60)" \
+        "a scan that walked nothing is NOT reached (the vacuity case #739 exists for)"
+}
+
+test_corpus_reached_does_not_invert_its_operands() {
+    # Pins operand ORDER independently of the operator. Swapping the two would
+    # make a small corpus look reached against a large floor; asserting an
+    # asymmetric pair catches that even if the operator itself is untouched.
+    assert_equals "1" "$(agnix_corpus_reached 100 10)" \
+        "count=100 against floor=10 is reached"
+    assert_equals "0" "$(agnix_corpus_reached 10 100)" \
+        "count=10 against floor=100 is NOT reached (operands are not interchangeable)"
+}
+
 # --- Registration ------------------------------------------------------------
 
 run_test test_extraction_guards_are_real "Extraction guards catch an over-grown / absent region"
@@ -614,5 +663,12 @@ run_test test_files_checked_rejects_a_malformed_value \
     "agnix_files_checked: non-numeric value is not a count"
 run_test test_files_checked_first_occurrence_wins_over_a_later_one \
     "agnix_files_checked: the first occurrence wins (greedy single-stage would not)"
+
+run_test test_corpus_reached_boundary_is_inclusive \
+    "agnix_corpus_reached: the floor is inclusive (the boundary the gate cannot reach)"
+run_test test_corpus_reached_on_realistic_magnitudes \
+    "agnix_corpus_reached: full / collapsed / empty corpus verdicts"
+run_test test_corpus_reached_does_not_invert_its_operands \
+    "agnix_corpus_reached: operand order is not interchangeable"
 
 generate_report

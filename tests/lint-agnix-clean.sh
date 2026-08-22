@@ -216,6 +216,32 @@ agnix_files_checked() {
         command head -n 1 || true
 }
 
+# Echo 1 when a scan that walked $1 files meets the floor $2, else 0 (#739).
+#
+# Extracted from test_corpus_reached rather than left inline so the unit suite
+# can drive its boundary directly. The live gate cannot: it only ever sees the
+# real corpus size, so it can never present the exactly-at-the-floor input that
+# distinguishes `-ge` from `-gt`. Mutation-verified — `-le` and a swapped
+# operand order both fail the live gate at once, but the `-gt` off-by-one
+# survives it, and that is precisely the case a unit test makes trivial.
+#
+# The floor is INCLUSIVE: a scan that walked exactly AGNIX_MIN_FILES files has
+# met it. Reading `AGNIX_MIN_FILES` as "the fewest files that still count" is
+# what makes the constant's name true.
+#
+# Echoes a flag instead of signalling through the exit status, deliberately
+# unlike its sibling agnix_ver_lt: the caller assigns the result under `set -e`,
+# where a function returning 1 would abort the test body before its assertion
+# ran. (agnix_ver_lt gets away with the exit-status idiom only because both of
+# its call sites are `if`-guarded.)
+agnix_corpus_reached() {
+    if [ "$1" -ge "$2" ]; then
+        command printf '1\n'
+    else
+        command printf '0\n'
+    fi
+}
+
 CI_PIN="$(agnix_pin_in "$WORKFLOW_DIR/ci.yml")"
 SCAN_PIN="$(agnix_pin_in "$WORKFLOW_DIR/code-scanning.yml")"
 
@@ -417,13 +443,16 @@ test_corpus_reached() {
         return 0
     fi
 
-    # `if`, not `[ ... ] && x=1`: under `set -e` a whole AND-list that evaluates
-    # false is a failing command, so the shorthand would abort this function
-    # before its assertion ran — the check would vanish instead of failing.
-    local reached=0
-    if [ "$FILES_CHECKED" -ge "$AGNIX_MIN_FILES" ]; then
-        reached=1
-    fi
+    # The comparison itself lives in agnix_corpus_reached (above) rather than
+    # inline, so the unit suite can drive its BOUNDARY. Mutation-verified that
+    # this extraction earns its keep: flipping the operator to `-le` or swapping
+    # the operands both fail the live gate immediately (110 is not <= 60), but
+    # `-ge` -> `-gt` SURVIVES it — the live gate can only ever present the real
+    # corpus size, so it cannot produce the exactly-at-the-floor input that
+    # separates the two. That one case is untestable here by construction and
+    # trivial in a unit test.
+    local reached
+    reached="$(agnix_corpus_reached "$FILES_CHECKED" "$AGNIX_MIN_FILES")"
 
     assert_equals "1" "$reached" \
         "agnix walked only $FILES_CHECKED files, below the floor of $AGNIX_MIN_FILES — the 0-error result above is meaningless. Either a target in '$AGNIX_TARGETS' stopped matching (renamed/moved path, or one dropped from the invocation), or an .agnix.toml \`exclude\` grew over-broad. Fix the scan rather than lowering the floor."
