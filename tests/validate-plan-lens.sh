@@ -486,6 +486,70 @@ test_measure_record_fields_agree_across_runtimes() {
     fi
 }
 
+# --- the HIGH band, in BOTH arms -------------------------------------------
+# Every other fixture in this suite lands in the WARNING band (setup_near_budget
+# projects to at most 660, setup_over_threshold sits at ~640 — both under the
+# 800 default high for .py). So the `current > high` / `projected > high`
+# comparison that chooses HIGH-vs-MEDIUM was never exercised: a mutation pinning
+# certainty to MEDIUM, or flipping that `>` to `<`, passed the whole suite in
+# both runtimes.
+#
+# Asserted on the CERTAINTY and the band WORDING together, because they are
+# computed from the same comparison and a test reading only one would miss a
+# half-applied change.
+test_plan_lens_high_band_on_projection() {
+    local big="$WORKDIR/high-proj.py" list="$WORKDIR/high-list.txt" est="$WORKDIR/high-est.tsv"
+    make_py_file "$big" 240 # ~480 production LOC, under the 500 warning
+    command printf '%s\n' "$big" >"$list"
+    # 480 + 400 = 880, over the 800 high — not merely over the warning.
+    make_estimate "$est" "$big" 400
+
+    run_plan "$list" "$est"
+    assert_plan_parity
+    assert_contains "$PLAN_OUT" "size-headroom" "the headroom row is emitted"
+    assert_contains "$PLAN_OUT" "HIGH" \
+        "a projection over the HIGH threshold is HIGH, not MEDIUM"
+    assert_contains "$PLAN_OUT" "high budget" \
+        "the evidence names the high band (certainty and wording agree)"
+}
+
+test_plan_lens_high_band_on_already_over() {
+    local big="$WORKDIR/high-over.py" list="$WORKDIR/high-over-list.txt" est="$WORKDIR/high-over-est.tsv"
+    make_py_file "$big" 420 # ~840 production LOC, already past the 800 high
+    command printf '%s\n' "$big" >"$list"
+    make_estimate "$est" "$big" 30
+
+    run_plan "$list" "$est"
+    assert_plan_parity
+    assert_contains "$PLAN_OUT" "HIGH" \
+        "an already-over file past the HIGH threshold is HIGH, not MEDIUM"
+    assert_contains "$PLAN_OUT" "already over its high budget" \
+        "the already-over arm names the high band too"
+}
+
+# The sidecar's SECOND rename shape. git prints a rename either as
+# `old.py => new.py` (whole path) or `a/{x => y}/f.py` (one segment), and the
+# brace branch is a separate code path in both impls — python slices around
+# index("{")/index("}"), awk does the same by hand. Only the whole-path form was
+# fixtured, so a broken brace branch silently read the estimate as 0 and the file
+# could never be raised, which is the case the lens most wants to see.
+# validate-sizing-scanner.sh fixtures this shape for the review lens; the plan
+# lens needs its own.
+test_plan_lens_brace_rename_shape() {
+    setup_near_budget
+    local est="$WORKDIR/est-brace.tsv" dir base
+    dir="$(command dirname "$NEAR_FILE")"
+    base="$(command basename "$NEAR_FILE")"
+    # `a/{oldsub => }/f.py` — the dropped-segment spelling, which also exercises
+    # the `//` collapse both impls perform after splicing.
+    command printf '200\t0\t%s/{oldsub => }/%s\n' "$dir" "$base" >"$est"
+
+    run_plan "$PLAN_LIST" "$est"
+    assert_plan_parity
+    assert_contains "$PLAN_OUT" "size-headroom" \
+        "a {old => new} segment rename resolves to its post-rename path and keeps its estimate"
+}
+
 run_test test_plan_lens_headroom_fires_on_projection "#756 AC2: an under-budget file whose projection crosses emits size-headroom"
 run_test test_plan_lens_small_estimate_stays_silent "#756 AC2: the same file with a small estimate stays silent (estimate is the variable)"
 run_test test_plan_lens_ample_headroom_stays_silent "#756: a projection that stays under budget is silent (distinct guard from the floor)"
@@ -494,6 +558,9 @@ run_test test_plan_lens_already_over_is_raised_regardless "#756 AC3: an already-
 run_test test_plan_lens_without_estimates_is_informational "#756 AC4: no sidecar -> informational, and no headroom rows"
 run_test test_plan_lens_distinguishes_zero_from_absent "#756: a sidecar naming no growth reads differently from no sidecar"
 run_test test_plan_lens_classifies_prose_by_type "#756: prose classification reaches the plan lens (#724 does not regress)"
+run_test test_plan_lens_high_band_on_projection "#756: a projection over the HIGH threshold is HIGH, not MEDIUM"
+run_test test_plan_lens_high_band_on_already_over "#756: an already-over file past HIGH is HIGH (both arms)"
+run_test test_plan_lens_brace_rename_shape "#756: the {old => new} segment rename shape resolves (2nd git rename form)"
 run_test test_plan_lens_accepts_numstat_shape "#756 AC1: the sidecar accepts a real numstat file and is rename-aware"
 run_test test_plan_lens_fails_loud_without_engine "#756: no LOC engine exits 2, never 0-with-no-findings"
 run_test test_plan_lens_usage_contract "#756: plan-lens usage / missing-file / empty-list contract"
