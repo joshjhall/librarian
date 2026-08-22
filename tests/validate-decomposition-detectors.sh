@@ -961,15 +961,63 @@ static REGISTRY: u32 = 0;
 
 type Handle = u32;
 
+extern crate serde;
+
 pub async fn fetch_it(u: &str) -> String {
     String::from(u)
 }
 EOF
     list="$(list_of "$f")"
-    # Eight items, each previously invisible except the async fn. The count is
-    # the assertion: any arm that stops matching drops it below 8.
-    assert_fires "$list" file-length "8 top-level units" \
+    # Nine items, each previously invisible except the async fn. Any arm that
+    # stops matching drops the count below 9. `extern crate` is its own arm:
+    # the modifier alternation recognizes `extern` only as a PREFIX to a
+    # keyword item, and `crate` is not one, so a bare `extern crate serde;`
+    # matched nothing and was absorbed into the preceding unit's span.
+    assert_fires "$list" file-length "9 top-level units" \
         "rust: macro_rules/unsafe/const/extern fn, const, static, type all segment"
+
+    # A COUNT alone cannot catch a MISNAMING. An arm that still matches but
+    # captures the wrong identifier — `macro_rules!` taking the `!`, or
+    # `extern "C" fn` taking `"C"` instead of `ffi_entry` — leaves the count at
+    # 8 and a count-only test green (verified by mutation: truncating the
+    # macro_rules capture to one character failed zero cases). The seam row is
+    # the only output that carries a captured NAME, so the fixture below gives
+    # each item kind a shared `item_*` stem: the family name can only form if
+    # every arm captured its identifier correctly.
+    f="$d/named.rs"
+    command cat >"$f" <<'EOF'
+macro_rules! item_shout {
+    ($e:expr) => {
+        println!("{}", $e)
+    };
+}
+
+unsafe fn item_poke(p: *mut u8) {
+    *p = 1;
+}
+
+const fn item_compile() -> u32 {
+    7
+}
+
+extern "C" fn item_ffi(v: u32) -> u32 {
+    v + 1
+}
+
+static ITEM_REGISTRY: u32 = 0;
+
+type ItemHandle = u32;
+
+extern crate item_serde;
+EOF
+    list="$(list_of "$f")"
+    # Seven units share the `item` family only if each arm captured the real
+    # identifier. Under the mutation above the macro contributes `i`, the
+    # family drops to 6, and this assertion fails. `extern crate` is included
+    # because its name is the arm most easily captured as the literal `crate`.
+    assert_fires "$list" decomposition-seam "fn item_* family (7 units," \
+        "rust: every item arm captures its real identifier, not a stray token" \
+        DECOMP_SEAM_MIN_UNITS=7
 }
 
 # The #[cfg(test)] region had TWO independent defects (#727), fixtured

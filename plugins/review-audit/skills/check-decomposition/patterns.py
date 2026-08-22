@@ -119,6 +119,7 @@ UNIT_RE = {
         r"(?:macro_rules![ \t]+([A-Za-z_][A-Za-z0-9_]*)"
         r"|impl(?:<[^>]*>)?[ \t]+(?:.*[ \t]+for[ \t]+)?(?:&[ \t]*)?"
         r"([A-Za-z_][A-Za-z0-9_]*)"
+        r"|extern[ \t]+crate[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
         r"|(?:fn|struct|enum|trait|mod|type|static|const|union)"
         r"[ \t]+([A-Za-z_][A-Za-z0-9_]*))"
     ),
@@ -134,6 +135,20 @@ UNIT_RE = {
     # for its keyword. Same reason: grouped blocks were invisible, not "one unit
     # each". One visible unit per block is the honest count — the engine cannot
     # see into a block it does not segment.
+    #
+    # ACCEPTED LIMITATION (#727): the header line carries no identifier, so the
+    # keyword IS the name and two adjacent blocks of the same kind (two `var (`
+    # runs back to back — legal, and gofmt does not merge them) share family
+    # `var` and can cluster as one seam. Accepted rather than fixed: the
+    # alternatives are worse. A running index would make the name
+    # position-dependent, so inserting a block upstream renames every one below
+    # it and the TSV churns on an unrelated edit; naming the block for its first
+    # inner identifier would require reading past the header, which this
+    # line-anchored engine deliberately does not do. The failure mode is also
+    # benign — a seam proposing that two adjacent declaration groups move to one
+    # file is a reasonable suggestion even when they are unrelated, unlike the
+    # pre-#727 behavior where the blocks were invisible and the file was
+    # declined as cohesive.
     #
     # CHECKED, CORRECT AS-IS (#727): `//go:generate` and build tags do not
     # interact with GENERATED_RE. That pattern looks for @generated /
