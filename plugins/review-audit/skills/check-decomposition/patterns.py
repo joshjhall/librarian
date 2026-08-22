@@ -151,9 +151,11 @@ EXT_LANG = {
 # review lens has no cluster coupling analysis to run it over.
 TOKEN_RE = re.compile(r"[A-Za-z0-9_$]+")
 
-# Noun used in seam evidence, per language. NOT shared with sizing.py — the
-# review lens names a split SHAPE rather than a unit noun, so copying this table
-# there would add a lookup nothing reads (#730).
+# Noun used in seam evidence, per language. NOT shared with sizing.py — only
+# this lens emits line-range seam rows, so the review lens has nowhere to spend a
+# unit noun and copying the table there would add a lookup nothing reads (#730).
+# The split SHAPE below is the opposite case: both lenses emit it, which is
+# exactly why it IS shared (#725).
 UNIT_NOUN = {
     "py": "def",
     "js": "function",
@@ -162,6 +164,57 @@ UNIT_NOUN = {
     "sh": "function",
     "md": "section",
 }
+
+
+# >>> shared:split-shape-py (sync: ship-issue/sizing.py)
+# LANGUAGE-SHAPED SPLIT GUIDANCE — shared by BOTH lenses (#725).
+#
+# Introduced on the review lens alone (#695), which was backwards: the AUDIT lens
+# is the one that files a backlog somebody picks up weeks later, with none of the
+# PR context that makes a bare line range interpretable. That reader needs the
+# shape spelled out most, and had it least — the exact "too generic to act on, so
+# nothing gets decomposed" failure #663 was filed against.
+#
+# Keyed by the same language keys the segmenters use (EXT_LANG's values), so
+# advice and measurement can never disagree about what a file IS. That invariant
+# is asserted structurally: a language with a segmenter and no shape, or a shape
+# for a language nothing segments, fails tests/validate-shared-scanner-sync.sh.
+# It is what makes adding a language (#726 TypeScript, #727 Rust/Go, #728 Swift)
+# a one-table edit rather than two that must be remembered together.
+#
+# Each string names the SHAPE of the split, not a generic "consider splitting" —
+# the finding has to be actionable or it is noise.
+SPLIT_SHAPE = {
+    "rs": "new subdir module; mod.rs re-exports the decomposed units",
+    "py": "package dir with __init__.py re-exporting the public surface",
+    "js": "sibling modules + a barrel index.ts",
+    "go": "additional files in the same package (no import churn)",
+    "sh": "sourced fragment + an explicit ordered list (split-suite convention)",
+    "md": (
+        "progressive disclosure: move detail to linked files, leave a one-line pointer"
+    ),
+}
+
+# The shape for a file whose extension has NO segmenter (.rb, .java, .c, .cpp,
+# .kt — all scanned, since none are skipped). Weaker than a language-shaped
+# string but still a real destination, which is what keeps every actionable
+# over-threshold file yielding exactly one seam row.
+#
+# It lives INSIDE the shared region on purpose. As a bare literal at each call
+# site it was two more unpinned copies of the same fact — the precise shape of
+# duplication this region exists to end.
+SPLIT_SHAPE_FALLBACK = "extract a cohesive unit into a sibling module"
+
+
+def split_shape(lang: str) -> str:
+    """The split shape for LANG, falling back for an unsegmented language.
+
+    Every consumer goes through this rather than indexing SPLIT_SHAPE directly,
+    so the fallback cannot fork the way it already had."""
+    return SPLIT_SHAPE.get(lang, SPLIT_SHAPE_FALLBACK)
+
+
+# <<< shared:split-shape-py
 
 
 # >>> shared:loc-helpers-py (sync: ship-issue/sizing.py)
@@ -869,6 +922,46 @@ def scan_file(path: str, lines: list[str]) -> None:
             "HIGH",
         )
         seams += 1
+
+    # --- The split SHAPE (#725) --------------------------------------------
+    # The seam rows above say WHERE to cut. This says what the result should
+    # LOOK LIKE — a package dir, a barrel index, a sourced fragment. Without it
+    # the audit lens hands a backlog reader a bare line range weeks after the
+    # sweep, with none of the PR context that would make it interpretable; the
+    # review lens, whose reader has the diff on screen, had the better guidance.
+    #
+    # Gated on `seams > 0`, NOT merely `over`. The `over and seams == 0` arm
+    # below emits a reasoned decline — "no low-coupling seam found", "single
+    # cohesive unit" — and a shape row beside it would contradict its own
+    # neighbour, telling the reader to build a package dir out of a file the
+    # scanner just said has nothing to cut. Shape accompanies a real seam; a
+    # decline stands alone. (Same one-verdict discipline as #700's bundle
+    # suppression, applied to the language path.)
+    #
+    # Unreachable for a memory bundle by CONSTRUCTION: the bundle branch above
+    # returns before this point, so an index/concept never receives generic md
+    # advice. Fixtured anyway — an invariant that holds by construction is one
+    # refactor away from not holding.
+    # `lang` is non-empty here — the `if not lang: return` above this point
+    # guarantees it — so SPLIT_SHAPE_FALLBACK is UNREACHABLE in this lens, and
+    # deliberately so rather than untested: only the review lens sizes a file
+    # with no segmenter (.rb, .java, .c), because only it is handed an arbitrary
+    # diff. Recorded here rather than given a test that cannot fail
+    # ([[surviving-mutation-may-be-a-real-no-op]]); the fallback IS exercised,
+    # through sizing.py, by tests/validate-sizing-scanner.sh's
+    # test_unknown_language_still_emits_a_seam_row (named, so the claim is
+    # checkable rather than a cross-file assertion the reader must take on
+    # trust). If a language is ever added to EXT_LANG without a segmenter, the
+    # invariant behind "unreachable" breaks — and the shape/segmenter key-set
+    # test in validate-shared-scanner-sync.sh is what fails first.
+    if seams > 0:
+        emit(
+            path,
+            1,
+            "decomposition-seam",
+            "split shape for %s: %s" % (lang, split_shape(lang)),
+            "MEDIUM",
+        )
 
     # --- Reasoned decline --------------------------------------------------
     # A file over threshold with no seam is a RESULT, not a silence. A generated

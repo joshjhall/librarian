@@ -394,9 +394,22 @@ while IFS= read -r file; do
     }
     # <<< shared:loc-helpers-awk
 
-    # Language-shaped split guidance (AC7). Mirrors SPLIT_SHAPE in sizing.py.
+    # >>> shared:split-shape-awk (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
+    # Language-shaped split guidance, shared by BOTH lenses (#725). This is the
+    # awk-fallback half of SPLIT_SHAPE / split_shape() in the .py primaries.
+    #
+    # NB: no apostrophes anywhere in this region. The whole awk program is a
+    # single-quoted shell string, so one would end it and the next line would be
+    # parsed as shell.
+    #
     # Names the SHAPE of the split, not a generic "consider splitting" — the
-    # finding has to be actionable or it is noise.
+    # finding has to be actionable or it is noise. Keyed by the same language
+    # keys the segmenters use, so advice and measurement can never disagree
+    # about what a file IS.
+    #
+    # The final `return` is the shape for a language with no segmenter, and it
+    # is INSIDE the region deliberately: as a bare literal at each call site it
+    # was one more unpinned copy of the same fact.
     function split_shape(lang) {
         if (lang == "rs") return "new subdir module; mod.rs re-exports the decomposed units"
         if (lang == "py") return "package dir with __init__.py re-exporting the public surface"
@@ -406,6 +419,7 @@ while IFS= read -r file; do
         if (lang == "md") return "progressive disclosure: move detail to linked files, leave a one-line pointer"
         return "extract a cohesive unit into a sibling module"
     }
+    # <<< shared:split-shape-awk
     function emit(line_no, category, evidence, certainty) {
         printf "%s\t%d\t%s\t%s\t%s\n", path, line_no, category, evidence, certainty
     }

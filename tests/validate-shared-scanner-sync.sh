@@ -103,9 +103,9 @@ source "$SCRIPT_DIR/lib/harness.sh"
 SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
-    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec"
+    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk"
     "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
-    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py"
+    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py"
 )
 
 # The Python pair's regions, in the order they appear above. Used by the
@@ -116,7 +116,7 @@ SHARED_PAIRS=(
 # audit-lens-only on purpose. Copying them into sizing.py to make the files look
 # more alike would add lookups nothing there reads — deliberate duplication is
 # only worth its cost for logic BOTH lenses execute.
-PY_REGIONS="loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py"
+PY_REGIONS="loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py"
 
 # Pair-specific paths used by the targeted tests below (the language-arm shape
 # check and the two tamper fixtures). Kept as consts so a path edit above is a
@@ -562,6 +562,133 @@ test_detector_fires_on_bloat_region_drift() {
     done
 }
 
+# The detector FIRES on drift in the split-shape-awk region (#725) — the awk
+# fallback half of the language split-shape table, whose Python primaries are
+# covered by the split-shape-py case in the loop above.
+#
+# Cross-file like every other awk fixture here: the tamper is applied to the
+# DUPLICATE (sizing.sh) and compared against the UNTAMPERED CANONICAL
+# (check-decomposition/patterns.sh), because a fixture that tampered one file
+# against itself would pass even if the two files were never paired.
+#
+# The tamper targets the `md` arm. Markdown is the largest and fastest-churning
+# surface in this repo (#589) and the one arm whose guidance is structurally
+# unlike the others — progressive disclosure rather than a module move — so a
+# copy that "helpfully" rewrote it to match its siblings is the realistic drift.
+#
+# A fixed-string sed with no alternation: BSD sed reads BRE `\|` as a LITERAL, so
+# an alternation-bearing pattern would match nothing on macOS and the tamper
+# would be a silent no-op there (#679).
+test_detector_fires_on_split_shape_region_drift() {
+    local canonical duplicate tampered baseline tamper_took drift
+
+    canonical="$(extract_shared "$DECOMP_PATTERNS" split-shape-awk | normalize)"
+    duplicate="$(extract_shared "$SIZING" split-shape-awk | normalize)"
+
+    assert_not_empty "$canonical" "check-decomposition split-shape-awk extract is non-empty"
+    assert_not_empty "$duplicate" "sizing split-shape-awk extract is non-empty"
+
+    baseline="differs"
+    [ "$canonical" = "$duplicate" ] && baseline="matches"
+    assert_equals "matches" "$baseline" \
+        "the untampered split-shape-awk pair matches (tamper is the only variable)"
+
+    tampered="$(extract_shared "$SIZING" split-shape-awk |
+        command sed 's/return "progressive disclosure/return "zzz disclosure/' | normalize)"
+    assert_not_empty "$tampered" "tampered split-shape-awk extract is non-empty (extract still works)"
+
+    tamper_took="no"
+    [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+    assert_equals "yes" "$tamper_took" \
+        "the tamper actually changed the region (the md progressive-disclosure arm is present)"
+
+    drift="none"
+    [ "$canonical" != "$tampered" ] && drift="detected"
+    assert_equals "detected" "$drift" \
+        "a one-line edit to sizing.sh's split-shape copy is detected as drift (#725)"
+}
+
+# The shape table and the segmenters cover THE SAME LANGUAGE SET (#725 AC3).
+#
+# This is the invariant that makes the unified table worth having: advice and
+# measurement must not disagree about what a file is. A language with a
+# segmenter and no shape emits a generic fallback where a real shape was
+# possible; a shape for a language nothing segments is dead advice that will
+# never fire. Both are silent — no error, no empty output, just weaker findings
+# — which is why they need a structural assertion rather than a behavioral one.
+#
+# Asserted on BOTH copies of the region and against BOTH runtimes' tables, NOT
+# copy-vs-copy: a defect present in both passes an equality check by
+# construction ([[parity-gate-hides-shared-defect]]). The awk half is checked by
+# its `if (lang == "xx")` arms and the Python half by its dict keys, so the two
+# spellings of the same table are each held to the segmenter set independently.
+#
+# The segmenter set is read from EXT_LANG's VALUES (the language keys), not its
+# keys (the extensions): `ts`/`tsx`/`mjs` all map to `js`, and it is the mapped
+# language the shape table is keyed by.
+test_split_shape_covers_every_segmenter_language() {
+    local file label langs lang body found
+
+    # The language set, derived from the shared loc-tables-py region rather than
+    # hardcoded — a list retyped here would be a third copy of the same fact and
+    # would silently pass when #726/#727/#728 add a language.
+    langs="$(extract_shared "$DECOMP_PATTERNS_PY" loc-tables-py |
+        command sed -n '/^EXT_LANG = {/,/^}/p' |
+        command sed -n 's/^[[:space:]]*"[^"]*":[[:space:]]*"\([^"]*\)",.*$/\1/p' |
+        command sort -u)"
+    assert_not_empty "$langs" "the segmenter language set is derivable from EXT_LANG"
+
+    # Sanity: the extraction found a plausible set, not one stray line. Six
+    # languages today; the assertion is a FLOOR so adding a language does not
+    # need an edit here, but a broken extract yielding one value fails.
+    local count
+    count="$(command printf '%s\n' "$langs" | command wc -l | command tr -d ' ')"
+    local enough="no"
+    [ "$count" -ge 6 ] && enough="yes"
+    assert_equals "yes" "$enough" "EXT_LANG yields the full language set (>= 6, got ${count})"
+
+    # --- Python halves: every segmenter language is a SPLIT_SHAPE key --------
+    for file in "$DECOMP_PATTERNS_PY" "$SIZING_PY"; do
+        label="$(label_for "$file")"
+        body="$(extract_shared "$file" split-shape-py)"
+        assert_not_empty "$body" "${label}: split-shape-py region is non-empty"
+
+        for lang in $langs; do
+            assert_contains "$body" "\"${lang}\":" \
+                "${label}: SPLIT_SHAPE has a ${lang} arm (segmenter exists for it)"
+        done
+    done
+
+    # --- awk halves: every segmenter language has an `if (lang == ...)` arm --
+    for file in "$DECOMP_PATTERNS" "$SIZING"; do
+        label="$(label_for "$file")"
+        body="$(extract_shared "$file" split-shape-awk)"
+        assert_not_empty "$body" "${label}: split-shape-awk region is non-empty"
+
+        for lang in $langs; do
+            assert_contains "$body" "lang == \"${lang}\"" \
+                "${label}: awk split_shape has a ${lang} arm (segmenter exists for it)"
+        done
+    done
+
+    # --- the converse: no shape for a language nothing segments -------------
+    # Dead advice, and the direction a hand-added arm drifts. Read the Python
+    # table's keys back out and require each to be in the segmenter set.
+    for file in "$DECOMP_PATTERNS_PY" "$SIZING_PY"; do
+        label="$(label_for "$file")"
+        for lang in $(extract_shared "$file" split-shape-py |
+            command sed -n '/^SPLIT_SHAPE = {/,/^}/p' |
+            command sed -n 's/^[[:space:]]*"\([^"]*\)":.*$/\1/p'); do
+            found="no"
+            for l2 in $langs; do
+                [ "$lang" = "$l2" ] && found="yes"
+            done
+            assert_equals "yes" "$found" \
+                "${label}: SPLIT_SHAPE key ${lang} is a language some segmenter produces"
+        done
+    done
+}
+
 # The detector FIRES on drift in the unit-segmenter pair — sizing.sh's proposal
 # side vs split-verify.sh's verification side (#695). This pair is a NESTED
 # region: `unit-segmenters-awk` sits inside `loc-helpers-awk`, which is itself
@@ -661,6 +788,15 @@ test_detector_fires_on_python_primary_drift() {
                 # about how big an agent definition may be, which is the class
                 # of fork this region exists to make impossible.
                 sed_expr='s/            _int_env("AGENT_HIGH", 400),/            _int_env("AGENT_HIGH", 900),/'
+                ;;
+            split-shape-py)
+                # Targets the `sh` ARM, not the fallback: shell is this repo's
+                # own largest scanner surface, so a drifted shell shape is the
+                # one that would misdirect a reader here first. A drift means
+                # the audit backlog and the per-PR review propose DIFFERENT
+                # destinations for the same file — advice that contradicts
+                # itself across lenses, which is the whole fork #725 closes.
+                sed_expr='s/    "sh": "sourced fragment/    "sh": "zzz fragment/'
                 ;;
             *)
                 _fail "no tamper case for region ${region}" \
@@ -773,6 +909,8 @@ run_test test_detector_fires_on_drift "Drift detector fires on a tampered region
 run_test test_detector_fires_on_py_region_drift "Drift detector fires across the py-public-symbols pair (#609)"
 run_test test_detector_fires_on_loc_region_drift "Drift detector fires across the LOC-engine pair (#695)"
 run_test test_detector_fires_on_segmenter_region_drift "Drift detector fires across the unit-segmenter pair (#695)"
+run_test test_detector_fires_on_split_shape_region_drift "Drift detector fires across the split-shape awk pair (#725)"
+run_test test_split_shape_covers_every_segmenter_language "Split-shape keys and segmenter languages are the same set (#725)"
 run_test test_detector_fires_on_bloat_region_drift "Drift detector fires across the prose-classification regions (#724)"
 run_test test_detector_fires_on_python_primary_drift "Drift detector fires across every region of the Python-primary pair (#730)"
 run_test test_py_regions_and_tampers_agree "Every registered Python region has a tamper case, and vice versa (#730)"
