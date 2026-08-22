@@ -103,6 +103,31 @@ function strip_comment(line,    i, c, out, in_str, bs) {
 }
 '
 
+# The `[[overrides]]` block that actually suppresses $SUPPRESSED_RULE, comments
+# stripped — or empty if no such block exists.
+#
+# Shared by both .agnix.toml tests so they cannot disagree about what "the
+# suppression" is. The structural extract is the ONLY honest way to ask whether
+# the rule is suppressed: a raw grep for the literal `CC-SK-006` is satisfied by
+# the long prose comment that EXPLAINS the suppression, so it stays true after
+# the override block is deleted. (Measured: deleting the block left a raw-text
+# assertion passing.) Only assignments are code here.
+#
+# Comments must be stripped before selecting, too, or the XML-001 block — whose
+# header comment discusses CC-SK-006 — is chosen instead, and its three paths
+# counted as if they were this rule's.
+suppression_override_block() {
+    command awk -v rule="$SUPPRESSED_RULE" "$AWK_STRIP_COMMENT"'
+        { $0 = strip_comment($0) }
+        /^\[\[overrides\]\]/ { block = ""; in_block = 1 }
+        in_block { block = block $0 "\n" }
+        /^disabled_rules/ && in_block {
+            if (index(block, rule) > 0) { print block; exit }
+            in_block = 0
+        }
+    ' "$AGNIX_CONFIG_FILE"
+}
+
 test_suite "ship-issue autonomy-level contract (#737)"
 
 # Contract blocks are addressed BY ID, resolved anywhere under plugins/, so this
@@ -247,33 +272,29 @@ test_suppression_is_per_file_not_global() {
     # compensating for nothing. (If CC-SK-006 is ever genuinely re-enabled for
     # ship-issue, delete this gate deliberately rather than letting it pass on a
     # config it no longer describes.)
-    assert_file_contains "$AGNIX_CONFIG_FILE" "$SUPPRESSED_RULE" \
-        "$SUPPRESSED_RULE is still suppressed in .agnix.toml (this gate compensates for it)"
+    #
+    # Asserted STRUCTURALLY, against the override block, not with a raw
+    # `assert_file_contains` on the file text. That was this assertion's original
+    # form and it was vacuous: .agnix.toml devotes ~19 lines of prose to
+    # explaining the CC-SK-006 suppression, naming the rule repeatedly, so
+    # deleting the override block outright left the literal in the file and this
+    # assertion still passed — the one regression it names as its purpose.
+    # Measured before the fix: with the block removed, this test PASSED and only
+    # the sibling path test failed. An assertion whose stated guarantee is
+    # enforced solely by a different test is the comment-asserts-intent shape the
+    # rest of this gate exists to prevent.
+    assert_not_empty "$(suppression_override_block)" \
+        "$SUPPRESSED_RULE is still suppressed by a real [[overrides]] block in .agnix.toml (this gate compensates for it) — prose merely MENTIONING the rule does not count"
 }
 
 test_suppression_names_only_ship_issue() {
     # The [[overrides]] block carrying CC-SK-006 must name ship-issue's SKILL.md
-    # and nothing else. Read the file into blocks split on `[[overrides]]`, keep
-    # the one mentioning the rule, and count its `paths` entries.
-    #
-    # Pure awk rather than a TOML parser: this repo's gates stay dependency-free,
-    # and the question — "how many quoted paths sit in the block naming this
-    # rule" — does not need one.
-    #
-    # Comments are stripped here for the same reason as in the global check
-    # above: the prose introducing these blocks names CC-SK-006, so a raw match
-    # would select the WRONG block (the XML-001 one, whose header comment
-    # discusses the rule) and then count its three paths.
+    # and nothing else. Same structural extract the "still suppressed" assertion
+    # above reads, via the shared helper — pure awk rather than a TOML parser,
+    # since this repo's gates stay dependency-free and the question ("how many
+    # quoted paths sit in the block naming this rule") does not need one.
     local block
-    block="$(command awk -v rule="$SUPPRESSED_RULE" "$AWK_STRIP_COMMENT"'
-        { $0 = strip_comment($0) }
-        /^\[\[overrides\]\]/ { block = ""; in_block = 1 }
-        in_block { block = block $0 "\n" }
-        /^disabled_rules/ && in_block {
-            if (index(block, rule) > 0) { print block; exit }
-            in_block = 0
-        }
-    ' "$AGNIX_CONFIG_FILE")"
+    block="$(suppression_override_block)"
 
     assert_not_empty "$block" \
         "$SUPPRESSED_RULE must live in an [[overrides]] block (per-file), not as a bare global entry"
@@ -367,13 +388,25 @@ test_markers_are_line_initial() {
 # .agnix.toml: a gate that mutates the file it audits could leave the repo dirty
 # on a mid-run failure, and a fixture that both arms and satisfies its own gate
 # is a known local failure class.
+# NO `skip_test` FALLBACK ON A MISSING mktemp, deliberately — this diverges from
+# the `mktemp -d || skip_test` shape used by lint-action-pins.sh and
+# lint-env-var-drift.sh, and the divergence is the point. This is the ONLY test
+# exercising either branch, so a silent skip returns the suite to precisely the
+# state that made the branches worth testing — green, with the parity and
+# `in_str` guards unverified — and a skip is indistinguishable from a pass at a
+# glance. That is the self-skipping-test-hides-the-risky-branch class.
+#
+# The repo's rule resolves it: the 77 sentinel and per-case skips are for an
+# absent OPTIONAL tool, whereas this gate's header states it needs only bash +
+# coreutils and therefore has no skip path at all. `mktemp` IS coreutils, so its
+# absence is a broken environment, not an unavailable optional tool — the same
+# call CLAUDE.md makes for lint-prose-budget.sh. So: fail loud.
 test_strip_comment_handles_quoted_hash_and_escapes() {
     local sandbox
     sandbox="$(command mktemp -d 2>/dev/null || true)"
-    if [ -z "$sandbox" ]; then
-        skip_test "mktemp unavailable — cannot build the strip_comment fixture"
-        return 0
-    fi
+    assert_not_empty "$sandbox" \
+        "mktemp -d must succeed — coreutils is a hard requirement of this gate, not an optional tool"
+    [ -n "$sandbox" ] || return 0
     # shellcheck disable=SC2064  # expand sandbox now, not at trap time
     trap "command rm -rf '$sandbox'" RETURN
 
