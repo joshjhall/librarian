@@ -1650,6 +1650,34 @@ export async function run() {
       "preScanSection: truncation is disclosed in-prompt, never silent",
     );
 
+    // #724 cache-prefix neutrality. The prose-classification rows the sizing
+    // scanner gained are new CANDIDATE ROWS, not a new prompt mechanism: they
+    // ride the same TSV -> preScan -> dataBlock path with its fixed five-field
+    // order. So a diff that produces no new candidates must still yield a
+    // byte-identical prefix.
+    //
+    // Asserted as an EQUALITY against a bloat-row payload, not merely as "the
+    // no-op is empty" (already covered above): the failure this guards is a
+    // hand-rolled builder for the new categories, which would serialize
+    // differently while leaving the empty case untouched and every assertion
+    // above green.
+    const BLOAT = {
+      file: "agents/checker.md",
+      line: 1,
+      category: "ai-file-bloat",
+      evidence: "agent definition exceeds high threshold: 580 lines (>400)",
+      certainty: "HIGH",
+    };
+    eq(
+      mkPreScan([BLOAT]).preScanSection(),
+      mkPreScan([{ ...BLOAT, sneaked: "x" }]).preScanSection(),
+      "preScanSection: a bloat row serializes through the fixed-field dataBlock path (#724/#256)",
+    );
+    ok(
+      mkPreScan([BLOAT]).preScanSection().includes("ai-file-bloat"),
+      "preScanSection: prose-classification rows reach the reviewer prompt (#724)",
+    );
+
     // It must live inside the SHARED block, so all reviewers see it and the
     // fan-out prefix stays byte-identical across siblings (#256).
     const src = harnessSource(SHIP);

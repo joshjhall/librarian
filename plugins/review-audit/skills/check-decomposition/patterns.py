@@ -195,15 +195,6 @@ def lang_of(path: str) -> str:
 # <<< shared:loc-helpers-py
 
 
-def _glob(path: str, pattern: str) -> bool:
-    """`case "$path" in <pattern>)` — an unanchored shell glob over the full
-    path. fnmatchcase's `*` crosses '/', matching bash `case` glob semantics.
-
-    NOT shared with sizing.py: the review lens has no bloat_spec classification
-    to glob paths for."""
-    return _fnmatch.fnmatchcase(path, pattern)
-
-
 # >>> shared:loc-unit-py (sync: ship-issue/sizing.py)
 def family_prefix(name: str) -> str:
     """The family key a unit name belongs to — the shared stem that makes
@@ -484,6 +475,64 @@ def concept_dir(path: str) -> str:
     return _bundle_root()
 
 
+def bundle_sections(lines: list[str]) -> list[str]:
+    """The topic clusters of a bundle markdown file (#700).
+
+    NOT the same as `find_units`' top-level units. `find_units` takes the
+    SHALLOWEST heading depth present, which for a normal bundle file is the
+    lone `# Title` — so the `##` topic sections, which are exactly what an
+    index splits along, would be invisible and every index would decline.
+
+    The rule here is the shallowest depth that has at least TWO headings: a
+    `# Title` + `## topics` file clusters by its `##`, and a file written with
+    all-`##` sections and no title clusters by those same `##`. Falls back to
+    the shallowest depth when nothing repeats (a genuinely unsplittable file)."""
+    heads: list[tuple[int, str]] = []
+    fenced = False
+    for line in lines:
+        if line.startswith("```") or line.startswith("~~~"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        m = re.match(r"^(#{1,6})[ \t]+(.*)$", line)
+        if m:
+            heads.append((len(m.group(1)), md_slug(m.group(2)) or "section"))
+    if not heads:
+        return []
+    depths = sorted(set(d for d, _ in heads))
+    chosen = depths[0]
+    for d in depths:
+        if sum(1 for hd, _ in heads if hd == d) >= 2:
+            chosen = d
+            break
+    return [name for d, name in heads if d == chosen]
+
+
+# >>> shared:bloat-spec-py (sync: ship-issue/sizing.py)
+# PROSE FILE-TYPE CLASSIFICATION — shared by BOTH lenses (#724).
+#
+# What a markdown file IS is a fact about its PATH, and a fact must not fork.
+# Before #724 only the audit lens classified prose; the review lens sized every
+# .md by the generic md pair (700/1000), so an over-budget agent definition
+# passed a per-PR review silently while the audit sweep called it HIGH. The two
+# lenses may differ in STRICTNESS — that is a policy dial each owns — but they
+# may not disagree about what the file is.
+#
+# STRICTNESS IS NOT FORKED EITHER, for these files specifically. Both lenses
+# apply the bloat_thresholds numbers verbatim; there is no review-lens override
+# table. The review lens is looser than the audit lens for CODE because those
+# thresholds count production LOC and a per-PR gate that nags gets turned off.
+# That argument does not transfer: bloat budgets are measured on TOTAL lines
+# because these files load WHOLE into context, and that cost does not depend on
+# which lens is looking. What keeps the review lens survivable here is its
+# GROWTH DISPOSITION (sizing.py's scan_file), not a bigger number.
+def _glob(path: str, pattern: str) -> bool:
+    """`case "$path" in <pattern>)` — an unanchored shell glob over the full
+    path. fnmatchcase's `*` crosses '/', matching bash `case` glob semantics."""
+    return _fnmatch.fnmatchcase(path, pattern)
+
+
 def _bundle_root() -> str:
     """The configured memory-bundle root, normalized for glob matching (#700).
 
@@ -533,40 +582,6 @@ def bundle_kind(path: str) -> str:
     if base == "MEMORY.md" or base == "index.md" or base.startswith("index-"):
         return "index"
     return "concept"
-
-
-def bundle_sections(lines: list[str]) -> list[str]:
-    """The topic clusters of a bundle markdown file (#700).
-
-    NOT the same as `find_units`' top-level units. `find_units` takes the
-    SHALLOWEST heading depth present, which for a normal bundle file is the
-    lone `# Title` — so the `##` topic sections, which are exactly what an
-    index splits along, would be invisible and every index would decline.
-
-    The rule here is the shallowest depth that has at least TWO headings: a
-    `# Title` + `## topics` file clusters by its `##`, and a file written with
-    all-`##` sections and no title clusters by those same `##`. Falls back to
-    the shallowest depth when nothing repeats (a genuinely unsplittable file)."""
-    heads: list[tuple[int, str]] = []
-    fenced = False
-    for line in lines:
-        if line.startswith("```") or line.startswith("~~~"):
-            fenced = not fenced
-            continue
-        if fenced:
-            continue
-        m = re.match(r"^(#{1,6})[ \t]+(.*)$", line)
-        if m:
-            heads.append((len(m.group(1)), md_slug(m.group(2)) or "section"))
-    if not heads:
-        return []
-    depths = sorted(set(d for d, _ in heads))
-    chosen = depths[0]
-    for d in depths:
-        if sum(1 for hd, _ in heads if hd == d) >= 2:
-            chosen = d
-            break
-    return [name for d, name in heads if d == chosen]
 
 
 def bloat_spec(path: str) -> tuple[int, int, str, str] | None:
@@ -640,6 +655,9 @@ def bloat_spec(path: str) -> tuple[int, int, str, str] | None:
             "doc-file-bloat",
         )
     return None
+
+
+# <<< shared:bloat-spec-py
 
 
 def scan_file(path: str, lines: list[str]) -> None:

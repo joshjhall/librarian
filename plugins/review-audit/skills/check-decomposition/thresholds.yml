@@ -132,6 +132,23 @@ cohesive:
 # statement "this file type has its own budget", so judging it a second time
 # against code-derived thresholds contradicts that: it produced duplicate rows,
 # and flagged docs pages that were under their own configured budget.
+#
+# BOTH LENSES APPLY THESE NUMBERS VERBATIM (#724), and that is a decision, not
+# an omission. The review lens is deliberately LOOSER than the audit lens for
+# CODE (see review_size_thresholds above) because those thresholds count
+# production LOC, and a per-PR gate that fires on a large share of PRs gets
+# turned off. That argument does not transfer to prose: these budgets count
+# TOTAL lines precisely because the files are loaded WHOLE into context, and
+# that cost does not depend on which lens is looking. A 580-line agent
+# definition is over budget on any lens.
+#
+# What keeps the review lens survivable here is its GROWTH DISPOSITION, not a
+# bigger number: ship-issue's sizing.{py,sh} grades a prose row by what the diff
+# did (crossed / material / trivial / no signal), so a one-line touch to a
+# pre-existing over-budget file is LOW and never blocking. CLASSIFICATION is
+# shared — a fact about the path cannot fork — while DISPOSITION stays each
+# lens's own. Adding a second prose table here to make the review lens looser
+# would reintroduce exactly the duplication #663 was filed to eliminate.
 bloat_thresholds:
   claude_md: # CLAUDE.md / AGENTS.md — loaded every conversation
     warning: 400 # CLAUDE_MD_WARN
@@ -185,8 +202,10 @@ bloat_thresholds:
 memory_bundle:
   root: .claude/memory # MEMORY_BUNDLE_ROOT
 
-# THIS TABLE IS AUTHORITATIVE FOR MEMORY SIZING — three consumers read it: the
-# audit lens, #695's review lens, and #669's index health. #669 must read
+# THIS TABLE IS AUTHORITATIVE FOR ALL PROSE SIZING — four consumers read it: the
+# audit lens, #695's review lens (which since #724 classifies prose by file type
+# through the shared `bloat-spec` regions rather than sizing every .md as a
+# generic doc), #669's index health, and #589's prose-budget gate. #669 must read
 # memory_index/memory_concept FROM HERE rather than defining its own
 # `memory-index-bloat` config: two threshold tables over the same files that
 # must agree is exactly the duplicated-prose failure #663 was filed to

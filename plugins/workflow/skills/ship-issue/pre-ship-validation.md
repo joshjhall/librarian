@@ -96,7 +96,20 @@ behavior is noted inline per check; environment variables referenced here
    | `missing-test-file`   | Source files with no corresponding test file      | HIGH         |
    | `untested-public-api` | Public functions not referenced in any test file  | HIGH         |
    | `file-length`         | Production LOC over the **review-lens** threshold | HIGH/MED/LOW |
+   | `ai-file-bloat`       | An agent/skill/companion/CLAUDE.md/memory file over its per-type budget | HIGH/MED/LOW |
+   | `doc-file-bloat`      | A `docs/*.md` page over its per-type budget       | HIGH/MED/LOW |
    | `decomposition-seam`  | A language-shaped split shape, or a reasoned decline | MED/LOW   |
+
+   The two `*-bloat` rows are the **prose** half of the size lens (#724). A
+   markdown file the scanner can classify by path — an `agents/*.md`, a
+   `SKILL.md`, a skill companion, a `CLAUDE.md`, a memory index/concept, a
+   `docs/*.md` — is sized against its own budget from
+   `check-decomposition/thresholds.yml` § `bloat_thresholds` (the same table the
+   audit lens reads, measured on **total lines** because these files load whole
+   into context) and gets **exactly one** size verdict: a bloat row *instead of*
+   `file-length`, never both. Unclassified markdown keeps the production-LOC
+   path. Certainty is growth-graded exactly like `file-length`, so a one-line
+   touch to a pre-existing over-budget agent file stays `LOW`.
 
    **Verifying a split mechanically.** When a diff *performs* a decomposition —
    a file shrank sharply and siblings appeared, or prose moved into new linked

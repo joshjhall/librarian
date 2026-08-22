@@ -73,8 +73,17 @@ DECOMP_SEAM_MAX_FANIN="${DECOMP_SEAM_MAX_FANIN:-3}"
 DECOMP_GOD_UNITS="${DECOMP_GOD_UNITS:-12}"
 DECOMP_GOD_CONCERNS="${DECOMP_GOD_CONCERNS:-3}"
 DECOMP_COHESIVE_MAX_UNITS="${DECOMP_COHESIVE_MAX_UNITS:-2}"
+# >>> shared:bloat-config (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
 # Bloat table — migrated from check-ai-config with its variable names intact so
 # an operator's existing overrides keep working after the move.
+#
+# SHARED WITH THE REVIEW LENS (#724). Both lenses apply these numbers verbatim;
+# there is no review-lens prose override. The review lens is looser than the
+# audit lens for CODE, where thresholds count production LOC and a per-PR gate
+# that nags gets turned off — but that argument does not transfer here. These
+# budgets count TOTAL lines because the files load WHOLE into context, and that
+# cost does not depend on which lens is looking. The review lens stays
+# survivable through its growth disposition instead (sizing.sh's awk END).
 CLAUDE_MD_WARN="${CLAUDE_MD_WARN:-400}"
 CLAUDE_MD_HIGH="${CLAUDE_MD_HIGH:-600}"
 SKILL_WARN="${SKILL_WARN:-300}"
@@ -109,6 +118,7 @@ while :; do
         *) break ;;
     esac
 done
+# <<< shared:bloat-config
 
 while IFS= read -r file; do
     [ -f "$file" ] || continue
@@ -133,6 +143,11 @@ while IFS= read -r file; do
         *.md | *.markdown) lang="md" ;;
     esac
 
+    # >>> shared:bloat-spec (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
+    # PROSE FILE-TYPE CLASSIFICATION — shared by BOTH lenses (#724). What a
+    # markdown file IS is a fact about its PATH, and a fact must not fork.
+    # Strictness is a policy dial each lens owns; classification is not.
+    #
     # Memory-bundle classification (#700) — mirrors bundle_kind() in
     # patterns.py. Only *.md under the root is bundle prose; a .sh or .py in a
     # bundle is code and keeps the code thresholds. Computed BEFORE the bloat
@@ -205,6 +220,7 @@ while IFS= read -r file; do
             b_cat="doc-file-bloat"
             ;;
     esac
+    # <<< shared:bloat-spec
 
     LC_ALL=C command awk \
         -v path="$file" -v lang="$lang" \
