@@ -877,6 +877,169 @@ EOF
 }
 
 # ============================================================================
+# Rust segmenter — impl clustering, item coverage (#727)
+# ============================================================================
+# `impl Trait for Type` captures the TYPE, not the trait. Capturing the trait
+# scattered one type across as many families as it had impls, so a type with
+# Display + Debug + its inherent impl looked like three unrelated things.
+#
+# The IMPL-AS-ONE-UNIT decision is asserted here too (see UNIT_RE["rs"] for the
+# reasoning): the fixture's impl blocks carry indented methods that must NOT be
+# counted, which the unit total pins.
+test_rust_impl_clustering() {
+    local d f list
+    d="$(fresh_dir)"
+    f="$d/render.rs"
+    command cat >"$f" <<'EOF'
+pub struct Widget {
+    id: u32,
+}
+
+impl Widget {
+    pub fn new() -> Self {
+        Widget { id: 0 }
+    }
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl Display for Widget {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(f, "{}", self.id)
+    }
+}
+
+impl Debug for Widget {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(f, "{:?}", self.id)
+    }
+}
+EOF
+    list="$(list_of "$f")"
+
+    # All four items are family `widget` — the struct and its three impls. Under
+    # the pre-#727 trait capture these were widget/display/debug, so a 4-unit
+    # family is only reachable with the type-capturing arm.
+    assert_fires "$list" decomposition-seam "fn widget_* family (4 units," \
+        "rust: impl Trait for Type clusters under the TYPE, not the trait" \
+        DECOMP_SEAM_MIN_UNITS=4
+    # impl is ONE unit: the six indented `fn`s inside these blocks are not
+    # units. 4 is struct + 3 impls; method-level segmentation would give 10.
+    assert_fires "$list" file-length "4 top-level units" \
+        "rust: an impl block is one unit — its methods are not segmented"
+}
+
+# Item kinds the prefix alternation missed entirely before #727. Each was
+# INVISIBLE, so it inflated the preceding unit's span and deflated the count.
+test_rust_item_coverage() {
+    local d f list
+    d="$(fresh_dir)"
+    f="$d/items.rs"
+    command cat >"$f" <<'EOF'
+macro_rules! shout {
+    ($e:expr) => {
+        println!("{}", $e)
+    };
+}
+
+unsafe fn raw_poke(p: *mut u8) {
+    *p = 1;
+}
+
+const fn compile_time() -> u32 {
+    7
+}
+
+extern "C" fn ffi_entry(v: u32) -> u32 {
+    v + 1
+}
+
+pub const MAX_SIZE: u32 = 512;
+
+static REGISTRY: u32 = 0;
+
+type Handle = u32;
+
+pub async fn fetch_it(u: &str) -> String {
+    String::from(u)
+}
+EOF
+    list="$(list_of "$f")"
+    # Eight items, each previously invisible except the async fn. The count is
+    # the assertion: any arm that stops matching drops it below 8.
+    assert_fires "$list" file-length "8 top-level units" \
+        "rust: macro_rules/unsafe/const/extern fn, const, static, type all segment"
+}
+
+# The #[cfg(test)] region had TWO independent defects (#727), fixtured
+# separately because they fail through different code paths.
+test_rust_midfile_test_region() {
+    local d f list
+    d="$(fresh_dir)"
+
+    # (1) A mid-file marker excluded to EOF, swallowing every production unit
+    # that followed. Here `beta` and `gamma` sit AFTER the test module.
+    f="$d/midfile.rs"
+    command cat >"$f" <<'EOF'
+pub fn alpha() -> u32 {
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn t_one() {
+        assert!(true);
+    }
+}
+
+pub fn beta() -> u32 {
+    2
+}
+
+pub fn gamma() -> u32 {
+    3
+}
+EOF
+    list="$(list_of "$f")"
+    # Only the test module is excluded (lines 5-12, its span), not the 7 lines
+    # after it. Pre-fix this read 15 — the marker to EOF.
+    assert_fires "$list" file-length "8 test-excluded" \
+        "rust: a mid-file #[cfg(test)] excludes only its own module, not to EOF"
+    # The three production fns all survive. Pre-fix this read 1.
+    assert_fires "$list" file-length "3 top-level units" \
+        "rust: production units after a mid-file test module are still counted"
+
+    # (2) An INDENTED #[test] inside `mod tests` set the pending-test flag,
+    # which then marked the next TOP-LEVEL unit as test code. Distinct from (1):
+    # this one mis-marks a UNIT rather than over-extending the region. The
+    # fixture uses #[cfg(test)] on the module (so the region rule is in play)
+    # and asserts the following production fn is not swallowed.
+    f="$d/pending.rs"
+    command cat >"$f" <<'EOF'
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn inner_one() {}
+    #[test]
+    fn inner_two() {}
+}
+
+pub fn survivor() -> u32 {
+    41
+}
+
+pub fn survivor_two() -> u32 {
+    42
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "2 top-level units" \
+        "rust: an indented #[test] does not mark the next top-level unit as test"
+}
+
+# ============================================================================
 # Go segmenter
 # ============================================================================
 test_seam_go() {
@@ -915,6 +1078,124 @@ EOF
     # func Test... excluded — the other rule that was duplicated prose.
     assert_fires "$list" file-length "3 test-excluded" \
         "go: func Test excluded from production LOC"
+}
+
+# ============================================================================
+# Go segmenter — methods, receivers, grouped declarations (#727)
+# ============================================================================
+# Before #727 a method header did not merely get a poor NAME: `func (r *Repo)`
+# failed the identifier class outright, so the match failed and the method was
+# absorbed into the preceding unit's span. A 25-method file segmented to ~2
+# units and was declined as "single cohesive unit". The assertions below key on
+# the unit COUNT and on receiver-keyed family names, both of which are
+# unreachable without the fix.
+test_go_method_receivers() {
+    local d f list
+    d="$(fresh_dir)"
+    f="$d/repo.go"
+    command cat >"$f" <<'EOF'
+package repo
+
+func (r *Repo) GetOne(id string) string {
+	return r.db[id]
+}
+
+func (r *Repo) GetTwo(id string) string {
+	return r.db[id]
+}
+
+func (r *Repo) GetThree(id string) string {
+	return r.db[id]
+}
+
+func (s Store) PutOne(v string) error {
+	s.n++
+	return nil
+}
+
+func NewRepo() *Repo {
+	return &Repo{}
+}
+EOF
+    list="$(list_of "$f")"
+
+    # Methods on one receiver cluster into one family, which is what makes the
+    # seam proposable at all — Go's split shape is "more files in the package".
+    assert_fires "$list" decomposition-seam "func repo_* family (3 units," \
+        "go: methods on one receiver cluster by that receiver"
+    # The unit count proves the methods are VISIBLE. Pre-fix this file measured
+    # 1 unit (only NewRepo); 5 is reachable only once each method segments.
+    assert_fires "$list" file-length "5 top-level units" \
+        "go: every method is its own unit, not absorbed into the previous one"
+
+    # A pointer receiver, a value receiver, and a generic receiver all name the
+    # TYPE, never the binder — `Store_PutOne`, not `s_PutOne`.
+    assert_fires "$list" decomposition-seam "> $d/repo/repo.go" \
+        "go: the receiver family proposes a receiver-named module"
+
+    # Grouped declarations were invisible for the same reason (`(` is not an
+    # identifier char). One visible unit per block is the honest count.
+    f="$d/decls.go"
+    command cat >"$f" <<'EOF'
+package decls
+
+var (
+	ErrOne = 1
+	ErrTwo = 2
+)
+
+const (
+	Alpha = "a"
+	Beta  = "b"
+)
+
+func Solo() int {
+	return 1
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "3 top-level units" \
+        "go: grouped var/const blocks are one visible unit each, not zero"
+}
+
+# A testify-style method (`func (s *Suite) TestFoo`) must stay TEST-classified
+# even though the receiver arm now rewrites its name. Kept separate from the
+# clustering case: this is the ordering between TEST_UNIT_RE and UNIT_RE, and a
+# regression here silently counts test code as production.
+test_go_method_test_classification() {
+    local d f list
+    d="$(fresh_dir)"
+    f="$d/suite_test.go"
+    command cat >"$f" <<'EOF'
+package suite
+
+func Production(s string) string {
+	a := s + "!"
+	b := a + "?"
+	c := b + "."
+	return c
+}
+
+func TestPlain(t *testing.T) {
+	Production("x")
+}
+
+func (s *Suite) TestMethod() {
+	Production("y")
+}
+
+func (s *Suite) BenchmarkMethod() {
+	Production("z")
+}
+EOF
+    list="$(list_of "$f")"
+    # The plain Test func AND both testify METHODS are excluded. A regression
+    # that let the receiver arm win would leave the two methods counted as
+    # production, raising units to 3 and dropping test-excluded to 4.
+    assert_fires "$list" file-length "11 test-excluded" \
+        "go: a testify Test/Benchmark method stays test-classified under the receiver arm"
+    assert_fires "$list" file-length "1 top-level units" \
+        "go: only the production func counts toward the unit total"
 }
 
 # ============================================================================
@@ -2234,6 +2515,11 @@ run_test test_seam_typescript "ts: type-level units, seam-not-decline, .d.ts dec
 run_test test_seam_swift "swift: unit forms, /// comment model, both test conventions, seam-not-decline (#728)"
 run_test test_seam_rust "rust: fn-family seam + #[cfg(test)] region exclusion"
 run_test test_seam_go "go: func-family seam + func Test exclusion"
+run_test test_rust_impl_clustering "rust: impl Trait for Type clusters by type; impl is one unit (#727)"
+run_test test_rust_item_coverage "rust: macro_rules/unsafe/const/extern/static/type all segment (#727)"
+run_test test_rust_midfile_test_region "rust: mid-file #[cfg(test)] is module-scoped; indented #[test] does not leak (#727)"
+run_test test_go_method_receivers "go: methods cluster by receiver; grouped decls are visible (#727)"
+run_test test_go_method_test_classification "go: a testify Test method stays test-classified (#727)"
 run_test test_seam_shell "shell: function-family seam + comment exclusion"
 run_test test_seam_markdown "markdown: heading-cluster seam + fenced-block counter"
 run_test test_split_shape_per_language "shape: every language arm is reachable and language-specific (#725)"

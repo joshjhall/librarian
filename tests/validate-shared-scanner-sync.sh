@@ -103,7 +103,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
-    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk"
+    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk unit-segmenters-awk"
     "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
     "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py"
 )
@@ -728,6 +728,37 @@ test_detector_fires_on_segmenter_region_drift() {
     drift="none"
     [ "$canonical" != "$tampered" ] && drift="detected"
     assert_equals "detected" "$drift" "a one-line edit to split-verify's segmenter copy is detected as drift"
+
+    # THIRD holder (#727): check-decomposition/patterns.sh carries this region
+    # too. Until #727 its copy was inside loc-helpers-awk but bore no inner
+    # sentinels, so patterns.sh <-> split-verify.sh was pinned only TRANSITIVELY
+    # through sizing.sh. That was enough while the segmenters were static; the
+    # rs/go arms are now the most-edited lines in the file, and a three-way
+    # region where one leg is unpinned is how two of three copies drift.
+    #
+    # Tampered on the `go` receiver arm — the rule #727 added, and the one a
+    # careless edit is most likely to touch. Matched on the distinctive
+    # `^func[ \t]*\(` opener via a fixed string: the arm contains `||`, and a
+    # sed BRE `\|` is a GNU extension BSD sed reads as a LITERAL (#679), so an
+    # alternation-bearing pattern would silently no-op on macOS.
+    canonical="$(extract_shared "$DECOMP_PATTERNS" unit-segmenters-awk | normalize)"
+    assert_not_empty "$canonical" "check-decomposition unit-segmenters-awk extract is non-empty"
+
+    baseline="differs"
+    [ "$canonical" = "$duplicate" ] && baseline="matches"
+    assert_equals "matches" "$baseline" "patterns.sh's segmenter copy matches split-verify's (three-way region)"
+
+    tampered="$(extract_shared "$SPLIT_VERIFY" unit-segmenters-awk |
+        command sed 's|if (lang == "go") return line ~ /\^func\[ .t\]\*|if (0) return line ~ /^func[ \\t]*|' | normalize)"
+    assert_not_empty "$tampered" "tampered go-arm extract is non-empty (extract still works)"
+
+    tamper_took="no"
+    [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+    assert_equals "yes" "$tamper_took" "the tamper actually changed the region (the go receiver arm is present)"
+
+    drift="none"
+    [ "$canonical" != "$tampered" ] && drift="detected"
+    assert_equals "detected" "$drift" "a one-line edit to the go receiver arm is detected against patterns.sh"
 }
 
 # The detector FIRES on drift in EACH region of the FOURTH pair — the Python
