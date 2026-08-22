@@ -96,6 +96,10 @@ REVIEW_LOC_WARN_RS="${REVIEW_LOC_WARN_RS:-400}"
 REVIEW_LOC_HIGH_RS="${REVIEW_LOC_HIGH_RS:-700}"
 REVIEW_LOC_WARN_GO="${REVIEW_LOC_WARN_GO:-400}"
 REVIEW_LOC_HIGH_GO="${REVIEW_LOC_HIGH_GO:-700}"
+# Swift joins rs/go by decision, not omission (#728) — see PER_LANG_THRESHOLDS
+# in sizing.py for the rationale.
+REVIEW_LOC_WARN_SWIFT="${REVIEW_LOC_WARN_SWIFT:-400}"
+REVIEW_LOC_HIGH_SWIFT="${REVIEW_LOC_HIGH_SWIFT:-700}"
 
 # >>> shared:bloat-config (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
 # Bloat table — migrated from check-ai-config with its variable names intact so
@@ -217,6 +221,7 @@ while IFS= read -r file; do
         *.go) lang="go" ;;
         *.sh | *.bash) lang="sh" ;;
         *.md | *.markdown) lang="md" ;;
+        *.swift) lang="swift" ;;
     esac
 
     # Per-language threshold selection, mirroring PER_LANG_THRESHOLDS.
@@ -238,6 +243,10 @@ while IFS= read -r file; do
         go)
             loc_warn=$REVIEW_LOC_WARN_GO
             loc_high=$REVIEW_LOC_HIGH_GO
+            ;;
+        swift)
+            loc_warn=$REVIEW_LOC_WARN_SWIFT
+            loc_high=$REVIEW_LOC_HIGH_SWIFT
             ;;
     esac
 
@@ -352,6 +361,7 @@ while IFS= read -r file; do
         if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
         if (lang == "rs") return line ~ /^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "go") return line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
+        if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias|associatedtype)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         return 0
     }
@@ -365,20 +375,55 @@ while IFS= read -r file; do
         else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
         else if (lang == "rs") { sub(/^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+/, "", s) }
         else if (lang == "go") { sub(/^(func|type|var|const)[ \t]+/, "", s) }
+        # swift: `class` appears in BOTH the modifier group and the keyword
+        # alternation (`class func` is a type method; `class Foo` is a type).
+        # POSIX awk ERE is leftmost-LONGEST over the whole match, and only one
+        # parse of each valid spelling reaches a trailing identifier, so the two
+        # resolve without an ordering hack. A malformed spelling that captures a
+        # KEYWORD as the name is rejected by is_reserved_name below.
+        else if (lang == "swift") { sub(/^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias|associatedtype)[ \t]+/, "", s) }
         else if (lang == "sh") { sub(/^function[ \t]+/, "", s); sub(/[ \t]*\(.*$/, "", s) }
         if (match(s, /^[A-Za-z_$][A-Za-z0-9_$]*/)) return substr(s, 1, RLENGTH)
         return ""
+    }
+    # is_reserved_name: NM is a keyword that must never be accepted as a unit
+    # name. The awk half of RESERVED_UNIT_NAME in the .py primaries (#728).
+    #
+    # Swift `class` sits in BOTH the modifier group and the keyword alternation,
+    # so `open class override Foo` parses `class` as the keyword and yields
+    # `override` as the name — which would become a seam family and a
+    # god-module concern in human-read evidence. A post-match filter rather than
+    # a negative lookahead because POSIX awk ERE has NO lookahead: a
+    # Python-only construct there would make the two impls disagree on exactly
+    # these lines. A fixed-string membership test transcribes verbatim.
+    function is_reserved_name(nm, lang) {
+        if (lang != "swift") return 0
+        return index(" public private internal fileprivate open final static class override indirect func struct enum protocol extension actor typealias associatedtype ", " " nm " ") > 0
     }
     function is_test_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?def[ \t]+test_/ || line ~ /^class[ \t]+Test/
         if (lang == "js" || lang == "ts") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
         if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)/
+        if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func[ \t]+test|class[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*:[^{]*XCTestCase)/
         if (lang == "sh") return line ~ /^(function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)/
+        return 0
+    }
+    # is_attr_test: an ATTRIBUTE line marking the NEXT unit as test code —
+    # Rust #[test]/#[cfg(test)], swift-testing @Test. The awk half of
+    # ATTR_TEST_RE in the .py primaries (#728), replacing what was a hardcoded
+    # `lang == "rs"` test inline in the segmenter loop.
+    #
+    # `@Test\b` has no POSIX ERE spelling (no \b), so the boundary is written
+    # explicitly as "not an identifier character" — with an end-of-string
+    # alternative, since a bare `@Test` line has nothing after it.
+    function is_attr_test(line, lang) {
+        if (lang == "rs") return line ~ /^[ \t]*#\[(cfg\(test\)|test)\]/
+        if (lang == "swift") return line ~ /^[ \t]*@Test([^A-Za-z0-9_]|$)/
         return 0
     }
     function is_comment(line, lang) {
         if (lang == "py" || lang == "sh") return line ~ /^[ \t]*#/
-        if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
+        if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go" || lang == "swift") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
     # <<< shared:unit-segmenters-awk
@@ -405,6 +450,7 @@ while IFS= read -r file; do
         if (lang == "go") return "func"
         if (lang == "sh") return "function"
         if (lang == "md") return "section"
+        if (lang == "swift") return "declaration"
         return "unit"
     }
     # <<< shared:loc-helpers-awk
@@ -431,6 +477,7 @@ while IFS= read -r file; do
         if (lang == "js") return "sibling modules + a barrel index.ts"
         if (lang == "ts") return "types/ dir split by domain + a re-exporting barrel index.ts"
         if (lang == "go") return "additional files in the same package (no import churn)"
+        if (lang == "swift") return "extensions in separate files (Type+Concern.swift), same module"
         if (lang == "sh") return "sourced fragment + an explicit ordered list (split-suite convention)"
         if (lang == "md") return "progressive disclosure: move detail to linked files, leave a one-line pointer"
         return "extract a cohesive unit into a sibling module"
@@ -481,18 +528,32 @@ while IFS= read -r file; do
             pending_test = 0
             for (i = 1; i <= total; i++) {
                 line = L[i]
-                # Rust: an attribute line marks the NEXT unit as test code.
-                if (lang == "rs" && line ~ /^[ \t]*#\[(cfg\(test\)|test)\]/) {
+                is_hdr = is_unit_header(line, lang)
+                # An attribute line marks the NEXT unit as test code (Rust
+                # #[test], swift-testing @Test). Table-driven since #728.
+                #
+                # The header check runs FIRST and the attribute only consumes
+                # the line when it is NOT itself a unit header: swift-testing
+                # writes `@Test func foo()` on ONE line, which under a
+                # continue-first shape would swallow the unit and mark the next
+                # (production) one as a test. Rust `#[test]` always stands
+                # alone, so its behavior is unchanged. Mirrors find_units() in
+                # the .py primaries.
+                if (is_attr_test(line, lang)) {
                     pending_test = 1
-                    continue
+                    if (!is_hdr) continue
                 }
-                if (!is_unit_header(line, lang)) continue
+                if (!is_hdr) continue
                 nm = unit_name(line, lang)
                 if (nm == "") continue
+                # See is_reserved_name: a keyword captured as a name means a
+                # modifier was parsed as the unit keyword. Drop the phantom
+                # unit; the line is still counted by the sizing layer.
+                if (is_reserved_name(nm, lang)) continue
                 nu++
                 un[nu] = nm; us[nu] = i
                 if (pending_test) { ut[nu] = 1; pending_test = 0 }
-                else if (lang != "rs" && is_test_header(line, lang)) ut[nu] = 1
+                else if (is_test_header(line, lang)) ut[nu] = 1
                 else ut[nu] = 0
             }
         }
