@@ -116,6 +116,23 @@ jobs:
       # should rest on, and nothing in the script enforces either. Installing the
       # verified tree makes the audited bytes and the installed bytes the same
       # bytes by construction, so the guarantee holds without that assumption.
+      #
+      # SCOPE OF THAT GUARANTEE, stated exactly because the general case is
+      # weaker than it looks: `npm install -g <local-dir>` PACKS the directory,
+      # and a pack conventionally excludes `node_modules`. For a package with
+      # runtime dependencies, npm would re-resolve that dependency closure from
+      # the registry — a second unaudited fetch, the same TOCTOU shape one level
+      # down. agnix has NO dependencies of any kind (no `dependencies`,
+      # `optionalDependencies`, or `peerDependencies`; its lockfile closure in
+      # the scratch tree is the single entry `node_modules/agnix`), so the
+      # audited closure and the installed closure are the same one package.
+      # Confirmed empirically: `npm install -g --offline` from the verified tree
+      # succeeds, which it could not do if any byte still had to be fetched.
+      #
+      # This is therefore a property of agnix, not of the pattern. Should agnix
+      # ever gain a dependency, this reasoning stops holding and the step needs
+      # revisiting — reuse the same `--offline` check to tell, since it fails
+      # loudly the moment something must be fetched.
       - name: Install agnix (pinned)
         id: agnix
         run: |

@@ -368,10 +368,27 @@ test_scratch_dir_is_cleaned_up() {
     # is what keeps the step self-contained — and a future edit that drops the
     # cleanup while keeping the mktemp is exactly the kind of silent drift this
     # gate family exists to catch.
-    local f
+    #
+    # Ordering is asserted too, and it is the load-bearing half now that the
+    # global install READS $verify_dir: a cleanup hoisted above that install
+    # would delete the verified tree before it is consumed. Presence alone would
+    # stay green through that regression.
+    local f cleanup_line install_line ok
     for f in ci.yml code-scanning.yml; do
-        assert_not_empty "$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'rm -rf "$verify_dir"')" \
+        cleanup_line="$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'rm -rf "$verify_dir"')"
+        assert_not_empty "$cleanup_line" \
             "$f creates a scratch \$verify_dir with mktemp -d and must remove it (#740) — found no non-comment 'rm -rf \"\$verify_dir\"'."
+
+        install_line="$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'npm install -g "$verify_dir/node_modules/agnix"')"
+        # Fail loud rather than pass vacuously when either line is missing —
+        # comparing two empty strings would report correct ordering between two
+        # things that do not exist.
+        ok=0
+        if [ -n "$cleanup_line" ] && [ -n "$install_line" ] && [ "$cleanup_line" -gt "$install_line" ]; then
+            ok=1
+        fi
+        assert_equals "1" "$ok" \
+            "$f must remove \$verify_dir (line ${cleanup_line:-none}) AFTER installing from it (line ${install_line:-none}) (#740) — cleaning up first deletes the verified tree before the install reads it."
     done
 }
 
