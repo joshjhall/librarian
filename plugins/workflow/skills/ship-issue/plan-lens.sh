@@ -65,6 +65,15 @@ fi
 # under budget does not fire on a 1-line estimate; that is noise, and noise is
 # how a lens gets turned off.
 PLAN_HEADROOM_MIN_ESTIMATE="${PLAN_HEADROOM_MIN_ESTIMATE:-25}"
+# Validated, not merely defaulted — mirrors _int_env() in plan-lens.py, which
+# falls back on a non-integer AND on a negative. Without this the bash twin
+# passes any string straight to awk, where a non-numeric compares as 0 (so every
+# estimate clears the floor) and a negative does the same — the floor silently
+# inverts instead of being ignored, and the two impls disagree about what a
+# malformed override means.
+case "$PLAN_HEADROOM_MIN_ESTIMATE" in
+    '' | *[!0-9]*) PLAN_HEADROOM_MIN_ESTIMATE=25 ;;
+esac
 
 # --- fail loud when the LOC engine is missing --------------------------------
 # A scanner with no engine must NOT exit 0 with no findings: a clean "no

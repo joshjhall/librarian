@@ -80,9 +80,14 @@ def _int_env(name: str, default: int) -> int:
     """
     val = os.environ.get(name, "")
     try:
-        return int(val)
+        parsed = int(val)
     except ValueError:
         return default
+    # A NEGATIVE threshold is nonsense and must not silently invert the gate: a
+    # floor below zero would make every estimate clear it. The bash twin's
+    # ${VAR:-N} keeps whatever string it is handed, so both impls fall back to
+    # the default rather than honoring a negative.
+    return parsed if parsed >= 0 else default
 
 
 def emit(path: str, line_no: int, category: str, evidence: str, certainty: str) -> None:
@@ -137,9 +142,22 @@ def read_estimates(path: str) -> dict[str, int]:
                     continue
                 added, name = parts[0], parts[-1]
                 try:
-                    counts[sidecar_path(name)] = int(added)
+                    value = int(added)
                 except ValueError:
                     continue
+                # NON-NEGATIVE ONLY, matching awk's /^[0-9]+$/ guard in the bash
+                # twin and in sizing.sh's added_for(). Python's int() happily
+                # parses "-5", awk's regex does not — so a sidecar of only
+                # negative rows made have_estimate TRUE here and FALSE there,
+                # and the same input produced two different evidence strings
+                # ("this plan does not add to it" vs "no plan estimate
+                # supplied"). That is a TSV-contract violation, the one thing a
+                # port may never do. An estimate is a count of lines a plan will
+                # ADD; a negative is malformed input, not a shrink signal, and
+                # numstat never emits one.
+                if value < 0:
+                    continue
+                counts[sidecar_path(name)] = value
     except OSError:
         return {}
     return counts

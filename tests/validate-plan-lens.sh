@@ -41,6 +41,22 @@
 #   projection(sh) — `if (projected <= warn) exit 0` deleted -> SURVIVED, see below
 #   projection(py) — the same guard in the python twin       -> red
 #
+# The #756 cycle-3 round (review-driven), same discipline:
+#   negative guard (py) — the `value < 0` skip removed        -> red
+#   env validation (sh) — the numeric `case` guard removed    -> SURVIVED TWICE
+#
+# THE ENV-VALIDATION MUTATION SURVIVED TWO FIXTURES BEFORE BITING, both failing
+# the same way as the projection one above: a silence with more than one cause.
+# The first fixture used `abc`, which awk compares as a STRING — every number
+# sorts before it, so an unvalidated floor silences EVERYTHING and a test
+# asserting silence passes with and without the fix. The second used `-10`
+# (numeric, so the floor genuinely collapses) but on a file 50 LOC under budget
+# with an estimate of 5: the PROJECTION guard caught it downstream, so the row
+# stayed silent regardless. Only a file 10 LOC under its warning with an estimate
+# of 20 — below the floor, yet enough to cross the budget if the floor were gone —
+# makes the floor the SOLE cause of the silence. When a guard is one of several
+# in series, the fixture must clear all the others before it can test that one.
+#
 # THAT ROUND PAID FOR ITSELF. The bash projection guard initially SURVIVED, and
 # it was a REAL GAP rather than a no-op: with the guard gone the scanner claims
 # a 40-production-LOC file is "over the 500 warning budget" while python stays
@@ -612,7 +628,76 @@ run_test test_plan_lens_high_band_on_already_over "#756: an already-over file pa
 run_test test_plan_lens_brace_rename_shape "#756: the {old => new} segment rename shape resolves (2nd git rename form)"
 run_test test_plan_lens_accepts_numstat_shape "#756 AC1: the sidecar accepts a real numstat file and is rename-aware"
 run_test test_plan_lens_fails_loud_without_engine "#756: no LOC engine exits 2, never 0-with-no-findings"
+# A sidecar of ONLY negative counts. Found by review cycle 3 as genuine
+# cross-runtime DRIFT, not a hypothetical: python's int() parses "-5" so
+# have_estimate went TRUE, while awk's /^[0-9]+$/ rejected the minus sign so it
+# went FALSE — the same input produced two different evidence strings ("this
+# plan does not add to it" vs "no plan estimate supplied"). A port may differ in
+# speed, never in output; that is the TSV contract.
+#
+# BASH was right and python was the outlier: sizing.sh's added_for() uses the
+# same non-negative guard, numstat never emits a negative, and an estimate is a
+# count of lines a plan will ADD — a negative is malformed input, not a shrink.
+test_plan_lens_negative_estimates_are_malformed() {
+    setup_over_threshold
+    local est="$WORKDIR/est-neg.tsv"
+    command printf -- '-5\t%s\n' "$OVER_FILE" >"$est"
+
+    run_plan "$LIST" "$est"
+    assert_plan_parity
+    assert_contains "$PLAN_OUT" "no plan estimate supplied" \
+        "a sidecar of only negative counts reads as NO estimate, in both runtimes"
+    assert_not_contains "$PLAN_OUT" "does not add to it" \
+        "a negative row must not register as a present-but-zero estimate"
+}
+
+# A malformed or negative env override must FALL BACK to the default, never
+# change the gate. The two bad spellings fail in OPPOSITE directions in awk, and
+# getting that wrong is how this test first shipped unable to fail:
+#
+#   'abc'  — awk compares as STRINGS, and every number sorts before "abc", so an
+#            unvalidated floor silences EVERYTHING. A test asserting silence
+#            therefore passes with and without the fix — the fixture both arms
+#            and satisfies the gate ([[gate-and-evidence-converge-tautology]]).
+#   '-10'  — numeric, so the floor COLLAPSES and an estimate that should be
+#            below it fires instead. This is the spelling that discriminates.
+#
+# So the '-10' arm carries an estimate BELOW the default floor and asserts
+# SILENCE (proving the default still governs), while 'abc' is kept only for
+# cross-runtime agreement. Found by mutation: reverting the bash validation left
+# the original test green.
+test_plan_lens_env_override_is_validated() {
+    # THE FIXTURE MUST CLEAR TWO GUARDS, not one. An estimate below the floor is
+    # silent for TWO independent reasons — the floor check AND the projection
+    # check — so a fixture whose projection also stays under budget passes with
+    # and without the validation, which is how the first version of this test
+    # shipped unable to fail. This file sits 10 LOC under its warning, so an
+    # estimate of 20 (below the 25 floor) WOULD cross the budget if the floor
+    # were collapsed: the floor is then the only thing keeping it quiet.
+    local tight="$WORKDIR/tight.py" est="$WORKDIR/est-envfloor.tsv"
+    make_py_file "$tight" 245 # ~490 production LOC against the 500 warning
+    PLAN_LIST="$WORKDIR/tight-list.txt"
+    command printf '%s\n' "$tight" >"$PLAN_LIST"
+    make_estimate "$est" "$tight" 20
+
+    # THE DISCRIMINATING ARM. Unvalidated, awk reads -10 numerically, 5 clears
+    # it, and a headroom row appears. Validated, the floor stays 25 and 5 is
+    # below it, so the file is silent.
+    PLAN_HEADROOM_MIN_ESTIMATE=-10 run_plan "$PLAN_LIST" "$est"
+    assert_plan_parity
+    assert_equals "" "$PLAN_OUT" \
+        "PLAN_HEADROOM_MIN_ESTIMATE=-10 falls back to the default floor rather than collapsing it"
+
+    # Non-numeric: both runtimes must agree, whichever way they degrade.
+    PLAN_HEADROOM_MIN_ESTIMATE=abc run_plan "$PLAN_LIST" "$est"
+    assert_plan_parity
+    assert_equals "" "$PLAN_OUT" \
+        "PLAN_HEADROOM_MIN_ESTIMATE=abc falls back to the default floor"
+}
+
 run_test test_plan_lens_tolerates_malformed_estimate_rows "#756: a malformed estimate row is skipped, not fatal and not growth"
+run_test test_plan_lens_negative_estimates_are_malformed "#756: a negative estimate is malformed in BOTH runtimes (cycle-3 drift)"
+run_test test_plan_lens_env_override_is_validated "#756: a malformed/negative env override falls back, never inverts the floor"
 run_test test_plan_lens_usage_contract "#756: plan-lens usage / missing-file / empty-list contract"
 run_test test_measure_record_fields_agree_across_runtimes "#756: the measure record's unconsumed fields are pinned across runtimes"
 run_test test_measure_mode_does_not_disturb_review_output "#756 AC6: the review lens is unchanged by the measure-mode seam"
