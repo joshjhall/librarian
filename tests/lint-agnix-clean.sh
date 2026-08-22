@@ -279,6 +279,15 @@ test_zero_errors() {
     if [ "$ERROR_COUNT" != "0" ]; then
         # Surface the actual error lines, not just the count — a bare "expected 0
         # got 3" sends the reader back to re-run the tool by hand.
+        #
+        # ` error: ` is verified against real output, not inferred from the
+        # summary-line pattern above (which is a different format and proves
+        # nothing about this one). A per-finding line at 0.49.0 reads:
+        #   /abs/path/agents/issue-filer.md:1:0 error: Referenced skill … not found
+        # i.e. `<path>:<line>:<col> <level>: <msg>` — a space on each side of the
+        # level. If a future agnix drops those spaces this silently yields an
+        # EMPTY detail on a real failure; the count assertion still fails, but
+        # the message loses its evidence, so re-check the format when bumping.
         detail="$(printf '%s\n' "$AGNIX_OUT" | command grep -E ' error: ' | command head -n 10 | command tr '\n' ' ')"
     fi
 

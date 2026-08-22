@@ -84,9 +84,16 @@ jobs:
       - name: Install agnix (pinned)
         id: agnix
         run: |
-          if npm install -g agnix@0.49.0; then
+          # Smoke-test inside the CONDITION, and set `present` only after it
+          # passes. Two bugs this shape avoids, both reachable when the install
+          # succeeds but the binary is unusable (broken postinstall, incompatible
+          # Node, crash on invocation): under `bash -e` a bare `agnix --version`
+          # in the `then` branch fails the whole job — the opposite of the
+          # "clear skip, not a hard failure" acceptance above — and it would do
+          # so having ALREADY written present=true, so a re-run of just the
+          # downstream steps would scan with a binary known not to work.
+          if npm install -g agnix@0.49.0 && agnix --version; then
             echo "present=true" >> "$GITHUB_OUTPUT"
-            agnix --version
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::notice::agnix install failed — skipping code-scanning upload (agnix is a best-effort enrichment; the check-ai-config floor still runs in the checker path)."

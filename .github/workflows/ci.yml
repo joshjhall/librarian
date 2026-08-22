@@ -162,8 +162,17 @@ jobs:
       # code-scanning.yml already does at its own install step.
       - name: Install agnix (pinned)
         run: |
-          if npm install -g agnix@0.49.0; then
-            agnix --version
+          # BOTH commands sit in the condition, deliberately. A `run:` step
+          # executes under `bash -e`, so an `agnix --version` placed inside the
+          # `then` branch would abort the step — and fail the whole job — when
+          # the install SUCCEEDS but the binary is unusable (a broken postinstall,
+          # an incompatible Node, a crash on invocation). That is the exact
+          # outcome the comment above promises cannot happen, and it is the
+          # likelier half of the failure space: a registry outage is caught by
+          # the `if`, a bad install is not. Folding the smoke-test into the
+          # condition routes both to the same notice-and-skip path.
+          if npm install -g agnix@0.49.0 && agnix --version; then
+            :
           else
             echo "::notice::agnix install failed — tests/lint-agnix-clean.sh will SKIP (exit 77), not fail. agnix is a best-effort enrichment (ADR 0001 §2/§4); the rest of the suite still gates this job."
           fi
