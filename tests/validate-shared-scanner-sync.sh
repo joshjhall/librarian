@@ -471,7 +471,7 @@ test_detector_fires_on_loc_region_drift() {
     # exactly the silent class that lint catches). `s/…/…/` on a plain fixed
     # string is dialect-neutral.
     tampered="$(extract_shared "$SIZING" loc-helpers-awk |
-        command sed 's/if (lang == "js" || lang == "rs" || lang == "go") return line ~/if (0) return line ~/' | normalize)"
+        command sed 's/if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go") return line ~/if (0) return line ~/' | normalize)"
     assert_not_empty "$tampered" "tampered loc-helpers-awk extract is non-empty (extract still works)"
 
     tamper_took="no"

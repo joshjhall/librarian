@@ -136,7 +136,8 @@ while IFS= read -r file; do
     lang=""
     case "$file" in
         *.py) lang="py" ;;
-        *.js | *.jsx | *.mjs | *.cjs | *.ts | *.tsx) lang="js" ;;
+        *.js | *.jsx | *.mjs | *.cjs) lang="js" ;;
+        *.ts | *.tsx) lang="ts" ;;
         *.rs) lang="rs" ;;
         *.go) lang="go" ;;
         *.sh | *.bash) lang="sh" ;;
@@ -263,6 +264,7 @@ while IFS= read -r file; do
     function is_unit_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
+        if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
         if (lang == "rs") return line ~ /^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "go") return line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
@@ -275,6 +277,7 @@ while IFS= read -r file; do
         s = line
         if (lang == "py") { sub(/^(async[ \t]+)?(def|class)[ \t]+/, "", s) }
         else if (lang == "js") { sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
+        else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
         else if (lang == "rs") { sub(/^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+/, "", s) }
         else if (lang == "go") { sub(/^(func|type|var|const)[ \t]+/, "", s) }
         else if (lang == "sh") { sub(/^function[ \t]+/, "", s); sub(/[ \t]*\(.*$/, "", s) }
@@ -283,23 +286,35 @@ while IFS= read -r file; do
     }
     function is_test_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?def[ \t]+test_/ || line ~ /^class[ \t]+Test/
-        if (lang == "js") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
+        if (lang == "js" || lang == "ts") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
         if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)/
         if (lang == "sh") return line ~ /^(function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)/
         return 0
     }
     function is_comment(line, lang) {
         if (lang == "py" || lang == "sh") return line ~ /^[ \t]*#/
-        if (lang == "js" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
+        if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
     function nest_unit(lang) {
-        if (lang == "js" || lang == "md") return 2
+        if (lang == "js" || lang == "ts" || lang == "md") return 2
         return 4
+    }
+    # is_decl_file: a TypeScript DECLARATION file (*.d.ts), type-level by
+    # construction with no runtime units to extract (#726). Mirrors
+    # is_decl_file() in patterns.py, including the case-insensitive match, so
+    # Foo.D.TS classifies the same as foo.d.ts.
+    #
+    # NOT a skip: a skipped .d.ts would be indistinguishable from an unscanned
+    # one. It is measured and sized as usual and only its SEAM is suppressed, so
+    # it falls through to the reasoned decline.
+    function is_decl_file(p) {
+        return tolower(p) ~ /\.d\.ts$/
     }
     function unit_noun(lang) {
         if (lang == "py") return "def"
         if (lang == "js") return "function"
+        if (lang == "ts") return "declaration"
         if (lang == "rs") return "fn"
         if (lang == "go") return "func"
         if (lang == "sh") return "function"
@@ -328,6 +343,7 @@ while IFS= read -r file; do
         if (lang == "rs") return "new subdir module; mod.rs re-exports the decomposed units"
         if (lang == "py") return "package dir with __init__.py re-exporting the public surface"
         if (lang == "js") return "sibling modules + a barrel index.ts"
+        if (lang == "ts") return "types/ dir split by domain + a re-exporting barrel index.ts"
         if (lang == "go") return "additional files in the same package (no import churn)"
         if (lang == "sh") return "sourced fragment + an explicit ordered list (split-suite convention)"
         if (lang == "md") return "progressive disclosure: move detail to linked files, leave a one-line pointer"
@@ -602,7 +618,11 @@ while IFS= read -r file; do
 
         noun = unit_noun(lang)
         seams = 0
-        for (i = 1; i <= nc; i++) {
+        # A .d.ts yields no seam, and therefore no shape row either (that emit
+        # is gated on seams > 0). It still reaches the decline below — examined
+        # and found unsplittable, not skipped. Mirrors the `[] if is_decl_file`
+        # loop guard in patterns.py.
+        for (i = 1; !is_decl_file(path) && i <= nc; i++) {
             span = ce[i] - cs[i] + 1
             if (cn[i] < seam_min_units || span < seam_min_lines) continue
 
@@ -674,7 +694,11 @@ while IFS= read -r file; do
                     generated = 1; break
                 }
             }
-            if (generated) reason = "generated file — regenerate rather than split"
+            # Ahead of `generated` on purpose (#726) — matches the order in
+            # patterns.py. A .d.ts is often ALSO banner-marked as generated, and
+            # the declaration-file reason is the more specific fact.
+            if (is_decl_file(path)) reason = "type declaration file — no runtime units to extract"
+            else if (generated) reason = "generated file — regenerate rather than split"
             else if (prod_units <= cohesive_max) reason = "single cohesive unit — no internal seam to cut"
             else if (comment_pct >= 50) reason = "majority prose/comment — length is documentation, not logic"
             else reason = "no low-coupling seam found — units are mutually referential"

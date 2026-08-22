@@ -89,6 +89,24 @@ UNIT_RE = {
         r"^(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?"
         r"(?:function|class|const|let|var)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)"
     ),
+    # TypeScript is its OWN key, not a js alias (#726). The js arm above matches
+    # only value-level forms, so every TYPE-level declaration — interface, type,
+    # enum, namespace, declare, abstract class — was invisible as a unit, and a
+    # types.ts full of interfaces segmented to ~0 units and was declined as a
+    # "single cohesive unit". A confident wrong answer, not a silence.
+    #
+    # ALTERNATION ORDER IS LOAD-BEARING, and it is a two-runtime trap. Python re
+    # is leftmost-FIRST (ordered alternation); POSIX awk ERE is leftmost-LONGEST.
+    # With bare `const` listed before `const enum`, Python captures the NAME
+    # `enum` from `export const enum Delta` while awk captures `Delta` — a silent
+    # TSV divergence surfacing only as a parity failure. Listing the two-word
+    # forms FIRST makes both runtimes agree by construction rather than by
+    # dialect luck. Same reason `abstract class` precedes `class`.
+    "ts": re.compile(
+        r"^(?:export[ \t]+)?(?:default[ \t]+)?(?:declare[ \t]+)?(?:async[ \t]+)?"
+        r"(?:const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var"
+        r"|interface|type|enum|namespace|module)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)"
+    ),
     "rs": re.compile(
         r"^(?:pub(?:\([a-z]+\))?[ \t]+)?(?:async[ \t]+)?"
         r"(?:fn|struct|enum|trait|impl|mod)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
@@ -105,6 +123,7 @@ COMMENT_RE = {
     "py": re.compile(r"^[ \t]*#"),
     "sh": re.compile(r"^[ \t]*#"),
     "js": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "ts": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "rs": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "go": re.compile(r"^[ \t]*(?://|/\*|\*)"),
 }
@@ -116,6 +135,7 @@ COMMENT_RE = {
 TEST_UNIT_RE = {
     "py": re.compile(r"^(?:async[ \t]+)?def[ \t]+test_|^class[ \t]+Test"),
     "js": re.compile(r"^[ \t]*(?:describe|it|test)[ \t]*\("),
+    "ts": re.compile(r"^[ \t]*(?:describe|it|test)[ \t]*\("),
     "rs": re.compile(r"^[ \t]*#\[(?:cfg\(test\)|test)\]"),
     "go": re.compile(r"^func[ \t]+(?:Test|Benchmark|Fuzz|Example)"),
     "sh": re.compile(r"^(?:function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)"),
@@ -131,7 +151,7 @@ TEST_REGION_RE = {
 }
 
 # Indent width used to convert leading whitespace into a nesting depth.
-NEST_UNIT = {"py": 4, "js": 2, "rs": 4, "go": 4, "sh": 4, "md": 2}
+NEST_UNIT = {"py": 4, "js": 2, "ts": 2, "rs": 4, "go": 4, "sh": 4, "md": 2}
 
 # Blankness and indent are defined by REGEX, not str.strip()/str.lstrip(): the
 # latter are unicode-aware (\x0b, \x0c, \x85, NBSP...) while the awk fallback
@@ -146,8 +166,8 @@ EXT_LANG = {
     "jsx": "js",
     "mjs": "js",
     "cjs": "js",
-    "ts": "js",
-    "tsx": "js",
+    "ts": "ts",
+    "tsx": "ts",
     "rs": "rs",
     "go": "go",
     "sh": "sh",
@@ -179,6 +199,12 @@ SPLIT_SHAPE = {
     "rs": "new subdir module; mod.rs re-exports the decomposed units",
     "py": "package dir with __init__.py re-exporting the public surface",
     "js": "sibling modules + a barrel index.ts",
+    # DIFFERENT from js on purpose (#726). The js shape moves runtime modules;
+    # an oversized TypeScript file is usually type-heavy, and its real remedy is
+    # to group types by DOMAIN under types/ with a re-exporting barrel — a
+    # different instruction, which is why ts needs its own key rather than
+    # inheriting the js one through an alias.
+    "ts": "types/ dir split by domain + a re-exporting barrel index.ts",
     "go": "additional files in the same package (no import churn)",
     "sh": "sourced fragment + an explicit ordered list (split-suite convention)",
     "md": (
@@ -247,6 +273,25 @@ def lang_of(path: str) -> str:
     if "." not in path:
         return ""
     return EXT_LANG.get(path.rsplit(".", 1)[-1].lower(), "")
+
+
+DECL_SUFFIX = ".d.ts"
+
+
+def is_decl_file(path: str) -> bool:
+    """A TypeScript DECLARATION file (*.d.ts), which is type-level by
+    construction and has no runtime units to extract (#726).
+
+    Deliberately NOT added to SKIP_GLOBS. A skip makes an over-budget .d.ts
+    indistinguishable from an unscanned one, and this scanner's whole discipline
+    is that a decline is a RESULT while silence is the bug. So the file is
+    measured and sized as usual; only its SEAM is suppressed, and it declines
+    with its own reason.
+
+    Matched on the full lowercased path (a case-insensitive suffix test), so
+    `Foo.D.TS` on a case-insensitive filesystem classifies the same as
+    `foo.d.ts` — the same target must decide alike in every spelling."""
+    return path.lower().endswith(DECL_SUFFIX)
 
 
 # <<< shared:loc-helpers-py
@@ -458,7 +503,7 @@ def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
 # At that moment the two lenses would have named the same heading differently —
 # which is the bug this unification pre-empts. The reachable half (md_slug's own
 # slugging rules) IS fixtured, in tests/validate-python-ports.sh.
-def decline_reason(lines: list[str], m: dict) -> str:
+def decline_reason(path: str, lines: list[str], m: dict) -> str:
     """WHY a long file was not flagged as splittable.
 
     A decline is a RESULT, not a silence — silence is indistinguishable from
@@ -466,6 +511,11 @@ def decline_reason(lines: list[str], m: dict) -> str:
     accepting the length. Reasons are reused verbatim from
     check-decomposition/contract.md so a decline reads identically in both lenses.
     """
+    # Ahead of `generated` on purpose (#726) — see the matching order in
+    # check-decomposition/patterns.py. A .d.ts is often ALSO banner-marked as
+    # generated, and "type declaration file" is the more specific fact.
+    if is_decl_file(path):
+        return "type declaration file — no runtime units to extract"
     for line in lines[:20]:
         if GENERATED_RE.search(line):
             return "generated file — regenerate rather than split"
@@ -891,7 +941,14 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
     # The generic fallback is weaker advice than a language-shaped one but it is
     # a real destination, and every blocking-eligible file now yields exactly one
     # seam row.
-    if crossed or material:
+    # `and not is_decl_file(path)` (#726): a .d.ts has no runtime units to
+    # extract, so a shape row would tell the reviewer to build a types/ dir out
+    # of a file with nothing to move. It takes the decline branch instead, where
+    # decline_reason names the declaration file specifically. This mirrors the
+    # audit lens, which reaches the same outcome through `seams == 0` — the two
+    # lenses gate on different quantities (growth vs seams), so the suppression
+    # has to be stated in each rather than inherited.
+    if (crossed or material) and not is_decl_file(path):
         shape = split_shape(lang)
         label = lang if lang else "this file"
         emit(
@@ -906,7 +963,7 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
             path,
             1,
             "decomposition-seam",
-            f"declined: {decline_reason(lines, m)} ({production} production LOC, "
+            f"declined: {decline_reason(path, lines, m)} ({production} production LOC, "
             f"{m['units']} top-level units)",
             "LOW",
         )

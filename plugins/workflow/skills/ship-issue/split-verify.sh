@@ -80,7 +80,8 @@ SPLIT_LOC_TOLERANCE="${SPLIT_LOC_TOLERANCE:-40}"
 lang_of() {
     case "$1" in
         *.py) echo "py" ;;
-        *.js | *.jsx | *.mjs | *.cjs | *.ts | *.tsx) echo "js" ;;
+        *.js | *.jsx | *.mjs | *.cjs) echo "js" ;;
+        *.ts | *.tsx) echo "ts" ;;
         *.rs) echo "rs" ;;
         *.go) echo "go" ;;
         *.sh | *.bash) echo "sh" ;;
@@ -98,6 +99,7 @@ awk_lib() {
     function is_unit_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
+        if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
         if (lang == "rs") return line ~ /^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "go") return line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
@@ -110,6 +112,7 @@ awk_lib() {
         s = line
         if (lang == "py") { sub(/^(async[ \t]+)?(def|class)[ \t]+/, "", s) }
         else if (lang == "js") { sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
+        else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
         else if (lang == "rs") { sub(/^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+/, "", s) }
         else if (lang == "go") { sub(/^(func|type|var|const)[ \t]+/, "", s) }
         else if (lang == "sh") { sub(/^function[ \t]+/, "", s); sub(/[ \t]*\(.*$/, "", s) }
@@ -118,14 +121,14 @@ awk_lib() {
     }
     function is_test_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?def[ \t]+test_/ || line ~ /^class[ \t]+Test/
-        if (lang == "js") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
+        if (lang == "js" || lang == "ts") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
         if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)/
         if (lang == "sh") return line ~ /^(function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)/
         return 0
     }
     function is_comment(line, lang) {
         if (lang == "py" || lang == "sh") return line ~ /^[ \t]*#/
-        if (lang == "js" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
+        if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
     # <<< shared:unit-segmenters-awk
