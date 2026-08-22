@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Unit coverage for lint-agnix-clean.sh's two pure helpers (issue #738).
+# Unit coverage for lint-agnix-clean.sh's pure helpers (issues #738, #739).
 #
-# tests/lint-agnix-clean.sh (#734) carries two pure functions that its own six
+# tests/lint-agnix-clean.sh (#734) carries three pure functions that its own six
 # gate tests exercise only INDIRECTLY, and only at whatever version the host
 # happens to have:
 #
@@ -12,12 +12,18 @@
 #                          convention exists to prevent).
 #   agnix_pin_in <file>    extracts the `agnix@X.Y.Z` npm pin from a workflow
 #                          file, feeding the pin-drift cross-check.
+#   agnix_files_checked    reads `files_checked` from agnix `--format json` on
+#                          stdin, feeding the corpus-reach floor (#739). The gate
+#                          treats an empty result as a hard failure and a numeric
+#                          one as the verdict, so a wrong answer either reddens a
+#                          healthy tree or — worse — floats a scan that walked
+#                          almost nothing over the floor.
 #
-# Both were hand-verified during #734's review across 11 comparator cases
-# (major/minor/patch boundaries, equality, and the multi-digit pairs `0.9.0` vs
-# `0.10.0` and `2.0.0` vs `10.0.0`) and found CORRECT. So this is a coverage gap,
-# not a latent defect — these tests pin behaviour that is already right, so that
-# a future rewrite cannot quietly regress it.
+# The first two were hand-verified during #734's review across 11 comparator
+# cases (major/minor/patch boundaries, equality, and the multi-digit pairs
+# `0.9.0` vs `0.10.0` and `2.0.0` vs `10.0.0`) and found CORRECT. So for those
+# this is a coverage gap, not a latent defect — the tests pin behaviour that is
+# already right, so that a future rewrite cannot quietly regress it.
 #
 # WHY EXTRACT RATHER THAN SOURCE. validate-threshold-check.sh can `source` its
 # library because threshold-check.sh is a pure function collection with no
@@ -47,7 +53,7 @@ WORKFLOW_DIR="$REPO_ROOT/.github/workflows"
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
-test_suite "lint-agnix-clean.sh helpers (#738)"
+test_suite "lint-agnix-clean.sh helpers (#738, #739)"
 
 WORKDIR="$(command mktemp -d)"
 trap 'command rm -rf "$WORKDIR"' EXIT
@@ -138,6 +144,7 @@ load_fn() {
 
 load_fn agnix_ver_lt
 load_fn agnix_pin_in
+load_fn agnix_files_checked
 
 # The extraction guards above are load-bearing, so they get their own assertions
 # rather than only ever running as invisible preconditions. Both drive the real
@@ -412,6 +419,140 @@ test_pin_in_missing_file_is_empty_not_fatal() {
     assert_equals "" "$got" "a missing file yields an empty pin"
 }
 
+# --- agnix_files_checked -----------------------------------------------------
+
+# The corpus-reach floor (#739) rests entirely on this extraction: an empty
+# result is a hard gate failure, and a WRONG one silently changes the verdict.
+# It runs on hosts with no agnix at all — which is the point, since the gate
+# itself skips there and would otherwise leave the parser untested exactly where
+# nobody is watching.
+
+# A real-shaped agnix `--format json` payload: the field sits at the top level,
+# pretty-printed, followed by the diagnostics array. Fixtures are built from the
+# shape agnix actually emits (verified against 0.49.0) rather than a minimal
+# `{"files_checked":N}`, so a pattern that only works on the simplified form
+# cannot pass here.
+agnix_json_fixture() {
+    command printf '%s\n' \
+        '{' \
+        '  "version": "0.49.0",' \
+        "  \"files_checked\": ${1:-110}," \
+        '  "diagnostics": [' \
+        '    {' \
+        '      "level": "warning",' \
+        '      "rule": "CC-MEM-006",' \
+        '      "file": "CLAUDE.md",' \
+        '      "line": 126,' \
+        '      "message": "Negative instruction without positive alternative"' \
+        '    }' \
+        '  ],' \
+        '  "summary": { "errors": 0, "warnings": 80, "info": 1 }' \
+        '}'
+}
+
+test_files_checked_extracts_from_real_shape() {
+    assert_equals "110" "$(agnix_json_fixture 110 | agnix_files_checked)" \
+        "the count is extracted from a real-shaped agnix JSON payload"
+
+    # A different value, so the test cannot pass by coincidence against a
+    # hardcoded 110 anywhere in the pipeline.
+    assert_equals "7" "$(agnix_json_fixture 7 | agnix_files_checked)" \
+        "the extracted value tracks the payload, not a constant"
+
+    # Multi-digit and zero both parse — zero especially, since it is the exact
+    # value the gate must be able to see in order to FAIL on an empty scan. An
+    # extractor that returned empty for 0 would send the gate down the
+    # unparsable/broken-environment branch instead of the floor assertion.
+    assert_equals "0" "$(agnix_json_fixture 0 | agnix_files_checked)" \
+        "a zero count parses as \"0\", not as an empty/unparsable result"
+}
+
+test_files_checked_tolerates_compact_json() {
+    # Same JSON, no pretty-printing. agnix pretty-prints today, but the pattern
+    # must not depend on the whitespace around the colon — that is formatting,
+    # not contract.
+    assert_equals "42" "$(command printf '%s' '{"version":"0.49.0","files_checked":42,"diagnostics":[]}' | agnix_files_checked)" \
+        "a compact payload with no space after the colon still parses"
+
+    # And extra whitespace on both sides.
+    assert_equals "42" "$(command printf '%s' '{ "files_checked"  :   42 }' | agnix_files_checked)" \
+        "extra whitespace around the colon still parses"
+}
+
+test_files_checked_absent_field_is_empty_not_fatal() {
+    local rc=0 got
+    # agnix that ran but emitted no such field. Must yield empty so the gate's
+    # fail-loud branch reports the real problem, rather than dying on a bare
+    # grep error mid-substitution.
+    got="$(command printf '%s' '{"version":"0.49.0","diagnostics":[]}' | agnix_files_checked)" || rc=$?
+    assert_equals "0" "$rc" "an absent field does not abort the caller"
+    assert_equals "" "$got" "an absent field yields an empty count"
+
+    # Completely empty input — the shape of a crashed agnix whose stderr was
+    # dropped, which is precisely how the gate invokes it.
+    rc=0
+    got="$(command printf '%s' '' | agnix_files_checked)" || rc=$?
+    assert_equals "0" "$rc" "empty input does not abort the caller"
+    assert_equals "" "$got" "empty input yields an empty count"
+}
+
+# The `|| true` inside agnix_files_checked is load-bearing and its own comment
+# says so — so assert it against real bytes rather than trusting the comment,
+# exactly as test_pin_in_no_match_survives_pipefail does for the sibling helper.
+test_files_checked_no_match_survives_pipefail() {
+    local rc=0 out
+
+    out="$(GATE="$GATE" "$(command -v bash)" -c '
+        set -euo pipefail
+        eval "$(command awk -v sig="agnix_files_checked() {" '"'"'
+            index($0, sig) == 1 { grab = 1 }
+            grab { print }
+            grab && $0 == "}" { exit }
+        '"'"' "$GATE")"
+        V="$(printf "%s" "{\"diagnostics\":[]}" | agnix_files_checked)"
+        printf "survived:[%s]\n" "$V"
+    ')" || rc=$?
+
+    assert_equals "0" "$rc" \
+        "a no-match extraction does not abort a set -euo pipefail caller (the || true is doing its job)"
+    assert_equals "survived:[]" "$out" \
+        "the caller reaches its next statement with an empty value"
+}
+
+test_files_checked_rejects_a_malformed_value() {
+    # A non-numeric value must NOT be accepted. The gate feeds the result
+    # straight to `[ "$FILES_CHECKED" -ge "$AGNIX_MIN_FILES" ]`, where a
+    # non-numeric operand is a bash syntax error that aborts the test function
+    # before its assertion runs — the check would vanish rather than fail. An
+    # empty result instead routes to the fail-loud branch, which is correct.
+    assert_equals "" "$(command printf '%s' '{"files_checked": "many"}' | agnix_files_checked)" \
+        "a quoted non-numeric value is not accepted as a count"
+
+    assert_equals "" "$(command printf '%s' '{"files_checked": null}' | agnix_files_checked)" \
+        "a null value is not accepted as a count"
+
+    # A negative number: the minus is not consumed by the pattern, so this must
+    # not silently yield a positive 12 that would sail over the floor.
+    local got
+    got="$(command printf '%s' '{"files_checked": -12}' | agnix_files_checked)"
+    local is_twelve=0
+    if [ "$got" = "12" ]; then
+        is_twelve=1
+    fi
+    assert_equals "0" "$is_twelve" \
+        "a negative value is not silently read as its positive magnitude"
+}
+
+test_files_checked_ignores_lookalike_text_in_messages() {
+    # The two-stage grep-then-sed exists so a `files_checked`-shaped substring
+    # inside a diagnostic MESSAGE cannot be mistaken for the real field. The
+    # real field here is 110; a message mentions a different number.
+    local payload
+    payload='{"files_checked": 110, "diagnostics": [{"message": "expected files_checked: 999 in config"}]}'
+    assert_equals "110" "$(command printf '%s' "$payload" | agnix_files_checked)" \
+        "the top-level field wins over a lookalike inside a message (first match)"
+}
+
 # --- Registration ------------------------------------------------------------
 
 run_test test_extraction_guards_are_real "Extraction guards catch an over-grown / absent region"
@@ -431,5 +572,18 @@ run_test test_pin_in_no_match_survives_pipefail "agnix_pin_in: no-match survives
 run_test test_pin_in_rejects_a_malformed_pin "agnix_pin_in: malformed version is not a pin"
 run_test test_pin_in_takes_the_first_of_several "agnix_pin_in: first pin wins"
 run_test test_pin_in_missing_file_is_empty_not_fatal "agnix_pin_in: missing file yields empty"
+
+run_test test_files_checked_extracts_from_real_shape \
+    "agnix_files_checked: extracts the count from a real-shaped payload"
+run_test test_files_checked_tolerates_compact_json \
+    "agnix_files_checked: whitespace around the colon is formatting, not contract"
+run_test test_files_checked_absent_field_is_empty_not_fatal \
+    "agnix_files_checked: absent field / empty input yields empty"
+run_test test_files_checked_no_match_survives_pipefail \
+    "agnix_files_checked: no-match survives set -euo pipefail"
+run_test test_files_checked_rejects_a_malformed_value \
+    "agnix_files_checked: non-numeric value is not a count"
+run_test test_files_checked_ignores_lookalike_text_in_messages \
+    "agnix_files_checked: a lookalike inside a message does not win"
 
 generate_report
