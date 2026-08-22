@@ -249,14 +249,21 @@ jobs:
               # run-all.sh's own emission carries it: this is REPORTING, and a
               # read-only or full summary file must never convert a skipped gate
               # into a failed job (the step runs under `bash -e`).
-              printf '%s\n' "> agnix unavailable: install or smoke-test failed for \`$pin\` — \`tests/lint-agnix-clean.sh\` will SKIP." >> "$GITHUB_STEP_SUMMARY" || true
+              #
+              # `2>/dev/null` BEFORE the append, matching run-all.sh's
+              # note_skip_in_step_summary. Redirections apply left to right, so
+              # the usual `>> "$f" 2>/dev/null` spelling opens the file first and
+              # a failed open writes its diagnostic to the stderr still in
+              # effect — absorbing the failure but not its noise, which puts a
+              # spurious error in the job log of an otherwise fine run.
+              printf '%s\n' "> agnix unavailable: install or smoke-test failed for \`$pin\` — \`tests/lint-agnix-clean.sh\` will SKIP." 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
             fi
           else
             echo "::warning::agnix signature verification failed — NOT installing agnix (#740). Either npm was unreachable, or the tarball for $pin does not match its published registry signature. tests/lint-agnix-clean.sh will SKIP (exit 77), not fail."
             # Its own summary line, matching its own message: an unsigned tarball
             # and an unreachable registry are different events, and a
             # supply-chain signal must not render as an outage (#740).
-            printf '%s\n' "> agnix unavailable: **signature verification failed** for \`$pin\` (#740) — npm was unreachable, or the tarball is not the one its publisher signed. \`tests/lint-agnix-clean.sh\` will SKIP." >> "$GITHUB_STEP_SUMMARY" || true
+            printf '%s\n' "> agnix unavailable: **signature verification failed** for \`$pin\` (#740) — npm was unreachable, or the tarball is not the one its publisher signed. \`tests/lint-agnix-clean.sh\` will SKIP." 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
           fi
           rm -rf "$verify_dir"
 

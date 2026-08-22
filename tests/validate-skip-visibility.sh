@@ -353,24 +353,26 @@ test_ci_happy_path_is_quiet() {
         "the global install reads the VERIFIED tree, not a re-resolved registry fetch (#740)"
 }
 
-test_ci_summary_write_failure_does_not_fail_the_job() {
-    local sb body
+# assert_summary_write_failure_is_survivable <workflow-file> <label> — drive the
+# named workflow's install step with an unwritable $GITHUB_STEP_SUMMARY.
+#
+# Shared by both workflows rather than written twice: the two steps carry the
+# same append in the same shape, and a copy would let one drift while the other
+# kept passing. That is the very asymmetry cycle 1 caught in the code itself, so
+# the test for it must not reintroduce the shape one level up.
+#
+# A directory is the portable way to make the append fail: `>>` on a directory
+# errors on every platform, whereas a mode-000 file is still writable by root
+# (CI containers routinely run as root, so a chmod-based fixture would silently
+# stop failing there).
+assert_summary_write_failure_is_survivable() {
+    local wf="$1" label="$2" sb body rc=0 out
     stub_dir sb || return 1
     plant_npm "$sb"
     plant_agnix "$sb"
-    load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
+    load_step_body "$wf" "Install agnix (pinned)" body || return 1
 
-    # The reporting addition must not become a NEW way to fail the job. The step
-    # runs under `bash -e`, so an unguarded append to an unwritable summary file
-    # would abort it — converting the graceful skip this whole step exists to
-    # produce back into the hard failure #734 removed, by way of the fix for it.
-    #
-    # A directory is the portable way to make the append fail: `>>` on a
-    # directory errors on every platform, whereas a mode-000 file is still
-    # writable by root (CI containers routinely run as root, so a chmod-based
-    # fixture would silently pass there).
     command mkdir -p "$sb/unwritable-summary"
-    local rc=0 out
     out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
         HOME="$sb" PATH="$sb/bin" \
         GITHUB_STEP_SUMMARY="$sb/unwritable-summary" \
@@ -378,10 +380,29 @@ test_ci_summary_write_failure_does_not_fail_the_job() {
         NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=1 \
         "$REAL_BASH" -e -c "$body" 2>&1)" || rc=$?
 
+    # The reporting addition must not become a NEW way to fail the job. The step
+    # runs under `bash -e`, so an unguarded append to an unwritable summary file
+    # would abort it — converting the graceful skip this whole step exists to
+    # produce back into the hard failure #734 removed, by way of the fix for it.
     assert_equals "0" "$rc" \
-        "an unwritable \$GITHUB_STEP_SUMMARY must not fail the step — the summary line is reporting, not a gate (#741)"
+        "$label: an unwritable \$GITHUB_STEP_SUMMARY must not fail the step — the summary line is reporting, not a gate (#741)"
     assert_contains "$out" "::notice::agnix install failed" \
-        "the notice still reaches the log when the summary write fails (the signal is not lost, only its second surface)"
+        "$label: the notice still reaches the log when the summary write fails (the signal is not lost, only its second surface)"
+    # `2>/dev/null` must precede the append: redirections apply left to right, so
+    # the usual trailing spelling opens the file first and a failed open writes
+    # its diagnostic to the still-live stderr — absorbed failure, unabsorbed
+    # noise, landing a spurious error in the job log of an otherwise fine run.
+    assert_not_contains "$out" "Is a directory" \
+        "$label: the failed append is silent, not merely non-fatal (stderr is redirected BEFORE the open)"
+}
+
+test_ci_summary_write_failure_does_not_fail_the_job() {
+    assert_summary_write_failure_is_survivable "$WORKFLOW_DIR/ci.yml" "ci.yml"
+}
+
+test_code_scanning_summary_write_failure_does_not_fail_the_job() {
+    assert_summary_write_failure_is_survivable \
+        "$WORKFLOW_DIR/code-scanning.yml" "code-scanning.yml"
 }
 
 # --- code-scanning.yml: the same branch, reached by the sibling route ---------
@@ -648,6 +669,8 @@ run_test test_ci_happy_path_is_quiet \
     "ci.yml: a healthy install announces no skip and installs the verified tree"
 run_test test_ci_summary_write_failure_does_not_fail_the_job \
     "ci.yml: an unwritable step summary does not fail the job"
+run_test test_code_scanning_summary_write_failure_does_not_fail_the_job \
+    "code-scanning.yml: an unwritable step summary does not fail the job"
 run_test test_code_scanning_broken_binary_marks_absent \
     "code-scanning.yml: a broken binary sets present=false"
 run_test test_code_scanning_signature_failure_is_visible \

@@ -170,12 +170,12 @@ jobs:
               # this branch structure, so fixing the visibility in one and not the
               # other would leave the identical invisible skip alive by the other
               # route. `|| true`: reporting must never fail the job under `bash -e`.
-              printf '%s\n' "> agnix unavailable: install or smoke-test failed for \`$pin\` — the code-scanning upload was SKIPPED." >> "$GITHUB_STEP_SUMMARY" || true
+              printf '%s\n' "> agnix unavailable: install or smoke-test failed for \`$pin\` — the code-scanning upload was SKIPPED." 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
             fi
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::warning::agnix signature verification failed — NOT installing agnix, skipping code-scanning upload (#740). Either npm was unreachable, or the tarball for $pin does not match its published registry signature."
-            printf '%s\n' "> agnix unavailable: **signature verification failed** for \`$pin\` (#740) — npm was unreachable, or the tarball is not the one its publisher signed. The code-scanning upload was SKIPPED." >> "$GITHUB_STEP_SUMMARY" || true
+            printf '%s\n' "> agnix unavailable: **signature verification failed** for \`$pin\` (#740) — npm was unreachable, or the tarball is not the one its publisher signed. The code-scanning upload was SKIPPED." 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
           fi
           rm -rf "$verify_dir"
 
