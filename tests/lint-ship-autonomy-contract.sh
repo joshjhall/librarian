@@ -261,14 +261,29 @@ test_suppression_names_only_ship_issue() {
 
 # --- Corpus sanity: the markers this gate depends on are real ---------------
 # extract_contract already fails loud on a missing or duplicated id, so the three
-# surfaces above cannot pass against an empty region. What it cannot catch is the
-# marker drifting INDENTED: extract_contract requires a line-initial marker, and
-# an indented one is simply invisible — which would surface as "not found" here,
-# but as a silent non-suppression for any future consumer. Assert the shape once,
-# cheaply, so the failure names the real cause.
+# surfaces above cannot pass against an empty region. What it cannot catch is a
+# marker drifting INDENTED — and the two marker kinds fail differently:
+#
+#   START marker indented -> extract_contract cannot find the id and FATALs.
+#     Loud, though the message blames a missing contract rather than the
+#     whitespace that actually moved.
+#   END marker indented -> extract_contract's terminator test is
+#     `index($0, "<!-- contract:") == 1` (harness.sh), so an indented end marker
+#     does NOT stop the region. The region silently OVER-GROWS into whatever
+#     prose follows, and every assertion above still passes — an over-grown
+#     region still CONTAINS its tokens, and assert_contract_carries' tamper half
+#     only proves the token is really there, not that the region ended where it
+#     should. That is precisely the vacuous pass this gate exists to preclude,
+#     so the END markers must be pinned too, not just the ids naming the regions.
+#     Verified by mutation: indenting `end-ship-merge-invariant` by two spaces
+#     left all six tests green before this loop covered it.
+#
+# `ship-autonomy-level-gates` needs no end marker of its own — it is terminated
+# by `ship-merge-invariant`'s START marker, which this loop already pins.
 test_markers_are_line_initial() {
     local id
-    for id in ship-autonomy-level-gates ship-merge-invariant next-issue-critical-cap; do
+    for id in ship-autonomy-level-gates ship-merge-invariant next-issue-critical-cap \
+        end-ship-merge-invariant end-next-issue-critical-cap; do
         local hits
         hits="$(command grep -rlF "<!-- contract: ${id} -->" "$CONTRACT_SEARCH_ROOT" \
             --include='*.md' 2>/dev/null || true)"
@@ -278,7 +293,7 @@ test_markers_are_line_initial() {
         line_initial="$(command grep -rhF "<!-- contract: ${id} -->" "$CONTRACT_SEARCH_ROOT" \
             --include='*.md' 2>/dev/null | command grep -c "^<!-- contract: ${id} -->" || true)"
         assert_equals "1" "$line_initial" \
-            "contract marker '$id' must start at column 0 (found $line_initial line-initial occurrences) — an indented marker is invisible to extract_contract"
+            "contract marker '$id' must start at column 0 (found $line_initial line-initial occurrences) — an indented START marker is invisible to extract_contract; an indented END marker silently over-grows the region"
     done
 }
 
