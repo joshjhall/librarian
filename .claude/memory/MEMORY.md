@@ -34,6 +34,8 @@
 - [A fix reintroduces its own failure](fix-reintroduces-its-own-failure.md) — the snapshot/trap/rename a silent-loss fix adds is where the loss reappears
 - [Prose contract anchored to prose](prose-contract-anchored-to-prose.md) — heading/sentence anchors block the extraction they should survive; use contract ids
 - [Escaped fixture cannot self-match](escaped-fixture-cannot-self-match.md) — `console\.` on disk never matches a `console\.` pattern; passes either way (#604)
+- [Config prose satisfies its own assertion](config-prose-satisfies-its-own-assertion.md) — delete the setting, the comment explaining it keeps the raw-text check green (#737)
+- [End-marker indent over-grows the region](end-marker-indent-overgrows-the-region.md) — a moved START delimiter errors loud; a moved END one silently swallows what follows (#737)
 - [Measure a suppression before keeping it](measure-suppression-before-keeping-it.md) — neuter the predicate and diff; a guard can buy 0 rows and cost a false negative (#604)
 - [Reproduce outside the tool first](reproduce-outside-the-tool-first.md) — curl before instrumenting; A/B your own capture; a constant duration is a timeout, not congestion
 - [Self-skipping test hides the risky branch](self-skipping-test-hides-the-risky-branch.md) — skip-if-tool-absent covers only the present arm; force absence instead (#543)
