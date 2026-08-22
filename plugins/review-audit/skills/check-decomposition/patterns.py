@@ -948,7 +948,12 @@ def scan_file(path: str, lines: list[str]) -> None:
     # with no segmenter (.rb, .java, .c), because only it is handed an arbitrary
     # diff. Recorded here rather than given a test that cannot fail
     # ([[surviving-mutation-may-be-a-real-no-op]]); the fallback IS exercised,
-    # through sizing.py, in tests/validate-sizing-scanner.sh.
+    # through sizing.py, by tests/validate-sizing-scanner.sh's
+    # test_unknown_language_still_emits_a_seam_row (named, so the claim is
+    # checkable rather than a cross-file assertion the reader must take on
+    # trust). If a language is ever added to EXT_LANG without a segmenter, the
+    # invariant behind "unreachable" breaks — and the shape/segmenter key-set
+    # test in validate-shared-scanner-sync.sh is what fails first.
     if seams > 0:
         emit(
             path,
