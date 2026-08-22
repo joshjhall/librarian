@@ -11,8 +11,15 @@
 # same rules, same corpus, same findings, but parsable with grep/sed alone. CI
 # needs SARIF because it uploads to code scanning; a local gate that required it
 # would drag in a `jq` dependency to answer a yes/no question. Verified rather
-# than assumed: on this tree both formats report 0 errors / 78 warnings / 1 note,
-# so the SARIF that CI uploads and the text this gate parses agree.
+# than assumed: on this tree both formats report the same 0 errors alongside the
+# same advisory warning/note counts, so the SARIF that CI uploads and the text
+# this gate parses agree. Stated as agreement rather than as a warning FIGURE on
+# purpose — the figure drifts with ordinary prose edits (it has already gone 78
+# -> 80), and a comment carrying a number nobody defends rots into a false claim.
+#
+# The one place a count IS load-bearing is the corpus floor below, which reads
+# `files_checked` from `--format json`. That is a different measurement in kind:
+# how many files the scan REACHED, not how dirty they were. See AGNIX_MIN_FILES.
 #
 # VERSION FLOOR 0.48.1 (#734). agnix <= 0.47.0 ships stale frontmatter/tools
 # parsers that emit dozens of phantom errors on a tree that is genuinely clean:
@@ -47,11 +54,19 @@
 #      precisely the inert-and-silent failure this repo's 77-sentinel convention
 #      exists to prevent, so it gets a real assertion rather than a comment.
 #
-# SCOPE. Errors only. agnix also emits ~78 warnings (negative-instruction
-# phrasing, critical-keyword placement, AGENTS.md character limits) which are
-# deliberately NOT gated: only errors drive the red annotation, and #734 put the
-# warnings explicitly out of scope. Gating them would convert a large advisory
-# backlog into a hard blocker, which is a separate decision to make deliberately.
+# SCOPE. Errors only. agnix also emits a standing backlog of warnings
+# (negative-instruction phrasing, critical-keyword placement, AGENTS.md character
+# limits) which are deliberately NOT gated: only errors drive the red annotation,
+# and #734 put the warnings explicitly out of scope. Gating them would convert a
+# large advisory backlog into a hard blocker, which is a separate decision to
+# make deliberately.
+#
+# Nothing in this gate keys off the SIZE of that backlog, which is what #739
+# fixed. The corpus-sanity check below used to assert "some diagnostic line was
+# printed" — true today only because those warnings exist — so CLEARING them, an
+# unambiguously good thing, would have reddened the gate on a better tree and
+# invited deleting the guard rather than replacing it. It now floors
+# `files_checked` instead, which measures scan REACH and holds at 0 warnings.
 #
 # ABSENT BINARY => exit 77, never 0. agnix is an optional enrichment (ADR
 # plugins/review-audit/docs/adr/0001-agnix-check-ai-config-boundary.md §2/§4), so
@@ -76,6 +91,25 @@ AGNIX_CONFIG_FILE="$REPO_ROOT/.agnix.toml"
 # invocation and the message a failure prints — one source of truth for "what
 # was actually scanned".
 AGNIX_TARGETS="CLAUDE.md AGENTS.md plugins"
+
+# Corpus floor for the vacuity guard (#739): the fewest files a scan of
+# AGNIX_TARGETS may report having walked before the 0-error result stops meaning
+# anything.
+#
+# CALIBRATION. Measured per target at time of writing: `plugins` 108,
+# `CLAUDE.md` 1, `AGENTS.md` 1 (a symlink to CLAUDE.md, but counted as its own
+# walked file rather than deduplicated) — 110 total. The regression this
+# defends against is a TARGET THAT STOPS MATCHING (a rename, a mis-shaped
+# `exclude`, a path argument dropped from the invocation), which takes the count
+# to ~2 or 0 — not per-file churn, which moves it by ones. So the floor sits far
+# below today's count on purpose: low enough that ordinary growth and pruning in
+# either direction never trip it, high enough that losing `plugins` — the target
+# carrying ~98% of the corpus — cannot pass.
+#
+# It is a FLOOR, not an equality: pinning the exact number would fail on every
+# added or deleted plugin file, which is the churn-coupling #739 removed. Raise
+# it only if the corpus grows so much that 60 stops being a meaningful fraction.
+AGNIX_MIN_FILES=60
 
 # The floor this gate refuses to run below (see VERSION FLOOR above). Declared
 # HERE, above the absent-binary skip, because the pin cross-check below compares
@@ -146,6 +180,66 @@ agnix_pin_in() {
     # assertion, which names the actual problem.
     command grep -oE 'agnix@[0-9]+\.[0-9]+\.[0-9]+' "$1" 2>/dev/null |
         command head -n 1 | command sed -n 's/^agnix@//p' || true
+}
+
+# Echo the `files_checked` count from agnix `--format json` output on STDIN, or
+# nothing when the field is absent or malformed (#739).
+#
+# Reads stdin rather than taking the JSON as an argument: the payload is ~100 KB
+# on this tree, and passing it through a positional would push it onto the
+# command line for no benefit.
+#
+# A two-stage grep-then-sed rather than one `sed`, matching agnix_pin_in above:
+# `grep -oE` isolates the whole field first, so the `sed` that pulls the digits
+# out cannot match a `files_checked`-shaped substring elsewhere in a diagnostic
+# MESSAGE. The pattern accepts optional whitespace on both sides of the colon —
+# agnix pretty-prints today, but a compact `{"files_checked":110}` is the same
+# JSON and must parse identically.
+#
+# Portability (this repo bans GNU-only regex — macOS ships BSD grep/sed): POSIX
+# classes `[[:space:]]` and `[0-9]`, never `\s` or `\d`, and `-E` rather than
+# `grep -P`, which BSD grep does not have at all. That failure would be silent —
+# the pattern would stop matching, the count would come back empty — which is
+# why the caller treats an empty result as a hard failure rather than a skip.
+#
+# `head -n 1` takes the FIRST match: `files_checked` is a top-level scalar and
+# appears once, but a defensive first-wins costs nothing and keeps the contract
+# single-valued (same choice, same reason, as agnix_pin_in).
+#
+# `|| true` is load-bearing under `set -euo pipefail`: a grep that matches
+# nothing exits 1 and would abort the script mid-substitution, killing the gate
+# with a bare status instead of letting the empty value reach the assertion that
+# explains it.
+agnix_files_checked() {
+    command grep -oE '"files_checked"[[:space:]]*:[[:space:]]*[0-9]+' |
+        command sed -n 's/.*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' |
+        command head -n 1 || true
+}
+
+# Echo 1 when a scan that walked $1 files meets the floor $2, else 0 (#739).
+#
+# Extracted from test_corpus_reached rather than left inline so the unit suite
+# can drive its boundary directly. The live gate cannot: it only ever sees the
+# real corpus size, so it can never present the exactly-at-the-floor input that
+# distinguishes `-ge` from `-gt`. Mutation-verified — `-le` and a swapped
+# operand order both fail the live gate at once, but the `-gt` off-by-one
+# survives it, and that is precisely the case a unit test makes trivial.
+#
+# The floor is INCLUSIVE: a scan that walked exactly AGNIX_MIN_FILES files has
+# met it. Reading `AGNIX_MIN_FILES` as "the fewest files that still count" is
+# what makes the constant's name true.
+#
+# Echoes a flag instead of signalling through the exit status, deliberately
+# unlike its sibling agnix_ver_lt: the caller assigns the result under `set -e`,
+# where a function returning 1 would abort the test body before its assertion
+# ran. (agnix_ver_lt gets away with the exit-status idiom only because both of
+# its call sites are `if`-guarded.)
+agnix_corpus_reached() {
+    if [ "$1" -ge "$2" ]; then
+        command printf '1\n'
+    else
+        command printf '0\n'
+    fi
 }
 
 CI_PIN="$(agnix_pin_in "$WORKFLOW_DIR/ci.yml")"
@@ -247,6 +341,40 @@ AGNIX_RC=0
 AGNIX_OUT="$(cd "$REPO_ROOT" && agnix --target claude-code \
     --config "$AGNIX_CONFIG_FILE" validate $AGNIX_TARGETS 2>&1)" || AGNIX_RC=$?
 
+# A SECOND invocation, in JSON, read only for `files_checked` (#739) — the
+# corpus-reach measurement the text format does not carry at all.
+#
+# Additive rather than a rewrite of this gate to JSON. The text run above stays
+# primary: it feeds test_zero_errors AND the human-readable ` error: ` detail
+# lines that a failure message quotes, which a JSON port would have to
+# reconstruct. Running agnix twice is the cheaper trade — measured at 78ms for
+# the full JSON pass, against the header's standing argument for not making a
+# yes/no gate depend on `jq`.
+#
+# `--config` precedes `validate`: it is a global (clap) flag, and agnix rejects
+# `validate --config …` outright — the same ordering trap documented in
+# check-ai-config/agnix-normalize.sh.
+#
+# VERIFIED AT THE FLOOR, not just at the version this was developed on. The
+# concern is real in shape: this gate RUNS at AGNIX_MIN_VERSION (the skip is for
+# versions strictly BELOW it), so a `--format json` introduced after 0.48.1 would
+# make the corpus check report "broken agnix" on a supported host. Checked
+# against a real 0.48.1 install rather than reasoned about: it carries
+# `--format <FORMAT> (text, json, sarif, or github)` and emits the same
+# `"files_checked": 110` as 0.49.0. So the floor needs no raise and this check
+# needs no version gate of its own. Re-verify if the floor ever moves DOWN.
+#
+# stderr is dropped and a non-zero rc absorbed for the same reason as the text
+# run: agnix exits non-zero when it FINDS things, which is not a harness
+# failure. A genuinely broken run yields no parsable count, and the assertion
+# below fails loudly on exactly that.
+AGNIX_JSON=""
+# shellcheck disable=SC2086  # AGNIX_TARGETS is a deliberate multi-arg word split
+AGNIX_JSON="$(cd "$REPO_ROOT" && agnix --target claude-code \
+    --config "$AGNIX_CONFIG_FILE" --format json validate $AGNIX_TARGETS 2>/dev/null)" || true
+
+FILES_CHECKED="$(printf '%s\n' "$AGNIX_JSON" | agnix_files_checked)"
+
 # The summary line agnix prints last: "Found N errors, M warnings".
 SUMMARY_LINE="$(printf '%s\n' "$AGNIX_OUT" | command grep -E '^Found [0-9]+ error' | command tail -n 1 || true)"
 
@@ -299,29 +427,48 @@ test_zero_errors() {
 # A run that walked zero files would trivially report 0 errors. Without this, a
 # broken path argument or an over-broad `exclude` would turn the gate inert while
 # still printing green — the same tautology class the suppressions above guard.
-test_corpus_non_empty() {
-    local checked
-    # Matches agnix's per-finding lines (`<file>:<line>:<col> <level>: <msg>`).
-    # Not anchored to a leading `/`: agnix prints absolute paths today, but the
-    # assertion is "diagnostics were produced", and anchoring it to a path shape
-    # that is not part of any contract would turn a cosmetic output change into a
-    # spurious failure.
-    checked="$(printf '%s\n' "$AGNIX_OUT" | command grep -cE ':[0-9]+:[0-9]+ (warning|error|info):' || true)"
-
-    # `if`, not `[ ... ] && x=1`: under `set -e` a whole AND-list that evaluates
-    # false is a failing command, so the shorthand would abort this function
-    # before its assertion ran — the check would vanish instead of failing.
-    local has_findings=0
-    if [ "${checked:-0}" -ge 1 ]; then
-        has_findings=1
+#
+# Keyed on `files_checked` from the JSON run, NOT on diagnostics being present
+# (#739). The original asserted that agnix printed at least one finding line,
+# which — since this gate scopes itself to errors and the tree has none — really
+# asserted the standing WARNING backlog still existed. That made a warning
+# cleanup, a strict improvement, fail the guard on a better tree, where the
+# expedient fix is to delete it. `files_checked` measures what the guard actually
+# means ("the scan reached the corpus") and is unchanged by how clean the corpus
+# is: it still reads 110 on a tree with zero findings of any level.
+#
+# It also detects something the old proxy structurally could not: a SHRINKING
+# corpus. A target path that silently stops matching still emits warnings from
+# the targets that do match, so the diagnostics-present check stayed green; the
+# file count drops and this one fails.
+test_corpus_reached() {
+    # A present binary whose JSON carries no parsable count is a BROKEN
+    # ENVIRONMENT, not absent tooling — fail loudly rather than skip, exactly as
+    # test_output_parsable does for the text summary. Degrading this to a skip
+    # would restore the inert-but-green state the whole gate exists to prevent.
+    if [ -z "$FILES_CHECKED" ]; then
+        assert_not_empty "$FILES_CHECKED" \
+            "agnix --format json must carry a parsable top-level \"files_checked\" (found none). This is a broken agnix/config, not an absent one — the binary ran. JSON tail: $(printf '%s\n' "$AGNIX_JSON" | command tail -n 5 | command tr '\n' ' ')"
+        return 0
     fi
 
-    assert_equals "1" "$has_findings" \
-        "agnix must actually have walked the corpus (expected diagnostic lines; found $checked). Zero means the scan matched no files, making the 0-error result meaningless. NOTE: this leans on the ~78 known warnings still being present — if a future change legitimately clears them all, replace this proxy rather than deleting it."
+    # The comparison itself lives in agnix_corpus_reached (above) rather than
+    # inline, so the unit suite can drive its BOUNDARY. Mutation-verified that
+    # this extraction earns its keep: flipping the operator to `-le` or swapping
+    # the operands both fail the live gate immediately (110 is not <= 60), but
+    # `-ge` -> `-gt` SURVIVES it — the live gate can only ever present the real
+    # corpus size, so it cannot produce the exactly-at-the-floor input that
+    # separates the two. That one case is untestable here by construction and
+    # trivial in a unit test.
+    local reached
+    reached="$(agnix_corpus_reached "$FILES_CHECKED" "$AGNIX_MIN_FILES")"
+
+    assert_equals "1" "$reached" \
+        "agnix walked only $FILES_CHECKED files, below the floor of $AGNIX_MIN_FILES — the 0-error result above is meaningless. Either a target in '$AGNIX_TARGETS' stopped matching (renamed/moved path, or one dropped from the invocation), or an .agnix.toml \`exclude\` grew over-broad. Fix the scan rather than lowering the floor."
 }
 
 run_test test_output_parsable "agnix output carries a parsable summary (fail-loud, not skip)"
 run_test test_zero_errors "0 agnix errors over CLAUDE.md AGENTS.md plugins"
-run_test test_corpus_non_empty "Scan is non-empty (gate is not a no-op)"
+run_test test_corpus_reached "Scan reached the corpus (gate is not a no-op)"
 
 generate_report
