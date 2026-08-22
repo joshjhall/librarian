@@ -49,6 +49,7 @@
 - [Test defined but never registered](test-defined-but-never-registered.md) — no `run_test` line = never runs; guard by NAME SETS, not counts (#596)
 - [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry masks later assertions; use `?.`
 - [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice (#544, #549)
+- [Verify-then-refetch is not verified](verify-then-refetch-is-not-verified.md) — re-resolving by name installs unaudited bytes; install the verified path
 - [stop/C6-duplicate can hold a live defect](c6-duplicate-stop-can-hold-a-live-defect.md) — a stop verdict on a cycle that ALSO blocked leaves the fix unreviewed (#613)
 
 ## This repo's conventions
