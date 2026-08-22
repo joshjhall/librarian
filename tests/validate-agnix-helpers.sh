@@ -531,26 +531,55 @@ test_files_checked_rejects_a_malformed_value() {
     assert_equals "" "$(command printf '%s' '{"files_checked": null}' | agnix_files_checked)" \
         "a null value is not accepted as a count"
 
-    # A negative number: the minus is not consumed by the pattern, so this must
-    # not silently yield a positive 12 that would sail over the floor.
-    local got
-    got="$(command printf '%s' '{"files_checked": -12}' | agnix_files_checked)"
-    local is_twelve=0
-    if [ "$got" = "12" ]; then
-        is_twelve=1
-    fi
-    assert_equals "0" "$is_twelve" \
-        "a negative value is not silently read as its positive magnitude"
+    # A negative number. `[0-9]+` has no leading `-`, so the field does not match
+    # at all and the result is EMPTY — which routes the gate to its fail-loud
+    # branch, the correct disposition for a nonsensical count.
+    #
+    # Asserted as equality-to-empty, not as "!= 12". The inequality form would
+    # also pass if a future regex change made this parse as 1, or 2, or anything
+    # else that is not literally "12" — ruling out one wrong answer while
+    # admitting every other. Pin the actual behaviour, matching
+    # test_files_checked_absent_field_is_empty_not_fatal above.
+    assert_equals "" "$(command printf '%s' '{"files_checked": -12}' | agnix_files_checked)" \
+        "a negative value yields empty (not its positive magnitude, and not any other digit run)"
 }
 
-test_files_checked_ignores_lookalike_text_in_messages() {
-    # The two-stage grep-then-sed exists so a `files_checked`-shaped substring
-    # inside a diagnostic MESSAGE cannot be mistaken for the real field. The
-    # real field here is 110; a message mentions a different number.
+test_files_checked_first_occurrence_wins_over_a_later_one() {
+    # This is the fixture that DISCRIMINATES the two-stage grep-then-sed from the
+    # obvious single-stage `sed -n 's/.*"files_checked"[^0-9]*\([0-9]*\).*/\1/p'`,
+    # and it took two tries to find one that does.
+    #
+    # The first attempt used unquoted prose in a message ("expected
+    # files_checked: 999 in config"). Verified: a single-stage sed with no
+    # isolating grep passes that fixture unchanged — it never matched, because
+    # both patterns require the literal leading quote. So the test proved nothing
+    # about the design it claimed to defend (the tautology-adjacent class this
+    # repo already has a lesson about).
+    #
+    # A JSON-escaped lookalike inside a message does not discriminate either, and
+    # for a structural reason worth recording: in VALID JSON an inner quote is
+    # always backslash-escaped, so the `\"` breaks the adjacency both patterns
+    # need. Neither impl can be fooled by message text at all.
+    #
+    # What actually separates them is GREEDINESS across two REAL, matchable
+    # occurrences. `.*` in the single-stage sed is greedy, so it walks to the
+    # LAST one; the shipped grep+sed+`head -n 1` takes the FIRST. Verified both
+    # ways in-sandbox on this exact payload:
+    #     single-stage sed -> 7    (wrong: a nested/secondary value)
+    #     grep | sed | head -> 110 (right: the top-level field)
+    # A future rewrite that collapses the two stages therefore fails HERE, which
+    # is the whole point of pinning it.
     local payload
+    payload='{"files_checked": 110, "extra": {"files_checked": 7}}'
+    assert_equals "110" "$(command printf '%s' "$payload" | agnix_files_checked)" \
+        "the FIRST occurrence wins — a greedy single-stage extraction would return the later 7"
+
+    # And the ordinary message-text case still behaves, even though (per above)
+    # it does not discriminate the design. Kept as a regression pin on the
+    # real-world shape, not as evidence for the two-stage choice.
     payload='{"files_checked": 110, "diagnostics": [{"message": "expected files_checked: 999 in config"}]}'
     assert_equals "110" "$(command printf '%s' "$payload" | agnix_files_checked)" \
-        "the top-level field wins over a lookalike inside a message (first match)"
+        "unquoted lookalike prose in a message never matches the field pattern"
 }
 
 # --- Registration ------------------------------------------------------------
@@ -583,7 +612,7 @@ run_test test_files_checked_no_match_survives_pipefail \
     "agnix_files_checked: no-match survives set -euo pipefail"
 run_test test_files_checked_rejects_a_malformed_value \
     "agnix_files_checked: non-numeric value is not a count"
-run_test test_files_checked_ignores_lookalike_text_in_messages \
-    "agnix_files_checked: a lookalike inside a message does not win"
+run_test test_files_checked_first_occurrence_wins_over_a_later_one \
+    "agnix_files_checked: the first occurrence wins (greedy single-stage would not)"
 
 generate_report
