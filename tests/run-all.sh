@@ -154,6 +154,15 @@ _skips_header_written=""
 # read-only or full $GITHUB_STEP_SUMMARY must never turn a skipped stage into a
 # failed suite. Losing the line is the correct degradation — the `[SKIP]` stdout
 # line above still carries the signal.
+#
+# `2>/dev/null` comes BEFORE the append, and the order is load-bearing. Bash
+# applies redirections left to right, so the familiar `>>"$f" 2>/dev/null`
+# spelling opens the file FIRST — and when that open fails, the shell's
+# "Is a directory" / "Permission denied" diagnostic is written to the stderr
+# still in effect, i.e. the terminal. The failure is absorbed but its noise is
+# not, which puts an alarming-looking error in the middle of a suite that is
+# otherwise fine. Redirecting stderr first means the diagnostic lands in
+# /dev/null along with everything else.
 note_skip_in_step_summary() {
     [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
     if [ -z "$_skips_header_written" ]; then
@@ -162,10 +171,10 @@ note_skip_in_step_summary() {
             printf '\n### Skipped gates\n\n'
             printf 'These gates did NOT run — their tooling was unavailable. '
             printf 'A gate that skips persistently is not a gate.\n\n'
-        } >>"$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        } 2>/dev/null >>"$GITHUB_STEP_SUMMARY" || true
     fi
     printf -- '- **%s** — did not run (exit %s)\n' "$1" "$SKIP_EXIT_CODE" \
-        >>"$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        2>/dev/null >>"$GITHUB_STEP_SUMMARY" || true
 }
 
 run_stage() {
@@ -198,8 +207,16 @@ if command -v node >/dev/null 2>&1; then
     run_stage "Manifest validation" node "$SCRIPT_DIR/validate-manifests.mjs"
     run_stage "Workflow helper unit tests" node "$SCRIPT_DIR/validate-workflow-helpers.mjs"
 else
+    # The ONE skip path that does not flow through run_stage, so it needs the
+    # step-summary call explicitly (#741). Without it, an absent node would skip
+    # these two stages invisibly on the run page while every other skip-if-absent
+    # gate reported itself there — the precise asymmetry this change exists to
+    # remove, surviving in the one branch that takes a different route to the
+    # same outcome.
     printf '[SKIP] Manifest validation — did not run (node not available)\n'
+    note_skip_in_step_summary "Manifest validation"
     printf '[SKIP] Workflow helper unit tests — did not run (node not available)\n'
+    note_skip_in_step_summary "Workflow helper unit tests"
 fi
 
 run_stage "Harness self-test" bash "$SCRIPT_DIR/validate-harness.sh"

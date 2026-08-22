@@ -409,6 +409,31 @@ test_code_scanning_broken_binary_marks_absent() {
         "present=true is never written for a binary that failed its smoke-test"
     assert_contains "$STEP_OUT" "::notice::agnix install failed" \
         "the code-scanning branch announces the skip too"
+    # The SIBLING half of #741. ci.yml and code-scanning.yml carry the same
+    # branch structure, so escalating the skip to the run page in one and not
+    # the other would leave the identical invisible skip alive by the other
+    # route — the harden-one-knob-but-not-its-sibling class this repo keeps
+    # rediscovering.
+    assert_contains "$STEP_SUMMARY" "agnix unavailable" \
+        "code-scanning's broken-binary skip reaches the run page too, not just ci.yml's (#741)"
+}
+
+test_code_scanning_signature_failure_is_visible() {
+    local sb body
+    stub_dir sb || return 1
+    plant_npm "$sb"
+    plant_agnix "$sb"
+    load_step_body "$WORKFLOW_DIR/code-scanning.yml" "Install agnix (pinned)" body || return 1
+
+    NPM_SCRATCH_RC=0 NPM_AUDIT_RC=1 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
+
+    assert_equals "0" "$STEP_RC" "a signature failure skips rather than failing the code-scanning job"
+    assert_contains "$STEP_OUTPUT" "present=false" \
+        "an unverified agnix never scans (present=false)"
+    assert_contains "$STEP_SUMMARY" "signature verification failed" \
+        "code-scanning's signature failure reaches the run page with its OWN message (#741/#740)"
+    assert_not_contains "$STEP_LOG" "npm install -g" \
+        "a failed signature check prevents the global install here too (#740)"
 }
 
 test_code_scanning_happy_path_marks_present() {
@@ -544,6 +569,73 @@ test_off_github_is_a_total_noop() {
         "a skip off GitHub does not stop the stages that follow it"
 }
 
+test_run_stage_survives_an_unwritable_summary() {
+    local out summary_dir
+    summary_dir="$WORKDIR/unwritable-run-all"
+    command mkdir -p "$summary_dir"
+
+    # The sibling of test_ci_summary_write_failure_does_not_fail_the_job, for
+    # run-all.sh's OWN emission. Its `|| true` is a separate line of code from
+    # ci.yml's, and the comment beside it makes the same load-bearing claim
+    # ("must never turn a skipped stage into a failed suite") — so it needs its
+    # own assertion, or a regression dropping it there would pass on the
+    # strength of the ci.yml case covering a different file.
+    #
+    # A directory rather than a chmod-000 file, for the reason given at the
+    # ci.yml case: root can write a mode-000 file, and CI containers routinely
+    # run as root, so a permission-based fixture would silently stop failing.
+    out="$(render_stage "$summary_dir" "$SKIP_SENTINEL 0")"
+
+    assert_contains "$out" "[SKIP] Demo stage 1 — did not run" \
+        "the stdout skip line still renders when the summary write fails"
+    assert_not_contains "$out" "Is a directory" \
+        "the failed append is absorbed, not leaked into the suite's output"
+    # The load-bearing half: the stage AFTER the failed write still runs. An
+    # unabsorbed failure would abort the suite mid-run.
+    assert_contains "$out" "[ok] Demo stage 2" \
+        "an unwritable \$GITHUB_STEP_SUMMARY does not abort the suite (#741)"
+}
+
+test_node_absent_branch_reports_its_skip() {
+    # The one skip path that does NOT go through run_stage: run-all.sh prints
+    # its two [SKIP] lines directly when node is missing. Before #741 it also
+    # bypassed the step summary entirely — every other skip-if-absent gate
+    # reported itself on the run page and these two did not, which is the same
+    # invisible-skip asymmetry the change exists to remove, surviving in the one
+    # branch that reaches the outcome by a different route.
+    #
+    # Sliced out of run-all.sh and driven with a stub PATH that has no `node`,
+    # so the else-branch is genuinely taken rather than simulated.
+    local sb out
+    stub_dir sb || return 1
+    # THE POINT OF THE CASE: stub_dir does not plant node, but remove it
+    # explicitly so a future widening of that symlink list cannot silently make
+    # this case take the then-branch and assert nothing.
+    command rm -f "$sb/bin/node"
+
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        HOME="$sb" PATH="$sb/bin" \
+        GITHUB_STEP_SUMMARY="$sb/node-summary.md" \
+        "$REAL_BASH" -c '
+            set -u
+            eval "$(command sed -n "/^SKIP_EXIT_CODE=/p" "$1")"
+            eval "$(command sed -n "/^_skips_header_written=/p" "$1")"
+            eval "$(command sed -n "/^note_skip_in_step_summary() {/,/^}/p" "$1")"
+            eval "$(command sed -n "/^run_stage() {/,/^}/p" "$1")"
+            SCRIPT_DIR="$2"
+            eval "$(command sed -n "/^if command -v node /,/^fi$/p" "$1")"
+        ' _ "$RUN_ALL" "$SCRIPT_DIR" 2>&1 || true)"
+
+    assert_contains "$out" "[SKIP] Manifest validation" \
+        "the node-absent branch was genuinely taken (no node on the stub PATH)"
+    local written
+    written="$(command cat "$sb/node-summary.md" 2>/dev/null || true)"
+    assert_contains "$written" "Manifest validation" \
+        "the node-absent skip reaches the run page like every other skip (#741)"
+    assert_contains "$written" "Workflow helper unit tests" \
+        "BOTH node-dependent stages are reported, not just the first"
+}
+
 # --- Registration ------------------------------------------------------------
 
 run_test test_ci_broken_binary_skips_without_failing \
@@ -558,6 +650,8 @@ run_test test_ci_summary_write_failure_does_not_fail_the_job \
     "ci.yml: an unwritable step summary does not fail the job"
 run_test test_code_scanning_broken_binary_marks_absent \
     "code-scanning.yml: a broken binary sets present=false"
+run_test test_code_scanning_signature_failure_is_visible \
+    "code-scanning.yml: a signature failure is visible and blocks the install"
 run_test test_code_scanning_happy_path_marks_present \
     "code-scanning.yml: a healthy install sets present=true"
 run_test test_skipped_stage_reaches_the_step_summary \
@@ -568,5 +662,9 @@ run_test test_passing_and_failing_stages_add_nothing \
     "run_stage: pass and fail write nothing to the summary"
 run_test test_off_github_is_a_total_noop \
     "run_stage: an absent step summary is a total no-op under set -u"
+run_test test_run_stage_survives_an_unwritable_summary \
+    "run_stage: an unwritable step summary does not abort the suite"
+run_test test_node_absent_branch_reports_its_skip \
+    "run-all.sh: the node-absent skip reaches the run page too"
 
 generate_report
