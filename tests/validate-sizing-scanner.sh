@@ -267,6 +267,64 @@ test_decline_records_a_reason() {
     assert_contains "$out" "single cohesive unit" "the decline names WHY it declined"
 }
 
+# --- .d.ts declines in the REVIEW lens too (#726) ----------------------------
+# This lens gates its shape row on diff GROWTH (`crossed || material`), not on
+# `seams == 0` the way the audit lens does. So the `.d.ts` suppression had to be
+# stated here separately — `(crossed || material) && !is_decl_file(path)` — and
+# that conjunct has NO audit-lens analog, which means
+# tests/validate-decomposition-detectors.sh structurally cannot cover it.
+#
+# Nor can the parity corpus: it asserts sizing.py == sizing.sh, so dropping the
+# guard from BOTH impls in one commit keeps every existing gate green
+# ([[parity-gate-hides-shared-defect]] — same-output is not same-intent). This
+# is the behavioral assertion that actually pins the intent.
+test_declaration_file_declines_in_review_lens() {
+    local f="$WORKDIR/api.d.ts" list="$WORKDIR/dts-list.txt"
+    local numstat="$WORKDIR/ns-dts.txt" out i
+
+    # A clusterable Api* family, large enough to be well over threshold, and
+    # handed MATERIAL growth so the shape branch is the one it would otherwise
+    # take. Without the guard this emits "split shape for ts: types/ dir ...".
+    : >"$f"
+    i=0
+    while [ "$i" -lt 400 ]; do
+        command printf 'export declare interface ApiThing%d {\n  id: string;\n}\n' "$i" >>"$f"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$f" >"$list"
+    make_numstat "$numstat" "$f" 1200
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "declined: type declaration file — no runtime units to extract" \
+        "review lens: a .d.ts declines with the declaration-file reason (#726)"
+    assert_not_contains "$out" "split shape for" \
+        "review lens: a .d.ts emits NO shape row despite material growth (#726)"
+
+    # Counter-fixture, and it is what makes the assertion above non-vacuous: the
+    # SAME content under a plain .ts name takes the shape branch. Without this
+    # pair, a suppression that fired on every ts file (or on nothing at all)
+    # would look identical.
+    local g="$WORKDIR/plain.ts" glist="$WORKDIR/ts-list.txt" gns="$WORKDIR/ns-ts.txt"
+    : >"$g"
+    i=0
+    while [ "$i" -lt 400 ]; do
+        command printf 'export interface ApiThing%d {\n  id: string;\n}\n' "$i" >>"$g"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$g" >"$glist"
+    make_numstat "$gns" "$g" 1200
+    run_scan "$glist" "$gns"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "split shape for ts: types/ dir split by domain" \
+        "review lens: the same content as .ts DOES get the ts shape row (#726)"
+    assert_not_contains "$out" "type declaration file" \
+        "review lens: a plain .ts is not treated as a declaration file (#726)"
+}
+
 # --- a whitespace-heavy diff cannot fake a threshold crossing ----------------
 # `prior = production - added` compares two different units: numstat counts RAW
 # insertions (blanks and comments included) while `production` excludes them. So
@@ -507,6 +565,7 @@ test_every_split_shape_arm_is_language_specific() {
     for entry in \
         "py:py:__init__.py" \
         "js:js:barrel index.ts" \
+        "ts:ts:types/ dir split by domain" \
         "rs:rs:mod.rs" \
         "go:go:same package"; do
         ext="${entry%%:*}"
@@ -524,6 +583,10 @@ test_every_split_shape_arm_is_language_specific() {
             case "$ext" in
                 py) command printf 'def unit_%d(x):\n    return x + %d\n' "$i" "$i" >>"$f" ;;
                 js) command printf 'function unit_%d(x) {\n  return x + %d;\n}\n' "$i" "$i" >>"$f" ;;
+                # TYPE-level units (#726), so the ts arm is reached through the
+                # forms only its own segmenter matches — a function fixture here
+                # would be caught by the js arm too and prove nothing about ts.
+                ts) command printf 'export interface Unit%d {\n  a: string;\n}\n' "$i" >>"$f" ;;
                 rs) command printf 'fn unit_%d() {\n    let _ = %d;\n}\n' "$i" "$i" >>"$f" ;;
                 go) command printf 'func unit_%d() int {\n    return %d\n}\n' "$i" "$i" >>"$f" ;;
             esac
@@ -874,6 +937,7 @@ run_test test_crossing_the_threshold_is_actionable "AC4: a diff that pushes a fi
 run_test test_material_growth_is_actionable "AC4: material growth on an already-over file is actionable"
 run_test test_materiality_floor_is_honored "AC4: REVIEW_GROWTH_MIN_ADDED is a real boundary"
 run_test test_decline_records_a_reason "AC5: a long-but-cohesive file yields a recorded decline reason"
+run_test test_declaration_file_declines_in_review_lens "review lens: a .d.ts declines and gets no shape row, a plain .ts does (#726)"
 run_test test_whitespace_heavy_diff_does_not_fake_a_crossing "A whitespace-heavy diff cannot fake a threshold crossing"
 run_test test_unknown_language_still_emits_a_seam_row "An over-threshold file with no segmenter still gets a seam row"
 run_test test_renamed_file_keeps_its_growth_signal "A renamed file keeps its growth signal (both numstat rename shapes)"
