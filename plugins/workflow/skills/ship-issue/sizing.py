@@ -23,6 +23,14 @@ fallbacks (`shared:loc-*-awk`) are pinned; before #730 only the awk half was,
 so the two Python halves — the ones that actually run whenever a python3>=3.11
 is present — could drift freely while every gate stayed green.
 
+PROSE FILE-TYPE CLASSIFICATION is shared the same way (`shared:bloat-spec-py`,
+#724). Before it, this lens sized every .md by the generic 700/1000 md pair, so
+an `agents/*.md` well over its own 250/400 budget — flagged HIGH by the audit
+lens — passed a per-PR review in silence. Strictness is a policy dial each lens
+owns; what a file IS is a fact about its path and must not fork. The DISPOSITION
+below stays this lens's own: classified prose is still growth-graded, so a
+one-line touch to a pre-existing over-budget file is LOW, never blocking.
+
 Python 3.11+ primary behind the language-agnostic TSV contract; the sibling
 sizing.sh is the portable bash fallback (it exec's this file when a python3>=3.11
 is present). Both emit byte-identical findings — parity pinned by
@@ -45,6 +53,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import fnmatch as _fnmatch
 import os
 import re
 import sys
@@ -432,6 +441,157 @@ def decline_reason(lines: list[str], m: dict) -> str:
     return "no low-coupling seam found — units are mutually referential"
 
 
+# >>> shared:bloat-spec-py (sync: check-decomposition/patterns.py)
+# PROSE FILE-TYPE CLASSIFICATION — shared by BOTH lenses (#724).
+#
+# What a markdown file IS is a fact about its PATH, and a fact must not fork.
+# Before #724 only the audit lens classified prose; the review lens sized every
+# .md by the generic md pair (700/1000), so an over-budget agent definition
+# passed a per-PR review silently while the audit sweep called it HIGH. The two
+# lenses may differ in STRICTNESS — that is a policy dial each owns — but they
+# may not disagree about what the file is.
+#
+# STRICTNESS IS NOT FORKED EITHER, for these files specifically. Both lenses
+# apply the bloat_thresholds numbers verbatim; there is no review-lens override
+# table. The review lens is looser than the audit lens for CODE because those
+# thresholds count production LOC and a per-PR gate that nags gets turned off.
+# That argument does not transfer: bloat budgets are measured on TOTAL lines
+# because these files load WHOLE into context, and that cost does not depend on
+# which lens is looking. What keeps the review lens survivable here is its
+# GROWTH DISPOSITION (sizing.py's scan_file), not a bigger number.
+def _glob(path: str, pattern: str) -> bool:
+    """`case "$path" in <pattern>)` — an unanchored shell glob over the full
+    path. fnmatchcase's `*` crosses '/', matching bash `case` glob semantics."""
+    return _fnmatch.fnmatchcase(path, pattern)
+
+
+def _bundle_root() -> str:
+    """The configured memory-bundle root, normalized for glob matching (#700).
+
+    Configurable rather than hardcoded, defaulting to `.claude/memory`. An
+    EMPTY value means no bundle is configured: memory classification is off and
+    nothing errors.
+
+    Normalization strips a leading `./` and any trailing `/` so that every
+    spelling of the same root — `.claude/memory`, `./.claude/memory`,
+    `.claude/memory/` — decides alike. An unnormalized root would make the
+    glob miss, the file would fall back to the code thresholds, and the scan
+    would still exit 0 — the silent fail-open this issue exists to close."""
+    root = os.environ.get("MEMORY_BUNDLE_ROOT", ".claude/memory").strip()
+    while root.startswith("./"):
+        root = root[2:]
+    while root.endswith("/"):
+        root = root[:-1]
+    return root
+
+
+def bundle_kind(path: str) -> str:
+    """Which half of the memory bundle PATH is: "index", "concept", or "" when
+    it is not a bundle markdown file (#700).
+
+    Only `*.md` under the root is bundle prose — a `.sh` or `.py` sitting in a
+    bundle is code and keeps the code thresholds.
+
+    An index is the file loaded every session to route recall: the root
+    `MEMORY.md`, a topic sub-index `index-*.md`, or OKF's `index.md`."""
+    root = _bundle_root()
+    if not root:
+        return ""
+    # LITERAL containment, deliberately NOT _glob(). The root is operator
+    # configuration, and routing it through fnmatch would interpret any glob
+    # metacharacter in it (`[`, `]`, `*`, `?`) as syntax. The bash mirror does
+    # NOT: a QUOTED expansion in a `case` pattern (`"$MEMORY_BUNDLE_ROOT"/*.md`)
+    # is matched literally by bash. So a root like `weird[x]root` made fnmatch
+    # read `[x]` as a character class and miss, while bash matched — the two
+    # impls disagreed on the same file, breaking the byte-identical TSV
+    # contract, silently and at exit 0. These two tests mirror bash's two arms:
+    # `"$ROOT"/*` (root at the start) and `*/"$ROOT"/*` (root nested anywhere).
+    if not (path.startswith(root + "/") or ("/" + root + "/") in path):
+        return ""
+    base = path.rsplit("/", 1)[-1]
+    if not base.endswith(".md"):
+        return ""
+    if base == "MEMORY.md" or base == "index.md" or base.startswith("index-"):
+        return "index"
+    return "concept"
+
+
+def bloat_spec(path: str) -> tuple[int, int, str, str] | None:
+    """The per-file-type bloat thresholds, migrated verbatim from
+    check-ai-config so the move is behavior-preserving. Returns
+    (warn, high, file-type label, category) or None when the path is not an
+    AI-instruction or documentation file.
+
+    The memory-bundle arm is FIRST (#700): inside a configured bundle, bundle
+    rules apply, so a `docs/` or `agents/` directory nested in the bundle
+    cannot escape to the arms below and be sized by the wrong budget."""
+    kind = bundle_kind(path)
+    if kind == "index":
+        return (
+            _int_env("MEMORY_INDEX_WARN", 150),
+            _int_env("MEMORY_INDEX_HIGH", 250),
+            "memory index",
+            "ai-file-bloat",
+        )
+    if kind == "concept":
+        return (
+            _int_env("MEMORY_CONCEPT_WARN", 200),
+            _int_env("MEMORY_CONCEPT_HIGH", 350),
+            "memory concept",
+            "ai-file-bloat",
+        )
+    if _glob(path, "*/CLAUDE.md") or _glob(path, "*/AGENTS.md"):
+        return (
+            _int_env("CLAUDE_MD_WARN", 400),
+            _int_env("CLAUDE_MD_HIGH", 600),
+            "CLAUDE.md",
+            "ai-file-bloat",
+        )
+    if _glob(path, "*/skills/*/SKILL.md"):
+        return (
+            _int_env("SKILL_WARN", 300),
+            _int_env("SKILL_HIGH", 500),
+            "skill definition",
+            "ai-file-bloat",
+        )
+    if _glob(path, "*/agents/*/*.md") or _glob(path, "*/agents/*.md"):
+        # Both agent layouts: the FLAT agents/<name>.md Claude Code discovers,
+        # and the nested agents/<name>/<name>.md a harness-bearing agent uses.
+        return (
+            _int_env("AGENT_WARN", 250),
+            _int_env("AGENT_HIGH", 400),
+            "agent definition",
+            "ai-file-bloat",
+        )
+    if _glob(path, "*/skills/*/*.md"):
+        # Skill COMPANION prose (#589) — a reference file a SKILL.md tells the
+        # agent to load. MUST stay below the SKILL.md arm above, which is the
+        # narrower pattern: these arms are sequential, so hoisting this one
+        # would swallow every SKILL.md into the looser companion budget.
+        #
+        # Before this arm existed, a companion matched NOTHING here and fell
+        # through to the production-LOC code thresholds (300/500) — sized by a
+        # rule written for source. Exactly the defect #700 fixed for memory
+        # bundles, on the repo's LARGEST prose files.
+        return (
+            _int_env("COMPANION_WARN", 400),
+            _int_env("COMPANION_HIGH", 650),
+            "skill companion",
+            "ai-file-bloat",
+        )
+    if _glob(path, "*/docs/*.md"):
+        return (
+            _int_env("DOC_WARN", 500),
+            _int_env("DOC_HIGH", 800),
+            "documentation",
+            "doc-file-bloat",
+        )
+    return None
+
+
+# <<< shared:bloat-spec-py
+
+
 def numstat_path(field: str) -> str:
     """The POST-rename path from a `git diff --numstat` path field.
 
@@ -487,6 +647,93 @@ def read_numstat(path: str) -> dict[str, int]:
     return counts
 
 
+def scan_prose(
+    path: str,
+    lines: list[str],
+    m: dict,
+    spec: tuple[int, int, str, str],
+    added: int,
+    have_growth: bool,
+    min_added: int,
+) -> None:
+    """Emit the size row for a CLASSIFIED prose file — an agent definition, a
+    SKILL.md, a companion, a CLAUDE.md, a memory index/concept, a docs page
+    (#724).
+
+    Thresholds and file-type label come from the shared `bloat_spec`, so this
+    lens and the audit lens can never disagree about what the file is. What
+    stays this lens's own is the DISPOSITION: the audit lens grades a bloat row
+    flat HIGH/MEDIUM on size alone, which for a per-PR gate would make a
+    one-line touch to a pre-existing 580-line agent file blocking — precisely
+    the outcome #695 AC4 exists to prevent, on the file type most likely to be
+    brushed against. So the same four-way growth grading the LOC path uses
+    applies here, and only `crossed`/`material` are blocking-eligible.
+
+    MEASURED ON TOTAL LINES, matching the audit lens (#701): nothing is
+    excluded, because these files are loaded WHOLE into context and every line
+    is real cost.
+    """
+    b_warn, b_high, ftype, category = spec
+    total = m["total"]
+    if total <= b_warn:
+        return
+
+    # PRIOR IS EXACT HERE, not the approximation the production-LOC path needs.
+    # That path subtracts raw insertions from a count that excludes blanks and
+    # comments, over-subtracts, and needs a clamp to stop a whitespace-heavy
+    # reformat faking a threshold crossing. This budget already counts every
+    # line, and numstat already counts every inserted line, so the two are in
+    # the same unit and the subtraction is the real pre-diff size. The clamp's
+    # absence is deliberate, not an oversight.
+    prior = max(0, total - added) if have_growth else total
+    crossed = have_growth and prior <= b_warn
+    material = have_growth and added >= min_added
+
+    band = "high" if total > b_high else "warning"
+    limit = b_high if total > b_high else b_warn
+
+    if crossed:
+        certainty = "HIGH" if total > b_high else "MEDIUM"
+        evidence = (
+            f"{ftype} exceeds {band} threshold: {total} lines (>{limit}); this "
+            f"diff added {added} lines and pushed it over the {b_warn} budget"
+        )
+    elif material:
+        certainty = "MEDIUM"
+        evidence = (
+            f"{ftype} exceeds {band} threshold: {total} lines (>{limit}); "
+            f"already over before this diff, which added {added} more lines"
+        )
+    elif have_growth:
+        certainty = "LOW"
+        evidence = (
+            f"{ftype} exceeds {band} threshold: {total} lines (>{limit}); "
+            f"pre-existing size, this diff added only {added} lines — "
+            f"informational, not this PR's debt"
+        )
+    else:
+        certainty = "LOW"
+        evidence = (
+            f"{ftype} exceeds {band} threshold: {total} lines (>{limit}); no "
+            f"diff growth data supplied — informational only"
+        )
+
+    emit(path, 1, category, evidence, certainty)
+
+    # Prose splits by progressive disclosure, never by a line range. Emitted
+    # only for the dispositions a reviewer should act on, mirroring the seam
+    # rule on the LOC path — a decline row would be noise on a file whose
+    # length this diff did not meaningfully change.
+    if crossed or material:
+        emit(
+            path,
+            1,
+            "decomposition-seam",
+            f"split shape for {ftype}: {SPLIT_SHAPE['md']}",
+            "MEDIUM",
+        )
+
+
 def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> None:
     """Emit sizing rows for one changed file.
 
@@ -506,11 +753,26 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
     m = measure(lines, lang, units)
     warn, high = thresholds_for(lang)
     production = m["production"]
+    min_added = _int_env("REVIEW_GROWTH_MIN_ADDED", 50)
+
+    # --- Classified prose: its own budget, never the code one (#724/#701) ----
+    # Checked BEFORE the production-LOC early return below, which would
+    # otherwise swallow the whole branch: a 580-line agent definition measures
+    # 501 production LOC, under the generic md warning of 700, so it returns
+    # here and the file is never classified at all. That early return IS the
+    # defect #724 reports, seen from the inside.
+    #
+    # EXACTLY ONE size verdict per file, exactly as the audit lens does it
+    # (#701): a spec means "this file type has its own budget", so the generic
+    # file-length row is skipped rather than emitted alongside.
+    spec = bloat_spec(path)
+    if spec is not None:
+        scan_prose(path, lines, m, spec, added, have_growth, min_added)
+        return
 
     if production <= warn:
         return
 
-    min_added = _int_env("REVIEW_GROWTH_MIN_ADDED", 50)
     # Production LOC before this diff, approximated by removing the added lines.
     #
     # THE APPROXIMATION ERRS LOW, NOT HIGH. numstat counts RAW insertions —

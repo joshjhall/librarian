@@ -33,6 +33,21 @@
 #   decline path  — decline reason arm swapped             -> red (10 -> 9)
 #   split shape   — split_shape() collapsed to "split it"  -> red (10 -> 6)
 #
+# The #724 prose-classification round (five mutations, each reverted after):
+#   classification — bloat_spec() forced to None            -> red (23 -> 20)
+#   arm order      — companion glob hoisted above SKILL.md  -> red (23 -> 22)
+#   disposition    — `crossed` forced True (flat grading)   -> red (23 -> 20)
+#   one verdict    — the #701 early `return` removed        -> red (23 -> 22)
+#   fall-through   — docs arm widened to every *.md         -> red (23 -> 21)
+#
+# THAT ROUND PAID FOR ITSELF TOO. The one-verdict mutation initially SURVIVED,
+# and the cause was a test that could not fail: the assertion rode the 500-line
+# agent fixture, which is UNDER the generic 700 md warning, so the production-LOC
+# path returned early on its own and the guard being removed changed nothing.
+# Diagnosed as a real gap rather than a no-op by reproducing the double row on a
+# larger file; see test_classified_prose_gets_exactly_one_verdict, which is sized
+# at 900 lines so both paths genuinely compete.
+#
 # THE ROUND PAID FOR ITSELF. The decline-reason mutation initially SURVIVED, and
 # the reason was a defect in this file rather than a missing case: `run_scan` was
 # called in a command substitution, so the bash-vs-python assertion inside it ran
@@ -562,6 +577,179 @@ test_small_file_stays_silent() {
     assert_equals "" "$out" "a small file produces no rows at all"
 }
 
+# --- #724: classified prose is sized by file TYPE, not as a generic doc -------
+# make_md_file PATH NLINES — a markdown file of NLINES prose lines.
+make_md_file() {
+    local path="$1" nlines="$2" i
+    : >"$path"
+    i=0
+    while [ "$i" -lt "$nlines" ]; do
+        command printf 'Prose line %d of the document.\n' "$i" >>"$path"
+        i=$((i + 1))
+    done
+}
+
+# THE HEADLINE FIXTURE (#724). Before this issue an agent definition was sized by
+# the generic md pair (700/1000), so a ~500-line agents/*.md — well over its own
+# 250/400 budget, and flagged HIGH by the audit lens — passed the review lens in
+# total silence. The measured miss was plugins/review-audit/agents/checker.md at
+# 580 lines: `ai-file-bloat ... HIGH` on the audit lens, no output at all here.
+#
+# Asserted on the FILE-TYPE LABEL, not merely on "some row appeared": the whole
+# defect was a classification fork, so a row that fires under the wrong label
+# (or under the generic file-length category) has not fixed it.
+test_agent_md_is_classified_by_type() {
+    local agent_dir="$WORKDIR/prose/agents" out
+    command mkdir -p "$agent_dir"
+    local agent_md="$agent_dir/checker.md"
+    make_md_file "$agent_md" 500
+    local list="$WORKDIR/prose-agent.txt"
+    command printf '%s\n' "$agent_md" >"$list"
+
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "ai-file-bloat" "an agent definition emits ai-file-bloat, not a generic size row"
+    assert_contains "$out" "agent definition" "the row names the FILE TYPE the audit lens would name"
+    assert_contains "$out" "(>400)" "the agent HIGH budget (400) is the one applied, not the md 1000"
+}
+
+# --- #724/#701: exactly ONE size verdict per classified file ------------------
+# SIZED AT 900 LINES ON PURPOSE, and that is the whole point of this fixture.
+#
+# The obvious version of this assertion — checking `file-length` is absent from
+# the 500-line agent fixture above — is a TEST THAT CANNOT FAIL. At 500 lines the
+# file is under the generic md warning of 700, so the production-LOC path returns
+# early of its own accord: removing the one-verdict guard entirely changes
+# nothing, and the assertion passes with AND without the code it claims to pin.
+# (Found by the mutation round — dropping the guard left every #724 test green.)
+#
+# At 900 lines the file is over BOTH its own 250/400 agent budget and the generic
+# 700 md warning, so the two paths genuinely compete and the guard is the only
+# thing suppressing the second row.
+test_classified_prose_gets_exactly_one_verdict() {
+    local agent_dir="$WORKDIR/one-verdict/agents" out
+    command mkdir -p "$agent_dir"
+    local agent_md="$agent_dir/huge.md"
+    make_md_file "$agent_md" 900
+    local list="$WORKDIR/one-verdict.txt"
+    command printf '%s\n' "$agent_md" >"$list"
+
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    # Both thresholds are genuinely exceeded — without this the test could pass
+    # by the file being under one of them, which is the trap described above.
+    assert_contains "$out" "ai-file-bloat" "the file is over its per-type budget"
+    assert_true "[ 900 -gt 700 ]" "the fixture also exceeds the generic md warning (both paths compete)"
+
+    assert_not_contains "$out" "file-length" \
+        "a classified prose file gets its bloat row INSTEAD of file-length, never both (#701)"
+}
+
+# --- #724: arm ORDER is load-bearing -----------------------------------------
+# The arms are sequential and `*/skills/*/*.md` MUST stay below
+# `*/skills/*/SKILL.md`. Hoisting it swallows every SKILL.md into the looser
+# companion budget — silently, since both still emit a plausible-looking row.
+#
+# Both files are the SAME LENGTH on purpose: the only variable is the path, so a
+# difference in the reported budget can only come from classification. A fixture
+# with two different lengths would pass even with the arms reversed.
+test_skill_and_companion_arms_stay_ordered() {
+    local skill_dir="$WORKDIR/prose/skills/x" out
+    command mkdir -p "$skill_dir"
+    make_md_file "$skill_dir/SKILL.md" 520
+    make_md_file "$skill_dir/companion.md" 520
+    local list="$WORKDIR/prose-skill.txt"
+    command printf '%s\n%s\n' "$skill_dir/SKILL.md" "$skill_dir/companion.md" >"$list"
+
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    local skill_row companion_row
+    skill_row="$(command printf '%s\n' "$out" | command grep -F '/SKILL.md' || true)"
+    companion_row="$(command printf '%s\n' "$out" | command grep -F '/companion.md' || true)"
+
+    assert_not_empty "$skill_row" "the SKILL.md is reported"
+    assert_not_empty "$companion_row" "the companion is reported"
+    assert_contains "$skill_row" "skill definition" "SKILL.md classifies as a skill definition"
+    assert_contains "$skill_row" "(>500)" "SKILL.md gets the 300/500 SKILL budget"
+    assert_contains "$companion_row" "skill companion" "a sibling .md classifies as a companion"
+    assert_contains "$companion_row" "(>400)" "the companion gets the looser 400/650 budget"
+}
+
+# --- #724: prose keeps the review lens's GROWTH disposition (AC4) -------------
+# The counter-case to the headline fixture. Without it, that test passes just as
+# well from a change that made every classified prose file blocking — importing
+# the audit lens's flat HIGH/MEDIUM grading wholesale, which on a per-PR gate
+# would block a one-line touch to a pre-existing 580-line agent file. That is the
+# outcome AC4 exists to prevent, on the file type most likely to be brushed
+# against, and it is how the lens gets turned off.
+#
+# Asserted on CERTAINTY, not on silence: the scanner is supposed to speak here.
+test_prose_trivial_touch_is_not_blocking() {
+    local agent_dir="$WORKDIR/prose-growth/agents" out row
+    command mkdir -p "$agent_dir"
+    local agent_md="$agent_dir/big.md"
+    make_md_file "$agent_md" 500
+    local list="$WORKDIR/prose-growth.txt" numstat="$WORKDIR/ns-prose-trivial.txt"
+    command printf '%s\n' "$agent_md" >"$list"
+    make_numstat "$numstat" "$agent_md" 1
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "pre-existing size" "the evidence names the size as pre-existing"
+    row="$(command printf '%s\n' "$out" | command grep -F 'ai-file-bloat' || true)"
+    assert_not_empty "$row" "a bloat row exists to check the certainty of"
+    case "$row" in
+        *"	LOW") : ;;
+        *) _fail "a trivial touch to an over-budget prose file was blocking-eligible" \
+            "Classification is shared with the audit lens; the growth DISPOSITION is not (#724/AC4)." \
+            "$row" ;;
+    esac
+
+    # And the counter-direction: a diff that pushes it over IS actionable, so the
+    # LOW above cannot be satisfied by rating everything LOW.
+    local cross="$WORKDIR/ns-prose-cross.txt"
+    make_numstat "$cross" "$agent_md" 400
+    run_scan "$list" "$cross"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "pushed it over" "a diff that crosses the budget says so"
+    row="$(command printf '%s\n' "$out" | command grep -F 'ai-file-bloat' || true)"
+    case "$row" in
+        *"	LOW") _fail "a budget-crossing prose diff was rated LOW" \
+            "Crossing a prose budget because of this diff must be blocking-eligible." \
+            "$row" ;;
+        *) : ;;
+    esac
+}
+
+# --- #724: an UNCLASSIFIED markdown file still takes the generic path ---------
+# The scoping counter-case. Classification must not swallow all markdown: a .md
+# that matches no bloat arm (not an agent, skill, companion, CLAUDE.md, doc or
+# memory file) still belongs to the production-LOC lens at the md thresholds.
+# Without this, deleting the `spec is None` fall-through would go unnoticed.
+test_unclassified_markdown_keeps_the_loc_path() {
+    local plain="$WORKDIR/plain-notes.md" out
+    make_md_file "$plain" 900
+    local list="$WORKDIR/plain-md.txt"
+    command printf '%s\n' "$plain" >"$list"
+
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "file-length" "an unclassified .md still gets the generic file-length row"
+    assert_contains "$out" "production LOC" "and is measured in production LOC, not total lines"
+    assert_not_contains "$out" "ai-file-bloat" "an unclassified .md is not forced into a bloat category"
+}
+
 # --- the TSV contract is exactly five tab-separated columns ------------------
 # The language boundary every check-* skill and all three parity gates depend on.
 test_tsv_contract_is_five_columns() {
@@ -614,6 +802,11 @@ run_test test_markdown_arm_is_sized_and_shaped "The markdown arm is sized and ge
 run_test test_split_shape_is_language_shaped "AC7: split guidance matches the file's language"
 run_test test_every_split_shape_arm_is_language_specific "AC7: every SPLIT_SHAPE arm is reachable and language-specific"
 run_test test_per_language_thresholds_differ "Per-language thresholds are consulted, not merely present"
+run_test test_agent_md_is_classified_by_type "#724: an agent definition is sized by its own budget, not as a generic doc"
+run_test test_classified_prose_gets_exactly_one_verdict "#724/#701: a classified prose file gets exactly one size verdict"
+run_test test_skill_and_companion_arms_stay_ordered "#724: SKILL.md and its companion get different budgets (arm order)"
+run_test test_prose_trivial_touch_is_not_blocking "#724: prose keeps the growth disposition (AC4 holds for classified files)"
+run_test test_unclassified_markdown_keeps_the_loc_path "#724: an unclassified .md still takes the production-LOC path"
 run_test test_small_file_stays_silent "A file under threshold produces no rows"
 run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"
 run_test test_usage_contract "Usage / missing-file / empty-list contract"

@@ -214,11 +214,43 @@ run_thing() {
 run_thing
 EOF
 
+# Classified-prose fixtures (#724). Both lenses now decide a markdown file's
+# TYPE from its PATH, through the shared `bloat-spec` regions — so the corpus
+# needs files that actually reach those arms, or the parity diff runs over a
+# classification neither impl was asked to perform.
+#
+# Sized to STRADDLE the budgets rather than to be uniformly huge: the agent file
+# (500 lines) is over the 250/400 agent budget and would be silent under the old
+# generic md pair, which is the #724 miss itself; the SKILL.md and its companion
+# are the SAME length on purpose, so any bash/python disagreement about arm
+# ORDER shows up as different budgets on identical input rather than hiding
+# behind a size difference.
+command mkdir -p "$FIXDIR/prose/agents" "$FIXDIR/prose/skills/demo" "$FIXDIR/prose/docs"
+make_prose_fixture() {
+    local path="$1" nlines="$2" i=0
+    : >"$path"
+    while [ "$i" -lt "$nlines" ]; do
+        command printf 'Prose line %d of the document.\n' "$i" >>"$path"
+        i=$((i + 1))
+    done
+}
+make_prose_fixture "$FIXDIR/prose/agents/reviewer.md" 500
+make_prose_fixture "$FIXDIR/prose/skills/demo/SKILL.md" 520
+make_prose_fixture "$FIXDIR/prose/skills/demo/reference.md" 520
+make_prose_fixture "$FIXDIR/prose/docs/guide.md" 900
+make_prose_fixture "$FIXDIR/prose/CLAUDE.md" 700
+# Unclassified markdown — the fall-through arm. Without it the corpus could not
+# tell "classification is shared" from "all markdown is classified".
+make_prose_fixture "$FIXDIR/prose/notes.md" 900
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
-    "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh"; do
+    "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
+    "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
+    "$FIXDIR/prose/skills/demo/reference.md" "$FIXDIR/prose/docs/guide.md" \
+    "$FIXDIR/prose/CLAUDE.md" "$FIXDIR/prose/notes.md"; do
     command printf '%s\n' "$f" >>"$FILE_LIST"
 done
 

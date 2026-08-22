@@ -103,9 +103,9 @@ source "$SCRIPT_DIR/lib/harness.sh"
 SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
-    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk"
+    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec"
     "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
-    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py"
+    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py"
 )
 
 # The Python pair's regions, in the order they appear above. Used by the
@@ -116,7 +116,7 @@ SHARED_PAIRS=(
 # audit-lens-only on purpose. Copying them into sizing.py to make the files look
 # more alike would add lookups nothing there reads — deliberate duplication is
 # only worth its cost for logic BOTH lenses execute.
-PY_REGIONS="loc-tables-py loc-helpers-py loc-unit-py loc-measure-py"
+PY_REGIONS="loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py"
 
 # Pair-specific paths used by the targeted tests below (the language-arm shape
 # check and the two tamper fixtures). Kept as consts so a path edit above is a
@@ -506,6 +506,62 @@ test_detector_fires_on_loc_region_drift() {
     assert_equals "detected" "$drift" "a one-line edit to sizing's loc-measure copy is detected as drift"
 }
 
+# The detector FIRES on drift in the PROSE-CLASSIFICATION pair (#724) — the bash
+# half of what bloat-spec-py pins on the Python side.
+#
+# Two regions, tampered on the two things that can independently fork:
+#
+#   bloat-config — the NUMBERS. A drifted budget means the two lenses disagree
+#                  about how big an agent definition may be.
+#   bloat-spec   — the ARM ORDER. `*/skills/*/*.md` sitting above
+#                  `*/skills/*/SKILL.md` swallows every SKILL.md into the looser
+#                  companion budget, because `case` takes the FIRST match. That
+#                  is a silent misciassification, not an error, which is exactly
+#                  why it needs a fixture.
+#
+# Tampers are FIXED STRINGS: a BRE `\|` is a GNU extension BSD sed reads as a
+# literal, so an alternation-bearing pattern would match nothing on macOS and the
+# tamper would be a no-op there (#679).
+test_detector_fires_on_bloat_region_drift() {
+    local canonical duplicate tampered baseline tamper_took drift region sed_expr
+
+    for region in bloat-config bloat-spec; do
+        case "$region" in
+            bloat-config)
+                sed_expr='s/AGENT_HIGH="${AGENT_HIGH:-400}"/AGENT_HIGH="${AGENT_HIGH:-900}"/'
+                ;;
+            bloat-spec)
+                sed_expr='s|        \*/skills/\*/SKILL.md)|        */skills/*/OTHER.md)|'
+                ;;
+        esac
+
+        canonical="$(extract_shared "$DECOMP_PATTERNS" "$region" | normalize)"
+        duplicate="$(extract_shared "$SIZING" "$region" | normalize)"
+
+        assert_not_empty "$canonical" "check-decomposition ${region} extract is non-empty"
+        assert_not_empty "$duplicate" "sizing ${region} extract is non-empty"
+
+        baseline="differs"
+        [ "$canonical" = "$duplicate" ] && baseline="matches"
+        assert_equals "matches" "$baseline" \
+            "the untampered ${region} pair matches (tamper is the only variable)"
+
+        tampered="$(extract_shared "$SIZING" "$region" |
+            command sed "$sed_expr" | normalize)"
+        assert_not_empty "$tampered" "tampered ${region} extract is non-empty (extract still works)"
+
+        tamper_took="no"
+        [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+        assert_equals "yes" "$tamper_took" \
+            "the ${region} tamper actually changed the region (the targeted line is present)"
+
+        drift="none"
+        [ "$canonical" != "$tampered" ] && drift="detected"
+        assert_equals "detected" "$drift" \
+            "a one-line edit to sizing's ${region} copy is detected as drift"
+    done
+}
+
 # The detector FIRES on drift in the unit-segmenter pair — sizing.sh's proposal
 # side vs split-verify.sh's verification side (#695). This pair is a NESTED
 # region: `unit-segmenters-awk` sits inside `loc-helpers-awk`, which is itself
@@ -598,6 +654,13 @@ test_detector_fires_on_python_primary_drift() {
                 ;;
             loc-measure-py)
                 sed_expr='s/    production = total - blank - comment - test_excluded/    production = total/'
+                ;;
+            bloat-spec-py)
+                # Targets the AGENT budget — the arm #724's headline fixture
+                # lands on. A drifted copy here means the two lenses disagree
+                # about how big an agent definition may be, which is the class
+                # of fork this region exists to make impossible.
+                sed_expr='s/            _int_env("AGENT_HIGH", 400),/            _int_env("AGENT_HIGH", 900),/'
                 ;;
             *)
                 _fail "no tamper case for region ${region}" \
@@ -710,6 +773,7 @@ run_test test_detector_fires_on_drift "Drift detector fires on a tampered region
 run_test test_detector_fires_on_py_region_drift "Drift detector fires across the py-public-symbols pair (#609)"
 run_test test_detector_fires_on_loc_region_drift "Drift detector fires across the LOC-engine pair (#695)"
 run_test test_detector_fires_on_segmenter_region_drift "Drift detector fires across the unit-segmenter pair (#695)"
+run_test test_detector_fires_on_bloat_region_drift "Drift detector fires across the prose-classification regions (#724)"
 run_test test_detector_fires_on_python_primary_drift "Drift detector fires across every region of the Python-primary pair (#730)"
 run_test test_py_regions_and_tampers_agree "Every registered Python region has a tamper case, and vice versa (#730)"
 run_test test_py_regions_start_at_column_zero "Python regions open at column zero, so normalize's strip is safe (#730)"

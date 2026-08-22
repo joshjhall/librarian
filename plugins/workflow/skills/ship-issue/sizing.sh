@@ -19,6 +19,14 @@
 # library is impossible — and a third drifting copy of the LOC rules is exactly
 # what #663 was filed to kill.
 #
+# PROSE FILE-TYPE CLASSIFICATION is shared the same way (`shared:bloat-config`
+# and `shared:bloat-spec`, #724). Before it, this lens sized every .md by the
+# generic 700/1000 md pair, so an agents/*.md well over its own 250/400 budget
+# — flagged HIGH by the audit lens — passed a per-PR review in silence.
+# Strictness is a policy dial each lens owns; what a file IS is a fact about its
+# path and must not fork. The disposition stays this lens's own: classified
+# prose is still growth-graded, so a one-line touch is LOW, never blocking.
+#
 # Input:  $1 = file containing paths to scan (one per line)
 #         $2 = OPTIONAL numstat sidecar: `added<TAB>deleted<TAB>path` rows
 #              (`git diff --numstat`). ABSENT => no growth signal, so every
@@ -88,6 +96,53 @@ REVIEW_LOC_WARN_RS="${REVIEW_LOC_WARN_RS:-400}"
 REVIEW_LOC_HIGH_RS="${REVIEW_LOC_HIGH_RS:-700}"
 REVIEW_LOC_WARN_GO="${REVIEW_LOC_WARN_GO:-400}"
 REVIEW_LOC_HIGH_GO="${REVIEW_LOC_HIGH_GO:-700}"
+
+# >>> shared:bloat-config (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
+# Bloat table — migrated from check-ai-config with its variable names intact so
+# an operator's existing overrides keep working after the move.
+#
+# SHARED WITH THE REVIEW LENS (#724). Both lenses apply these numbers verbatim;
+# there is no review-lens prose override. The review lens is looser than the
+# audit lens for CODE, where thresholds count production LOC and a per-PR gate
+# that nags gets turned off — but that argument does not transfer here. These
+# budgets count TOTAL lines because the files load WHOLE into context, and that
+# cost does not depend on which lens is looking. The review lens stays
+# survivable through its growth disposition instead (sizing.sh's awk END).
+CLAUDE_MD_WARN="${CLAUDE_MD_WARN:-400}"
+CLAUDE_MD_HIGH="${CLAUDE_MD_HIGH:-600}"
+SKILL_WARN="${SKILL_WARN:-300}"
+SKILL_HIGH="${SKILL_HIGH:-500}"
+AGENT_WARN="${AGENT_WARN:-250}"
+AGENT_HIGH="${AGENT_HIGH:-400}"
+DOC_WARN="${DOC_WARN:-500}"
+DOC_HIGH="${DOC_HIGH:-800}"
+# Skill companion prose (#589) — the reference files a SKILL.md loads on demand.
+# Before this arm they matched nothing and fell through to DECOMP_LOC_*, the code
+# thresholds; same defect #700 fixed for the memory bundle.
+COMPANION_WARN="${COMPANION_WARN:-400}"
+COMPANION_HIGH="${COMPANION_HIGH:-650}"
+# Memory-bundle budgets (#700) — index is a READ limit, concept is the cost of
+# one recalled fact. Before #700 a bundle file matched no bloat arm and fell
+# through to DECOMP_LOC_*, the code thresholds.
+MEMORY_INDEX_WARN="${MEMORY_INDEX_WARN:-150}"
+MEMORY_INDEX_HIGH="${MEMORY_INDEX_HIGH:-250}"
+MEMORY_CONCEPT_WARN="${MEMORY_CONCEPT_WARN:-200}"
+MEMORY_CONCEPT_HIGH="${MEMORY_CONCEPT_HIGH:-350}"
+
+# Bundle root — configurable, EMPTY disables memory classification entirely
+# (no bundle configured -> no findings, no error). Normalized so `.claude/memory`,
+# `./.claude/memory` and `.claude/memory/` all decide alike; an unnormalized
+# root would miss the glob, fall back to the code thresholds, and still exit 0.
+# Mirrors _bundle_root() in patterns.py.
+MEMORY_BUNDLE_ROOT="${MEMORY_BUNDLE_ROOT-.claude/memory}"
+while :; do
+    case "$MEMORY_BUNDLE_ROOT" in
+        ./*) MEMORY_BUNDLE_ROOT="${MEMORY_BUNDLE_ROOT#./}" ;;
+        */) MEMORY_BUNDLE_ROOT="${MEMORY_BUNDLE_ROOT%/}" ;;
+        *) break ;;
+    esac
+done
+# <<< shared:bloat-config
 
 # added_for PATH — added-line count for PATH from the numstat sidecar, or 0.
 # Binary files render as `-` in numstat and are skipped rather than crashing.
@@ -185,6 +240,85 @@ while IFS= read -r file; do
             ;;
     esac
 
+    # >>> shared:bloat-spec (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
+    # PROSE FILE-TYPE CLASSIFICATION — shared by BOTH lenses (#724). What a
+    # markdown file IS is a fact about its PATH, and a fact must not fork.
+    # Strictness is a policy dial each lens owns; classification is not.
+    #
+    # Memory-bundle classification (#700) — mirrors bundle_kind() in
+    # patterns.py. Only *.md under the root is bundle prose; a .sh or .py in a
+    # bundle is code and keeps the code thresholds. Computed BEFORE the bloat
+    # case below because the bundle arm is first in the chain.
+    b_kind=""
+    if [ -n "$MEMORY_BUNDLE_ROOT" ]; then
+        case "$file" in
+            "$MEMORY_BUNDLE_ROOT"/*.md | */"$MEMORY_BUNDLE_ROOT"/*.md)
+                case "${file##*/}" in
+                    MEMORY.md | index.md | index-*) b_kind="index" ;;
+                    *) b_kind="concept" ;;
+                esac
+                ;;
+        esac
+    fi
+
+    # Bloat spec — mirrors bloat_spec() in patterns.py, in the same order (the
+    # first matching arm wins, so */agents/*.md never reaches the docs arm, and
+    # the memory-bundle arm above pre-empts all four).
+    b_warn=0
+    b_high=0
+    b_type=""
+    b_cat=""
+    case "$b_kind" in
+        index)
+            b_warn=$MEMORY_INDEX_WARN
+            b_high=$MEMORY_INDEX_HIGH
+            b_type="memory index"
+            b_cat="ai-file-bloat"
+            ;;
+        concept)
+            b_warn=$MEMORY_CONCEPT_WARN
+            b_high=$MEMORY_CONCEPT_HIGH
+            b_type="memory concept"
+            b_cat="ai-file-bloat"
+            ;;
+    esac
+    [ -n "$b_kind" ] || case "$file" in
+        */CLAUDE.md | */AGENTS.md)
+            b_warn=$CLAUDE_MD_WARN
+            b_high=$CLAUDE_MD_HIGH
+            b_type="CLAUDE.md"
+            b_cat="ai-file-bloat"
+            ;;
+        */skills/*/SKILL.md)
+            b_warn=$SKILL_WARN
+            b_high=$SKILL_HIGH
+            b_type="skill definition"
+            b_cat="ai-file-bloat"
+            ;;
+        */agents/*/*.md | */agents/*.md)
+            b_warn=$AGENT_WARN
+            b_high=$AGENT_HIGH
+            b_type="agent definition"
+            b_cat="ai-file-bloat"
+            ;;
+        # Skill COMPANION prose (#589). MUST stay below the */skills/*/SKILL.md
+        # arm above, which is the narrower pattern: `case` takes the FIRST match,
+        # so hoisting this would swallow every SKILL.md into the looser budget.
+        */skills/*/*.md)
+            b_warn=$COMPANION_WARN
+            b_high=$COMPANION_HIGH
+            b_type="skill companion"
+            b_cat="ai-file-bloat"
+            ;;
+        */docs/*.md)
+            b_warn=$DOC_WARN
+            b_high=$DOC_HIGH
+            b_type="documentation"
+            b_cat="doc-file-bloat"
+            ;;
+    esac
+    # <<< shared:bloat-spec
+
     added=$(added_for "$file")
 
     LC_ALL=C command awk \
@@ -192,7 +326,9 @@ while IFS= read -r file; do
         -v loc_warn="$loc_warn" -v loc_high="$loc_high" \
         -v added="$added" -v have_growth="$HAVE_GROWTH" \
         -v min_added="$REVIEW_GROWTH_MIN_ADDED" \
-        -v cohesive_max="$REVIEW_COHESIVE_MAX_UNITS" '
+        -v cohesive_max="$REVIEW_COHESIVE_MAX_UNITS" \
+        -v b_warn="$b_warn" -v b_high="$b_high" \
+        -v b_type="$b_type" -v b_cat="$b_cat" '
     # >>> shared:loc-helpers-awk (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
     # md_slug: heading text -> identifier-shaped slug, so family_prefix applies
     # unchanged. Mirrors md_slug() in patterns.py.
@@ -367,6 +503,73 @@ while IFS= read -r file; do
         metrics = sprintf("%d total, %d comment (%d%%), %d blank, %d test-excluded, max nesting %d, %d top-level units", \
             total, comment, comment_pct, blank, test_excluded, max_depth, prod_units)
         # <<< shared:loc-measure-awk
+
+        # ---- classified prose: its own budget, never the code one (#724) ----
+        # Mirrors scan_prose() in sizing.py. Checked BEFORE the production-LOC
+        # early return below, which would otherwise swallow the whole branch: a
+        # 580-line agent definition measures 501 production LOC, under the
+        # generic md warning of 700, so it would return here and never be
+        # classified at all. That early return IS the defect #724 reports, seen
+        # from the inside.
+        #
+        # EXACTLY ONE size verdict per file (#701), as on the audit lens: a
+        # b_type means "this file type has its own budget", so the generic
+        # file-length row is skipped rather than emitted alongside.
+        #
+        # Thresholds and label come from the SHARED bloat-spec region above, so
+        # the two lenses can never disagree about what the file is. The
+        # DISPOSITION stays this lens own: the audit lens grades a bloat row
+        # flat HIGH/MEDIUM on size alone, which for a per-PR gate would make a
+        # one-line touch to a pre-existing 580-line agent file blocking — the
+        # outcome AC4 exists to prevent, on the file type most likely to be
+        # brushed against. Measured on TOTAL lines (these files load whole).
+        if (b_type != "") {
+            if (total <= b_warn) exit 0
+
+            # PRIOR IS EXACT HERE, not the approximation the production-LOC
+            # path needs. That path subtracts raw insertions from a count that
+            # excludes blanks and comments, over-subtracts, and needs a clamp to
+            # stop a whitespace-heavy reformat faking a crossing. This budget
+            # already counts every line and numstat already counts every
+            # inserted line, so the two are in the same unit and the
+            # subtraction is the real pre-diff size. The clamp is absent
+            # deliberately, not by oversight.
+            b_prior = (have_growth == 1) ? total - added : total
+            if (b_prior < 0) b_prior = 0
+            b_crossed = (have_growth == 1 && b_prior <= b_warn) ? 1 : 0
+            b_material = (have_growth == 1 && added >= min_added) ? 1 : 0
+
+            b_band = (total > b_high) ? "high" : "warning"
+            b_limit = (total > b_high) ? b_high : b_warn
+
+            if (b_crossed) {
+                certainty = (total > b_high) ? "HIGH" : "MEDIUM"
+                evidence = sprintf("%s exceeds %s threshold: %d lines (>%d); this diff added %d lines and pushed it over the %d budget", \
+                    b_type, b_band, total, b_limit, added, b_warn)
+            } else if (b_material) {
+                certainty = "MEDIUM"
+                evidence = sprintf("%s exceeds %s threshold: %d lines (>%d); already over before this diff, which added %d more lines", \
+                    b_type, b_band, total, b_limit, added)
+            } else if (have_growth == 1) {
+                certainty = "LOW"
+                evidence = sprintf("%s exceeds %s threshold: %d lines (>%d); pre-existing size, this diff added only %d lines — informational, not this PR'"'"'s debt", \
+                    b_type, b_band, total, b_limit, added)
+            } else {
+                certainty = "LOW"
+                evidence = sprintf("%s exceeds %s threshold: %d lines (>%d); no diff growth data supplied — informational only", \
+                    b_type, b_band, total, b_limit)
+            }
+            emit(1, b_cat, evidence, certainty)
+
+            # Prose splits by progressive disclosure, never by a line range.
+            # Emitted only for dispositions a reviewer should act on, mirroring
+            # the seam rule on the LOC path.
+            if (b_crossed || b_material) {
+                emit(1, "decomposition-seam", sprintf("split shape for %s: %s", \
+                    b_type, split_shape("md")), "MEDIUM")
+            }
+            exit 0
+        }
 
         # ---- review lens: growth-aware disposition (AC4) --------------------
         # Only "crossed" and "material" are ever blocking-eligible. A one-line
