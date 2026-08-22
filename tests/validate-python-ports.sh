@@ -279,6 +279,31 @@ final class SwiftProfileTests: XCTestCase {
 }
 EOF
 
+# The declarations above reach the swift arms, but a 29-line file is UNDER both
+# decomposition lenses' LOC thresholds — so patterns.{py,sh} and sizing.{py,sh}
+# emit nothing for it, and "both impls agree" would hold trivially between two
+# empty outputs. That is the vacuity this corpus exists to prevent, reached by a
+# different route than the missing-extension trap the comments above record: the
+# file IS scanned and the arms DO run, but no row survives the threshold, so no
+# divergence can be observed.
+#
+# Padding pushes it over the audit lens's 300-LOC warning so real rows are
+# emitted and compared. Two name families, so the seam path (not merely
+# file-length) is exercised too. Verified non-vacuous by breaking ONE impl's
+# swift arm and confirming this suite goes red.
+{
+    i=0
+    while [ "$i" -lt 40 ]; do
+        command printf 'public struct PadUser%s {\n    let a: Int\n    let b: Int\n    let c: Int\n}\n' "$i"
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt 40 ]; do
+        command printf 'public struct PadOrder%s {\n    let a: Int\n    let b: Int\n    let c: Int\n}\n' "$i"
+        i=$((i + 1))
+    done
+} >>"$FIXDIR/Model.swift"
+
 # A .d.ts, whose decline reason and seam suppression are new in #726 and are
 # decided per-PATH. Without a `.d.ts` in the corpus that branch never runs.
 command cat >"$FIXDIR/api.d.ts" <<'EOF'
@@ -348,7 +373,7 @@ FILE_LIST="$WORKDIR/list.txt"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
-    "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" \
+    "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
     "$FIXDIR/prose/skills/demo/reference.md" "$FIXDIR/prose/docs/guide.md" \
     "$FIXDIR/prose/CLAUDE.md" "$FIXDIR/prose/notes.md" \
