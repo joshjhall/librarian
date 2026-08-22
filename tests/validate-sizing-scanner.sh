@@ -302,17 +302,40 @@ test_declaration_file_declines_in_review_lens() {
     assert_not_contains "$out" "split shape for" \
         "review lens: a .d.ts emits NO shape row despite material growth (#726)"
 
-    # Counter-fixture, and it is what makes the assertion above non-vacuous: the
-    # SAME content under a plain .ts name takes the shape branch. Without this
-    # pair, a suppression that fired on every ts file (or on nothing at all)
-    # would look identical.
+    # Case-insensitivity of the DECLINE PREDICATE, which both impls document as
+    # load-bearing ("the same target must decide alike in every spelling") and
+    # which nothing pinned behaviorally. Drop tolower()/.lower() from either
+    # is_decl_file and this goes red.
+    #
+    # Asserted per-impl rather than through assert_parity, deliberately. A
+    # mixed-case EXTENSION diverges between the two runtimes for an unrelated,
+    # PRE-EXISTING reason: sizing.py's lang_of lowercases the extension before
+    # the EXT_LANG lookup while the shell `case` matches literally, so `.D.TS`
+    # segments as ts under python and as no-language under bash. That is not a
+    # #726 defect — `.PY` vs `.py` diverges identically on the pre-#726 tree —
+    # and it is filed separately. What IS #726's to hold is that the declaration
+    # predicate itself decides alike in every spelling, and that holds in both
+    # runtimes independently, which is what these two assertions check.
+    local u="$WORKDIR/Weird.D.TS" ulist="$WORKDIR/uc-list.txt" uns="$WORKDIR/ns-uc.txt"
+    command cp "$f" "$u"
+    command printf '%s\n' "$u" >"$ulist"
+    make_numstat "$uns" "$u" 1200
+    run_scan "$ulist" "$uns"
+
+    assert_contains "$SCAN_OUT" "declined: type declaration file — no runtime units to extract" \
+        "review lens: .D.TS declines like .d.ts (case-insensitive, bash, #726)"
+    if [ "$HAVE_PY" = "1" ]; then
+        assert_contains "$SCAN_PY_OUT" "declined: type declaration file — no runtime units to extract" \
+            "review lens: .D.TS declines like .d.ts (case-insensitive, python, #726)"
+    fi
+
+    # Counter-fixture, and it is what makes the assertions above non-vacuous: a
+    # BYTE-IDENTICAL body under a plain .ts name takes the shape branch instead.
+    # The path is the only variable — `declare` is kept here deliberately so the
+    # contrast isolates the suffix predicate and nothing else. Without this pair,
+    # a suppression firing on every ts file (or on nothing) would look the same.
     local g="$WORKDIR/plain.ts" glist="$WORKDIR/ts-list.txt" gns="$WORKDIR/ns-ts.txt"
-    : >"$g"
-    i=0
-    while [ "$i" -lt 400 ]; do
-        command printf 'export interface ApiThing%d {\n  id: string;\n}\n' "$i" >>"$g"
-        i=$((i + 1))
-    done
+    command cp "$f" "$g"
     command printf '%s\n' "$g" >"$glist"
     make_numstat "$gns" "$g" 1200
     run_scan "$glist" "$gns"
@@ -323,6 +346,19 @@ test_declaration_file_declines_in_review_lens() {
         "review lens: the same content as .ts DOES get the ts shape row (#726)"
     assert_not_contains "$out" "type declaration file" \
         "review lens: a plain .ts is not treated as a declaration file (#726)"
+
+    # `.tsx` shares the ts language key, and that EXT_LANG/case arm was
+    # otherwise asserted only by inspection — no scan drove a .tsx path.
+    local x="$WORKDIR/widget.tsx" xlist="$WORKDIR/tsx-list.txt" xns="$WORKDIR/ns-tsx.txt"
+    command cp "$f" "$x"
+    command printf '%s\n' "$x" >"$xlist"
+    make_numstat "$xns" "$x" 1200
+    run_scan "$xlist" "$xns"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "split shape for ts: types/ dir split by domain" \
+        "review lens: .tsx resolves to the ts language key like .ts (#726)"
 }
 
 # --- a whitespace-heavy diff cannot fake a threshold crossing ----------------
