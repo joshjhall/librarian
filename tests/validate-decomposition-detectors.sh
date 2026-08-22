@@ -928,6 +928,36 @@ EOF
     # units. 4 is struct + 3 impls; method-level segmentation would give 10.
     assert_fires "$list" file-length "4 top-level units" \
         "rust: an impl block is one unit — its methods are not segmented"
+
+    # NESTED generic bounds. A `<[^>]*>` generic group stops at the first `>`,
+    # so `impl<T: Into<String>> Foo<T>` failed the match outright and the impl
+    # went INVISIBLE — the very defect this arm fixes, reappearing on the
+    # commonest form of generic impl ([[fix-reintroduces-its-own-failure]]).
+    # Every impl below carries a nested bound, so a regression to the
+    # single-level class drops the family and this case fails.
+    f="$d/generic.rs"
+    command cat >"$f" <<'EOF'
+impl<T: Into<String>> Gadget<T> {
+    pub fn new(v: T) -> Self {
+        Gadget { v }
+    }
+}
+
+impl<T: Iterator<Item = u32>> Display for Gadget<T> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(f, "g")
+    }
+}
+
+impl<T: A<B<C>>> Debug for Gadget<T> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(f, "d")
+    }
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "fn gadget_* family (3 units," \
+        "rust: impl with NESTED generic bounds is still segmented, named by type"
 }
 
 # Item kinds the prefix alternation missed entirely before #727. Each was
@@ -1156,6 +1186,10 @@ func (r *Repo) GetThree(id string) string {
 	return r.db[id]
 }
 
+func (r *Repo[T]) GetFour(id string) string {
+	return r.db[id]
+}
+
 func (s Store) PutOne(v string) error {
 	s.n++
 	return nil
@@ -1169,11 +1203,15 @@ EOF
 
     # Methods on one receiver cluster into one family, which is what makes the
     # seam proposable at all — Go's split shape is "more files in the package".
-    assert_fires "$list" decomposition-seam "func repo_* family (3 units," \
-        "go: methods on one receiver cluster by that receiver"
+    # GetFour has a GENERIC receiver (`*Repo[T]`); it joins the same family only
+    # if the type-parameter suffix is stripped, so a family of 4 also pins that
+    # the name is `Repo_GetFour`, not `Repo[T]_GetFour`.
+    assert_fires "$list" decomposition-seam "func repo_* family (4 units," \
+        "go: methods cluster by receiver, generic receiver stripped to its type" \
+        DECOMP_SEAM_MIN_UNITS=4
     # The unit count proves the methods are VISIBLE. Pre-fix this file measured
-    # 1 unit (only NewRepo); 5 is reachable only once each method segments.
-    assert_fires "$list" file-length "5 top-level units" \
+    # 1 unit (only NewRepo); 6 is reachable only once each method segments.
+    assert_fires "$list" file-length "6 top-level units" \
         "go: every method is its own unit, not absorbed into the previous one"
 
     # A pointer receiver, a value receiver, and a generic receiver all name the

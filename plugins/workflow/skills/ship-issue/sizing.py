@@ -132,7 +132,14 @@ UNIT_RE = {
         r"^(?:(?:pub(?:\([a-z ]+\))?|default|async|unsafe|const"
         r"|extern(?:[ \t]+\"[^\"]*\")?)[ \t]+)*"
         r"(?:macro_rules![ \t]+([A-Za-z_][A-Za-z0-9_]*)"
-        r"|impl(?:<[^>]*>)?[ \t]+(?:.*[ \t]+for[ \t]+)?(?:&[ \t]*)?"
+        # The generic list must tolerate NESTING: `<[^>]*>` stops at the first
+        # `>`, so a trait bound like `impl<T: Into<String>> Foo<T>` failed the
+        # whole match and the impl went INVISIBLE — reintroducing the exact
+        # defect this arm exists to fix, on the commonest form of generic impl.
+        # Regex cannot balance arbitrarily; this covers three levels, which is
+        # past anything real (`A<B<C>>` already exhausts two).
+        r"|impl(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?[ \t]+"
+        r"(?:.*[ \t]+for[ \t]+)?(?:&[ \t]*)?"
         r"([A-Za-z_][A-Za-z0-9_]*)"
         r"|extern[ \t]+crate[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
         r"|(?:fn|struct|enum|trait|mod|type|static|const|union)"
