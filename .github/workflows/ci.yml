@@ -181,9 +181,19 @@ jobs:
       # the flag is still there, because losing it leaves a check that looks
       # right and protects nothing.
       #
-      # Re-installing globally after the audit does not reopen the hole: npm
-      # enforces the recorded integrity hash for a pinned version, and the audit
-      # is exactly the assertion that the registry signed those bytes.
+      # The global install then reads the VERIFIED DIRECTORY, not the registry:
+      # `npm install -g "$verify_dir/node_modules/agnix"`. This is the whole
+      # point of the sequence and is not interchangeable with re-installing
+      # `"$pin"` globally.
+      #
+      # Re-resolving `"$pin"` would be two independent fetches — the audit would
+      # describe bytes the first fetch received while a second, unaudited fetch
+      # supplied the bytes that actually run, and `-g` is where `postinstall`
+      # executes. That is a TOCTOU window: registry immutability and cache reuse
+      # usually close it, but "usually" is not a property a supply-chain check
+      # should rest on, and nothing in the script enforces either. Installing the
+      # verified tree makes the audited bytes and the installed bytes the same
+      # bytes by construction, so the guarantee holds without that assumption.
       - name: Install agnix (pinned)
         run: |
           # BOTH commands sit in the condition, deliberately. A `run:` step
@@ -210,7 +220,7 @@ jobs:
           # agnix is a best-effort enrichment, so the gate skips (77) either way.
           if npm install --prefix "$verify_dir" --ignore-scripts "$pin" \
             && (cd "$verify_dir" && npm audit signatures); then
-            if npm install -g "$pin" && agnix --version; then
+            if npm install -g "$verify_dir/node_modules/agnix" && agnix --version; then
               :
             else
               echo "::notice::agnix install failed — tests/lint-agnix-clean.sh will SKIP (exit 77), not fail. agnix is a best-effort enrichment (ADR 0001 §2/§4); the rest of the suite still gates this job."

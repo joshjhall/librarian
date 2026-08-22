@@ -330,6 +330,51 @@ test_signature_check_present() {
     done
 }
 
+test_signature_check_is_scoped_to_the_scratch_tree() {
+    # Presence is not enough: `npm audit signatures` audits whatever tree it is
+    # invoked in. Run from the job's own working directory it would audit
+    # something other than the agnix install — a check that runs, exits, and
+    # means nothing about the package being installed. The `cd "$verify_dir"`
+    # is what points it at the tree actually under test.
+    local f
+    for f in ci.yml code-scanning.yml; do
+        assert_not_empty "$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'cd "$verify_dir" && npm audit signatures')" \
+            "$f must run 'npm audit signatures' INSIDE \$verify_dir (#740) — an audit run anywhere else verifies a different tree than the one being installed, and reports success without checking agnix at all."
+    done
+}
+
+test_global_install_uses_the_verified_tree() {
+    # The strongest property in this change, and the one worth guarding hardest:
+    # the bytes that were audited must be the bytes that get installed.
+    #
+    # `npm install -g "$pin"` would re-resolve the package from the registry — a
+    # second, independent fetch that the audit never saw. Registry immutability
+    # and cache reuse usually make the two identical, but nothing here enforces
+    # that, and `-g` is where postinstall runs. Installing the verified
+    # DIRECTORY removes the assumption entirely.
+    #
+    # Asserted as a positive match on the verified path rather than as an
+    # absence of `"$pin"`: an absence check would also pass if the install line
+    # were deleted outright.
+    local f
+    for f in ci.yml code-scanning.yml; do
+        assert_not_empty "$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'npm install -g "$verify_dir/node_modules/agnix"')" \
+            "$f's global install must read the VERIFIED tree (\$verify_dir/node_modules/agnix), not re-resolve \$pin from the registry (#740) — re-resolving audits one fetch and installs another, leaving the postinstall that actually runs unverified."
+    done
+}
+
+test_scratch_dir_is_cleaned_up() {
+    # A stray mktemp -d per run is minor on an ephemeral runner, but the pairing
+    # is what keeps the step self-contained — and a future edit that drops the
+    # cleanup while keeping the mktemp is exactly the kind of silent drift this
+    # gate family exists to catch.
+    local f
+    for f in ci.yml code-scanning.yml; do
+        assert_not_empty "$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'rm -rf "$verify_dir"')" \
+            "$f creates a scratch \$verify_dir with mktemp -d and must remove it (#740) — found no non-comment 'rm -rf \"\$verify_dir\"'."
+    done
+}
+
 test_scratch_install_ignores_scripts() {
     # The pre-verification install must not run the package's own scripts. The
     # order is verify-THEN-install precisely so a tampered tarball's postinstall
@@ -365,8 +410,11 @@ test_signature_check_precedes_global_install() {
 }
 
 run_test test_signature_check_present "Both workflows verify agnix's registry signature"
+run_test test_signature_check_is_scoped_to_the_scratch_tree "Signature check runs inside \$verify_dir"
 run_test test_scratch_install_ignores_scripts "Pre-verification install passes --ignore-scripts"
+run_test test_global_install_uses_the_verified_tree "Global install reads the verified tree, not the registry"
 run_test test_signature_check_precedes_global_install "Signature check precedes the global install"
+run_test test_scratch_dir_is_cleaned_up "Scratch verify_dir is removed"
 
 # agnix is an OPTIONAL enrichment — absent binary skips the REST of the gate
 # rather than failing it or, worse, passing quietly. The pin checks above have
