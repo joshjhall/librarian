@@ -39,6 +39,9 @@
 #   disposition    — `crossed` forced True (flat grading)   -> red (23 -> 20)
 #   one verdict    — the #701 early `return` removed        -> red (23 -> 22)
 #   fall-through   — docs arm widened to every *.md         -> red (23 -> 21)
+#   category       — emit() category hardcoded ai-file-bloat -> red (25 -> 24)
+#   prose material — `material` forced False in scan_prose   -> red (25 -> 24)
+#   bundle kind    — bundle_kind() forced ""                 -> red (25 -> 24)
 #
 # THAT ROUND PAID FOR ITSELF TOO. The one-verdict mutation initially SURVIVED,
 # and the cause was a test that could not fail: the assertion rode the 500-line
@@ -730,6 +733,85 @@ test_prose_trivial_touch_is_not_blocking() {
     esac
 }
 
+# --- #724: EVERY remaining bloat arm reaches this lens's own disposition ------
+# The agent/SKILL/companion arms are covered above; this drives the other four —
+# memory index, memory concept, CLAUDE.md, and docs.
+#
+# WHY THEY NEED THEIR OWN CASE HERE. They are tested against the AUDIT lens in
+# validate-decomposition-detectors.sh, but `bundle_kind`/`_bundle_root` are brand
+# new to sizing.{py,sh} in #724 — before it this lens had no classification at
+# all. So an arm's thresholds could be right in patterns.py and still reach the
+# review lens's growth-aware wrapper wrongly, and no gate would see it.
+#
+# The `documentation` arm carries the extra property: it is the ONE arm whose
+# category is `doc-file-bloat` rather than `ai-file-bloat` (the #222 split). A
+# wrapper that hardcoded the category would pass every other arm and silently
+# reclassify docs pages.
+test_every_bloat_arm_reaches_the_review_lens() {
+    local root="$WORKDIR/arms" out
+    command mkdir -p "$root/.claude/memory" "$root/sub" "$root/docs"
+    make_md_file "$root/.claude/memory/MEMORY.md" 300 # >250 index high
+    make_md_file "$root/.claude/memory/lesson.md" 400 # >350 concept high
+    make_md_file "$root/sub/CLAUDE.md" 700            # >600 CLAUDE.md high
+    make_md_file "$root/docs/guide.md" 900            # >800 doc high
+    local list="$WORKDIR/arms.txt"
+    command printf '%s\n%s\n%s\n%s\n' \
+        "$root/.claude/memory/MEMORY.md" "$root/.claude/memory/lesson.md" \
+        "$root/sub/CLAUDE.md" "$root/docs/guide.md" >"$list"
+
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "memory index" "the memory-index arm reaches this lens"
+    assert_contains "$out" "memory concept" "the memory-concept arm reaches this lens"
+    assert_contains "$out" "CLAUDE.md exceeds" "the CLAUDE.md arm reaches this lens"
+    assert_contains "$out" "documentation exceeds" "the docs arm reaches this lens"
+
+    # The category split (#222): docs are doc-file-bloat, everything else is
+    # ai-file-bloat. Asserted on the docs ROW, not on the whole output, which
+    # would pass merely because some other row carried the category.
+    local docs_row
+    docs_row="$(command printf '%s\n' "$out" | command grep -F '/docs/guide.md' || true)"
+    assert_not_empty "$docs_row" "the docs page is reported"
+    assert_contains "$docs_row" "doc-file-bloat" "a docs page keeps doc-file-bloat, not ai-file-bloat"
+    local mem_row
+    mem_row="$(command printf '%s\n' "$out" | command grep -F '/MEMORY.md' || true)"
+    assert_contains "$mem_row" "ai-file-bloat" "a memory index stays ai-file-bloat"
+}
+
+# --- #724: the `material` disposition on CLASSIFIED prose --------------------
+# test_material_growth_is_actionable covers this branch on the production-LOC
+# path only. scan_prose (and the awk `b_material` arm) carry their own copy of
+# the logic, so the branch is genuinely separate code — an already-over prose
+# file taking material growth without crossing from under-budget.
+test_prose_material_growth_is_actionable() {
+    local root="$WORKDIR/prose-material/agents" out row
+    command mkdir -p "$root"
+    local agent_md="$root/big.md"
+    make_md_file "$agent_md" 700
+    local list="$WORKDIR/prose-material.txt" numstat="$WORKDIR/ns-prose-material.txt"
+    command printf '%s\n' "$agent_md" >"$list"
+    # 60 added: over the 50 materiality floor, but prior (700-60=640) is still
+    # far above the 250 warn, so this is `material`, NOT `crossed`.
+    make_numstat "$numstat" "$agent_md" 60
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    assert_contains "$out" "already over before this diff" "the evidence takes the material wording"
+    assert_not_contains "$out" "pushed it over" "material growth is not reported as a crossing"
+    row="$(command printf '%s\n' "$out" | command grep -F 'ai-file-bloat' || true)"
+    assert_not_empty "$row" "a bloat row exists"
+    case "$row" in
+        *"	MEDIUM") : ;;
+        *) _fail "material growth on an over-budget prose file was not MEDIUM" \
+            "Material growth is blocking-eligible at MEDIUM, like the LOC path (#724/AC4)." \
+            "$row" ;;
+    esac
+}
+
 # --- #724: an UNCLASSIFIED markdown file still takes the generic path ---------
 # The scoping counter-case. Classification must not swallow all markdown: a .md
 # that matches no bloat arm (not an agent, skill, companion, CLAUDE.md, doc or
@@ -806,6 +888,8 @@ run_test test_agent_md_is_classified_by_type "#724: an agent definition is sized
 run_test test_classified_prose_gets_exactly_one_verdict "#724/#701: a classified prose file gets exactly one size verdict"
 run_test test_skill_and_companion_arms_stay_ordered "#724: SKILL.md and its companion get different budgets (arm order)"
 run_test test_prose_trivial_touch_is_not_blocking "#724: prose keeps the growth disposition (AC4 holds for classified files)"
+run_test test_every_bloat_arm_reaches_the_review_lens "#724: every bloat arm (memory/CLAUDE.md/docs) reaches the review lens"
+run_test test_prose_material_growth_is_actionable "#724: material growth on classified prose is MEDIUM/actionable"
 run_test test_unclassified_markdown_keeps_the_loc_path "#724: an unclassified .md still takes the production-LOC path"
 run_test test_small_file_stays_silent "A file under threshold produces no rows"
 run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"

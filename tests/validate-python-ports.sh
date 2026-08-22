@@ -225,7 +225,8 @@ EOF
 # are the SAME length on purpose, so any bash/python disagreement about arm
 # ORDER shows up as different budgets on identical input rather than hiding
 # behind a size difference.
-command mkdir -p "$FIXDIR/prose/agents" "$FIXDIR/prose/skills/demo" "$FIXDIR/prose/docs"
+command mkdir -p "$FIXDIR/prose/agents" "$FIXDIR/prose/skills/demo" "$FIXDIR/prose/docs" \
+    "$FIXDIR/prose/.claude/memory"
 make_prose_fixture() {
     local path="$1" nlines="$2" i=0
     : >"$path"
@@ -239,6 +240,13 @@ make_prose_fixture "$FIXDIR/prose/skills/demo/SKILL.md" 520
 make_prose_fixture "$FIXDIR/prose/skills/demo/reference.md" 520
 make_prose_fixture "$FIXDIR/prose/docs/guide.md" 900
 make_prose_fixture "$FIXDIR/prose/CLAUDE.md" 700
+# Memory-bundle prose. `bundle_kind` is the arm most at risk of a parity split:
+# the Python side matches the root with a LITERAL containment test while bash
+# matches a QUOTED `case` pattern, deliberately, because fnmatch would read glob
+# metacharacters in an operator-configured root as syntax. Both halves are new
+# to sizing.{py,sh} in #724, so the corpus needs to actually reach them.
+make_prose_fixture "$FIXDIR/prose/.claude/memory/MEMORY.md" 300
+make_prose_fixture "$FIXDIR/prose/.claude/memory/lesson.md" 400
 # Unclassified markdown — the fall-through arm. Without it the corpus could not
 # tell "classification is shared" from "all markdown is classified".
 make_prose_fixture "$FIXDIR/prose/notes.md" 900
@@ -250,7 +258,8 @@ for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" 
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
     "$FIXDIR/prose/skills/demo/reference.md" "$FIXDIR/prose/docs/guide.md" \
-    "$FIXDIR/prose/CLAUDE.md" "$FIXDIR/prose/notes.md"; do
+    "$FIXDIR/prose/CLAUDE.md" "$FIXDIR/prose/notes.md" \
+    "$FIXDIR/prose/.claude/memory/MEMORY.md" "$FIXDIR/prose/.claude/memory/lesson.md"; do
     command printf '%s\n' "$f" >>"$FILE_LIST"
 done
 
