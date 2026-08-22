@@ -28,8 +28,11 @@
 # other and against its own floor, but it cannot police prose, so prose must not
 # carry a copy worth policing.
 #
-# This config's rule IDs/schema track whatever version those pins name; binary
-# bumps route via #769 / dependabot (ADR §5: never `@latest`).
+# This config's rule IDs/schema track whatever version those pins name. Bumping
+# those pins is a HAND EDIT — .github/dependabot.yml configures the
+# `github-actions` ecosystem only, so nothing automates an `npm install -g
+# agnix@X.Y.Z` line here; the container-side install is #769's, in a repo with
+# its own dependabot config (ADR §5: never `@latest`).
 # `tool_versions`/`spec_revisions` are intentionally unset — no consumer needs
 # version-aware CC-* validation yet, and pinning them would add a second drift
 # surface to keep in sync.
@@ -103,7 +106,8 @@ disabled_rules = ["CC-MEM-014", "CC-MEM-009"]
 # The fix is the version, which is why #734 also moved code-scanning.yml's pin
 # from 0.40.0 to 0.49.0 — before that bump, CI's annotation stayed red no matter
 # what this file said. tests/lint-agnix-clean.sh encodes the same floor and skips
-# below it. Bumps still route via containers#769 / dependabot per ADR §5.
+# below it. Bumping the pins is a deliberate hand edit — no dependabot ecosystem
+# covers them (ADR §5); containers#769 owns the container-side install.
 
 # XML-001 (unclosed XML tag) — 6 errors, all FALSE POSITIVES. Every hit is a
 # placeholder metavariable in prose, not markup: `<specific>`, `<path>`,
