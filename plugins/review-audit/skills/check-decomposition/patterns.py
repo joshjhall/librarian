@@ -97,6 +97,39 @@ UNIT_RE = {
         r"(?:fn|struct|enum|trait|impl|mod)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
     ),
     "go": re.compile(r"^(?:func|type|var|const)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"),
+    # Swift (#728). Modifiers are a REPEATED optional group, not a fixed
+    # sequence: `public final class`, `@objc private static func` and bare
+    # `struct` are all real, and Swift imposes no canonical order on them. One
+    # `(?:...)*` group covering access levels, `final`/`static`/`class`
+    # (type-method), `override`, `@objc`/`@MainActor`-style attributes, and
+    # `indirect` matches every ordering without enumerating permutations.
+    #
+    # `extension` is ONE unit, matching Rust's `impl` (#727). The two are the
+    # same construct — a block bundling many methods onto a type — so they must
+    # be segmented the same way or the cohesive-decline path treats equivalent
+    # code differently by language. If #727 re-decides `impl`, this arm changes
+    # in the SAME PR; neither may move alone.
+    #
+    # `associatedtype` is deliberately NOT here, though the issue listed it.
+    # Swift allows it only INSIDE a protocol body, so it is never a top-level
+    # declaration — and an arm for it is not merely dead, it is harmful: a
+    # protocol whose body is written unindented (legal Swift) would have each
+    # `associatedtype` lifted into a phantom top-level unit, corrupting the very
+    # count the cohesive-decline and seam paths read. Found by the mutation
+    # round: deleting the arm changed nothing, and the reachability check that
+    # followed showed the only inputs it fires on are invalid Swift or that
+    # false positive ([[surviving-mutation-may-be-a-real-no-op]]). It stays in
+    # RESERVED_UNIT_NAME, since it is still a keyword no NAME may be.
+    #
+    # A keyword captured as the NAME is rejected downstream by
+    # RESERVED_UNIT_NAME — see the note there for why that is a filter rather
+    # than a negative lookahead.
+    "swift": re.compile(
+        r"^(?:(?:public|private|internal|fileprivate|open|final|static|class"
+        r"|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*"
+        r"(?:func|class|struct|enum|protocol|extension|actor|typealias)"
+        r"[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+    ),
     "sh": re.compile(
         r"^(?:function[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([ \t]*\)|"
         r"^function[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
@@ -111,6 +144,11 @@ COMMENT_RE = {
     "ts": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "rs": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "go": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    # Swift (#728). `///` and `/**` doc comments are matched by the `//` and
+    # `/*` alternatives respectively — the issue notes this works "by luck" for
+    # the `//` arm, so the fixture asserts the production-LOC NUMBER changes on
+    # a doc-commented file rather than trusting the shape by inspection.
+    "swift": re.compile(r"^[ \t]*(?://|/\*|\*)"),
 }
 
 # A unit header that marks the unit as TEST code. Replaces the per-language
@@ -121,9 +159,83 @@ TEST_UNIT_RE = {
     "py": re.compile(r"^(?:async[ \t]+)?def[ \t]+test_|^class[ \t]+Test"),
     "js": re.compile(r"^[ \t]*(?:describe|it|test)[ \t]*\("),
     "ts": re.compile(r"^[ \t]*(?:describe|it|test)[ \t]*\("),
-    "rs": re.compile(r"^[ \t]*#\[(?:cfg\(test\)|test)\]"),
+    # NB: `rs` is deliberately absent — Rust marks tests with an ATTRIBUTE on
+    # the preceding line, so it lives in ATTR_TEST_RE below. It USED to sit here
+    # too, read by a hardcoded `lang == "rs"` attribute branch; #728 moved it to
+    # the table that describes what it actually is. Keeping a copy here would be
+    # two spellings of one fact, and now that the same-line path no longer
+    # excludes rs by name, a stale copy would be live code.
     "go": re.compile(r"^func[ \t]+(?:Test|Benchmark|Fuzz|Example)"),
     "sh": re.compile(r"^(?:function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)"),
+    # Swift XCTest (#728) — the SAME-LINE half of Swift's two test conventions:
+    # a `func test…` (any modifier prefix) or an `XCTestCase` subclass. The
+    # swift-testing half is an ATTRIBUTE on the preceding line and lives in
+    # ATTR_TEST_RE below; both ship because the ecosystem is mid-migration.
+    #
+    # The class arm keys off the `: XCTestCase` conformance rather than a name
+    # convention, since Swift test classes are not required to be named Test*.
+    # `[^{]*` spans any other protocols in the conformance list without running
+    # into the body.
+    "swift": re.compile(
+        r"^(?:(?:public|private|internal|fileprivate|open|final|static|class"
+        r"|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*"
+        r"(?:func[ \t]+test|class[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*:[^{]*XCTestCase)"
+    ),
+}
+
+# An ATTRIBUTE line that marks the NEXT unit as test code (#728).
+#
+# Generalized from a hardcoded `lang == "rs"` branch in find_units(). Rust's
+# `#[test]` and swift-testing's `@Test` are the same construct — a marker on the
+# line BEFORE the unit header — and hardcoding a second language would have made
+# three copies of one idea across four files. Table membership now drives the
+# `pending_test` path, so a third attribute-marking language is one entry.
+#
+# A language may appear in BOTH tables: Swift does, since XCTest is same-line
+# while swift-testing is attribute-marked, which is why find_units() checks the
+# two paths independently rather than as an either/or.
+ATTR_TEST_RE = {
+    "rs": re.compile(r"^[ \t]*#\[(?:cfg\(test\)|test)\]"),
+    "swift": re.compile(r"^[ \t]*@Test\b"),
+}
+
+# Words that must never be accepted as a captured unit NAME (#728).
+#
+# Swift's `class` is in both the modifier group and the keyword alternation of
+# UNIT_RE, so a malformed-but-parseable spelling (`open class override Foo`)
+# matches `class` as the keyword and hands back `override` as the name. That is
+# not a cosmetic mislabel: the name becomes the seam family and a god-module
+# "concern" in evidence a human reads, so a keyword there is a WRONG FINDING.
+#
+# Enforced as a post-match FILTER rather than a negative lookahead, on purpose.
+# POSIX awk ERE has no lookahead at all, so a lookahead would be a Python-only
+# construct — the two impls would disagree on exactly these lines, and the
+# divergence would surface as a parity failure rather than as the fix it looks
+# like. A set membership test transcribes to awk verbatim (is_reserved_name).
+#
+# Only `swift` populates this today; find_units consults it for every language
+# so a future one needs no new branch.
+RESERVED_UNIT_NAME = {
+    "swift": {
+        "public",
+        "private",
+        "internal",
+        "fileprivate",
+        "open",
+        "final",
+        "static",
+        "class",
+        "override",
+        "indirect",
+        "func",
+        "struct",
+        "enum",
+        "protocol",
+        "extension",
+        "actor",
+        "typealias",
+        "associatedtype",
+    },
 }
 
 # Whole-file test-region markers: everything from the match to EOF is test code.
@@ -136,7 +248,16 @@ TEST_REGION_RE = {
 }
 
 # Indent width used to convert leading whitespace into a nesting depth.
-NEST_UNIT = {"py": 4, "js": 2, "ts": 2, "rs": 4, "go": 4, "sh": 4, "md": 2}
+NEST_UNIT = {
+    "py": 4,
+    "js": 2,
+    "ts": 2,
+    "rs": 4,
+    "go": 4,
+    "sh": 4,
+    "md": 2,
+    "swift": 4,
+}
 
 # Blankness and indent are defined by REGEX, not str.strip()/str.lstrip(): the
 # latter are unicode-aware (\x0b, \x0c, \x85, NBSP...) while the awk fallback
@@ -159,6 +280,7 @@ EXT_LANG = {
     "bash": "sh",
     "md": "md",
     "markdown": "md",
+    "swift": "swift",
 }
 # <<< shared:loc-tables-py
 
@@ -187,6 +309,10 @@ UNIT_NOUN = {
     "go": "func",
     "sh": "function",
     "md": "section",
+    # Same argument as ts: a Swift top-level unit is as often a TYPE
+    # (struct/protocol/enum/extension) as a callable, so "func" would be wrong
+    # for most rows. "declaration" is the one word true of every swift arm.
+    "swift": "declaration",
 }
 
 
@@ -219,6 +345,14 @@ SPLIT_SHAPE = {
     # inheriting the js one through an alias.
     "ts": "types/ dir split by domain + a re-exporting barrel index.ts",
     "go": "additional files in the same package (no import churn)",
+    # Swift's idiomatic decomposition is extensions in separate files (#728) —
+    # `Foo+Networking.swift`, `Foo+Codable.swift`. DIFFERENT from every other
+    # shape here because it needs no re-exporting barrel and no module: Swift
+    # types are open for extension across files within a module, so a split
+    # costs zero import churn at the call site. Naming the `Type+Concern.swift`
+    # convention is what makes the row actionable rather than "consider
+    # splitting".
+    "swift": "extensions in separate files (Type+Concern.swift), same module",
     "sh": "sourced fragment + an explicit ordered list (split-suite convention)",
     "md": (
         "progressive disclosure: move detail to linked files, leave a one-line pointer"
@@ -383,13 +517,25 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
         if rx is None:
             return []
         test_rx = TEST_UNIT_RE.get(lang)
+        attr_rx = ATTR_TEST_RE.get(lang)
         pending_test = False
         for idx, line in enumerate(lines, start=1):
-            # An attribute line (Rust #[test]) marks the NEXT unit as test code.
-            if lang == "rs" and test_rx is not None and test_rx.search(line):
-                pending_test = True
-                continue
             m = rx.match(line)
+            # An attribute line marks the NEXT unit as test code (Rust #[test],
+            # swift-testing @Test). Table-driven since #728 — it was a hardcoded
+            # `lang == "rs"` branch.
+            #
+            # ORDER MATTERS, and differs from the pre-#728 code: the unit match
+            # is attempted FIRST, and the attribute only CONSUMES the line when
+            # the line is not itself a unit header. Rust's `#[test]` always
+            # stands alone so this is a no-op there, but swift-testing writes
+            # `@Test func foo()` on ONE line — under the old continue-first
+            # shape that line would set the flag and be skipped, losing the unit
+            # entirely and marking the NEXT (production) unit as a test instead.
+            if attr_rx is not None and attr_rx.search(line):
+                pending_test = True
+                if m is None:
+                    continue
             if not m:
                 continue
             name = m.group(1)
@@ -397,11 +543,31 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
                 name = m.group(2)
             if not name:
                 continue
+            # A keyword captured as a name means the line parsed a modifier as
+            # the unit keyword — drop the bogus unit rather than seed a seam
+            # family called "override" (#728). The line is still counted by
+            # measure(); only the phantom unit disappears.
+            #
+            # pending_test MUST be cleared on this path. The dropped header is
+            # what the attribute was marking, so leaving the flag set carries it
+            # onto the NEXT genuine unit and silently marks a PRODUCTION unit as
+            # test — removing its lines from production LOC and suppressing the
+            # very findings this scanner exists to emit. The guard against one
+            # wrong answer would otherwise manufacture another
+            # ([[fix-reintroduces-its-own-failure]]).
+            if name in RESERVED_UNIT_NAME.get(lang, ()):
+                pending_test = False
+                continue
             u = Unit(name, idx)
             if pending_test:
                 u.is_test = True
                 pending_test = False
-            elif test_rx is not None and lang != "rs" and test_rx.search(line):
+            elif test_rx is not None and test_rx.search(line):
+                # No longer excludes the attribute-marked languages by name
+                # (#728). Rust has no TEST_UNIT_RE entry, so dropping the old
+                # `lang != "rs"` guard cannot change its behavior; Swift needs
+                # BOTH paths live, since XCTest is same-line while swift-testing
+                # is attribute-marked.
                 u.is_test = True
             units.append(u)
 

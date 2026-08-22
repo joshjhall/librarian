@@ -666,6 +666,105 @@ test_per_language_thresholds_differ() {
     assert_not_contains "$out" "mid.sh" "the same size shell file is under its 700 threshold"
 }
 
+# --- #728: Swift is modeled in the REVIEW lens too ---------------------------
+# The audit lens has its own coverage (validate-decomposition-detectors.sh); this
+# is the other half of "modeled in BOTH lenses". Before #728, lang_of() returned
+# "" for a .swift path here as well, so a Swift file was sized with no comment
+# model, no test exclusion, and no segmenter.
+#
+# The threshold assertion uses the SAME between-the-pairs gap trick as
+# test_per_language_thresholds_differ above: 600 production LOC is over Swift's
+# decided 400 warning and under the shell 700, so a gutted per_language table
+# (Swift falling through to the 500/800 default, or to no entry at all) changes
+# the verdict. A fixture over every pair would pass with the entry deleted.
+test_swift_is_modeled_in_the_review_lens() {
+    # TWO name families, not one: a single family spanning the whole file has no
+    # low-coupling seam to cut and declines, which would leave the split-shape
+    # assertion below with no seam row to attach to.
+    local sw="$WORKDIR/mid.swift" list="$WORKDIR/swift-list.txt" out i
+    : >"$sw"
+    i=0
+    while [ "$i" -lt 100 ]; do
+        command printf 'public struct UserThing%d {\n    let a: Int\n}\n' "$i" >>"$sw"
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt 100 ]; do
+        command printf 'public struct OrderThing%d {\n    let b: Int\n}\n' "$i" >>"$sw"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$sw" >"$list"
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    # The THRESHOLD ITSELF is asserted, not merely that a row fired. At 600 LOC
+    # this file is over the default 500 pair too, so "a row appeared" passes
+    # with the per_language entry deleted — which is exactly what a mutation
+    # round proved: gutting the swift 400/700 pair SURVIVED an earlier draft of
+    # this test. The rendered "(>400 warning)" is the only observable that
+    # distinguishes the decided pair from the fallthrough.
+    assert_contains "$out" "(>400 warning)" \
+        "swift uses its DECIDED 400 warning, not the 500 default (#728)"
+    assert_contains "$out" "mid.swift" "a 600-LOC Swift file is over its decided 400 warning (#728)"
+    assert_contains "$out" "200 top-level units" "the review lens segments Swift, not just sizes it (#728)"
+
+    # The HIGH half of the pair needs its own fixture: 600 LOC is under both
+    # 700 (swift) and 800 (default), so nothing above can see a mutated high
+    # value. 750 sits between them.
+    local swhi="$WORKDIR/high.swift" hilist="$WORKDIR/swift-high.txt"
+    : >"$swhi"
+    i=0
+    while [ "$i" -lt 250 ]; do
+        command printf 'public struct HighThing%d {\n    let a: Int\n}\n' "$i" >>"$swhi"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$swhi" >"$hilist"
+    run_scan "$hilist"
+    assert_parity
+    assert_contains "$SCAN_OUT" "(>700 high)" \
+        "swift uses its DECIDED 700 high, not the 800 default (#728)"
+
+    # The shape row is gated on a GROWTH signal (`crossed or material`), so it
+    # needs a numstat sidecar — this lens deliberately stays quiet about how to
+    # split a file the diff did not meaningfully grow. Without the sidecar the
+    # run above takes the decline branch and the shape assertion would be
+    # testing the wrong branch.
+    local ns="$WORKDIR/ns-swift.txt"
+    make_numstat "$ns" "$sw" 200
+    run_scan "$list" "$ns"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "extensions in separate files" \
+        "the review lens emits the Swift split shape on a grown file (#728)"
+
+    # Comment model + both test conventions, asserted through the production
+    # NUMBER — the quantity a threshold verdict actually reads. Padding keeps
+    # the file over threshold so a row exists to read at all.
+    local sw2="$WORKDIR/mixed.swift"
+    {
+        command printf '/// Doc line one.\n/// Doc line two.\n'
+        command printf '@Test\nfunc swiftTestingUnit() {\n    work()\n}\n'
+        command printf 'func testXCTestUnit() {\n    work()\n}\n'
+        i=0
+        while [ "$i" -lt 200 ]; do
+            command printf 'public struct PadThing%d {\n    let a: Int\n}\n' "$i"
+            i=$((i + 1))
+        done
+    } >"$sw2"
+    command printf '%s\n' "$sw2" >"$list"
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+
+    # 609 total - 2 comment - 6 test-excluded = 601 production.
+    assert_contains "$out" "601 production LOC" \
+        "swift: /// doc comments and both test conventions leave 601 production LOC (#728)"
+    assert_contains "$out" "2 comment" "swift: the two /// lines count as comments (#728)"
+    assert_contains "$out" "6 test-excluded" \
+        "swift: both test conventions are excluded in the review lens (#728)"
+}
+
 # --- a file UNDER threshold stays silent -------------------------------------
 # The counter-fixture. Without it every assertion above could pass by emitting a
 # row for literally every file.
@@ -984,6 +1083,7 @@ run_test test_markdown_arm_is_sized_and_shaped "The markdown arm is sized and ge
 run_test test_split_shape_is_language_shaped "AC7: split guidance matches the file's language"
 run_test test_every_split_shape_arm_is_language_specific "AC7: every SPLIT_SHAPE arm is reachable and language-specific"
 run_test test_per_language_thresholds_differ "Per-language thresholds are consulted, not merely present"
+run_test test_swift_is_modeled_in_the_review_lens "swift: segmenter, comment model, test exclusion, 400/700 pair (#728)"
 run_test test_agent_md_is_classified_by_type "#724: an agent definition is sized by its own budget, not as a generic doc"
 run_test test_classified_prose_gets_exactly_one_verdict "#724/#701: a classified prose file gets exactly one size verdict"
 run_test test_skill_and_companion_arms_stay_ordered "#724: SKILL.md and its companion get different budgets (arm order)"

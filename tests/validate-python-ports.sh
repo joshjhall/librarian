@@ -221,6 +221,89 @@ export module LegacyModule { }
 export const realFn = () => 1
 EOF
 
+# Swift coverage (#728). Before it, `lang_of()` returned "" for a .swift path in
+# BOTH decomposition lenses, so the corpus carried no file that reached a swift
+# arm — the same vacuity trap the .mjs/.cjs and .sh comments above record.
+#
+# Content is chosen to reach the arms that can DIVERGE between the two runtimes
+# rather than merely to be Swift:
+#
+#   - Every unit keyword, including `extension` (one unit, matching Rust's
+#     `impl`) and the newer `actor`.
+#   - The MODIFIER group in several orders (`public final class`,
+#     `@objc private static func`, `override public func`) — Swift fixes no
+#     order, and the group is a repeated `(...)*` in both impls.
+#   - `public class func` — `class` is in BOTH the modifier group and the
+#     keyword alternation, so this is the spelling where leftmost-FIRST (python
+#     re) and leftmost-LONGEST (awk ERE) could pick different parses and capture
+#     different NAMES.
+#   - `open class override Bogus` — malformed Swift that still parses, whose
+#     captured name would be the keyword `override` without the reserved-name
+#     filter. A phantom unit named for a keyword becomes a seam family and a
+#     god-module "concern" in human-read evidence, so it is a wrong FINDING and
+#     not a cosmetic mislabel.
+#   - BOTH test conventions, including the one-line `@Test func` that the
+#     attribute path must not swallow, plus a production unit immediately after
+#     an attribute-marked one (the line that goes wrong if the attribute
+#     consumes its own header).
+#   - `///` doc comments, whose exclusion from production LOC is AC2.
+command cat >"$FIXDIR/Model.swift" <<'EOF'
+/// A doc comment.
+/// A second doc line.
+public struct SwiftUser {
+    let id: String
+}
+public final class SwiftStore {
+    let cache: Int
+}
+@objc private static func swiftHelper() {}
+override public func swiftOverride() {}
+public class func swiftTypeMethod() {}
+extension SwiftUser: Codable {
+    func encode() {}
+}
+public protocol SwiftLoading {}
+public actor SwiftCache {}
+indirect enum SwiftTree { case leaf }
+typealias SwiftHandler = () -> Void
+open class override Bogus {
+    let x: Int
+}
+@Test
+func swiftTestingTwoLine() {}
+@Test func swiftTestingOneLine() {}
+func productionAfterAttribute() {}
+func testXCTestTopLevel() {}
+final class SwiftProfileTests: XCTestCase {
+    func testInner() {}
+}
+EOF
+
+# The declarations above reach the swift arms, but a 29-line file is UNDER both
+# decomposition lenses' LOC thresholds — so patterns.{py,sh} and sizing.{py,sh}
+# emit nothing for it, and "both impls agree" would hold trivially between two
+# empty outputs. That is the vacuity this corpus exists to prevent, reached by a
+# different route than the missing-extension trap the comments above record: the
+# file IS scanned and the arms DO run, but no row survives the threshold, so no
+# divergence can be observed.
+#
+# Padding pushes it over the audit lens's 300-LOC warning so real rows are
+# emitted and compared. Two name families, so the seam path (not merely
+# file-length) is exercised too. Verified non-vacuous by breaking ONE impl's
+# swift arm and confirming this suite goes red.
+{
+    i=0
+    while [ "$i" -lt 40 ]; do
+        command printf 'public struct PadUser%s {\n    let a: Int\n    let b: Int\n    let c: Int\n}\n' "$i"
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt 40 ]; do
+        command printf 'public struct PadOrder%s {\n    let a: Int\n    let b: Int\n    let c: Int\n}\n' "$i"
+        i=$((i + 1))
+    done
+} >>"$FIXDIR/Model.swift"
+
 # A .d.ts, whose decline reason and seam suppression are new in #726 and are
 # decided per-PATH. Without a `.d.ts` in the corpus that branch never runs.
 command cat >"$FIXDIR/api.d.ts" <<'EOF'
@@ -290,7 +373,7 @@ FILE_LIST="$WORKDIR/list.txt"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
-    "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" \
+    "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
     "$FIXDIR/prose/skills/demo/reference.md" "$FIXDIR/prose/docs/guide.md" \
     "$FIXDIR/prose/CLAUDE.md" "$FIXDIR/prose/notes.md" \

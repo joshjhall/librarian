@@ -86,6 +86,7 @@ lang_of() {
         *.go) echo "go" ;;
         *.sh | *.bash) echo "sh" ;;
         *.md | *.markdown) echo "md" ;;
+        *.swift) echo "swift" ;;
         *) echo "" ;;
     esac
 }
@@ -102,6 +103,7 @@ awk_lib() {
         if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
         if (lang == "rs") return line ~ /^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "go") return line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
+        if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         return 0
     }
@@ -115,20 +117,55 @@ awk_lib() {
         else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
         else if (lang == "rs") { sub(/^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+/, "", s) }
         else if (lang == "go") { sub(/^(func|type|var|const)[ \t]+/, "", s) }
+        # swift: `class` appears in BOTH the modifier group and the keyword
+        # alternation (`class func` is a type method; `class Foo` is a type).
+        # POSIX awk ERE is leftmost-LONGEST over the whole match, and only one
+        # parse of each valid spelling reaches a trailing identifier, so the two
+        # resolve without an ordering hack. A malformed spelling that captures a
+        # KEYWORD as the name is rejected by is_reserved_name below.
+        else if (lang == "swift") { sub(/^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias)[ \t]+/, "", s) }
         else if (lang == "sh") { sub(/^function[ \t]+/, "", s); sub(/[ \t]*\(.*$/, "", s) }
         if (match(s, /^[A-Za-z_$][A-Za-z0-9_$]*/)) return substr(s, 1, RLENGTH)
         return ""
+    }
+    # is_reserved_name: NM is a keyword that must never be accepted as a unit
+    # name. The awk half of RESERVED_UNIT_NAME in the .py primaries (#728).
+    #
+    # Swift `class` sits in BOTH the modifier group and the keyword alternation,
+    # so `open class override Foo` parses `class` as the keyword and yields
+    # `override` as the name — which would become a seam family and a
+    # god-module concern in human-read evidence. A post-match filter rather than
+    # a negative lookahead because POSIX awk ERE has NO lookahead: a
+    # Python-only construct there would make the two impls disagree on exactly
+    # these lines. A fixed-string membership test transcribes verbatim.
+    function is_reserved_name(nm, lang) {
+        if (lang != "swift") return 0
+        return index(" public private internal fileprivate open final static class override indirect func struct enum protocol extension actor typealias associatedtype ", " " nm " ") > 0
     }
     function is_test_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?def[ \t]+test_/ || line ~ /^class[ \t]+Test/
         if (lang == "js" || lang == "ts") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
         if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)/
+        if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func[ \t]+test|class[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*:[^{]*XCTestCase)/
         if (lang == "sh") return line ~ /^(function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)/
+        return 0
+    }
+    # is_attr_test: an ATTRIBUTE line marking the NEXT unit as test code —
+    # Rust #[test]/#[cfg(test)], swift-testing @Test. The awk half of
+    # ATTR_TEST_RE in the .py primaries (#728), replacing what was a hardcoded
+    # `lang == "rs"` test inline in the segmenter loop.
+    #
+    # `@Test\b` has no POSIX ERE spelling (no \b), so the boundary is written
+    # explicitly as "not an identifier character" — with an end-of-string
+    # alternative, since a bare `@Test` line has nothing after it.
+    function is_attr_test(line, lang) {
+        if (lang == "rs") return line ~ /^[ \t]*#\[(cfg\(test\)|test)\]/
+        if (lang == "swift") return line ~ /^[ \t]*@Test([^A-Za-z0-9_]|$)/
         return 0
     }
     function is_comment(line, lang) {
         if (lang == "py" || lang == "sh") return line ~ /^[ \t]*#/
-        if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
+        if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go" || lang == "swift") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
     # <<< shared:unit-segmenters-awk
@@ -146,13 +183,27 @@ production_loc() {
         if (lang != "" && lang != "md") {
             for (i = 1; i <= total; i++) {
                 line = L[i]
-                if (lang == "rs" && line ~ /^[ \t]*#\[(cfg\(test\)|test)\]/) { pending_test = 1; continue }
+                # Table-driven since #728 (was hardcoded to rs). Same
+                # header-first ordering as the two scanners: a one-line
+                # @Test func must still register as a unit, since the whole job
+                # of this tool is proving no unit was lost in a split.
+                #
+                # NB: no apostrophes in this region — the awk program is a
+                # single-quoted shell string, so one would end it and the rest
+                # would be parsed as shell.
+                if (is_attr_test(line, lang)) { pending_test = 1; if (!is_unit_header(line, lang)) continue }
                 if (!is_unit_header(line, lang)) continue
                 if (unit_name(line, lang) == "") continue
+                # See is_reserved_name: a keyword captured as a name means a
+                # modifier was parsed as the unit keyword (#728). pending_test
+                # MUST be cleared here — the dropped header is what the
+                # attribute was marking, so leaving it set carries the mark onto
+                # the NEXT genuine unit and counts a PRODUCTION unit as test.
+                if (is_reserved_name(unit_name(line, lang), lang)) { pending_test = 0; continue }
                 nu++
                 us[nu] = i
                 if (pending_test) { ut[nu] = 1; pending_test = 0 }
-                else if (lang != "rs" && is_test_header(line, lang)) ut[nu] = 1
+                else if (is_test_header(line, lang)) ut[nu] = 1
                 else ut[nu] = 0
             }
         }
@@ -184,12 +235,26 @@ unit_names() {
     [ -n "$2" ] && [ "$2" != "md" ] || return 0
     LC_ALL=C command awk -v lang="$2" "$(awk_lib)"'
     {
-        if (lang == "rs" && $0 ~ /^[ \t]*#\[(cfg\(test\)|test)\]/) { pending = 1; next }
-        if (!is_unit_header($0, lang)) next
+        # SECOND segmenter loop in this file — production_loc() above has its
+        # own. Both must apply the same rules or the two halves of one
+        # verification disagree about what a unit is. #728 updated this one to
+        # match: table-driven attribute tests (was hardcoded to rs),
+        # header-first ordering so a one-line `@Test func` still registers, and
+        # the reserved-name filter so a keyword captured as a name never becomes
+        # a phantom unit. Without the last one this loop counted 3 units where
+        # production_loc() and the python port counted 2 — caught as a parity
+        # failure ([[harden-one-knob-grep-every-sibling]]).
+        is_hdr = is_unit_header($0, lang)
+        if (is_attr_test($0, lang)) { pending = 1; if (!is_hdr) next }
+        if (!is_hdr) next
         nm = unit_name($0, lang)
         if (nm == "") next
+        # Clears `pending` for the same reason production_loc() does: the
+        # dropped header is what the attribute was marking, so leaving it set
+        # would carry the mark onto the next genuine unit.
+        if (is_reserved_name(nm, lang)) { pending = 0; next }
         if (pending) { pending = 0; next }
-        if (lang != "rs" && is_test_header($0, lang)) next
+        if (is_test_header($0, lang)) next
         print nm
     }
     ' "$1"

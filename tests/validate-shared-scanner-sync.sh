@@ -471,7 +471,7 @@ test_detector_fires_on_loc_region_drift() {
     # exactly the silent class that lint catches). `s/…/…/` on a plain fixed
     # string is dialect-neutral.
     tampered="$(extract_shared "$SIZING" loc-helpers-awk |
-        command sed 's/if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go") return line ~/if (0) return line ~/' | normalize)"
+        command sed 's/if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go" || lang == "swift") return line ~/if (0) return line ~/' | normalize)"
     assert_not_empty "$tampered" "tampered loc-helpers-awk extract is non-empty (extract still works)"
 
     tamper_took="no"
@@ -771,7 +771,13 @@ test_detector_fires_on_python_primary_drift() {
     for region in $PY_REGIONS; do
         case "$region" in
             loc-tables-py)
-                sed_expr='s/"md": 2}/"md": 4}/'
+                # NEST_UNIT's `md` entry. Was `s/"md": 2}/"md": 4}/` back when
+                # the dict fit on one line; adding `swift` (#728) pushed it to
+                # one-key-per-line, so the closing brace is no longer on it.
+                # Anchored on the trailing comma instead, which is still a fixed
+                # string and still unique in the region (EXT_LANG's md entry is
+                # `"md": "md",`, a different value).
+                sed_expr='s/    "md": 2,/    "md": 4,/'
                 ;;
             loc-helpers-py)
                 sed_expr='s/        return default/        return 0/'

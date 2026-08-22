@@ -77,13 +77,25 @@ suppressed** — a `seam 40-96:` row would be actively wrong advice here:
 comment ratio, test lines excluded, production LOC, max nesting depth, top-level
 declaration count.
 
-**Language layer** — Python, JavaScript, TypeScript, Rust, Go, Shell, Markdown.
+**Language layer** — Python, JavaScript, TypeScript, Rust, Go, Swift, Shell,
+Markdown.
 TypeScript is its **own** language key rather than a JS alias (#726): its
 segmenter also matches the type-level forms (`interface`, `type`, `enum`,
 `const enum`, `namespace`, `declare`, `abstract class`), and it carries its own
 split shape, because the remedy for an oversized type file is a `types/` dir
 split by domain rather than JS's sibling modules. A `*.d.ts` is measured but
-never seamed — it declines as a type declaration file. Each segmenter
+never seamed — it declines as a type declaration file. Swift (#728) models both
+test conventions, since the ecosystem is mid-migration: XCTest is matched on the
+unit header (`func test…`, `: XCTestCase`) while swift-testing's `@Test` is an
+**attribute on the preceding line** — the same mechanism as Rust's `#[test]`,
+and shared with it rather than special-cased. Its `extension` is **one** unit,
+matching Rust's `impl`: both bundle many methods onto a type, so segmenting them
+differently would make the cohesive-decline path treat equivalent code
+differently by language. **If #727 re-decides `impl`, Swift's `extension`
+changes in the same PR** — neither may move alone. Swift's split shape is
+extensions in separate files (`Type+Concern.swift`), which uniquely needs no
+barrel or module: Swift types are open for extension across files within a
+module, so the split costs no import churn. Each segmenter
 locates top-level units and their spans, groups **consecutive** units sharing a
 name family (`parse_entry` / `parse_header` / `parse_body`), and measures each
 group's **fan-in** — how much of the rest of the file reaches into that span. A
