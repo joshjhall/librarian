@@ -698,8 +698,32 @@ test_swift_is_modeled_in_the_review_lens() {
     assert_parity
     out="$SCAN_OUT"
 
+    # The THRESHOLD ITSELF is asserted, not merely that a row fired. At 600 LOC
+    # this file is over the default 500 pair too, so "a row appeared" passes
+    # with the per_language entry deleted — which is exactly what a mutation
+    # round proved: gutting the swift 400/700 pair SURVIVED an earlier draft of
+    # this test. The rendered "(>400 warning)" is the only observable that
+    # distinguishes the decided pair from the fallthrough.
+    assert_contains "$out" "(>400 warning)" \
+        "swift uses its DECIDED 400 warning, not the 500 default (#728)"
     assert_contains "$out" "mid.swift" "a 600-LOC Swift file is over its decided 400 warning (#728)"
     assert_contains "$out" "200 top-level units" "the review lens segments Swift, not just sizes it (#728)"
+
+    # The HIGH half of the pair needs its own fixture: 600 LOC is under both
+    # 700 (swift) and 800 (default), so nothing above can see a mutated high
+    # value. 750 sits between them.
+    local swhi="$WORKDIR/high.swift" hilist="$WORKDIR/swift-high.txt"
+    : >"$swhi"
+    i=0
+    while [ "$i" -lt 250 ]; do
+        command printf 'public struct HighThing%d {\n    let a: Int\n}\n' "$i" >>"$swhi"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$swhi" >"$hilist"
+    run_scan "$hilist"
+    assert_parity
+    assert_contains "$SCAN_OUT" "(>700 high)" \
+        "swift uses its DECIDED 700 high, not the 800 default (#728)"
 
     # The shape row is gated on a GROWTH signal (`crossed or material`), so it
     # needs a numstat sidecar — this lens deliberately stays quiet about how to

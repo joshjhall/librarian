@@ -125,14 +125,25 @@ UNIT_RE = {
     # code differently by language. If #727 re-decides `impl`, this arm changes
     # in the SAME PR; neither may move alone.
     #
+    # `associatedtype` is deliberately NOT here, though the issue listed it.
+    # Swift allows it only INSIDE a protocol body, so it is never a top-level
+    # declaration — and an arm for it is not merely dead, it is harmful: a
+    # protocol whose body is written unindented (legal Swift) would have each
+    # `associatedtype` lifted into a phantom top-level unit, corrupting the very
+    # count the cohesive-decline and seam paths read. Found by the mutation
+    # round: deleting the arm changed nothing, and the reachability check that
+    # followed showed the only inputs it fires on are invalid Swift or that
+    # false positive ([[surviving-mutation-may-be-a-real-no-op]]). It stays in
+    # RESERVED_UNIT_NAME, since it is still a keyword no NAME may be.
+    #
     # A keyword captured as the NAME is rejected downstream by
     # RESERVED_UNIT_NAME — see the note there for why that is a filter rather
     # than a negative lookahead.
     "swift": re.compile(
         r"^(?:(?:public|private|internal|fileprivate|open|final|static|class"
         r"|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*"
-        r"(?:func|class|struct|enum|protocol|extension|actor|typealias"
-        r"|associatedtype)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:func|class|struct|enum|protocol|extension|actor|typealias)"
+        r"[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
     ),
     "sh": re.compile(
         r"^(?:function[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([ \t]*\)|"

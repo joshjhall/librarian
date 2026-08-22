@@ -550,14 +550,50 @@ public actor FormActor {}
 indirect enum FormEnum { case leaf }
 typealias FormAlias = () -> Void
 public class func formTypeMethod() {}
+internal struct FormInternal {
+    let c: Int
+}
+fileprivate enum FormFilePrivate { case one }
+open class FormOpen {
+    let d: Int
+}
+override public func formOverride() {}
+protocol FormAssoc {
+associatedtype FormElement
+}
 EOF
     list="$(list_of "$f")"
 
     # The COUNT is the assertion, not merely "a row fired": the count is the
     # quantity the cohesive-decline path reads, so it distinguishes a real fix
     # from an anchor that never matched ([[anchored-regex-tautological-test]]).
-    assert_fires "$list" file-length "9 top-level units" \
-        "swift: all nine unit forms segment as top-level units (#728 AC1)"
+    #
+    # EVERY unit keyword and EVERY modifier appears exactly once, so dropping
+    # any single alternative from either group changes this number and the
+    # assertion goes red on its own. The mutation round is what put the last
+    # four modifiers here: `internal`, `fileprivate`, `open` and `override`
+    # SURVIVED a round against the first draft of this fixture, which used only
+    # public/private/final/static/indirect — the rule with zero failures is the
+    # one the round exists to find ([[mutate-every-rule-not-every-test]]).
+    #
+    # The FormAssoc protocol body is written UNINDENTED on purpose — legal
+    # Swift, and the shape that proves `associatedtype` is not a unit keyword.
+    # The issue's spec listed it, but Swift permits it only inside a protocol
+    # body, so an arm for it is never a top-level declaration and, on exactly
+    # this fixture, would lift FormElement into a phantom 15th unit and corrupt
+    # the count the cohesive-decline and seam paths read. A mutation round found
+    # the arm dead, and the reachability check that followed found it harmful
+    # ([[surviving-mutation-may-be-a-real-no-op]]).
+    assert_fires "$list" file-length "14 top-level units" \
+        "swift: every unit form and modifier segments as a top-level unit (#728 AC1)"
+    out="$(emit_rows sh "$list" decomposition-seam)"
+    assert_not_contains "$out" "form_element" \
+        "swift: associatedtype in an unindented protocol body is not a unit (bash, #728)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        out="$(emit_rows py "$list" decomposition-seam)"
+        assert_not_contains "$out" "form_element" \
+            "swift: associatedtype in an unindented protocol body is not a unit (python, #728)"
+    fi
 
     # --- AC2: /// doc comments are excluded from production LOC ------------
     # The issue notes the /// arm is caught by // "only by luck", so the
