@@ -58,6 +58,9 @@
 # was inert — it could not fail, which reads identically to always passing. See
 # the `run_scan`/`assert_parity` split below, which is what makes it real.
 #
+# The #756 plan-lens round and its surviving-mutation story live with the tests
+# they cover, in tests/validate-plan-lens.sh.
+#
 # Pure bash + coreutils; no node/jq. Full /usr/bin/* paths per project shell
 # convention. Uses the shared harness assertions.
 

@@ -87,6 +87,54 @@
           "items": { "type": "string" },
           "description": "Files that still need to change."
         },
+        "scope_expansions": {
+          "type": "array",
+          "description": "Decomposition work the plan-lens sizing step added to this issue's scope, or a recorded decline (#756). Each entry marks the growth as PLANNED, so drift-detect and the pre-PR review do not read it as unplanned scope creep.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "description": "Path the plan-lens row was raised against."
+              },
+              "trigger": {
+                "type": "string",
+                "enum": ["size-headroom", "file-length", "ai-file-bloat", "doc-file-bloat"],
+                "description": "Category of the plan-lens row that raised it."
+              },
+              "resolution": {
+                "type": "string",
+                "enum": ["folded-in", "follow-up-issue", "decompose-first", "proceed-unchanged"],
+                "description": "What was decided. The last three come from the swamp gate; folded-in is also the silent cheap-seam path."
+              },
+              "decided_by": {
+                "type": "string",
+                "enum": ["planner", "human", "l4-auto"],
+                "description": "planner = cheap seam folded in with no gate; human = swamp gate answered at L1-L3; l4-auto = swamp gate auto-selected at L4."
+              },
+              "rationale": {
+                "type": "string",
+                "description": "One line: why this resolution. Required for an l4-auto selection, so an unattended scope decision is visible after the fact."
+              },
+              "follow_up_issue": {
+                "type": "integer",
+                "description": "Issue number filed for a follow-up-issue or decompose-first resolution."
+              }
+            },
+            "required": ["file", "resolution"],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "$comment": "An l4-auto selection is the ONE case with no human in the loop, so the rationale is what makes an unattended scope decision auditable after the fact (plan-sizing.md § Dispatch by level). Enforced rather than merely described: a required-ness stated only in a `description` is a comment asserting intent the schema does not check, which is how an entry that silently omits it still validates.",
+                "if": {
+                  "properties": { "decided_by": { "const": "l4-auto" } },
+                  "required": ["decided_by"]
+                },
+                "then": { "required": ["rationale"] }
+              }
+            ]
+          }
+        },
         "warnings": {
           "type": "array",
           "items": { "type": "string" },

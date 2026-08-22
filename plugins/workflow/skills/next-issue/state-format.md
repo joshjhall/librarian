@@ -123,6 +123,7 @@ up with full context.
 | `key_decisions`   | Non-obvious choices that affect downstream work             |
 | `files_modified`  | What changed so far (avoids re-scanning)                    |
 | `files_planned`   | What still needs to change                                  |
+| `scope_expansions` | Decomposition the plan lens added to scope, or a recorded decline (#756) — see `plan-sizing.md`. Marks the growth PLANNED so `drift-detect` does not read it as scope creep |
 | `warnings`        | Discoveries the next phase should know about                |
 | `next_action`     | Explicit directive for post-reset pickup                    |
 | `loop_state`      | Implementation loop progress (completed/remaining/criteria) |

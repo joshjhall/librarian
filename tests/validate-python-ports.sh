@@ -84,7 +84,7 @@ fi
 # its argv is `<original> <post-split-original> [results...]`, for which "empty
 # file list exits 0" is meaningless — so its bash<->python parity is asserted
 # per-case in tests/validate-split-verify.sh rather than over this corpus.
-PORT_BASENAMES="patterns sizing"
+PORT_BASENAMES="patterns sizing plan-lens"
 
 list_python_ports() {
     local stem
@@ -446,10 +446,10 @@ test_python_bash_parity() {
     local py_out sh_out
     if port_is_two_arg "$py"; then
         py_out="$(python3 "$py" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
-        sh_out="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 bash "$sh" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
+        sh_out="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 PLAN_LENS_FORCE_BASH=1 bash "$sh" "$DRIFT_ACTUAL" "$DRIFT_PLANNED" 2>/dev/null | command sort)"
     else
         py_out="$(python3 "$py" "$FILE_LIST" 2>/dev/null | command sort)"
-        sh_out="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 bash "$sh" "$FILE_LIST" 2>/dev/null | command sort)"
+        sh_out="$(PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 PLAN_LENS_FORCE_BASH=1 bash "$sh" "$FILE_LIST" 2>/dev/null | command sort)"
     fi
 
     assert_equals "$sh_out" "$py_out" \

@@ -19,6 +19,7 @@ compatible_with: "finding-schema.md >= 1.0"
 | `ai-file-bloat`      | HIGH/MEDIUM | deterministic | >= 0.9     |
 | `doc-file-bloat`     | HIGH/MEDIUM | deterministic | >= 0.9     |
 | `decomposition-seam` | HIGH/LOW    | deterministic | >= 0.9     |
+| `size-headroom`      | HIGH/MEDIUM | deterministic | >= 0.9     |
 
 `file-length`, `ai-file-bloat` and `doc-file-bloat` emit **HIGH** over the high
 threshold and **MEDIUM** over the warning threshold. `decomposition-seam` emits
@@ -96,6 +97,32 @@ seam <start>-<end>: <noun> <family>_* family (<n> units, <fan-in>) -> <target pa
   family under a directory named for the source file.
 
 Consumers parse `<start>`/`<end>` into `line_start`/`line_end`.
+
+### Headroom grammar (plan lens, #756)
+
+`size-headroom` is emitted **only by the plan lens** (`ship-issue/plan-lens.{py,sh}`,
+run from `next-issue` Phase 2) and is the one row neither other lens can produce:
+it fires on a file **under** its budget, which both the audit and review lenses
+return early on.
+
+```text
+<label> has <n> <unit> of headroom (<current>/<warn>); this plan adds ~<estimate>, projecting <total> — over the <limit> <band> budget. Fold the decomposition into the plan before adding to this file (<n> top-level units)
+```
+
+- `<unit>` — `production LOC` for code, `lines` for classified prose (whose
+  budget is measured on total lines, per #701).
+- Certainty is `HIGH` when the **projection** lands over the high threshold,
+  `MEDIUM` when it lands over the warning threshold. It is graded on the
+  projection, not on today's size — the file is under budget by definition here.
+- Requires an estimate at or above `plan_size_thresholds.headroom_min_estimate`;
+  below that floor an under-budget file stays silent whatever it projects to.
+
+A file **already over** budget takes its ordinary `file-length` /
+`ai-file-bloat` / `doc-file-bloat` category instead, with plan-lens wording that
+distinguishes three cases: an estimate that grows it, a sidecar that names no
+growth for it, and no sidecar at all. Unlike the review lens, the plan lens
+raises an already-over file **regardless of estimate** — the planner is about to
+open it anyway, which is the cheapest moment its split will ever have.
 
 ### Decline grammar
 

@@ -16,6 +16,23 @@ structurally in Phase 2 (`EnterPlanMode`/`ExitPlanMode`). This protocol is for
 the escalations that surface *mid-flight*, where there is no plan-mode ceremony
 to hang them on — the one genuinely new gate in the level model.
 
+**Scope note — the payload and dispatch rules below are NOT mid-flight-only**
+(#756). The heading above says *during implementation or testing* because that
+was the only such gate when this file was written. A second one now exists
+earlier: the **swamp gate** in `plan-sizing.md`, raised during Phase 2 planning
+when a decomposition would swamp the issue. It is neither mid-flight nor the
+plan-approval checkpoint — `ExitPlanMode` presents a finished plan for approval
+and cannot ask "which of these four scopes should this issue have?" before the
+plan is written.
+
+Read this file as two layers. The **payload format** and **disposition by
+level** (block-and-wait at L1–L3, auto-select at L4, dead-end blocks everywhere,
+never lapse-and-default) are the general contract for **every** non-mechanical
+gate, whenever it fires. The *mid-flight* framing applies only to **when** the
+gates described here arise. A new gate reuses the layers below rather than
+inventing a parallel ladder, and says where it fires; `plan-sizing.md` § *The
+swamp gate* is the worked example.
+
 ## Escalation vs a mechanical decision
 
 Escalate a decision when a reasonable reviewer would want a say **before** it is

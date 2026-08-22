@@ -14,6 +14,7 @@
 #   6. Pre-scan empty/missing-input robustness (tests/validate-prescans.sh)
 #   7. pre-review-gates scan categories + skip policy (tests/validate-pre-review-gates.sh)
 #   7b. review-lens sizing scanner, growth-aware (tests/validate-sizing-scanner.sh)
+#   7b2. plan-lens sizing scanner, projection-aware (tests/validate-plan-lens.sh)
 #   7c. non-lossy split verification (tests/validate-split-verify.sh)
 #   8. codebase-audit issue-template sync (tests/validate-template-sync.sh)
 #   8b. audit project-source integrity gate (tests/validate-audit-trust-gate.sh)
@@ -164,6 +165,7 @@ run_stage "status/pr-pending label lifecycle" bash "$SCRIPT_DIR/validate-label-l
 run_stage "Pre-scan empty/missing-input robustness" bash "$SCRIPT_DIR/validate-prescans.sh"
 run_stage "pre-review-gates scan categories + skip policy" bash "$SCRIPT_DIR/validate-pre-review-gates.sh"
 run_stage "review-lens sizing scanner (growth-aware)" bash "$SCRIPT_DIR/validate-sizing-scanner.sh"
+run_stage "plan-lens sizing scanner (projection-aware)" bash "$SCRIPT_DIR/validate-plan-lens.sh"
 run_stage "non-lossy split verification" bash "$SCRIPT_DIR/validate-split-verify.sh"
 run_stage "codebase-audit issue-template sync" bash "$SCRIPT_DIR/validate-template-sync.sh"
 run_stage "audit project-source integrity gate" bash "$SCRIPT_DIR/validate-audit-trust-gate.sh"
