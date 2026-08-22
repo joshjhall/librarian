@@ -393,20 +393,69 @@ test_plan_lens_fails_loud_without_engine() {
 }
 
 test_plan_lens_usage_contract() {
-    local rc=0
-    command bash "$PLAN_SH" >/dev/null 2>&1 || rc=$?
-    assert_equals "1" "$rc" "plan-lens: no argument exits 1"
-
-    rc=0
-    command bash "$PLAN_SH" "$WORKDIR/does-not-exist.txt" >/dev/null 2>&1 || rc=$?
-    assert_equals "1" "$rc" "plan-lens: a missing file list exits 1"
-
-    local empty="$WORKDIR/empty-plan.txt" out
+    local rc=0 empty="$WORKDIR/empty-plan.txt" out
     : >"$empty"
+
+    # BOTH RUNTIMES. A bare `bash "$PLAN_SH"` is exec'd straight to the python
+    # primary by the shim whenever a python3>=3.11 is present, so without the
+    # FORCE_BASH arm the bash body's own usage handling is never reached — the
+    # same asymmetry the fail-loud case had. The CLI contract is what
+    # validate-python-ports.sh keys the whole corpus on, so it must hold in each
+    # impl independently, not merely in whichever one the shim happened to pick.
     rc=0
-    out="$(command bash "$PLAN_SH" "$empty" 2>&1)" || rc=$?
-    assert_equals "0" "$rc" "plan-lens: an empty file list exits 0"
-    assert_equals "" "$out" "plan-lens: an empty file list emits nothing"
+    PLAN_LENS_FORCE_BASH=1 command bash "$PLAN_SH" >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "plan-lens (bash): no argument exits 1"
+
+    rc=0
+    PLAN_LENS_FORCE_BASH=1 command bash "$PLAN_SH" "$WORKDIR/does-not-exist.txt" >/dev/null 2>&1 || rc=$?
+    assert_equals "1" "$rc" "plan-lens (bash): a missing file list exits 1"
+
+    rc=0
+    out="$(PLAN_LENS_FORCE_BASH=1 command bash "$PLAN_SH" "$empty" 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "plan-lens (bash): an empty file list exits 0"
+    assert_equals "" "$out" "plan-lens (bash): an empty file list emits nothing"
+
+    if [ "$HAVE_PY" = "1" ]; then
+        rc=0
+        command python3 "$PLAN_PY" >/dev/null 2>&1 || rc=$?
+        assert_equals "1" "$rc" "plan-lens (python): no argument exits 1"
+
+        rc=0
+        command python3 "$PLAN_PY" "$WORKDIR/does-not-exist.txt" >/dev/null 2>&1 || rc=$?
+        assert_equals "1" "$rc" "plan-lens (python): a missing file list exits 1"
+
+        rc=0
+        out="$(command python3 "$PLAN_PY" "$empty" 2>&1)" || rc=$?
+        assert_equals "0" "$rc" "plan-lens (python): an empty file list exits 0"
+        assert_equals "" "$out" "plan-lens (python): an empty file list emits nothing"
+    fi
+}
+
+# A hand-written sidecar WILL eventually carry a malformed row — the planner
+# writes it, not git. The contract is that a bad row is SKIPPED, not fatal and
+# not silently treated as growth: an unparseable count must leave the file with
+# no estimate rather than crash the scan or invent a number. Pinned in both
+# impls because they parse independently (python int()/ValueError, awk's
+# /^[0-9]+$/ guard) and could disagree about what "malformed" means.
+test_plan_lens_tolerates_malformed_estimate_rows() {
+    setup_over_threshold
+    local est="$WORKDIR/est-bad.tsv"
+    {
+        command printf 'notanumber\t%s\n' "$OVER_FILE"
+        command printf '\n'
+        command printf 'onlyonefield\n'
+    } >"$est"
+
+    run_plan "$LIST" "$est"
+    assert_plan_parity
+    # The file is over budget, so it must still be REPORTED — a malformed
+    # sidecar must not silence the scan (that would be the fail-loud inversion).
+    assert_contains "$PLAN_OUT" "file-length" \
+        "a malformed sidecar does not silence an already-over file"
+    assert_contains "$PLAN_OUT" "no plan estimate supplied" \
+        "an unparseable count reads as NO estimate, never as growth"
+    assert_not_contains "$PLAN_OUT" "size-headroom" \
+        "a malformed row cannot manufacture a projection"
 }
 
 # --- AC6: the REVIEW lens is byte-identical after the measure-mode seam -------
@@ -563,6 +612,7 @@ run_test test_plan_lens_high_band_on_already_over "#756: an already-over file pa
 run_test test_plan_lens_brace_rename_shape "#756: the {old => new} segment rename shape resolves (2nd git rename form)"
 run_test test_plan_lens_accepts_numstat_shape "#756 AC1: the sidecar accepts a real numstat file and is rename-aware"
 run_test test_plan_lens_fails_loud_without_engine "#756: no LOC engine exits 2, never 0-with-no-findings"
+run_test test_plan_lens_tolerates_malformed_estimate_rows "#756: a malformed estimate row is skipped, not fatal and not growth"
 run_test test_plan_lens_usage_contract "#756: plan-lens usage / missing-file / empty-list contract"
 run_test test_measure_record_fields_agree_across_runtimes "#756: the measure record's unconsumed fields are pinned across runtimes"
 run_test test_measure_mode_does_not_disturb_review_output "#756 AC6: the review lens is unchanged by the measure-mode seam"
