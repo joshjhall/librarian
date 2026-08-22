@@ -67,6 +67,42 @@ AGNIX_CONFIG_FILE="$REPO_ROOT/.agnix.toml"
 SUPPRESSED_RULE="CC-SK-006"
 SUPPRESSED_PATH="**/skills/ship-issue/SKILL.md"
 
+# QUOTE-AWARE COMMENT STRIP, shared by both .agnix.toml surfaces below.
+#
+# Both of them must ignore `#` comments — this config discusses CC-SK-006 at
+# length in prose, so a raw match would fire on the documentation OF the property
+# rather than the property (see each test for its own version of that trap). But
+# a bare `sub(/#.*/, "")` is wrong in the other direction: TOML permits `#`
+# INSIDE a quoted value, and truncating there silently discards the rest of the
+# line. A mutation round confirmed the consequence — a second suppressed path
+# `"**/skills/gh#issue/SKILL.md"` on the same line as ship-issue's made the whole
+# tail vanish before the path count ever saw it, so a second dangerous skill was
+# suppressed with the gate still green.
+#
+# So: walk the line, track whether we are inside a double-quoted span, and cut
+# only at a `#` outside one. TOML basic strings permit `\"`, so a quote preceded
+# by an odd run of backslashes does not close the span. Deliberately no support
+# for literal ('') or multi-line (""") strings — this file uses neither, and the
+# `[[overrides]]`-block assertions below would fail loudly rather than silently
+# if it ever grew one.
+AWK_STRIP_COMMENT='
+function strip_comment(line,    i, c, out, in_str, bs) {
+    out = ""; in_str = 0
+    for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "#" && !in_str) { return out }
+        if (c == "\"") {
+            # count the contiguous backslashes immediately before this quote
+            bs = 0
+            while (i - 1 - bs >= 1 && substr(line, i - 1 - bs, 1) == "\\") { bs++ }
+            if (bs % 2 == 0) { in_str = !in_str }
+        }
+        out = out c
+    }
+    return out
+}
+'
+
 test_suite "ship-issue autonomy-level contract (#737)"
 
 # Contract blocks are addressed BY ID, resolved anywhere under plugins/, so this
@@ -190,9 +226,9 @@ test_suppression_is_per_file_not_global() {
     # assertion that fires on the documentation OF the property rather than the
     # property. Only assignments are code here.
     local global_assignments
-    global_assignments="$(command awk '
+    global_assignments="$(command awk "$AWK_STRIP_COMMENT"'
         /^\[\[overrides\]\]/ { exit }
-        { sub(/#.*/, ""); print }
+        { print strip_comment($0) }
     ' "$AGNIX_CONFIG_FILE")"
 
     assert_not_contains "$global_assignments" "$SUPPRESSED_RULE" \
@@ -229,8 +265,8 @@ test_suppression_names_only_ship_issue() {
     # would select the WRONG block (the XML-001 one, whose header comment
     # discusses the rule) and then count its three paths.
     local block
-    block="$(command awk -v rule="$SUPPRESSED_RULE" '
-        { sub(/#.*/, "") }
+    block="$(command awk -v rule="$SUPPRESSED_RULE" "$AWK_STRIP_COMMENT"'
+        { $0 = strip_comment($0) }
         /^\[\[overrides\]\]/ { block = ""; in_block = 1 }
         in_block { block = block $0 "\n" }
         /^disabled_rules/ && in_block {
@@ -241,22 +277,38 @@ test_suppression_names_only_ship_issue() {
 
     assert_not_empty "$block" \
         "$SUPPRESSED_RULE must live in an [[overrides]] block (per-file), not as a bare global entry"
-    assert_contains "$block" "$SUPPRESSED_PATH" \
-        "the $SUPPRESSED_RULE override names ship-issue's SKILL.md"
 
-    # Exactly one path. A second entry would suppress a dangerous skill that
-    # never got the deliberate #734 review this one did.
+    # Extract every quoted glob in the block, one per line, unquoted. Both
+    # assertions below read this list — the identity check and the count — so
+    # they cannot disagree about what "the paths" are.
     #
-    # Counts OCCURRENCES, not lines. `grep -c` reports matching LINES, and TOML
-    # permits `paths = ["a", "b"]` on one line — the shape this override already
-    # uses — so a line count returns 1 for any number of paths. A mutation round
-    # caught exactly that: adding a second skill to the same line survived.
-    # `grep -o` puts each match on its own line first.
+    # `grep -o` (not `grep -c` on the raw block): `-c` reports matching LINES,
+    # and TOML permits `paths = ["a", "b"]` on ONE line — the very shape this
+    # override uses — so a line count returns 1 for any number of paths. A
+    # mutation round caught exactly that: a second skill appended to the same
+    # line survived.
+    local paths
+    paths="$(command printf '%s\n' "$block" | command grep -oE '"\*\*/[^"]*"' |
+        command tr -d '"')"
+
+    # EXACT identity, not substring containment. `assert_contains` would accept
+    # any path that merely CONTAINS this one, so a single path silently widening
+    # to `**/skills/ship-issue/SKILL.mdx` (or `...SKILL.md-backup`) would pass —
+    # the path count is still 1, and the literal is still in there. A mutation
+    # round confirmed it: renaming the suppressed file to `SKILL.mdx` left all
+    # six tests green. Comparing the whole extracted list to the expected path
+    # closes both halves at once — a drifted path fails the equality, and an
+    # ADDED path makes the list multi-line and fails it too.
+    assert_equals "$SUPPRESSED_PATH" "$paths" \
+        "the $SUPPRESSED_RULE override must name EXACTLY ship-issue's SKILL.md and nothing else (found: $(command printf '%s' "$paths" | command tr '\n' ' ')) — a new dangerous skill must be suppressed by decision, not by inheritance"
+
+    # The count, asserted separately so a failure says WHICH way it broke: the
+    # equality above already rejects a second path, but reports it as a mismatched
+    # string rather than as "two paths where one was expected".
     local path_count
-    path_count="$(command printf '%s\n' "$block" | command grep -oE '"\*\*/[^"]*"' |
-        command grep -c . || true)"
+    path_count="$(command printf '%s\n' "$paths" | command grep -c . || true)"
     assert_equals "1" "$path_count" \
-        "the $SUPPRESSED_RULE override must name exactly ONE path (found $path_count) — a new dangerous skill must be suppressed by decision, not by inheritance"
+        "the $SUPPRESSED_RULE override must name exactly ONE path (found $path_count)"
 }
 
 # --- Corpus sanity: the markers this gate depends on are real ---------------
