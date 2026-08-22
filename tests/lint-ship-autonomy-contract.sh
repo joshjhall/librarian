@@ -349,11 +349,75 @@ test_markers_are_line_initial() {
     done
 }
 
+# --- The parser's own hard cases, on a fixture rather than the live config --
+# Every assertion above runs strip_comment against the REAL .agnix.toml, which
+# today contains no `#` inside a quoted value and no backslash-escaped quote. So
+# the two branches that exist precisely FOR those cases — the `in_str` guard and
+# the odd/even backslash parity — are never taken by this suite, and their
+# correctness rests on the comment above claiming a mutation round found them
+# necessary. That is the comment-asserts-intent shape: prose asserting a property
+# the automated suite does not check.
+#
+# Verified untested rather than merely unreachable: flipping the parity test to
+# `bs % 2 == 1` left all six tests PASSING against the live config. So the branch
+# is live code with no coverage, not dead code — a fixture is the right answer,
+# and this one kills that mutation.
+#
+# The fixture is a heredoc in a per-run mktemp sandbox, never the live
+# .agnix.toml: a gate that mutates the file it audits could leave the repo dirty
+# on a mid-run failure, and a fixture that both arms and satisfies its own gate
+# is a known local failure class.
+test_strip_comment_handles_quoted_hash_and_escapes() {
+    local sandbox
+    sandbox="$(command mktemp -d 2>/dev/null || true)"
+    if [ -z "$sandbox" ]; then
+        skip_test "mktemp unavailable — cannot build the strip_comment fixture"
+        return 0
+    fi
+    # shellcheck disable=SC2064  # expand sandbox now, not at trap time
+    trap "command rm -rf '$sandbox'" RETURN
+
+    local fixture="$sandbox/fixture.toml"
+    command cat >"$fixture" <<'FIXTURE'
+plain = "value"  # trailing comment
+hashed = ["**/skills/gh#issue/SKILL.md", "**/b.md"] # comment after a quoted #
+escaped = "a\"# still inside" # comment after an escaped quote
+# whole-line comment
+FIXTURE
+
+    local got
+    got="$(command awk "$AWK_STRIP_COMMENT"'{ print strip_comment($0) }' "$fixture")"
+
+    # A `#` OUTSIDE quotes still cuts (the behaviour the whole strip exists for).
+    assert_not_contains "$got" 'trailing comment' \
+        "strip_comment: cuts an ordinary trailing comment"
+    assert_not_contains "$got" 'whole-line comment' \
+        "strip_comment: cuts a whole-line comment"
+
+    # A `#` INSIDE quotes does NOT cut — the line survives past it. This is the
+    # branch whose absence let a second suppressed path vanish.
+    assert_contains "$got" '"**/skills/gh#issue/SKILL.md"' \
+        "strip_comment: a # inside a quoted value does not truncate the line"
+    assert_contains "$got" '"**/b.md"' \
+        "strip_comment: content AFTER a quoted # survives the strip"
+    assert_not_contains "$got" 'comment after a quoted' \
+        "strip_comment: the real comment on that same line is still cut"
+
+    # An escaped quote does not close the span, so the `#` after it is still
+    # inside the string. This is the parity branch: with `bs % 2 == 1` the span
+    # closes at the escaped quote, the # reads as outside, and the line truncates.
+    assert_contains "$got" 'still inside' \
+        "strip_comment: a backslash-escaped quote does not close the quoted span"
+    assert_not_contains "$got" 'comment after an escaped quote' \
+        "strip_comment: the real comment after the closing quote is still cut"
+}
+
 run_test test_l1_l2_stops_for_human_merge "L1–L2 stop for a human merge (ship dispatch table)"
 run_test test_merge_invariant_binds_all_levels "Merge invariant binds every level, L4 included"
 run_test test_critical_caps_at_l3 "severity/critical caps at L3, keeping the plan gate"
 run_test test_suppression_is_per_file_not_global "CC-SK-006 suppression is per-file, never global"
 run_test test_suppression_names_only_ship_issue "CC-SK-006 override names only ship-issue's SKILL.md"
 run_test test_markers_are_line_initial "Contract markers are line-initial and unique"
+run_test test_strip_comment_handles_quoted_hash_and_escapes "strip_comment: quoted # and escaped quotes (fixture)"
 
 generate_report
