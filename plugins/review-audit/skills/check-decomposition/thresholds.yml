@@ -93,6 +93,32 @@ review_size_thresholds:
       warning: 400 # REVIEW_LOC_WARN_GO
       high: 700 # REVIEW_LOC_HIGH_GO
 
+# THE PLAN LENS (#756) — consumed by next-issue's Phase 2 sizing step through
+# ship-issue's plan-lens.{py,sh}, NOT by the audit sweep or the per-PR review.
+#
+# THE THIRD QUESTION. The audit lens asks "is this file too long?"; the review
+# lens asks "did this diff make it worse?"; the plan lens asks "will this PLAN
+# make it worse?" — before any code exists. Its growth signal is therefore not a
+# diff but the PLANNER'S ESTIMATE of lines the plan will add.
+#
+# WHY THIS IS NOT A LOOSER/TIGHTER COPY OF THE PAIRS ABOVE, and why it needs no
+# threshold pair of its own: the plan lens reads the SAME budgets the other two
+# lenses do (review_size_thresholds for code, bloat_thresholds for prose). What
+# is new is the ARITHMETIC — it projects `current + estimate` against the budget
+# and reports a file that is UNDER threshold today but would not be after the
+# plan lands. Both other lenses return early on exactly that file, which is why
+# a near-budget file is silent everywhere else and why the one knob below is a
+# floor on the ESTIMATE rather than a size.
+#
+# The single knob is a NOISE FLOOR. Without it a file one line under budget
+# fires on a one-line estimate, the planner learns to ignore the row, and a lens
+# nobody reads catches nothing at all — the same failure mode recorded for the
+# review lens above, arriving by a different route.
+plan_size_thresholds:
+  # Minimum estimated added lines before a projected crossing is worth raising.
+  # Below this an under-budget file stays silent no matter what it projects to.
+  headroom_min_estimate: 25 # PLAN_HEADROOM_MIN_ESTIMATE
+
 # Non-lossy split verification (#695 AC8), consumed by ship-issue's
 # split-verify.{py,sh}. Tolerance for the import/`mod`/`__init__` boilerplate a
 # split legitimately adds — the check exists to catch a LOST HALF, not to police

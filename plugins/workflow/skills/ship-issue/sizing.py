@@ -38,6 +38,7 @@ tests/validate-python-ports.sh, behavior by tests/validate-sizing-scanner.sh.
 See CLAUDE.md § Key conventions (runtime policy).
 
 Input:  argv[1] = file containing paths to scan (one per line)
+                  (or `--measure` followed by that file — see measure_record())
         argv[2] = OPTIONAL numstat sidecar: `added<TAB>deleted<TAB>path` rows
                   (`git diff --numstat`). ABSENT => no growth signal, so every
                   over-threshold file is reported at LOW/informational only.
@@ -969,9 +970,65 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
         )
 
 
+def measure_record(path: str, lines: list[str]) -> str:
+    """One TAB-separated metrics row for PATH — the MEASURE-MODE contract.
+
+    This exists so the plan lens (plan-lens.{py,sh}, #756) can reuse this lens's
+    LOC engine instead of carrying a fourth hand-copy of the counting rules. The
+    audit lens and this one are already pinned byte-for-byte through the
+    `# >>> shared:loc-*` sentinel regions; a third scanner re-deriving the same
+    arithmetic is exactly what #663 was filed to kill, and a sentinel region can
+    only pin text it can see — it cannot stop a NEW file from computing
+    production LOC its own way.
+
+    So measure mode is a SEAM, not a copy: `sizing --measure` answers "how big is
+    this file, and by which budget is it judged", and the plan lens supplies only
+    the projection arithmetic on top. The row is deliberately flat TSV rather
+    than JSON so the bash fallback can emit the identical record from awk.
+
+    Fields (13):
+      path total production units comment_pct generated lang
+      loc_warn loc_high b_warn b_high b_type b_cat
+
+    `b_*` are empty/0 for a file the prose classifier does not claim, which is
+    the signal to size it by production LOC instead of total lines.
+    """
+    lang = lang_of(path)
+    units = find_units(lines, lang)
+    m = measure(lines, lang, units)
+    warn, high = thresholds_for(lang)
+    spec = bloat_spec(path)
+    b_warn, b_high, b_type, b_cat = spec if spec is not None else (0, 0, "", "")
+    generated = 1 if any(GENERATED_RE.search(ln) for ln in lines[:20]) else 0
+    return "\t".join(
+        str(f)
+        for f in (
+            path,
+            m["total"],
+            m["production"],
+            m["units"],
+            m["comment_pct"],
+            generated,
+            lang,
+            warn,
+            high,
+            b_warn,
+            b_high,
+            b_type,
+            b_cat,
+        )
+    )
+
+
 def main(argv: list[str]) -> int:
+    # Measure mode is opt-in and positional-first, so the default review-lens
+    # invocation is byte-for-byte the command it always was (#756 AC6).
+    measure_only = len(argv) > 1 and argv[1] == "--measure"
+    if measure_only:
+        argv = [argv[0]] + argv[2:]
+
     if len(argv) < 2:
-        sys.stderr.write("Usage: sizing.py <file-list> [numstat-file]\n")
+        sys.stderr.write("Usage: sizing.py [--measure] <file-list> [numstat-file]\n")
         return 1
     file_list = argv[1]
     if not os.path.isfile(file_list):
@@ -1000,7 +1057,10 @@ def main(argv: list[str]) -> int:
                 continue
             if lines and lines[-1] == "":
                 lines.pop()
-            scan_file(path, lines, growth.get(path, 0), have_growth)
+            if measure_only:
+                sys.stdout.write(measure_record(path, lines) + "\n")
+            else:
+                scan_file(path, lines, growth.get(path, 0), have_growth)
     return 0
 
 

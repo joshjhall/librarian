@@ -122,6 +122,22 @@ Exceptions (reduce to LOW):
 - Configuration files commonly touched as side effects (`.gitignore`,
   `package-lock.json`, `go.sum`, lock files)
 
+Exceptions (**exclude entirely** — declared plan-lens scope expansions, #756):
+
+- Files named in the state file's `checkpoint.scope_expansions` with a
+  resolution of `folded-in`. These are decompositions the **plan lens** added
+  during Phase 2 planning — either a cheap seam folded in silently or a swamp
+  gate a human (or an L4 auto-selection) resolved. They are planned work that
+  simply does not appear in the issue body, because the issue was written before
+  anyone measured the file. Reporting them as drift would punish exactly the
+  behavior #756 exists to encourage, and would train an agent to skip the
+  sizing step. The **new files a split creates** are covered too: a decomposition
+  of `src/parser.rs` into `src/parser/parse.rs` legitimately adds paths the issue
+  never listed. Read the array from
+  `.claude/memory/tmp/next-issue-{N}.json`; treat it as absent (no exclusion) if
+  the file is gone. A `proceed-unchanged` entry grants no exclusion — nothing was
+  supposed to change.
+
 Exceptions (**exclude entirely** — base noise, not the golem's work, #26):
 
 - **Base-noise paths** that leak into a worktree golem's diff without being
@@ -146,6 +162,9 @@ clearly not addressed; **MEDIUM** for ambiguous cases.
 Unplanned files that introduce new functionality beyond the issue's scope
 (not just supporting changes). Determined by LLM judgment examining the diff
 content. **Severity: LOW** — informational.
+
+The same `checkpoint.scope_expansions` exclusion applies here (see 3b): a
+declared decomposition is planned scope, not an addition to it.
 
 ### Step 4 — Report
 

@@ -2,7 +2,8 @@
 
 Companion to `next-issue/SKILL.md`. Load this when a run reaches the planning
 phase (after Phase 1 selection). It carries the full Phase 2 step sequence:
-scope assessment, the mandatory `/workflow:ship-issue` final step, the state-file write,
+scope assessment, the plan-lens sizing step (`plan-sizing.md`), the mandatory
+`/workflow:ship-issue` final step, the state-file write,
 the plan-gate branch (L4 comment-only vs L1–L3 `EnterPlanMode`/`ExitPlanMode`),
 the implement step with its mid-flight escalation gate, and the hand-off /
 `--ship` fast-path. The authoritative level model is
@@ -12,6 +13,21 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
 1. Read the full issue body
 
 1. Explore the relevant code areas (use Grep/Glob/Read)
+
+1. **Run the plan-lens sizing step** — load `plan-sizing.md` and follow it.
+   Build the candidate file list from the exploration you just did, estimate the
+   lines the plan adds to each, and run
+   `${CLAUDE_PLUGIN_ROOT}/skills/ship-issue/plan-lens.sh`. It reports files
+   already over budget **and** — the row no other lens can produce — files
+   *under* budget that this plan would push over.
+
+   A **cheap, mechanical** seam is folded into the plan here as ordinary steps
+   before the feature work; a **swamping** one raises the swamp gate (four
+   options: fold in / follow-up issue / decompose first / proceed unchanged),
+   dispatched by level exactly like any other escalation — human at L1–L3,
+   auto-selected at L4. Record every outcome in `checkpoint.scope_expansions`
+   so the growth does not later read as drift. If the scanner is unavailable,
+   note it in one line and keep planning — this step never blocks the pipeline.
 
 1. **Assess scope** from labels (note the effort tier — the final step uses it
    to decide whether `--ship` applies):
@@ -98,7 +114,11 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
      ```
 
      Capture the returned comment URL and record it in the state file as
-     `"plan_comment_url"`. Then proceed DIRECTLY to implementation — no
+     `"plan_comment_url"`. **The comment must carry any plan-lens scope
+     expansion** — folded-in decomposition steps, and any swamp-gate resolution
+     this level auto-selected, with its rationale (`plan-sizing.md`). L4 is the
+     path with no human in the loop, so this comment is the only place that
+     scope growth becomes visible. Then proceed DIRECTLY to implementation — no
      `ExitPlanMode`, no approval gate. This path SKIPS both the "Exit plan mode"
      and "Suggest context reset" steps below.
 
