@@ -494,7 +494,12 @@ while IFS= read -r file; do
                 # See is_reserved_name: a keyword captured as a name means a
                 # modifier was parsed as the unit keyword. Drop the phantom
                 # unit; the line is still counted by the sizing layer.
-                if (is_reserved_name(nm, lang)) continue
+                #
+                # pending_test MUST be cleared here. The dropped header is what
+                # the attribute was marking, so leaving the flag set carries it
+                # onto the NEXT genuine unit and marks a PRODUCTION unit as
+                # test, removing its lines from production LOC.
+                if (is_reserved_name(nm, lang)) { pending_test = 0; continue }
                 nu++
                 un[nu] = nm; us[nu] = i
                 if (pending_test) { ut[nu] = 1; pending_test = 0 }

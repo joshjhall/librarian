@@ -760,6 +760,40 @@ EOF
             "swift: no seam family is named for a captured keyword (python, #728)"
     fi
 
+    # --- the pending_test leak across a dropped reserved-name unit ---------
+    # The two features above INTERACT, and the interaction was a live bug: an
+    # attribute (@Test) marks the NEXT unit, but if that next header captures a
+    # RESERVED name the unit is dropped — and the flag used to survive the drop
+    # and land on the following GENUINE unit, marking a production unit as test.
+    # Its lines then left production LOC, suppressing the very findings this
+    # scanner exists to emit: the guard against one wrong answer manufactured
+    # another ([[fix-reintroduces-its-own-failure]]).
+    #
+    # Neither the reserved-name fixture nor the test-convention fixture above
+    # can see this — each exercises one feature alone. It needs the two ADJACENT,
+    # which is what this fixture is for.
+    d="$(fresh_dir)"
+    f="$d/leak.swift"
+    {
+        command printf '@Test\nopen class override BogusOne {\n    let x: Int\n}\n'
+        i=0
+        while [ "$i" -lt 60 ]; do
+            command printf 'public struct RealThing%s {\n    let a: Int\n    let b: Int\n    let c: Int\n    let d: Int\n}\n' "$i"
+            i=$((i + 1))
+        done
+    } >"$f"
+    list="$(list_of "$f")"
+
+    # All 364 lines are production: the dropped header claims no span, so its
+    # lines fall to the file rather than being excluded. With the leak, the
+    # flag lands on RealThing0 and its 6 lines leave production — 358, and 59
+    # units instead of 60. Both numbers were confirmed to move by reverting the
+    # fix and re-running, so neither assertion is tautological.
+    assert_fires "$list" file-length "364 production LOC" \
+        "swift: pending_test does not leak past a dropped reserved-name unit (#728)"
+    assert_fires "$list" file-length "60 top-level units" \
+        "swift: the unit after a dropped reserved-name header stays production (#728)"
+
     # --- Counter: a short cohesive Swift file emits nothing ----------------
     d="$(fresh_dir)"
     f="$d/small.swift"

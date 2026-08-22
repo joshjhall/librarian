@@ -567,7 +567,16 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
             # the unit keyword — drop the bogus unit rather than seed a seam
             # family called "override" (#728). The line is still counted by
             # measure(); only the phantom unit disappears.
+            #
+            # pending_test MUST be cleared on this path. The dropped header is
+            # what the attribute was marking, so leaving the flag set carries it
+            # onto the NEXT genuine unit and silently marks a PRODUCTION unit as
+            # test — removing its lines from production LOC and suppressing the
+            # very findings this scanner exists to emit. The guard against one
+            # wrong answer would otherwise manufacture another
+            # ([[fix-reintroduces-its-own-failure]]).
             if name in RESERVED_UNIT_NAME.get(lang, ()):
+                pending_test = False
                 continue
             u = Unit(name, idx)
             if pending_test:

@@ -173,6 +173,92 @@ test_sound_split_verifies() {
     assert_not_contains "$VERIFY_OUT" "split-fanin-dangling" "a sound split reports no dangling callers"
 }
 
+# --- Swift (#728) ------------------------------------------------------------
+# split-verify is the THIRD consumer of the shared segmenter table, and the one
+# whose entire job is proving no unit was lost across a split. Its own scan loop
+# — not the shared awk_lib helpers — gained real control flow in #728: the
+# header-first `is_attr_test` ordering and the `is_reserved_name` filter are both
+# called from `production_loc()`, OUTSIDE the `shared:unit-segmenters-awk`
+# region. validate-shared-scanner-sync.sh proves those HELPERS are byte-identical
+# to sizing.sh's copies; it says nothing about whether this loop CALLS them
+# correctly. That gap is what these cases close: the sibling suites
+# (validate-decomposition-detectors.sh, validate-sizing-scanner.sh) each got
+# purpose-built Swift fixtures and this one had none.
+setup_swift_fixtures() {
+    # Four top-level declarations plus a swift-testing unit and a `///` doc
+    # comment, so the fixtures exercise the exclusion paths and not merely the
+    # unit list.
+    SW_ORIG="$WORKDIR/Model.swift"
+    {
+        command printf '/// Model doc line.\n'
+        command printf 'public struct UserProfile {\n    let id: String\n}\n'
+        command printf 'public struct UserSettings {\n    let theme: String\n}\n'
+        command printf 'extension UserProfile: Codable {\n    func encode() {}\n}\n'
+        command printf 'public func loadUser() {\n    _ = UserProfile.self\n}\n'
+        command printf '@Test\nfunc testLoadsUser() {\n    _ = loadUser()\n}\n'
+    } >"$SW_ORIG"
+
+    # The post-split original: the two Users stay, the extension and loader move.
+    SW_KEPT="$WORKDIR/Model-kept.swift"
+    {
+        command printf '/// Model doc line.\n'
+        command printf 'public struct UserProfile {\n    let id: String\n}\n'
+        command printf 'public struct UserSettings {\n    let theme: String\n}\n'
+        command printf '@Test\nfunc testLoadsUser() {\n    _ = loadUser()\n}\n'
+    } >"$SW_KEPT"
+
+    # The Type+Concern destination — the idiomatic Swift split shape this repo
+    # now recommends, so the fixture matches the advice the scanners emit.
+    SW_MOVED="$WORKDIR/UserProfile+Codable.swift"
+    {
+        command printf 'extension UserProfile: Codable {\n    func encode() {}\n}\n'
+        command printf 'public func loadUser() {\n    _ = UserProfile.self\n}\n'
+    } >"$SW_MOVED"
+
+    # LOSSY: loadUser never lands anywhere, though it is still called.
+    SW_LOSSY="$WORKDIR/UserProfile+Lossy.swift"
+    command printf 'extension UserProfile: Codable {\n    func encode() {}\n}\n' >"$SW_LOSSY"
+}
+
+test_swift_sound_split_verifies() {
+    setup_swift_fixtures
+    run_verify "$SW_ORIG" "$SW_KEPT" "$SW_MOVED"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-verified" "swift: a sound split is reported as non-lossy (#728)"
+    assert_not_contains "$VERIFY_OUT" "split-unit-lost" "swift: a sound split reports no lost units (#728)"
+}
+
+test_swift_lost_unit_is_detected() {
+    setup_swift_fixtures
+    run_verify "$SW_ORIG" "$SW_KEPT" "$SW_LOSSY"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-unit-lost" "swift: a dropped Swift declaration is reported (#728)"
+    assert_contains "$VERIFY_OUT" "loadUser" "swift: the report NAMES the lost declaration (#728)"
+}
+
+# The reserved-name filter and the attribute path both live in THIS tool's loop,
+# so they need a case here even though the scanners cover them too. The malformed
+# `open class override` header must not become a phantom unit, and — the #728
+# review finding — the `@Test` before it must not leak its mark onto the genuine
+# unit that follows.
+test_swift_reserved_name_and_attribute_paths() {
+    local orig="$WORKDIR/Leak.swift" kept="$WORKDIR/Leak-kept.swift"
+    {
+        command printf '@Test\nopen class override BogusOne {\n    let x: Int\n}\n'
+        command printf 'public func realProductionUnit() {\n    work()\n}\n'
+        command printf 'public func secondRealUnit() {\n    work()\n}\n'
+    } >"$orig"
+    # Same file, so a sound split verifies — the assertion is that neither the
+    # phantom unit nor a leaked test mark makes this look lossy.
+    command cp "$orig" "$kept"
+    run_verify "$orig" "$kept"
+    assert_parity
+    assert_not_contains "$VERIFY_OUT" "override" \
+        "swift: no phantom unit named for a captured keyword (#728)"
+    assert_contains "$VERIFY_OUT" "split-verified" \
+        "swift: an unchanged file with a reserved-name header still verifies (#728)"
+}
+
 # --- check 1: LOC conservation -----------------------------------------------
 # Uses a LARGE drop so the loss clears the boilerplate tolerance — the tolerance
 # exists precisely so a few import/mod/__init__ lines are not reported as drift.
@@ -399,6 +485,9 @@ test_usage_contract() {
 
 run_test test_lost_unit_is_detected "Check 2: a dropped top-level unit is detected and named"
 run_test test_sound_split_verifies "Check 2 counter: a sound split verifies clean"
+run_test test_swift_sound_split_verifies "swift: a sound Type+Concern split verifies clean (#728)"
+run_test test_swift_lost_unit_is_detected "swift: a dropped Swift declaration is detected and named (#728)"
+run_test test_swift_reserved_name_and_attribute_paths "swift: reserved-name filter and attribute path in split-verify's own loop (#728)"
 run_test test_loc_drift_is_detected "Check 1: a large content drop is detected as LOC drift"
 run_test test_boilerplate_does_not_trip_loc_check "Check 1 counter: re-export boilerplate is tolerated"
 run_test test_dangling_reference_is_detected "Check 3: a dangling call site is detected and named"

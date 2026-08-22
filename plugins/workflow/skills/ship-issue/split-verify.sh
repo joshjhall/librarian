@@ -195,8 +195,11 @@ production_loc() {
                 if (!is_unit_header(line, lang)) continue
                 if (unit_name(line, lang) == "") continue
                 # See is_reserved_name: a keyword captured as a name means a
-                # modifier was parsed as the unit keyword (#728).
-                if (is_reserved_name(unit_name(line, lang), lang)) continue
+                # modifier was parsed as the unit keyword (#728). pending_test
+                # MUST be cleared here — the dropped header is what the
+                # attribute was marking, so leaving it set carries the mark onto
+                # the NEXT genuine unit and counts a PRODUCTION unit as test.
+                if (is_reserved_name(unit_name(line, lang), lang)) { pending_test = 0; continue }
                 nu++
                 us[nu] = i
                 if (pending_test) { ut[nu] = 1; pending_test = 0 }
@@ -232,12 +235,26 @@ unit_names() {
     [ -n "$2" ] && [ "$2" != "md" ] || return 0
     LC_ALL=C command awk -v lang="$2" "$(awk_lib)"'
     {
-        if (lang == "rs" && $0 ~ /^[ \t]*#\[(cfg\(test\)|test)\]/) { pending = 1; next }
-        if (!is_unit_header($0, lang)) next
+        # SECOND segmenter loop in this file — production_loc() above has its
+        # own. Both must apply the same rules or the two halves of one
+        # verification disagree about what a unit is. #728 updated this one to
+        # match: table-driven attribute tests (was hardcoded to rs),
+        # header-first ordering so a one-line `@Test func` still registers, and
+        # the reserved-name filter so a keyword captured as a name never becomes
+        # a phantom unit. Without the last one this loop counted 3 units where
+        # production_loc() and the python port counted 2 — caught as a parity
+        # failure ([[harden-one-knob-grep-every-sibling]]).
+        is_hdr = is_unit_header($0, lang)
+        if (is_attr_test($0, lang)) { pending = 1; if (!is_hdr) next }
+        if (!is_hdr) next
         nm = unit_name($0, lang)
         if (nm == "") next
+        # Clears `pending` for the same reason production_loc() does: the
+        # dropped header is what the attribute was marking, so leaving it set
+        # would carry the mark onto the next genuine unit.
+        if (is_reserved_name(nm, lang)) { pending = 0; next }
         if (pending) { pending = 0; next }
-        if (lang != "rs" && is_test_header($0, lang)) next
+        if (is_test_header($0, lang)) next
         print nm
     }
     ' "$1"
