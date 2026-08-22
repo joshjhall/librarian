@@ -160,6 +160,30 @@ jobs:
       # purpose" — the reader has no breadcrumb back to this step. So the
       # failure branch emits an explicit `::notice::`, matching what
       # code-scanning.yml already does at its own install step.
+      #
+      # Signature verification (#740). The pin above fixes WHICH version npm
+      # serves; it says nothing about whether the tarball npm serves for that
+      # version is the one its publisher signed. `npm audit signatures` checks
+      # the registry signature, so a tampered or substituted tarball is caught
+      # before agnix runs against this repo's config.
+      #
+      # It cannot be appended after `npm install -g`: npm rejects the pairing
+      # outright with `EAUDITGLOBAL: does not support global packages`. The audit
+      # reads a package.json/package-lock.json pair, which only a LOCAL install
+      # tree has. So verification happens in a throwaway prefix first, and the
+      # global install is gated on it.
+      #
+      # `--ignore-scripts` on that scratch install is the load-bearing half. The
+      # order is verify-THEN-install precisely so a tampered tarball's
+      # `postinstall` never executes; letting scripts run during the scratch
+      # install would run attacker code first and check the signature afterward,
+      # which is the same as not checking it. tests/lint-agnix-clean.sh asserts
+      # the flag is still there, because losing it leaves a check that looks
+      # right and protects nothing.
+      #
+      # Re-installing globally after the audit does not reopen the hole: npm
+      # enforces the recorded integrity hash for a pinned version, and the audit
+      # is exactly the assertion that the registry signed those bytes.
       - name: Install agnix (pinned)
         run: |
           # BOTH commands sit in the condition, deliberately. A `run:` step
@@ -171,11 +195,30 @@ jobs:
           # likelier half of the failure space: a registry outage is caught by
           # the `if`, a bad install is not. Folding the smoke-test into the
           # condition routes both to the same notice-and-skip path.
-          if npm install -g agnix@0.49.0 && agnix --version; then
-            :
+          #
+          # ONE pin literal, reused by both npm commands. Two literals in one
+          # file would be a drift channel tests/lint-agnix-clean.sh cannot see:
+          # its agnix_pin_in takes the FIRST `agnix@X.Y.Z` match and would never
+          # compare it against the second.
+          pin="agnix@0.49.0"
+          verify_dir="$(mktemp -d)"
+
+          # Signature failure gets its OWN message, not the notice below. "npm
+          # was unreachable" and "the tarball npm served is not the one its
+          # publisher signed" are different events, and a supply-chain signal
+          # must not read as an outage. Still a warning rather than a failure:
+          # agnix is a best-effort enrichment, so the gate skips (77) either way.
+          if npm install --prefix "$verify_dir" --ignore-scripts "$pin" \
+            && (cd "$verify_dir" && npm audit signatures); then
+            if npm install -g "$pin" && agnix --version; then
+              :
+            else
+              echo "::notice::agnix install failed — tests/lint-agnix-clean.sh will SKIP (exit 77), not fail. agnix is a best-effort enrichment (ADR 0001 §2/§4); the rest of the suite still gates this job."
+            fi
           else
-            echo "::notice::agnix install failed — tests/lint-agnix-clean.sh will SKIP (exit 77), not fail. agnix is a best-effort enrichment (ADR 0001 §2/§4); the rest of the suite still gates this job."
+            echo "::warning::agnix signature verification failed — NOT installing agnix (#740). Either npm was unreachable, or the tarball for $pin does not match its published registry signature. tests/lint-agnix-clean.sh will SKIP (exit 77), not fail."
           fi
+          rm -rf "$verify_dir"
 
       # Fail loudly if a required linter did not land on PATH — otherwise the
       # skip-if-absent gates would quietly no-op in CI, defeating their purpose.

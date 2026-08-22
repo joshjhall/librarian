@@ -275,6 +275,99 @@ run_test test_pins_found "agnix install pins are discoverable in both workflows"
 run_test test_pins_agree "ci.yml and code-scanning.yml pin the same agnix version"
 run_test test_floor_not_stale "Gate floor is not above the CI pin"
 
+# --- Signature verification: both install sites must actually check ----------
+# (#740) The pin fixes WHICH version npm serves; it says nothing about whether
+# the tarball for that version is the one its publisher signed. Both workflows
+# run `npm audit signatures` before installing agnix. These checks assert the
+# code is still there and still ordered correctly.
+#
+# Placed with the pin family, ABOVE the absent-binary skip, for the same reason:
+# pure text comparison over files in the repo, needs no agnix, and would
+# otherwise vanish behind sentinel 77 on exactly the hosts where nobody looks.
+
+# Echo the line number of the first NON-COMMENT line of $1 matching $2, or
+# nothing when there is none.
+#
+# Comment-stripping is the entire point, not defensive tidying. Both workflows
+# carry a paragraph EXPLAINING the verification, and that prose contains the
+# literal strings these tests search for. A plain `grep 'npm audit signatures'`
+# would therefore be satisfied by the explanation of a check that had been
+# deleted — delete the code, keep the comment, gate stays green. The filter is
+# what makes these assertions about the workflow's behavior rather than about
+# its documentation.
+#
+# The comment filter is ANCHORED at the `grep -n` line-number prefix
+# (`^[0-9]*:[[:space:]]*#`), so it drops a line whose content begins with `#`
+# while keeping a code line that merely has a trailing comment. Anchoring is not
+# style: unanchored, the same pattern would also match a colon-then-`#` sequence
+# occurring anywhere in a line's TEXT, silently discarding a real code line that
+# happened to contain one.
+#
+# `-e` before the pattern is load-bearing: a search string starting with `-`
+# (`--ignore-scripts`, one of this gate's two searches) is otherwise parsed as
+# grep OPTIONS, not as a pattern. That failure is loud here only because the
+# assertion is written to fail on an empty result.
+#
+# Portability (this repo bans GNU-only regex — macOS ships BSD grep): POSIX
+# `[[:space:]]`, `-F` for the fixed strings, never `\s` or `grep -P`.
+#
+# `|| true` is load-bearing under `set -euo pipefail`: a grep matching nothing
+# exits 1 and would abort the script mid-substitution, killing the gate with a
+# bare status instead of letting the empty value reach the assertion that names
+# the real problem.
+agnix_code_line_no() {
+    command grep -nF -e "$2" "$1" 2>/dev/null |
+        command grep -v '^[0-9][0-9]*:[[:space:]]*#' |
+        command sed -n 's/^\([0-9][0-9]*\):.*/\1/p' |
+        command head -n 1 || true
+}
+
+test_signature_check_present() {
+    local f
+    for f in ci.yml code-scanning.yml; do
+        assert_not_empty "$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'npm audit signatures')" \
+            "$f must RUN 'npm audit signatures' before installing agnix (#740) — found no non-comment line invoking it. A pinned version is not a verified tarball."
+    done
+}
+
+test_scratch_install_ignores_scripts() {
+    # The pre-verification install must not run the package's own scripts. The
+    # order is verify-THEN-install precisely so a tampered tarball's postinstall
+    # never executes; without this flag the scratch install runs that code
+    # first and audits afterward, which is the same as not auditing at all.
+    # The check survives as a check only while this flag does.
+    local f line
+    for f in ci.yml code-scanning.yml; do
+        line="$(agnix_code_line_no "$WORKFLOW_DIR/$f" '--ignore-scripts')"
+        assert_not_empty "$line" \
+            "$f's pre-verification agnix install must pass --ignore-scripts (#740) — without it a tampered tarball's postinstall runs BEFORE its signature is checked, leaving a check that looks right and protects nothing."
+    done
+}
+
+test_signature_check_precedes_global_install() {
+    # Ordering is the whole security property. An audit placed after the global
+    # install verifies bytes that have already been unpacked and executed —
+    # every assertion above would still pass while the check protected nothing.
+    local f audit_line install_line ok
+    for f in ci.yml code-scanning.yml; do
+        audit_line="$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'npm audit signatures')"
+        install_line="$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'npm install -g')"
+        # Fail loud rather than pass vacuously when either line is missing:
+        # comparing two empty strings would report correct ordering between two
+        # things that do not exist.
+        ok=0
+        if [ -n "$audit_line" ] && [ -n "$install_line" ] && [ "$audit_line" -lt "$install_line" ]; then
+            ok=1
+        fi
+        assert_equals "1" "$ok" \
+            "$f must run 'npm audit signatures' (line ${audit_line:-none}) BEFORE 'npm install -g' (line ${install_line:-none}) (#740) — verifying after the global install audits bytes already unpacked and executed."
+    done
+}
+
+run_test test_signature_check_present "Both workflows verify agnix's registry signature"
+run_test test_scratch_install_ignores_scripts "Pre-verification install passes --ignore-scripts"
+run_test test_signature_check_precedes_global_install "Signature check precedes the global install"
+
 # agnix is an OPTIONAL enrichment — absent binary skips the REST of the gate
 # rather than failing it or, worse, passing quietly. The pin checks above have
 # already run and are already recorded, so a drift still fails here even on a
