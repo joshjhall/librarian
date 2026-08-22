@@ -1400,6 +1400,37 @@ EOF
         "go: a testify Test/Benchmark method stays test-classified under the receiver arm"
     assert_fires "$list" file-length "1 top-level units" \
         "go: only the production func counts toward the unit total"
+
+    # The prefix needs a BOUNDARY. Go's rule is `func TestXxx` where Xxx does
+    # not start lowercase, so a bare prefix match classifies `Testify`,
+    # `Benchmarking` and `Exampler` as test code and silently drops their
+    # lines from production LOC — a wrong number feeding every downstream
+    # verdict, with no visible error. Every unit below is PRODUCTION.
+    f="$d/prefixy.go"
+    command cat >"$f" <<'EOF'
+package api
+
+func (s *Suite) Testify(v string) string {
+	return v
+}
+
+func (r *Repo) Exampler(v string) string {
+	return v
+}
+
+func (a *API) Benchmarking(v string) string {
+	return v
+}
+
+func Fuzzy(v string) string {
+	return v
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "0 test-excluded" \
+        "go: a name merely STARTING with Test/Benchmark/Example is not a test"
+    assert_fires "$list" file-length "4 top-level units" \
+        "go: those four production units all survive the test classifier"
 }
 
 # ============================================================================

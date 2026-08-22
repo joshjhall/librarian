@@ -765,6 +765,93 @@ test_swift_is_modeled_in_the_review_lens() {
         "swift: both test conventions are excluded in the review lens (#728)"
 }
 
+# --- #727: the Rust/Go segmenter fixes reach the REVIEW lens too -------------
+# The audit lens has thorough coverage in validate-decomposition-detectors.sh,
+# but every one of those cases drives patterns.{py,sh}. sizing.{py,sh} carry the
+# same logic through the shared regions — and validate-shared-scanner-sync.sh
+# proves the TEXT is identical, not that this lens's own scan_file() consumes
+# the new unit counts correctly ([[parity-gate-hides-shared-defect]]: three
+# copies wrong the same way compare equal). Same gap the Swift case above closes
+# for #728, and the split-verify cases close for that tool.
+#
+# Every assertion keys on a NUMBER the pre-#727 code could not produce.
+test_rust_go_segmenters_reach_the_review_lens() {
+    local rs="$WORKDIR/impls.rs" go="$WORKDIR/methods.go"
+    local list="$WORKDIR/rsgo-list.txt" out i
+
+    # 150 impl blocks on one type: 600 production LOC, over the Rust 400 warning.
+    # Pre-#727 the `impl Trait for` arm captured the TRAIT, so these scattered
+    # across 150 families instead of clustering into one.
+    : >"$rs"
+    i=0
+    while [ "$i" -lt 150 ]; do
+        command printf 'impl Trait%d for Holder {\n    fn go(&self) {}\n}\n' "$i" >>"$rs"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$rs" >"$list"
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+    # 150 units is only reachable if impl is segmented AND stays ONE unit each:
+    # invisible would give 0, method-level segmentation would give 300.
+    assert_contains "$out" "150 top-level units" \
+        "rust: the review lens segments impl blocks, one unit each (#727)"
+    assert_contains "$out" "(>400 warning)" \
+        "rust: the review lens applies the decided Rust threshold to a segmented file"
+
+    # 120 receiver methods on one type. Pre-#727 a method matched NOTHING — the
+    # `(` fails the identifier class — so this file measured 0 units and was
+    # declined as a single cohesive unit.
+    # 150 methods x 3 lines + package = 451 production LOC, over the Go 400
+    # warning. Sized past the threshold on purpose: under it the lens emits
+    # nothing and every assertion below would compare against an empty string,
+    # which passes for the wrong reason.
+    : >"$go"
+    command printf 'package repo\n' >>"$go"
+    i=0
+    while [ "$i" -lt 150 ]; do
+        command printf 'func (r *Repo) Get%d(id string) string {\n\treturn id\n}\n' "$i" >>"$go"
+        i=$((i + 1))
+    done
+    command printf '%s\n' "$go" >"$list"
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+    assert_contains "$out" "150 top-level units" \
+        "go: the review lens sees receiver methods as units (#727)"
+    assert_not_contains "$out" "single cohesive unit" \
+        "go: a method-heavy file is no longer mis-declined as cohesive (#727)"
+
+    # A MID-FILE test module must exclude only itself. Pre-#727 the region ran
+    # to EOF, so everything after the module vanished from production LOC —
+    # the fixture below puts 300 lines of production code AFTER it.
+    local mid="$WORKDIR/midregion.rs"
+    {
+        command printf 'pub fn head_unit() -> u32 {\n    1\n}\n'
+        command printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {}\n}\n'
+        i=0
+        while [ "$i" -lt 150 ]; do
+            command printf 'pub fn tail_%d() -> u32 {\n    %d\n}\n' "$i" "$i"
+            i=$((i + 1))
+        done
+    } >"$mid"
+    command printf '%s\n' "$mid" >"$list"
+    run_scan "$list"
+    assert_parity
+    out="$SCAN_OUT"
+    # 3 head + 450 tail = 453 production, over the Rust 400 warning; only the
+    # 5-line test module is excluded. Running to EOF would leave 3 production
+    # LOC — under threshold, so NO row at all, and an assertion against the
+    # empty string would have to be written to catch it. Asserting the real
+    # number is the stronger form.
+    assert_contains "$out" "453 production LOC" \
+        "rust: a mid-file test module excludes only itself in the review lens (#727)"
+    assert_contains "$out" "5 test-excluded" \
+        "rust: exactly the test module is excluded, not everything after it (#727)"
+    assert_contains "$out" "151 top-level units" \
+        "rust: production units after a mid-file test module still count (#727)"
+}
+
 # --- a file UNDER threshold stays silent -------------------------------------
 # The counter-fixture. Without it every assertion above could pass by emitting a
 # row for literally every file.
@@ -1084,6 +1171,7 @@ run_test test_split_shape_is_language_shaped "AC7: split guidance matches the fi
 run_test test_every_split_shape_arm_is_language_specific "AC7: every SPLIT_SHAPE arm is reachable and language-specific"
 run_test test_per_language_thresholds_differ "Per-language thresholds are consulted, not merely present"
 run_test test_swift_is_modeled_in_the_review_lens "swift: segmenter, comment model, test exclusion, 400/700 pair (#728)"
+run_test test_rust_go_segmenters_reach_the_review_lens "rust/go: impl clustering, receiver methods, mid-file test region (#727)"
 run_test test_agent_md_is_classified_by_type "#724: an agent definition is sized by its own budget, not as a generic doc"
 run_test test_classified_prose_gets_exactly_one_verdict "#724/#701: a classified prose file gets exactly one size verdict"
 run_test test_skill_and_companion_arms_stay_ordered "#724: SKILL.md and its companion get different budgets (arm order)"

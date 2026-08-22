@@ -278,9 +278,18 @@ TEST_UNIT_RE = {
     # learned to segment methods, anchoring on `^func[ \t]+Test` alone stopped
     # matching them — the suite method became a production unit and its body
     # counted toward production LOC.
+    # The prefix needs a BOUNDARY. Go's rule is `func TestXxx` where Xxx does
+    # not begin with a lowercase letter, so a bare prefix match classifies
+    # `Testify`, `Benchmarking` and `Exampler` as test code and silently drops
+    # their lines from production LOC and the unit count — a wrong number
+    # feeding god-module, seam and decline verdicts, with no visible error.
+    # Requiring an uppercase letter, `_`, or the end of the name (`(`) after
+    # the prefix matches the convention exactly. The bare-func arm had this
+    # weakness before #727; extending the prefix to every receiver METHOD would
+    # have widened it considerably, so both arms are anchored here.
     "go": re.compile(
-        r"^func[ \t]+(?:Test|Benchmark|Fuzz|Example)"
-        r"|^func[ \t]*\([^)]*\)[ \t]*(?:Test|Benchmark|Fuzz|Example)"
+        r"^func[ \t]+(?:Test|Benchmark|Fuzz|Example)(?:[A-Z_]|[ \t]*\()"
+        r"|^func[ \t]*\([^)]*\)[ \t]*(?:Test|Benchmark|Fuzz|Example)(?:[A-Z_]|[ \t]*\()"
     ),
     "sh": re.compile(r"^(?:function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)"),
     # Swift XCTest (#728) — the SAME-LINE half of Swift's two test conventions:

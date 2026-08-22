@@ -452,7 +452,7 @@ while IFS= read -r file; do
     function is_test_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?def[ \t]+test_/ || line ~ /^class[ \t]+Test/
         if (lang == "js" || lang == "ts") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
-        if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)/ || line ~ /^func[ \t]*\([^)]*\)[ \t]*(Test|Benchmark|Fuzz|Example)/
+        if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)([A-Z_]|[ \t]*\()/ || line ~ /^func[ \t]*\([^)]*\)[ \t]*(Test|Benchmark|Fuzz|Example)([A-Z_]|[ \t]*\()/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func[ \t]+test|class[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*:[^{]*XCTestCase)/
         if (lang == "sh") return line ~ /^(function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)/
         return 0
