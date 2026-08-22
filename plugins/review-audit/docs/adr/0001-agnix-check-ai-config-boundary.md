@@ -224,11 +224,17 @@ no-op-with-clear-log when the binary is absent.
 - **agnix is pinned, not `@latest`.** A `@latest` bump can add rules that fail a
   previously-green tree with no code change — exactly the drift the repo's
   GitHub-Action SHA-pin + dependabot discipline prevents. Pin to a specific
-  version (e.g. `agnix@0.40.0`) and route bumps through dependabot's npm ecosystem.
+  version (e.g. `agnix@0.49.0`) and route bumps through dependabot's npm ecosystem.
   The install edit lives in the **`containers` submodule** (a separate repo), so
   this is a cross-repo coordination item, not an in-repo change. librarian's own
-  consumers already pin `agnix@0.40.0` (this config's `.agnix.toml` and the CI
-  `code-scanning.yml`); the container install edit is tracked in the
+  CI workflows carry that exact pin — `ci.yml` and `code-scanning.yml`, held in
+  agreement by `tests/lint-agnix-clean.sh`'s pin cross-check, which runs
+  unconditionally (pure text comparison, so it fires even on a host with no
+  agnix installed). That same gate's *error-count* assertions are the part with
+  a floor: they skip (sentinel 77) below agnix 0.48.1, where stale parsers emit
+  phantom errors. `.agnix.toml` deliberately states no version of its own
+  (#734), so those two workflow pins are the single place the number lives.
+  The container install edit is tracked in the
   `severity/high` companion issue **joshjhall/containers#769**, coordinated from
   librarian tracking issue #400.
 

@@ -13,14 +13,26 @@
 # repo-aware checks (claude-md-drift, config-inconsistency, harness-logic), and
 # the LLM heuristic pass. So the two overlapping numeric rules are disabled here.
 #
-# agnix version: 0.40.0. The binary itself is pinned where it is INSTALLED, not
-# here — the `containers` npm install (issue #400 coordination; the submodule
-# edit is tracked in companion issue joshjhall/containers#769) and the CI SARIF
-# gate (.github/workflows/code-scanning.yml, `agnix@0.40.0`). This config's rule
-# IDs/schema track that pinned version; binary bumps route via #769 / dependabot
-# (ADR §5: never `@latest`). `tool_versions`/`spec_revisions` are intentionally
-# unset — no consumer needs version-aware CC-* validation yet, and pinning them
-# would add a second drift surface to keep in sync.
+# agnix version: deliberately NOT restated here. The binary is pinned where it
+# is INSTALLED — `agnix@X.Y.Z` in .github/workflows/ci.yml and
+# .github/workflows/code-scanning.yml, plus the `containers` npm install (issue
+# #400 coordination; the submodule edit is tracked in companion issue
+# joshjhall/containers#769). Read the version off those pins.
+#
+# This comment used to name the version twice (`0.40.0`), and #734's bump to
+# 0.49.0 left both mentions stale in the same commit that moved the real pins —
+# a comment asserting a property the code no longer has, which is worse than no
+# comment because it tells the next reader the drift is handled. Naming a
+# pointer instead of a number removes the drift surface rather than resetting
+# it: tests/lint-agnix-clean.sh cross-checks the two install pins against each
+# other and against its own floor, but it cannot police prose, so prose must not
+# carry a copy worth policing.
+#
+# This config's rule IDs/schema track whatever version those pins name; binary
+# bumps route via #769 / dependabot (ADR §5: never `@latest`).
+# `tool_versions`/`spec_revisions` are intentionally unset — no consumer needs
+# version-aware CC-* validation yet, and pinning them would add a second drift
+# surface to keep in sync.
 
 # Select the Claude Code rule set (this repo is a Claude Code plugin
 # marketplace). The `tools` array takes agnix's kebab-case tool IDs — NOT the
@@ -45,3 +57,108 @@ severity = "Warning"
 #   CC-MEM-014 — CLAUDE.md exceeds line limit
 #   CC-MEM-009 — token count exceeded
 disabled_rules = ["CC-MEM-014", "CC-MEM-009"]
+
+# ---------------------------------------------------------------------------
+# Per-file rule suppressions (issue #734)
+# ---------------------------------------------------------------------------
+#
+# These clear the 10 pre-existing agnix ERRORS that reddened the code-scanning
+# annotation on every PR — including PRs touching none of the affected files.
+# The check is informational by design (code-scanning.yml keeps it out of the
+# merge gate), so nothing was blocked; the cost was erosion. A permanently-red
+# annotation trains reviewers to ignore the surface, at which point a genuinely
+# NEW agnix error lands unnoticed. Clearing it restores the signal.
+#
+# Each block is `[[overrides]]` — per-FILE, not a global `disabled_rules` entry —
+# so every rule below stays live everywhere else in the repo. That distinction
+# is load-bearing for CC-SK-006 especially: a global disable would forfeit its
+# protection for every OTHER skill, which is the protection worth keeping.
+# Paths name the exact flagged files rather than a directory glob, so a NEW
+# unclosed tag or a NEW dangerous skill still errors.
+#
+# !! GLOB SHAPE — read before editing a path below !!
+# `paths` entries match only as `**/`-prefixed SUFFIX globs. Measured against
+# 0.49.0, every one of these silently matches NOTHING and leaves the error in
+# place, while agnix still exits 0:
+#     "plugins/workflow/agents/issue-filer.md"      (repo-relative)
+#     "plugins/**/issue-filer.md"                   (prefix + wildcard)
+#     "*/issue-filer.md"                            (single-star)
+#     "/abs/path/to/issue-filer.md"                 (absolute)
+# Only "**/agents/issue-filer.md" (and longer `**/`-prefixed suffixes) suppress.
+# A mis-shaped path is therefore INERT AND SILENT — it looks like a suppression,
+# reports success, and changes nothing. tests/lint-agnix-clean.sh exists to catch
+# exactly that: it fails when this file stops producing a 0-error run.
+#
+# VERSION FLOOR: these overrides reach 0 errors only on agnix >= 0.48.1.
+# The 10 errors they suppress do reproduce identically across versions — but
+# agnix <= 0.47.0 ALSO emits dozens of additional PHANTOM errors from stale
+# frontmatter/tools parsers (AS-002 demanding a `name` key this repo's skills
+# omit by design; CC-AG-009 splitting `Bash(git diff:*)` on the comma inside its
+# own parens; CC-AG-003 rejecting the valid `model: fable`). Measured here, as
+# TOTALS of which 10 are the real errors these overrides clear — so the phantom
+# count is the row minus 10, and it is NOT constant across the pre-floor range:
+#     0.40.0 -> 57   0.43.0 -> 57   0.47.0 -> 50   0.48.1 -> 10   0.49.0 -> 10
+# Do NOT add overrides for the phantoms: they are parser bugs against correct
+# files, and suppressing them would hide the real rule everywhere it applies.
+# The fix is the version, which is why #734 also moved code-scanning.yml's pin
+# from 0.40.0 to 0.49.0 — before that bump, CI's annotation stayed red no matter
+# what this file said. tests/lint-agnix-clean.sh encodes the same floor and skips
+# below it. Bumps still route via containers#769 / dependabot per ADR §5.
+
+# XML-001 (unclosed XML tag) — 6 errors, all FALSE POSITIVES. Every hit is a
+# placeholder metavariable in prose, not markup: `<specific>`, `<path>`,
+# `<acc>`, `<k>`. agnix skips neither inline code spans nor backslash escapes —
+# skill-authoring/SKILL.md:16 is already written `\<specific situation>` and is
+# flagged anyway, so escaping is not an available fix.
+#
+# The ci-review-protocol.md hits matter most: `<acc>` and `<k>` are the
+# documented argument placeholders of a CLI signature and match
+# `scripts/workflow-wall-timeout.sh --help` verbatim. Rewriting them as
+# `{acc}`/`{k}` to appease the linter would make the docs disagree with the
+# script's own help output — the docs are correct and the rule is wrong here.
+[[overrides]]
+paths = [
+  "**/skills/ship-issue/ci-review-protocol.md",
+  "**/skills/skill-authoring/SKILL.md",
+  "**/skills/codebase-audit/orchestration-protocol.md",
+]
+disabled_rules = ["XML-001"]
+
+# CC-AG-005 (referenced skill not found) — 3 errors, all FALSE POSITIVES. All
+# three skills exist and resolve correctly at runtime. agnix looks for them at
+# `.claude/skills/<name>/SKILL.md`, the SINGLE-REPO layout; this repo is a plugin
+# MARKETPLACE, where skills live at `plugins/<plugin>/skills/<name>/SKILL.md`.
+# The rule has no notion of that layout, so it cannot resolve any of them:
+#   agent-author.md  -> agent-authoring  (plugins/dev-core/skills/agent-authoring)
+#   skill-author.md  -> skill-authoring  (plugins/dev-core/skills/skill-authoring)
+#   issue-filer.md   -> file-issue       (plugins/workflow/skills/file-issue)
+[[overrides]]
+paths = [
+  "**/agents/agent-author.md",
+  "**/agents/skill-author.md",
+  "**/agents/issue-filer.md",
+]
+disabled_rules = ["CC-AG-005"]
+
+# CC-SK-006 (dangerous skill must set `disable-model-invocation`) — 1 error, and
+# the ONLY one here that is not a false positive. This is a deliberate, reasoned
+# deviation; do not "fix" it mechanically.
+#
+# agnix's concern is legitimate — `ship-issue` commits, pushes, opens PRs, and at
+# L3–L4 merges. But setting `disable-model-invocation: true` would break the
+# L3–L4 auto-chain, which depends on the MODEL invoking the skill:
+#   next-issue/phase2-plan.md — "invoke the /workflow:ship-issue skill in this
+#     same turn (call the `Skill` tool with `ship-issue`)"
+#   next-issue/SKILL.md § Autonomy Levels — an L3–L4 run "invokes
+#     /workflow:ship-issue in the same turn… never end the turn with only a
+#     'next step' note"
+# The whole point of L3–L4 is that one `/workflow:next-issue N --level 4` reaches
+# a pushed PR without a second manual command; the flag would make every
+# autonomous run stop dead after implementation.
+#
+# The real guardrail for this skill is the AUTONOMY LEVEL, not an invocation
+# flag. Suppressed for this one file only, so the rule keeps protecting every
+# other skill in the marketplace.
+[[overrides]]
+paths = ["**/skills/ship-issue/SKILL.md"]
+disabled_rules = ["CC-SK-006"]

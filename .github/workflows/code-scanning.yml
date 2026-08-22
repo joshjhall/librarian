@@ -52,8 +52,31 @@ jobs:
           node-version: "24"
 
       # Pin agnix (ADR §5: no @latest — a floating bump can add rules that red a
-      # previously-green tree with no code change). Offline-tolerant: if the
-      # install fails (registry hiccup, npm-less/network-restricted runner), log
+      # previously-green tree with no code change).
+      #
+      # FLOOR IS 0.48.1, NOT COSMETIC (#734). Versions <= 0.47.0 carry stale
+      # frontmatter/tools parsers that emit dozens of phantom errors on a tree
+      # that is actually clean — measured on this repo at the config in
+      # .agnix.toml, as TOTALS of which 10 are real (so the phantom count is the
+      # row minus 10, and it is not one constant across the pre-floor range):
+      #     0.40.0 (the old pin) -> 57 errors    0.43.0 -> 57
+      #     0.47.0               -> 50 errors    0.48.1 -> 10    0.49.0 -> 10
+      # The phantoms are self-evidently wrong: AS-002 "missing required 'name'
+      # field" against skills whose frontmatter has no `name` key BY DESIGN
+      # (directory-derived), CC-AG-009 "unknown tool 'diff:*)'" from splitting
+      # `Bash(git diff:*)` on the comma inside its own parens, CC-AG-003 against
+      # the valid `model: fable`. The .agnix.toml [[overrides]] cannot suppress
+      # them and must not try — they are parser bugs, not findings to silence.
+      #
+      # So the 0-error contract holds only at >= 0.48.1, and this pin is what
+      # makes CI's annotation agree with a local run. tests/lint-agnix-clean.sh
+      # encodes the same floor and SKIPS (sentinel 77) below it, rather than
+      # reporting a phantom failure. No dependabot ecosystem covers this pin
+      # (github-actions only), so bumping it is always a deliberate edit: re-run
+      # that gate against the new version before changing the number.
+      #
+      # Offline-tolerant: if the install fails (registry hiccup,
+      # npm-less/network-restricted runner), log
       # a clear skip and set an output so the scan + upload steps no-op rather
       # than hard-failing the job — agnix is a best-effort enrichment, not a
       # required gate (acceptance: "agnix-absent → clear skip, not a hard
@@ -61,7 +84,7 @@ jobs:
       - name: Install agnix (pinned)
         id: agnix
         run: |
-          if npm install -g agnix@0.40.0; then
+          if npm install -g agnix@0.49.0; then
             echo "present=true" >> "$GITHUB_OUTPUT"
             agnix --version
           else

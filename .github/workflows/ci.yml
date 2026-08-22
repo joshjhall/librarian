@@ -135,8 +135,42 @@ jobs:
           url="https://github.com/crate-ci/typos/releases/download/v${typos_version}/typos-v${typos_version}-x86_64-unknown-linux-musl.tar.gz"
           curl -fsSL "$url" | sudo tar -xz -C /usr/local/bin ./typos
 
+      # agnix powers tests/lint-agnix-clean.sh, which asserts the repo's own
+      # AI-config artifacts stay error-free (#734). That gate skips with sentinel
+      # 77 when agnix is absent, so without this step it would sit inert here —
+      # exactly the failure mode the typos step above was added to close.
+      #
+      # Pinned to the SAME version as .github/workflows/code-scanning.yml, and
+      # for the same reason: agnix <= 0.47.0 emits dozens of phantom errors from
+      # stale parsers, so a lower version would skip the gate rather than run it.
+      # (Exact per-version counts live in the code-scanning.yml table; this file
+      # deliberately keeps no copy of them.) The
+      # two pins move together — see the FLOOR note in code-scanning.yml. Not
+      # covered by dependabot (github-actions ecosystem only), so this is
+      # deliberately a hand-edited number.
+      #
+      # Tolerating a failed install: unlike the three linters below, agnix is a
+      # best-effort enrichment per ADR 0001 §2/§4 — a registry hiccup must leave
+      # the gate skipping (77, rendered `[SKIP]`), never fail the whole CI job.
+      # That is why it is absent from the PATH assertion that follows.
+      #
+      # But it does NOT swallow the failure silently. A bare `|| true` makes a
+      # registry outage render downstream as `[SKIP] agnix error-free — did not
+      # run`, which is indistinguishable from "agnix was never installed here on
+      # purpose" — the reader has no breadcrumb back to this step. So the
+      # failure branch emits an explicit `::notice::`, matching what
+      # code-scanning.yml already does at its own install step.
+      - name: Install agnix (pinned)
+        run: |
+          if npm install -g agnix@0.49.0; then
+            agnix --version
+          else
+            echo "::notice::agnix install failed — tests/lint-agnix-clean.sh will SKIP (exit 77), not fail. agnix is a best-effort enrichment (ADR 0001 §2/§4); the rest of the suite still gates this job."
+          fi
+
       # Fail loudly if a required linter did not land on PATH — otherwise the
       # skip-if-absent gates would quietly no-op in CI, defeating their purpose.
+      # agnix is deliberately NOT asserted here (see its install step above).
       - name: Verify linters are on PATH
         run: |
           command -v shellcheck >/dev/null || { echo "shellcheck missing on PATH"; exit 1; }
