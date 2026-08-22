@@ -958,6 +958,89 @@ EOF
     list="$(list_of "$f")"
     assert_fires "$list" decomposition-seam "fn gadget_* family (3 units," \
         "rust: impl with NESTED generic bounds is still segmented, named by type"
+
+    # BORROW MARKERS before the type. `impl Trait for &mut Foo` captured the
+    # keyword `mut` — a keyword as the family name and as a god-module
+    # "concern" in human-read evidence, the same wrong-finding class
+    # RESERVED_UNIT_NAME exists to prevent for Swift. All five impls below
+    # belong to one type, so they form a single family only if `&`, `&mut` and
+    # `&'a mut` are all consumed.
+    f="$d/borrow.rs"
+    command cat >"$f" <<'EOF'
+impl Display for Holder {
+    fn fmt(&self) -> R {
+        w()
+    }
+}
+
+impl Debug for &mut Holder {
+    fn fmt(&self) -> R {
+        w()
+    }
+}
+
+impl Clone for &Holder {
+    fn clone(&self) -> Self {
+        c()
+    }
+}
+
+impl<'a> Render for &'a mut Holder {
+    fn render(&self) -> R {
+        r()
+    }
+}
+
+impl Holder {
+    pub fn new() -> Self {
+        Holder {}
+    }
+}
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "fn holder_* family (5 units," \
+        "rust: &, &mut and &'a mut before the type are consumed, not captured" \
+        DECOMP_SEAM_MIN_UNITS=5
+}
+
+# The `Trait for` clause must match in LINEAR time. With `.*[ \t]+for`, a run of
+# N spaces after `impl` can be partitioned between `.*` and `[ \t]+` in O(N) ways
+# at each of O(N) offsets, and Python's engine tries all of them before failing:
+# measured 0.25 s at N=1000, 1.9 s at N=2000, 14.5 s at N=4000 — cubic. That is
+# reachable by a stray line of trailing whitespace in any scanned .rs file, not
+# only by a crafted one, and these scanners run over arbitrary trees.
+#
+# A WALL-CLOCK assertion, deliberately: the defect is not a wrong answer that a
+# value assertion could catch — both the fast and slow patterns return the same
+# (non-)match. Only the time differs. The bound is loose (10s) because CI timing
+# is noisy; the fixed pattern does this in well under a second, and the
+# regression it guards took 14s at a SMALLER N than the fixture uses.
+test_rust_impl_matches_in_linear_time() {
+    local d f list rc
+    d="$(fresh_dir)"
+    f="$d/pathological.rs"
+    {
+        command printf 'pub fn real_unit() -> u32 {\n    1\n}\n'
+        # 8000 spaces after `impl`, then a non-identifier so the match fails.
+        command printf 'impl '
+        command awk 'BEGIN { for (i = 0; i < 8000; i++) printf " " }'
+        command printf '!\n'
+    } >"$f"
+    list="$(list_of "$f")"
+
+    rc=0
+    command timeout 10 /usr/bin/env \
+        DECOMP_LOC_WARN=5 DECOMP_LOC_HIGH=400 \
+        python3 "$PY" "$list" >/dev/null 2>&1 || rc=$?
+    assert_exit 0 "$rc" \
+        "rust: a long whitespace run after impl does not blow up the matcher (python)"
+
+    rc=0
+    command timeout 10 /usr/bin/env \
+        PATTERNS_FORCE_BASH=1 DECOMP_LOC_WARN=5 DECOMP_LOC_HIGH=400 \
+        "$REAL_BASH" "$SH" "$list" >/dev/null 2>&1 || rc=$?
+    assert_exit 0 "$rc" \
+        "rust: the same line does not blow up the awk fallback"
 }
 
 # Item kinds the prefix alternation missed entirely before #727. Each was
@@ -2638,6 +2721,7 @@ run_test test_seam_rust "rust: fn-family seam + #[cfg(test)] region exclusion"
 run_test test_seam_go "go: func-family seam + func Test exclusion"
 run_test test_rust_impl_clustering "rust: impl Trait for Type clusters by type; impl is one unit (#727)"
 run_test test_rust_item_coverage "rust: macro_rules/unsafe/const/extern/static/type all segment (#727)"
+run_test test_rust_impl_matches_in_linear_time "rust: the impl arm matches in linear time (ReDoS guard, #727)"
 run_test test_rust_midfile_test_region "rust: mid-file #[cfg(test)] is module-scoped; indented #[test] does not leak (#727)"
 run_test test_go_method_receivers "go: methods cluster by receiver; grouped decls are visible (#727)"
 run_test test_go_method_test_classification "go: a testify Test method stays test-classified (#727)"

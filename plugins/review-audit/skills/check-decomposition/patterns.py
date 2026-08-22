@@ -123,8 +123,24 @@ UNIT_RE = {
         # defect this arm exists to fix, on the commonest form of generic impl.
         # Regex cannot balance arbitrarily; this covers three levels, which is
         # past anything real (`A<B<C>>` already exhausts two).
+        # The optional `Trait for` clause is LINEAR-TIME by construction, and it
+        # has to be: with `.*[ \t]+for`, a run of N spaces after `impl` can be
+        # split between `.*` and `[ \t]+` in O(N) ways at each of O(N) offsets,
+        # and the engine tries all of them before failing. Measured on the live
+        # pattern: `"impl " + " "*N + "!"` took 0.25 s at N=1000, 1.9 s at
+        # N=2000, 14.5 s at N=4000 — cubic, and reached by a stray line of
+        # trailing whitespace, not only by a crafted one. Two changes make it
+        # flat (0.7 ms at N=16000): the clause must START on a non-space, and
+        # the separator before `for` is a SINGLE [ \t] so greedy `.*` has
+        # exactly one way to hand off.
+        #
+        # The borrow markers are consumed too. `impl Trait for &mut Foo` used to
+        # capture `mut` — a keyword as the family name and a god-module
+        # "concern" in human-read evidence, the same wrong-finding class
+        # RESERVED_UNIT_NAME exists to prevent for Swift.
         r"|impl(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?[ \t]+"
-        r"(?:.*[ \t]+for[ \t]+)?(?:&[ \t]*)?"
+        r"(?:[^ \t].*[ \t]for[ \t]+)?(?:&[ \t]*)?"
+        r"(?:'[A-Za-z_][A-Za-z0-9_]*[ \t]+)?(?:mut[ \t]+)?"
         r"([A-Za-z_][A-Za-z0-9_]*)"
         r"|extern[ \t]+crate[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
         r"|(?:fn|struct|enum|trait|mod|type|static|const|union)"

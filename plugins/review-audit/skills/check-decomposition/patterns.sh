@@ -267,7 +267,7 @@ while IFS= read -r file; do
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
         if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
-        if (lang == "rs") return line ~ /^((pub(\([a-z ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*(macro_rules![ \t]+[A-Za-z_][A-Za-z0-9_]*|impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+(.*[ \t]+for[ \t]+)?(&[ \t]*)?[A-Za-z_][A-Za-z0-9_]*|extern[ \t]+crate[ \t]+[A-Za-z_][A-Za-z0-9_]*|(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+[A-Za-z_][A-Za-z0-9_]*)/
+        if (lang == "rs") return line ~ /^((pub(\([a-z ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*(macro_rules![ \t]+[A-Za-z_][A-Za-z0-9_]*|impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+([^ \t].*[ \t]for[ \t]+)?(&[ \t]*)?([\047][A-Za-z_][A-Za-z0-9_]*[ \t]+)?(mut[ \t]+)?[A-Za-z_][A-Za-z0-9_]*|extern[ \t]+crate[ \t]+[A-Za-z_][A-Za-z0-9_]*|(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+[A-Za-z_][A-Za-z0-9_]*)/
         if (lang == "go") return line ~ /^func[ \t]*\([ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]+)?\*?[ \t]*[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?[ \t]*\)[ \t]*[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(var|const|type)[ \t]*\(/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
@@ -296,8 +296,14 @@ while IFS= read -r file; do
             if (s ~ /^macro_rules![ \t]+/) { sub(/^macro_rules![ \t]+/, "", s) }
             else if (s ~ /^impl/) {
                 sub(/^impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+/, "", s)
-                sub(/^.*[ \t]+for[ \t]+/, "", s)
+                sub(/^[^ \t].*[ \t]for[ \t]+/, "", s)
                 sub(/^&[ \t]*/, "", s)
+                # Borrow markers before the type: a lifetime (\047 is an
+                # apostrophe — a literal one would end this single-quoted awk
+                # program) and/or `mut`. Without these, `for &mut Foo` yields
+                # the keyword `mut` as the unit name.
+                sub(/^[\047][A-Za-z_][A-Za-z0-9_]*[ \t]+/, "", s)
+                sub(/^mut[ \t]+/, "", s)
             }
             else { sub(/^(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+/, "", s) }
         }
