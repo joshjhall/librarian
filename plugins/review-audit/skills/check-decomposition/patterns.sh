@@ -307,6 +307,34 @@ while IFS= read -r file; do
         return "unit"
     }
     # <<< shared:loc-helpers-awk
+
+    # >>> shared:split-shape-awk (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
+    # Language-shaped split guidance, shared by BOTH lenses (#725). This is the
+    # awk-fallback half of SPLIT_SHAPE / split_shape() in the .py primaries.
+    #
+    # NB: no apostrophes anywhere in this region. The whole awk program is a
+    # single-quoted shell string, so one would end it and the next line would be
+    # parsed as shell.
+    #
+    # Names the SHAPE of the split, not a generic "consider splitting" — the
+    # finding has to be actionable or it is noise. Keyed by the same language
+    # keys the segmenters use, so advice and measurement can never disagree
+    # about what a file IS.
+    #
+    # The final `return` is the shape for a language with no segmenter, and it
+    # is INSIDE the region deliberately: as a bare literal at each call site it
+    # was one more unpinned copy of the same fact.
+    function split_shape(lang) {
+        if (lang == "rs") return "new subdir module; mod.rs re-exports the decomposed units"
+        if (lang == "py") return "package dir with __init__.py re-exporting the public surface"
+        if (lang == "js") return "sibling modules + a barrel index.ts"
+        if (lang == "go") return "additional files in the same package (no import churn)"
+        if (lang == "sh") return "sourced fragment + an explicit ordered list (split-suite convention)"
+        if (lang == "md") return "progressive disclosure: move detail to linked files, leave a one-line pointer"
+        return "extract a cohesive unit into a sibling module"
+    }
+    # <<< shared:split-shape-awk
+
     # target_path: sibling module named for the family, under a directory named
     # for the file it came from. Mirrors target_path() in patterns.py.
     # NB: `i` is declared LOCAL here (the extra-parameter idiom). awk has no
@@ -617,6 +645,23 @@ while IFS= read -r file; do
             emit(cs[i], "decomposition-seam", sprintf("seam %d-%d: %s %s_* family (%d units, %s) -> %s", \
                 cs[i], ce[i], noun, cp[i], cn[i], fan, target_path(path, cp[i])), "HIGH")
             seams++
+        }
+
+        # ---- the split SHAPE (#725) -----------------------------------------
+        # Mirrors the shape emit in scan_file() (patterns.py). The seam rows
+        # above say WHERE to cut; this says what the result should LOOK LIKE.
+        #
+        # Gated on `seams > 0`, NOT merely `over`: the decline arm below covers
+        # `over && seams == 0`, and a shape row beside a decline would
+        # contradict its own neighbour — telling the reader to build a package
+        # dir out of a file the scanner just said has nothing to cut.
+        #
+        # Unreachable for a memory bundle by CONSTRUCTION (the bundle branch
+        # above exits before this point), so an index/concept never receives
+        # generic md advice. Fixtured anyway.
+        if (seams > 0) {
+            emit(1, "decomposition-seam", sprintf("split shape for %s: %s", \
+                lang, split_shape(lang)), "MEDIUM")
         }
 
         # ---- reasoned decline -----------------------------------------------

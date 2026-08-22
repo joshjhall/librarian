@@ -157,10 +157,24 @@ EXT_LANG = {
 }
 # <<< shared:loc-tables-py
 
-# Language-shaped split guidance (AC7). Keyed by the same language keys the
-# segmenters use, so advice and measurement can never disagree about what a file
-# IS. Each string names the SHAPE of the split, not a generic "consider
-# splitting" — the finding has to be actionable or it is noise.
+# >>> shared:split-shape-py (sync: check-decomposition/patterns.py)
+# LANGUAGE-SHAPED SPLIT GUIDANCE — shared by BOTH lenses (#725).
+#
+# Introduced on the review lens alone (#695), which was backwards: the AUDIT lens
+# is the one that files a backlog somebody picks up weeks later, with none of the
+# PR context that makes a bare line range interpretable. That reader needs the
+# shape spelled out most, and had it least — the exact "too generic to act on, so
+# nothing gets decomposed" failure #663 was filed against.
+#
+# Keyed by the same language keys the segmenters use (EXT_LANG's values), so
+# advice and measurement can never disagree about what a file IS. That invariant
+# is asserted structurally: a language with a segmenter and no shape, or a shape
+# for a language nothing segments, fails tests/validate-shared-scanner-sync.sh.
+# It is what makes adding a language (#726 TypeScript, #727 Rust/Go, #728 Swift)
+# a one-table edit rather than two that must be remembered together.
+#
+# Each string names the SHAPE of the split, not a generic "consider splitting" —
+# the finding has to be actionable or it is noise.
 SPLIT_SHAPE = {
     "rs": "new subdir module; mod.rs re-exports the decomposed units",
     "py": "package dir with __init__.py re-exporting the public surface",
@@ -171,6 +185,27 @@ SPLIT_SHAPE = {
         "progressive disclosure: move detail to linked files, leave a one-line pointer"
     ),
 }
+
+# The shape for a file whose extension has NO segmenter (.rb, .java, .c, .cpp,
+# .kt — all scanned, since none are skipped). Weaker than a language-shaped
+# string but still a real destination, which is what keeps every actionable
+# over-threshold file yielding exactly one seam row.
+#
+# It lives INSIDE the shared region on purpose. As a bare literal at each call
+# site it was two more unpinned copies of the same fact — the precise shape of
+# duplication this region exists to end.
+SPLIT_SHAPE_FALLBACK = "extract a cohesive unit into a sibling module"
+
+
+def split_shape(lang: str) -> str:
+    """The split shape for LANG, falling back for an unsegmented language.
+
+    Every consumer goes through this rather than indexing SPLIT_SHAPE directly,
+    so the fallback cannot fork the way it already had."""
+    return SPLIT_SHAPE.get(lang, SPLIT_SHAPE_FALLBACK)
+
+
+# <<< shared:split-shape-py
 
 # Per-language review-lens thresholds, overriding the default pair. A 500-line
 # Rust file and a 500-line shell script are not the same claim. Languages absent
@@ -729,7 +764,7 @@ def scan_prose(
             path,
             1,
             "decomposition-seam",
-            f"split shape for {ftype}: {SPLIT_SHAPE['md']}",
+            f"split shape for {ftype}: {split_shape('md')}",
             "MEDIUM",
         )
 
@@ -857,7 +892,7 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
     # a real destination, and every blocking-eligible file now yields exactly one
     # seam row.
     if crossed or material:
-        shape = SPLIT_SHAPE.get(lang, "extract a cohesive unit into a sibling module")
+        shape = split_shape(lang)
         label = lang if lang else "this file"
         emit(
             path,

@@ -1678,6 +1678,33 @@ export async function run() {
       "preScanSection: prose-classification rows reach the reviewer prompt (#724)",
     );
 
+    // #725 cache-prefix neutrality, same shape as the #724 case above. Unifying
+    // the split-shape table made the AUDIT lens emit a `split shape for <lang>`
+    // row it never emitted before, and the review lens now reaches its own copy
+    // through split_shape() — but neither is a new prompt MECHANISM: both ride
+    // the same TSV -> preScan -> dataBlock path with its fixed five-field order.
+    //
+    // Asserted as an EQUALITY against an extra-key variant rather than as "the
+    // no-op is empty" (covered above): the failure this guards is a hand-rolled
+    // builder for seam rows, which would serialize differently while leaving the
+    // empty case untouched and every assertion above green.
+    const SEAM = {
+      file: "plugins/review-audit/skills/check-decomposition/patterns.py",
+      line: 1,
+      category: "decomposition-seam",
+      evidence: "split shape for py: package dir with __init__.py re-exporting the public surface",
+      certainty: "MEDIUM",
+    };
+    eq(
+      mkPreScan([SEAM]).preScanSection(),
+      mkPreScan([{ ...SEAM, sneaked: "x" }]).preScanSection(),
+      "preScanSection: a split-shape seam row serializes through the fixed-field dataBlock path (#725/#256)",
+    );
+    ok(
+      mkPreScan([SEAM]).preScanSection().includes("split shape for py"),
+      "preScanSection: split-shape guidance reaches the reviewer prompt (#725)",
+    );
+
     // It must live inside the SHARED block, so all reviewers see it and the
     // fan-out prefix stays byte-identical across siblings (#256).
     const src = harnessSource(SHIP);
