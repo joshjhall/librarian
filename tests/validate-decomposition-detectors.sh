@@ -1115,6 +1115,41 @@ EOF
     list="$(list_of "$f")"
     assert_fires "$list" file-length "2 top-level units" \
         "rust: an indented #[test] does not mark the next top-level unit as test"
+
+    # (3) A NESTED `#[cfg(test)] mod tests` — indented inside an outer `mod` —
+    # must not engage the whole-file REGION path at all. The marker is not a
+    # unit header (units are column-zero anchored), so the bounded stop from (1)
+    # could not find the module it introduces and latched onto whatever
+    # top-level unit followed, excluding everything in between: 11 of 16 lines
+    # and a production fn swallowed whole. Distinct from (2), which mis-marks a
+    # UNIT via the attribute flag; this one mis-sizes a REGION. A nested test
+    # module is already excluded per-unit through its enclosing unit's span.
+    f="$d/nested.rs"
+    command cat >"$f" <<'EOF'
+mod outer {
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn t() {}
+    }
+}
+
+pub fn after_a() -> u32 {
+    1
+}
+
+pub fn after_b() -> u32 {
+    2
+}
+EOF
+    list="$(list_of "$f")"
+    # Nothing is region-excluded: the only marker is indented. All three
+    # top-level units survive. Pre-fix this read 11 test-excluded and dropped
+    # after_a entirely.
+    assert_fires "$list" file-length "0 test-excluded" \
+        "rust: a NESTED #[cfg(test)] does not open a whole-file test region"
+    assert_fires "$list" file-length "3 top-level units" \
+        "rust: production units after a nested test module are still counted"
 }
 
 # ============================================================================

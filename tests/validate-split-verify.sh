@@ -352,6 +352,48 @@ test_go_method_split_is_verified_by_receiver_name() {
         "go: the lost method is NAMED receiver-first, proving the receiver join"
 }
 
+# production_loc() is this tool's OWN measurement loop, outside the shared
+# unit-segmenters-awk region — so the sync gate cannot see it, and #727's
+# unit-bounded test-region sweep had to be applied here as a fourth sibling
+# ([[harden-one-knob-grep-every-sibling]]). Unbounded, a mid-file
+# `#[cfg(test)] mod tests` excluded every production unit after it: measured on
+# this fixture, 3 -> 10 production LOC instead of 9 -> 10. A phantom seven-line
+# GAIN, which is what would mask a real loss on the LOC-conservation check.
+test_rust_midfile_test_region_in_production_loc() {
+    local orig kept moved
+    orig="$WORKDIR/rs-mid-orig.rs"
+    {
+        command printf 'pub fn alpha() -> u32 {\n    1\n}\n\n'
+        command printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn t_one() {\n        assert!(true);\n    }\n}\n\n'
+        command printf 'pub fn beta() -> u32 {\n    2\n}\n\n'
+        command printf 'pub fn gamma() -> u32 {\n    3\n}\n'
+    } >"$orig"
+
+    kept="$WORKDIR/rs-mid-kept.rs"
+    {
+        command printf 'use beta::{beta, gamma};\n\n'
+        command printf 'pub fn alpha() -> u32 {\n    1\n}\n\n'
+        command printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn t_one() {\n        assert!(true);\n    }\n}\n'
+    } >"$kept"
+
+    moved="$WORKDIR/rs-mid-beta.rs"
+    {
+        command printf 'pub fn beta() -> u32 {\n    2\n}\n\n'
+        command printf 'pub fn gamma() -> u32 {\n    3\n}\n'
+    } >"$moved"
+
+    run_verify "$orig" "$kept" "$moved"
+    assert_parity
+    # The ORIGINAL side must measure 9, not 3 — the test module alone is
+    # excluded, not everything after it. Asserting the rendered number rather
+    # than merely "verified": both the fixed and unbounded impls report
+    # verified here, and only the LOC figure tells them apart.
+    assert_contains "$VERIFY_OUT" "9 -> 10 production LOC" \
+        "rust: a mid-file test module excludes only itself in production_loc()"
+    assert_contains "$VERIFY_OUT" "all 3 top-level unit(s) preserved" \
+        "rust: units after a mid-file test module survive split verification"
+}
+
 # --- check 1: LOC conservation -----------------------------------------------
 # Uses a LARGE drop so the loss clears the boilerplate tolerance — the tolerance
 # exists precisely so a few import/mod/__init__ lines are not reported as drift.
@@ -583,6 +625,7 @@ run_test test_swift_lost_unit_is_detected "swift: a dropped Swift declaration is
 run_test test_swift_reserved_name_and_attribute_paths "swift: reserved-name filter and attribute path in split-verify's own loop (#728)"
 run_test test_rust_split_is_verified_by_unit_name "Check 2 (rust): impl moves as one unit, named by type (#727)"
 run_test test_go_method_split_is_verified_by_receiver_name "Check 2 (go): a lost receiver method is named Receiver_Method (#727)"
+run_test test_rust_midfile_test_region_in_production_loc "Check 1 (rust): a mid-file test module excludes only itself (#727)"
 run_test test_loc_drift_is_detected "Check 1: a large content drop is detected as LOC drift"
 run_test test_boilerplate_does_not_trip_loc_check "Check 1 counter: re-export boilerplate is tolerated"
 run_test test_dangling_reference_is_detected "Check 3: a dangling call site is detected and named"

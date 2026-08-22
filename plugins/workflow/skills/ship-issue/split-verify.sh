@@ -262,9 +262,21 @@ production_loc() {
         for (i = 1; i <= total; i++) {
             hit = 0
             if (lang == "py" && L[i] ~ /^if[ \t]+__name__/) hit = 1
-            else if (lang == "rs" && L[i] ~ /^[ \t]*#\[cfg\(test\)\]/) hit = 1
+            else if (lang == "rs" && L[i] ~ /^#\[cfg\(test\)\]/) hit = 1
             else if (lang == "sh" && L[i] ~ /^#[ \t]*-+[ \t]*tests?[ \t]*-+/) hit = 1
-            if (hit) { for (j = i; j <= total; j++) tl[j] = 1; break }
+            # Bounded to the unit the marker INTRODUCES, not to EOF (#727) —
+            # the same rule sizing.sh and the .py primaries apply. This loop
+            # lives OUTSIDE the shared region, so the sync gate cannot see it:
+            # it is the fourth sibling doing the identical LOC-exclusion job
+            # ([[harden-one-knob-grep-every-sibling]]). Left unbounded, a
+            # mid-file test module would exclude every production unit after it
+            # and skew the LOC-conservation check either way.
+            if (hit) {
+                stop = total
+                for (k = 1; k <= nu; k++) if (us[k] >= i) { stop = uend[k]; break }
+                for (j = i; j <= stop; j++) tl[j] = 1
+                break
+            }
         }
         blank = 0; comment = 0; test_excluded = 0
         for (i = 1; i <= total; i++) {

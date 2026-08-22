@@ -584,7 +584,7 @@ while IFS= read -r file; do
         for (i = 1; i <= total; i++) {
             hit = 0
             if (lang == "py" && L[i] ~ /^if[ \t]+__name__/) hit = 1
-            else if (lang == "rs" && L[i] ~ /^[ \t]*#\[cfg\(test\)\]/) hit = 1
+            else if (lang == "rs" && L[i] ~ /^#\[cfg\(test\)\]/) hit = 1
             else if (lang == "sh" && L[i] ~ /^#[ \t]*-+[ \t]*tests?[ \t]*-+/) hit = 1
             if (hit) {
                 stop = total

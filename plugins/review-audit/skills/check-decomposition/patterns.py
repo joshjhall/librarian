@@ -328,7 +328,17 @@ RESERVED_UNIT_NAME = {
 # than unit-scoped.
 TEST_REGION_RE = {
     "py": re.compile(r"^if[ \t]+__name__"),
-    "rs": re.compile(r"^[ \t]*#\[cfg\(test\)\]"),
+    # COLUMN-ZERO only (#727), matching the pending-test attribute guard in
+    # find_units. The `[ \t]*` this used to carry made a NESTED marker — a
+    # `#[cfg(test)] mod tests` indented inside an outer `mod` — engage the
+    # whole-file region path. That marker is not itself a unit header (units are
+    # column-zero anchored), so the stop-computation below latched onto whatever
+    # top-level unit happened to follow and excluded everything in between:
+    # measured on a 16-line fixture, 11 lines test-excluded and a production fn
+    # swallowed whole, for 4 production LOC instead of 10. A nested test module
+    # is already covered per-unit by its enclosing unit's span; the region path
+    # exists for the CONVENTIONAL trailing placement, which is column-zero.
+    "rs": re.compile(r"^#\[cfg\(test\)\]"),
     "sh": re.compile(r"^#[ \t]*-+[ \t]*tests?[ \t]*-+"),
 }
 
@@ -627,11 +637,7 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
             # lines from production LOC. The guard is language-agnostic because
             # the invariant is: units are column-zero anchored, so an indented
             # attribute cannot be marking one.
-            if (
-                attr_rx is not None
-                and not line[:1].isspace()
-                and attr_rx.search(line)
-            ):
+            if attr_rx is not None and not line[:1].isspace() and attr_rx.search(line):
                 pending_test = True
                 if m is None:
                     continue
