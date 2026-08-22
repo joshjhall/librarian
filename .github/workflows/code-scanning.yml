@@ -81,6 +81,58 @@ jobs:
       # than hard-failing the job — agnix is a best-effort enrichment, not a
       # required gate (acceptance: "agnix-absent → clear skip, not a hard
       # failure").
+      #
+      # Signature verification (#740). The pin above fixes WHICH version npm
+      # serves; it says nothing about whether the tarball npm serves for that
+      # version is the one its publisher signed. `npm audit signatures` checks
+      # the registry signature — and this job is the one that matters most: it
+      # reads this repo's config and WRITES a code-scanning annotation, so a
+      # substituted tarball would run with `security-events: write` in hand.
+      #
+      # It cannot be appended after `npm install -g`: npm rejects the pairing
+      # outright with `EAUDITGLOBAL: does not support global packages`. The audit
+      # reads a package.json/package-lock.json pair, which only a LOCAL install
+      # tree has. So verification happens in a throwaway prefix first, and the
+      # global install is gated on it.
+      #
+      # `--ignore-scripts` on that scratch install is the load-bearing half. The
+      # order is verify-THEN-install precisely so a tampered tarball's
+      # `postinstall` never executes; letting scripts run during the scratch
+      # install would run attacker code first and check the signature afterward,
+      # which is the same as not checking it. tests/lint-agnix-clean.sh asserts
+      # the flag is still there, because losing it leaves a check that looks
+      # right and protects nothing.
+      #
+      # The global install then reads the VERIFIED DIRECTORY, not the registry:
+      # `npm install -g "$verify_dir/node_modules/agnix"`. This is the whole
+      # point of the sequence and is not interchangeable with re-installing
+      # `"$pin"` globally.
+      #
+      # Re-resolving `"$pin"` would be two independent fetches — the audit would
+      # describe bytes the first fetch received while a second, unaudited fetch
+      # supplied the bytes that actually run, and `-g` is where `postinstall`
+      # executes. That is a TOCTOU window: registry immutability and cache reuse
+      # usually close it, but "usually" is not a property a supply-chain check
+      # should rest on, and nothing in the script enforces either. Installing the
+      # verified tree makes the audited bytes and the installed bytes the same
+      # bytes by construction, so the guarantee holds without that assumption.
+      #
+      # SCOPE OF THAT GUARANTEE, stated exactly because the general case is
+      # weaker than it looks: `npm install -g <local-dir>` PACKS the directory,
+      # and a pack conventionally excludes `node_modules`. For a package with
+      # runtime dependencies, npm would re-resolve that dependency closure from
+      # the registry — a second unaudited fetch, the same TOCTOU shape one level
+      # down. agnix has NO dependencies of any kind (no `dependencies`,
+      # `optionalDependencies`, or `peerDependencies`; its lockfile closure in
+      # the scratch tree is the single entry `node_modules/agnix`), so the
+      # audited closure and the installed closure are the same one package.
+      # Confirmed empirically: `npm install -g --offline` from the verified tree
+      # succeeds, which it could not do if any byte still had to be fetched.
+      #
+      # This is therefore a property of agnix, not of the pattern. Should agnix
+      # ever gain a dependency, this reasoning stops holding and the step needs
+      # revisiting — reuse the same `--offline` check to tell, since it fails
+      # loudly the moment something must be fetched.
       - name: Install agnix (pinned)
         id: agnix
         run: |
@@ -92,12 +144,33 @@ jobs:
           # "clear skip, not a hard failure" acceptance above — and it would do
           # so having ALREADY written present=true, so a re-run of just the
           # downstream steps would scan with a binary known not to work.
-          if npm install -g agnix@0.49.0 && agnix --version; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
+          #
+          # ONE pin literal, reused by both npm commands. Two literals in one
+          # file would be a drift channel tests/lint-agnix-clean.sh cannot see:
+          # its agnix_pin_in takes the FIRST `agnix@X.Y.Z` match and would never
+          # compare it against the second.
+          pin="agnix@0.49.0"
+          verify_dir="$(mktemp -d)"
+
+          # A failed signature check writes present=false on the SAME path as a
+          # failed install — the scan and upload steps below are already gated on
+          # that output, so an unverified agnix simply never scans. The message
+          # is its own, not the notice below: "npm was unreachable" and "the
+          # tarball npm served is not the one its publisher signed" are different
+          # events, and a supply-chain signal must not read as an outage.
+          if npm install --prefix "$verify_dir" --ignore-scripts "$pin" \
+            && (cd "$verify_dir" && npm audit signatures); then
+            if npm install -g "$verify_dir/node_modules/agnix" && agnix --version; then
+              echo "present=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "present=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::agnix install failed — skipping code-scanning upload (agnix is a best-effort enrichment; the check-ai-config floor still runs in the checker path)."
+            fi
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::agnix install failed — skipping code-scanning upload (agnix is a best-effort enrichment; the check-ai-config floor still runs in the checker path)."
+            echo "::warning::agnix signature verification failed — NOT installing agnix, skipping code-scanning upload (#740). Either npm was unreachable, or the tarball for $pin does not match its published registry signature."
           fi
+          rm -rf "$verify_dir"
 
       # Run agnix over the repo's OWN AI-config artifacts only:
       #   - `--config .agnix.toml` uses the repo's operator-controlled config
