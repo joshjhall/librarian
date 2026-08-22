@@ -224,10 +224,37 @@ esac
 #      worktree root is cwd-independent: `git rev-parse --show-toplevel`
 #      returns `.../issue-N` even when the Notification fires from a
 #      subdirectory or a review-harness subagent with its own cwd.
-#   3. A placeholder, only when neither source resolves (e.g. not in a
-#      worktree at all).
+#   3. $AGENT_ID — a CONTAINER golem's id (agentNN), stamped by
+#      agent-entrypoint.sh / the provision-agent compose env. Ranked below the
+#      worktree root because it is a plain env var with no format guarantee,
+#      while rungs 1–2 are shape-checked (`golem-*` / `issue-*`). Reachable in
+#      practice via agent-entrypoint.sh's NON-pipeline interactive branch: the
+#      pipeline path stamps GOLEM_ID=golem-{ISSUE} (rung 1 wins), but a
+#      container started with no/non-numeric AGENT_ISSUE returns before that
+#      stamp and launches `claude` with AGENT_ID set and GOLEM_ID unset (#744).
+#   4. A placeholder, only when no source resolves (e.g. not in a worktree at
+#      all).
 # The old `$TMUX` path was dead — the golem's `claude` process has no TMUX in
 # its environment even though tmux launched it — so it is gone.
+#
+# Rung 3 mirrors the sibling identity hook `claude-host-event.sh` (in
+# joshjhall/containers, at lib/features/templates/claude/hooks/), whose own
+# comment asserts the two ladders resolve in the same order — an assertion that
+# was false here until #744. Two properties are load-bearing for that agreement:
+#
+#   * `?*`, not `*` — an EMPTY AGENT_ID must fall through to the placeholder
+#     rather than key the feed on "".
+#   * The value is keyed BARE, with no session-id suffix. AGENT_ID is already
+#     unique per container (like GOLEM_ID), so it needs no disambiguation;
+#     host-event uses it bare, and keeping it bare here is exactly what makes
+#     the cross-hook identity `host_session_id == "<project>-" + feed_golem`
+#     hold. Do not "normalize" a suffix onto it.
+#
+# Deliberately NOT imported from host-event: its `CLAUDE_SESSION_ROLE` /
+# `primary` rungs below AGENT_ID. This hook's `golem-?` is a load-bearing ORPHAN
+# SENTINEL — golem-gate-watch.sh drops it before the event/TTL predicate (#323),
+# and golem-status.sh / worktree-rm.sh special-case it — so replacing it with a
+# `primary` row would silently re-admit gates that are never actionable.
 golem=""
 case "${GOLEM_ID:-}" in
     golem-*) golem="$GOLEM_ID" ;;
@@ -237,7 +264,12 @@ if [ -z "$golem" ]; then
     case "$base" in
         issue-*) golem="golem-${base#issue-}" ;;
         golem-*) golem="$base" ;;
-        *) golem="golem-?" ;;
+        *)
+            case "${AGENT_ID:-}" in
+                ?*) golem="$AGENT_ID" ;;
+                *) golem="golem-?" ;;
+            esac
+            ;;
     esac
 fi
 
@@ -246,9 +278,12 @@ ts="$("$DATE" -u +%FT%TZ)"
 # Build the classified {ts, golem, event, message} JSON line ONCE, then fan the
 # SAME line to every sink (feed always; HTTP sinks best-effort). Prefer jq for
 # correct escaping; fall back to a best-effort literal if jq is unavailable. The
-# message (and, defensively, the golem id) are attacker-influenceable, so both
-# paths escape/sanitize them identically before this one string reaches any sink
-# (#406 AC4 — same escaped payload to every sink).
+# message and the golem id are both attacker-influenceable, so both paths
+# escape/sanitize them identically before this one string reaches any sink
+# (#406 AC4 — same escaped payload to every sink). The golem id is not merely
+# "defensively" sanitized: rung 3 of the ladder above interpolates `$AGENT_ID`
+# with NO format check (unlike rung 1's `golem-*` / rung 2's `issue-*` shape
+# guards), so a crafted AGENT_ID reaches the encoder verbatim (#744).
 if command -v jq >/dev/null 2>&1; then
     line="$(jq -cn --arg ts "$ts" --arg golem "$golem" --arg event "$event" --arg message "$message" \
         '{ts: $ts, golem: $golem, event: $event, message: $message}' 2>/dev/null || true)"

@@ -81,8 +81,16 @@ GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
 # would fire real network POSTs from every default-path case and could fail the
 # no-network assertion. The sink-fan-out tests set GOLEM_EVENT_SINKS explicitly
 # after this scrub, so they are unaffected.
+#
+# AGENT_ID is scrubbed for a THIRD reason, new with #744: the hook now reads it
+# as rung 3 of the golem-id ladder. Running this suite inside a container golem
+# (where AGENT_ID=agentNN is exported) would otherwise let the ambient value
+# satisfy rung 3 and derive `agentNN` where a test expects the `golem-?`
+# placeholder — a real assertion failing on environment alone. The AGENT_ID
+# cases below set it explicitly after this scrub, so they are unaffected.
 # shellcheck disable=SC2034  # consumed by the sourced drivers/fragments, not by this file
-GOLEM_SCRUB=(GOLEM_STATUS_DIR GOLEM_WORKTREE_DIR GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT)
+GOLEM_SCRUB=(GOLEM_STATUS_DIR GOLEM_WORKTREE_DIR GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT
+    AGENT_ID)
 
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
@@ -153,5 +161,11 @@ run_fragment_test test_golemid_issue_basename "golem-id: issue-N basename → go
 run_fragment_test test_golemid_golem_passthrough "golem-id: golem-* basename passes through"
 run_fragment_test test_golemid_placeholder "golem-id: unmatched basename → golem-? placeholder"
 run_fragment_test test_golemid_issue_basename_from_subdir "golem-id: issue-N from a subdir → golem-N (cwd-independent)"
+run_fragment_test test_golemid_agent_id_resolves "golem-id: AGENT_ID → bare agentNN, not golem-? (#744)"
+run_fragment_test test_golemid_golem_id_outranks_agent_id "golem-id: GOLEM_ID (rung 1) outranks AGENT_ID (rung 3) (#744)"
+run_fragment_test test_golemid_worktree_outranks_agent_id "golem-id: issue-N root (rung 2) outranks AGENT_ID (rung 3) (#744)"
+run_fragment_test test_golemid_golem_basename_outranks_agent_id "golem-id: golem-* root (rung 2) outranks AGENT_ID (rung 3) (#744)"
+run_fragment_test test_golemid_empty_agent_id_falls_through "golem-id: empty AGENT_ID falls through to golem-? (#744)"
+run_fragment_test test_golemid_agent_id_nojq_sanitized "golem-id: no-jq escaper sanitizes a hostile AGENT_ID (#744)"
 
 generate_report
