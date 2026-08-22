@@ -122,7 +122,17 @@
               }
             },
             "required": ["file", "resolution"],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "$comment": "An l4-auto selection is the ONE case with no human in the loop, so the rationale is what makes an unattended scope decision auditable after the fact (plan-sizing.md § Dispatch by level). Enforced rather than merely described: a required-ness stated only in a `description` is a comment asserting intent the schema does not check, which is how an entry that silently omits it still validates.",
+                "if": {
+                  "properties": { "decided_by": { "const": "l4-auto" } },
+                  "required": ["decided_by"]
+                },
+                "then": { "required": ["rationale"] }
+              }
+            ]
           }
         },
         "warnings": {
