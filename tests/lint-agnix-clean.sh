@@ -355,6 +355,15 @@ AGNIX_OUT="$(cd "$REPO_ROOT" && agnix --target claude-code \
 # `validate --config …` outright — the same ordering trap documented in
 # check-ai-config/agnix-normalize.sh.
 #
+# VERIFIED AT THE FLOOR, not just at the version this was developed on. The
+# concern is real in shape: this gate RUNS at AGNIX_MIN_VERSION (the skip is for
+# versions strictly BELOW it), so a `--format json` introduced after 0.48.1 would
+# make the corpus check report "broken agnix" on a supported host. Checked
+# against a real 0.48.1 install rather than reasoned about: it carries
+# `--format <FORMAT> (text, json, sarif, or github)` and emits the same
+# `"files_checked": 110` as 0.49.0. So the floor needs no raise and this check
+# needs no version gate of its own. Re-verify if the floor ever moves DOWN.
+#
 # stderr is dropped and a non-zero rc absorbed for the same reason as the text
 # run: agnix exits non-zero when it FINDS things, which is not a harness
 # failure. A genuinely broken run yields no parsable count, and the assertion
