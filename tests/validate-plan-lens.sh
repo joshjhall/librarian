@@ -362,12 +362,34 @@ test_plan_lens_accepts_numstat_shape() {
 test_plan_lens_fails_loud_without_engine() {
     local iso="$WORKDIR/isolated" rc=0
     command mkdir -p "$iso"
-    command cp "$PLAN_SH" "$iso/"
     setup_near_budget
 
-    command bash "$iso/plan-lens.sh" "$PLAN_LIST" >/dev/null 2>&1 || rc=$?
+    # BOTH RUNTIMES, and the pairing is the point. Copying only plan-lens.sh
+    # leaves the shim with no sibling .py to exec, so it silently falls through
+    # to the bash body and the PYTHON fail-loud arm — the one that actually runs
+    # in production, since the shim prefers python3>=3.11 — is never exercised.
+    # That is the [[self-skipping-test-hides-the-risky-branch]] shape: the test
+    # passes while covering only the arm that does not run.
+    command cp "$PLAN_SH" "$iso/"
+    rc=0
+    PLAN_LENS_FORCE_BASH=1 command bash "$iso/plan-lens.sh" "$PLAN_LIST" >/dev/null 2>&1 || rc=$?
     assert_equals "2" "$rc" \
-        "with no sibling sizing engine the scanner exits 2, NOT 0-with-no-findings"
+        "bash fallback: with no sibling sizing engine the scanner exits 2, NOT 0-with-no-findings"
+
+    if [ "$HAVE_PY" = "1" ]; then
+        command cp "$PLAN_PY" "$iso/"
+        rc=0
+        command python3 "$iso/plan-lens.py" "$PLAN_LIST" >/dev/null 2>&1 || rc=$?
+        assert_equals "2" "$rc" \
+            "python primary: with no sibling sizing engine the scanner exits 2, NOT 0-with-no-findings"
+
+        # And through the SHIM, which is how a caller actually reaches it: with
+        # both files present the shim exec's python, so this pins the real path.
+        rc=0
+        command bash "$iso/plan-lens.sh" "$PLAN_LIST" >/dev/null 2>&1 || rc=$?
+        assert_equals "2" "$rc" \
+            "via the shim (python primary selected): the scanner still exits 2"
+    fi
 }
 
 test_plan_lens_usage_contract() {
@@ -411,6 +433,59 @@ test_measure_mode_does_not_disturb_review_output() {
     assert_contains "$m_out" "$OVER_FILE" \
         "measure mode emits a record for the scanned file"
 }
+# The measure record's `generated` and `comment_pct` fields carry NO assertion
+# from the plan lens, which consumes neither (they feed the review lens's
+# decline-reason arms). That makes them the record's soft spot: a drift between
+# the two runtimes there changes no plan-lens output, so every existing test
+# stays green while the shared contract silently forks — and the review lens,
+# which DOES read them, would then disagree with itself across runtimes.
+#
+# Pinned here because this suite owns the --measure seam. Positional too, not
+# just valued: the whole point of a 13-field record is that field N means the
+# same thing to every consumer.
+test_measure_record_fields_agree_across_runtimes() {
+    local gen="$WORKDIR/gen.py" com="$WORKDIR/com.py" list="$WORKDIR/measure-list.txt"
+    local i=0
+
+    command printf '# @generated\n# DO NOT EDIT\ndef a():\n    return 1\n' >"$gen"
+
+    # Majority-comment file: 60 comment lines against 20 production lines.
+    : >"$com"
+    while [ "$i" -lt 60 ]; do
+        command printf '# comment %d\n' "$i" >>"$com"
+        i=$((i + 1))
+    done
+    make_py_file "$WORKDIR/tmp-defs.py" 10
+    command cat "$WORKDIR/tmp-defs.py" >>"$com"
+
+    command printf '%s\n%s\n' "$gen" "$com" >"$list"
+
+    local sh_out py_out
+    sh_out="$(SIZING_FORCE_BASH=1 command bash "$SIZING_SH" --measure "$list" 2>&1 || true)"
+    assert_not_empty "$sh_out" "measure mode emits a record (the gate is not a no-op)"
+
+    # generated=1 on the marked file, 0 on the other — asserted by VALUE, so a
+    # detector that always answered the same way fails here.
+    assert_contains "$sh_out" "$(command printf '%s\t4\t' "$gen")" \
+        "the generated fixture's record starts with its path and total"
+    local gen_flag com_flag gen_pct com_pct
+    gen_flag="$(command printf '%s\n' "$sh_out" | command awk -F'\t' -v f="$gen" '$1 == f { print $6 }')"
+    com_flag="$(command printf '%s\n' "$sh_out" | command awk -F'\t' -v f="$com" '$1 == f { print $6 }')"
+    assert_equals "1" "$gen_flag" "a @generated file reports generated=1"
+    assert_equals "0" "$com_flag" "an ordinary file reports generated=0 (the flag discriminates)"
+
+    com_pct="$(command printf '%s\n' "$sh_out" | command awk -F'\t' -v f="$com" '$1 == f { print $5 }')"
+    gen_pct="$(command printf '%s\n' "$sh_out" | command awk -F'\t' -v f="$gen" '$1 == f { print $5 }')"
+    assert_equals "75" "$com_pct" "a 60-comment/20-code file reports comment_pct=75"
+    assert_equals "50" "$gen_pct" "the generated fixture reports comment_pct=50"
+
+    if [ "$HAVE_PY" = "1" ]; then
+        py_out="$(command python3 "$SIZING_PY" --measure "$list" 2>&1 || true)"
+        assert_equals "$sh_out" "$py_out" \
+            "the FULL 13-field measure record is byte-identical across runtimes (incl. fields plan-lens ignores)"
+    fi
+}
+
 run_test test_plan_lens_headroom_fires_on_projection "#756 AC2: an under-budget file whose projection crosses emits size-headroom"
 run_test test_plan_lens_small_estimate_stays_silent "#756 AC2: the same file with a small estimate stays silent (estimate is the variable)"
 run_test test_plan_lens_ample_headroom_stays_silent "#756: a projection that stays under budget is silent (distinct guard from the floor)"
@@ -422,5 +497,6 @@ run_test test_plan_lens_classifies_prose_by_type "#756: prose classification rea
 run_test test_plan_lens_accepts_numstat_shape "#756 AC1: the sidecar accepts a real numstat file and is rename-aware"
 run_test test_plan_lens_fails_loud_without_engine "#756: no LOC engine exits 2, never 0-with-no-findings"
 run_test test_plan_lens_usage_contract "#756: plan-lens usage / missing-file / empty-list contract"
+run_test test_measure_record_fields_agree_across_runtimes "#756: the measure record's unconsumed fields are pinned across runtimes"
 run_test test_measure_mode_does_not_disturb_review_output "#756 AC6: the review lens is unchanged by the measure-mode seam"
 generate_report
