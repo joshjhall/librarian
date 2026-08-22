@@ -48,6 +48,7 @@
 #  11e. Python lint + format — ruff (tests/lint-python.sh)
 #  11e2. Spell check — typos (tests/lint-typos.sh)
 #  11f. Lint-gate integrity — runner resolution + skip reporting (tests/validate-lint-gates.sh)
+#  11f2. Skip visibility — step summary + agnix install branches (tests/validate-skip-visibility.sh)
 #  11g. bounded-run.sh copy sync (tests/lint-bounded-run-sync.sh)
 #  11h. Markdown lint — .claude/memory/ (tests/lint-markdown.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
@@ -122,6 +123,60 @@ SKIP_EXIT_CODE=77
 # so the gate sat vacuous and unnoticed on a host with no ruff. A skip does not
 # fail the suite (rc is untouched); it just stops lying about having run. Any
 # future skip-if-absent gate gets the same treatment by returning 77.
+#
+# Step-summary escalation (#741). The `[SKIP]` line above fixes the confusion
+# between "passed" and "did not run" only for someone READING the log. A gate
+# that has quietly stopped running for weeks still looks like a gate that keeps
+# passing to anyone glancing at a green check — the log line is buried in
+# thousands of others and nobody scrolls a job that succeeded. So on GitHub the
+# skip is also written to $GITHUB_STEP_SUMMARY, which renders on the run page
+# itself. That is the whole point of the sentinel carried one surface further
+# out: 77 stopped the gate lying to the log, this stops it lying to the summary.
+#
+# Emission is conditional on $GITHUB_STEP_SUMMARY being set and non-empty, so a
+# local `just test` is completely unaffected — no file is created, nothing is
+# printed differently. The `:-` is load-bearing, not defensive style: this
+# script runs under `set -u` (above), where a bare `$GITHUB_STEP_SUMMARY` off
+# GitHub is a FATAL unbound-variable error that would abort the whole suite at
+# the first skipped gate. `:-` covers unset and empty in the same test.
+#
+# The header is written LAZILY, on the first skip only, tracked by a plain flag
+# variable. Two properties, both deliberate: a run with no skips adds no section
+# at all (an empty "Skipped gates" heading would be its own small lie), and a
+# run with several adds one heading over a list rather than repeating it. A
+# plain string flag rather than an associative array keeps this bash-3.2 clean
+# per the repo's portability floor.
+_skips_header_written=""
+
+# Append one skipped stage to the GitHub run-page summary. No-op off GitHub.
+#
+# Failures are absorbed with `|| true`: the summary is a REPORTING nicety, and a
+# read-only or full $GITHUB_STEP_SUMMARY must never turn a skipped stage into a
+# failed suite. Losing the line is the correct degradation — the `[SKIP]` stdout
+# line above still carries the signal.
+#
+# `2>/dev/null` comes BEFORE the append, and the order is load-bearing. Bash
+# applies redirections left to right, so the familiar `>>"$f" 2>/dev/null`
+# spelling opens the file FIRST — and when that open fails, the shell's
+# "Is a directory" / "Permission denied" diagnostic is written to the stderr
+# still in effect, i.e. the terminal. The failure is absorbed but its noise is
+# not, which puts an alarming-looking error in the middle of a suite that is
+# otherwise fine. Redirecting stderr first means the diagnostic lands in
+# /dev/null along with everything else.
+note_skip_in_step_summary() {
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+    if [ -z "$_skips_header_written" ]; then
+        _skips_header_written=1
+        {
+            printf '\n### Skipped gates\n\n'
+            printf 'These gates did NOT run — their tooling was unavailable. '
+            printf 'A gate that skips persistently is not a gate.\n\n'
+        } 2>/dev/null >>"$GITHUB_STEP_SUMMARY" || true
+    fi
+    printf -- '- **%s** — did not run (exit %s)\n' "$1" "$SKIP_EXIT_CODE" \
+        2>/dev/null >>"$GITHUB_STEP_SUMMARY" || true
+}
+
 run_stage() {
     local label="$1"
     shift
@@ -141,6 +196,7 @@ run_stage() {
         printf '[ok] %s (%ss)\n' "$label" "$_elapsed"
     elif [ "$_rc" -eq "$SKIP_EXIT_CODE" ]; then
         printf '[SKIP] %s — did not run (%ss)\n' "$label" "$_elapsed"
+        note_skip_in_step_summary "$label"
     else
         printf '[FAIL] %s (%ss)\n' "$label" "$_elapsed"
         rc=1
@@ -151,8 +207,16 @@ if command -v node >/dev/null 2>&1; then
     run_stage "Manifest validation" node "$SCRIPT_DIR/validate-manifests.mjs"
     run_stage "Workflow helper unit tests" node "$SCRIPT_DIR/validate-workflow-helpers.mjs"
 else
+    # The ONE skip path that does not flow through run_stage, so it needs the
+    # step-summary call explicitly (#741). Without it, an absent node would skip
+    # these two stages invisibly on the run page while every other skip-if-absent
+    # gate reported itself there — the precise asymmetry this change exists to
+    # remove, surviving in the one branch that takes a different route to the
+    # same outcome.
     printf '[SKIP] Manifest validation — did not run (node not available)\n'
+    note_skip_in_step_summary "Manifest validation"
     printf '[SKIP] Workflow helper unit tests — did not run (node not available)\n'
+    note_skip_in_step_summary "Workflow helper unit tests"
 fi
 
 run_stage "Harness self-test" bash "$SCRIPT_DIR/validate-harness.sh"
@@ -210,6 +274,7 @@ run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck
 run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
 run_stage "Spell check (typos)" bash "$SCRIPT_DIR/lint-typos.sh"
 run_stage "Lint-gate integrity (resolution + skip reporting)" bash "$SCRIPT_DIR/validate-lint-gates.sh"
+run_stage "Skip visibility (step summary + agnix install branches)" bash "$SCRIPT_DIR/validate-skip-visibility.sh"
 run_stage "bounded-run.sh copy sync" bash "$SCRIPT_DIR/lint-bounded-run-sync.sh"
 run_stage "Markdown lint (.claude/memory/)" bash "$SCRIPT_DIR/lint-markdown.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
