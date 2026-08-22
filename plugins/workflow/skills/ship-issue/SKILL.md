@@ -46,10 +46,14 @@ mirrors and the `--autonomous`/`--auto`/`NEXT_ISSUE_AUTONOMOUS` aliases were
 removed in #215 (and GitHub's `gh pr merge --auto` / the harness's
 `--permission-mode auto` are unrelated).
 
+<!-- contract: ship-autonomy-level-gates -->
+
 | Level | Shipping mode (Step 3) | CI | Merge (Step 4) |
 | ----- | ---------------------- | -- | -------------- |
 | **L3–L4** | no prompt — always Branch + PR (Option 1) | always wait + auto-fix | **auto-merge** squash (+`--delete-branch` unless a worktree holds the branch), prune remote, then prune |
 | **L1–L2** | prompt for mode | wait | **stop** at green+clean with the completion summary — human merges |
+
+<!-- contract: ship-merge-invariant -->
 
 **The merge invariant (all levels, including L4).** Never merge unless CI is green
 **and** the PR review loop terminated clean. If either fails and cannot be
@@ -57,6 +61,8 @@ mechanically resolved, it is a **dead-end** (see `orchestrate/autonomy-levels.md
 § dead-end rule and #181): park the PR, emit the dead-end summary, and wait for a
 human — **even at L4**. The level decides whether merging needs a human keystroke,
 never whether an un-green or un-reviewed PR may merge.
+
+<!-- contract: end-ship-merge-invariant -->
 
 A ship-issue dead-end is a **kept human gate**, so under an orchestrator it is
 **brokerable** exactly like a mid-flight escalation (#227): mint a gate-id,

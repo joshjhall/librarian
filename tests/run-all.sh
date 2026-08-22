@@ -23,6 +23,7 @@
 #   9c2. agnix→TSV normalizer (tests/validate-agnix-normalize.sh)
 #   9c3. agnix→checker wiring contract (tests/validate-agnix-checker-wiring.sh)
 #   9c4. agnix error-free (tests/lint-agnix-clean.sh)
+#   9c5. ship-issue autonomy-level contract (tests/lint-ship-autonomy-contract.sh)
 #   9d. check-docs-* detector fixtures (tests/validate-docs-detectors.sh)
 #   9e. check-security + check-code-health detector fixtures (tests/validate-source-detectors.sh)
 #   9e2. check-lifecycle detector fixtures (tests/validate-lifecycle-detectors.sh)
@@ -171,6 +172,7 @@ run_stage "check-ai-config detector fixtures" bash "$SCRIPT_DIR/validate-checker
 run_stage "agnix→TSV normalizer" bash "$SCRIPT_DIR/validate-agnix-normalize.sh"
 run_stage "agnix→checker wiring" bash "$SCRIPT_DIR/validate-agnix-checker-wiring.sh"
 run_stage "agnix error-free" bash "$SCRIPT_DIR/lint-agnix-clean.sh"
+run_stage "ship-issue autonomy-level contract" bash "$SCRIPT_DIR/lint-ship-autonomy-contract.sh"
 run_stage "check-docs-* detector fixtures" bash "$SCRIPT_DIR/validate-docs-detectors.sh"
 run_stage "check-security + check-code-health detector fixtures" bash "$SCRIPT_DIR/validate-source-detectors.sh"
 run_stage "check-lifecycle detector fixtures" bash "$SCRIPT_DIR/validate-lifecycle-detectors.sh"

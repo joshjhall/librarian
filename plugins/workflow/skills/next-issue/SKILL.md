@@ -63,6 +63,8 @@ table, the plan-gate rule, and the shipping handoff, all computed by the resolve
 `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh` (#190) — **call it** rather
 than re-deriving. The summary below is the operational gist.
 
+<!-- contract: next-issue-critical-cap -->
+
 The run's **autonomy level** (int 1–4) is set by `--level {1,2,3,4}` (the sole
 autonomy dial); or, absent any signal, defaults to an **L1 disposition** (every
 gate asks). A `severity/critical` issue **caps at L3**. The level is persisted
@@ -82,6 +84,8 @@ stored. The level splits into **two dispositions**:
   effort-driven. There is no override that lifts the plan gate on an L1–L3 run —
   "L4 but keep the plan gate" is simply **L3** (#215; the old
   `--plan-gate`/`--force-auto` overrides were removed).
+
+<!-- contract: end-next-issue-critical-cap -->
 
 After implementation and testing complete, an **L3–L4** run **invokes
 `/workflow:ship-issue` in the same turn** (call the `Skill` tool) — never end the turn
