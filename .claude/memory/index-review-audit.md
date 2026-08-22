@@ -54,3 +54,5 @@
 - [Autonomy vs plan-gate flags](autonomy-vs-plangate-flags.md) — orthogonal; 3 unrelated `--auto` spellings never to rename
 - [Read issue comments not just body](next-issue-read-issue-comments.md) — `--json body` omits comments; fetch --comments in Phase 2
 - [#400 cross-repo coordination](issue-400-cross-repo-coordination.md) — real fix owned by containers#769; Closes-vs-unmet-AC catch
+- [Workflow args must be a JSON object](workflow-args-must-be-json-object.md) — a stringified args silently mislabels the cycle and drops the diff
+- [Convergence needs every --prev-result](review-convergence-needs-prev-results.md) — omit them and all findings score novel; repeatable by design

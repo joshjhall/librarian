@@ -64,6 +64,7 @@ yarn-error.log*
 temp/
 tmp/
 results/
+_notes.md
 
 # ============================================================================
 # ENVIRONMENT FILES (SECRETS)
