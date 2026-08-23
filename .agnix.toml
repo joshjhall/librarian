@@ -24,9 +24,9 @@
 # a comment asserting a property the code no longer has, which is worse than no
 # comment because it tells the next reader the drift is handled. Naming a
 # pointer instead of a number removes the drift surface rather than resetting
-# it: tests/lint-agnix-clean.sh cross-checks the two install pins against each
-# other and against its own floor, but it cannot police prose, so prose must not
-# carry a copy worth policing.
+# it: tests/lint-agnix-clean.sh cross-checks the in-repo version literals against
+# each other and against its own floor, but it cannot police prose, so prose must
+# not carry a copy worth policing.
 #
 # This config's rule IDs/schema track whatever version those pins name. Bumping
 # those pins is a HAND EDIT — .github/dependabot.yml configures the
@@ -36,6 +36,55 @@
 # `tool_versions`/`spec_revisions` are intentionally unset — no consumer needs
 # version-aware CC-* validation yet, and pinning them would add a second drift
 # surface to keep in sync.
+#
+# ---------------------------------------------------------------------------
+# WHY THERE IS NO SINGLE SOURCE FOR THE VERSION — decided in #743
+# ---------------------------------------------------------------------------
+#
+# The obvious comparison is ruff: its pin lives once, at `required-version` in
+# ruff.toml, and every consumer reads it through bin/ruff-version.sh (#542). The
+# question #743 asked was whether agnix wants the same treatment. It does not,
+# and this paragraph exists so the next reader does not re-open it.
+#
+# THE RUFF PATTERN DOES NOT TRANSFER, because the part that does the work there
+# is not the reader. ruff's pin is SELF-ENFORCING: ruff refuses to run (exit 2)
+# when the binary disagrees with required-version, which is what covers the
+# callers that have no install step to pin — a bare `ruff` from lefthook, or a
+# hand invocation. agnix has no equivalent check. A bin/agnix-version.sh would
+# therefore be an UNENFORCED reader: it would centralize where the number is
+# typed while leaving tests/lint-agnix-clean.sh's cross-check as the only thing
+# actually holding the literals in agreement. That is new machinery that
+# resembles enforcement without being any, which is the failure mode this file
+# already has one scar from (see the stale-`0.40.0` note above).
+#
+# So the cross-check IS the mechanism, deliberately, and not a stopgap awaiting
+# a refactor. Each in-repo literal is held by a named assertion:
+#
+#   ci.yml            `pin="agnix@X.Y.Z"`          -> test_pins_agree
+#   ci.yml            cache `key: agnix-bin-…-X.Y.Z` (#742)
+#                                                  -> test_cache_key_matches_pin
+#   code-scanning.yml `pin="agnix@X.Y.Z"`          -> test_pins_agree
+#
+# Note the count: FOUR hand-edited install literals exist, but only these three
+# are in-repo. The fourth is the `containers` submodule's npm install — a
+# separate repo, reachable by no gate here, which is why it is a cross-repo
+# coordination item (joshjhall/containers#769) rather than a line in this table.
+# #743 was filed against a three-literal inventory that also counted the floor;
+# both halves of that are corrected here.
+#
+# AGNIX_MIN_VERSION IS NOT ONE OF THESE. tests/lint-agnix-clean.sh's floor is a
+# different number with a different meaning — the measured version below which
+# stale parsers emit phantom errors (see VERSION FLOOR below) — and it stays
+# independent of the install pin on purpose. It is held against the pin by
+# test_floor_not_stale as an INEQUALITY (floor must not exceed pin), not the
+# equality the three above are held to. Folding it into a shared source would
+# assert a relation that is not true.
+#
+# The genuine residual cost is that nothing PROPOSES a bump: no dependabot
+# ecosystem covers an npm install line (stated above), so the version moves only
+# when someone decides to move it. That is accepted. The gate guarantees the
+# literals cannot drift apart silently; it was never going to supply the
+# intent to upgrade.
 
 # Select the Claude Code rule set (this repo is a Claude Code plugin
 # marketplace). The `tools` array takes agnix's kebab-case tool IDs — NOT the
