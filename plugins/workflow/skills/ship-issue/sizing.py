@@ -149,13 +149,25 @@ UNIT_RE = {
         # the separator before `for` is a SINGLE [ \t] so greedy `.*` has
         # exactly one way to hand off.
         #
-        # The borrow markers are consumed too. `impl Trait for &mut Foo` used to
-        # capture `mut` — a keyword as the family name and a god-module
-        # "concern" in human-read evidence, the same wrong-finding class
-        # RESERVED_UNIT_NAME exists to prevent for Swift.
+        # Everything between `for` and the type is consumed: `&`, a lifetime,
+        # `mut`, and `dyn`. Each of these was captured as the unit NAME —
+        # a keyword as the family and as a god-module "concern" in human-read
+        # evidence, the same wrong-finding class RESERVED_UNIT_NAME exists to
+        # prevent for Swift. `dyn` is listed beside `mut` deliberately: fixing
+        # one borrow marker and leaving its sibling is exactly the
+        # [[harden-one-knob-grep-every-sibling]] recurrence, and trait objects
+        # are idiomatic rather than exotic.
+        #
+        # The path prefix is consumed so the LAST segment is captured. Taking
+        # the first meant `impl A for crate::Foo` landed in family `crate`
+        # while `impl B for Foo` landed in `foo` — the same type in two
+        # families, which is the precise failure the trait-vs-type capture was
+        # changed to fix. `(?:IDENT::)*` is a bounded prefix loop, so it stays
+        # linear (a 8000-segment path matches in 0.5 ms).
         r"|impl(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?[ \t]+"
         r"(?:[^ \t].*[ \t]for[ \t]+)?(?:&[ \t]*)?"
-        r"(?:'[A-Za-z_][A-Za-z0-9_]*[ \t]+)?(?:mut[ \t]+)?"
+        r"(?:'[A-Za-z_][A-Za-z0-9_]*[ \t]+)?(?:mut[ \t]+)?(?:dyn[ \t]+)?"
+        r"(?:[A-Za-z_][A-Za-z0-9_]*::)*"
         r"([A-Za-z_][A-Za-z0-9_]*)"
         r"|extern[ \t]+crate[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
         r"|(?:fn|struct|enum|trait|mod|type|static|const|union)"

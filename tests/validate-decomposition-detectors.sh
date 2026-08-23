@@ -991,6 +991,24 @@ impl<'a> Render for &'a mut Holder {
     }
 }
 
+impl Serialize for dyn Holder {
+    fn encode(&self) -> R {
+        e()
+    }
+}
+
+impl Deserialize for &mut dyn Holder {
+    fn de(&self) -> R {
+        d()
+    }
+}
+
+impl Convert for crate::inner::Holder {
+    fn conv(&self) -> R {
+        c()
+    }
+}
+
 impl Holder {
     pub fn new() -> Self {
         Holder {}
@@ -998,9 +1016,15 @@ impl Holder {
 }
 EOF
     list="$(list_of "$f")"
-    assert_fires "$list" decomposition-seam "fn holder_* family (5 units," \
-        "rust: &, &mut and &'a mut before the type are consumed, not captured" \
-        DECOMP_SEAM_MIN_UNITS=5
+    # Eight impls, ONE family. Every marker between `for` and the type must be
+    # consumed for that to hold: `&`, `&mut`, `&'a mut`, `dyn`, `&mut dyn`, and
+    # a qualified path. Each was captured as the NAME at some point — `mut`,
+    # `dyn` and `crate` respectively — which is a keyword as the seam family and
+    # as a god-module "concern" in evidence a human reads. A family of 8 is
+    # unreachable if any one of them regresses.
+    assert_fires "$list" decomposition-seam "fn holder_* family (8 units," \
+        "rust: &, mut, dyn and path prefixes are consumed, never captured" \
+        DECOMP_SEAM_MIN_UNITS=8
 }
 
 # The `Trait for` clause must match in LINEAR time. With `.*[ \t]+for`, a run of
@@ -1122,15 +1146,38 @@ static ITEM_REGISTRY: u32 = 0;
 type ItemHandle = u32;
 
 extern crate item_serde;
+
+pub struct ItemPlain {
+    a: u32,
+}
+
+pub enum ItemChoice {
+    A,
+}
+
+pub trait ItemBehavior {
+    fn go(&self);
+}
+
+pub union ItemRaw {
+    a: u32,
+}
+
+mod item_inner {
+    pub fn hidden() {}
+}
 EOF
     list="$(list_of "$f")"
-    # Seven units share the `item` family only if each arm captured the real
+    # Twelve units share the `item` family only if each arm captured the real
     # identifier. Under the mutation above the macro contributes `i`, the
-    # family drops to 6, and this assertion fails. `extern crate` is included
-    # because its name is the arm most easily captured as the literal `crate`.
-    assert_fires "$list" decomposition-seam "fn item_* family (7 units," \
+    # family drops to 11, and this assertion fails. `extern crate` is included
+    # because its name is the arm most easily captured as the literal `crate`;
+    # struct/enum/trait/union/mod cover the bare-keyword alternative, whose
+    # capture group was renumbered by this issue's rewrite and which no other
+    # fixture exercised as a standalone top-level header.
+    assert_fires "$list" decomposition-seam "fn item_* family (12 units," \
         "rust: every item arm captures its real identifier, not a stray token" \
-        DECOMP_SEAM_MIN_UNITS=7
+        DECOMP_SEAM_MIN_UNITS=12
 }
 
 # The #[cfg(test)] region had TWO independent defects (#727), fixtured
@@ -1353,13 +1400,50 @@ const (
 	Beta  = "b"
 )
 
+type (
+	Handle = string
+	Token  = string
+)
+
 func Solo() int {
 	return 1
 }
 EOF
     list="$(list_of "$f")"
-    assert_fires "$list" file-length "3 top-level units" \
-        "go: grouped var/const blocks are one visible unit each, not zero"
+    # All THREE grouped forms are exercised: `type (` is named in the arm's own
+    # comment but had no fixture, so a divergence confined to that branch would
+    # have gone unseen.
+    assert_fires "$list" file-length "4 top-level units" \
+        "go: grouped var/const/type blocks are one visible unit each, not zero"
+
+    # The ACCEPTED LIMITATION, pinned as live behavior rather than only as a
+    # comment: two adjacent blocks of the same kind share the keyword as their
+    # name, so they cluster as one family. That is the documented trade-off —
+    # a future change to position-dependent naming (explicitly rejected in
+    # UNIT_RE["go"], because it would churn the TSV on an unrelated insert)
+    # would break this assertion, which is the point.
+    f="$d/adjacent.go"
+    command cat >"$f" <<'EOF'
+package adjacent
+
+var (
+	GroupOneA = 1
+	GroupOneB = 2
+)
+
+var (
+	GroupTwoA = 3
+	GroupTwoB = 4
+)
+
+var (
+	GroupThreeA = 5
+	GroupThreeB = 6
+)
+EOF
+    list="$(list_of "$f")"
+    assert_fires "$list" decomposition-seam "func var_* family (3 units," \
+        "go: adjacent same-kind grouped blocks share the keyword family (accepted, #727)"
 }
 
 # A testify-style method (`func (s *Suite) TestFoo`) must stay TEST-classified
