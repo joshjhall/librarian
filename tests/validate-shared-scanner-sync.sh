@@ -92,6 +92,11 @@ source "$SCRIPT_DIR/lib/harness.sh"
 #
 #   <canonical>|<duplicate>|<space-separated region names>
 #
+# Each of the first two fields is a MEMBER: a `+`-joined list of paths whose
+# regions reassemble in list order (#772). A single path is the one-element
+# list, which is why most entries below read as plain paths. See the
+# MULTI-FILE PAIR MEMBERS block above for why the order is explicit.
+#
 # Paths are repo-relative (joined to $REPO_ROOT at use) so the entries stay
 # readable and failure messages can print the short form. Pipe-delimited fields
 # in an indexed array rather than an associative one: bash 3.2 (stock macOS) has
@@ -99,13 +104,14 @@ source "$SCRIPT_DIR/lib/harness.sh"
 #
 # Add a region name to a pair's third field when a new `# >>> shared:<name>`
 # block is introduced in both of that pair's files; add a whole line when a new
-# duplicated-logic pair appears.
+# duplicated-logic pair appears; append `+<path>` to a member when that side's
+# regions grow into a new sibling module.
 SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
     "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk unit-segmenters-awk bundle-seam-awk"
     "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
-    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py bundle-seam-py"
+    "plugins/review-audit/skills/check-decomposition/loc_engine.py+plugins/review-audit/skills/check-decomposition/prose_spec.py|plugins/workflow/skills/ship-issue/loc_engine.py+plugins/workflow/skills/ship-issue/prose_spec.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py bundle-seam-py"
 )
 
 # The Python pair's regions, in the order they appear above. Used by the
@@ -127,8 +133,15 @@ PRE_REVIEW_GATES="$REPO_ROOT/plugins/workflow/skills/ship-issue/pre-review-gates
 DECOMP_PATTERNS="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/patterns.sh"
 SIZING="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.sh"
 SPLIT_VERIFY="$REPO_ROOT/plugins/workflow/skills/ship-issue/split-verify.sh"
-DECOMP_PATTERNS_PY="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/patterns.py"
-SIZING_PY="$REPO_ROOT/plugins/workflow/skills/ship-issue/sizing.py"
+# The Python pair's two MEMBERS (#772) — `+`-joined file lists, not single
+# paths. Since the split, no single file holds every shared Python region: the
+# LOC engine and the prose spec live in sibling modules of each entry scanner.
+# Every consumer below therefore goes through extract_shared_multi; a bare
+# extract_shared against one of these would find the region in one file and
+# nothing in the other, which is the silent-empty failure this issue exists to
+# prevent.
+DECOMP_PATTERNS_PY="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/loc_engine.py+$REPO_ROOT/plugins/review-audit/skills/check-decomposition/prose_spec.py"
+SIZING_PY="$REPO_ROOT/plugins/workflow/skills/ship-issue/loc_engine.py+$REPO_ROOT/plugins/workflow/skills/ship-issue/prose_spec.py"
 
 test_suite "shared scanner sync (#89/#132/#133/#609)"
 
@@ -152,6 +165,98 @@ extract_shared() {
     ' "$1"
 }
 
+# ---------------------------------------------------------------------------
+# MULTI-FILE PAIR MEMBERS (#772).
+#
+# A pair member is a `+`-joined LIST of paths, not a single path. A region's
+# lines may then live in several files of one member, reassembled by
+# concatenating each file's extract IN LIST ORDER.
+#
+#   plugins/.../sizing.py+plugins/.../loc_engine.py+plugins/.../prose_spec.py
+#
+# A single-path member is the degenerate one-element list, so every entry
+# written before this change keeps working verbatim.
+#
+# WHY A LIST AND NOT A DIRECTORY. The reassembly order is part of the contract —
+# two members whose regions concatenate in different orders are NOT the same
+# region, and a comparison that sorted or globbed the files would silently
+# accept a reordering. A directory glob would also pick up a newly-added file
+# nobody registered. The list is explicit, ordered, and reviewable in the diff.
+#
+# `+` is safe as the delimiter: `|` already separates the three pair fields,
+# spaces already separate region names, and no path in this repo contains `+`.
+# ---------------------------------------------------------------------------
+
+# split_member MEMBER — the member's paths, one per line, in list order.
+# Pure parameter expansion (bash 3.2: no `mapfile`, no `readarray`).
+split_member() {
+    local rest="$1" part
+    while [ -n "$rest" ]; do
+        case "$rest" in
+            *+*)
+                part="${rest%%+*}"
+                rest="${rest#*+}"
+                ;;
+            *)
+                part="$rest"
+                rest=""
+                ;;
+        esac
+        [ -n "$part" ] && printf '%s\n' "$part"
+    done
+}
+
+# member_abs MEMBER — MEMBER with every repo-relative path joined to $REPO_ROOT,
+# re-joined with `+`. Keeps SHARED_PAIRS readable in the short form.
+member_abs() {
+    local path out=""
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        if [ -z "$out" ]; then
+            out="$REPO_ROOT/$path"
+        else
+            out="${out}+${REPO_ROOT}/${path}"
+        fi
+    done <<<"$(split_member "$1")"
+    printf '%s' "$out"
+}
+
+# missing_member_files MEMBER [ROOT] — the paths of MEMBER that do not exist,
+# one per line; empty when every file is present. ROOT defaults to $REPO_ROOT
+# and is a parameter only so a fixture can drive this over a temp dir.
+#
+# A HELPER rather than an inline loop so the rule is directly testable. As an
+# inline `assert_file_exists` loop the check could only ever be exercised by the
+# real SHARED_PAIRS, whose files all exist — so mutating it to inspect just the
+# first path of each member left the suite green. A rule with no reachable
+# negative case is a rule nothing proves.
+#
+# EVERY path is checked, not just the first: a missing constituent does not
+# error, it silently yields a SHORTER reassembled region (awk prints to stderr
+# and moves on), which surfaces as a confusing drift report against a member
+# that is in fact correct.
+missing_member_files() {
+    local member="$1" root="${2:-$REPO_ROOT}" path
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        case "$path" in
+            /*) [ -f "$path" ] || printf '%s\n' "$path" ;;
+            *) [ -f "$root/$path" ] || printf '%s\n' "$path" ;;
+        esac
+    done <<<"$(split_member "$member")"
+}
+
+# extract_shared_multi MEMBER REGION — REGION's lines across every file of
+# MEMBER, concatenated in list order. `extract_shared` itself is unchanged, so
+# the nested-region sentinel handling above still applies per file.
+extract_shared_multi() {
+    local member="$1" region="$2" path
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        extract_shared "$path" "$region"
+    done <<<"$(split_member "$member")"
+}
+
 # Normalize to the ordered sequence of non-blank, trimmed lines. Trimming
 # collapses the indentation difference between the two nesting depths. Order and
 # duplicates are preserved (no sort, no -u), so the comparison is a true
@@ -169,6 +274,25 @@ sentinel_count() {
     command grep -cF "$1" "$2" || true
 }
 
+# sentinel_count_multi NEEDLE MEMBER — occurrences of NEEDLE summed across every
+# file of MEMBER.
+#
+# A SUM, not a per-file check, on purpose: the caller asserts the total is
+# exactly 1, which is the property that actually matters for a multi-file
+# member. A region accidentally pasted into two files of the same member would
+# reassemble as a doubled region — the ordered-multiset comparison would then
+# report drift against the other member without saying why. Summing here fails
+# on the duplication itself, with the region named (#772).
+sentinel_count_multi() {
+    local needle="$1" member="$2" path total=0 n
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        n="$(sentinel_count "$needle" "$path")"
+        total=$((total + n))
+    done <<<"$(split_member "$member")"
+    printf '%s' "$total"
+}
+
 # label_for PATH — the plugin-qualified short name used in assertion messages.
 # Both pairs' canonical file is *named* `patterns.sh`, so a bare basename would
 # make the second pair's failures read as the first pair's. Keep the last two
@@ -179,25 +303,48 @@ label_for() {
     printf '%s/%s' "${tail##*/}" "${path##*/}"
 }
 
-# assert_region_synced CANONICAL_FILE DUPLICATE_FILE REGION — both copies of
-# REGION are present (one open + one close sentinel each) and byte-identical
-# after normalization. Files are passed explicitly rather than read from globals
-# so the same assertion serves every pair in SHARED_PAIRS.
+# label_for_multi MEMBER — the label used in assertion messages for a
+# possibly-multi-file member: the first file's short name, plus `(+N more)` when
+# the member carries more. A bare first-file label would make a failure in the
+# third file of a member read as one in the first (#772).
+label_for_multi() {
+    local member="$1" path first="" count=0
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        [ -z "$first" ] && first="$path"
+        count=$((count + 1))
+    done <<<"$(split_member "$member")"
+
+    if [ "$count" -le 1 ]; then
+        label_for "$first"
+    else
+        printf '%s (+%d more)' "$(label_for "$first")" "$((count - 1))"
+    fi
+}
+
+# assert_region_synced CANONICAL_MEMBER DUPLICATE_MEMBER REGION — both copies of
+# REGION are present (one open + one close sentinel across each MEMBER) and
+# byte-identical after normalization. Members are passed explicitly rather than
+# read from globals so the same assertion serves every pair in SHARED_PAIRS.
+#
+# Each member is a `+`-joined file list (a single path being the one-element
+# case), so a region may span several files on either side — reassembled in list
+# order by extract_shared_multi (#772).
 assert_region_synced() {
     local canonical_file="$1" duplicate_file="$2" region="$3"
     local open="# >>> shared:${region}" close="# <<< shared:${region}"
     local can_label dup_label
-    can_label="$(label_for "$canonical_file")"
-    dup_label="$(label_for "$duplicate_file")"
+    can_label="$(label_for_multi "$canonical_file")"
+    dup_label="$(label_for_multi "$duplicate_file")"
 
-    assert_equals "1" "$(sentinel_count "$open" "$canonical_file")" "${can_label}: one opening sentinel for ${region}"
-    assert_equals "1" "$(sentinel_count "$close" "$canonical_file")" "${can_label}: one closing sentinel for ${region}"
-    assert_equals "1" "$(sentinel_count "$open" "$duplicate_file")" "${dup_label}: one opening sentinel for ${region}"
-    assert_equals "1" "$(sentinel_count "$close" "$duplicate_file")" "${dup_label}: one closing sentinel for ${region}"
+    assert_equals "1" "$(sentinel_count_multi "$open" "$canonical_file")" "${can_label}: one opening sentinel for ${region}"
+    assert_equals "1" "$(sentinel_count_multi "$close" "$canonical_file")" "${can_label}: one closing sentinel for ${region}"
+    assert_equals "1" "$(sentinel_count_multi "$open" "$duplicate_file")" "${dup_label}: one opening sentinel for ${region}"
+    assert_equals "1" "$(sentinel_count_multi "$close" "$duplicate_file")" "${dup_label}: one closing sentinel for ${region}"
 
     local canonical duplicate
-    canonical="$(extract_shared "$canonical_file" "$region" | normalize)"
-    duplicate="$(extract_shared "$duplicate_file" "$region" | normalize)"
+    canonical="$(extract_shared_multi "$canonical_file" "$region" | normalize)"
+    duplicate="$(extract_shared_multi "$duplicate_file" "$region" | normalize)"
 
     assert_not_empty "$canonical" "${can_label} ${region} region is non-empty (sentinels intact)"
     assert_not_empty "$duplicate" "${dup_label} ${region} region is non-empty (sentinels intact)"
@@ -218,23 +365,41 @@ assert_region_synced() {
 # Every shared region of every pinned pair is in sync. This is the live drift
 # guard.
 test_all_regions_match() {
-    local entry canonical_rel duplicate_rel regions region
+    local entry canonical_rel duplicate_rel regions region path
+    local canonical_member duplicate_member
 
     for entry in "${SHARED_PAIRS[@]}"; do
         # Field-split on the delimiter. Region names are space-separated inside
-        # the third field and are re-split by the unquoted `for` below.
+        # the third field and are re-split by the unquoted `for` below. Each of
+        # the first two fields is itself a `+`-joined file list (#772).
         IFS='|' read -r canonical_rel duplicate_rel regions <<<"$entry"
 
         assert_not_empty "$canonical_rel" "pair entry declares a canonical file"
         assert_not_empty "$duplicate_rel" "pair entry declares a duplicate file"
         assert_not_empty "$regions" "pair ${canonical_rel} declares at least one region"
 
-        assert_file_exists "$REPO_ROOT/$canonical_rel" "${canonical_rel} exists"
-        assert_file_exists "$REPO_ROOT/$duplicate_rel" "${duplicate_rel} exists"
+        # EVERY file of EVERY member must exist — not just the first. A typo in
+        # the third path of a member would otherwise surface as an empty extract
+        # and a confusing drift report rather than a missing-file failure.
+        for path in $(missing_member_files "$canonical_rel"); do
+            _fail "member file does not exist: ${path}" \
+                "Every path of a '+'-joined member must exist; check the SHARED_PAIRS entry."
+        done
+        for path in $(missing_member_files "$duplicate_rel"); do
+            _fail "member file does not exist: ${path}" \
+                "Every path of a '+'-joined member must exist; check the SHARED_PAIRS entry."
+        done
+        assert_equals "" "$(missing_member_files "$canonical_rel")" \
+            "every file of the canonical member exists (${canonical_rel})"
+        assert_equals "" "$(missing_member_files "$duplicate_rel")" \
+            "every file of the duplicate member exists (${duplicate_rel})"
+
+        canonical_member="$(member_abs "$canonical_rel")"
+        duplicate_member="$(member_abs "$duplicate_rel")"
 
         # shellcheck disable=SC2086  # deliberate word-split: regions is a list
         for region in $regions; do
-            assert_region_synced "$REPO_ROOT/$canonical_rel" "$REPO_ROOT/$duplicate_rel" "$region"
+            assert_region_synced "$canonical_member" "$duplicate_member" "$region"
         done
     done
 }
@@ -632,7 +797,7 @@ test_split_shape_covers_every_segmenter_language() {
     # The language set, derived from the shared loc-tables-py region rather than
     # hardcoded — a list retyped here would be a third copy of the same fact and
     # would silently pass when #726/#727/#728 add a language.
-    langs="$(extract_shared "$DECOMP_PATTERNS_PY" loc-tables-py |
+    langs="$(extract_shared_multi "$DECOMP_PATTERNS_PY" loc-tables-py |
         command sed -n '/^EXT_LANG = {/,/^}/p' |
         command sed -n 's/^[[:space:]]*"[^"]*":[[:space:]]*"\([^"]*\)",.*$/\1/p' |
         command sort -u)"
@@ -649,8 +814,8 @@ test_split_shape_covers_every_segmenter_language() {
 
     # --- Python halves: every segmenter language is a SPLIT_SHAPE key --------
     for file in "$DECOMP_PATTERNS_PY" "$SIZING_PY"; do
-        label="$(label_for "$file")"
-        body="$(extract_shared "$file" split-shape-py)"
+        label="$(label_for_multi "$file")"
+        body="$(extract_shared_multi "$file" split-shape-py)"
         assert_not_empty "$body" "${label}: split-shape-py region is non-empty"
 
         for lang in $langs; do
@@ -661,7 +826,7 @@ test_split_shape_covers_every_segmenter_language() {
 
     # --- awk halves: every segmenter language has an `if (lang == ...)` arm --
     for file in "$DECOMP_PATTERNS" "$SIZING"; do
-        label="$(label_for "$file")"
+        label="$(label_for_multi "$file")"
         body="$(extract_shared "$file" split-shape-awk)"
         assert_not_empty "$body" "${label}: split-shape-awk region is non-empty"
 
@@ -675,8 +840,8 @@ test_split_shape_covers_every_segmenter_language() {
     # Dead advice, and the direction a hand-added arm drifts. Read the Python
     # table's keys back out and require each to be in the segmenter set.
     for file in "$DECOMP_PATTERNS_PY" "$SIZING_PY"; do
-        label="$(label_for "$file")"
-        for lang in $(extract_shared "$file" split-shape-py |
+        label="$(label_for_multi "$file")"
+        for lang in $(extract_shared_multi "$file" split-shape-py |
             command sed -n '/^SPLIT_SHAPE = {/,/^}/p' |
             command sed -n 's/^[[:space:]]*"\([^"]*\)":.*$/\1/p'); do
             found="no"
@@ -851,8 +1016,8 @@ test_detector_fires_on_python_primary_drift() {
                 ;;
         esac
 
-        canonical="$(extract_shared "$DECOMP_PATTERNS_PY" "$region" | normalize)"
-        duplicate="$(extract_shared "$SIZING_PY" "$region" | normalize)"
+        canonical="$(extract_shared_multi "$DECOMP_PATTERNS_PY" "$region" | normalize)"
+        duplicate="$(extract_shared_multi "$SIZING_PY" "$region" | normalize)"
 
         assert_not_empty "$canonical" "patterns.py ${region} extract is non-empty"
         assert_not_empty "$duplicate" "sizing.py ${region} extract is non-empty"
@@ -862,7 +1027,7 @@ test_detector_fires_on_python_primary_drift() {
         assert_equals "matches" "$baseline" \
             "the untampered ${region} pair matches (tamper is the only variable)"
 
-        tampered="$(extract_shared "$SIZING_PY" "$region" |
+        tampered="$(extract_shared_multi "$SIZING_PY" "$region" |
             command sed "$sed_expr" | normalize)"
         assert_not_empty "$tampered" "tampered ${region} extract is non-empty (extract still works)"
 
@@ -914,6 +1079,276 @@ test_py_regions_and_tampers_agree() {
     done
 }
 
+# The detector FIRES when exactly ONE constituent file of a multi-file member
+# drifts (#772 AC2).
+#
+# This is the property the multi-file support exists to preserve, and it is NOT
+# implied by the per-region fixture above. That one tampers whichever file
+# happens to hold the region; this one pins the harder direction — the tampered
+# file is the SECOND of the member's list, and the first is left untouched. A
+# reassembly bug that only ever read the first file would leave the region
+# EMPTY, `assert_not_empty` would fail loudly, and the drift assertion would
+# never be reached. A bug that read the files but dropped the second's lines
+# would compare two truncated regions as equal and pass silently — which is the
+# failure mode the issue names, and the one this fixture is aimed at.
+#
+# Shaped as a genuine CROSS-FILE comparison like every other fixture here: the
+# tamper is applied to the DUPLICATE member (ship-issue) and compared against
+# the UNTAMPERED CANONICAL (check-decomposition).
+#
+# The untampered-match assertion keeps it honest: it proves the two members
+# reassemble equal to begin with, so the inequality below can only come from the
+# tamper. Without it a broken extract returning empty for one side would make
+# BOTH branches report "detected" and the fixture would pass vacuously.
+test_detector_fires_on_multifile_member_drift() {
+    local canonical duplicate tampered baseline tamper_took drift
+    local first_file second_file untouched_before untouched_after
+
+    # bundle-seam-py lives in prose_spec.py — the SECOND file of the member.
+    first_file="$(split_member "$SIZING_PY" | command head -1)"
+    second_file="$(split_member "$SIZING_PY" | command sed -n '2p')"
+    assert_not_empty "$first_file" "the duplicate member has a first file"
+    assert_not_empty "$second_file" "the duplicate member has a second file (it is genuinely multi-file)"
+
+    canonical="$(extract_shared_multi "$DECOMP_PATTERNS_PY" bundle-seam-py | normalize)"
+    duplicate="$(extract_shared_multi "$SIZING_PY" bundle-seam-py | normalize)"
+
+    assert_not_empty "$canonical" "canonical member reassembles bundle-seam-py"
+    assert_not_empty "$duplicate" "duplicate member reassembles bundle-seam-py"
+
+    baseline="differs"
+    [ "$canonical" = "$duplicate" ] && baseline="matches"
+    assert_equals "matches" "$baseline" \
+        "the untampered multi-file member matches (tamper is the only variable)"
+
+    # The region really does live in the SECOND file, not the first. Without
+    # this the fixture could be tampering the first file and proving nothing
+    # about reassembly reaching past it.
+    untouched_before="$(extract_shared "$first_file" bundle-seam-py)"
+    assert_equals "" "$untouched_before" \
+        "bundle-seam-py is absent from the member's FIRST file (the tamper lands in the second)"
+
+    # Tamper the CONCEPT row's anti-orphan clause, same behavioral line the
+    # per-region fixture targets — a fixed string, since BSD sed reads a BRE
+    # `\|` as a literal (#679).
+    tampered="$(extract_shared_multi "$SIZING_PY" bundle-seam-py |
+        command sed 's/                "line (an extracted concept with no index line is an orphan)"/                "line (optional)"/' | normalize)"
+    assert_not_empty "$tampered" "tampered multi-file extract is non-empty (reassembly still works)"
+
+    tamper_took="no"
+    [ "$duplicate" != "$tampered" ] && tamper_took="yes"
+    assert_equals "yes" "$tamper_took" \
+        "the tamper actually changed the region (the anti-orphan clause is present)"
+
+    drift="none"
+    [ "$canonical" != "$tampered" ] && drift="detected"
+    assert_equals "detected" "$drift" \
+        "a one-line edit to ONE constituent file of a multi-file member is detected as drift (#772)"
+
+    # The member's OTHER file is untouched by the tamper — this fixture mutates
+    # exactly one constituent, which is what AC2 asks for.
+    untouched_after="$(extract_shared "$first_file" loc-tables-py | normalize)"
+    assert_not_empty "$untouched_after" \
+        "the member's first file still yields its own region (only one constituent was tampered)"
+}
+
+# Reassembly is ORDER-PRESERVING (#772).
+#
+# The contract says a multi-file region concatenates in LIST order. Nothing
+# above would notice if extract_shared_multi sorted the paths, globbed them, or
+# read them backwards: every region currently lives whole inside ONE file of its
+# member, so any order yields the same bytes per region. That makes the ordering
+# rule true-by-accident today and silently breakable tomorrow — the moment a
+# region does span two files, a sorted implementation would compare a correct
+# member against a reordered one and report drift on two identical copies.
+#
+# So this asserts the property directly, on a purpose-built fixture: ONE region
+# genuinely SPANNING two temp files, extracted by a SINGLE extract_shared_multi
+# call per order. That single call is essential. An earlier version of this test
+# made two calls and concatenated them at the call site — which put the ordering
+# in the TEST's hands, not the function's, so mutating extract_shared_multi to
+# `sort` its paths left it green. It was a tautology, and the mutation round is
+# what surfaced it ([[anchored-regex-tautological-test]]).
+#
+# Temp files rather than the real modules for the same reason: no real region
+# spans files today, so any pair of real regions would concatenate identically
+# in either order and prove nothing.
+test_multifile_reassembly_preserves_list_order() {
+    local tmpdir file_a file_b forward reverse differs same_set
+
+    tmpdir="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    file_a="$tmpdir/a.py"
+    file_b="$tmpdir/b.py"
+
+    # ONE region, two files. Each half is meaningless alone; the ordered
+    # concatenation is the region.
+    command cat >"$file_a" <<'FIXTURE'
+# >>> shared:order-probe (sync: b.py)
+ALPHA = 1
+BRAVO = 2
+# <<< shared:order-probe
+FIXTURE
+    command cat >"$file_b" <<'FIXTURE'
+# >>> shared:order-probe (sync: a.py)
+CHARLIE = 3
+DELTA = 4
+# <<< shared:order-probe
+FIXTURE
+
+    # A SINGLE call per order — the function does the concatenating, which is
+    # the whole point.
+    forward="$(extract_shared_multi "${file_a}+${file_b}" order-probe | normalize)"
+    reverse="$(extract_shared_multi "${file_b}+${file_a}" order-probe | normalize)"
+
+    command rm -rf "$tmpdir"
+
+    assert_not_empty "$forward" "forward-order reassembly is non-empty"
+    assert_not_empty "$reverse" "reverse-order reassembly is non-empty"
+
+    # The region really does span both files — otherwise the order assertion
+    # below could pass on a one-file extract for the wrong reason.
+    assert_contains "$forward" "ALPHA = 1" "the reassembled region includes the FIRST file's lines"
+    assert_contains "$forward" "CHARLIE = 3" "the reassembled region includes the SECOND file's lines"
+
+    assert_equals "ALPHA = 1" "$(command printf '%s\n' "$forward" | command head -1)" \
+        "list order decides which file's lines come first"
+    assert_equals "CHARLIE = 3" "$(command printf '%s\n' "$reverse" | command head -1)" \
+        "reversing the member reverses the reassembly (order is preserved, not sorted)"
+
+    # Same LINES, different ORDER — which is exactly what an ordered-multiset
+    # comparison must distinguish and a sorted one cannot. A `sort`-ing
+    # implementation would make these two equal, which is the mutation.
+    differs="no"
+    [ "$forward" != "$reverse" ] && differs="yes"
+    assert_equals "yes" "$differs" \
+        "reassembling a member in reverse order yields different text (order is preserved, not sorted)"
+
+    same_set="no"
+    [ "$(command printf '%s\n' "$forward" | command sort)" = \
+        "$(command printf '%s\n' "$reverse" | command sort)" ] && same_set="yes"
+    assert_equals "yes" "$same_set" \
+        "both orders carry the SAME lines (the difference is order alone, not content)"
+}
+
+# A member naming a file that does not exist FAILS, on every file of the list
+# (#772).
+#
+# The mutation round found this untested: neutering the per-file
+# assert_file_exists in test_all_regions_match to check only the first path left
+# the suite green, because every registered member's files do exist. A rule with
+# no negative fixture is a rule nothing proves.
+#
+# Asserted on the HELPER rather than by corrupting SHARED_PAIRS: the property is
+# that a missing constituent is DETECTABLE, and extract_shared_multi returning
+# empty for it is what makes the existence check load-bearing. A member whose
+# second file is absent must not silently reassemble as if it were a one-file
+# member.
+test_missing_constituent_is_detectable() {
+    local tmpdir file_a present absent
+
+    tmpdir="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    file_a="$tmpdir/a.py"
+    command cat >"$file_a" <<'FIXTURE'
+# >>> shared:absent-probe (sync: ghost.py)
+ALPHA = 1
+# <<< shared:absent-probe
+FIXTURE
+
+    # Every path of the member must be seen by split_member, including one that
+    # does not exist — that is what lets missing_member_files fire on it.
+    absent="$(split_member "${file_a}+${tmpdir}/ghost.py" | command sed -n '2p')"
+    assert_equals "${tmpdir}/ghost.py" "$absent" \
+        "split_member yields the missing path too (so existence can be asserted on it)"
+
+    local ghost_exists="yes"
+    [ -f "${tmpdir}/ghost.py" ] || ghost_exists="no"
+    assert_equals "no" "$ghost_exists" "the probe path is genuinely absent"
+
+    # THE RULE ITSELF, driven over a member whose SECOND file is missing. This
+    # is the assertion the mutation round demanded: checking only the first path
+    # returns empty here and fails this line.
+    assert_equals "${tmpdir}/ghost.py" \
+        "$(missing_member_files "${file_a}+${tmpdir}/ghost.py")" \
+        "missing_member_files names the absent SECOND file of a member"
+
+    # ...and a fully-present member reports nothing, so the check cannot be
+    # passing by always returning something.
+    assert_equals "" "$(missing_member_files "${file_a}+${file_a}")" \
+        "missing_member_files is silent when every file of the member exists"
+
+    # A missing FIRST file is caught too — the converse direction, so the rule
+    # is not merely 'inspect the tail'.
+    assert_equals "${tmpdir}/ghost.py" \
+        "$(missing_member_files "${tmpdir}/ghost.py+${file_a}")" \
+        "missing_member_files names the absent FIRST file of a member"
+
+    # THE RELATIVE ARM, driven with an explicit root. Every assertion above
+    # passes ABSOLUTE paths, which take the `/*` branch — but SHARED_PAIRS
+    # entries are repo-RELATIVE, so the `*)` branch is the one that actually
+    # runs in production. The mutation round found it untested: neutering the
+    # relative arm to a no-op left the suite green, because every real member's
+    # files exist and no fixture reached that branch with an absent path.
+    #
+    # This is why missing_member_files takes a root parameter at all.
+    assert_equals "ghost.py" \
+        "$(missing_member_files "a.py+ghost.py" "$tmpdir")" \
+        "missing_member_files names an absent RELATIVE path (the arm SHARED_PAIRS actually uses)"
+    assert_equals "" \
+        "$(missing_member_files "a.py" "$tmpdir")" \
+        "a present RELATIVE path reports nothing (the relative arm is not always-failing)"
+
+    # The present half still extracts, so a missing constituent degrades to a
+    # SHORTER region rather than an error — which is precisely why the explicit
+    # per-file existence assertion is required and cannot be inferred from a
+    # non-empty extract.
+    # stderr is silenced HERE ONLY, and only because the missing file is the
+    # POINT of this fixture — awk's "cannot open" is the expected noise, and
+    # letting it through would print a scary line in a passing report. It is
+    # deliberately NOT silenced inside extract_shared_multi: everywhere else a
+    # missing file is a real defect and must be loud.
+    present="$(extract_shared_multi "${file_a}+${tmpdir}/ghost.py" absent-probe 2>/dev/null | normalize)"
+    command rm -rf "$tmpdir"
+
+    assert_equals "ALPHA = 1" "$present" \
+        "a member with a missing file reassembles SILENTLY from the rest — the existence check is what catches it"
+}
+
+# A member's files are ALL required to exist, and split_member handles the
+# one-element case unchanged (#772).
+#
+# The one-element assertion is what keeps every pre-#772 entry in SHARED_PAIRS
+# honest: those members are still written as bare paths, and if split_member
+# mangled a path with no `+` in it, four of the five pinned pairs would break at
+# once.
+test_split_member_handles_both_shapes() {
+    local single multi count
+
+    single="$(split_member "path/to/file.py")"
+    assert_equals "path/to/file.py" "$single" \
+        "a member with no '+' is returned unchanged (every pre-#772 entry keeps working)"
+
+    multi="$(split_member "a.py+b.py+c.py")"
+    count="$(command printf '%s\n' "$multi" | command wc -l | command tr -d ' ')"
+    assert_equals "3" "$count" "a three-file member splits into three paths"
+    assert_equals "a.py" "$(command printf '%s\n' "$multi" | command head -1)" \
+        "split_member preserves the first path"
+    assert_equals "c.py" "$(command printf '%s\n' "$multi" | command tail -1)" \
+        "split_member preserves the last path"
+
+    # label_for_multi must distinguish the shapes, or a failure in the third
+    # file of a member reads as one in the first.
+    assert_equals "to/file.py" "$(label_for_multi "path/to/file.py")" \
+        "label_for_multi renders a single-file member as a plain label"
+    assert_contains "$(label_for_multi "x/a.py+x/b.py+x/c.py")" "+2 more" \
+        "label_for_multi marks a multi-file member with its extra count"
+}
+
 # The Python regions obey the column-zero rule stated in the header — the rule
 # that makes `normalize`'s whitespace strip safe for a language where
 # indentation is semantic.
@@ -930,10 +1365,10 @@ test_py_regions_and_tampers_agree() {
 test_py_regions_start_at_column_zero() {
     local file label region first col0
     for file in "$DECOMP_PATTERNS_PY" "$SIZING_PY"; do
-        label="$(label_for "$file")"
+        label="$(label_for_multi "$file")"
         for region in $PY_REGIONS; do
             # First non-blank line of the raw (un-normalized) extract.
-            first="$(extract_shared "$file" "$region" |
+            first="$(extract_shared_multi "$file" "$region" |
                 command grep -v '^[[:space:]]*$' | command head -1)"
             assert_not_empty "$first" "${label}: ${region} has a non-blank first line"
 
@@ -960,6 +1395,10 @@ run_test test_split_shape_covers_every_segmenter_language "Split-shape keys and 
 run_test test_detector_fires_on_bloat_region_drift "Drift detector fires across the prose-classification regions (#724)"
 run_test test_detector_fires_on_python_primary_drift "Drift detector fires across every region of the Python-primary pair (#730)"
 run_test test_py_regions_and_tampers_agree "Every registered Python region has a tamper case, and vice versa (#730)"
+run_test test_split_member_handles_both_shapes "split_member handles single- and multi-file members (#772)"
+run_test test_multifile_reassembly_preserves_list_order "Multi-file reassembly preserves list order (#772)"
+run_test test_missing_constituent_is_detectable "A missing constituent file of a member is detectable (#772)"
+run_test test_detector_fires_on_multifile_member_drift "Drift detector fires when one constituent file of a multi-file member drifts (#772)"
 run_test test_py_regions_start_at_column_zero "Python regions open at column zero, so normalize's strip is safe (#730)"
 
 generate_report
