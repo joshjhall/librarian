@@ -971,10 +971,11 @@ PY
 # assert those aggregates and would keep passing through a rule change here, as
 # long as the fixture's units happened to still group the same way.
 #
-# The rules, all three exercised below: snake_case splits at the first
+# The rules, all four exercised below: snake_case splits at the first
 # underscore; camelCase/PascalCase at the first INTERNAL uppercase (index 1, so
-# a leading capital is not itself the split); the result is lowercased, which is
-# what puts `ParseEntry` and `parse_entry` in one family.
+# a leading capital is not itself the split); a leading RUN of uppercase is an
+# ACRONYM and stays whole (#778); the result is lowercased, which is what puts
+# `ParseEntry` and `parse_entry` in one family.
 #
 # Driven from ONE case table across all three runtimes, so a rule can never be
 # asserted of one impl and not the others — the same discipline as md_slug.
@@ -1006,16 +1007,41 @@ cases = [
     # PascalCase: the LEADING capital is not the split point (i starts at 1),
     # and the result lowercases — so this lands in the same family as the two
     # above, which is the whole point of the rule.
+    #
+    # ALSO the row that bounds #778's acronym branch from below: a leading run
+    # of length ONE is not an acronym, so this must fall through to the
+    # camelCase scan untouched. Drop the run-length guard and it regresses to
+    # `p` — which is why this row is load-bearing in both directions.
     ("ParseEntry", "parse"),
     # No separator at all: the whole name, lowercased.
     ("parse", "parse"),
-    # ALL-CAPS collapses to its first letter — `PARSE` -> `p`, because the scan
-    # for an internal uppercase stops at index 1. RECORDED, NOT ASSERTED-AS-
-    # DESIRABLE: it is what all three runtimes do, and pinning it is the point
-    # (a "fix" in one impl would break parity with the other two). It is also
-    # harmless in practice, since a top-level unit named in SCREAMING_CASE
-    # normally carries an underscore and takes the branch above.
-    ("PARSE", "p"),
+    # ACRONYM PREFIX (#778). A leading RUN of uppercase is one word, so the run
+    # survives whole instead of collapsing to its first letter. These rows were
+    # the DEFECT until #778: `HTTPServer` -> `h` made the seam row propose
+    # `api/h.ts` at HIGH certainty — a confident wrong filename, which is worse
+    # than no finding at all. Idiomatic in ts/go/rs/swift, all of which have
+    # segmenters here, so this is ordinary code and not an exotic shape.
+    ("HTTPServer", "http"),
+    ("XMLParser", "xml"),
+    ("IOError", "io"),
+    # Two acronyms back to back: the FIRST run wins and the back-off gives the
+    # `H` to `Http`, so this joins the `XMLParser` family rather than making its
+    # own. Pins the back-off boundary, not just that a run is consumed.
+    ("XMLHttpRequest", "xml"),
+    # All-caps with NO lowercase after the run: nothing to back off to, so the
+    # run is the whole name. Was `p` before #778 and pinned as such; these two
+    # rows are the same defect as the acronym rows above, and flipping them is
+    # part of the fix rather than collateral.
+    ("PARSE", "parse"),
+    ("MAX", "max"),
+    # The MINIMAL no-back-off case: a run of exactly 2 with nothing after it,
+    # where the run-length guard and the end-of-name guard are both at their
+    # boundary simultaneously. The rows above are all 3+, so without this one
+    # the length-2 corner is only reached by extrapolation.
+    ("IO", "io"),
+    # SCREAMING_CASE with an underscore still takes the underscore branch, which
+    # runs FIRST and is untouched by #778.
+    ("MAX_RETRIES", "max"),
     # A LEADING underscore is not a split (find returns 0, and the rule
     # requires > 0) — so a private helper keeps its full stem rather than
     # collapsing every `_foo`/`_bar` into one empty family.
@@ -1090,13 +1116,22 @@ PY
         command printf '%s\n' 'END { if (bad == 0) print "OK" }'
     } >"$WORKDIR/family_prefix_drive.awk"
 
+    # Same rows as the Python table above, in the same order — the two tables
+    # are one case list expressed twice, so a row added to one belongs in both.
     awk_out="$(command printf '%s\n' \
         "parse_entry	parse" \
         "parse_header_body	parse" \
         "parseEntry	parse" \
         "ParseEntry	parse" \
         "parse	parse" \
-        "PARSE	p" \
+        "HTTPServer	http" \
+        "XMLParser	xml" \
+        "IOError	io" \
+        "XMLHttpRequest	xml" \
+        "PARSE	parse" \
+        "MAX	max" \
+        "IO	io" \
+        "MAX_RETRIES	max" \
         "_private	_private" |
         LC_ALL=C command awk -f "$WORKDIR/family_prefix_drive.awk")"
     assert_equals "OK" "$awk_out" \

@@ -237,13 +237,23 @@ while IFS= read -r file; do
         -v b_kind="$b_kind" -v b_root="$MEMORY_BUNDLE_ROOT" '
     # ---- helpers -----------------------------------------------------------
     # family_prefix: snake_case splits at the first underscore; camel/Pascal at
-    # the first internal A-Z. Lowercased. Mirrors family_prefix() in patterns.py
-    # (ASCII-only on both sides so the two agree on non-ASCII identifiers).
+    # the first internal A-Z. A leading RUN of uppercase is an acronym and stays
+    # whole (#778): HTTPServer -> http, PARSE -> parse. Lowercased. Mirrors
+    # family_prefix() in patterns.py (ASCII-only on both sides so the two agree
+    # on non-ASCII identifiers).
     function family_prefix(name,   cut, i, n) {
         cut = index(name, "_")
         if (cut > 1) return tolower(substr(name, 1, cut - 1))
         n = length(name)
-        i = 2
+        i = 1
+        while (i <= n && substr(name, i, 1) ~ /[A-Z]/) i++
+        if (i > 2) {
+            # Back off only when a lowercase follows; past end-of-name the run
+            # IS the whole name and there is nothing to give back.
+            if (i <= n) i--
+            return tolower(substr(name, 1, i - 1))
+        }
+        if (i < 2) i = 2
         while (i <= n && substr(name, i, 1) !~ /[A-Z]/) i++
         return tolower(substr(name, 1, i - 1))
     }

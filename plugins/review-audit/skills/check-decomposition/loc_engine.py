@@ -517,11 +517,32 @@ def family_prefix(name: str) -> str:
     snake_case splits at the first underscore; camelCase and PascalCase split at
     the first internal uppercase letter. The result is lowercased so `ParseEntry`
     and `parse_entry` land in the same family.
+
+    A leading RUN of uppercase is an acronym and stays whole (#778): `HTTPServer`
+    -> `http`, not `h`. Consume the run, then back off one if a lowercase follows
+    (that last capital starts the next word: `HTTPS|erver`). With no lowercase
+    after it the whole name is the acronym, so `PARSE` -> `parse`. A run of
+    length 1 is not an acronym and falls through to the scan below unchanged,
+    which is what keeps `ParseEntry` -> `parse`.
+
+    This matters because the family NAME becomes the proposed destination
+    filename in a HIGH-certainty seam row — the collapse shipped `-> api/h.ts`
+    as confident advice, which is worse than staying silent.
     """
     cut = name.find("_")
     if cut > 0:
         return name[:cut].lower()
-    i = 1
+    i = 0
+    while i < len(name) and "A" <= name[i] <= "Z":
+        i += 1
+    if i > 1:
+        # Back off only when a lowercase follows; at end-of-name the run IS the
+        # whole name and there is nothing to give back.
+        if i < len(name):
+            i -= 1
+        return name[:i].lower()
+    if i < 1:
+        i = 1
     while i < len(name) and not ("A" <= name[i] <= "Z"):
         i += 1
     return name[:i].lower()
