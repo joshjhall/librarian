@@ -350,6 +350,7 @@ while IFS= read -r file; do
         -v cohesive_max="$REVIEW_COHESIVE_MAX_UNITS" \
         -v b_warn="$b_warn" -v b_high="$b_high" \
         -v b_type="$b_type" -v b_cat="$b_cat" \
+        -v b_kind="$b_kind" -v b_root="$MEMORY_BUNDLE_ROOT" \
         -v measure_only="$MEASURE_ONLY" '
     # >>> shared:loc-helpers-awk (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
     # md_slug: heading text -> identifier-shaped slug, so family_prefix applies
@@ -548,6 +549,78 @@ while IFS= read -r file; do
         return "extract a cohesive unit into a sibling module"
     }
     # <<< shared:split-shape-awk
+
+    # >>> shared:bundle-seam-awk (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
+    # Bundle-shaped split guidance, shared by BOTH lenses (#729). This is the
+    # awk-fallback half of bundle_seam_rows()/concept_dir() in the .py primaries.
+    #
+    # An index splits by TOPIC CLUSTER and a concept by extracting its second
+    # lesson; neither is a line range, so the generic markdown heading-cluster
+    # seam is wrong guidance rather than merely vague, and is SUPPRESSED for a
+    # bundle file. The concept row REQUIRES the index line in the same breath:
+    # extracting the lesson without it is #697 exactly — written, never
+    # recallable, and nothing errors.
+    #
+    # Rows are BUFFERED into bs_cat/bs_ev/bs_cert rather than emitted, because
+    # the two lenses differ on which survive: the audit lens emits every row
+    # including the LOW declined ones (a backlog reader must be able to tell
+    # examined-and-unsplittable from not-scanned), while the review lens drops
+    # those. awk has no return-a-list, so the caller reads the globals and the
+    # count comes back as the return value.
+    #
+    # NB: no apostrophes anywhere in this region. The whole awk program is a
+    # single-quoted shell string, so one would end it and the next line would be
+    # parsed as shell.
+    #
+    # NB: the extra parameters after the real ones are awk-LOCAL scratch (the
+    # extra-parameter idiom) — awk has no block scope, and these run inside
+    # loops that already use i/d as counters.
+    function concept_dir(p,   slash, i) {
+        slash = 0
+        for (i = length(p); i >= 1; i--) if (substr(p, i, 1) == "/") { slash = i; break }
+        if (slash) return substr(p, 1, slash - 1)
+        return b_root
+    }
+    function bundle_seam_rows(kind,   d, i, bn, bchosen, bns, bsec, clist, s) {
+        # Topic clusters — mirrors bundle_sections() in the .py primary, NOT the
+        # top-level units: those are the shallowest depth, which for a
+        # `# Title` + `## topics` file is the lone title, so every index would
+        # decline. Pick the shallowest depth with >= 2 headings, falling back to
+        # the shallowest.
+        bchosen = 0
+        for (d = 1; d <= 6; d++) {
+            bn = 0
+            for (i = 1; i <= nh; i++) if (hd[i] == d) bn++
+            if (bn > 0 && bchosen == 0) bchosen = d
+            if (bn >= 2) { bchosen = d; break }
+        }
+        bns = 0
+        for (i = 1; i <= nh; i++) {
+            if (hd[i] != bchosen) continue
+            s = md_slug(ht[i]); if (s == "") s = "section"
+            bns++; bsec[bns] = s
+        }
+        clist = ""
+        for (i = 1; i <= bns && i <= 5; i++) clist = (i == 1) ? bsec[i] : clist ", " bsec[i]
+        bs_cat[1] = "decomposition-seam"
+        if (kind == "index") {
+            if (bns >= 2) {
+                bs_ev[1] = sprintf("index split: %d topic clusters (%s) -> index-<topic>.md; root keeps one pointer line per sub-index", bns, clist)
+                bs_cert[1] = "HIGH"
+            } else {
+                bs_ev[1] = sprintf("declined: index has no topic clusters to split on (%d sections) — trim entries instead", bns)
+                bs_cert[1] = "LOW"
+            }
+        } else if (bns >= 2) {
+            bs_ev[1] = sprintf("concept split: extract %s to %s/%s.md AND add its index line (an extracted concept with no index line is an orphan)", bsec[2], concept_dir(path), bsec[2])
+            bs_cert[1] = "HIGH"
+        } else {
+            bs_ev[1] = sprintf("declined: single lesson — no second concept to extract (%d sections); tighten the prose instead", bns)
+            bs_cert[1] = "LOW"
+        }
+        return 1
+    }
+    # <<< shared:bundle-seam-awk
     function emit(line_no, category, evidence, certainty) {
         printf "%s\t%d\t%s\t%s\t%s\n", path, line_no, category, evidence, certainty
     }
@@ -783,8 +856,24 @@ while IFS= read -r file; do
             # Emitted only for dispositions a reviewer should act on, mirroring
             # the seam rule on the LOC path.
             if (b_crossed || b_material) {
-                emit(1, "decomposition-seam", sprintf("split shape for %s: %s", \
-                    b_type, split_shape("md")), "MEDIUM")
+                # A memory bundle takes the BUNDLE-SHAPED seam and the generic
+                # markdown one is SUPPRESSED (#729) — one seam verdict per file,
+                # the same one-verdict move #701 made for size. Checked FIRST,
+                # which gives the bundle arm precedence over every other prose
+                # type, matching the audit lens (#700): a docs/ or agents/ dir
+                # nested in the bundle still gets bundle rules. The LOW declined
+                # rows are dropped — this lens shares the row SHAPE, not the
+                # audit lens disposition.
+                if (b_kind != "") {
+                    bs_n = bundle_seam_rows(b_kind)
+                    for (bs_i = 1; bs_i <= bs_n; bs_i++) {
+                        if (bs_cert[bs_i] == "LOW") continue
+                        emit(1, bs_cat[bs_i], bs_ev[bs_i], bs_cert[bs_i])
+                    }
+                } else {
+                    emit(1, "decomposition-seam", sprintf("split shape for %s: %s", \
+                        b_type, split_shape("md")), "MEDIUM")
+                }
             }
             exit 0
         }

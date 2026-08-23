@@ -884,66 +884,6 @@ def target_path(path: str, prefix: str) -> str:
     return (directory + "/" + inner) if directory else inner
 
 
-def concept_dir(path: str) -> str:
-    """Which directory an extracted memory-bundle concept belongs in (#713).
-
-    The source file's OWN directory, not the bundle root. `bundle_kind()`
-    explicitly supports a concept nested below the root (its `*/root/*` arm), and
-    for `<root>/topics/two-lessons.md` a root-anchored target silently drops the
-    `topics/` segment — advice that, followed literally, moves the extracted
-    lesson out of its subdirectory instead of alongside the sibling it was
-    extracted from. Deriving from the source path is what every other
-    seam-target computation here does (`target_path()`).
-
-    Deliberately NOT `target_path()` itself, which builds `dir/stem/prefix.ext`
-    — a subdirectory named for the source file. That is right for a code family
-    and wrong for a bundle: an extracted lesson is a flat SIBLING of the file it
-    came from, never a child of it.
-
-    A flat-bundle file already HAS the root as its own directory, so the common
-    case is unchanged by this derivation — only a nested concept moves. The
-    bundle-root fallback is therefore defensive and unreachable from the only
-    call site: `bundle_kind()` sets a kind only for a path matching
-    `<root>/...` or `.../<root>/...`, both of which contain a slash."""
-    if "/" in path:
-        return path.rsplit("/", 1)[0]
-    return _bundle_root()
-
-
-def bundle_sections(lines: list[str]) -> list[str]:
-    """The topic clusters of a bundle markdown file (#700).
-
-    NOT the same as `find_units`' top-level units. `find_units` takes the
-    SHALLOWEST heading depth present, which for a normal bundle file is the
-    lone `# Title` — so the `##` topic sections, which are exactly what an
-    index splits along, would be invisible and every index would decline.
-
-    The rule here is the shallowest depth that has at least TWO headings: a
-    `# Title` + `## topics` file clusters by its `##`, and a file written with
-    all-`##` sections and no title clusters by those same `##`. Falls back to
-    the shallowest depth when nothing repeats (a genuinely unsplittable file)."""
-    heads: list[tuple[int, str]] = []
-    fenced = False
-    for line in lines:
-        if line.startswith("```") or line.startswith("~~~"):
-            fenced = not fenced
-            continue
-        if fenced:
-            continue
-        m = re.match(r"^(#{1,6})[ \t]+(.*)$", line)
-        if m:
-            heads.append((len(m.group(1)), md_slug(m.group(2)) or "section"))
-    if not heads:
-        return []
-    depths = sorted(set(d for d, _ in heads))
-    chosen = depths[0]
-    for d in depths:
-        if sum(1 for hd, _ in heads if hd == d) >= 2:
-            chosen = d
-            break
-    return [name for d, name in heads if d == chosen]
-
-
 # >>> shared:bloat-spec-py (sync: ship-issue/sizing.py)
 # PROSE FILE-TYPE CLASSIFICATION — shared by BOTH lenses (#724).
 #
@@ -1095,6 +1035,155 @@ def bloat_spec(path: str) -> tuple[int, int, str, str] | None:
 # <<< shared:bloat-spec-py
 
 
+# >>> shared:bundle-seam-py (sync: ship-issue/sizing.py)
+# BUNDLE SPLIT GUIDANCE — shared by BOTH lenses (#729).
+#
+# #700 taught the AUDIT lens that a memory bundle splits by its own shape, and
+# suppressed the generic markdown heading-cluster seam for it. The REVIEW lens
+# got neither half: on a PR growing `.claude/memory/MEMORY.md` it emitted the
+# generic `split shape for memory index: progressive disclosure ...` row. Two
+# distinct harms, and the second is the serious one:
+#
+#   * an index splits by TOPIC CLUSTER and a concept by EXTRACTING THE SECOND
+#     LESSON; neither is a line range, so the generic row is wrong guidance
+#     rather than merely vague — precisely what #700 removed from the audit lens.
+#   * the concept row's anti-orphan clause vanished entirely. That sentence is
+#     the one that prevents #697's documented failure: 16 memories on disk,
+#     absent from the index — written, never recallable, nothing errors.
+#
+# WHAT IS SHARED IS THE ROW, NOT THE DISPOSITION. These functions RETURN rows
+# instead of calling emit(), because the two lenses legitimately differ on which
+# rows survive: the audit lens emits the LOW `declined:` rows (a backlog reader
+# needs to see a file was examined and found unsplittable — silence there is
+# indistinguishable from "not scanned"), while the review lens drops them and
+# gates the rest on its growth disposition, exactly as its generic prose seam
+# already does. Sharing emit() would have forced one policy on both.
+#
+# MODULE-LEVEL BY NECESSITY, not by style. The audit lens carried this branch
+# INDENTED inside scan_file(), which cannot be a shared region at all:
+# validate-shared-scanner-sync.sh strips leading whitespace before comparing,
+# and Python indentation is semantic, so an indented fragment can compare equal
+# across a real divergence. Column-zero defs make the strip a no-op.
+def concept_dir(path: str) -> str:
+    """Which directory an extracted memory-bundle concept belongs in (#713).
+
+    The source file's OWN directory, not the bundle root. `bundle_kind()`
+    explicitly supports a concept nested below the root (its `*/root/*` arm), and
+    for `<root>/topics/two-lessons.md` a root-anchored target silently drops the
+    `topics/` segment — advice that, followed literally, moves the extracted
+    lesson out of its subdirectory instead of alongside the sibling it was
+    extracted from. Deriving from the source path is what every other
+    seam-target computation here does (`target_path()`).
+
+    Deliberately NOT `target_path()` itself, which builds `dir/stem/prefix.ext`
+    — a subdirectory named for the source file. That is right for a code family
+    and wrong for a bundle: an extracted lesson is a flat SIBLING of the file it
+    came from, never a child of it.
+
+    A flat-bundle file already HAS the root as its own directory, so the common
+    case is unchanged by this derivation — only a nested concept moves. The
+    bundle-root fallback is therefore defensive and unreachable from the only
+    call site: `bundle_kind()` sets a kind only for a path matching
+    `<root>/...` or `.../<root>/...`, both of which contain a slash."""
+    if "/" in path:
+        return path.rsplit("/", 1)[0]
+    return _bundle_root()
+
+
+def bundle_sections(lines: list[str]) -> list[str]:
+    """The topic clusters of a bundle markdown file (#700).
+
+    NOT the same as `find_units`' top-level units. `find_units` takes the
+    SHALLOWEST heading depth present, which for a normal bundle file is the
+    lone `# Title` — so the `##` topic sections, which are exactly what an
+    index splits along, would be invisible and every index would decline.
+
+    The rule here is the shallowest depth that has at least TWO headings: a
+    `# Title` + `## topics` file clusters by its `##`, and a file written with
+    all-`##` sections and no title clusters by those same `##`. Falls back to
+    the shallowest depth when nothing repeats (a genuinely unsplittable file)."""
+    heads: list[tuple[int, str]] = []
+    fenced = False
+    for line in lines:
+        if line.startswith("```") or line.startswith("~~~"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        m = re.match(r"^(#{1,6})[ \t]+(.*)$", line)
+        if m:
+            heads.append((len(m.group(1)), md_slug(m.group(2)) or "section"))
+    if not heads:
+        return []
+    depths = sorted(set(d for d, _ in heads))
+    chosen = depths[0]
+    for d in depths:
+        if sum(1 for hd, _ in heads if hd == d) >= 2:
+            chosen = d
+            break
+    return [name for d, name in heads if d == chosen]
+
+
+def bundle_seam_rows(path: str, lines: list[str], kind: str) -> list[tuple]:
+    """The bundle-shaped seam rows for an OVER-BUDGET bundle file (#729).
+
+    Returns `(category, evidence, certainty)` triples — never emits. The caller
+    decides which survive (see the region header): the audit lens takes all of
+    them, the review lens keeps only the actionable ones.
+
+    `kind` is `bundle_kind(path)`'s verdict and is assumed non-empty; callers
+    branch on it first, which is also what gives the bundle arm its precedence
+    over every other arm (#700's ordering) — a `docs/` or `agents/` directory
+    nested inside the bundle is still sized and split as a bundle.
+
+    The concept row names the extraction target AND requires its index line in
+    the same breath. That conjunction is the whole point: half-following it —
+    extracting the lesson, skipping the index line — is exactly the silent loss
+    (#697). `split-verify`'s `split-memory-orphan` check makes the requirement
+    mechanically verifiable rather than advisory."""
+    names = bundle_sections(lines)
+    if kind == "index":
+        if len(names) >= 2:
+            return [
+                (
+                    "decomposition-seam",
+                    "index split: %d topic clusters (%s) -> index-<topic>.md; "
+                    "root keeps one pointer line per sub-index"
+                    % (len(names), ", ".join(names[:5])),
+                    "HIGH",
+                )
+            ]
+        return [
+            (
+                "decomposition-seam",
+                "declined: index has no topic clusters to split on "
+                "(%d sections) — trim entries instead" % len(names),
+                "LOW",
+            )
+        ]
+    if len(names) >= 2:
+        return [
+            (
+                "decomposition-seam",
+                "concept split: extract %s to %s/%s.md AND add its index "
+                "line (an extracted concept with no index line is an orphan)"
+                % (names[1], concept_dir(path), names[1]),
+                "HIGH",
+            )
+        ]
+    return [
+        (
+            "decomposition-seam",
+            "declined: single lesson — no second concept to extract "
+            "(%d sections); tighten the prose instead" % len(names),
+            "LOW",
+        )
+    ]
+
+
+# <<< shared:bundle-seam-py
+
+
 def scan_file(path: str, lines: list[str]) -> None:
     lang = lang_of(path)
     units = find_units(lines, lang)
@@ -1193,51 +1282,16 @@ def scan_file(path: str, lines: list[str]) -> None:
     # the never-recalled failure).
     #
     # Gated on `over`, so a bundle file inside its budget emits NOTHING.
+    # The ROWS come from the shared `bundle-seam-py` region so both lenses agree
+    # on the shape; this lens's DISPOSITION is to emit every one of them,
+    # including the LOW `declined:` rows — a backlog reader needs to see that a
+    # file was examined and found unsplittable, since silence here would be
+    # indistinguishable from "not scanned".
     kind = bundle_kind(path)
     if kind:
         if over:
-            names = bundle_sections(lines)
-            if kind == "index":
-                if len(names) >= 2:
-                    emit(
-                        path,
-                        1,
-                        "decomposition-seam",
-                        "index split: %d topic clusters (%s) -> index-<topic>.md; "
-                        "root keeps one pointer line per sub-index"
-                        % (len(names), ", ".join(names[:5])),
-                        "HIGH",
-                    )
-                else:
-                    emit(
-                        path,
-                        1,
-                        "decomposition-seam",
-                        "declined: index has no topic clusters to split on "
-                        "(%d sections) — trim entries instead" % len(names),
-                        "LOW",
-                    )
-            elif len(names) >= 2:
-                # Two lessons in one file: extract the second, and REQUIRE its
-                # index line in the same breath.
-                emit(
-                    path,
-                    1,
-                    "decomposition-seam",
-                    "concept split: extract %s to %s/%s.md AND add its index "
-                    "line (an extracted concept with no index line is an orphan)"
-                    % (names[1], concept_dir(path), names[1]),
-                    "HIGH",
-                )
-            else:
-                emit(
-                    path,
-                    1,
-                    "decomposition-seam",
-                    "declined: single lesson — no second concept to extract "
-                    "(%d sections); tighten the prose instead" % len(names),
-                    "LOW",
-                )
+            for category, evidence, certainty in bundle_seam_rows(path, lines, kind):
+                emit(path, 1, category, evidence, certainty)
         return
 
     if not lang:

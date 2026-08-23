@@ -103,9 +103,9 @@ source "$SCRIPT_DIR/lib/harness.sh"
 SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
-    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk unit-segmenters-awk"
+    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk unit-segmenters-awk bundle-seam-awk"
     "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
-    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py"
+    "plugins/review-audit/skills/check-decomposition/patterns.py|plugins/workflow/skills/ship-issue/sizing.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py bundle-seam-py"
 )
 
 # The Python pair's regions, in the order they appear above. Used by the
@@ -116,7 +116,7 @@ SHARED_PAIRS=(
 # audit-lens-only on purpose. Copying them into sizing.py to make the files look
 # more alike would add lookups nothing there reads — deliberate duplication is
 # only worth its cost for logic BOTH lenses execute.
-PY_REGIONS="loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py"
+PY_REGIONS="loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py bundle-seam-py"
 
 # Pair-specific paths used by the targeted tests below (the language-arm shape
 # check and the two tamper fixtures). Kept as consts so a path edit above is a
@@ -834,6 +834,15 @@ test_detector_fires_on_python_primary_drift() {
                 # destinations for the same file — advice that contradicts
                 # itself across lenses, which is the whole fork #725 closes.
                 sed_expr='s/    "sh": "sourced fragment/    "sh": "zzz fragment/'
+                ;;
+            bundle-seam-py)
+                # Targets the CONCEPT row's anti-orphan clause (#729) — the one
+                # sentence in this region whose loss is silent and permanent. A
+                # drifted copy means one lens tells the reader to add the index
+                # line and the other does not; following the lens that does not
+                # produces #697 exactly: the lesson on disk, absent from the
+                # index, never recalled, nothing erroring.
+                sed_expr='s/                "line (an extracted concept with no index line is an orphan)"/                "line (optional)"/'
                 ;;
             *)
                 _fail "no tamper case for region ${region}" \
