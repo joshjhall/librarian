@@ -1157,6 +1157,218 @@ test_usage_contract() {
     assert_equals "" "$out" "an empty file list emits nothing"
 }
 
+# --- #729: bundle-shaped seam guidance on the REVIEW lens --------------------
+# make_md_file writes flat prose with no headings, which is right for a size
+# fixture and useless for a CLUSTER one: bundle_sections() picks the shallowest
+# heading depth with >= 2 headings, so a file with no headings can only ever
+# produce the LOW decline. These fixtures carry real `##` topic sections.
+make_bundle_file() {
+    local path="$1" nsections="$2" per="$3" i j
+    command printf '# Title\n\n' >"$path"
+    i=1
+    while [ "$i" -le "$nsections" ]; do
+        command printf '## Topic %d\n\n' "$i" >>"$path"
+        j=0
+        while [ "$j" -lt "$per" ]; do
+            command printf 'Prose line %d of topic %d.\n' "$j" "$i" >>"$path"
+            j=$((j + 1))
+        done
+        command printf '\n' >>"$path"
+        i=$((i + 1))
+    done
+}
+
+# THE HEADLINE FIXTURE (#729). Before this issue the review lens emitted the
+# GENERIC markdown seam for a bundle file — `split shape for memory index:
+# progressive disclosure ...` — where the audit lens emitted bundle-shaped
+# guidance. Two harms, and the second is the serious one:
+#
+#   * an index splits by TOPIC CLUSTER and a concept by extracting its second
+#     lesson; a generic row is wrong guidance, not merely vaguer (#700 removed
+#     exactly this row from the audit lens).
+#   * the concept row's anti-orphan clause vanished entirely — the sentence that
+#     prevents #697 (memories on disk, absent from the index, never recallable).
+#
+# Asserted BOTH ways: the bundle row present AND the generic row absent. Testing
+# only the former would pass an implementation that emitted both, which is the
+# double-verdict #701 exists to prevent.
+test_bundle_seam_reaches_the_review_lens() {
+    local root="$WORKDIR/bseam" out
+    command mkdir -p "$root/.claude/memory"
+    make_bundle_file "$root/.claude/memory/MEMORY.md" 4 70
+    make_bundle_file "$root/.claude/memory/two-lessons.md" 2 200
+    local list="$WORKDIR/bseam.txt" numstat="$WORKDIR/bseam.numstat"
+    command printf '%s\n%s\n' \
+        "$root/.claude/memory/MEMORY.md" "$root/.claude/memory/two-lessons.md" >"$list"
+    # Large added counts so both files take the `crossed` disposition — the seam
+    # row is gated on crossed||material, so a fixture with no growth signal would
+    # assert nothing about the seam at all.
+    command printf '300\t0\t%s\n400\t0\t%s\n' \
+        "$root/.claude/memory/MEMORY.md" "$root/.claude/memory/two-lessons.md" >"$numstat"
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    local idx_row cpt_row
+    idx_row="$(command printf '%s\n' "$out" | command grep -F '/MEMORY.md' | command grep -F 'decomposition-seam' || true)"
+    cpt_row="$(command printf '%s\n' "$out" | command grep -F '/two-lessons.md' | command grep -F 'decomposition-seam' || true)"
+
+    assert_not_empty "$idx_row" "an over-budget bundle index yields a seam row"
+    assert_contains "$idx_row" "index split:" "the index seam is bundle-shaped, not generic"
+    assert_contains "$idx_row" "topic clusters" "the index seam names its topic clusters"
+
+    assert_not_empty "$cpt_row" "an over-budget bundle concept yields a seam row"
+    assert_contains "$cpt_row" "concept split:" "the concept seam is bundle-shaped, not generic"
+    # THE clause. Its loss is silent and permanent, so it is asserted verbatim.
+    assert_contains "$cpt_row" "AND add its index line" \
+        "the concept seam carries the anti-orphan clause (#697)"
+
+    # SUPPRESSION: the generic markdown seam must be GONE for a bundle file.
+    # This is the half that fails if the bundle branch is merely added ahead of
+    # the generic one without returning.
+    assert_not_contains "$out" "split shape for memory index" \
+        "the generic markdown seam is suppressed for a bundle index (#701 one-verdict)"
+    assert_not_contains "$out" "split shape for memory concept" \
+        "the generic markdown seam is suppressed for a bundle concept"
+}
+
+# Bundle-arm PRECEDENCE (#700 ordering, #729 AC3). A `docs/` or `agents/`
+# directory NESTED INSIDE the bundle must still get bundle rules — the bundle
+# arm is checked first on both lenses. Without that ordering the file escapes to
+# the docs/agent arm and is sized and split by the wrong budget, silently.
+test_nested_dir_inside_bundle_keeps_bundle_rules() {
+    local root="$WORKDIR/bprec" out
+    command mkdir -p "$root/.claude/memory/docs" "$root/.claude/memory/agents"
+    make_bundle_file "$root/.claude/memory/docs/nested.md" 3 100
+    make_bundle_file "$root/.claude/memory/agents/nested.md" 3 100
+    local list="$WORKDIR/bprec.txt" numstat="$WORKDIR/bprec.numstat"
+    command printf '%s\n%s\n' \
+        "$root/.claude/memory/docs/nested.md" "$root/.claude/memory/agents/nested.md" >"$list"
+    command printf '400\t0\t%s\n400\t0\t%s\n' \
+        "$root/.claude/memory/docs/nested.md" "$root/.claude/memory/agents/nested.md" >"$numstat"
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    # Sized as a bundle concept, NOT as documentation or an agent definition.
+    assert_contains "$out" "memory concept" \
+        "a docs/ dir nested in the bundle is still sized as a bundle concept"
+    assert_not_contains "$out" "documentation exceeds" \
+        "the nested docs/ path does not escape to the docs arm"
+    assert_not_contains "$out" "agent definition" \
+        "the nested agents/ path does not escape to the agent arm"
+    # ...and SPLIT as one: the seam is bundle-shaped too, which is the half the
+    # audit lens already had and this lens did not.
+    assert_contains "$out" "concept split:" \
+        "a nested bundle path gets bundle-shaped split guidance"
+    assert_contains "$out" "AND add its index line" \
+        "the nested concept keeps the anti-orphan clause"
+
+    # The extraction target is the source file's OWN directory (#713), not the
+    # bundle root — a nested concept must not be told to land two levels up.
+    local nested_row
+    nested_row="$(command printf '%s\n' "$out" | command grep -F '/memory/docs/nested.md' | command grep -F 'concept split:' || true)"
+    assert_contains "$nested_row" "/.claude/memory/docs/" \
+        "the nested concept extraction target stays in its own directory (#713)"
+}
+
+# MEMORY_BUNDLE_ROOT honored identically by both lenses (#729 AC5), including
+# the empty-means-off case and every spelling of the same root.
+#
+# The empty case is the one that matters most: it is the fail-OPEN direction. If
+# one lens read empty as "off" and the other as "match everything", they would
+# disagree about every file in the repo.
+test_bundle_root_is_configurable_and_normalized() {
+    local root="$WORKDIR/broot" spelling py_out
+    command mkdir -p "$root/mem"
+    make_bundle_file "$root/mem/lesson.md" 2 200
+    local list="$WORKDIR/broot.txt" numstat="$WORKDIR/broot.numstat"
+    command printf '%s\n' "$root/mem/lesson.md" >"$list"
+    command printf '400\t0\t%s\n' "$root/mem/lesson.md" >"$numstat"
+
+    # Default root does not claim it: `mem/` is not `.claude/memory`.
+    run_scan "$list" "$numstat"
+    assert_parity
+    assert_not_contains "$SCAN_OUT" "memory concept" \
+        "a file outside the configured root is not a bundle file"
+
+    # Every spelling of the SAME root must decide alike. An unnormalized root
+    # misses the glob, falls back to the code thresholds, and still exits 0 —
+    # the silent fail-open [[path-guard-must-expand-before-scoping]].
+    for spelling in "mem" "./mem" "mem/"; do
+        SCAN_OUT="$(MEMORY_BUNDLE_ROOT="$spelling" SIZING_FORCE_BASH=1 \
+            command bash "$SIZING_SH" "$list" "$numstat" 2>&1 || true)"
+        assert_contains "$SCAN_OUT" "memory concept" \
+            "bash: root spelling '$spelling' classifies the file as a bundle concept"
+        assert_contains "$SCAN_OUT" "concept split:" \
+            "bash: root spelling '$spelling' also yields bundle-shaped guidance"
+        if [ "$HAVE_PY" = "1" ]; then
+            py_out="$(MEMORY_BUNDLE_ROOT="$spelling" command python3 "$SIZING_PY" "$list" "$numstat" 2>&1 || true)"
+            assert_equals "$SCAN_OUT" "$py_out" \
+                "python: root spelling '$spelling' agrees with bash"
+        fi
+    done
+
+    # EMPTY means classification is OFF — no bundle rows, no error, exit 0.
+    SCAN_OUT="$(MEMORY_BUNDLE_ROOT="" SIZING_FORCE_BASH=1 \
+        command bash "$SIZING_SH" "$list" "$numstat" 2>&1 || true)"
+    assert_not_contains "$SCAN_OUT" "memory concept" \
+        "bash: an empty root disables bundle classification"
+    assert_not_contains "$SCAN_OUT" "concept split:" \
+        "bash: an empty root disables bundle-shaped guidance too"
+    if [ "$HAVE_PY" = "1" ]; then
+        py_out="$(MEMORY_BUNDLE_ROOT="" command python3 "$SIZING_PY" "$list" "$numstat" 2>&1 || true)"
+        assert_equals "$SCAN_OUT" "$py_out" \
+            "python: the empty-root case agrees with bash"
+    fi
+}
+
+# The DECLINE path (#729). bundle_seam_rows() returns a LOW `declined:` row for a
+# bundle file with nothing to split on — a single-lesson concept, or an index
+# with fewer than two topic clusters. The review lens DROPS those rows, which
+# makes this a genuinely new behavior rather than a filtered-out detail: before
+# this change such a file fell through to the generic markdown seam and got a
+# `split shape for memory concept:` row. Now it gets NO seam row at all.
+#
+# Asserted as the ABSENCE OF BOTH rows, which is the only assertion that can fail
+# in both directions an implementation bug could take: falling through to the
+# generic seam after all, or leaking the LOW row the audit lens keeps. The size
+# row must still appear — the file IS over budget; it is only unsplittable.
+test_bundle_decline_emits_no_seam_at_all() {
+    local root="$WORKDIR/bdecline" out
+    command mkdir -p "$root/.claude/memory"
+    # One lesson: a single `##` section, so there is no second concept to
+    # extract. Over budget on the concept pair (350 high).
+    make_bundle_file "$root/.claude/memory/one-lesson.md" 1 400
+    # An index whose sections do not cluster: one `##`, nothing to split along.
+    make_bundle_file "$root/.claude/memory/MEMORY.md" 1 300
+    local list="$WORKDIR/bdecline.txt" numstat="$WORKDIR/bdecline.numstat"
+    command printf '%s\n%s\n' \
+        "$root/.claude/memory/one-lesson.md" "$root/.claude/memory/MEMORY.md" >"$list"
+    command printf '400\t0\t%s\n300\t0\t%s\n' \
+        "$root/.claude/memory/one-lesson.md" "$root/.claude/memory/MEMORY.md" >"$numstat"
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    # The file is still SIZED — being unsplittable is not being under budget.
+    assert_contains "$out" "memory concept exceeds" \
+        "an unsplittable bundle concept is still reported as over budget"
+    assert_contains "$out" "memory index exceeds" \
+        "an unsplittable bundle index is still reported as over budget"
+
+    # ...but yields no seam row of EITHER shape.
+    assert_not_contains "$out" "decomposition-seam" \
+        "an unsplittable bundle file emits no seam row on the review lens"
+    assert_not_contains "$out" "declined:" \
+        "the audit lens LOW decline row does not leak into the review lens"
+    assert_not_contains "$out" "split shape for memory" \
+        "nor does it fall through to the generic markdown seam"
+}
+
 run_test test_trivial_touch_is_not_blocking "AC4: a one-line touch to an oversized file is informational, never blocking"
 run_test test_crossing_the_threshold_is_actionable "AC4: a diff that pushes a file over the threshold is actionable"
 run_test test_material_growth_is_actionable "AC4: material growth on an already-over file is actionable"
@@ -1180,6 +1392,10 @@ run_test test_classified_prose_gets_exactly_one_verdict "#724/#701: a classified
 run_test test_skill_and_companion_arms_stay_ordered "#724: SKILL.md and its companion get different budgets (arm order)"
 run_test test_prose_trivial_touch_is_not_blocking "#724: prose keeps the growth disposition (AC4 holds for classified files)"
 run_test test_every_bloat_arm_reaches_the_review_lens "#724: every bloat arm (memory/CLAUDE.md/docs) reaches the review lens"
+run_test test_bundle_seam_reaches_the_review_lens "#729: bundle-shaped seam on the review lens, generic seam suppressed"
+run_test test_nested_dir_inside_bundle_keeps_bundle_rules "#729: a nested docs/ or agents/ dir inside the bundle keeps bundle rules"
+run_test test_bundle_root_is_configurable_and_normalized "#729: MEMORY_BUNDLE_ROOT spellings and empty-means-off agree across lenses"
+run_test test_bundle_decline_emits_no_seam_at_all "#729: an unsplittable bundle file emits NO seam row on the review lens"
 run_test test_prose_material_growth_is_actionable "#724: material growth on classified prose is MEDIUM/actionable"
 run_test test_unclassified_markdown_keeps_the_loc_path "#724: an unclassified .md still takes the production-LOC path"
 run_test test_small_file_stays_silent "A file under threshold produces no rows"

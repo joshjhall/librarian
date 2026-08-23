@@ -618,6 +618,199 @@ test_usage_contract() {
     assert_equals "1" "$rc" "a missing result file exits 1"
 }
 
+# --- Check 5: the memory-bundle index line (#729) ---------------------------
+# The scanner's concept-split row ends "AND add its index line (an extracted
+# concept with no index line is an orphan)". That was advisory English inside an
+# evidence string: nothing verified the second half was done. An agent following
+# the first half only produces #697 — the lesson on disk, absent from the index,
+# never recalled, nothing erroring.
+#
+# The fixture must be built so the ONLY difference between firing and not is the
+# index line itself; if any other check also fired, the counter-case would go
+# green for the wrong reason and prove nothing.
+sv_bundle_fixture() {
+    local root="$1"
+    command mkdir -p "$root/.claude/memory"
+    # Pre-split snapshot: two lessons in one file. Deliberately at a TEMP path
+    # OUTSIDE the bundle, exactly as the argument contract describes
+    # (`git show HEAD:path > /tmp/before.md`) — this is what makes the
+    # classify-on-results[0] behavior load-bearing rather than incidental.
+    command printf '# First lesson\n\nalpha text\n\n# Second lesson\n\nbeta text\n' \
+        >"$root/before.md"
+    # Post-split original keeps lesson 1 AND links to the extracted half, so
+    # check 4 (markdown reachability) is satisfied and cannot be the thing that
+    # fires.
+    command printf '# First lesson\n\nalpha text\n\nSee [second](second-lesson.md).\n' \
+        >"$root/.claude/memory/two-lessons.md"
+    command printf '# Second lesson\n\nbeta text\n' \
+        >"$root/.claude/memory/second-lesson.md"
+}
+
+test_extracted_concept_without_index_line_is_orphaned() {
+    local root="$WORKDIR/orphan" out sv_prev
+    sv_bundle_fixture "$root"
+    # An index that does NOT name the extracted concept.
+    command printf '# Memory index\n\n- [two-lessons](two-lessons.md) — hook\n' \
+        >"$root/.claude/memory/MEMORY.md"
+
+    # cd in THIS shell, not a subshell: run_verify sets VERIFY_OUT, which a
+    # subshell would discard. Relative paths matter — the bundle root is
+    # relative, so the tool must be run from the fixture root.
+    sv_prev="$PWD"
+    cd "$root" || return 1
+    run_verify before.md .claude/memory/two-lessons.md .claude/memory/second-lesson.md
+    cd "$sv_prev" || return 1
+    out="$VERIFY_OUT"
+    assert_parity
+
+    assert_contains "$out" "split-memory-orphan" \
+        "an extracted concept absent from the index is reported"
+    assert_contains "$out" "second-lesson.md" \
+        "the orphaned concept is NAMED, so the fix is actionable"
+    assert_not_contains "$out" "split-verified" \
+        "a split with an orphaned concept does not verify clean"
+}
+
+# THE COUNTER-CASE, and the reason this pair is not a tautology: the ONLY change
+# is the index line. If the check were keyed off anything else — the link, the
+# file existing, the heading — this case would stay red.
+test_extracted_concept_with_index_line_verifies() {
+    local root="$WORKDIR/indexed" out sv_prev
+    sv_bundle_fixture "$root"
+    command printf '# Memory index\n\n- [two-lessons](two-lessons.md) — hook\n- [second-lesson](second-lesson.md) — the second lesson\n' \
+        >"$root/.claude/memory/MEMORY.md"
+
+    # cd in THIS shell, not a subshell: run_verify sets VERIFY_OUT, which a
+    # subshell would discard. Relative paths matter — the bundle root is
+    # relative, so the tool must be run from the fixture root.
+    sv_prev="$PWD"
+    cd "$root" || return 1
+    run_verify before.md .claude/memory/two-lessons.md .claude/memory/second-lesson.md
+    cd "$sv_prev" || return 1
+    out="$VERIFY_OUT"
+    assert_parity
+
+    assert_not_contains "$out" "split-memory-orphan" \
+        "an extracted concept named by the index is not an orphan"
+    assert_contains "$out" "split-verified" \
+        "the same split verifies clean once the index line exists"
+}
+
+# A topic SUB-INDEX counts, not just the root MEMORY.md. This repo's own bundle
+# routes most entries through `index-*.md` files, so a check that only read
+# MEMORY.md would false-positive on the common correct layout here.
+test_subindex_pointer_satisfies_the_invariant() {
+    local root="$WORKDIR/subindex" out sv_prev
+    sv_bundle_fixture "$root"
+    command printf '# Memory index\n\n- [Runtime](index-runtime.md) — sub-index\n' \
+        >"$root/.claude/memory/MEMORY.md"
+    command printf '# Runtime\n\n- [second-lesson](second-lesson.md) — the second lesson\n' \
+        >"$root/.claude/memory/index-runtime.md"
+
+    # cd in THIS shell, not a subshell: run_verify sets VERIFY_OUT, which a
+    # subshell would discard. Relative paths matter — the bundle root is
+    # relative, so the tool must be run from the fixture root.
+    sv_prev="$PWD"
+    cd "$root" || return 1
+    run_verify before.md .claude/memory/two-lessons.md .claude/memory/second-lesson.md
+    cd "$sv_prev" || return 1
+    out="$VERIFY_OUT"
+    assert_parity
+
+    assert_not_contains "$out" "split-memory-orphan" \
+        "a pointer from a topic sub-index satisfies the invariant"
+}
+
+# SCOPE FENCE (#669 slice B stays out). The check is decomposition-side only:
+# "the split you were just told to make must not orphan ITS OWN output". A
+# pre-existing orphan the split never touched is NOT this tool's business —
+# reporting it here would silently widen the contract and make every split of an
+# imperfect bundle fail for reasons unrelated to the split.
+test_preexisting_orphan_is_not_this_tools_business() {
+    local root="$WORKDIR/preexisting" out sv_prev
+    sv_bundle_fixture "$root"
+    command printf '# Memory index\n\n- [two-lessons](two-lessons.md) — hook\n- [second-lesson](second-lesson.md) — the second lesson\n' \
+        >"$root/.claude/memory/MEMORY.md"
+    # An unrelated orphan that this split neither created nor was passed.
+    command printf '# Unrelated\n\nnobody points at me\n' \
+        >"$root/.claude/memory/stray-lesson.md"
+
+    # cd in THIS shell, not a subshell: run_verify sets VERIFY_OUT, which a
+    # subshell would discard. Relative paths matter — the bundle root is
+    # relative, so the tool must be run from the fixture root.
+    sv_prev="$PWD"
+    cd "$root" || return 1
+    run_verify before.md .claude/memory/two-lessons.md .claude/memory/second-lesson.md
+    cd "$sv_prev" || return 1
+    out="$VERIFY_OUT"
+    assert_parity
+
+    assert_not_contains "$out" "split-memory-orphan" \
+        "a pre-existing orphan outside this split is not reported (#669 slice B)"
+    assert_contains "$out" "split-verified" \
+        "the split itself still verifies clean"
+}
+
+# A NON-BUNDLE split must be untouched by check 5. Without the bundle_kind guard
+# the check would demand an index line for every markdown split in the repo.
+test_non_bundle_split_is_unaffected() {
+    local root="$WORKDIR/nonbundle" out sv_prev
+    command mkdir -p "$root/docs"
+    command printf '# First\n\nalpha\n\n# Second\n\nbeta\n' >"$root/before.md"
+    command printf '# First\n\nalpha\n\nSee [second](second.md).\n' >"$root/docs/guide.md"
+    command printf '# Second\n\nbeta\n' >"$root/docs/second.md"
+
+    sv_prev="$PWD"
+    cd "$root" || return 1
+    run_verify before.md docs/guide.md docs/second.md
+    cd "$sv_prev" || return 1
+    out="$VERIFY_OUT"
+    assert_parity
+
+    assert_not_contains "$out" "split-memory-orphan" \
+        "a split outside any memory bundle never asks for an index line"
+}
+
+# The '+N more' TRUNCATION arm (#729). Both impls cap the named orphans at 3 and
+# append a `(+N more)` suffix. That is hand-rolled twice — a Python slice on one
+# side, a bash counter on the other — so the two can disagree on the boundary
+# (is the 4th name included?) or on the suffix text, and the TSV contract would
+# break in a way no single-orphan fixture can see. `assert_parity` is doing real
+# work here rather than being ceremony.
+test_orphan_list_truncates_at_three_with_a_count() {
+    local root="$WORKDIR/trunc" out sv_prev i
+    command mkdir -p "$root/.claude/memory"
+    command printf '# Lesson one\n\nalpha\n' >"$root/before.md"
+    command printf '# Lesson one\n\nalpha\n' >"$root/.claude/memory/source.md"
+    # An index naming NONE of the extracted concepts, so all four are orphans.
+    command printf '# Memory index\n\n- [source](source.md) — hook\n' \
+        >"$root/.claude/memory/MEMORY.md"
+    i=1
+    while [ "$i" -le 4 ]; do
+        command printf '# Extracted %d\n\nbeta\n' "$i" \
+            >"$root/.claude/memory/extracted-$i.md"
+        i=$((i + 1))
+    done
+
+    sv_prev="$PWD"
+    cd "$root" || return 1
+    run_verify before.md .claude/memory/source.md \
+        .claude/memory/extracted-1.md .claude/memory/extracted-2.md \
+        .claude/memory/extracted-3.md .claude/memory/extracted-4.md
+    cd "$sv_prev" || return 1
+    out="$VERIFY_OUT"
+    assert_parity
+
+    assert_contains "$out" "split-memory-orphan" "four unindexed concepts are orphans"
+    assert_contains "$out" "4 extracted concept(s)" "the COUNT reports all four, not just the listed three"
+    assert_contains "$out" "(+1 more)" "the overflow suffix names how many were withheld"
+    # The BOUNDARY: three names listed, the fourth withheld. Asserting the
+    # absence of the 4th is what pins the cap — a `[:4]` slice would still
+    # satisfy every other assertion here.
+    assert_contains "$out" "extracted-3.md" "the third orphan is still named"
+    assert_not_contains "$out" "extracted-4.md" "the fourth orphan is withheld behind the count"
+}
+
 run_test test_lost_unit_is_detected "Check 2: a dropped top-level unit is detected and named"
 run_test test_sound_split_verifies "Check 2 counter: a sound split verifies clean"
 run_test test_swift_sound_split_verifies "swift: a sound Type+Concern split verifies clean (#728)"
@@ -634,6 +827,12 @@ run_test test_dropped_heading_is_unreachable_despite_a_link "Check 4: a heading 
 run_test test_second_destination_needs_its_own_link "Check 4: a link to one destination does not vouch for another (multi-file)"
 run_test test_all_destinations_linked_verifies "Check 4 counter: every destination linked verifies (multi-file)"
 run_test test_linked_moved_heading_passes "Check 4 counter: a one-line pointer makes the move sound"
+run_test test_extracted_concept_without_index_line_is_orphaned "Check 5: an extracted concept with no index line is an orphan (#729)"
+run_test test_extracted_concept_with_index_line_verifies "Check 5 counter: the index line alone clears it (#729)"
+run_test test_subindex_pointer_satisfies_the_invariant "Check 5: a topic sub-index pointer satisfies the invariant (#729)"
+run_test test_preexisting_orphan_is_not_this_tools_business "Check 5 scope: a pre-existing orphan is #669 slice B, not this tool (#729)"
+run_test test_non_bundle_split_is_unaffected "Check 5 guard: a non-bundle split never asks for an index line (#729)"
+run_test test_orphan_list_truncates_at_three_with_a_count "Check 5: the orphan list truncates at 3 with a (+N more) count (#729)"
 run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"
 run_test test_usage_contract "Usage / missing-file contract"
 

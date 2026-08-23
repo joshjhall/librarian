@@ -1705,6 +1705,53 @@ export async function run() {
       "preScanSection: split-shape guidance reaches the reviewer prompt (#725)",
     );
 
+    // #729 cache-prefix neutrality, same shape as the #724/#725 cases above.
+    // Teaching the review lens bundle-shaped seams makes it emit `index split:`
+    // and `concept split:` rows it never emitted before, and split-verify gains
+    // a `split-memory-orphan` category — but none of these is a new prompt
+    // MECHANISM: every one rides the same TSV -> preScan -> dataBlock path with
+    // its fixed five-field order.
+    //
+    // The concept row is the one asserted, because it is the one carrying the
+    // anti-orphan clause — the sentence whose loss is silent and permanent
+    // (#697). A hand-rolled builder for it would serialize differently while
+    // leaving the empty case untouched and every assertion above green.
+    const BUNDLE_SEAM = {
+      file: ".claude/memory/two-lessons.md",
+      line: 1,
+      category: "decomposition-seam",
+      evidence:
+        "concept split: extract second_lesson to .claude/memory/second_lesson.md AND add its index line (an extracted concept with no index line is an orphan)",
+      certainty: "HIGH",
+    };
+    eq(
+      mkPreScan([BUNDLE_SEAM]).preScanSection(),
+      mkPreScan([{ ...BUNDLE_SEAM, sneaked: "x" }]).preScanSection(),
+      "preScanSection: a bundle seam row serializes through the fixed-field dataBlock path (#729/#256)",
+    );
+    ok(
+      mkPreScan([BUNDLE_SEAM]).preScanSection().includes("AND add its index line"),
+      "preScanSection: the anti-orphan clause survives into the reviewer prompt (#729/#697)",
+    );
+
+    const ORPHAN = {
+      file: ".claude/memory/two-lessons.md",
+      line: 1,
+      category: "split-memory-orphan",
+      evidence: "1 extracted concept(s) with no index line: second-lesson.md",
+      certainty: "HIGH",
+    };
+    eq(
+      mkPreScan([ORPHAN]).preScanSection(),
+      mkPreScan([{ ...ORPHAN, sneaked: "x" }]).preScanSection(),
+      "preScanSection: a split-memory-orphan row rides the same fixed-field path (#729)",
+    );
+
+    // AND the no-op is STILL byte-identical to empty — restated after the new
+    // categories, because that is the property #256 actually protects and the
+    // equality assertions above would all pass on a build that broke it.
+    eq(mkPreScan([]).preScanSection(), "", "preScanSection: no candidates still yields a byte-identical empty prefix (#729/#256)");
+
     // It must live inside the SHARED block, so all reviewers see it and the
     // fan-out prefix stays byte-identical across siblings (#256).
     const src = harnessSource(SHIP);

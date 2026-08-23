@@ -20,6 +20,10 @@ split INTO, it mechanically checks four properties:
      reachable by a link from the original. A split that moves prose out but
      leaves no link has LOST content, not decomposed it — and that is the case
      the mechanical check is easiest to get wrong.
+  5. MEMORY-BUNDLE INDEX LINE (#729) — a concept extracted from a memory bundle
+     is named by an index. This turns the scanner's "AND add its index line"
+     from advisory prose into a checkable rule: half-following it produces a
+     memory that is written but never recallable (#697), silently.
 
 Usage:
     split-verify.py <original-file> <post-split-original> [<result-file> ...]
@@ -34,7 +38,7 @@ as link destinations.
 
 Output: TSV to stdout: file<TAB>line<TAB>category<TAB>evidence<TAB>certainty
   category is one of: split-loc-drift, split-unit-lost, split-fanin-dangling,
-  split-heading-unreachable, split-verified
+  split-heading-unreachable, split-memory-orphan, split-verified
 
 Exit codes:
   0 = verification ran (findings may or may not exist)
@@ -65,7 +69,9 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from sizing import (  # noqa: E402
+    _bundle_root,
     _int_env,
+    bundle_kind,
     emit,
     find_units,
     lang_of,
@@ -303,6 +309,68 @@ def main(argv: list[str]) -> int:
                     f"{len(unreachable)} heading(s) moved out of the original with "
                     f"no link left behind: {shown}{more} — progressive disclosure "
                     f"requires a one-line pointer, or the content is lost",
+                    "HIGH",
+                )
+
+    # --- 5. MEMORY-BUNDLE INDEX LINE (#729) ---------------------------------
+    # The scanner's concept-split row ends "AND add its index line (an extracted
+    # concept with no index line is an orphan)". Until now that was advisory
+    # English inside an evidence string: nothing verified the second half was
+    # done, and an agent that followed the first half only produced #697's
+    # documented failure — memories on disk, absent from the index, written but
+    # never recallable. Nothing errors; the memory simply never loads.
+    #
+    # This makes the invariant CHECKABLE, which is what #699 can call rather
+    # than re-deriving the reasoning from prose.
+    #
+    # DECOMPOSITION-SIDE ONLY, deliberately. The claim is "the split you were
+    # just told to make must not orphan ITS OWN output" — every newly-created
+    # concept in `results` must be reachable from an index. Orphan detection
+    # over a WHOLE bundle (including files this split never touched) is #669
+    # slice B, and pulling it in here would silently widen the tool's contract.
+    #
+    # Reads the index from disk rather than from `results`, because the index
+    # line is usually added to an index file the split did not otherwise touch —
+    # requiring it to be passed as a result would make the common correct split
+    # look like a failure.
+    #
+    # CLASSIFIED ON results[0], NOT `original`. Per the argument contract at the
+    # top of this file, `original` is the PRE-split snapshot and is typically a
+    # temp path (`git show HEAD:path > /tmp/before.md`) — which is never under
+    # the bundle root, so classifying it would make this check silently never
+    # fire. results[0] is the same logical file at its REAL path. Found by
+    # running the fixture rather than by reading the code.
+    if bundle_kind(results[0]) == "concept":
+        # results[0] is the post-split original; the rest are what content moved
+        # INTO. Only NEW concept files can be orphaned by this split.
+        new_concepts = [p for p in results[1:] if bundle_kind(p) == "concept"]
+        if new_concepts:
+            root = _bundle_root()
+            index_text = ""
+            if os.path.isdir(root):
+                for name in sorted(os.listdir(root)):
+                    if not name.endswith(".md"):
+                        continue
+                    if not (
+                        name == "MEMORY.md"
+                        or name == "index.md"
+                        or name.startswith("index-")
+                    ):
+                        continue
+                    index_text += "\n".join(read_lines(os.path.join(root, name)))
+            orphans = [p for p in new_concepts if os.path.basename(p) not in index_text]
+            if orphans:
+                findings += 1
+                shown = "; ".join(os.path.basename(p) for p in orphans[:3])
+                extra = len(orphans) - 3
+                more = f" (+{extra} more)" if extra > 0 else ""
+                emit(
+                    original,
+                    1,
+                    "split-memory-orphan",
+                    f"{len(orphans)} extracted concept(s) with no index line: "
+                    f"{shown}{more} — an extracted concept absent from the index "
+                    f"is written but never recallable; add its pointer line",
                     "HIGH",
                 )
 

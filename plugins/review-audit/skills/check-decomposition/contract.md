@@ -66,6 +66,40 @@ The index-line clause is unconditional on the concept arm: a split that omits it
 orphans the extracted half. Unsplittable bundle files decline at `LOW` with a
 reason, exactly like the code path.
 
+**Both lenses emit these rows (#729).** The audit lens and the per-PR review
+lens (`ship-issue/sizing.{py,sh}`) share the row shape through the
+`bundle-seam-py` / `bundle-seam-awk` sentinel regions, so they cannot disagree
+about what a bundle split looks like. What still differs is the **disposition**,
+which each lens owns: the audit lens emits every row including the `LOW`
+declines (a backlog reader must be able to distinguish
+examined-and-unsplittable from not-scanned), while the review lens drops those
+and gates the rest on its growth disposition. Bundle classification is checked
+**first** on both, so a `docs/` or `agents/` directory nested inside the bundle
+still gets bundle rules.
+
+**The index-line clause is checkable, not just advisory (#729).**
+`ship-issue/split-verify.{py,sh}` emits `split-memory-orphan` (HIGH) when a
+split extracts a concept that no index names. Scope is decomposition-side only
+— "the split just proposed must not orphan its own output"; whole-bundle graph
+health (orphans in files this split never touched) is #669 slice B. The check
+classifies the **post-split** path, since the pre-split argument is typically a
+temp snapshot outside the bundle root.
+
+### CLAUDE.md / AGENTS.md need no bundle-style seam (#729)
+
+Recorded deliberately, because the question is natural to re-ask: a
+`CLAUDE.md`/`AGENTS.md` gets its file-type **budget** (#724) and the ordinary
+generic markdown seam — progressive disclosure, move detail to linked files,
+leave a one-line pointer. It gets **no** bundle-shaped rule.
+
+The reason is that the bundle rules exist for a recall structure these files do
+not have. An index splits by topic cluster because something routes lookups
+through it; a concept carries the anti-orphan clause because an extracted
+memory absent from the index is never loaded again. `CLAUDE.md` is read whole,
+every session, by path — there is no index to orphan a file from, so the
+invariant has nothing to protect and progressive disclosure is the complete
+remedy.
+
 ## TSV row format
 
 The shared five-column contract is unchanged:

@@ -3,7 +3,7 @@
 #
 # A reviewer that suggests a decomposition is cheap to ignore; a reviewer that
 # suggests one AND can PROVE the split lost nothing is cheap to accept. This tool
-# is that proof (issue #695, AC8). Four mechanical checks:
+# is that proof (issue #695, AC8). Five mechanical checks:
 #
 #   1. LOC CONSERVATION  — production LOC across results ~= original, modulo new
 #      import/mod/__init__ boilerplate (SPLIT_LOC_TOLERANCE, default 40).
@@ -13,6 +13,10 @@
 #   4. MARKDOWN REACHABILITY — every heading that MOVED out is reachable by a link
 #      from the post-split original. A split that moves prose out but leaves no
 #      link has LOST content, not decomposed it.
+#   5. MEMORY-BUNDLE INDEX LINE (#729) — a concept extracted from a memory bundle
+#      is named by an index. This turns the scanner's "AND add its index line"
+#      from advisory prose into a checkable rule: half-following it produces a
+#      memory that is written but never recallable (#697), silently.
 #
 # Usage: split-verify.sh <original-file> <post-split-original> [<result-file> ...]
 #
@@ -24,6 +28,8 @@
 # reachability, so only the "moved into" files count as link destinations.
 #
 # Output: TSV to stdout: file\tline\tcategory\tevidence\tcertainty
+#   category is one of: split-loc-drift, split-unit-lost, split-fanin-dangling,
+#   split-heading-unreachable, split-memory-orphan, split-verified
 #
 # Exit codes:
 #   0 = verification ran (findings may or may not exist)
@@ -504,6 +510,78 @@ EOF
         [ "$UNREACH_N" -gt 3 ] && more=" (+$((UNREACH_N - 3)) more)"
         emit "split-heading-unreachable" \
             "${UNREACH_N} heading(s) moved out of the original with no link left behind: ${UNREACHABLE}${more} — progressive disclosure requires a one-line pointer, or the content is lost" \
+            "HIGH"
+    fi
+fi
+
+# ---- 5. memory-bundle index line (#729) ------------------------------------
+# Mirrors the check-5 block in split-verify.py; see that comment for why the
+# invariant needs to be mechanical rather than advisory prose (#697), and why
+# whole-bundle orphan detection stays out of scope (#669 slice B).
+#
+# Classified on POST_ORIGINAL, never on ORIGINAL: the latter is the PRE-split
+# snapshot and is typically a temp path, which is never under the bundle root,
+# so classifying it would make this check silently never fire.
+#
+# Bundle root normalization mirrors _bundle_root() — empty means classification
+# is off, and every spelling of the same root must decide alike.
+SV_BUNDLE_ROOT="${MEMORY_BUNDLE_ROOT-.claude/memory}"
+while :; do
+    case "$SV_BUNDLE_ROOT" in
+        ./*) SV_BUNDLE_ROOT="${SV_BUNDLE_ROOT#./}" ;;
+        */) SV_BUNDLE_ROOT="${SV_BUNDLE_ROOT%/}" ;;
+        *) break ;;
+    esac
+done
+
+# sv_bundle_kind PATH — "index", "concept", or empty. Mirrors bundle_kind().
+sv_bundle_kind() {
+    [ -n "$SV_BUNDLE_ROOT" ] || return 0
+    case "$1" in
+        "$SV_BUNDLE_ROOT"/*.md | */"$SV_BUNDLE_ROOT"/*.md) ;;
+        *) return 0 ;;
+    esac
+    case "${1##*/}" in
+        MEMORY.md | index.md | index-*) command printf 'index' ;;
+        *) command printf 'concept' ;;
+    esac
+}
+
+if [ "$(sv_bundle_kind "$POST_ORIGINAL")" = "concept" ]; then
+    ORPHANS=""
+    ORPHAN_N=0
+    # Every index in the bundle, concatenated — the pointer line may live in any
+    # of them (the root MEMORY.md or a topic sub-index).
+    INDEX_TEXT=""
+    if [ -d "$SV_BUNDLE_ROOT" ]; then
+        for idx in "$SV_BUNDLE_ROOT"/MEMORY.md "$SV_BUNDLE_ROOT"/index.md "$SV_BUNDLE_ROOT"/index-*.md; do
+            [ -f "$idx" ] || continue
+            INDEX_TEXT="${INDEX_TEXT}
+$(command cat "$idx")"
+        done
+    fi
+    # RESULTS[0] is POST_ORIGINAL itself; only the files content moved INTO can
+    # be orphaned by this split.
+    sv_i=1
+    while [ "$sv_i" -lt "${#RESULTS[@]}" ]; do
+        sv_r="${RESULTS[$sv_i]}"
+        sv_i=$((sv_i + 1))
+        [ "$(sv_bundle_kind "$sv_r")" = "concept" ] || continue
+        sv_base="${sv_r##*/}"
+        command printf '%s\n' "$INDEX_TEXT" | command grep -qF -- "$sv_base" && continue
+        ORPHAN_N=$((ORPHAN_N + 1))
+        if [ -z "$ORPHANS" ]; then
+            ORPHANS="$sv_base"
+        elif [ "$ORPHAN_N" -le 3 ]; then
+            ORPHANS="${ORPHANS}; ${sv_base}"
+        fi
+    done
+    if [ "$ORPHAN_N" -gt 0 ]; then
+        FINDINGS=$((FINDINGS + 1))
+        more=""
+        [ "$ORPHAN_N" -gt 3 ] && more=" (+$((ORPHAN_N - 3)) more)"
+        emit "split-memory-orphan" \
+            "${ORPHAN_N} extracted concept(s) with no index line: ${ORPHANS}${more} — an extracted concept absent from the index is written but never recallable; add its pointer line" \
             "HIGH"
     fi
 fi

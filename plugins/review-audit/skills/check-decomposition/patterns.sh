@@ -445,6 +445,78 @@ while IFS= read -r file; do
     }
     # <<< shared:split-shape-awk
 
+    # >>> shared:bundle-seam-awk (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
+    # Bundle-shaped split guidance, shared by BOTH lenses (#729). This is the
+    # awk-fallback half of bundle_seam_rows()/concept_dir() in the .py primaries.
+    #
+    # An index splits by TOPIC CLUSTER and a concept by extracting its second
+    # lesson; neither is a line range, so the generic markdown heading-cluster
+    # seam is wrong guidance rather than merely vague, and is SUPPRESSED for a
+    # bundle file. The concept row REQUIRES the index line in the same breath:
+    # extracting the lesson without it is #697 exactly — written, never
+    # recallable, and nothing errors.
+    #
+    # Rows are BUFFERED into bs_cat/bs_ev/bs_cert rather than emitted, because
+    # the two lenses differ on which survive: the audit lens emits every row
+    # including the LOW declined ones (a backlog reader must be able to tell
+    # examined-and-unsplittable from not-scanned), while the review lens drops
+    # those. awk has no return-a-list, so the caller reads the globals and the
+    # count comes back as the return value.
+    #
+    # NB: no apostrophes anywhere in this region. The whole awk program is a
+    # single-quoted shell string, so one would end it and the next line would be
+    # parsed as shell.
+    #
+    # NB: the extra parameters after the real ones are awk-LOCAL scratch (the
+    # extra-parameter idiom) — awk has no block scope, and these run inside
+    # loops that already use i/d as counters.
+    function concept_dir(p,   slash, i) {
+        slash = 0
+        for (i = length(p); i >= 1; i--) if (substr(p, i, 1) == "/") { slash = i; break }
+        if (slash) return substr(p, 1, slash - 1)
+        return b_root
+    }
+    function bundle_seam_rows(kind,   d, i, bn, bchosen, bns, bsec, clist, s) {
+        # Topic clusters — mirrors bundle_sections() in the .py primary, NOT the
+        # top-level units: those are the shallowest depth, which for a
+        # `# Title` + `## topics` file is the lone title, so every index would
+        # decline. Pick the shallowest depth with >= 2 headings, falling back to
+        # the shallowest.
+        bchosen = 0
+        for (d = 1; d <= 6; d++) {
+            bn = 0
+            for (i = 1; i <= nh; i++) if (hd[i] == d) bn++
+            if (bn > 0 && bchosen == 0) bchosen = d
+            if (bn >= 2) { bchosen = d; break }
+        }
+        bns = 0
+        for (i = 1; i <= nh; i++) {
+            if (hd[i] != bchosen) continue
+            s = md_slug(ht[i]); if (s == "") s = "section"
+            bns++; bsec[bns] = s
+        }
+        clist = ""
+        for (i = 1; i <= bns && i <= 5; i++) clist = (i == 1) ? bsec[i] : clist ", " bsec[i]
+        bs_cat[1] = "decomposition-seam"
+        if (kind == "index") {
+            if (bns >= 2) {
+                bs_ev[1] = sprintf("index split: %d topic clusters (%s) -> index-<topic>.md; root keeps one pointer line per sub-index", bns, clist)
+                bs_cert[1] = "HIGH"
+            } else {
+                bs_ev[1] = sprintf("declined: index has no topic clusters to split on (%d sections) — trim entries instead", bns)
+                bs_cert[1] = "LOW"
+            }
+        } else if (bns >= 2) {
+            bs_ev[1] = sprintf("concept split: extract %s to %s/%s.md AND add its index line (an extracted concept with no index line is an orphan)", bsec[2], concept_dir(path), bsec[2])
+            bs_cert[1] = "HIGH"
+        } else {
+            bs_ev[1] = sprintf("declined: single lesson — no second concept to extract (%d sections); tighten the prose instead", bns)
+            bs_cert[1] = "LOW"
+        }
+        return 1
+    }
+    # <<< shared:bundle-seam-awk
+
     # target_path: sibling module named for the family, under a directory named
     # for the file it came from. Mirrors target_path() in patterns.py.
     # NB: `i` is declared LOCAL here (the extra-parameter idiom). awk has no
@@ -463,25 +535,6 @@ while IFS= read -r file; do
         else     { stem = base; ext = "" }
         if (dir != "") return dir "/" stem "/" prefix ext
         return stem "/" prefix ext
-    }
-    # concept_dir: which directory an extracted bundle concept belongs in — the
-    # OWN directory of the source file, not b_root. Mirrors concept_dir() in
-    # patterns.py; see that docstring for why (a root-anchored target silently
-    # drops the subdirectory of a nested concept). NOT target_path(): an
-    # extracted lesson is a flat SIBLING of its source, never a child of it.
-    # The b_root fallback is defensive — unreachable from the only call site,
-    # which requires a slash in the path for b_kind to be set at all.
-    #
-    # NB: `i` is LOCAL (the extra-parameter idiom) for the same reason
-    # target_path declares it — awk has no block scope, and this is called from
-    # inside the bundle branch, which uses `i` as a loop counter.
-    # NB: no apostrophes in this comment — the awk program is one single-quoted
-    # shell word, so one apostrophe ends it and the script dies at load.
-    function concept_dir(p,   slash, i) {
-        slash = 0
-        for (i = length(p); i >= 1; i--) if (substr(p, i, 1) == "/") { slash = i; break }
-        if (slash) return substr(p, 1, slash - 1)
-        return b_root
     }
     function emit(line_no, category, evidence, certainty) {
         printf "%s\t%d\t%s\t%s\t%s\n", path, line_no, category, evidence, certainty
@@ -654,51 +707,17 @@ while IFS= read -r file; do
             emit(1, "file-length", sprintf("%d production LOC (>%d warning); %s", production, loc_warn, metrics), "MEDIUM")
         }
 
-        # ---- bundle-aware split guidance (#700) -----------------------------
-        # Mirrors the bundle branch in scan_file() (patterns.py). A memory
-        # bundle gets its own split shape and the generic markdown
-        # heading-cluster seam is SUPPRESSED for it — a `seam 40-96:` row would
-        # be actively wrong guidance: an index splits by TOPIC CLUSTER, not by
-        # line range, and a concept split with no index line orphans the
-        # extracted half (#669 memory-orphan). Gated on `over`, so a bundle
-        # file inside its budget emits nothing.
+        # ---- bundle-aware split guidance (#700, shared #729) ----------------
+        # The ROWS come from the shared bundle-seam-awk region so both lenses
+        # agree on the shape; this lens emits every one of them, including the
+        # LOW declined rows — a backlog reader needs to see that a file was
+        # examined and found unsplittable, since silence here would be
+        # indistinguishable from not-scanned. Gated on `over`, so a bundle file
+        # inside its budget emits nothing.
         if (b_kind != "") {
             if (over) {
-                # Topic clusters — mirrors bundle_sections() in patterns.py, NOT
-                # the un[] top-level units: those are the shallowest depth, which
-                # for a `# Title` + `## topics` file is the lone title, so every
-                # index would decline. Pick the shallowest depth with >= 2
-                # headings, falling back to the shallowest.
-                bchosen = 0
-                for (d = 1; d <= 6; d++) {
-                    bn = 0
-                    for (i = 1; i <= nh; i++) if (hd[i] == d) bn++
-                    if (bn > 0 && bchosen == 0) bchosen = d
-                    if (bn >= 2) { bchosen = d; break }
-                }
-                bns = 0
-                for (i = 1; i <= nh; i++) {
-                    if (hd[i] != bchosen) continue
-                    s = md_slug(ht[i]); if (s == "") s = "section"
-                    bns++; bsec[bns] = s
-                }
-                clist = ""
-                for (i = 1; i <= bns && i <= 5; i++) clist = (i == 1) ? bsec[i] : clist ", " bsec[i]
-                if (b_kind == "index") {
-                    if (bns >= 2) {
-                        emit(1, "decomposition-seam", sprintf("index split: %d topic clusters (%s) -> index-<topic>.md; root keeps one pointer line per sub-index", \
-                            bns, clist), "HIGH")
-                    } else {
-                        emit(1, "decomposition-seam", sprintf("declined: index has no topic clusters to split on (%d sections) — trim entries instead", \
-                            bns), "LOW")
-                    }
-                } else if (bns >= 2) {
-                    emit(1, "decomposition-seam", sprintf("concept split: extract %s to %s/%s.md AND add its index line (an extracted concept with no index line is an orphan)", \
-                        bsec[2], concept_dir(path), bsec[2]), "HIGH")
-                } else {
-                    emit(1, "decomposition-seam", sprintf("declined: single lesson — no second concept to extract (%d sections); tighten the prose instead", \
-                        bns), "LOW")
-                }
+                bs_n = bundle_seam_rows(b_kind)
+                for (bs_i = 1; bs_i <= bs_n; bs_i++) emit(1, bs_cat[bs_i], bs_ev[bs_i], bs_cert[bs_i])
             }
             exit 0
         }
