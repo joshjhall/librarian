@@ -1051,11 +1051,37 @@ PY
         skip_test "check-decomposition/patterns.sh not present"
         return 0
     fi
+    # BRACE-DEPTH tracked, not "stop at the first 4-space-indented `}`".
+    #
+    # The indent-matching form works only while the body has no nested block
+    # closing at the function's own indent. Wrap the underscore check in an `if`
+    # and the extract TRUNCATES mid-function — awk then fails on a syntactically
+    # incomplete program with a parse error pointing at the generated driver,
+    # not at the extraction that broke. Counting braces finds the real close
+    # regardless of body shape, and the balance assertion below turns any
+    # remaining surprise into a clear failure rather than a cryptic one.
     command awk '
-        /^    function family_prefix\(/ { in_f = 1 }
-        in_f { print }
-        in_f && /^    }[[:space:]]*$/ { exit }
+        /^[[:space:]]*function family_prefix\(/ { in_f = 1 }
+        in_f {
+            print
+            n = gsub(/\{/, "{")
+            m = gsub(/\}/, "}")
+            depth += n - m
+            if (depth <= 0) exit
+        }
     ' "$DECOMP_SH_PORT" >"$WORKDIR/family_prefix.awk"
+
+    # The extract is non-empty and brace-balanced. Without this a truncated or
+    # missing extract surfaces as an awk syntax error inside the driver, which
+    # reads as "the test is broken" rather than "the extraction needs updating".
+    local fp_opens fp_closes fp_lines
+    fp_lines="$(command wc -l <"$WORKDIR/family_prefix.awk" | command tr -d ' ')"
+    fp_opens="$(command tr -cd '{' <"$WORKDIR/family_prefix.awk" | command wc -c | command tr -d ' ')"
+    fp_closes="$(command tr -cd '}' <"$WORKDIR/family_prefix.awk" | command wc -c | command tr -d ' ')"
+    local fp_ok="no"
+    [ "$fp_lines" -gt 1 ] && [ "$fp_opens" = "$fp_closes" ] && fp_ok="yes"
+    assert_equals "yes" "$fp_ok" \
+        "the extracted awk family_prefix is non-empty and brace-balanced (${fp_lines} lines, ${fp_opens} open / ${fp_closes} close)"
 
     {
         command cat "$WORKDIR/family_prefix.awk"

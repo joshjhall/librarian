@@ -201,8 +201,14 @@ run_test test_selftest_match_passes "self-test: matching fixture passes clean"
 # Both directions pass over plugins/ today, so nothing there pins the boundary:
 # a future edit to the `^from <name> import` pattern could silently widen or
 # narrow the union and the suite would stay green. The fixture makes both
-# directions reachable — `helper_mod.py` MUST be included, `unrelated_tool.py`
-# MUST NOT be.
+# directions reachable — `helper_mod.py` and `second_mod.py` MUST be included,
+# `unrelated_tool.py` MUST NOT be.
+#
+# TWO imported siblings, not one. The real shape has two
+# (check-decomposition/patterns.py imports `loc_engine` AND `prose_spec`), and a
+# single-sibling fixture cannot distinguish "unions every declared import" from
+# "unions the first declared import" — worse, the exact-count assertion below
+# would have PINNED the one-sibling answer, locking the bug in.
 test_selftest_import_scoping() {
     local srcs
     srcs="$(py_sources_for "$FIXROOT/multifile/patterns.sh")"
@@ -210,15 +216,17 @@ test_selftest_import_scoping() {
     assert_contains "$srcs" "multifile/patterns.py" \
         "py_sources_for includes the entry module"
     assert_contains "$srcs" "multifile/helper_mod.py" \
-        "py_sources_for includes a module the entry IMPORTS (union is not entry-only)"
+        "py_sources_for includes the FIRST module the entry imports (union is not entry-only)"
+    assert_contains "$srcs" "multifile/second_mod.py" \
+        "py_sources_for includes the SECOND module the entry imports (union is not first-import-only)"
     assert_not_contains "$srcs" "unrelated_tool.py" \
         "py_sources_for EXCLUDES a same-dir module the entry does not import (union is not a directory sweep)"
 
-    # Exactly two files — a count check catches a union that is right about
-    # these two names but wrong about something else in the directory.
+    # Exactly three files — a count check catches a union that is right about
+    # these names but wrong about something else in the directory.
     local count
     count="$(command printf '%s\n' "$srcs" | command grep -c '\.py$' || true)"
-    assert_equals "2" "$count" "py_sources_for returns exactly the entry + its imported sibling"
+    assert_equals "3" "$count" "py_sources_for returns exactly the entry + BOTH imported siblings"
 }
 run_test test_selftest_import_scoping "self-test: py_sources_for unions imports, not the directory (#772)"
 

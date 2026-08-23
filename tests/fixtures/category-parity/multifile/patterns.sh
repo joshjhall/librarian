@@ -14,3 +14,7 @@ emit_entry() {
 emit_helper() {
     printf 'x\t1\t%s\tevidence\tHIGH\n' "cat-helper-only"
 }
+
+emit_second() {
+    printf 'x\t1\t%s\tevidence\tHIGH\n' "cat-second-sibling"
+}
