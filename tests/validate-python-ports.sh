@@ -822,8 +822,15 @@ EOF
 # of one and not the other. The awk side is invoked through the same
 # `function md_slug` living in the shared:loc-helpers-awk region, so this is a
 # genuine cross-language check rather than python-vs-python.
-DECOMP_PY="$PLUGINS_DIR/review-audit/skills/check-decomposition/patterns.py"
-SIZING_PY_PORT="$PLUGINS_DIR/workflow/skills/ship-issue/sizing.py"
+#
+# The two Python paths point at loc_engine.py, NOT at the entry scanners (#772).
+# `md_slug` and `find_units` are shared-region code, and since the split that
+# region lives in the sibling module — the entry only re-exports what it calls.
+# Probing the module that DEFINES the shared code keeps this a test of the
+# shared halves rather than of the import wiring; the entry's re-export is
+# covered by the corpus parity runs, which execute the entry end-to-end.
+DECOMP_PY="$PLUGINS_DIR/review-audit/skills/check-decomposition/loc_engine.py"
+SIZING_PY_PORT="$PLUGINS_DIR/workflow/skills/ship-issue/loc_engine.py"
 SIZING_SH_PORT="$PLUGINS_DIR/workflow/skills/ship-issue/sizing.sh"
 
 test_py_md_slug_direct() {

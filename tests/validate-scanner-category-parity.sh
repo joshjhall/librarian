@@ -73,6 +73,42 @@ test_suite "Source-level category-slug parity (#189)"
 
 # --- Real pre-scan pairs under plugins/ -------------------------------------
 
+# py_sources_for <sh_file> — every Python file that makes up the bash file's
+# counterpart: the `patterns.py` entry PLUS any sibling module it was split into.
+#
+# A scanner's Python half is no longer necessarily ONE file (#772).
+# check-decomposition's entry now imports loc_engine.py and prose_spec.py, and
+# the two `*-file-bloat` slugs are emitted from prose_spec.py — so an
+# entry-only read reported them as bash-only and failed a pair that is in fact
+# in perfect parity. The failure was correct to fire: reading one file of a
+# multi-file impl genuinely does miss slugs. The fix is to read the whole impl.
+#
+# Scoped to the modules the entry ACTUALLY IMPORTS from its own directory — not
+# to every *.py in that directory. A directory sweep was the first attempt and
+# was wrong: check-ai-config/ also holds `agnix-normalize.py`, a JSON->TSV bridge
+# that is NOT part of the patterns pair, and folding its slugs in reported a
+# python-only divergence on a pair that was fine.
+#
+# The import list is the precise boundary, and it is cheap to read because these
+# scanners are flat: a sibling module is imported by bare name (their `sys.path`
+# seeding reaches only their own dir), so `^from <name> import` where
+# `<name>.py` sits beside the entry is exactly the set.
+py_sources_for() {
+    local sh="$1" dir entry mod
+    dir="${sh%/*}"
+    entry="${sh%patterns.sh}patterns.py"
+    [ -f "$entry" ] || return 0
+
+    printf '%s\n' "$entry"
+    command grep -oE '^from [A-Za-z_][A-Za-z0-9_]* import' "$entry" 2>/dev/null |
+        command awk '{ print $2 }' |
+        command sort -u |
+        while IFS= read -r mod; do
+            [ -n "$mod" ] || continue
+            [ -f "$dir/$mod.py" ] && printf '%s\n' "$dir/$mod.py"
+        done
+}
+
 CUR_SH=""
 test_pair_parity() {
     local sh="$CUR_SH"
@@ -83,8 +119,23 @@ test_pair_parity() {
         return 0
     fi
 
+    # The Python side is the union over every module of the impl, not the entry
+    # alone (#772). Concatenated into one temp file so category_slugs_of — which
+    # takes a single path — needs no change.
+    local py_all
+    py_all="$(command mktemp)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    local src
+    while IFS= read -r src; do
+        [ -n "$src" ] || continue
+        command cat "$src" >>"$py_all"
+    done <<<"$(py_sources_for "$sh")"
+
     local diff
-    diff="$(category_parity_diff "$sh" "$py")"
+    diff="$(category_parity_diff "$sh" "$py_all")"
+    command rm -f "$py_all"
 
     if [ -n "$diff" ]; then
         _fail "category slug sets differ between patterns.sh and patterns.py" \
