@@ -965,12 +965,20 @@ _plant_git_raw_stub() {
     # The probe needs a path git will actually REPORT, and the sandbox's link is
     # clean on ext4 — so probe a throwaway untracked file of the same name in a
     # scratch repo, strip the `?? ` prefix, and reuse that rendering.
+    # `-c core.quotePath=true` is PINNED, and HOME is repointed at the probe dir:
+    # without both, a host whose global ~/.gitconfig already sets
+    # `core.quotePath = false` would render the name bare, `quoted` would equal
+    # `$path`, and the non-ASCII test would only ever drive the stub's `_bare`
+    # branch — passing with OR without the script's fix on exactly the hosts
+    # where the ambient config hid the bug. The probe must reflect git's DEFAULT,
+    # not the operator's preference.
     quoted="$(
         probe="$(command mktemp -d "$WORKDIR/quote.XXXXXX")" || exit 1
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git -C "$probe" init -q 2>/dev/null
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" HOME="$probe" \
+            git -C "$probe" init -q 2>/dev/null
         command touch "$probe/$path" 2>/dev/null
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            git -C "$probe" status --porcelain 2>/dev/null |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" HOME="$probe" \
+            git -C "$probe" -c core.quotePath=true status --porcelain 2>/dev/null |
             command sed -n '1s/^...//p'
     )"
     [ -n "$quoted" ] || quoted="$path"
