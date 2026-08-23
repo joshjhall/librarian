@@ -1325,6 +1325,50 @@ test_bundle_root_is_configurable_and_normalized() {
     fi
 }
 
+# The DECLINE path (#729). bundle_seam_rows() returns a LOW `declined:` row for a
+# bundle file with nothing to split on — a single-lesson concept, or an index
+# with fewer than two topic clusters. The review lens DROPS those rows, which
+# makes this a genuinely new behavior rather than a filtered-out detail: before
+# this change such a file fell through to the generic markdown seam and got a
+# `split shape for memory concept:` row. Now it gets NO seam row at all.
+#
+# Asserted as the ABSENCE OF BOTH rows, which is the only assertion that can fail
+# in both directions an implementation bug could take: falling through to the
+# generic seam after all, or leaking the LOW row the audit lens keeps. The size
+# row must still appear — the file IS over budget; it is only unsplittable.
+test_bundle_decline_emits_no_seam_at_all() {
+    local root="$WORKDIR/bdecline" out
+    command mkdir -p "$root/.claude/memory"
+    # One lesson: a single `##` section, so there is no second concept to
+    # extract. Over budget on the concept pair (350 high).
+    make_bundle_file "$root/.claude/memory/one-lesson.md" 1 400
+    # An index whose sections do not cluster: one `##`, nothing to split along.
+    make_bundle_file "$root/.claude/memory/MEMORY.md" 1 300
+    local list="$WORKDIR/bdecline.txt" numstat="$WORKDIR/bdecline.numstat"
+    command printf '%s\n%s\n' \
+        "$root/.claude/memory/one-lesson.md" "$root/.claude/memory/MEMORY.md" >"$list"
+    command printf '400\t0\t%s\n300\t0\t%s\n' \
+        "$root/.claude/memory/one-lesson.md" "$root/.claude/memory/MEMORY.md" >"$numstat"
+
+    run_scan "$list" "$numstat"
+    assert_parity
+    out="$SCAN_OUT"
+
+    # The file is still SIZED — being unsplittable is not being under budget.
+    assert_contains "$out" "memory concept exceeds" \
+        "an unsplittable bundle concept is still reported as over budget"
+    assert_contains "$out" "memory index exceeds" \
+        "an unsplittable bundle index is still reported as over budget"
+
+    # ...but yields no seam row of EITHER shape.
+    assert_not_contains "$out" "decomposition-seam" \
+        "an unsplittable bundle file emits no seam row on the review lens"
+    assert_not_contains "$out" "declined:" \
+        "the audit lens LOW decline row does not leak into the review lens"
+    assert_not_contains "$out" "split shape for memory" \
+        "nor does it fall through to the generic markdown seam"
+}
+
 run_test test_trivial_touch_is_not_blocking "AC4: a one-line touch to an oversized file is informational, never blocking"
 run_test test_crossing_the_threshold_is_actionable "AC4: a diff that pushes a file over the threshold is actionable"
 run_test test_material_growth_is_actionable "AC4: material growth on an already-over file is actionable"
@@ -1351,6 +1395,7 @@ run_test test_every_bloat_arm_reaches_the_review_lens "#724: every bloat arm (me
 run_test test_bundle_seam_reaches_the_review_lens "#729: bundle-shaped seam on the review lens, generic seam suppressed"
 run_test test_nested_dir_inside_bundle_keeps_bundle_rules "#729: a nested docs/ or agents/ dir inside the bundle keeps bundle rules"
 run_test test_bundle_root_is_configurable_and_normalized "#729: MEMORY_BUNDLE_ROOT spellings and empty-means-off agree across lenses"
+run_test test_bundle_decline_emits_no_seam_at_all "#729: an unsplittable bundle file emits NO seam row on the review lens"
 run_test test_prose_material_growth_is_actionable "#724: material growth on classified prose is MEDIUM/actionable"
 run_test test_unclassified_markdown_keeps_the_loc_path "#724: an unclassified .md still takes the production-LOC path"
 run_test test_small_file_stays_silent "A file under threshold produces no rows"

@@ -771,6 +771,46 @@ test_non_bundle_split_is_unaffected() {
         "a split outside any memory bundle never asks for an index line"
 }
 
+# The '+N more' TRUNCATION arm (#729). Both impls cap the named orphans at 3 and
+# append a `(+N more)` suffix. That is hand-rolled twice — a Python slice on one
+# side, a bash counter on the other — so the two can disagree on the boundary
+# (is the 4th name included?) or on the suffix text, and the TSV contract would
+# break in a way no single-orphan fixture can see. `assert_parity` is doing real
+# work here rather than being ceremony.
+test_orphan_list_truncates_at_three_with_a_count() {
+    local root="$WORKDIR/trunc" out sv_prev i
+    command mkdir -p "$root/.claude/memory"
+    command printf '# Lesson one\n\nalpha\n' >"$root/before.md"
+    command printf '# Lesson one\n\nalpha\n' >"$root/.claude/memory/source.md"
+    # An index naming NONE of the extracted concepts, so all four are orphans.
+    command printf '# Memory index\n\n- [source](source.md) — hook\n' \
+        >"$root/.claude/memory/MEMORY.md"
+    i=1
+    while [ "$i" -le 4 ]; do
+        command printf '# Extracted %d\n\nbeta\n' "$i" \
+            >"$root/.claude/memory/extracted-$i.md"
+        i=$((i + 1))
+    done
+
+    sv_prev="$PWD"
+    cd "$root" || return 1
+    run_verify before.md .claude/memory/source.md \
+        .claude/memory/extracted-1.md .claude/memory/extracted-2.md \
+        .claude/memory/extracted-3.md .claude/memory/extracted-4.md
+    cd "$sv_prev" || return 1
+    out="$VERIFY_OUT"
+    assert_parity
+
+    assert_contains "$out" "split-memory-orphan" "four unindexed concepts are orphans"
+    assert_contains "$out" "4 extracted concept(s)" "the COUNT reports all four, not just the listed three"
+    assert_contains "$out" "(+1 more)" "the overflow suffix names how many were withheld"
+    # The BOUNDARY: three names listed, the fourth withheld. Asserting the
+    # absence of the 4th is what pins the cap — a `[:4]` slice would still
+    # satisfy every other assertion here.
+    assert_contains "$out" "extracted-3.md" "the third orphan is still named"
+    assert_not_contains "$out" "extracted-4.md" "the fourth orphan is withheld behind the count"
+}
+
 run_test test_lost_unit_is_detected "Check 2: a dropped top-level unit is detected and named"
 run_test test_sound_split_verifies "Check 2 counter: a sound split verifies clean"
 run_test test_swift_sound_split_verifies "swift: a sound Type+Concern split verifies clean (#728)"
@@ -792,6 +832,7 @@ run_test test_extracted_concept_with_index_line_verifies "Check 5 counter: the i
 run_test test_subindex_pointer_satisfies_the_invariant "Check 5: a topic sub-index pointer satisfies the invariant (#729)"
 run_test test_preexisting_orphan_is_not_this_tools_business "Check 5 scope: a pre-existing orphan is #669 slice B, not this tool (#729)"
 run_test test_non_bundle_split_is_unaffected "Check 5 guard: a non-bundle split never asks for an index line (#729)"
+run_test test_orphan_list_truncates_at_three_with_a_count "Check 5: the orphan list truncates at 3 with a (+N more) count (#729)"
 run_test test_tsv_contract_is_five_columns "Output honors the 5-column TSV contract"
 run_test test_usage_contract "Usage / missing-file contract"
 

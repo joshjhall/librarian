@@ -3,7 +3,7 @@
 #
 # A reviewer that suggests a decomposition is cheap to ignore; a reviewer that
 # suggests one AND can PROVE the split lost nothing is cheap to accept. This tool
-# is that proof (issue #695, AC8). Four mechanical checks:
+# is that proof (issue #695, AC8). Five mechanical checks:
 #
 #   1. LOC CONSERVATION  — production LOC across results ~= original, modulo new
 #      import/mod/__init__ boilerplate (SPLIT_LOC_TOLERANCE, default 40).
@@ -13,6 +13,10 @@
 #   4. MARKDOWN REACHABILITY — every heading that MOVED out is reachable by a link
 #      from the post-split original. A split that moves prose out but leaves no
 #      link has LOST content, not decomposed it.
+#   5. MEMORY-BUNDLE INDEX LINE (#729) — a concept extracted from a memory bundle
+#      is named by an index. This turns the scanner's "AND add its index line"
+#      from advisory prose into a checkable rule: half-following it produces a
+#      memory that is written but never recallable (#697), silently.
 #
 # Usage: split-verify.sh <original-file> <post-split-original> [<result-file> ...]
 #
@@ -24,6 +28,8 @@
 # reachability, so only the "moved into" files count as link destinations.
 #
 # Output: TSV to stdout: file\tline\tcategory\tevidence\tcertainty
+#   category is one of: split-loc-drift, split-unit-lost, split-fanin-dangling,
+#   split-heading-unreachable, split-memory-orphan, split-verified
 #
 # Exit codes:
 #   0 = verification ran (findings may or may not exist)
