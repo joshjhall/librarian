@@ -204,17 +204,45 @@ plant_npm() {
     command chmod +x "$dir/bin/npm"
 }
 
-# plant_agnix <dir> — an agnix whose `--version` smoke-test exits AGNIX_RC. The
-# broken-binary case is AGNIX_RC=1: the install "succeeded", the binary does not
-# work. That is the branch this whole suite exists for.
+# plant_agnix <dir> [version] — an agnix whose `--version` smoke-test exits
+# AGNIX_RC. The broken-binary case is AGNIX_RC=1: the install "succeeded", the
+# binary does not work. That is the branch this whole suite exists for.
+#
+# It PRINTS its version to stdout (default: the version ci.yml pins), because
+# the step's smoke test greps that output for the pinned version rather than
+# merely running the binary (#742). A stub that logged the call but printed
+# nothing would fail that grep, so every healthy-install case would report a
+# skip — the regression this default prevents.
+#
+# The optional second argument plants a DIFFERENT version, which is how the
+# stale-cache case drives the mismatch branch: a binary that runs perfectly and
+# is simply not the pinned one.
 plant_agnix() {
-    local dir="$1"
+    local dir="$1" ver="${2:-}"
+    if [ -z "$ver" ]; then
+        ver="$(agnix_pin_version "$WORKFLOW_DIR/ci.yml")"
+    fi
     {
         command printf '#!/usr/bin/env bash\n'
         command printf 'printf "agnix %%s\\n" "$*" >>"%s/calls.log"\n' "$dir"
-        command printf 'exit "${AGNIX_RC:-0}"\n'
+        # The version line is emitted ONLY on the success path. A stub that
+        # printed it before honouring AGNIX_RC would satisfy the step's
+        # `grep -qF <pin>` on its text alone, so the broken-binary cases would
+        # take the healthy branch and assert nothing — the failure mode this
+        # whole suite exists to cover, hidden by its own fixture.
+        command printf 'if [ "${AGNIX_RC:-0}" -ne 0 ]; then exit "${AGNIX_RC:-0}"; fi\n'
+        command printf 'printf "agnix %s\\n"\n' "$ver"
     } >"$dir/bin/agnix"
     command chmod +x "$dir/bin/agnix"
+}
+
+# agnix_pin_version <workflow> — the bare X.Y.Z from that file's agnix install
+# pin. Read from the workflow rather than hardcoded so a version bump does not
+# silently strand these fixtures on a stale number (the same reason the gate in
+# tests/lint-agnix-clean.sh derives its pins instead of copying them).
+agnix_pin_version() {
+    command grep -oE 'agnix@[0-9]+\.[0-9]+\.[0-9]+' "$1" 2>/dev/null |
+        command head -n 1 | command sed -n 's/^agnix@//p' || true
 }
 
 # Results of the most recent step invocation.
@@ -325,6 +353,47 @@ test_ci_signature_failure_is_its_own_event() {
     # guard actually holds.
     assert_not_contains "$STEP_LOG" "npm install -g" \
         "a failed signature check must prevent the global install entirely (#740)"
+}
+
+test_ci_wrong_version_binary_skips() {
+    # A binary that RUNS PERFECTLY and is simply not the pinned version (#742).
+    # Distinct from the broken-binary case above in the way that matters: there,
+    # `agnix --version` fails outright; here it succeeds, so any smoke test that
+    # merely executes the binary accepts it.
+    #
+    # That is exactly the stale-cache failure. The cache key restores an older
+    # binary, install.js finds bin/agnix-binary present and skips its download,
+    # and the job scans with an agnix it did not pin — green, and wrong. The
+    # drift gate in tests/lint-agnix-clean.sh cannot see this: it compares
+    # literals someone WROTE, never a stale blob in the remote cache. So the
+    # step's own version grep is the only thing standing between a stale entry
+    # and a bad scan, and this case is what holds it in place.
+    local sb body pin
+    stub_dir sb || return 1
+    plant_npm "$sb"
+    pin="$(agnix_pin_version "$WORKFLOW_DIR/ci.yml")"
+    assert_not_empty "$pin" \
+        "ci.yml must carry a greppable agnix pin for this fixture to mean anything"
+    # A version that is NOT the pin and does not CONTAIN it either. The obvious
+    # spelling — something like "0.0.0-not-$pin" — embeds the pin as a
+    # substring, so the step's `grep -qF` matches it and the fixture sails down
+    # the healthy path: a test that cannot fail for the reason it was written.
+    # A fixed literal far from any real version avoids that, and the assertion
+    # below proves the two genuinely differ rather than assuming it.
+    local stale="1.0.0"
+    assert_not_contains "$stale" "$pin" \
+        "the stale fixture version must not contain the pin as a substring, or the step's grep -qF matches it and this case silently becomes a duplicate of the happy path"
+    plant_agnix "$sb" "$stale"
+    load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
+
+    NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
+
+    assert_equals "0" "$STEP_RC" \
+        "a version mismatch degrades to a skip, it does not fail the job (ADR 0001 §2/§4)"
+    assert_contains "$STEP_OUT" "::notice::agnix install failed" \
+        "a wrong-version binary takes the notice-and-skip path, not the healthy one"
+    assert_contains "$STEP_SUMMARY" "agnix unavailable" \
+        "the version-mismatch skip is visible on the run page too (#741)"
 }
 
 test_ci_happy_path_is_quiet() {
@@ -665,6 +734,8 @@ run_test test_ci_broken_binary_is_visible_in_the_step_summary \
     "ci.yml: the broken-binary skip reaches the run-page summary"
 run_test test_ci_signature_failure_is_its_own_event \
     "ci.yml: a signature failure is distinct, and blocks the global install"
+run_test test_ci_wrong_version_binary_skips \
+    "ci.yml: a runnable but WRONG-version binary skips (stale cache, #742)"
 run_test test_ci_happy_path_is_quiet \
     "ci.yml: a healthy install announces no skip and installs the verified tree"
 run_test test_ci_summary_write_failure_does_not_fail_the_job \
