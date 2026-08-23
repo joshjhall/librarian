@@ -562,8 +562,10 @@ jobs:
   # Coverage reporting (issue #186). INFORMATIONAL, never a merge gate: this job
   # is deliberately absent from merge-gate's `needs:` below, and codecov.yml
   # marks every status informational, so a coverage regression or a Codecov
-  # outage cannot red the PR. Scope is Python (patterns.py ports, coverage.py ->
-  # coverage.xml) + the .mjs validators (c8 -> lcov). The bash patterns.sh
+  # outage cannot red the PR. Scope is Python (EVERY .py we ship — the patterns.py
+  # ports plus the non-port tools, coverage.py -> coverage.xml; the corpus is kept
+  # complete by tests/validate-coverage-corpus.sh, #748) + the .mjs validators
+  # (c8 -> lcov). The bash patterns.sh
   # fallback is NOT measured — line coverage is instrument noise for its
   # grep-pipeline detection (see CLAUDE.md runtime policy). Runs on maintainer
   # push and same-repo PRs; skipped for fork PRs, which lack the CODECOV_TOKEN
@@ -592,8 +594,22 @@ jobs:
       - name: Install coverage.py
         run: pipx install coverage
 
-      # coverage.xml — the 14 patterns.py ports under coverage.py.
+      # coverage.xml — every Python file we ship, under coverage.py. The count is
+      # NOT restated here: the script prints `N ports run` and
+      # tests/validate-coverage-corpus.sh enforces that N is all of them. A number
+      # in this comment drifted from 14 to 17 without anyone noticing (#748), which
+      # is what a comment asserting a derivable fact always eventually does.
+      #
+      # COVERAGE_PYTHON_REQUIRED=1 makes a skip FATAL here. This job installs
+      # coverage one step above, so "coverage.py not installed" is a broken runner,
+      # not an unequipped host. Without it the script skipped on EVERY run — pipx
+      # installs into an isolated venv that `python3 -m coverage` cannot see — and
+      # exited 0, so the step was green, the job was green, and Codecov silently
+      # received nothing under the `python` flag (#748). The flag is what makes
+      # that state loud instead of invisible.
       - name: Python coverage
+        env:
+          COVERAGE_PYTHON_REQUIRED: "1"
         run: bash tests/coverage-python.sh
 
       # coverage/lcov.info — the two .mjs validators via `npx c8`.
