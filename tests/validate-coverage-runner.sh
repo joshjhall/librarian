@@ -231,14 +231,29 @@ test_broken_path_runner_is_not_selected() {
 
 # The required flag must not fire when a runner IS resolvable — otherwise CI
 # would fail on a healthy environment.
+#
+# THE ASSERTION IS ABOUT THE RESOLUTION MESSAGE, NOT ABOUT SUCCESS. The stub
+# coverage answers --version and then exits 0 without writing any data file, so
+# the script legitimately fails LATER at `coverage.xml is empty`. A blanket
+# "no [FAIL] appears" check therefore fails on CI while passing locally, and —
+# worse — could not distinguish "the required flag fired" from "the stub produced
+# no data": two different failures wearing the same string. (It passed locally
+# only because the host's real coverage was reachable through the sandbox.)
+#
+# So assert the specific thing: the run got past resolution, and the
+# required-mode diagnostic — which names the flag — is absent.
 test_required_flag_is_inert_when_runner_resolves() {
     local dir
     dir="$(make_stub_dir required-ok-case)"
     add_coverage_stub "$dir"
     run_script "$dir" env COVERAGE_PYTHON_REQUIRED=1
 
-    assert_not_contains "$RUN_OUT" "[FAIL] python-coverage" \
-        "COVERAGE_PYTHON_REQUIRED=1 does not fail when a runner resolves"
+    assert_contains "$RUN_OUT" "Runner:" \
+        "A resolvable runner is announced even with COVERAGE_PYTHON_REQUIRED=1"
+    assert_not_contains "$RUN_OUT" "COVERAGE_PYTHON_REQUIRED=1" \
+        "The required-mode failure does NOT fire when a runner resolves"
+    assert_not_contains "$RUN_OUT" "coverage.py not installed" \
+        "It does not claim coverage is missing when a runner resolved"
 }
 
 # CI must actually SET the flag — the guard is worthless if the one caller that

@@ -171,6 +171,8 @@ OUT_XML="$REPO_ROOT/coverage.xml"
 # Adding a Python tool? Add it here AND give it a driver below. The gate will
 # tell you if you do only one.
 #
+# A LIBRARY MODULE goes in IMPORTED_MODULES instead — see that list below.
+#
 # shellcheck disable=SC2034  # read by tests/validate-coverage-corpus.sh, which
 # parses this declaration out of this file rather than keeping a second copy.
 NON_PATTERNS_TOOLS="\
@@ -180,6 +182,35 @@ plugins/workflow/scripts/golem-event-listener.py
 plugins/workflow/skills/ship-issue/plan-lens.py
 plugins/workflow/skills/ship-issue/sizing.py
 plugins/workflow/skills/ship-issue/split-verify.py"
+
+# --- Library modules, measured TRANSITIVELY via their importers (#772, #776) --
+#
+# The third category, and the one that makes the completeness rule honest rather
+# than merely strict. These files have NO CLI: they are imported by a scanner
+# that IS driven above (sizing.py imports loc_engine/prose_spec; so does
+# check-decomposition's patterns.py). Their lines execute under `coverage run`
+# through that importer, so they are genuinely measured — verified, not assumed:
+# each reports 50-97% line-rate in coverage.xml.
+#
+# They are listed rather than exempted by a path pattern because the completeness
+# gate's question is "is this file accounted for?", and "imported by something
+# driven" is a real answer to it — while "matches *_engine.py" would be a new
+# filename convention, which is the exact failure mode #748 exists to kill.
+#
+# Writing a bespoke CLI driver for these would be worse than useless: it would
+# measure the module through an entry point nothing in production uses, reporting
+# coverage of a path no caller takes.
+#
+# Adding a library module? List it here AND make sure a driven tool imports it.
+# The gate checks both — an entry nothing imports fails as surely as an undriven
+# scanner, because a module no importer reaches is measured by nothing.
+#
+# shellcheck disable=SC2034  # read by tests/validate-coverage-corpus.sh
+IMPORTED_MODULES="\
+plugins/review-audit/skills/check-decomposition/loc_engine.py
+plugins/review-audit/skills/check-decomposition/prose_spec.py
+plugins/workflow/skills/ship-issue/loc_engine.py
+plugins/workflow/skills/ship-issue/prose_spec.py"
 
 # --- Synthetic corpus lifecycle ---------------------------------------------
 WORKDIR="$(mktemp -d)"

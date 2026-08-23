@@ -74,13 +74,24 @@ patterns_ports() {
 # every non-patterns tool look undriven — a gate that fails loudly for the wrong
 # reason on exactly one platform.
 declared_tools() {
-    local file="$COVERAGE_SH" line inside=""
+    _parse_list 'NON_PATTERNS_TOOLS="'
+}
+
+# imported_modules — the IMPORTED_MODULES list: library modules with no CLI,
+# measured transitively through an importer that IS driven. Same parse.
+imported_modules() {
+    _parse_list 'IMPORTED_MODULES="'
+}
+
+# _parse_list <opening-token> — shared walker for both declarations.
+_parse_list() {
+    local file="$COVERAGE_SH" token="$1" line inside=""
     while IFS= read -r line; do
         case "$line" in
-            'NON_PATTERNS_TOOLS="'*)
+            "$token"*)
                 inside="yes"
-                # The opening line carries `NON_PATTERNS_TOOLS="\` — a line
-                # continuation, so it holds no path itself.
+                # The opening line carries `NAME="\` — a line continuation, so
+                # it holds no path itself.
                 continue
                 ;;
         esac
@@ -116,17 +127,19 @@ test_inputs_non_empty() {
 # THE POINT OF THE GATE. A shipped .py that is neither a patterns.py port nor a
 # declared tool is measured by nothing.
 test_no_undriven_python_file() {
-    local shipped ports declared covered undriven
+    local shipped ports declared imported covered undriven
     shipped="$(shipped_python_files)"
     ports="$(patterns_ports)"
     declared="$(declared_tools)"
-    covered="$(printf '%s\n%s\n' "$ports" "$declared" | command grep -v '^[[:space:]]*$' | command sort -u)"
+    imported="$(imported_modules)"
+    covered="$(printf '%s\n%s\n%s\n' "$ports" "$declared" "$imported" |
+        command grep -v '^[[:space:]]*$' | command sort -u)"
     undriven="$(command comm -23 <(printf '%s\n' "$shipped") <(printf '%s\n' "$covered"))"
 
     assert_equals "" "$undriven" \
-        "Every shipped Python file is driven (a patterns.py port, or declared in NON_PATTERNS_TOOLS)"
+        "Every shipped Python file is accounted for (patterns.py port, NON_PATTERNS_TOOLS, or IMPORTED_MODULES)"
     if [ -n "$undriven" ]; then
-        printf '    undriven (add a driver in tests/coverage-python.sh and list it in NON_PATTERNS_TOOLS):\n' >&2
+        printf '    unaccounted (give it a driver + NON_PATTERNS_TOOLS entry, or list it in IMPORTED_MODULES if a driven tool imports it):\n' >&2
         printf '      %s\n' $undriven >&2
     fi
 }
@@ -135,11 +148,12 @@ test_no_undriven_python_file() {
 test_no_stale_declaration() {
     local shipped declared stale
     shipped="$(shipped_python_files)"
-    declared="$(declared_tools)"
+    declared="$(printf '%s\n%s\n' "$(declared_tools)" "$(imported_modules)" |
+        command grep -v '^[[:space:]]*$' | command sort -u)"
     stale="$(command comm -13 <(printf '%s\n' "$shipped") <(printf '%s\n' "$declared"))"
 
     assert_equals "" "$stale" \
-        "Every NON_PATTERNS_TOOLS entry names a file that exists"
+        "Every declared entry (both lists) names a file that exists"
     if [ -n "$stale" ]; then
         printf '    stale declarations (renamed or deleted — drop them from NON_PATTERNS_TOOLS):\n' >&2
         printf '      %s\n' $stale >&2
@@ -223,6 +237,47 @@ EOF
         "Every declared tool is INVOKED by a run_coverage driver (not merely mentioned)"
 }
 
+# An IMPORTED_MODULES entry earns its exemption ONLY by actually being imported.
+# The list says "measured transitively", and that claim is worth exactly as much
+# as the import that backs it: a module nothing imports is measured by nothing,
+# and listing it would be a silent exemption — precisely the shape #748 exists to
+# prevent, re-entering through the door built to accommodate a legitimate case.
+#
+# So require a sibling .py in the SAME directory to import the module by name.
+# Same-directory is the real constraint, not a shortcut: these modules are reached
+# via a sys.path insert of the file's own dir (they exist as deliberate per-plugin
+# duplicates precisely because a cross-plugin import is impossible), so an
+# importer anywhere else could not load this copy.
+test_imported_modules_are_imported() {
+    local imported module dir stem missing=""
+    imported="$(imported_modules)"
+
+    # No entries is a legitimate state (nothing but CLI tools shipped), not a
+    # failure — the loop simply does nothing.
+    while IFS= read -r module; do
+        [ -n "$module" ] || continue
+        dir="$REPO_ROOT/$(dirname "$module")"
+        stem="$(basename "$module" .py)"
+
+        # `import X` or `from X import ...`, in any sibling EXCEPT the module
+        # itself (a file importing its own name proves nothing).
+        if ! (cd "$dir" 2>/dev/null && command grep -lE \
+            "^[[:space:]]*(from[[:space:]]+${stem}[[:space:]]+import|import[[:space:]]+${stem})" \
+            ./*.py 2>/dev/null | command grep -qv "^\./${stem}\.py$"); then
+            missing="$missing $module"
+        fi
+    done <<EOF
+$imported
+EOF
+
+    assert_equals "" "$missing" \
+        "Every IMPORTED_MODULES entry is imported by a sibling scanner (else nothing measures it)"
+    if [ -n "$missing" ]; then
+        printf '    listed as imported, but no sibling imports it:\n' >&2
+        printf '      %s\n' $missing >&2
+    fi
+}
+
 # The corpus fragment that builds these fixtures must be SOURCED. An unlisted
 # fragment leaves its path-list variables unbound, which `set -u` turns into a
 # hard failure — but only when the script actually runs, which needs coverage.py.
@@ -239,6 +294,7 @@ run_test test_no_undriven_python_file "No shipped Python file is undriven"
 run_test test_no_stale_declaration "No stale NON_PATTERNS_TOOLS declaration"
 run_test test_declared_are_not_patterns_ports "Declared tools exclude patterns.py ports"
 run_test test_declared_tools_have_drivers "Declared tools have drivers"
+run_test test_imported_modules_are_imported "Imported modules are actually imported"
 run_test test_workflow_fragment_is_wired "Workflow-tools corpus fragment is wired"
 
 generate_report
