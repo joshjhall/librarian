@@ -262,12 +262,13 @@ while IFS= read -r file; do
         sub(/^_+/, "", out); sub(/_+$/, "", out)
         return out
     }
+    # >>> shared:unit-segmenters-awk (kept in sync with ship-issue/split-verify.sh by tests/validate-shared-scanner-sync.sh)
     function is_unit_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
         if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
-        if (lang == "rs") return line ~ /^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
-        if (lang == "go") return line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
+        if (lang == "rs") return line ~ /^((pub(\([a-z:_ ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*(macro_rules![ \t]+[A-Za-z_][A-Za-z0-9_]*|impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+([^ \t].*[ \t]for[ \t]+)?(&[ \t]*)?([\047][A-Za-z_][A-Za-z0-9_]*[ \t]+)?(mut[ \t]+)?(dyn[ \t]+)?([A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*|extern[ \t]+crate[ \t]+[A-Za-z_][A-Za-z0-9_]*|(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+[A-Za-z_][A-Za-z0-9_]*)/
+        if (lang == "go") return line ~ /^func[ \t]*\([ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]+)?\*?[ \t]*[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?[ \t]*\)[ \t]*[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(var|const|type)[ \t]*\(/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         return 0
@@ -275,13 +276,66 @@ while IFS= read -r file; do
     # unit_name: the captured identifier. POSIX awk has no capture groups, so the
     # keyword prefix is stripped and the leading identifier read off directly —
     # equivalent to patterns.py group(1) for every arm above.
-    function unit_name(line, lang,   s) {
+    function unit_name(line, lang,   s, r, recv) {
         s = line
         if (lang == "py") { sub(/^(async[ \t]+)?(def|class)[ \t]+/, "", s) }
         else if (lang == "js") { sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
         else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
-        else if (lang == "rs") { sub(/^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+/, "", s) }
-        else if (lang == "go") { sub(/^(func|type|var|const)[ \t]+/, "", s) }
+        else if (lang == "rs") {
+            # Strip modifiers, then the item keyword. `impl` additionally drops
+            # its generics, an optional `Trait for`, and a leading `&`, so the
+            # captured identifier is the TYPE — mirroring the impl arm of
+            # UNIT_RE["rs"] in patterns.py (#727).
+            #
+            # `extern crate` is stripped BEFORE the modifier pass: that pass
+            # would otherwise consume the `extern` as a modifier and leave
+            # `crate foo`, whose leading identifier reads as `crate` rather
+            # than the crate name.
+            sub(/^(pub(\([a-z:_ ]+\))?[ \t]+)?extern[ \t]+crate[ \t]+/, "", s)
+            sub(/^((pub(\([a-z:_ ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*/, "", s)
+            if (s ~ /^macro_rules![ \t]+/) { sub(/^macro_rules![ \t]+/, "", s) }
+            else if (s ~ /^impl/) {
+                sub(/^impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+/, "", s)
+                sub(/^[^ \t].*[ \t]for[ \t]+/, "", s)
+                sub(/^&[ \t]*/, "", s)
+                # Borrow markers before the type: a lifetime (\047 is an
+                # apostrophe — a literal one would end this single-quoted awk
+                # program) and/or `mut`. Without these, `for &mut Foo` yields
+                # the keyword `mut` as the unit name.
+                sub(/^[\047][A-Za-z_][A-Za-z0-9_]*[ \t]+/, "", s)
+                sub(/^mut[ \t]+/, "", s)
+                sub(/^dyn[ \t]+/, "", s)
+                # Path prefix: capture the LAST segment, so crate::bar::Baz
+                # clusters with an unqualified Baz rather than under `crate`.
+                sub(/^([A-Za-z_][A-Za-z0-9_]*::)+/, "", s)
+            }
+            else { sub(/^(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+/, "", s) }
+        }
+        else if (lang == "go") {
+            # A METHOD is named Receiver_Method (#727). awk has no capture
+            # groups, so the receiver type is read off the parenthesized clause
+            # and re-joined to the method name by hand — the same string
+            # patterns.py builds by joining its two groups.
+            if (s ~ /^func[ \t]*\(/) {
+                r = s
+                sub(/^func[ \t]*\([ \t]*/, "", r)
+                sub(/^[A-Za-z_][A-Za-z0-9_]*[ \t]+/, "", r)   # binder, if named
+                sub(/^\*[ \t]*/, "", r)                        # pointer receiver
+                if (!match(r, /^[A-Za-z_][A-Za-z0-9_]*/)) return ""
+                recv = substr(r, 1, RLENGTH)
+                r = substr(r, RLENGTH + 1)
+                sub(/^\[[^\]]*\]/, "", r)                      # generic params
+                sub(/^[ \t]*\)[ \t]*/, "", r)
+                if (!match(r, /^[A-Za-z_][A-Za-z0-9_]*/)) return ""
+                return recv "_" substr(r, 1, RLENGTH)
+            }
+            # A GROUPED declaration is named for its keyword.
+            if (match(s, /^(var|const|type)[ \t]*\(/)) {
+                match(s, /^(var|const|type)/)
+                return substr(s, 1, RLENGTH)
+            }
+            sub(/^(func|type|var|const)[ \t]+/, "", s)
+        }
         # swift: `class` appears in BOTH the modifier group and the keyword
         # alternation (`class func` is a type method; `class Foo` is a type).
         # POSIX awk ERE is leftmost-LONGEST over the whole match, and only one
@@ -310,7 +364,7 @@ while IFS= read -r file; do
     function is_test_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?def[ \t]+test_/ || line ~ /^class[ \t]+Test/
         if (lang == "js" || lang == "ts") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
-        if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)/
+        if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)([A-Z_]|[ \t]*\()/ || line ~ /^func[ \t]*\([^)]*\)[ \t]*(Test|Benchmark|Fuzz|Example)([A-Z_]|[ \t]*\()/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func[ \t]+test|class[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*:[^{]*XCTestCase)/
         if (lang == "sh") return line ~ /^(function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)/
         return 0
@@ -333,6 +387,7 @@ while IFS= read -r file; do
         if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go" || lang == "swift") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
+    # <<< shared:unit-segmenters-awk
     function nest_unit(lang) {
         if (lang == "js" || lang == "ts" || lang == "md") return 2
         return 4
@@ -484,7 +539,20 @@ while IFS= read -r file; do
                 # (production) one as a test. Rust `#[test]` always stands
                 # alone, so its behavior is unchanged. Mirrors find_units() in
                 # the .py primaries.
-                if (is_attr_test(line, lang)) {
+                #
+                # Only a COLUMN-ZERO attribute may set the flag (#727). Both
+                # attribute patterns tolerate indent — rs because the same
+                # spelling doubles as the test-REGION marker below — so an
+                # indented attribute inside a block (#[test] within
+                # `mod tests { ... }`, @Test within an XCTestCase body) used to
+                # mark the next TOP-LEVEL unit, a production declaration after
+                # the block, as test code. Language-agnostic because the
+                # invariant is: units are column-zero anchored, so an indented
+                # attribute cannot be marking one.
+                #
+                # NB: no apostrophes in this awk program — it is one
+                # single-quoted shell string, so one would end it.
+                if (line !~ /^[ \t]/ && is_attr_test(line, lang)) {
                     pending_test = 1
                     if (!is_hdr) continue
                 }
@@ -516,13 +584,24 @@ while IFS= read -r file; do
             if (!ut[i]) continue
             for (j = us[i]; j <= uend[i]; j++) tl[j] = 1
         }
-        # Whole-file test-region markers: match to EOF.
+        # Whole-file test-region markers. The region runs to the end of the unit
+        # the marker INTRODUCES, not unconditionally to EOF (#727). For the
+        # conventional TRAILING placement those are the same line, so this is a
+        # no-op there; it differs only for a marker in the MIDDLE of a file,
+        # where running to EOF excluded every production unit that followed.
+        # Falling back to EOF when no unit follows preserves a trailing marker
+        # with no unit after it (py `if __name__`, sh `# --- tests ---`).
         for (i = 1; i <= total; i++) {
             hit = 0
             if (lang == "py" && L[i] ~ /^if[ \t]+__name__/) hit = 1
-            else if (lang == "rs" && L[i] ~ /^[ \t]*#\[cfg\(test\)\]/) hit = 1
+            else if (lang == "rs" && L[i] ~ /^#\[cfg\(test\)\]/) hit = 1
             else if (lang == "sh" && L[i] ~ /^#[ \t]*-+[ \t]*tests?[ \t]*-+/) hit = 1
-            if (hit) { for (j = i; j <= total; j++) tl[j] = 1; break }
+            if (hit) {
+                stop = total
+                for (k = 1; k <= nu; k++) if (us[k] >= i) { stop = uend[k]; break }
+                for (j = i; j <= stop; j++) tl[j] = 1
+                break
+            }
         }
 
         blank = 0; comment = 0; test_excluded = 0; max_depth = 0

@@ -92,11 +92,121 @@ UNIT_RE = {
         r"(?:const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var"
         r"|interface|type|enum|namespace|module)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)"
     ),
+    # Rust (#727). `impl` is deliberately ONE unit spanning header -> next
+    # top-level header, NOT its methods. This decision is load-bearing and will
+    # be re-asked, so the reason lives here: (a) the engine's invariant is
+    # column-zero anchoring — an indented item is never a unit — and segmenting
+    # inside `impl` would break that for one language only, requiring
+    # depth-aware segmentation nothing else in the engine has; (b) Rust's own
+    # SPLIT_SHAPE ("new subdir module; mod.rs re-exports") moves whole ITEMS,
+    # and splitting one type's impl across files is a real Rust smell, so a
+    # method-level seam would propose a split the language discourages. The
+    # cost is accepted and visible: a 400-line impl stays one unit and can reach
+    # the "single cohesive unit" decline.
+    #
+    # `impl Trait for Type` captures the TYPE, not the trait, so `impl Display
+    # for Foo` and `impl Debug for Foo` cluster with `impl Foo` under family
+    # `foo` — the family then means "this type's surface". Capturing the trait
+    # scattered one type across as many families as it had impls.
+    #
+    # CHECKED, CORRECT AS-IS (#727): a nested `mod foo { ... }` is a unit, but
+    # the items INSIDE it are indented and therefore invisible — intended, and
+    # the same column-zero rule that makes impl one unit. An inline module is a
+    # cut point (it moves to its own file wholesale); its contents are not.
+    # The visibility class admits `:` and `_` so `pub(in crate::foo)` matches
+    # (#727). With `[a-z ]+` the parenthesized group failed, the whole `pub`
+    # alternative failed with it, and the item went INVISIBLE — absorbed into
+    # the previous unit's span. Pre-existing, but it is this issue's own defect
+    # class, and it is one character to close. `pub(crate)` / `pub(super)` were
+    # always fine; only the path form broke.
     "rs": re.compile(
-        r"^(?:pub(?:\([a-z]+\))?[ \t]+)?(?:async[ \t]+)?"
-        r"(?:fn|struct|enum|trait|impl|mod)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+        r"^(?:(?:pub(?:\([a-z:_ ]+\))?|default|async|unsafe|const"
+        r"|extern(?:[ \t]+\"[^\"]*\")?)[ \t]+)*"
+        r"(?:macro_rules![ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+        # The generic list must tolerate NESTING: `<[^>]*>` stops at the first
+        # `>`, so a trait bound like `impl<T: Into<String>> Foo<T>` failed the
+        # whole match and the impl went INVISIBLE — reintroducing the exact
+        # defect this arm exists to fix, on the commonest form of generic impl.
+        # Regex cannot balance arbitrarily; this covers three levels, which is
+        # past anything real (`A<B<C>>` already exhausts two).
+        # The optional `Trait for` clause is LINEAR-TIME by construction, and it
+        # has to be: with `.*[ \t]+for`, a run of N spaces after `impl` can be
+        # split between `.*` and `[ \t]+` in O(N) ways at each of O(N) offsets,
+        # and the engine tries all of them before failing. Measured on the live
+        # pattern: `"impl " + " "*N + "!"` took 0.25 s at N=1000, 1.9 s at
+        # N=2000, 14.5 s at N=4000 — cubic, and reached by a stray line of
+        # trailing whitespace, not only by a crafted one. Two changes make it
+        # flat (0.7 ms at N=16000): the clause must START on a non-space, and
+        # the separator before `for` is a SINGLE [ \t] so greedy `.*` has
+        # exactly one way to hand off.
+        #
+        # Everything between `for` and the type is consumed: `&`, a lifetime,
+        # `mut`, and `dyn`. Each of these was captured as the unit NAME —
+        # a keyword as the family and as a god-module "concern" in human-read
+        # evidence, the same wrong-finding class RESERVED_UNIT_NAME exists to
+        # prevent for Swift. `dyn` is listed beside `mut` deliberately: fixing
+        # one borrow marker and leaving its sibling is exactly the
+        # [[harden-one-knob-grep-every-sibling]] recurrence, and trait objects
+        # are idiomatic rather than exotic.
+        #
+        # The path prefix is consumed so the LAST segment is captured. Taking
+        # the first meant `impl A for crate::Foo` landed in family `crate`
+        # while `impl B for Foo` landed in `foo` — the same type in two
+        # families, which is the precise failure the trait-vs-type capture was
+        # changed to fix. `(?:IDENT::)*` is a bounded prefix loop, so it stays
+        # linear (a 8000-segment path matches in 0.5 ms).
+        r"|impl(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?[ \t]+"
+        r"(?:[^ \t].*[ \t]for[ \t]+)?(?:&[ \t]*)?"
+        r"(?:'[A-Za-z_][A-Za-z0-9_]*[ \t]+)?(?:mut[ \t]+)?(?:dyn[ \t]+)?"
+        r"(?:[A-Za-z_][A-Za-z0-9_]*::)*"
+        r"([A-Za-z_][A-Za-z0-9_]*)"
+        r"|extern[ \t]+crate[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+        r"|(?:fn|struct|enum|trait|mod|type|static|const|union)"
+        r"[ \t]+([A-Za-z_][A-Za-z0-9_]*))"
     ),
-    "go": re.compile(r"^(?:func|type|var|const)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"),
+    # Go (#727). A METHOD is named `Receiver_Method`, so family_prefix's
+    # split-at-first-underscore clusters every method on one receiver into one
+    # family — which is exactly Go's SPLIT_SHAPE ("additional files in the same
+    # package"). Before this the receiver clause made the match FAIL outright
+    # (`(` is not in [A-Za-z_]), so methods were not mis-named, they were
+    # INVISIBLE — silently absorbed into the preceding unit's span, and a
+    # method-heavy file was declined as near-cohesive on a unit count of ~2.
+    #
+    # The final arm names a GROUPED declaration (`var (` / `const (` / `type (`)
+    # for its keyword. Same reason: grouped blocks were invisible, not "one unit
+    # each". One visible unit per block is the honest count — the engine cannot
+    # see into a block it does not segment.
+    #
+    # ACCEPTED LIMITATION (#727): the header line carries no identifier, so the
+    # keyword IS the name and two adjacent blocks of the same kind (two `var (`
+    # runs back to back — legal, and gofmt does not merge them) share family
+    # `var` and can cluster as one seam. Accepted rather than fixed: the
+    # alternatives are worse. A running index would make the name
+    # position-dependent, so inserting a block upstream renames every one below
+    # it and the TSV churns on an unrelated edit; naming the block for its first
+    # inner identifier would require reading past the header, which this
+    # line-anchored engine deliberately does not do. The failure mode is also
+    # benign — a seam proposing that two adjacent declaration groups move to one
+    # file is a reasonable suggestion even when they are unrelated, unlike the
+    # pre-#727 behavior where the blocks were invisible and the file was
+    # declined as cohesive.
+    #
+    # CHECKED, CORRECT AS-IS (#727): `//go:generate` and build tags do not
+    # interact with GENERATED_RE. That pattern looks for @generated /
+    # "Code generated by" / DO NOT EDIT in the first 20 lines; a `//go:generate`
+    # directive contains none of them, and the file it generates carries the
+    # real "Code generated by ... DO NOT EDIT." banner that SHOULD match. So the
+    # generator's source is sized normally and its output is declined as
+    # generated — which is the intended split. No fixture: a test asserting a
+    # pattern does not match an unrelated string cannot fail
+    # ([[surviving-mutation-may-be-a-real-no-op]]).
+    "go": re.compile(
+        r"^func[ \t]*\([ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]+)?\*?[ \t]*"
+        r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?[ \t]*\)[ \t]*"
+        r"([A-Za-z_][A-Za-z0-9_]*)"
+        r"|^(?:func|type|var|const)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+        r"|^(var|const|type)[ \t]*\("
+    ),
     # Swift (#728). Modifiers are a REPEATED optional group, not a fixed
     # sequence: `public final class`, `@objc private static func` and bare
     # `struct` are all real, and Swift imposes no canonical order on them. One
@@ -165,7 +275,25 @@ TEST_UNIT_RE = {
     # the table that describes what it actually is. Keeping a copy here would be
     # two spellings of one fact, and now that the same-line path no longer
     # excludes rs by name, a stale copy would be live code.
-    "go": re.compile(r"^func[ \t]+(?:Test|Benchmark|Fuzz|Example)"),
+    #
+    # The optional receiver clause keeps a TESTIFY-style method
+    # (`func (s *Suite) TestFoo`) test-classified (#727). Once UNIT_RE["go"]
+    # learned to segment methods, anchoring on `^func[ \t]+Test` alone stopped
+    # matching them — the suite method became a production unit and its body
+    # counted toward production LOC.
+    # The prefix needs a BOUNDARY. Go's rule is `func TestXxx` where Xxx does
+    # not begin with a lowercase letter, so a bare prefix match classifies
+    # `Testify`, `Benchmarking` and `Exampler` as test code and silently drops
+    # their lines from production LOC and the unit count — a wrong number
+    # feeding god-module, seam and decline verdicts, with no visible error.
+    # Requiring an uppercase letter, `_`, or the end of the name (`(`) after
+    # the prefix matches the convention exactly. The bare-func arm had this
+    # weakness before #727; extending the prefix to every receiver METHOD would
+    # have widened it considerably, so both arms are anchored here.
+    "go": re.compile(
+        r"^func[ \t]+(?:Test|Benchmark|Fuzz|Example)(?:[A-Z_]|[ \t]*\()"
+        r"|^func[ \t]*\([^)]*\)[ \t]*(?:Test|Benchmark|Fuzz|Example)(?:[A-Z_]|[ \t]*\()"
+    ),
     "sh": re.compile(r"^(?:function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)"),
     # Swift XCTest (#728) — the SAME-LINE half of Swift's two test conventions:
     # a `func test…` (any modifier prefix) or an `XCTestCase` subclass. The
@@ -243,7 +371,17 @@ RESERVED_UNIT_NAME = {
 # than unit-scoped.
 TEST_REGION_RE = {
     "py": re.compile(r"^if[ \t]+__name__"),
-    "rs": re.compile(r"^[ \t]*#\[cfg\(test\)\]"),
+    # COLUMN-ZERO only (#727), matching the pending-test attribute guard in
+    # find_units. The `[ \t]*` this used to carry made a NESTED marker — a
+    # `#[cfg(test)] mod tests` indented inside an outer `mod` — engage the
+    # whole-file region path. That marker is not itself a unit header (units are
+    # column-zero anchored), so the stop-computation below latched onto whatever
+    # top-level unit happened to follow and excluded everything in between:
+    # measured on a 16-line fixture, 11 lines test-excluded and a production fn
+    # swallowed whole, for 4 production LOC instead of 10. A nested test module
+    # is already covered per-unit by its enclosing unit's span; the region path
+    # exists for the CONVENTIONAL trailing placement, which is column-zero.
+    "rs": re.compile(r"^#\[cfg\(test\)\]"),
     "sh": re.compile(r"^#[ \t]*-+[ \t]*tests?[ \t]*-+"),
 }
 
@@ -532,15 +670,27 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
             # `@Test func foo()` on ONE line — under the old continue-first
             # shape that line would set the flag and be skipped, losing the unit
             # entirely and marking the NEXT (production) unit as a test instead.
-            if attr_rx is not None and attr_rx.search(line):
+            # Only a COLUMN-ZERO attribute may set the flag (#727). Both
+            # ATTR_TEST_RE patterns tolerate leading whitespace — rs because the
+            # same spelling doubles as the TEST_REGION_RE marker — so an
+            # INDENTED attribute inside a block (`#[test]` within
+            # `mod tests { ... }`, `@Test` within an XCTestCase body) used to
+            # set this flag and then mark the next TOP-LEVEL unit, a PRODUCTION
+            # declaration after the block, as test code — silently dropping its
+            # lines from production LOC. The guard is language-agnostic because
+            # the invariant is: units are column-zero anchored, so an indented
+            # attribute cannot be marking one.
+            if attr_rx is not None and not line[:1].isspace() and attr_rx.search(line):
                 pending_test = True
                 if m is None:
                     continue
             if not m:
                 continue
-            name = m.group(1)
-            if not name and m.lastindex and m.lastindex >= 2:
-                name = m.group(2)
+            # Join every group that matched. Most arms set exactly one (the
+            # rest are None), so this is the old "group(1) else group(2)" for
+            # them; Go's method arm sets TWO — receiver and method — and joins
+            # them into `Repo_Get`, the underscore family_prefix then splits on.
+            name = "_".join(g for g in m.groups() if g)
             if not name:
                 continue
             # A keyword captured as a name means the line parsed a modifier as
@@ -600,7 +750,24 @@ def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
     if region_rx is not None:
         for idx, line in enumerate(lines, start=1):
             if region_rx.search(line):
-                test_lines.update(range(idx, total + 1))
+                # The region runs to the end of the unit the marker INTRODUCES,
+                # not unconditionally to EOF (#727). For the conventional
+                # trailing placement these are the same line — the marked unit
+                # is the last one — so this is a no-op there. It differs only
+                # for a marker in the MIDDLE of a file, where running to EOF
+                # excluded every production unit that followed: a `#[cfg(test)]
+                # mod tests` at line 5 of an 18-line file excluded 14 lines and
+                # reported 3 production LOC instead of 9.
+                #
+                # Falling back to EOF when no unit follows keeps a marker with
+                # no unit after it (a trailing `if __name__` block in py, a
+                # `# --- tests ---` banner in sh) excluding its tail as before.
+                stop = total
+                for u in units:
+                    if u.start >= idx:
+                        stop = u.end
+                        break
+                test_lines.update(range(idx, stop + 1))
                 break
 
     blank = 0

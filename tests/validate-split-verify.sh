@@ -259,6 +259,141 @@ test_swift_reserved_name_and_attribute_paths() {
         "swift: an unchanged file with a reserved-name header still verifies (#728)"
 }
 
+# --- checks 2/3 over the Rust and Go segmenters (#727) -----------------------
+# Every case above drives .py fixtures, so split-verify's OWN use of unit_name
+# was exercised for one language only. The rs/go arms are the most-edited lines
+# in the shared unit-segmenters-awk region, and the sync gate that covers them
+# is a DRIFT detector, not a behavior detector: three copies wrong in the same
+# way still compare equal ([[parity-gate-hides-shared-defect]]). These two cases
+# pin the behavior here, where the region is actually consumed.
+test_rust_split_is_verified_by_unit_name() {
+    local orig kept moved lossy
+    orig="$WORKDIR/rs-orig.rs"
+    {
+        command printf 'pub fn render_all(x: u32) -> u32 {\n    parse_entry(x)\n}\n\n'
+        command printf 'pub fn parse_entry(x: u32) -> u32 {\n    x + 1\n}\n\n'
+        command printf 'impl Display for Doc {\n    fn fmt(&self) -> R {\n        w()\n    }\n}\n'
+    } >"$orig"
+
+    kept="$WORKDIR/rs-kept.rs"
+    {
+        command printf 'use parse::parse_entry;\n\n'
+        command printf 'pub fn render_all(x: u32) -> u32 {\n    parse_entry(x)\n}\n'
+    } >"$kept"
+
+    # The impl block moves as ONE unit — the granularity decision #727 records.
+    # Its unit name is the TYPE (`Doc`), not the trait, so a regression that
+    # reverted to trait-capture would look for `Display` and report it lost.
+    moved="$WORKDIR/rs-parse.rs"
+    {
+        command printf 'pub fn parse_entry(x: u32) -> u32 {\n    x + 1\n}\n\n'
+        command printf 'impl Display for Doc {\n    fn fmt(&self) -> R {\n        w()\n    }\n}\n'
+    } >"$moved"
+
+    run_verify "$orig" "$kept" "$moved"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-verified" \
+        "rust: a sound impl/fn split verifies clean"
+
+    # Lossy: the impl block never reached the destination.
+    lossy="$WORKDIR/rs-lossy.rs"
+    command printf 'pub fn parse_entry(x: u32) -> u32 {\n    x + 1\n}\n' >"$lossy"
+
+    run_verify "$orig" "$kept" "$lossy"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-unit-lost" \
+        "rust: a dropped impl block is detected as a lost unit"
+    assert_contains "$VERIFY_OUT" "Doc" \
+        "rust: the lost impl is NAMED by its type, not by its trait"
+}
+
+test_go_method_split_is_verified_by_receiver_name() {
+    local orig kept moved lossy
+    orig="$WORKDIR/go-orig.go"
+    {
+        command printf 'package app\n\n'
+        command printf 'func MainEntry(s string) string {\n\treturn s\n}\n\n'
+        command printf 'func (r *Repo) GetOne(id string) string {\n\treturn id\n}\n\n'
+        command printf 'func (r *Repo) PutOne(id string) error {\n\treturn nil\n}\n'
+    } >"$orig"
+
+    kept="$WORKDIR/go-kept.go"
+    {
+        command printf 'package app\n\n'
+        command printf 'func MainEntry(s string) string {\n\treturn s\n}\n'
+    } >"$kept"
+
+    moved="$WORKDIR/go-repo.go"
+    {
+        command printf 'package app\n\n'
+        command printf 'func (r *Repo) GetOne(id string) string {\n\treturn id\n}\n\n'
+        command printf 'func (r *Repo) PutOne(id string) error {\n\treturn nil\n}\n'
+    } >"$moved"
+
+    run_verify "$orig" "$kept" "$moved"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-verified" \
+        "go: a sound receiver-method split verifies clean"
+
+    # Lossy: PutOne never reached the destination. Before #727 methods were
+    # INVISIBLE to unit_name, so neither method was a unit and this loss was
+    # undetectable — the split would have verified clean.
+    lossy="$WORKDIR/go-lossy.go"
+    {
+        command printf 'package app\n\n'
+        command printf 'func (r *Repo) GetOne(id string) string {\n\treturn id\n}\n'
+    } >"$lossy"
+
+    run_verify "$orig" "$kept" "$lossy"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-unit-lost" \
+        "go: a dropped receiver method is detected as a lost unit"
+    assert_contains "$VERIFY_OUT" "Repo_PutOne" \
+        "go: the lost method is NAMED receiver-first, proving the receiver join"
+}
+
+# production_loc() is this tool's OWN measurement loop, outside the shared
+# unit-segmenters-awk region — so the sync gate cannot see it, and #727's
+# unit-bounded test-region sweep had to be applied here as a fourth sibling
+# ([[harden-one-knob-grep-every-sibling]]). Unbounded, a mid-file
+# `#[cfg(test)] mod tests` excluded every production unit after it: measured on
+# this fixture, 3 -> 10 production LOC instead of 9 -> 10. A phantom seven-line
+# GAIN, which is what would mask a real loss on the LOC-conservation check.
+test_rust_midfile_test_region_in_production_loc() {
+    local orig kept moved
+    orig="$WORKDIR/rs-mid-orig.rs"
+    {
+        command printf 'pub fn alpha() -> u32 {\n    1\n}\n\n'
+        command printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn t_one() {\n        assert!(true);\n    }\n}\n\n'
+        command printf 'pub fn beta() -> u32 {\n    2\n}\n\n'
+        command printf 'pub fn gamma() -> u32 {\n    3\n}\n'
+    } >"$orig"
+
+    kept="$WORKDIR/rs-mid-kept.rs"
+    {
+        command printf 'use beta::{beta, gamma};\n\n'
+        command printf 'pub fn alpha() -> u32 {\n    1\n}\n\n'
+        command printf '#[cfg(test)]\nmod tests {\n    #[test]\n    fn t_one() {\n        assert!(true);\n    }\n}\n'
+    } >"$kept"
+
+    moved="$WORKDIR/rs-mid-beta.rs"
+    {
+        command printf 'pub fn beta() -> u32 {\n    2\n}\n\n'
+        command printf 'pub fn gamma() -> u32 {\n    3\n}\n'
+    } >"$moved"
+
+    run_verify "$orig" "$kept" "$moved"
+    assert_parity
+    # The ORIGINAL side must measure 9, not 3 — the test module alone is
+    # excluded, not everything after it. Asserting the rendered number rather
+    # than merely "verified": both the fixed and unbounded impls report
+    # verified here, and only the LOC figure tells them apart.
+    assert_contains "$VERIFY_OUT" "9 -> 10 production LOC" \
+        "rust: a mid-file test module excludes only itself in production_loc()"
+    assert_contains "$VERIFY_OUT" "all 3 top-level unit(s) preserved" \
+        "rust: units after a mid-file test module survive split verification"
+}
+
 # --- check 1: LOC conservation -----------------------------------------------
 # Uses a LARGE drop so the loss clears the boilerplate tolerance — the tolerance
 # exists precisely so a few import/mod/__init__ lines are not reported as drift.
@@ -488,6 +623,9 @@ run_test test_sound_split_verifies "Check 2 counter: a sound split verifies clea
 run_test test_swift_sound_split_verifies "swift: a sound Type+Concern split verifies clean (#728)"
 run_test test_swift_lost_unit_is_detected "swift: a dropped Swift declaration is detected and named (#728)"
 run_test test_swift_reserved_name_and_attribute_paths "swift: reserved-name filter and attribute path in split-verify's own loop (#728)"
+run_test test_rust_split_is_verified_by_unit_name "Check 2 (rust): impl moves as one unit, named by type (#727)"
+run_test test_go_method_split_is_verified_by_receiver_name "Check 2 (go): a lost receiver method is named Receiver_Method (#727)"
+run_test test_rust_midfile_test_region_in_production_loc "Check 1 (rust): a mid-file test module excludes only itself (#727)"
 run_test test_loc_drift_is_detected "Check 1: a large content drop is detected as LOC drift"
 run_test test_boilerplate_does_not_trip_loc_check "Check 1 counter: re-export boilerplate is tolerated"
 run_test test_dangling_reference_is_detected "Check 3: a dangling call site is detected and named"

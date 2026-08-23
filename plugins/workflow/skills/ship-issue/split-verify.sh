@@ -101,8 +101,8 @@ awk_lib() {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
         if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
-        if (lang == "rs") return line ~ /^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
-        if (lang == "go") return line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
+        if (lang == "rs") return line ~ /^((pub(\([a-z:_ ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*(macro_rules![ \t]+[A-Za-z_][A-Za-z0-9_]*|impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+([^ \t].*[ \t]for[ \t]+)?(&[ \t]*)?([\047][A-Za-z_][A-Za-z0-9_]*[ \t]+)?(mut[ \t]+)?(dyn[ \t]+)?([A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*|extern[ \t]+crate[ \t]+[A-Za-z_][A-Za-z0-9_]*|(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+[A-Za-z_][A-Za-z0-9_]*)/
+        if (lang == "go") return line ~ /^func[ \t]*\([ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]+)?\*?[ \t]*[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?[ \t]*\)[ \t]*[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(var|const|type)[ \t]*\(/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         if (lang == "sh") return line ~ /^(function[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/ || line ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/
         return 0
@@ -110,13 +110,66 @@ awk_lib() {
     # unit_name: the captured identifier. POSIX awk has no capture groups, so the
     # keyword prefix is stripped and the leading identifier read off directly —
     # equivalent to patterns.py group(1) for every arm above.
-    function unit_name(line, lang,   s) {
+    function unit_name(line, lang,   s, r, recv) {
         s = line
         if (lang == "py") { sub(/^(async[ \t]+)?(def|class)[ \t]+/, "", s) }
         else if (lang == "js") { sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
         else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
-        else if (lang == "rs") { sub(/^(pub(\([a-z]+\))?[ \t]+)?(async[ \t]+)?(fn|struct|enum|trait|impl|mod)[ \t]+/, "", s) }
-        else if (lang == "go") { sub(/^(func|type|var|const)[ \t]+/, "", s) }
+        else if (lang == "rs") {
+            # Strip modifiers, then the item keyword. `impl` additionally drops
+            # its generics, an optional `Trait for`, and a leading `&`, so the
+            # captured identifier is the TYPE — mirroring the impl arm of
+            # UNIT_RE["rs"] in patterns.py (#727).
+            #
+            # `extern crate` is stripped BEFORE the modifier pass: that pass
+            # would otherwise consume the `extern` as a modifier and leave
+            # `crate foo`, whose leading identifier reads as `crate` rather
+            # than the crate name.
+            sub(/^(pub(\([a-z:_ ]+\))?[ \t]+)?extern[ \t]+crate[ \t]+/, "", s)
+            sub(/^((pub(\([a-z:_ ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*/, "", s)
+            if (s ~ /^macro_rules![ \t]+/) { sub(/^macro_rules![ \t]+/, "", s) }
+            else if (s ~ /^impl/) {
+                sub(/^impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+/, "", s)
+                sub(/^[^ \t].*[ \t]for[ \t]+/, "", s)
+                sub(/^&[ \t]*/, "", s)
+                # Borrow markers before the type: a lifetime (\047 is an
+                # apostrophe — a literal one would end this single-quoted awk
+                # program) and/or `mut`. Without these, `for &mut Foo` yields
+                # the keyword `mut` as the unit name.
+                sub(/^[\047][A-Za-z_][A-Za-z0-9_]*[ \t]+/, "", s)
+                sub(/^mut[ \t]+/, "", s)
+                sub(/^dyn[ \t]+/, "", s)
+                # Path prefix: capture the LAST segment, so crate::bar::Baz
+                # clusters with an unqualified Baz rather than under `crate`.
+                sub(/^([A-Za-z_][A-Za-z0-9_]*::)+/, "", s)
+            }
+            else { sub(/^(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+/, "", s) }
+        }
+        else if (lang == "go") {
+            # A METHOD is named Receiver_Method (#727). awk has no capture
+            # groups, so the receiver type is read off the parenthesized clause
+            # and re-joined to the method name by hand — the same string
+            # patterns.py builds by joining its two groups.
+            if (s ~ /^func[ \t]*\(/) {
+                r = s
+                sub(/^func[ \t]*\([ \t]*/, "", r)
+                sub(/^[A-Za-z_][A-Za-z0-9_]*[ \t]+/, "", r)   # binder, if named
+                sub(/^\*[ \t]*/, "", r)                        # pointer receiver
+                if (!match(r, /^[A-Za-z_][A-Za-z0-9_]*/)) return ""
+                recv = substr(r, 1, RLENGTH)
+                r = substr(r, RLENGTH + 1)
+                sub(/^\[[^\]]*\]/, "", r)                      # generic params
+                sub(/^[ \t]*\)[ \t]*/, "", r)
+                if (!match(r, /^[A-Za-z_][A-Za-z0-9_]*/)) return ""
+                return recv "_" substr(r, 1, RLENGTH)
+            }
+            # A GROUPED declaration is named for its keyword.
+            if (match(s, /^(var|const|type)[ \t]*\(/)) {
+                match(s, /^(var|const|type)/)
+                return substr(s, 1, RLENGTH)
+            }
+            sub(/^(func|type|var|const)[ \t]+/, "", s)
+        }
         # swift: `class` appears in BOTH the modifier group and the keyword
         # alternation (`class func` is a type method; `class Foo` is a type).
         # POSIX awk ERE is leftmost-LONGEST over the whole match, and only one
@@ -145,7 +198,7 @@ awk_lib() {
     function is_test_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?def[ \t]+test_/ || line ~ /^class[ \t]+Test/
         if (lang == "js" || lang == "ts") return line ~ /^[ \t]*(describe|it|test)[ \t]*\(/
-        if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)/
+        if (lang == "go") return line ~ /^func[ \t]+(Test|Benchmark|Fuzz|Example)([A-Z_]|[ \t]*\()/ || line ~ /^func[ \t]*\([^)]*\)[ \t]*(Test|Benchmark|Fuzz|Example)([A-Z_]|[ \t]*\()/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func[ \t]+test|class[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*:[^{]*XCTestCase)/
         if (lang == "sh") return line ~ /^(function[ \t]+)?test_[A-Za-z0-9_]*[ \t]*\([ \t]*\)/
         return 0
@@ -191,7 +244,11 @@ production_loc() {
                 # NB: no apostrophes in this region — the awk program is a
                 # single-quoted shell string, so one would end it and the rest
                 # would be parsed as shell.
-                if (is_attr_test(line, lang)) { pending_test = 1; if (!is_unit_header(line, lang)) continue }
+                # Column-zero guard (#727): both attribute patterns tolerate
+                # indent, so an indented attribute inside a block would mark the
+                # next TOP-LEVEL unit as test code. Must match the primaries or
+                # this loop and production_loc() disagree.
+                if (line !~ /^[ \t]/ && is_attr_test(line, lang)) { pending_test = 1; if (!is_unit_header(line, lang)) continue }
                 if (!is_unit_header(line, lang)) continue
                 if (unit_name(line, lang) == "") continue
                 # See is_reserved_name: a keyword captured as a name means a
@@ -215,9 +272,21 @@ production_loc() {
         for (i = 1; i <= total; i++) {
             hit = 0
             if (lang == "py" && L[i] ~ /^if[ \t]+__name__/) hit = 1
-            else if (lang == "rs" && L[i] ~ /^[ \t]*#\[cfg\(test\)\]/) hit = 1
+            else if (lang == "rs" && L[i] ~ /^#\[cfg\(test\)\]/) hit = 1
             else if (lang == "sh" && L[i] ~ /^#[ \t]*-+[ \t]*tests?[ \t]*-+/) hit = 1
-            if (hit) { for (j = i; j <= total; j++) tl[j] = 1; break }
+            # Bounded to the unit the marker INTRODUCES, not to EOF (#727) —
+            # the same rule sizing.sh and the .py primaries apply. This loop
+            # lives OUTSIDE the shared region, so the sync gate cannot see it:
+            # it is the fourth sibling doing the identical LOC-exclusion job
+            # ([[harden-one-knob-grep-every-sibling]]). Left unbounded, a
+            # mid-file test module would exclude every production unit after it
+            # and skew the LOC-conservation check either way.
+            if (hit) {
+                stop = total
+                for (k = 1; k <= nu; k++) if (us[k] >= i) { stop = uend[k]; break }
+                for (j = i; j <= stop; j++) tl[j] = 1
+                break
+            }
         }
         blank = 0; comment = 0; test_excluded = 0
         for (i = 1; i <= total; i++) {
@@ -245,7 +314,9 @@ unit_names() {
         # production_loc() and the python port counted 2 — caught as a parity
         # failure ([[harden-one-knob-grep-every-sibling]]).
         is_hdr = is_unit_header($0, lang)
-        if (is_attr_test($0, lang)) { pending = 1; if (!is_hdr) next }
+        # Column-zero guard (#727) — same rule as production_loc() above and the
+        # .py primaries; a divergence here surfaces as a parity failure.
+        if ($0 !~ /^[ \t]/ && is_attr_test($0, lang)) { pending = 1; if (!is_hdr) next }
         if (!is_hdr) next
         nm = unit_name($0, lang)
         if (nm == "") next
