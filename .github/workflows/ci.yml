@@ -211,7 +211,68 @@ jobs:
       # ever gain a dependency, this reasoning stops holding and the step needs
       # revisiting — reuse the same `--offline` check to tell, since it fails
       # loudly the moment something must be fetched.
+
+      # Cache agnix's POSTINSTALL BINARY (#742). Measured, because the obvious
+      # reading of "cache the npm install" targets the wrong layer entirely:
+      # agnix's npm tarball is 17 KB (dist.unpackedSize=17676) and a warm npm
+      # cache saves ~85 ms on it, while its `postinstall` (install.js) fetches a
+      # 3.6 MB archive — 8.5 MB extracted — from github.com/agent-sh/agnix
+      # releases, which is NOT the npm registry and which no npm-level cache
+      # covers. So ~98% of the bytes, and effectively all of the network-latency
+      # variance the issue was filed about, live here.
+      #
+      # `actions/setup-node`'s own `cache: npm` cannot do this job for a second,
+      # independent reason: it derives its key from a lockfile, and this repo has
+      # no root package.json/package-lock.json at all.
+      #
+      # THE SEAM: install.js returns early when `bin/agnix-binary` already
+      # exists ("agnix binary already installed"), and agnix's `files:` array
+      # includes `bin/`, so a binary seeded into the verified scratch tree is
+      # packed through by `npm install -g "$verify_dir/node_modules/agnix"` and
+      # the download never happens. Verified empirically in both directions: a
+      # seeded tree short-circuits, an unseeded one downloads.
+      #
+      # NO `restore-keys`, deliberately. A prefix fallback could restore a
+      # DIFFERENT version's binary under a bumped pin — precisely the drift the
+      # pin exists to prevent. A miss must be a clean miss.
+      #
+      # The key carries the BARE version (`0.49.0`), never the pinned-spec form
+      # that the install step below uses. tests/lint-agnix-clean.sh's
+      # agnix_pin_in greps the FIRST pinned-spec match in the file — over the
+      # whole file, comments included — and compares it against
+      # code-scanning.yml's. Any earlier occurrence of that spelling, in a
+      # comment as readily as in code, would shadow the real pin: bump the
+      # install step alone and the gate would keep reporting the OLD version and
+      # still pass, which is precisely the cross-workflow drift it exists to
+      # catch. Hence the bare version here, and no example of the pinned spelling
+      # anywhere in this comment. (Same reason the install step keeps ONE pin
+      # literal for its two npm commands.)
+      #
+      # This key must be bumped in lockstep with that pin. Leaving it stale is
+      # not merely untidy: the old key would restore the PREVIOUS version's
+      # binary, install.js would find bin/agnix-binary present and skip its
+      # download, and the job would silently run the wrong agnix — green, and
+      # wrong. The `agnix --version` smoke test below is the backstop that turns
+      # that into a visible skip rather than a bad scan.
+      - name: Restore cached agnix binary
+        id: agnix-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/agnix-bin
+          # runner.arch is in the key because the release asset is
+          # arch-specific (x86_64 vs aarch64) — a shared key would hand an
+          # unrunnable binary to the other architecture.
+          key: agnix-bin-${{ runner.os }}-${{ runner.arch }}-0.49.0
+
       - name: Install agnix (pinned)
+        # The cache-hit flag reaches the script through env rather than being
+        # interpolated into the shell body, matching how merge-gate passes
+        # `needs.*.result` below. `cache-hit` is a trusted action output
+        # ("true"/"false"/empty), not attacker-controlled, so this is convention
+        # and habit rather than a live injection fix — which is exactly when a
+        # convention is cheapest to keep.
+        env:
+          AGNIX_CACHE_HIT: ${{ steps.agnix-cache.outputs.cache-hit }}
         run: |
           # BOTH commands sit in the condition, deliberately. A `run:` step
           # executes under `bash -e`, so an `agnix --version` placed inside the
@@ -237,8 +298,90 @@ jobs:
           # agnix is a best-effort enrichment, so the gate skips (77) either way.
           if npm install --prefix "$verify_dir" --ignore-scripts "$pin" \
             && (cd "$verify_dir" && npm audit signatures); then
+            # Seed the cached binary into the VERIFIED tree, between the
+            # signature gate and the global install (#742). Placement is exact:
+            # after `npm audit signatures` so nothing here can weaken that
+            # check, and before the global install so install.js finds
+            # bin/agnix-binary already present and skips its 3.6 MB download.
+            #
+            # SCOPE OF THE #740 GUARANTEE, NARROWED — stated plainly because the
+            # comment block above claims the audited bytes and the installed
+            # bytes are "the same bytes by construction", and seeding adds bytes
+            # that npm never audited. What still holds: every byte of the npm
+            # PACKAGE is signature-verified, and the binary is exactly what a
+            # previous run of this same job downloaded and checksum-verified via
+            # install.js's own sha256 sidecar check. What changes: on a cache
+            # hit the binary's provenance rests on the cache key
+            # (os + arch + version) plus the sha256 re-check below, not on a
+            # fresh fetch. That trade is acceptable HERE because this job holds
+            # least-privilege `contents: read`.
+            #
+            # It is NOT acceptable in code-scanning.yml, which runs with
+            # `security-events: write` — actions/setup-node's own docs warn a
+            # poisoned cache can expose credentials and OIDC tokens to
+            # attacker-controlled code. That job is deliberately left uncached
+            # and always downloads a freshly checksum-verified binary. Do not
+            # "unify" the two workflows by copying this block over; the
+            # asymmetry is the point.
+            cached_bin="$HOME/.cache/agnix-bin/agnix-binary"
+            if [ -f "$cached_bin" ] && [ -f "$cached_bin.sha256" ]; then
+              # Re-check the restored bytes against the digest stored beside
+              # them. FAIL-SAFE, not fail-closed: a mismatch discards the cache
+              # and falls through to a normal download, because agnix is a
+              # best-effort enrichment (ADR 0001 §2/§4) and a corrupt cache must
+              # not red this job. `cut -d' ' -f1` because sha256sum prints
+              # "<digest>  <path>" and the stored path is not the current one.
+              want="$(cut -d' ' -f1 <"$cached_bin.sha256")"
+              got="$(sha256sum "$cached_bin" | cut -d' ' -f1)"
+              if [ "$want" = "$got" ]; then
+                cp "$cached_bin" "$verify_dir/node_modules/agnix/bin/agnix-binary"
+                chmod +x "$verify_dir/node_modules/agnix/bin/agnix-binary"
+                echo "agnix binary restored from cache (sha256 $got)"
+              else
+                echo "::notice::cached agnix binary failed its sha256 re-check — discarding and downloading fresh."
+                rm -f "$cached_bin" "$cached_bin.sha256"
+              fi
+            fi
             if npm install -g "$verify_dir/node_modules/agnix" && agnix --version; then
-              :
+              # Populate the cache on a miss, reading from $verify_dir rather
+              # than from `npm root -g`. That is load-bearing, not stylistic.
+              #
+              # `npm install -g <local-dir>` SYMLINKS the directory rather than
+              # copying it (verified on npm 11, which node-version 24 ships).
+              # Two consequences, both relied on here:
+              #
+              #   1. The postinstall's download therefore writes THROUGH the
+              #      link and lands in $verify_dir/node_modules/agnix/bin/ —
+              #      so $staged_bin below is exactly the freshly downloaded
+              #      binary that install.js just verified against the publisher's
+              #      .sha256 sidecar. The cache is seeded with checksum-verified
+              #      bytes, not with something scavenged from elsewhere.
+              #   2. `npm root -g`/agnix is only a link INTO $verify_dir, so it
+              #      dangles the instant the `rm -rf` below runs. Reading it here
+              #      would work solely because that cleanup happens later — a
+              #      spatial coupling nothing enforces, silently broken if the
+              #      cleanup ever moved up. $verify_dir has no such dependency.
+              #
+              # The install also passed `agnix --version` just above, so a binary
+              # is only ever cached after being proven to run on this runner.
+              #
+              # Guarded by the cache-hit output: on a hit the file is already
+              # what we would write, and actions/cache refuses to overwrite an
+              # existing key anyway.
+              #
+              # Trailing `|| true`: this is an OPTIMIZATION, and under `bash -e`
+              # a failed copy must never convert a working agnix install into a
+              # failed CI job.
+              if [ "$AGNIX_CACHE_HIT" != "true" ]; then
+                staged_bin="$verify_dir/node_modules/agnix/bin/agnix-binary"
+                if [ -f "$staged_bin" ]; then
+                  mkdir -p "$HOME/.cache/agnix-bin" \
+                    && cp "$staged_bin" "$HOME/.cache/agnix-bin/agnix-binary" \
+                    && sha256sum "$HOME/.cache/agnix-bin/agnix-binary" \
+                      >"$HOME/.cache/agnix-bin/agnix-binary.sha256" \
+                    && echo "agnix binary staged for cache save" || true
+                fi
+              fi
             else
               echo "::notice::agnix install failed — tests/lint-agnix-clean.sh will SKIP (exit 77), not fail. agnix is a best-effort enrichment (ADR 0001 §2/§4); the rest of the suite still gates this job."
               # Also surface it on the RUN PAGE (#741). A ::notice:: lives in log
