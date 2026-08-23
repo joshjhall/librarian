@@ -960,12 +960,40 @@ PY
             printf '[note] python-coverage — golem-event-listener did not start; skipping its driver\n'
         fi
 
-        # SIGTERM (never SIGKILL): the handler raises KeyboardInterrupt so the
-        # process exits cleanly and coverage.py flushes its data file.
+        # SIGTERM (never SIGKILL first): the handler raises KeyboardInterrupt so
+        # the process exits cleanly and coverage.py flushes its data file.
+        #
+        # The wait is BOUNDED. A bare `wait` would block forever if that handler
+        # ever stopped firing (a future change swallowing the signal, a process
+        # wedged in a syscall), and this job's only backstop is the 15-minute
+        # workflow timeout — so a stuck listener would burn the whole budget and
+        # report an unattributable job timeout instead of naming itself. SIGKILL
+        # is the last resort: it loses this driver's coverage data, which is
+        # strictly better than losing the entire run's.
         kill -TERM "$LISTENER_PID" 2>/dev/null || true
+        _waited=0
+        while [ "$_waited" -lt 50 ]; do
+            kill -0 "$LISTENER_PID" 2>/dev/null || break
+            sleep 0.1
+            _waited=$((_waited + 1))
+        done
+        if kill -0 "$LISTENER_PID" 2>/dev/null; then
+            printf '[note] python-coverage — golem-event-listener ignored SIGTERM; killing (its coverage data is lost)\n'
+            kill -KILL "$LISTENER_PID" 2>/dev/null || true
+        fi
         wait "$LISTENER_PID" 2>/dev/null || true
-        unset _tries _ready
-        run_count=$((run_count + 1))
+
+        # Count the tool as driven ONLY when the server actually served. The
+        # printed `N ports run` is now a load-bearing signal (ci.yml defers to it
+        # rather than restating a count), so incrementing on the did-not-start
+        # path would inflate exactly the number that is supposed to be trustworthy.
+        # An `if`, not `[ ... ] && ...`: under `set -e` the short-circuit form
+        # returns non-zero when _ready is empty, which would abort the script the
+        # moment anything else followed it.
+        if [ -n "$_ready" ]; then
+            run_count=$((run_count + 1))
+        fi
+        unset _tries _ready _waited
     else
         printf '[note] python-coverage — no free port; skipping golem-event-listener driver\n'
     fi
