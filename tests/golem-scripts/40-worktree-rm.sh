@@ -954,18 +954,37 @@ test_worktree_rm_refuses_dirty_regular_file_with_submodule() {
 # Single-use by design — it belongs to this area, so it stays in this fragment
 # rather than accreting into the shared sandbox library.
 _plant_git_raw_stub() {
-    local sb="$1" blob="$2" path="$3" real
+    local sb="$1" blob="$2" path="$3" real quoted
     real="$(command -v git)"
+    # How REAL git renders <path> in `status --porcelain` at the default
+    # core.quotePath=true. Ask git itself rather than reimplementing its
+    # C-quoting: hand-rolled octal escaping drifts (git escapes only the
+    # non-ASCII bytes, `od` would encode every byte), and a fixture that encodes
+    # its own idea of the format stops testing the real one.
+    #
+    # The probe needs a path git will actually REPORT, and the sandbox's link is
+    # clean on ext4 — so probe a throwaway untracked file of the same name in a
+    # scratch repo, strip the `?? ` prefix, and reuse that rendering.
+    quoted="$(
+        probe="$(command mktemp -d "$WORKDIR/quote.XXXXXX")" || exit 1
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git -C "$probe" init -q 2>/dev/null
+        command touch "$probe/$path" 2>/dev/null
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            git -C "$probe" status --porcelain 2>/dev/null |
+            command sed -n '1s/^...//p'
+    )"
+    [ -n "$quoted" ] || quoted="$path"
     command mkdir -p "$sb/bin"
     command cat >"$sb/bin/git" <<EOF
 #!/usr/bin/env bash
 # Test stub (#768): forge the three git observations a stale-attr symlink
 # produces on virtiofs; defer everything else to the real git.
-_raw=0 _status=0 _wt_remove=0 _forced=0
+_raw=0 _status=0 _wt_remove=0 _forced=0 _bare=0
 for a in "\$@"; do
     case "\$a" in
         --raw) _raw=1 ;;
         --force) _forced=1 ;;
+        core.quotePath=false) _bare=1 ;;
     esac
 done
 # Match the SUBCOMMAND, not a bare \`--porcelain\`: \`worktree list --porcelain\`
@@ -982,11 +1001,66 @@ if [ "\$_raw" = 1 ]; then
     exit 0
 fi
 if [ "\$_status" = 1 ]; then
-    command printf ' M %s\n' "$path"
+    # Emit the status line the REAL git would produce for a stale-attr <path>,
+    # including its C-quoting: when core.quotePath is at its default \`true\`,
+    # git renders a non-ASCII path as \` M "caf\\303\\251.md"\`, and honoring the
+    # script's \`-c core.quotePath=false\` means emitting the bare path instead.
+    # The stub must respect that flag rather than always printing bare, or the
+    # non-ASCII test would assert the stub's own output and pass with OR without
+    # the fix. \$_bare is set from the parsed argv above.
+    if [ "\$_bare" = 1 ]; then
+        command printf ' M %s\n' "$path"
+    else
+        command printf ' M %s\n' "$quoted"
+    fi
     exec "$real" "\$@"
 fi
 if [ "\$_wt_remove" = 1 ] && [ "\$_forced" = 0 ]; then
     command printf 'fatal: %s contains modified or untracked files\n' "$path" >&2
+    exit 1
+fi
+exec "$real" "\$@"
+EOF
+    command chmod +x "$sb/bin/git"
+}
+
+# _plant_git_raw_stub_multi <sandbox> <blobA> <pathA> <blobB> <pathB> — as
+# _plant_git_raw_stub but forging TWO stale symlinks, so the accumulator and the
+# `forced past N` disclosure can be pinned at N=2 (the motivating #760 shape).
+# `status` reports both links; `diff --raw` answers per-path, keyed off the
+# `--` operand the helper passes.
+_plant_git_raw_stub_multi() {
+    local sb="$1" blob_a="$2" path_a="$3" blob_b="$4" path_b="$5" real
+    real="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<EOF
+#!/usr/bin/env bash
+# Test stub (#768): forge TWO stale-attr symlinks; defer everything else.
+_raw=0 _status=0 _wt_remove=0 _forced=0
+for a in "\$@"; do
+    case "\$a" in
+        --raw) _raw=1 ;;
+        --force) _forced=1 ;;
+    esac
+done
+case " \$* " in *" status "*) _status=1 ;; esac
+case " \$* " in *" worktree remove "*) _wt_remove=1 ;; esac
+
+if [ "\$_raw" = 1 ]; then
+    # Answer for whichever path the helper asked about.
+    case " \$* " in
+        *" $path_a"*) command printf ':120000 120000 %s 0000000 M\t%s\n' "$blob_a" "$path_a" ;;
+        *" $path_b"*) command printf ':120000 120000 %s 0000000 M\t%s\n' "$blob_b" "$path_b" ;;
+    esac
+    exit 0
+fi
+if [ "\$_status" = 1 ]; then
+    command printf ' M %s\n' "$path_a"
+    command printf ' M %s\n' "$path_b"
+    exec "$real" "\$@"
+fi
+if [ "\$_wt_remove" = 1 ] && [ "\$_forced" = 0 ]; then
+    command printf 'fatal: contains modified or untracked files\n' >&2
     exit 1
 fi
 exec "$real" "\$@"
@@ -1135,6 +1209,77 @@ test_worktree_rm_refuses_file_replaced_by_symlink() {
     assert_contains "$RUN_OUT" "uncommitted changes" "explains there are uncommitted changes"
     assert_true "[ -L '$sb/.worktrees/issue-65/seed.txt' ]" \
         "the type change is preserved, not force-discarded"
+}
+
+# A NON-ASCII symlink path must reach the carve-out (#768 review). At git's
+# default `core.quotePath=true`, `status --porcelain` reports `café.md` as
+# ` M "caf\303\251.md"` — C-quoted with octal escapes — and the fixed-width
+# `${line#???}` strip then yields that literal escaped string, which no `[ -L ]`
+# can find. The failure is CLOSED (teardown refuses rather than discarding
+# work), which is why no other assertion here catches it: the suite would stay
+# green while the carve-out silently never fired for an internationalized path,
+# re-creating the very deadlock this issue fixes. The script pins
+# `-c core.quotePath=false`; this test is what keeps that from being dropped.
+test_worktree_rm_forces_past_stale_symlink_non_ascii_path() {
+    local sb blob link='café.md'
+    _sandbox_with_symlink sb "$link" CLAUDE.md || return 1
+    run_in "$sb" "$WT_NEW" 66
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds with a non-ASCII symlink path"
+    blob="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb/.worktrees/issue-66" rev-parse "HEAD:$link" 2>/dev/null || true)"
+    assert_not_empty "$blob" "the non-ASCII symlink has an index blob"
+    _plant_git_raw_stub "$sb" "$blob" "$link"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 66 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "worktree-rm tears down past a stale-attr non-ASCII symlink"
+    assert_contains "$RUN_OUT" "stale symlink attr" \
+        "the carve-out fires for a non-ASCII path, not only an ASCII one"
+    assert_true "[ ! -e '$sb/.worktrees/issue-66' ]" \
+        "the worktree directory is gone after rm"
+}
+
+# TWO stale symlinks are counted and disclosed as 2 — the motivating #760 case
+# had exactly two (AGENTS.md and .codegraph), and every other test here stubs a
+# single link, so the accumulator was otherwise pinned only at N=1 where a
+# `stale_links=1` assignment would pass just as well as `+= 1`.
+test_worktree_rm_counts_multiple_stale_symlinks() {
+    local sb blob_a blob_b
+    _sandbox_with_symlink sb AGENTS.md CLAUDE.md || return 1
+    # A second committed symlink, mirroring .codegraph in the real fixture.
+    (cd "$sb" && command ln -s CLAUDE.md SECOND.md)
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git -C "$sb" add -A 2>/dev/null
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb" commit -qm "second symlink" 2>/dev/null
+    run_in "$sb" "$WT_NEW" 67
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds with two committed symlinks"
+    blob_a="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb/.worktrees/issue-67" rev-parse HEAD:AGENTS.md 2>/dev/null || true)"
+    blob_b="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb/.worktrees/issue-67" rev-parse HEAD:SECOND.md 2>/dev/null || true)"
+    _plant_git_raw_stub_multi "$sb" "$blob_a" AGENTS.md "$blob_b" SECOND.md
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            --unset=BASH_ENV \
+            HOME="$sb" PATH="$sb/bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 67 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "worktree-rm tears down past two stale-attr symlinks"
+    assert_contains "$RUN_OUT" "forced past 2 stale symlink attr(s)" \
+        "the disclosure counts BOTH stale symlinks, not just one"
 }
 
 # A DELETED symlink is real work, not a stat artifact — the helper requires the

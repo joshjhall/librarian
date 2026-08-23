@@ -206,6 +206,8 @@ run_fragment_test test_worktree_rm_readonly_tainted_git_env_fails_loud "worktree
 run_fragment_test test_worktree_rm_forces_past_clean_submodule "worktree-rm: forces past a clean populated submodule (#325)"
 run_fragment_test test_worktree_rm_refuses_dirty_regular_file_with_submodule "worktree-rm: refuses dirty regular file even with a submodule (#325)"
 run_fragment_test test_worktree_rm_forces_past_stale_symlink_attrs "worktree-rm: forces past stale symlink attrs, disclosing why (#768)"
+run_fragment_test test_worktree_rm_forces_past_stale_symlink_non_ascii_path "worktree-rm: carve-out fires for a non-ASCII symlink path (#768)"
+run_fragment_test test_worktree_rm_counts_multiple_stale_symlinks "worktree-rm: counts and discloses TWO stale symlinks (#768)"
 run_fragment_test test_worktree_rm_refuses_genuinely_retargeted_symlink "worktree-rm: refuses a genuinely retargeted symlink (#768)"
 run_fragment_test test_worktree_rm_refuses_dirty_regular_file_beside_symlink "worktree-rm: dirty regular file still blocks beside a stale symlink (#768)"
 run_fragment_test test_worktree_rm_refuses_file_replaced_by_symlink "worktree-rm: refuses a regular file replaced by a symlink (#768)"

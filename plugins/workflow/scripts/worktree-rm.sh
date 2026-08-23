@@ -164,7 +164,16 @@ if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"
         # regular file AND a populated submodule, git prints the submodule
         # message, so a bare `--force` would SILENTLY discard the user's changes
         # (verified) — the ignore-submodules status is what tells them apart.
-        dirty="$(command git -C "$wt" status --porcelain --ignore-submodules=all 2>/dev/null || true)"
+        # `-c core.quotePath=false` so a non-ASCII path arrives verbatim rather
+        # than C-quoted-and-octal-escaped (#768 review). At git's default
+        # `core.quotePath=true`, `café.md` is reported as ` M "caf\303\251.md"`,
+        # and the `${line#???}` strip below then yields that literal escaped
+        # string — a path no `[ -L ]` will ever find. That fails CLOSED (teardown
+        # refuses, no work is discarded), but it means the carve-out silently
+        # never fires for an internationalized filename, re-creating the exact
+        # deadlock this fix exists to remove. Verified both ways.
+        dirty="$(command git -C "$wt" -c core.quotePath=false \
+            status --porcelain --ignore-submodules=all 2>/dev/null || true)"
 
         # Subtract stale-attribute symlinks from the dirty set (#768). Each ` M
         # <path>` line whose path is a symlink with an index-identical target is

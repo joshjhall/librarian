@@ -36,6 +36,13 @@ unparseable = "unparseable"
 Unparseable = "Unparseable"
 UNPARSEABLE = "UNPARSEABLE"
 
+# `caf` is not a word here: it is the leading ASCII run of git's C-quoted
+# rendering of `café.md`, which `status --porcelain` emits as
+# `"caf\303\251.md"` when core.quotePath is on (#768). The string is verbatim
+# tool output quoted in the prose that explains the parse, so "correcting" it to
+# `calf` would make the documentation describe output git never produces.
+caf = "caf"
+
 # `BRE` is POSIX Basic Regular Expression — the counterpart to ERE, named
 # throughout the portability prose and the lint gate (#679). typos reads it as
 # `BE`/`BRIE`. The term is standard and cannot be reworded without losing
