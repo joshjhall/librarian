@@ -394,6 +394,15 @@ test_ci_wrong_version_binary_skips() {
         "a wrong-version binary takes the notice-and-skip path, not the healthy one"
     assert_contains "$STEP_SUMMARY" "agnix unavailable" \
         "the version-mismatch skip is visible on the run page too (#741)"
+    # Non-vacuity, the same guard the broken-binary case carries. Every npm rc
+    # is 0 here, so the ONLY thing that can send this case down the skip path is
+    # the version grep — but that is an argument about today's if-condition, not
+    # a property the test enforces. Without this line a refactor that reordered
+    # or short-circuited the condition could reach the notice for an unrelated
+    # reason and the case would still pass, having never exercised the mismatch
+    # it is named for.
+    assert_contains "$STEP_LOG" "agnix --version" \
+        "the version smoke-test was genuinely invoked (else this case passes without testing the mismatch)"
 }
 
 test_ci_happy_path_is_quiet() {
