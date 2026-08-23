@@ -99,6 +99,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     20-worktree-new.sh \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
+    45-worktree-rm-symlink.sh \
     50-attach.sh \
     60-status.sh \
     70-status-checkpoint.sh \
