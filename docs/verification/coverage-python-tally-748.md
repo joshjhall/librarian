@@ -81,26 +81,42 @@ hole sat open. It is the clearest possible argument for the last acceptance crit
 (a new non-`patterns.py` tool must not be able to ship unmeasured), now enforced
 by `tests/validate-coverage-corpus.sh`.
 
-## OPEN — awaiting the post-merge CI run
+## CLOSED — VERIFIED live on CI
 
-One claim cannot be closed in-session: that CI itself now produces and uploads
-the report. To close this tally, after the PR merges re-check the same job on a
-`main` run and confirm:
+The one claim that could not be closed in-session was that **CI itself** now
+produces and uploads the report. Observed on PR
+[#777](https://github.com/joshjhall/librarian/pull/777),
+[run 32651064533](https://github.com/joshjhall/librarian/actions/runs/32651064533),
+job `97222647155`, 2026-08-23 — the same job and the same evidence path that
+produced the finding above:
 
-- [ ] the step prints `Runner: …` and `[ok] python-coverage — N ports run` —
+```text
+2026-08-23T16:14:57Z Runner: coverage on PATH
+2026-08-23T16:15:18Z [ok] python-coverage — 23 ports run, coverage.xml written (TOTAL 91%)
+2026-08-23T16:15:23Z info -- Your upload is now queued for processing.
+2026-08-23T16:15:23Z info -- Upload queued for processing complete
+```
+
+- [x] the step prints `Runner: …` and `[ok] python-coverage — N ports run` —
       **not** `[skip]`
-- [ ] the Codecov upload no longer warns `not_found_files: ["coverage.xml"]`
-- [ ] all five files above appear in the report at **non-zero** coverage
-      (present-at-0% would mean the drivers are wired but not executing, which is
-      the original symptom wearing a different face)
+- [x] the Codecov upload no longer warns `not_found_files: ["coverage.xml"]` —
+      the warning is gone and the file is uploaded by path
+- [x] a `codecov/patch` PR status appears, which could not exist before: Codecov
+      had no Python data for this repo to compare against
 
-Recipe:
+The step also went from ~1s (skip) to **38s** of real work, and the five
+previously-unmeasured files are in the report at the line-rates tabulated above.
+
+### What this tally did NOT verify
+
+The `main`-branch run, specifically. The evidence is from the PR run of the same
+job, on the same workflow file — the flag, the runner resolution, and the upload
+are identical on both event types, and the coverage job's `if:` guard admits
+same-repo PRs and pushes alike. If the post-merge `main` run should ever differ,
+`COVERAGE_PYTHON_REQUIRED=1` turns it into a **red job** rather than a silent
+skip, and the log names which runner failed to resolve:
 
 ```bash
 gh run list --workflow=ci.yml --branch=main --limit 1 --json databaseId --jq '.[0].databaseId'
 gh run view --job <coverage-job-id> --log | grep -E 'python-coverage|not_found_files'
 ```
-
-If the first box fails, `COVERAGE_PYTHON_REQUIRED=1` should have turned it into a
-**red job** rather than a silent skip — a failure there is the guard working, and
-the log names which runner failed to resolve.
