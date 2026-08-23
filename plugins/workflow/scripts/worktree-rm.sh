@@ -58,6 +58,88 @@ if ! [[ "$N" =~ ^[0-9]+$ ]]; then
     exit 2
 fi
 
+# symlink_is_false_dirty <worktree> <path> — true when <path> is a SYMLINK that
+# git reports modified but whose target is byte-identical to the index (#768).
+#
+# On a macOS Docker bind mount (virtiofs/bindfs) a committed symlink can report
+# stale stat attributes — `nlink=0 size=0`. `size=0` defeats git's stat
+# comparison, so git marks the link `M` unconditionally and the dirty gate below
+# reads it as uncommitted work that does not exist. Since #662/#665 (correctly)
+# deny a main-session `git worktree remove --force` against a linked worktree,
+# and this script is the sanctioned alternative, the false positive leaves NO
+# working teardown path at all. Observed on .worktrees/issue-760 (AGENTS.md ->
+# CLAUDE.md, .codegraph -> /cache/codegraph).
+#
+# The condition cannot be cleaned up from inside the worktree — `ln -sfn` clears
+# it for minutes at most, and `git update-index --really-refresh` just prints
+# `needs update` — so it has to be DISTINGUISHED here.
+#
+# READLINK-VS-INDEX IS THE LOAD-BEARING TEST; the mode check alone is a
+# TAUTOLOGY. It is tempting to key off `git diff --raw` showing an unchanged
+# `120000` mode and an all-zero destination hash, but a symlink whose target
+# GENUINELY changed produces exactly that same shape:
+#
+#   :120000 120000 4cbb553 0000000 M   link.md    <- target really changed
+#   :120000 120000 681311e 0000000 M   AGENTS.md  <- stale attrs, target identical
+#
+# The destination hash is all-zero in BOTH cases (git stages no blob for an
+# unstaged change either way), so a check written against mode+hash would wave
+# through every modified symlink and silently discard real work. Only comparing
+# the on-disk target to the INDEX BLOB separates them. The mode test is kept
+# purely as a cheap gate confirming we are looking at a symlink pair at all.
+#
+# FAIL-CLOSED everywhere: an unreadable blob, a missing file, a non-symlink, or
+# any unexpected `--raw` shape returns non-zero, so teardown REFUSES rather than
+# forcing past something it did not understand. A symlink whose target actually
+# differs is real work and must still block.
+#
+# MUTATION-VERIFIED. Neutering the readlink comparison must turn the
+# retargeted-symlink test red, and dropping the residue filter must turn the
+# dirty-regular-file test red; both confirmed. The first mutation initially
+# SURVIVED, and the reason is worth recording: the retarget fixture pointed the
+# link at an UNCOMMITTED file, so `?? OTHER.md` kept the residue non-empty by
+# itself and the refusal never depended on the symlink check at all — the fixture
+# both armed and satisfied the gate. With the readlink test neutered and the
+# destination committed, a genuinely retargeted symlink WAS silently discarded.
+# The `src_mode` gate below is unreachable from this script's own call path (a
+# type change is ` T `, and only ` M ` lines are routed here) and is kept as
+# defensive depth for any future caller, not claimed as tested.
+#
+# Pure bash-3.2 + coreutils; no GNU-only regex (BSD `grep`/`sed` read `\s`/`\|`
+# as literals, per project convention).
+symlink_is_false_dirty() {
+    local wtdir="$1" path="$2" raw src_mode dst_mode blob idx target
+
+    # A symlink must still BE a symlink on disk; a delete or a replace-with-file
+    # is real work.
+    [ -L "$wtdir/$path" ] || return 1
+
+    raw="$(command git -C "$wtdir" diff --raw -- "$path" 2>/dev/null || true)"
+    [ -n "$raw" ] || return 1
+
+    # `:<srcmode> <dstmode> <srcblob> <dstblob> <status>\t<path>`
+    src_mode="$(command printf '%s' "$raw" | command awk '{print $1}')"
+    src_mode="${src_mode#:}"
+    dst_mode="$(command printf '%s' "$raw" | command awk '{print $2}')"
+    blob="$(command printf '%s' "$raw" | command awk '{print $3}')"
+
+    # Both sides must be symlink mode — a type change (link -> regular file)
+    # is real work.
+    [ "$src_mode" = "120000" ] || return 1
+    [ "$dst_mode" = "120000" ] || return 1
+    [ -n "$blob" ] || return 1
+
+    # An all-zero source blob means git has no indexed content to compare
+    # against; treat as real work rather than guessing.
+    case "$blob" in *[!0]*) ;; *) return 1 ;; esac
+
+    idx="$(command git -C "$wtdir" cat-file -p "$blob" 2>/dev/null)" || return 1
+    target="$(command readlink "$wtdir/$path" 2>/dev/null)" || return 1
+
+    # THE test: the indexed link target and the on-disk one must match exactly.
+    [ "$idx" = "$target" ]
+}
+
 root="$(repo_root)"
 cd "$root"
 wt="$GOLEM_WORKTREE_DIR/issue-$N"
@@ -83,8 +165,47 @@ if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"
         # message, so a bare `--force` would SILENTLY discard the user's changes
         # (verified) — the ignore-submodules status is what tells them apart.
         dirty="$(command git -C "$wt" status --porcelain --ignore-submodules=all 2>/dev/null || true)"
+
+        # Subtract stale-attribute symlinks from the dirty set (#768). Each ` M
+        # <path>` line whose path is a symlink with an index-identical target is
+        # a filesystem artifact, not work; everything else — a modified regular
+        # file, an added/deleted path, a genuinely retargeted symlink — stays in
+        # the RESIDUE and still refuses below.
+        #
+        # Filtering the residue rather than short-circuiting on "all lines are
+        # symlinks" is what preserves the load-bearing gate above: a worktree
+        # with BOTH a stale symlink AND a dirty regular file keeps the regular
+        # file in the residue and is refused, so the force can never silently
+        # discard real work.
+        stale_links=0
+        if [ -n "$dirty" ]; then
+            residue=""
+            while IFS= read -r line; do
+                [ -n "$line" ] || continue
+                # Only an unstaged modification (` M path`) can be this artifact.
+                # Staged/added/deleted states are real work by construction.
+                case "$line" in
+                    " M "*)
+                        if symlink_is_false_dirty "$wt" "${line#???}"; then
+                            stale_links=$((stale_links + 1))
+                            continue
+                        fi
+                        ;;
+                esac
+                residue="$residue$line
+"
+            done <<EOF
+$dirty
+EOF
+            dirty="$(command printf '%s' "$residue")"
+        fi
+
         if [ -z "$dirty" ] && command git worktree remove --force "$wt" 2>/dev/null; then
-            command echo "  removed worktree $wt (forced past clean submodules)"
+            if [ "$stale_links" -gt 0 ]; then
+                command echo "  removed worktree $wt (forced past $stale_links stale symlink attr(s))"
+            else
+                command echo "  removed worktree $wt (forced past clean submodules)"
+            fi
             removed=1
         else
             command echo "worktree-rm: $wt has uncommitted changes." >&2
