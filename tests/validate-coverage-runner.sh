@@ -189,6 +189,31 @@ test_path_runner_wins_when_both_resolve() {
         "The module runner is NOT selected ahead of PATH"
 }
 
+# THE MODULE BRANCH'S HAPPY PATH. The ordering test above only ever watches the
+# module runner LOSE, and every other resolving case asserts the PATH runner won
+# — so nothing observed `python3 -m coverage` actually being selected and working.
+# That is the fallback a developer with coverage pip-installed (but not on PATH)
+# hits, and "never chosen ahead of PATH" is not evidence it is choosable at all.
+# Here PATH carries no coverage while the module stub does, so the elif is the
+# only branch left.
+test_module_runner_is_selected_when_alone() {
+    local dir modpath
+    dir="$(make_stub_dir module-only-case)" # deliberately no coverage stub
+
+    modpath="$WORKDIR/pymod-only"
+    command mkdir -p "$modpath/coverage"
+    printf 'class Coverage:\n    pass\n' >"$modpath/coverage/__init__.py"
+
+    run_script "$dir" env PYTHONPATH="$modpath"
+
+    assert_contains "$RUN_OUT" "Runner: python3 -m coverage" \
+        "With only the module resolvable, the module runner IS selected"
+    assert_not_contains "$RUN_OUT" "[skip] python-coverage" \
+        "The module fallback does not skip"
+    assert_not_contains "$RUN_OUT" "Runner: coverage on PATH" \
+        "It does not claim a PATH runner that is not there"
+}
+
 # A `coverage` NAME on PATH is not proof it WORKS. A stub that fails --version
 # must not be selected — it must fall through to the module branch or the skip,
 # never be driven as if healthy.
@@ -225,15 +250,29 @@ test_required_flag_is_inert_when_runner_resolves() {
 # checking the setting. Caught by the mutation round; it is the same shape as a
 # config comment keeping a check green after the config itself is gone. So match
 # the YAML key on a non-comment line instead.
+# The match is also ANCHORED TO THE OWNING STEP. A whole-file grep cannot tell
+# "wired to the Python coverage step" from "appears once somewhere in the
+# workflow", so a future edit that attached the flag to the wrong step would
+# still pass. Scope to the lines following the step header instead.
 test_ci_sets_required_flag() {
-    local ci="$REPO_ROOT/.github/workflows/ci.yml" hits
+    local ci="$REPO_ROOT/.github/workflows/ci.yml" step_block hits
     assert_file_exists "$ci" "ci.yml exists"
 
-    hits="$(command grep -v '^[[:space:]]*#' "$ci" 2>/dev/null |
+    # The `Python coverage` step's own block: from its header to the next step.
+    step_block="$(command grep -v '^[[:space:]]*#' "$ci" 2>/dev/null |
+        command awk '
+            /^[[:space:]]*-[[:space:]]*name:[[:space:]]*Python coverage[[:space:]]*$/ { inb = 1; next }
+            inb && /^[[:space:]]*-[[:space:]]*name:/ { inb = 0 }
+            inb { print }')"
+
+    assert_not_empty "$step_block" \
+        "The 'Python coverage' step is present in ci.yml (else the anchor matches nothing)"
+
+    hits="$(printf '%s\n' "$step_block" |
         command grep -cE '^[[:space:]]*COVERAGE_PYTHON_REQUIRED:[[:space:]]*"?1"?[[:space:]]*$' || true)"
 
     assert_equals "1" "$hits" \
-        "ci.yml SETS COVERAGE_PYTHON_REQUIRED: \"1\" as a real env key (not only in a comment)"
+        "The Python coverage step itself SETS COVERAGE_PYTHON_REQUIRED: \"1\" (real key, not a comment)"
 }
 
 run_test test_sandbox_actually_strips_coverage "Sandbox strips coverage from PATH"
@@ -241,6 +280,7 @@ run_test test_absent_runner_skips_cleanly "Absent runner skips cleanly (exit 0)"
 run_test test_absent_runner_fails_when_required "Absent runner fails when required (exit 1)"
 run_test test_path_runner_is_selected "coverage on PATH is selected"
 run_test test_path_runner_wins_when_both_resolve "PATH wins when both runners resolve"
+run_test test_module_runner_is_selected_when_alone "Module runner is selected when alone"
 run_test test_broken_path_runner_is_not_selected "A broken PATH runner is not selected"
 run_test test_required_flag_is_inert_when_runner_resolves "Required flag inert when runner resolves"
 run_test test_ci_sets_required_flag "ci.yml sets the required flag"
