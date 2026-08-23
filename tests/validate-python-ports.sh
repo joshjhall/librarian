@@ -832,6 +832,10 @@ EOF
 DECOMP_PY="$PLUGINS_DIR/review-audit/skills/check-decomposition/loc_engine.py"
 SIZING_PY_PORT="$PLUGINS_DIR/workflow/skills/ship-issue/loc_engine.py"
 SIZING_SH_PORT="$PLUGINS_DIR/workflow/skills/ship-issue/sizing.sh"
+# The audit lens's bash half. `family_prefix` lives OUTSIDE the shared region
+# there (it is audit-lens-only on the bash side), so its awk twin is extracted
+# from this file rather than from sizing.sh.
+DECOMP_SH_PORT="$PLUGINS_DIR/review-audit/skills/check-decomposition/patterns.sh"
 
 test_py_md_slug_direct() {
     local out rc=0 awk_out
@@ -957,12 +961,129 @@ PY
         "md_slug: the shared awk twin produces the same slug for every rule (#730)"
 }
 
+# family_prefix, called directly in BOTH Python copies and the shared awk twin.
+#
+# THE SIBLING OF md_slug ABOVE, and untested until #772 for the same reason it
+# is easy to miss: `family_prefix` decides which units CLUSTER, and a cluster is
+# only ever surfaced as an aggregate — a seam span, a unit count, a split shape.
+# So a wrong family produces a differently-grouped but still perfectly
+# well-formed finding. The end-to-end fixtures in validate-decomposition-detectors.sh
+# assert those aggregates and would keep passing through a rule change here, as
+# long as the fixture's units happened to still group the same way.
+#
+# The rules, all three exercised below: snake_case splits at the first
+# underscore; camelCase/PascalCase at the first INTERNAL uppercase (index 1, so
+# a leading capital is not itself the split); the result is lowercased, which is
+# what puts `ParseEntry` and `parse_entry` in one family.
+#
+# Driven from ONE case table across all three runtimes, so a rule can never be
+# asserted of one impl and not the others — the same discipline as md_slug.
+test_py_family_prefix_direct() {
+    local out rc=0 awk_out
+    if [ ! -f "$DECOMP_PY" ] || [ ! -f "$SIZING_PY_PORT" ]; then
+        skip_test "check-decomposition or ship-issue loc_engine.py not present"
+        return 0
+    fi
+
+    out="$(python3 - "$DECOMP_PY" "$SIZING_PY_PORT" <<'PY' 2>&1)" || rc=$?
+import importlib.util, sys
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+audit = load("decomp_loc_engine", sys.argv[1])
+review = load("sizing_loc_engine", sys.argv[2])
+
+cases = [
+    # snake_case: split at the FIRST underscore.
+    ("parse_entry", "parse"),
+    ("parse_header_body", "parse"),
+    # camelCase: split at the first internal uppercase.
+    ("parseEntry", "parse"),
+    # PascalCase: the LEADING capital is not the split point (i starts at 1),
+    # and the result lowercases — so this lands in the same family as the two
+    # above, which is the whole point of the rule.
+    ("ParseEntry", "parse"),
+    # No separator at all: the whole name, lowercased.
+    ("parse", "parse"),
+    # ALL-CAPS collapses to its first letter — `PARSE` -> `p`, because the scan
+    # for an internal uppercase stops at index 1. RECORDED, NOT ASSERTED-AS-
+    # DESIRABLE: it is what all three runtimes do, and pinning it is the point
+    # (a "fix" in one impl would break parity with the other two). It is also
+    # harmless in practice, since a top-level unit named in SCREAMING_CASE
+    # normally carries an underscore and takes the branch above.
+    ("PARSE", "p"),
+    # A LEADING underscore is not a split (find returns 0, and the rule
+    # requires > 0) — so a private helper keeps its full stem rather than
+    # collapsing every `_foo`/`_bar` into one empty family.
+    ("_private", "_private"),
+]
+
+bad = 0
+for name, expected in cases:
+    a = audit.family_prefix(name)
+    r = review.family_prefix(name)
+    if a != expected:
+        bad += 1
+        print("FAIL audit family_prefix(%r) -> %r, expected %r" % (name, a, expected))
+    if r != expected:
+        bad += 1
+        print("FAIL review family_prefix(%r) -> %r, expected %r" % (name, r, expected))
+    if a != r:
+        bad += 1
+        print("FAIL family_prefix(%r): audit %r != review %r" % (name, a, r))
+
+if bad == 0:
+    print("OK")
+PY
+
+    assert_equals "0" "$rc" "the direct family_prefix probe ran without error"
+    assert_equals "OK" "$out" \
+        "family_prefix: both Python lenses agree with the expected family for every rule (#772)"
+
+    # --- the awk twin, same table -------------------------------------------
+    # patterns.sh carries family_prefix OUTSIDE the shared region (it is
+    # audit-lens-only on the bash side), so it is extracted from there.
+    if [ ! -f "$DECOMP_SH_PORT" ]; then
+        skip_test "check-decomposition/patterns.sh not present"
+        return 0
+    fi
+    command awk '
+        /^    function family_prefix\(/ { in_f = 1 }
+        in_f { print }
+        in_f && /^    }[[:space:]]*$/ { exit }
+    ' "$DECOMP_SH_PORT" >"$WORKDIR/family_prefix.awk"
+
+    {
+        command cat "$WORKDIR/family_prefix.awk"
+        command printf '%s\n' 'BEGIN { FS = "\t"; bad = 0 }'
+        command printf '%s\n' '{ got = family_prefix($1); if (got != $2) { bad++; printf "FAIL awk family_prefix(<%s>) -> <%s>, expected <%s>\n", $1, got, $2 } }'
+        command printf '%s\n' 'END { if (bad == 0) print "OK" }'
+    } >"$WORKDIR/family_prefix_drive.awk"
+
+    awk_out="$(command printf '%s\n' \
+        "parse_entry	parse" \
+        "parse_header_body	parse" \
+        "parseEntry	parse" \
+        "ParseEntry	parse" \
+        "parse	parse" \
+        "PARSE	p" \
+        "_private	_private" |
+        LC_ALL=C command awk -f "$WORKDIR/family_prefix_drive.awk")"
+    assert_equals "OK" "$awk_out" \
+        "family_prefix: the awk twin produces the same family for every rule (#772)"
+}
+
 run_test test_corpus_non_empty "Python-port corpus is non-empty (gate is not a no-op)"
 run_test test_every_force_bash_var_is_set "Every port's *_FORCE_BASH var is set by the parity test (#695)"
 run_test test_py_is_test_file_direct "check-code-health/patterns.py: is_test_file called directly, both branches (#605)"
 run_test test_py_debug_family_direct "check-code-health/patterns.py: debug families called directly + emission order (#687)"
 run_test test_py_read_yaml_list_direct "check-code-health/patterns.py: _read_yaml_list quote/whitespace/section rules match the bash twin (#686)"
 run_test test_py_md_slug_direct "md_slug: both Python lenses and the shared awk twin agree (#730)"
+run_test test_py_family_prefix_direct "family_prefix: both Python lenses and the awk twin agree (#772)"
 
 while IFS= read -r py; do
     [ -n "$py" ] || continue
