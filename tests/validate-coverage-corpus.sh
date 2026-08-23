@@ -158,27 +158,69 @@ test_declared_are_not_patterns_ports() {
         "NON_PATTERNS_TOOLS holds no patterns.py port (those are glob-driven already)"
 }
 
-# Every declared tool must actually be REFERENCED by a driver in the script.
+# Every declared tool must actually be INVOKED by a driver in the script.
 # Declaring a file without writing its driver would satisfy the set comparison
 # above while measuring nothing — the same silent hole one level in.
+#
+# THE MATCH MUST BE AN INVOCATION, NOT A MENTION. An earlier version of this
+# check counted occurrences of the basename anywhere in coverage-python.sh and
+# required >= 2. That threshold was already met by prose alone — the file's
+# header comment names every tool, and the NON_PATTERNS_TOOLS entry is itself a
+# second hit — so deleting a tool's entire driver block left the gate GREEN while
+# the tool went back to being unmeasured. Verified by mutation: with the whole
+# sizing.py driver removed, the old check still passed. A gate that cannot fail
+# for the reason it exists is worse than no gate, because its comment asserts a
+# guarantee the code does not provide.
+#
+# So resolve the driver's `*_PY` variable from its assignment, then require that
+# variable to be passed to a real run_coverage/exec_coverage invocation.
+#
+# The invocations are LINE-CONTINUED — `run_coverage run --parallel-mode ... \`
+# on one line, `"$SIZING_PY" "$SIZING_LIST" ...` on the next — so the match must
+# run over logical lines, not physical ones. Comment lines are dropped first, and
+# backslash-continuations are then joined, so prose describing a driver can never
+# stand in for one and a real multi-line invocation is still seen.
 test_declared_tools_have_drivers() {
-    local declared tool base missing=""
+    local declared tool base var joined missing=""
     declared="$(declared_tools)"
+
+    # Strip comment-only lines, then fold continuations into logical lines.
+    joined="$(command grep -v '^[[:space:]]*#' "$COVERAGE_SH" 2>/dev/null |
+        command awk '{
+            line = line $0
+            if (sub(/\\$/, "", line)) { next }
+            print line
+            line = ""
+        }
+        END { if (line != "") print line }')"
     while IFS= read -r tool; do
         [ -n "$tool" ] || continue
         base="${tool##*/}"
-        # The driver names the file via a *_PY variable assignment ending in the
-        # basename; the declaration itself is the list line, which is why the
-        # match requires a `/` or `"` boundary and at least two occurrences.
-        if [ "$(command grep -c "$base" "$COVERAGE_SH" 2>/dev/null || echo 0)" -lt 2 ]; then
-            missing="$missing $tool"
+
+        # The variable whose assignment ends in this basename, e.g.
+        # `SIZING_PY="$PLUGINS_DIR/workflow/skills/ship-issue/sizing.py"` -> SIZING_PY.
+        # POSIX classes only (BSD grep has no \w), and the `=` boundary is what
+        # keeps this matching an assignment rather than any mention.
+        var="$(command grep -E "^[[:space:]]*[A-Z_][A-Z0-9_]*=\"[^\"]*/${base}\"" \
+            "$COVERAGE_SH" 2>/dev/null | command head -1 |
+            command sed -e 's/^[[:space:]]*//' -e 's/=.*$//')"
+
+        if [ -z "$var" ]; then
+            missing="$missing $tool(no-driver-variable)"
+            continue
+        fi
+
+        # That variable must reach a real invocation, on the joined logical lines.
+        if ! printf '%s\n' "$joined" |
+            command grep -E "(run_coverage|exec_coverage).*\"\\\$${var}\"" >/dev/null 2>&1; then
+            missing="$missing $tool(declared-but-never-invoked)"
         fi
     done <<EOF
 $declared
 EOF
 
     assert_equals "" "$missing" \
-        "Every declared tool is referenced by a driver in coverage-python.sh (not just listed)"
+        "Every declared tool is INVOKED by a run_coverage driver (not merely mentioned)"
 }
 
 # The corpus fragment that builds these fixtures must be SOURCED. An unlisted

@@ -45,6 +45,7 @@
 #  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
 #  11c4. check-* deterministic coverage tool (tests/validate-patterns-coverage.sh)
 #  11c5. Coverage-corpus completeness (tests/validate-coverage-corpus.sh)
+#  11c6. Coverage runner resolution + fail-loud (tests/validate-coverage-runner.sh)
 #  11d. Shellcheck — bundled shell scripts (tests/lint-shellcheck.sh)
 #  11e. Python lint + format — ruff (tests/lint-python.sh)
 #  11e2. Spell check — typos (tests/lint-typos.sh)
@@ -272,6 +273,7 @@ run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-presc
 run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner-category-parity.sh"
 run_stage "check-* deterministic coverage tool" bash "$SCRIPT_DIR/validate-patterns-coverage.sh"
 run_stage "Coverage-corpus completeness" bash "$SCRIPT_DIR/validate-coverage-corpus.sh"
+run_stage "Coverage runner resolution + fail-loud" bash "$SCRIPT_DIR/validate-coverage-runner.sh"
 run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck.sh"
 run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
 run_stage "Spell check (typos)" bash "$SCRIPT_DIR/lint-typos.sh"
