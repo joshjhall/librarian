@@ -1166,6 +1166,14 @@ pub union ItemRaw {
 mod item_inner {
     pub fn hidden() {}
 }
+
+pub(crate) fn item_scoped() -> u32 {
+    1
+}
+
+pub(in crate::deep) fn item_restricted() -> u32 {
+    2
+}
 EOF
     list="$(list_of "$f")"
     # Twelve units share the `item` family only if each arm captured the real
@@ -1175,9 +1183,13 @@ EOF
     # struct/enum/trait/union/mod cover the bare-keyword alternative, whose
     # capture group was renumbered by this issue's rewrite and which no other
     # fixture exercised as a standalone top-level header.
-    assert_fires "$list" decomposition-seam "fn item_* family (12 units," \
+    # Fourteen units, one family. The last two are visibility forms:
+    # `pub(crate)` always worked, but `pub(in crate::deep)` made the whole
+    # modifier alternative fail and the item went INVISIBLE — this issue's own
+    # defect class, so the pair is here rather than only the broken one.
+    assert_fires "$list" decomposition-seam "fn item_* family (14 units," \
         "rust: every item arm captures its real identifier, not a stray token" \
-        DECOMP_SEAM_MIN_UNITS=12
+        DECOMP_SEAM_MIN_UNITS=14
 }
 
 # The #[cfg(test)] region had TWO independent defects (#727), fixtured

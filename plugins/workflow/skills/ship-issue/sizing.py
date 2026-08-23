@@ -128,8 +128,14 @@ UNIT_RE = {
     # the items INSIDE it are indented and therefore invisible — intended, and
     # the same column-zero rule that makes impl one unit. An inline module is a
     # cut point (it moves to its own file wholesale); its contents are not.
+    # The visibility class admits `:` and `_` so `pub(in crate::foo)` matches
+    # (#727). With `[a-z ]+` the parenthesized group failed, the whole `pub`
+    # alternative failed with it, and the item went INVISIBLE — absorbed into
+    # the previous unit's span. Pre-existing, but it is this issue's own defect
+    # class, and it is one character to close. `pub(crate)` / `pub(super)` were
+    # always fine; only the path form broke.
     "rs": re.compile(
-        r"^(?:(?:pub(?:\([a-z ]+\))?|default|async|unsafe|const"
+        r"^(?:(?:pub(?:\([a-z:_ ]+\))?|default|async|unsafe|const"
         r"|extern(?:[ \t]+\"[^\"]*\")?)[ \t]+)*"
         r"(?:macro_rules![ \t]+([A-Za-z_][A-Za-z0-9_]*)"
         # The generic list must tolerate NESTING: `<[^>]*>` stops at the first
