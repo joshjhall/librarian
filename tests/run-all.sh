@@ -69,6 +69,7 @@
 #  14c1. golem-resolve clearing-signal helper (tests/validate-golem-resolve.sh)
 #  14c2. golem-inbox brokered gate reverse channel (tests/validate-golem-inbox.sh)
 #  14d. golem-watch streaming dispatcher (tests/validate-golem-watch.sh)
+#  14e. token-cost reconciliation harness (tests/validate-token-report.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -298,6 +299,7 @@ run_stage "worktree-scope PreToolUse hook" bash "$SCRIPT_DIR/validate-worktree-g
 run_stage "golem-resolve clearing-signal helper" bash "$SCRIPT_DIR/validate-golem-resolve.sh"
 run_stage "golem-inbox brokered gate reverse channel" bash "$SCRIPT_DIR/validate-golem-inbox.sh"
 run_stage "golem-watch streaming dispatcher" bash "$SCRIPT_DIR/validate-golem-watch.sh"
+run_stage "token-cost reconciliation harness" bash "$SCRIPT_DIR/validate-token-report.sh"
 
 printf '\n========================================\n'
 if [ "$rc" -eq 0 ]; then
