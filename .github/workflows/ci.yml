@@ -236,6 +236,25 @@ jobs:
       # DIFFERENT version's binary under a bumped pin — precisely the drift the
       # pin exists to prevent. A miss must be a clean miss.
       #
+      # CACHE ENTRIES ARE IMMUTABLE, and that shapes the recovery story below.
+      # actions/cache does not create a new entry when the primary key already
+      # matches ("If the provided `key` matches an existing cache, a new cache
+      # is not created"), and the post-job save is skipped outright on an exact
+      # hit. So NOTHING the install step does can repair a persisted entry whose
+      # blob has gone bad: the script can discard the local copy and re-download
+      # for THIS run, but the remote entry under this key stays as it is.
+      #
+      # The consequence is bounded and non-fatal — a corrupt entry degrades this
+      # job to "download every run", which is exactly where it was before this
+      # change, with an extra digest check. It is not a broken build.
+      #
+      # RECOVERY IS A KEY BUMP, and it is manual on purpose. Appending a
+      # generation counter here (`-g2`) invalidates the bad entry and costs one
+      # cold run. The documented alternative — a per-run unique key plus
+      # `restore-keys` — would make saves always write, but it burns cache quota
+      # on every run and reintroduces the prefix-fallback drift this key
+      # deliberately avoids. Not worth it for an event this rare.
+      #
       # The key carries the BARE version (`0.49.0`), never the pinned-spec form
       # that the install step below uses. tests/lint-agnix-clean.sh's
       # agnix_pin_in greps the FIRST pinned-spec match in the file — over the
@@ -324,19 +343,27 @@ jobs:
             # as a supply-chain guarantee; it is a cheap guard against a damaged
             # blob.
             #
-            # What actually bounds poisoning is GitHub's cache scoping, and the
-            # rule is worth stating exactly rather than approximately. A run can
-            # restore caches from its own ref, from the repository's default
-            # branch, and — for a pull_request run — from its base branch.
-            # Sibling branches and CHILD branches are not readable: an entry
-            # written on a topic branch is invisible to a run on main. A
-            # `pull_request` run's own writes are scoped to the merge ref
-            # (refs/pull/N/merge) and restorable only by re-runs of that same
-            # PR, which is why a fork PR cannot reach the entry a later run on
-            # main restores. GitHub separately restricts which triggers may
-            # write the default branch's scope at all (push, schedule,
-            # workflow_dispatch and friends — notably NOT pull_request_target or
-            # workflow_run), naming this threat cache poisoning directly.
+            # What actually bounds poisoning is GitHub's cache scoping. Stated
+            # exactly, from GitHub's dependency-caching reference (an earlier
+            # draft of this comment paraphrased it wrongly, so prefer checking
+            # that page over trusting this summary):
+            #
+            #   - A run restores from its own ref, from the default branch, and
+            #     — for a pull_request run — from its base branch. Sibling and
+            #     CHILD branches are not readable, so an entry written on a
+            #     topic branch is invisible to a run on main.
+            #   - A pull_request run's writes are scoped to the merge ref
+            #     (refs/pull/N/merge), restorable only by re-runs of that PR.
+            #   - Only push, workflow_dispatch, repository_dispatch, delete,
+            #     registry_package, page_build and schedule may create or
+            #     overwrite entries in the default branch's scope. Every other
+            #     event resolving to the default branch gets READ-ONLY access —
+            #     pull_request_target, issue_comment and workflow_run are the
+            #     named examples. GitHub calls this threat cache poisoning
+            #     directly.
+            #
+            # Together those are why a fork PR cannot reach the entry a later
+            # run on main restores.
             #
             # Isolation is not confidentiality, and that cuts the other way:
             # anyone who can open a PR against this repo can READ base-branch
@@ -361,14 +388,20 @@ jobs:
             # asymmetry is the point.
             #
             # Tracks whether the cache actually yielded a USABLE binary, which
-            # is not the same question as `cache-hit`. That output reports only
-            # that the KEY existed at restore time; it says nothing about the
-            # content being intact. Gating the save below on cache-hit alone
-            # would mean a corrupted entry is discarded, re-downloaded, and then
-            # never written back — the key stays corrupt and every later run
-            # repeats the same discard-and-redownload, so the cache silently
-            # stops ever helping again. Starting at 0 and setting it only on a
-            # verified restore makes "should we save?" depend on content.
+            # is a different question from `cache-hit`: that output reports only
+            # that the KEY existed at restore time, never that the content was
+            # intact. Keying the staging step below on content rather than on
+            # key presence keeps the local ~/.cache/agnix-bin coherent with the
+            # binary this run actually installed.
+            #
+            # WHAT THIS DOES NOT DO — stated plainly, because an earlier draft
+            # of this very comment claimed the opposite and was wrong. It does
+            # NOT make a corrupted cache self-healing. Cache entries are
+            # immutable and the post-job save is skipped on an exact key hit
+            # (see the cache step above), so a bad blob under this key survives
+            # no matter what this script writes locally. Recovery is a manual
+            # key bump; the failure mode meanwhile is "downloads every run",
+            # not a broken build.
             agnix_cache_usable=0
             cached_bin="$HOME/.cache/agnix-bin/agnix-binary"
             if [ -f "$cached_bin" ] && [ -f "$cached_bin.sha256" ]; then
@@ -416,22 +449,23 @@ jobs:
               # The install also passed `agnix --version` just above, so a binary
               # is only ever cached after being proven to run on this runner.
               #
-              # Guarded on CONTENT, not on key presence. Skip the write only
-              # when the restore actually produced a verified binary — then the
-              # file on disk is already what we would write, and actions/cache
-              # will not re-upload an existing key anyway.
+              # Guarded on CONTENT, not on key presence: skip the write only
+              # when the restore actually produced a verified binary, since the
+              # file on disk is then already what we would write.
               #
-              # A plain `cache-hit != true` guard would be wrong in the
-              # corrupted-entry case, and wrong silently: cache-hit is `true`
-              # (the key existed), the digest check just deleted the bad files,
-              # and the fresh download would then NOT be written back — leaving
-              # the entry broken so every future run repeats the discard and
-              # re-download. Keying on $agnix_cache_usable makes that path
-              # self-healing, which is the whole point of caching it.
+              # The case that makes content the right test is the CACHE MISS
+              # AFTER A CORRUPT RESTORE. There, the digest check has deleted the
+              # local files, so a `cache-hit`-keyed guard would skip staging and
+              # leave ~/.cache/agnix-bin EMPTY while a perfectly good binary sat
+              # in $verify_dir — the on-disk state would then disagree with the
+              # binary this job actually installed.
               #
-              # Note the local files were removed on that path, so the post-job
-              # save has a clean directory to repopulate rather than a mix of
-              # stale and fresh bytes.
+              # Be clear about the limit, though: staging here only prepares the
+              # directory for the post-job save. On an exact key hit that save
+              # is skipped and the entry is immutable regardless (see the cache
+              # step above), so this does NOT repair a bad remote entry — it
+              # keeps the local state honest and lets a MISS populate the key
+              # correctly. Repairing a corrupt entry means bumping the key.
               #
               # Trailing `|| true`: this is an OPTIMIZATION, and under `bash -e`
               # a failed copy must never convert a working agnix install into a
