@@ -3,7 +3,7 @@
 #
 # The script's whole reason to exist is that the Bifrost gateway fails SILENTLY:
 # `?models=<name>` filters, `?model=<name>` is ignored and returns the UNFILTERED
-# total with HTTP 200 (measured live: 89,027 vs 359,642 requests). A typo does not
+# total with HTTP 200 (measured live: a 4.0x overstatement). A typo does not
 # error — it returns a wrong number that reads as right. The reconciliation guard
 # is what converts that silent wrong answer into a loud failure, so the guard is
 # this suite's real subject; the TSV plumbing is what makes it assertable.
@@ -55,6 +55,11 @@ STUB_DIR=""
 #   dropfilter  ANY request returns the unfiltered total — what the gateway
 #               really does when the filter param is misspelled or dropped
 #   truncated   /api/models returns 1 of a claimed 14
+#   html200     /api/logs/stats returns the web UI's HTML shell with HTTP 200 —
+#               what the REAL gateway does when BIFROST_URL points at the proxy
+#               path instead of the admin root. Needs its own mode because an
+#               unmatched URL path yields a 404 with a valid-JSON body, which
+#               trips a different branch entirely (see the test).
 start_stub() {
     STUB_DIR="$(command mktemp -d)"
     command printf 'normal' >"$STUB_DIR/mode"
@@ -95,6 +100,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_html(self):
+        """Serve the SPA shell with HTTP 200 — the proxy-path failure mode.
+
+        Byte-shape copied from what the live gateway actually returns under
+        …/anthropic: a 200 with an HTML document, so the status check passes and
+        only a body-parse can catch it.
+        """
+        body = (b'<!doctype html>\n<html lang="en">\n<head>'
+                b'<title>Bifrost</title></head>\n<body>'
+                b'<div id=root></div>\n</body>\n</html>\n')
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
@@ -112,6 +133,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/logs/stats":
+            if m == "html200":
+                self._send_html()
+                return
+
             unfiltered = dict(UNFILTERED)
             if m == "tolerance":
                 unfiltered["total_requests"] = 401   # 1 unattributed request
@@ -402,13 +427,92 @@ test_missing_bifrost_url_is_usage_error() {
         "and warns against the plausible-but-wrong candidate"
 }
 
-test_non_json_response_is_failure_not_skip() {
-    # BIFROST_URL aimed at the proxy path returns the web UI's HTML with HTTP
-    # 200. The gateway answered, so this is a failure (1), not unreachable (77).
+test_html_200_is_failure_not_skip() {
+    # THE proxy-path failure mode, and the reason BIFROST_URL exists as its own
+    # variable: ANTHROPIC_BASE_URL addresses …/anthropic, whose /api/logs/stats
+    # serves the web UI's HTML with HTTP 200. The gateway answered, so this is a
+    # failure (1), not unreachable (77) — and the status alone cannot catch it,
+    # only a body parse can.
+    #
+    # This needs the html200 stub mode rather than a bogus URL path. An earlier
+    # version of this test appended /nonexistent to the base URL, which the stub
+    # answers with a 404 carrying a valid-JSON body — that trips the non-2xx
+    # branch instead, a different code path with a different message. Both exit
+    # 1, so the assertion passed while the branch it named went untested:
+    # verified by neutering the `jq -e .` check, after which the whole suite
+    # still passed 26/26.
+    run_tr html200 window --start "$W_START" --end "$W_END"
+    assert_exit 1 "$TR_RC" "HTML with HTTP 200 exits 1, not 77"
+    assert_contains "$TR_OUT" "non-JSON" "The body-parse branch is the one that fired"
+    assert_contains "$TR_OUT" "proxy path" \
+        "and its message names the actual cause an operator must fix"
+}
+
+test_non_2xx_response_is_failure_not_skip() {
+    # The sibling branch: a reachable gateway answering with a non-2xx status.
+    # Kept distinct from the case above so neither can stand in for the other.
     TR_OUT="$(BIFROST_URL="http://127.0.0.1:$STUB_PORT/nonexistent" "$TR_SH" window \
         --start "$W_START" --end "$W_END" 2>&1)"
     TR_RC=$?
-    assert_exit 1 "$TR_RC" "A reachable gateway returning the wrong thing exits 1"
+    assert_exit 1 "$TR_RC" "A non-2xx response exits 1, not 77"
+    assert_contains "$TR_OUT" "HTTP 404" "The status-code branch names the status"
+}
+
+test_missing_dependency_exits_3() {
+    # Exit 3 means "a required dependency is absent", and the message must name
+    # WHICH — a caller dispatching on the code alone would otherwise misdiagnose
+    # a curl-less box as a jq-less one. Forces absence with a PATH holding only
+    # the other tool, rather than skipping when the tool happens to be present:
+    # a skip-if-absent test covers only the arm that is already working.
+    # Absence has to be FORCED, and only a minimal PATH does it: prepending a
+    # stub dir does not work, because `command -v` reports a non-executable file
+    # AND still finds the real binary further along PATH (verified both ways
+    # before writing this). So build a PATH containing symlinks to exactly the
+    # tools the script needs, minus the one under test.
+    #
+    # Mode matters too: the stub must be answering NORMALLY, or the run fails on
+    # whatever the previous mode was doing and the assertion reads a different
+    # error entirely.
+    set_mode normal
+    local dir tool
+    dir="$(command mktemp -d)"
+
+    # Everything token-report.sh reaches through PATH, except curl and jq.
+    for tool in bash printf cat dirname tr awk sleep; do
+        command ln -s "$(command -v "$tool")" "$dir/$tool" 2>/dev/null
+    done
+
+    # `env -i` is load-bearing: a bare `PATH=… bash script` does NOT stay
+    # restricted, because the child bash re-reads the user's startup files and
+    # restores the full PATH — verified, the run then found /usr/bin/curl and
+    # exited 0. A cleared environment is what makes the absence stick.
+    #
+    # --noprofile --norc closes the same door from the other side.
+    local dir tool
+    dir="$(command mktemp -d)"
+    for tool in bash printf cat dirname tr awk sleep; do
+        command ln -s "$(command -v "$tool")" "$dir/$tool" 2>/dev/null
+    done
+
+    # curl absent, jq present -> must name curl.
+    command ln -s "$(command -v jq)" "$dir/jq" 2>/dev/null
+    TR_OUT="$(command env -i "PATH=$dir" "BIFROST_URL=http://127.0.0.1:$STUB_PORT" \
+        "$dir/bash" --noprofile --norc "$TR_SH" \
+        window --start "$W_START" --end "$W_END" 2>&1)"
+    TR_RC=$?
+    assert_exit 3 "$TR_RC" "A missing dependency exits 3"
+    assert_contains "$TR_OUT" "curl" "and the message names the absent tool"
+
+    # jq absent -> jq is checked first, so it must name jq rather than curl.
+    command rm -f "$dir/jq"
+    command ln -s "$(command -v curl)" "$dir/curl" 2>/dev/null
+    TR_OUT="$(command env -i "PATH=$dir" "BIFROST_URL=http://127.0.0.1:$STUB_PORT" \
+        "$dir/bash" --noprofile --norc "$TR_SH" \
+        window --start "$W_START" --end "$W_END" 2>&1)"
+    TR_RC=$?
+    command rm -rf "$dir"
+    assert_exit 3 "$TR_RC" "Still exit 3 when jq is the absent one"
+    assert_contains "$TR_OUT" "jq" "and it names jq, the first check"
 }
 
 test_usage_errors() {
@@ -459,6 +563,51 @@ test_compare_skips_comment_lines() {
     assert_contains "$TR_OUT" "+0" "An unchanged avg/req reports a zero delta, not garbage"
 }
 
+test_compare_percent_only_redacts_absolutes() {
+    # This repo is PUBLIC, and default compare output carries raw request counts,
+    # token volumes and dollar deltas. --percent-only is the publish-safe form,
+    # so its redaction is a security property, not a formatting preference —
+    # assert on the ABSENCE of the absolutes, since a regression here leaks
+    # quietly while the percentages still look right.
+    local dir base cmp
+    dir="$(command mktemp -d)"
+    base="$dir/base.tsv"
+    cmp="$dir/cmp.tsv"
+    command printf '# header\n%s\tmodel-a\t1234\t9876543\t500\t1111.22\t8000\n' "$W_START" >"$base"
+    command printf '# header\n%s\tmodel-a\t2468\t4938271\t500\t2222.44\t2000\n' "$W_END" >"$cmp"
+
+    TR_OUT="$("$TR_SH" compare --baseline "$base" --compare "$cmp" --percent-only 2>&1)"
+    TR_RC=$?
+    command rm -rf "$dir"
+
+    assert_exit 0 "$TR_RC" "--percent-only exits 0"
+    assert_contains "$TR_OUT" "%" "Percentages are still printed"
+    assert_contains "$TR_OUT" "model-a" "Models are still named"
+    # The distinctive absolute values from the fixtures must not appear.
+    assert_not_contains "$TR_OUT" "1234" "Raw request counts are redacted"
+    assert_not_contains "$TR_OUT" "4938271" "Raw token volumes are redacted"
+    assert_not_contains "$TR_OUT" "1111.22" "Dollar figures are redacted"
+    assert_not_contains "$TR_OUT" "+6000" "Absolute avg/req deltas are redacted"
+}
+
+test_compare_default_keeps_absolutes() {
+    # The complement: the default form must still carry absolutes, or the
+    # redaction test above would pass against a compare that prints nothing
+    # useful in either mode.
+    local dir base cmp
+    dir="$(command mktemp -d)"
+    base="$dir/base.tsv"
+    cmp="$dir/cmp.tsv"
+    command printf '# header\n%s\tmodel-a\t1234\t9876543\t500\t1111.22\t8000\n' "$W_START" >"$base"
+    command printf '# header\n%s\tmodel-a\t2468\t4938271\t500\t2222.44\t2000\n' "$W_END" >"$cmp"
+
+    TR_OUT="$("$TR_SH" compare --baseline "$base" --compare "$cmp" 2>&1)"
+    command rm -rf "$dir"
+
+    assert_contains "$TR_OUT" "+1234" "The default form reports the absolute request delta"
+    assert_contains "$TR_OUT" "%" "and the percentages alongside it"
+}
+
 test_compare_missing_file_is_usage_error() {
     TR_OUT="$("$TR_SH" compare --baseline /nonexistent/a --compare /nonexistent/b 2>&1)"
     assert_exit 2 "$?" "An unreadable input file is a usage error"
@@ -499,10 +648,14 @@ run_test test_unreachable_gateway_exits_77 "unreachable gateway exits 77"
 run_test test_unreachable_is_not_reconciliation_failure "77 and 1 do not collapse (unreachable)"
 run_test test_breach_is_not_the_skip_sentinel "77 and 1 do not collapse (breach)"
 run_test test_missing_bifrost_url_is_usage_error "unset BIFROST_URL exits 2, not 77"
-run_test test_non_json_response_is_failure_not_skip "non-JSON response exits 1, not 77"
+run_test test_html_200_is_failure_not_skip "HTML with HTTP 200 (proxy path) exits 1, not 77"
+run_test test_non_2xx_response_is_failure_not_skip "non-2xx response exits 1, not 77"
+run_test test_missing_dependency_exits_3 "missing jq/curl exits 3, naming the tool"
 run_test test_usage_errors "usage errors exit 2"
 run_test test_compare_prints_per_model_deltas "compare prints per-model deltas incl. avg/req"
 run_test test_compare_skips_comment_lines "compare ignores comment lines"
+run_test test_compare_percent_only_redacts_absolutes "compare --percent-only redacts absolutes"
+run_test test_compare_default_keeps_absolutes "compare default still reports absolutes"
 run_test test_compare_missing_file_is_usage_error "compare rejects unreadable files"
 
 stop_stub

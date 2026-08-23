@@ -125,14 +125,14 @@
 #                        request counts and compares them against the same
 #                        window queried unfiltered; a gap wider than this is a
 #                        hard failure (exit 1). A COMPLETE model list reconciles
-#                        exactly (measured: 28,702 vs 28,702, delta 0), so the
-#                        tolerance is headroom, not an observed need — it absorbs
-#                        a request the gateway attributes to no model without
-#                        turning that into a hard failure. Keep it tight: it must
-#                        stay far below the N-fold gap a dropped `models=` filter
-#                        opens (measured 401,828 vs 28,702). Note an incomplete
-#                        model list also inflates the gap, but that is caught
-#                        earlier and by name — see enumerate_models.
+#                        EXACTLY (measured delta 0), so the tolerance is headroom,
+#                        not an observed need — it absorbs a request the gateway
+#                        attributes to no model without turning that into a hard
+#                        failure. Keep it tight: it must stay far below the
+#                        N-fold gap a dropped `models=` filter opens (measured at
+#                        a 14x overstatement). Note an incomplete model list also
+#                        inflates the gap, but that is caught earlier and by
+#                        name — see enumerate_models.
 #                                                          Default: 0.5
 #
 # This file only DEFINES variables (no side effects beyond `export`), so it is

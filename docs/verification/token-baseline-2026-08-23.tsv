@@ -1,6 +1,0 @@
-# token-report window 2026-08-22T18:00:00Z .. 2026-08-23T18:00:00Z
-# reconciled: 28702 per-model requests vs 28702 unfiltered
-# window_start	model	requests	prompt_tokens	completion_tokens	cost	avg_prompt_per_request
-2026-08-22T18:00:00Z	claude-opus-5	12038	2987111272	5047062	2081.56049	248140
-2026-08-22T18:00:00Z	claude-sonnet-5	16663	1368127964	5784191	496.6858015	82105
-2026-08-22T18:00:00Z	text-embedding-3-small	1	4	0	8E-8	4

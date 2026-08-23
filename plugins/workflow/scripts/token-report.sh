@@ -16,10 +16,10 @@
 #   2. `?models=<name>` filters; `?model=<name>` is SILENTLY IGNORED. The singular
 #      spelling returns the *unfiltered* total with HTTP 200 — a wrong number that
 #      reads as right, and one that looks plausible beside a filtered figure
-#      (measured live: models= → 89,027 requests, model= → 359,642). The trap is
-#      not limited to that one typo: an entirely bogus `?zzznotaparam=1` also
-#      returns the unfiltered total, so ANY dropped or renamed param degrades the
-#      same silent way.
+#      (measured live: on a single-model query the singular spelling overstated
+#      the request count by 4.0x). The trap is not limited to that one typo: an
+#      entirely bogus `?zzznotaparam=1` also returns the unfiltered total, so ANY
+#      dropped or renamed param degrades the same silent way.
 #
 # THE GUARD. Because (2) fails silently, correctness cannot rest on spelling the
 # param right. After collecting per-model rows this tool queries the SAME window
@@ -30,10 +30,10 @@
 # all-models against one-model.
 #
 # The tolerance is headroom rather than an observed need: measured against the
-# live gateway with a COMPLETE model list, a window reconciles exactly (28,702 vs
-# 28,702). It exists so a request the gateway attributes to no model cannot turn
-# a healthy window into a hard failure. It must stay far below the N-fold gap a
-# dropped filter opens — measured 401,828 summed against an actual 28,702.
+# live gateway with a COMPLETE model list, a window reconciles EXACTLY (delta 0).
+# It exists so a request the gateway attributes to no model cannot turn a healthy
+# window into a hard failure. It must stay far below the N-fold gap a dropped
+# filter opens — measured at a 14x overstatement on a full-fleet window.
 #
 # NOTE the guard needs >= 2 models to bite. With one model, "unfiltered total" and
 # "that model's total" are the same number under a dropped filter, so the sum
@@ -56,8 +56,15 @@
 #
 # Usage:
 #   token-report.sh window --start <ISO> --end <ISO> [--models a,b] [--json]
-#   token-report.sh compare --baseline <file> --compare <file>
+#   token-report.sh compare --baseline <file> --compare <file> [--percent-only]
 #   token-report.sh reconcile --start <ISO> --end <ISO> [--models a,b]
+#
+# PUBLISHING NOTE. `window` output and the default `compare` output carry raw
+# request counts, token volumes and dollar figures — fleet-wide spend data. This
+# repo is public, so those belong in /tmp, not in a commit or an issue. Use
+# `compare --percent-only` for anything published: it prints percentage deltas
+# alone, which is what the #782–#788 series is judged on anyway (see
+# docs/verification/token-baseline-tally-781.md § Why no absolute figures).
 #
 # Output (window): the TSV contract #788 and the compare path both consume —
 #   window_start<TAB>model<TAB>requests<TAB>prompt_tokens<TAB>completion_tokens<TAB>cost<TAB>avg_prompt_per_request
@@ -69,7 +76,9 @@
 #   1   RECONCILIATION FAILED, or model enumeration truncated. A real, loud
 #       failure: the data is wrong, not absent.
 #   2   usage error, including BIFROST_URL unset
-#   3   jq not on PATH (cannot parse gateway JSON)
+#   3   a required dependency is missing from PATH (jq or curl). One code for
+#       both: the operator response is identical — install the named tool — and
+#       the stderr message always says which one is absent.
 #   77  gateway UNREACHABLE — the reserved skip sentinel. An unavailable gateway
 #       is a skipped gate, never a pass; run-all.sh renders it "[SKIP] … did not
 #       run" rather than "[ok]". Deliberately NOT reachable from a reconciliation
@@ -89,7 +98,7 @@ SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 EXIT_FAIL=1
 EXIT_USAGE=2
-EXIT_NO_JQ=3
+EXIT_NO_DEPS=3
 EXIT_UNREACHABLE=77
 
 # Model-enumeration page size. /api/models SILENTLY TRUNCATES to a small page
@@ -113,9 +122,10 @@ Commands:
              Per-model breakdown for a window, reconciled against the
              unfiltered total. Emits the TSV (or JSON) contract on stdout.
 
-  compare    --baseline <file> --compare <file>
+  compare    --baseline <file> --compare <file> [--percent-only]
              Per-model deltas between two window files: requests, tokens,
-             cost, and average prompt tokens per request.
+             cost, and average prompt tokens per request. --percent-only
+             omits absolute deltas, leaving output safe to publish.
 
   reconcile  --start <ISO> --end <ISO> [--models a,b]
              Run only the reconciliation guard; print the verdict.
@@ -126,7 +136,7 @@ Environment:
   TOKEN_REPORT_TIMEOUT        Per-request timeout, seconds (default 30).
   TOKEN_REPORT_RECONCILE_PCT  Tolerance, percent of total (default 0.5).
 
-Exit: 0 ok · 1 reconciliation failed · 2 usage · 3 no jq · 77 gateway unreachable
+Exit: 0 ok · 1 reconciliation failed · 2 usage · 3 missing jq/curl · 77 gateway unreachable
 EOF
 }
 
@@ -134,12 +144,12 @@ EOF
 
 require_jq() {
     command -v jq >/dev/null 2>&1 ||
-        die "jq not found on PATH — cannot parse gateway JSON" "$EXIT_NO_JQ"
+        die "jq not found on PATH — cannot parse gateway JSON" "$EXIT_NO_DEPS"
 }
 
 require_curl() {
     command -v curl >/dev/null 2>&1 ||
-        die "curl not found on PATH — cannot reach the gateway" "$EXIT_NO_JQ"
+        die "curl not found on PATH — cannot reach the gateway" "$EXIT_NO_DEPS"
 }
 
 # require_base_url — validate BIFROST_URL in the CALLER'S shell, at preflight.
@@ -469,7 +479,7 @@ cmd_reconcile() {
 # avg row is the one that matters: it isolates an efficiency change from a
 # workload change, so it is printed even for models present in only one file.
 cmd_compare() {
-    local baseline="" compare=""
+    local baseline="" compare="" percent_only=0
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -480,6 +490,10 @@ cmd_compare() {
             --compare)
                 compare="${2:-}"
                 shift 2
+                ;;
+            --percent-only)
+                percent_only=1
+                shift
                 ;;
             *)
                 usage
@@ -493,7 +507,7 @@ cmd_compare() {
     [ -r "$baseline" ] || die "baseline file not readable: $baseline" "$EXIT_USAGE"
     [ -r "$compare" ] || die "compare file not readable: $compare" "$EXIT_USAGE"
 
-    command awk -F'\t' '
+    command awk -F'\t' -v percent_only="$percent_only" '
         function pct(a, b) { return (b == 0) ? "n/a" : sprintf("%+.1f%%", (a - b) * 100.0 / b) }
         function sign(x)   { return sprintf("%+d", x) }
         FNR == NR {
@@ -510,26 +524,41 @@ cmd_compare() {
         END {
             printf "%-28s %14s %14s %12s %10s\n", "model", "requests", "prompt_tokens", "cost", "avg/req"
             for (m in seen) {
-                printf "%-28s %14s %14s %12s %10s\n", m, \
-                    sign(c_req[m] - b_req[m]), \
-                    sign(c_prompt[m] - b_prompt[m]), \
-                    sprintf("%+.2f", c_cost[m] - b_cost[m]), \
-                    sign(c_avg[m] - b_avg[m])
-                printf "%-28s %14s %14s %12s %10s\n", "", \
-                    pct(c_req[m], b_req[m]), pct(c_prompt[m], b_prompt[m]), \
-                    pct(c_cost[m], b_cost[m]), pct(c_avg[m], b_avg[m])
+                # --percent-only folds the percentages onto the model row and
+                # omits the absolute row entirely, so the output can be pasted
+                # into a public issue without leaking raw counts or dollars.
+                if (percent_only) {
+                    printf "%-28s %14s %14s %12s %10s\n", m, \
+                        pct(c_req[m], b_req[m]), pct(c_prompt[m], b_prompt[m]), \
+                        pct(c_cost[m], b_cost[m]), pct(c_avg[m], b_avg[m])
+                } else {
+                    printf "%-28s %14s %14s %12s %10s\n", m, \
+                        sign(c_req[m] - b_req[m]), \
+                        sign(c_prompt[m] - b_prompt[m]), \
+                        sprintf("%+.2f", c_cost[m] - b_cost[m]), \
+                        sign(c_avg[m] - b_avg[m])
+                    printf "%-28s %14s %14s %12s %10s\n", "", \
+                        pct(c_req[m], b_req[m]), pct(c_prompt[m], b_prompt[m]), \
+                        pct(c_cost[m], b_cost[m]), pct(c_avg[m], b_avg[m])
+                }
                 t_breq += b_req[m]; t_creq += c_req[m]
                 t_bprompt += b_prompt[m]; t_cprompt += c_prompt[m]
                 t_bcost += b_cost[m]; t_ccost += c_cost[m]
             }
             b_all = (t_breq == 0) ? 0 : t_bprompt / t_breq
             c_all = (t_creq == 0) ? 0 : t_cprompt / t_creq
-            printf "%-28s %14s %14s %12s %10s\n", "TOTAL", \
-                sign(t_creq - t_breq), sign(t_cprompt - t_bprompt), \
-                sprintf("%+.2f", t_ccost - t_bcost), sign(c_all - b_all)
-            printf "%-28s %14s %14s %12s %10s\n", "", \
-                pct(t_creq, t_breq), pct(t_cprompt, t_bprompt), \
-                pct(t_ccost, t_bcost), pct(c_all, b_all)
+            if (percent_only) {
+                printf "%-28s %14s %14s %12s %10s\n", "TOTAL", \
+                    pct(t_creq, t_breq), pct(t_cprompt, t_bprompt), \
+                    pct(t_ccost, t_bcost), pct(c_all, b_all)
+            } else {
+                printf "%-28s %14s %14s %12s %10s\n", "TOTAL", \
+                    sign(t_creq - t_breq), sign(t_cprompt - t_bprompt), \
+                    sprintf("%+.2f", t_ccost - t_bcost), sign(c_all - b_all)
+                printf "%-28s %14s %14s %12s %10s\n", "", \
+                    pct(t_creq, t_breq), pct(t_cprompt, t_bprompt), \
+                    pct(t_ccost, t_bcost), pct(c_all, b_all)
+            }
         }
     ' "$baseline" "$compare"
 }
