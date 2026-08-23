@@ -311,22 +311,44 @@ jobs:
             # PACKAGE is signature-verified, and the binary is exactly what a
             # previous run of this same job downloaded and checksum-verified via
             # install.js's own sha256 sidecar check. What changes: on a cache
-            # hit the binary's provenance rests on the cache key
-            # (os + arch + version) plus the sha256 re-check below, not on a
-            # fresh fetch. That trade is acceptable HERE because this job holds
-            # least-privilege `contents: read`.
+            # hit the binary is NOT re-verified against the publisher's
+            # checksum, because install.js short-circuits before fetching the
+            # sidecar. Its provenance rests instead on the cache key
+            # (os + arch + version) and on who could have written that entry.
             #
-            # It is NOT acceptable in code-scanning.yml, which runs with
-            # `security-events: write` — actions/setup-node's own docs warn a
-            # poisoned cache can expose credentials and OIDC tokens to
-            # attacker-controlled code. That job is deliberately left uncached
-            # and always downloads a freshly checksum-verified binary. Do not
+            # WHAT THE sha256 RE-CHECK BELOW IS AND IS NOT. Both sides of that
+            # comparison are written by this same job, so it detects corruption
+            # and truncation — NOT cache poisoning. An attacker able to write
+            # this key could store a malicious binary alongside a matching
+            # digest and it would verify happily. The control that actually
+            # bounds that is GitHub's cache scoping: an entry written by a PR
+            # branch is visible to that PR and to children of its base, never to
+            # main, so a fork PR cannot poison the entry main later restores.
+            # Do not read the digest check as a supply-chain guarantee; it is a
+            # cheap guard against a damaged blob.
+            #
+            # Nor is the job's `contents: read` a containment story. That scopes
+            # the GITHUB_TOKEN's API reach; it does nothing to constrain a
+            # binary already executing on the runner, which can still read the
+            # job's environment and make outbound requests. What genuinely makes
+            # the trade acceptable here is narrower: this job holds no secrets
+            # beyond that token, and it cannot write code-scanning results.
+            #
+            # code-scanning.yml is the job where that stops being true — it
+            # holds `security-events: write`, so a poisoned binary there could
+            # forge or suppress security findings, and actions/setup-node's docs
+            # warn a poisoned cache can expose credentials and OIDC tokens to
+            # attacker-controlled code. It is deliberately left uncached and
+            # always downloads a freshly checksum-verified binary. Do not
             # "unify" the two workflows by copying this block over; the
             # asymmetry is the point.
             cached_bin="$HOME/.cache/agnix-bin/agnix-binary"
             if [ -f "$cached_bin" ] && [ -f "$cached_bin.sha256" ]; then
               # Re-check the restored bytes against the digest stored beside
-              # them. FAIL-SAFE, not fail-closed: a mismatch discards the cache
+              # them — a CORRUPTION check, not an authenticity one (see the
+              # block above: this job wrote both sides, so it cannot detect a
+              # poisoned entry; cache scoping is what bounds that).
+              # FAIL-SAFE, not fail-closed: a mismatch discards the cache
               # and falls through to a normal download, because agnix is a
               # best-effort enrichment (ADR 0001 §2/§4) and a corrupt cache must
               # not red this job. `cut -d' ' -f1` because sha256sum prints

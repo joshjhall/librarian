@@ -242,8 +242,30 @@ agnix_corpus_reached() {
     fi
 }
 
+# Echo the bare version from ci.yml's agnix binary-cache key, or nothing when
+# the file carries none (#742).
+#
+# The cache key is `agnix-bin-${{ runner.os }}-${{ runner.arch }}-<version>`,
+# and that trailing version is a FOURTH hand-maintained literal alongside the
+# three above. It has to be spelled bare rather than as the `agnix@X.Y.Z` npm
+# spec, because agnix_pin_in takes the first `agnix@` match over the whole file
+# (comments included) and an earlier occurrence would shadow the real install
+# pin. That spelling is what makes this separate extractor necessary: the pin
+# grep cannot see this literal at all.
+#
+# Matched on the `key:` line specifically, not on a bare `agnix-bin-` prefix, so
+# a mention in prose or in the `path:` cannot satisfy it.
+#
+# Same grep-then-sed shape, `head -n 1`, and `|| true` as agnix_pin_in, for the
+# same reasons documented there.
+agnix_cache_key_ver_in() {
+    command grep -oE 'key:[[:space:]]*agnix-bin-.*-[0-9]+\.[0-9]+\.[0-9]+' "$1" 2>/dev/null |
+        command head -n 1 | command sed -n 's/.*-\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' || true
+}
+
 CI_PIN="$(agnix_pin_in "$WORKFLOW_DIR/ci.yml")"
 SCAN_PIN="$(agnix_pin_in "$WORKFLOW_DIR/code-scanning.yml")"
+CI_CACHE_KEY_VER="$(agnix_cache_key_ver_in "$WORKFLOW_DIR/ci.yml")"
 
 test_pins_found() {
     # Fail loud rather than pass vacuously: if the pins stop being greppable
@@ -271,9 +293,36 @@ test_floor_not_stale() {
         "CI pins agnix $CI_PIN but this gate's floor is $AGNIX_MIN_VERSION — the gate would SKIP in CI forever. Raise the pin or lower the floor."
 }
 
+test_cache_key_found() {
+    # Fail loud rather than pass vacuously, exactly as test_pins_found does: if
+    # the key stops being greppable (step renamed, key reshaped), the agreement
+    # assertion below would compare "" against a real pin and the drift check
+    # would silently stop covering anything.
+    assert_not_empty "$CI_CACHE_KEY_VER" \
+        "ci.yml must carry a greppable 'key: agnix-bin-...-X.Y.Z' binary-cache key (found none — did the cache step change shape?) (#742)"
+}
+
+test_cache_key_matches_pin() {
+    # THE POINT OF THIS CHECK (#742). ci.yml's comment states the cache key
+    # "must be bumped in lockstep with that pin" — and until this assertion,
+    # nothing enforced it. A comment claiming a property the code does not have
+    # is worse than none: it tells the next reader the drift is already handled.
+    #
+    # The failure it catches is silent and green. Bump the install pin alone and
+    # the stale key still hits, restoring the PREVIOUS version's binary;
+    # install.js then finds bin/agnix-binary present and skips its download, so
+    # the job installs one version and RUNS another. `agnix --version` is only a
+    # partial backstop — it proves the binary runs, not that it is the pinned
+    # one.
+    assert_equals "$CI_PIN" "$CI_CACHE_KEY_VER" \
+        "ci.yml pins agnix $CI_PIN but its binary-cache key carries $CI_CACHE_KEY_VER (#742) — the stale key would restore the OLD binary and install.js would skip its download, so CI would silently run an agnix it did not pin. Bump both together."
+}
+
 run_test test_pins_found "agnix install pins are discoverable in both workflows"
 run_test test_pins_agree "ci.yml and code-scanning.yml pin the same agnix version"
 run_test test_floor_not_stale "Gate floor is not above the CI pin"
+run_test test_cache_key_found "ci.yml carries a greppable agnix binary-cache key (#742)"
+run_test test_cache_key_matches_pin "Binary-cache key version matches the install pin (#742)"
 
 # --- Signature verification: both install sites must actually check ----------
 # (#740) The pin fixes WHICH version npm serves; it says nothing about whether
