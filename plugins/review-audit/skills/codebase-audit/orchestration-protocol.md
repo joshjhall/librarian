@@ -12,6 +12,19 @@ lives in `finding-schema.md`; grouping templates and platform commands live in
 
 ## Step 1: Map the Codebase
 
+**Route the survey reading to a subagent — load
+`/dev-core:delegating-investigation` and apply its break-even.** Mapping a whole
+repo is the widest read-only investigation any skill in this marketplace
+performs, so it clears the break-even
+(`result_tokens x turns_resident > ~24,568`, the measured median spawn
+prefix, #787) by a wide margin — and the mapping output then stays resident for
+the whole sweep, which is where the multiplier bites. Delegate the tree walks,
+convention traces, and "which files look like X" questions; keep **inline** the
+deterministic steps below whose output the manifest needs verbatim (the `wc -l`
+counts, `git ls-files` checks, and platform detection are single commands, well
+under the break-even). A delegated survey returns the classification and its
+`file:line` anchors, never a transcript.
+
 1. Run `Glob("**/*")` to get the full file tree within `scope`
 1. **Exclude vendored / submodule paths**: Run `git submodule status --recursive`
    via Bash. If any submodules are detected, extract their paths and remove all

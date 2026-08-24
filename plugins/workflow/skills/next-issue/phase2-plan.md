@@ -12,7 +12,19 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
 
 1. Read the full issue body
 
-1. Explore the relevant code areas (use Grep/Glob/Read)
+1. Explore the relevant code areas (use Grep/Glob/Read).
+
+   **Route fan-out reading to a subagent — load `/dev-core:delegating-investigation`
+   and apply its break-even.** Planning is the most investigation-heavy phase in
+   the pipeline, and its reading is exactly the shape that pays: wide surveys
+   collapsing to a short conclusion. Delegate when
+   `result_tokens x turns_resident > ~24,568` (the measured median spawn prefix,
+   #787) — surveying a tree, tracing a convention across the repo, "where is X
+   handled". Read **inline** when the file and line are already known: below the
+   break-even a subagent is slower *and* dearer. A delegated investigation
+   returns the answer plus `file:line` anchors, never a transcript of what it
+   read — otherwise the plan context absorbs the exploration anyway and the
+   delegation bought nothing.
 
 1. **Run the plan-lens sizing step** — load `plan-sizing.md` and follow it.
    Build the candidate file list from the exploration you just did, estimate the
