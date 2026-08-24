@@ -19,6 +19,23 @@
 # therefore only DEFINES test functions; the entry point dispatches them from its
 # explicit ordered run_test list.
 
+# WHY THERE IS NO FORCED-NO-JQ CASE HERE. The cases below skip when jq is absent,
+# which normally hides a branch (the self-skipping-test class). Reviewed twice and
+# measured rather than assumed: with jq stubbed off PATH, golem-status still
+# renders the block as
+#
+#     CONTEXT BUDGET (session-length signal — #784 handoff threshold):
+#       golem-42 — context unknown (no transcript)
+#
+# — the honest degradation, not a silent omission. And deleting the block's own
+# `command -v jq` gate produces BYTE-IDENTICAL output, because the row cannot be
+# populated without jq either way. So no assertion can distinguish gated from
+# ungated: a test here would pass with and without the code it claims to pin.
+#
+# The genuinely risky no-jq path is context-budget.sh's own exit 3, and THAT one
+# is covered by a forced-absence case (test_missing_jq_exits_3 in
+# tests/validate-context-budget.sh), where the two arms really do differ.
+
 # --- golem-status CONTEXT BUDGET block (#784) -------------------------------
 
 # The block renders at all, with the golem's context size and percent.
