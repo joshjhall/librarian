@@ -270,14 +270,24 @@ esac
 # the observed per-request growth, which is about one work step.
 #
 # Integer arithmetic throughout (no bc/awk): threshold is validated > 0 above, so
-# the division is safe, and percent is floored — a floored 79 cannot cross into
-# the advisory band early.
-advise_at=$((CONTEXT_BUDGET_THRESHOLD * 80 / 100))
+# the division is safe.
+#
+# THE ADVISORY BAND IS DECIDED FROM `pct`, NOT FROM A SEPARATELY-FLOORED
+# `advise_at`. Both spellings floor, but flooring two DIFFERENT expressions
+# (`threshold*80/100` vs `context*100/threshold`) lets them disagree: at
+# threshold=3, context=2 the old form computed advise_at=2, so the verdict said
+# `advise`, while pct floored to 66 — a row reading "66% of threshold —
+# approaching handoff". Also at 7/5 (71%) and 9/7 (77%). Only reachable at
+# absurdly small thresholds, never near the 175k default, but it is the same
+# defect class as the leading-zero bug above: one run emitting two numbers that
+# contradict each other, where a reader has no way to tell which is right.
+# Deriving the band from the very number that is printed makes the two agree by
+# construction rather than by the arithmetic happening to round the same way.
 pct=$((context * 100 / CONTEXT_BUDGET_THRESHOLD))
 
 if [ "$context" -ge "$CONTEXT_BUDGET_THRESHOLD" ]; then
     verdict="handoff"
-elif [ "$context" -ge "$advise_at" ]; then
+elif [ "$pct" -ge 80 ]; then
     verdict="advise"
 else
     verdict="ok"

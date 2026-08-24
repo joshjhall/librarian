@@ -189,6 +189,91 @@ EOF
         "no verdict is rendered from an out-of-bounds reading"
 }
 
+# read_context_budget defends against a truncated/partial capture with three
+# guards (non-numeric context_tokens, non-numeric pct, unrecognized verdict), each
+# falling back to `unknown`. The other cases only reach the EARLIER short-circuits
+# (container / missing issue / script failure), so these parse guards were
+# unexercised. Drive them by shadowing context-budget.sh with a stub that exits 0
+# while emitting a well-formed-looking but malformed row — the shape a truncated
+# read produces, and the one that must not render as a real measurement.
+test_status_rejects_malformed_budget_output() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (context budget needs jq)"
+        return 0
+    fi
+    local sb shadow
+    new_sandbox sb
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "blocking": false }
+EOF
+    # golem-status resolves both scripts from its own SCRIPT_DIR, so shadow the
+    # pair into a temp dir: a copy of the real status script beside a stub
+    # context-budget.sh. Exits 0 (so the `|| true` path is not what is being
+    # tested) but emits a verdict outside {ok,advise,handoff} and a non-numeric
+    # count — exactly what a half-written capture looks like.
+    shadow="$sb/shadow"
+    command mkdir -p "$shadow"
+    command cp "$STATUS" "$shadow/golem-status.sh"
+    command cp "$REPO_ROOT/plugins/workflow/scripts/config.sh" "$shadow/config.sh"
+    # THE GUARDS ARE ORDERED, so each needs a stub that SATISFIES the preceding
+    # ones and trips only its own — a single all-garbage stub trips the first
+    # guard and leaves the later two unexercised (they survived mutation that
+    # way). Each row below is malformed in exactly one field.
+    # No RUN_RC here: golem-status exits 0 in every case below (the malformed
+    # output is the subject, not the exit status), so only RUN_OUT is asserted.
+    _cb_case() {
+        command cat >"$shadow/context-budget.sh"
+        command chmod +x "$shadow/context-budget.sh"
+        RUN_OUT="$(cd "$sb" &&
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+                GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+                GOLEM_BASE_REF=HEAD GOLEM_WORKTREE_LOCAL_FILES="" \
+                CLAUDE_PROJECTS_DIR="$sb/projects" \
+                "$REAL_BASH" "$shadow/golem-status.sh" 2>&1)" || true
+    }
+
+    # (a) non-numeric COUNT — pct and verdict are well-formed.
+    _cb_case <<'EOF'
+#!/usr/bin/env bash
+echo "context_tokens=TRUNCA"
+echo "pct_of_threshold=50"
+echo "verdict=ok"
+exit 0
+EOF
+    assert_contains "$RUN_OUT" "context unknown" "a non-numeric count degrades to unknown"
+    assert_not_contains "$RUN_OUT" "TRUNCA" "the garbage count never reaches the table"
+
+    # (b) non-numeric PCT — count and verdict are well-formed, so guard (a) passes
+    # and only the pct guard can catch this.
+    _cb_case <<'EOF'
+#!/usr/bin/env bash
+echo "context_tokens=160000"
+echo "pct_of_threshold=NN"
+echo "verdict=ok"
+exit 0
+EOF
+    assert_contains "$RUN_OUT" "context unknown" "a non-numeric pct degrades to unknown"
+    assert_not_contains "$RUN_OUT" "160000 tokens" \
+        "a valid-looking count is NOT rendered beside an unparsable percent"
+
+    # (c) unrecognized VERDICT — count and pct are well-formed, so both earlier
+    # guards pass and only the allowlist can catch this.
+    _cb_case <<'EOF'
+#!/usr/bin/env bash
+echo "context_tokens=160000"
+echo "pct_of_threshold=91"
+echo "verdict=partial"
+exit 0
+EOF
+    assert_contains "$RUN_OUT" "context unknown" "an unrecognized verdict degrades to unknown"
+    assert_not_contains "$RUN_OUT" "partial" \
+        "an unrecognized verdict is never rendered as if it were real"
+    assert_not_contains "$RUN_OUT" "160000 tokens" \
+        "nor is its reading rendered under some other verdict's wording"
+}
+
 # The script's stderr must not leak into the rendered table. golem-status
 # redirects it in the same breath as absorbing the exit status; dropping that
 # redirect prints a raw diagnostic mid-table (the

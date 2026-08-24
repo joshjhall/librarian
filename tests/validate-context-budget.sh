@@ -201,6 +201,39 @@ test_verdict_ok_just_below_the_advisory_band() {
     assert_contains "$RUN_OUT" "verdict=ok" "just below 80% is ok, not advise"
 }
 
+# pct and verdict must never contradict each other. They used to be floored from
+# two different expressions (`threshold*80/100` vs `context*100/threshold`), which
+# could disagree: threshold=3/context=2 rendered "66% of threshold — approaching
+# handoff", a row whose own two numbers point opposite ways. Only reachable at
+# tiny thresholds, but the verdict is now derived FROM pct, so they agree by
+# construction. This pins that: an `advise` verdict must never carry a pct under
+# 80, whatever the threshold.
+test_pct_and_verdict_never_contradict() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    # THE THRESHOLD IS CHOSEN, NOT ARBITRARY. At 250126 the two spellings
+    # disagree: the old `advise_at = threshold*80/100` floors to exactly 200100,
+    # so `context >= advise_at` was TRUE and the verdict read `advise`, while
+    # `pct = context*100/threshold` floors to 79. That produced the row
+    # "79% of threshold — approaching handoff": one run, two numbers pointing
+    # opposite ways. Deriving the verdict from pct makes it `ok`.
+    #
+    # A threshold where both forms happen to agree (e.g. 300150) passes with AND
+    # without the fix and pins nothing — verified by mutation, which is the only
+    # thing that finds it.
+    run_ctx_budget "$sb" "$sb/.worktrees/issue-42" CONTEXT_BUDGET_THRESHOLD=250126
+    assert_contains "$RUN_OUT" "pct_of_threshold=79" "pct floors to 79"
+    assert_contains "$RUN_OUT" "verdict=ok" \
+        "79% is ok — the old separate-floor form said advise, contradicting its own pct"
+    assert_not_contains "$RUN_OUT" "verdict=advise" \
+        "a sub-80 pct never carries an advise verdict"
+}
+
 # --- fail-loud paths ---------------------------------------------------------
 
 test_missing_transcript_dir_fails_loud() {
@@ -383,6 +416,28 @@ test_missing_jq_exits_3() {
         "emits no verdict — an unparsable transcript is not a healthy budget"
 }
 
+# A RELATIVE worktree arg must resolve to the same slug as an absolute one — the
+# `abs="$(command pwd)/$worktree"` branch. Every other case here passes an
+# absolute path, so that branch was unexercised; both sibling scripts that share
+# this slug logic (golem-token-scrape.sh, golem-transcript-liveness.sh) carry the
+# equivalent case. Asserting the SAME reading as the absolute call is what makes
+# it meaningful: a broken prefix yields a different slug, hence no transcript and
+# an exit 2, not merely a different number.
+test_relative_worktree_arg_resolves_like_absolute() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" ".worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a relative worktree arg resolves and reads cleanly"
+    assert_contains "$RUN_OUT" "context_tokens=200100" \
+        "the relative arg lands on the same slug as the absolute form"
+    assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
+}
+
 # --- knobs + drift guard -----------------------------------------------------
 
 test_threshold_and_floor_are_env_overridable() {
@@ -513,6 +568,7 @@ run_test test_verdict_handoff_at_exactly_the_threshold "handoff at exactly the t
 run_test test_verdict_advise_one_below_the_threshold "advise one token below the threshold"
 run_test test_verdict_advise_at_exactly_eighty_percent "advise at exactly 80% of threshold"
 run_test test_verdict_ok_just_below_the_advisory_band "ok just below the advisory band"
+run_test test_pct_and_verdict_never_contradict "pct and verdict never contradict each other"
 run_test test_missing_transcript_dir_fails_loud "missing transcript dir fails loud (exit 2)"
 run_test test_no_toplevel_record_fails_loud "no top-level record fails loud (exit 2)"
 run_test test_no_subcommand_exits_1 "no subcommand is a usage error"
@@ -524,6 +580,7 @@ run_test test_leading_zero_floor_fails_loud "leading-zero floor fails loud too (
 run_test test_zero_threshold_fails_loud "zero threshold fails loud"
 run_test test_threshold_and_floor_are_env_overridable "threshold + floor are env-overridable"
 run_test test_emits_the_documented_default_threshold_and_floor "emits the documented defaults"
+run_test test_relative_worktree_arg_resolves_like_absolute "a relative worktree arg resolves like an absolute one"
 run_test test_missing_jq_exits_3 "an absent jq exits 3 (absence forced, not observed)"
 run_test test_config_export_propagates_to_the_subprocess "config.sh export propagates to the subprocess"
 run_test test_defaults_match_config_sh "defaults match config.sh (drift guard)"
