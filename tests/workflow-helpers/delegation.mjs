@@ -118,6 +118,23 @@ export function run() {
     );
 
     // =========================================================================
+    // The dispatch tier is NAMED (#785's title: "to sonnet subagents")
+    // =========================================================================
+    // The break-even alone is not actionable: an agent that applies it correctly
+    // and then spawns an OPUS subagent forfeits the repricing half of the saving
+    // entirely (opus-5 is 1.93x sonnet-5 per token on this fleet) while still
+    // paying the 24.5k prefix. The guidance must say which tier, and how to set
+    // it, or "delegate to sonnet subagents" is left to inference.
+    ok(
+      /sonnet/i.test(skill),
+      "delegating-investigation: names the sonnet tier for delegated investigation",
+    );
+    ok(
+      /agentType|model: 'sonnet'|Explore/.test(skill),
+      "delegating-investigation: names a concrete dispatch mechanism, not just a tier",
+    );
+
+    // =========================================================================
     // Conclusions, not transcripts (#785 AC5)
     // =========================================================================
     // This is the half of the saving that repricing does not deliver: if the
@@ -197,8 +214,25 @@ export function run() {
       /const SCOPE_DISCIPLINE\s*=/.test(src),
       "SCOPE_DISCIPLINE: still defined after #785",
     );
+    // End the slice at the const's OWN terminator — the next top-level `const`
+    // declaration — not at whatever comment happens to follow it today.
+    //
+    // The tempting anchor is the neighbouring "// `sanitize`" comment, and it is
+    // a trap: re-wording that unrelated comment makes indexOf return -1, which
+    // slices to end-of-file. The two content assertions below would still PASS
+    // (their phrases are in the const either way), so the window would silently
+    // widen to whole-file matching with nothing failing to announce it — the
+    // gate would keep reporting green while no longer checking what it claims.
+    // So a lost boundary is asserted, never absorbed.
     const sdStart = src.indexOf("const SCOPE_DISCIPLINE =");
-    const sd = sdStart === -1 ? "" : src.slice(sdStart, src.indexOf("\n// `sanitize`", sdStart));
+    ok(sdStart !== -1, "SCOPE_DISCIPLINE: start boundary located");
+    const sdRest = sdStart === -1 ? "" : src.slice(sdStart);
+    const sdEnd = sdRest.search(/\n(?:\/\/[^\n]*\n)*const\s/);
+    ok(
+      sdStart === -1 || sdEnd !== -1,
+      "SCOPE_DISCIPLINE: end boundary located (slice is a real window, not the whole file)",
+    );
+    const sd = sdEnd === -1 ? sdRest : sdRest.slice(0, sdEnd);
 
     // SCOPE_DISCIPLINE is built by concatenating adjacent string literals, so a
     // sentence can straddle a `' + '` join. Collapsing whitespace alone is NOT
@@ -215,18 +249,31 @@ export function run() {
       "SCOPE_DISCIPLINE: reviewers are still told not to survey the repo (#785 AC4)",
     );
 
-    // (b) The leak check. Scoped to the WHOLE harness, not just the
-    // SCOPE_DISCIPLINE literal: the hazard is delegation guidance reaching a
-    // reviewer through ANY prompt builder, and a check pinned to one const would
-    // miss it arriving via a sibling section. The two markers are the ones that
-    // would necessarily appear in pasted guidance — the skill's own namespaced
-    // ref, and the spawn-prefix figure.
+    // (b) The leak check, scanned over PROMPT TEXT ONLY — comments stripped.
+    //
+    // Scope is deliberately wider than SCOPE_DISCIPLINE (the hazard is guidance
+    // reaching a reviewer through ANY prompt builder, so a check pinned to one
+    // const would miss it arriving via a sibling), but it must not be the raw
+    // file: a future editor documenting this very boundary in a comment —
+    // "// see /dev-core:delegating-investigation for why this must not change",
+    // exactly the self-documenting comment the new SKILL.md argues for — would
+    // trip a raw-source check while no reviewer prompt had changed. A gate that
+    // fires on correct, desirable edits gets deleted, and then catches nothing.
+    //
+    // Stripping comments keeps the assertion aimed at what actually reaches an
+    // agent: string literals. Prose in a comment is inert; prose in a prompt is
+    // the regression.
+    const promptText = src
+      .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+      .replace(/^[ \t]*\/\/[^\n]*$/gm, "") // whole-line // comments
+      .replace(/[ \t]+\/\/[^\n'"]*$/gm, ""); // trailing // comments (quote-free only,
+    // so a `//` inside a URL string literal is never mistaken for a comment)
     ok(
-      !src.includes("/dev-core:delegating-investigation"),
+      !promptText.includes("/dev-core:delegating-investigation"),
       "SCOPE_DISCIPLINE: delegation skill ref has NOT leaked into reviewer prompts (#785 AC4)",
     );
     ok(
-      !src.includes(SPAWN_PREFIX),
+      !promptText.includes(SPAWN_PREFIX),
       `SCOPE_DISCIPLINE: the ${SPAWN_PREFIX} break-even has NOT leaked into reviewer prompts (#785 AC4)`,
     );
   }

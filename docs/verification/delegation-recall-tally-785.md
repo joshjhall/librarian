@@ -2,7 +2,8 @@
 
 **Status: OPEN — the instrument, with no rows yet.** This file ships with the
 guidance change ([#785](https://github.com/joshjhall/librarian/issues/785)) and is
-filled by a separate measurement follow-up issue. Rows are appended as windows
+filled by [#797](https://github.com/joshjhall/librarian/issues/797), the
+measurement follow-up that owns AC5/AC6. Rows are appended as windows
 are captured, so this is a running tally rather than a completed report (per
 CLAUDE.md § `docs/verification/`).
 
@@ -23,7 +24,11 @@ Issue #785's AC5 and AC6 ask for a **post-deployment** observation:
 Both need the guidance to be *in agents' hands and running* before there is an
 "after" to measure. The PR that adds the guidance cannot contain its own effect,
 and `BIFROST_URL` is unset in the authoring environment besides. Rather than
-close those ACs unmeasured, a follow-up issue owns them and points here.
+close those ACs unmeasured,
+[#797](https://github.com/joshjhall/librarian/issues/797) owns them and points
+here. That issue — not this file, and not #785 — is what stops this becoming
+"shipped and forgotten": it stays open until the row target below is met and this
+tally is closed with a verdict.
 
 Shipping the recipe now — while the context that produced it is live — is
 deliberate. Re-deriving the method later is exactly the transcript archaeology
@@ -134,6 +139,7 @@ row target is what it is.
 
 ## Verdict
 
-*Not yet reached — no rows.* To be written when the row target is met, in the
-form the prior art demands: state what the data **does** establish and what it
-does not, and do not upgrade "did not visibly break" into "held".
+*Not yet reached — no rows.* To be written under
+[#797](https://github.com/joshjhall/librarian/issues/797) when the row target is
+met, in the form the prior art demands: state what the data **does** establish
+and what it does not, and do not upgrade "did not visibly break" into "held".

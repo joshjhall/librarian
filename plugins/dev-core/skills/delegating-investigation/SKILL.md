@@ -73,6 +73,26 @@ round-trip of latency. When an investigation is genuinely borderline, read it
 inline — the inline cost is bounded and visible, while a spawn is a fixed
 up-front loss.
 
+## Dispatch it at the sonnet tier
+
+**Delegating to opus forfeits half the saving.** The repricing half only happens
+if the subagent runs on a cheaper tier: measured on the same fleet window,
+opus-5 costs **1.93x** sonnet-5 per token here (not 5x — `cache_read` dominates,
+and its ratio is 0.5 vs 0.3). An opus subagent still keeps the exploration out of
+the parent context, but pays parent-tier rates to do it.
+
+Investigation is the shape sonnet handles well: the reading is wide but each
+step is mechanical, and the judgment is concentrated in the short conclusion.
+
+- **Subagent dispatch** — `Explore` (read-only, purpose-built for this) or
+  `general-purpose`.
+- **Inside a `workflow.js` harness** — pass `model: 'sonnet'` alongside
+  `agentType` on the `agent()` call.
+
+Reserve opus for stages where a wrong call compounds — an adversarial judge, a
+final gate — not for reading files. That is the same rule the review and audit
+harnesses already apply when they pin **only** their judge/verify stages to opus.
+
 ## Conclusions, not transcripts
 
 **This is the half of the saving that repricing does not deliver, and it is lost
