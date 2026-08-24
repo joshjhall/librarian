@@ -324,10 +324,19 @@ plugins/workflow/scripts/token-report.sh window \
 | 2026-08-24 00:00–19:00Z (partial) | 3,297 | **142,052** | delta 0, tolerance 16 ✅ |
 
 Both reconciled against the unfiltered total. The two windows agree to **1.6%**
-on `avg_prompt_per_request` despite differing in length and request count by
-more than 5x — useful, because it establishes the **noise floor** against which
-any post-fix delta must be judged. A change smaller than roughly 2% is not
-distinguishable from ordinary day-to-day variation on this fleet.
+on `avg_prompt_per_request` while differing **5.4x in request count** (17,906 vs
+3,297) and **4.3x in throughput** (746 vs 174 requests/hour). Their *durations*
+are close — 24h vs 19h, only 1.26x — so the independence here is in how hard the
+fleet was pushed, not in how long each window ran.
+
+That is what makes the pair useful: it establishes a **noise floor** against
+which any post-fix delta must be judged. A change smaller than roughly 2% is not
+distinguishable from ordinary variation on this fleet.
+
+Treat that bound as **indicative, not statistical**. Two windows on consecutive
+days sharing a start-of-day boundary are not independent samples, so 1.6% is the
+observed spread of one pair rather than a confidence interval. It is a floor to
+clear, not a threshold to test against.
 
 ### Why the delta is still deferred
 
