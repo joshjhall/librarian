@@ -19,7 +19,7 @@ Measured on `feature/issue-782` at `6c0920f`, 2026-08-24.
 | 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated |
 | 2 | `dev-core` guidance documents silence-by-default with measured rationale | **PASS** — `shell-scripting/SKILL.md` § Hook Output Contract |
 | 3 | A hook that must emit `{}` carries a comment saying why | **PASS (vacuous)** — no shipped hook emits on a no-op path, so none needs the comment; the rule is documented for the case that arises |
-| 4 | Before/after measured with `token-report.sh`, delta recorded | **DEFERRED** — see below |
+| 4 | Before/after measured with `token-report.sh`, delta recorded | **DEFERRED** → [#793](https://github.com/joshjhall/librarian/issues/793) |
 | 5 | `docs/verification/` records the out-of-tree finding for operator action | **PASS** — this file |
 
 ## AC#1 — the in-tree audit contradicts the premise
@@ -78,6 +78,7 @@ reverted after each:
 | 3 | `_emit_deny "$reason"` replaced with a silent `exit 0` | **CAUGHT** |
 | 4 | `printf "\n"` (bare newline) at the reachable allow exit | **CAUGHT** — "Observed 1 byte(s)" |
 | 5 | a hook registered with an unresolvable command shape | **CAUGHT** — "command shape is unrecognized" |
+| 6 | live-feed pollution probe (size/line delta around a gate run) | **delta 0** after isolation; **+1 line / +110 bytes** before |
 
 Mutation 1 is worth recording rather than discarding: the obvious mutation
 target was dead code, and a round that stopped there would have "proved" the
@@ -107,6 +108,27 @@ is a distinct way a green gate can be hollow:
    substitution strips trailing newlines, so a hook emitting a bare `\n` read as
    empty and passed against a contract that says *zero bytes*. Now measured with
    `wc -c` on a captured file.
+
+**Cycle 2 found a fourth defect the stdout assertion could not see.** The gate
+ran each hook from the repo, and `golem-notify.sh` resolves its status feed from
+the **actual process cwd** (`git rev-parse --git-common-dir`) — it never reads
+the payload's `cwd`. So running the gate appended a synthetic line to the LIVE
+`.worktrees/.status/feed.jsonl` that `golem-status.sh` and gate-watch read to
+decide golem state. Measured before the fix:
+
+```text
+bytes: 122575 -> 122685   (delta 110)
+lines: 1110 -> 1111 (delta 1)
+POLLUTION CONFIRMED — appended lines:
+{"ts":"2026-08-24T17:31:23Z","golem":"golem-782","event":"idle","message":"Claude is waiting for your input"}
+```
+
+The line was attributed to `golem-782` — the very session running the gate. Every
+stdout assertion passed throughout, so a test about hook output was silently
+corrupting orchestration state that no assertion looked at. Fixed by running each
+hook from a throwaway git repo inside the sandbox, with `GOLEM_*` pointed there
+and `GOLEM_EVENT_SINKS` emptied (so an operator env wired to a real sink cannot
+make this gate POST a synthetic event). Same probe after the fix: **delta 0**.
 
 Fixing (2) surfaced a further bug in the fix itself: a leading **empty** field
 cannot survive `read` with `IFS=<tab>`, because tab is IFS *whitespace* and a
@@ -175,7 +197,11 @@ part of it and cannot patch it. Either fix works:
 Option 1 is the one to take if `hookify` has no configured rules — check with
 `/hookify:list`.
 
-## AC#4 — DEFERRED (recipe)
+Both the operator fix and the measurement that depends on it are tracked in
+[#793](https://github.com/joshjhall/librarian/issues/793), so #782 does not stay
+open on work that lives outside this tree.
+
+## AC#4 — DEFERRED (recipe) → #793
 
 `token-report.sh` **is** available (#781 merged as `6c0920f`), so the original
 blocker is gone. AC#4 is still deferred for two reasons, the second more

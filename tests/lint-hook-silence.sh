@@ -102,16 +102,25 @@ write_noop_payload() {
 # means the command shape was not recognized.
 hook_script_path() {
     local cmd="$1" plugin_root="$2" tok
+    # `set -f` disables pathname expansion for the unquoted split below. Without
+    # it, a command string containing a glob metacharacter (`*`, `?`, `[...]`)
+    # would be expanded against the cwd before the case match — turning an
+    # opaque data string from hooks.json into shell-evaluated input. Today the
+    # corpus is this repo's own trusted files, but the gate's premise is that it
+    # keeps working as more hooks get registered.
+    set -f
     for tok in $cmd; do
         tok="${tok%\"}"
         tok="${tok#\"}"
         case "$tok" in
             *'${CLAUDE_PLUGIN_ROOT}'*)
+                set +f
                 printf '%s' "${tok//\$\{CLAUDE_PLUGIN_ROOT\}/$plugin_root}"
                 return 0
                 ;;
         esac
     done
+    set +f
     printf ''
 }
 
@@ -173,8 +182,39 @@ test_hook_is_silent_on_noop() {
     # newlines, so `out="$(...)"` would read a hook that emits a bare `\n` as
     # empty — passing a byte-emitting hook against a contract that says "zero
     # bytes". The byte count is the contract; the string is only for the message.
+    #
+    # RUN THE HOOK IN AN ISOLATED SANDBOX (cycle-2 review finding). A hook may
+    # have SIDE EFFECTS that the stdout assertion cannot see. golem-notify.sh
+    # resolves its status feed from the ACTUAL process cwd via
+    # `git rev-parse --git-common-dir` — it never reads the payload's `cwd` —
+    # so invoking it from the repo appended a synthetic line to the LIVE
+    # `.worktrees/.status/feed.jsonl` that golem-status.sh and gate-watch read
+    # to decide golem state. Measured before this fix: running the gate grew the
+    # real feed by 1 line / 110 bytes, attributed to the current golem. The
+    # stdout check passed throughout, so the corruption was invisible to the
+    # test causing it.
+    #
+    # Three isolations, each closing one escape route:
+    #   - cwd is a throwaway git repo, so git-common-dir resolves into $SANDBOX
+    #   - GOLEM_* are pointed at the sandbox (belt-and-braces if cwd resolution
+    #     is ever changed to honor the payload)
+    #   - GOLEM_EVENT_SINKS is emptied so an operator env with a real sink
+    #     cannot make this gate POST a synthetic event to a live endpoint
+    if [ ! -d "$SANDBOX/hookcwd/.git" ]; then
+        mkdir -p "$SANDBOX/hookcwd" 2>/dev/null || true
+        git -C "$SANDBOX/hookcwd" init -q >/dev/null 2>&1 || true
+    fi
+
     set +e
-    bash "$CUR_SCRIPT" <"$payload" >"$SANDBOX/stdout.txt" 2>"$SANDBOX/stderr.txt"
+    (
+        cd "$SANDBOX/hookcwd" 2>/dev/null || exit 127
+        GOLEM_WORKTREE_DIR="wt" \
+            GOLEM_STATUS_DIR="wt/.status" \
+            GOLEM_EVENT_SINKS="" \
+            GOLEM_ID="lint-hook-silence" \
+            bash "$CUR_SCRIPT" <"$payload" \
+            >"$SANDBOX/stdout.txt" 2>"$SANDBOX/stderr.txt"
+    )
     rc=$?
     set -e
     err="$(cat "$SANDBOX/stderr.txt")"
@@ -283,6 +323,25 @@ test_detector_fires() {
 
     out="$(bash "$quiet" </dev/null 2>/dev/null)"
     assert_output_empty "$out" "Control: a silent hook is observed as empty"
+
+    # The bare-newline case is why this gate measures BYTES rather than string
+    # emptiness. Command substitution strips trailing newlines, so a hook that
+    # emits only `\n` reads as an empty string and would pass a contract that
+    # says "zero bytes" while having written one. Assert the measurement method
+    # the real check relies on, so a future edit cannot quietly regress it back
+    # to `out="$(...)"` emptiness with every test still green.
+    local newline_only nbytes
+    newline_only="$SANDBOX/newline.sh"
+    printf '#!/usr/bin/env bash\nprintf "\\n"\nexit 0\n' >"$newline_only"
+
+    bash "$newline_only" </dev/null >"$SANDBOX/nl-stdout.txt" 2>/dev/null
+    nbytes="$(command wc -c <"$SANDBOX/nl-stdout.txt" | command tr -d '[:space:]')"
+    assert_equals "1" "$nbytes" \
+        "A hook emitting a bare newline must measure as 1 byte — this is the case string-emptiness misses"
+
+    out="$(bash "$newline_only" </dev/null 2>/dev/null)"
+    assert_output_empty "$out" \
+        "...and the same output read via command substitution IS empty — which is precisely why the gate must not use that method"
 }
 
 run_test test_corpus_non_empty "Hook corpus is non-empty (gate is not a no-op)"
