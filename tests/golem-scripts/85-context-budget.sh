@@ -291,6 +291,52 @@ EOF
         "nor is its reading rendered under some other verdict's wording"
 }
 
+# A MISSING context-budget.sh must degrade to `unknown`, not error the sweep.
+# Every other `unknown` case gets there by RUNNING the script and having it fail
+# or emit garbage; this one removes the script entirely.
+#
+# SCOPE NOTE, measured rather than assumed: this pins the DEGRADATION, not the
+# `[ -x "$ctxbudget" ]` guard specifically. Deleting that guard leaves this test
+# green, because invoking an unresolvable path yields empty stdout, which the
+# empty-capture fallback already maps to `unknown` — so the -x check is an
+# optimization (it avoids a doomed exec and its stderr), not the thing producing
+# the observable behavior, and no assertion over output can distinguish the two.
+# The degradation itself is what an operator depends on, and that IS pinned here.
+test_status_handles_a_missing_context_budget_script() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (context budget needs jq)"
+        return 0
+    fi
+    local sb shadow
+    new_sandbox sb
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "blocking": false }
+EOF
+    # A transcript IS planted: with a working script this row would read 200100,
+    # so the assertion below distinguishes "the guard held" from "there was
+    # nothing to read anyway".
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    shadow="$sb/shadow"
+    command mkdir -p "$shadow"
+    command cp "$STATUS" "$shadow/golem-status.sh"
+    command cp "$REPO_ROOT/plugins/workflow/scripts/config.sh" "$shadow/config.sh"
+    # Deliberately NO context-budget.sh beside it.
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$shadow/golem-status.sh" 2>&1)" || true
+    assert_contains "$RUN_OUT" "context unknown" \
+        "a missing context-budget.sh degrades to unknown, not an error"
+    assert_not_contains "$RUN_OUT" "200100 tokens" \
+        "and certainly not a reading it had no way to obtain"
+    assert_not_contains "$RUN_OUT" "No such file" \
+        "no raw exec error leaks into the table"
+}
+
 # The script's stderr must not leak into the rendered table. golem-status
 # redirects it in the same breath as absorbing the exit status; dropping that
 # redirect prints a raw diagnostic mid-table (the

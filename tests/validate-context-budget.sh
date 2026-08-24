@@ -279,6 +279,30 @@ test_no_subcommand_exits_1() {
     assert_contains "$RUN_OUT" "usage:" "prints usage"
 }
 
+# The arity half of `[ "$#" -ne 2 ] || [ "$1" != "check" ]`. The 0-arg and
+# bogus-subcommand cases both leave `-ne 2` untested: each fails the guard for
+# the OTHER reason. These two pin the arity itself — a relaxed check would start
+# parsing a wrong `$2` instead of refusing.
+test_wrong_arity_exits_1() {
+    local sb
+    new_sandbox sb
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$CTX_BUDGET" check "$sb" extra-arg 2>&1)" || RUN_RC=$?
+    assert_exit 1 "$RUN_RC" "a third argument is a usage error, not a silently ignored extra"
+    assert_contains "$RUN_OUT" "usage:" "prints usage on the over-arity path"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$CTX_BUDGET" check 2>&1)" || RUN_RC=$?
+    assert_exit 1 "$RUN_RC" "a bare 'check' with no worktree is a usage error"
+    assert_contains "$RUN_OUT" "usage:" "prints usage on the under-arity path"
+}
+
 test_unknown_subcommand_exits_1() {
     local sb
     new_sandbox sb
@@ -573,6 +597,7 @@ run_test test_missing_transcript_dir_fails_loud "missing transcript dir fails lo
 run_test test_no_toplevel_record_fails_loud "no top-level record fails loud (exit 2)"
 run_test test_no_subcommand_exits_1 "no subcommand is a usage error"
 run_test test_unknown_subcommand_exits_1 "unknown subcommand is a usage error"
+run_test test_wrong_arity_exits_1 "wrong argument count is a usage error (pins -ne 2)"
 run_test test_non_numeric_threshold_fails_loud "non-numeric threshold fails loud"
 run_test test_leading_zero_octal_threshold_fails_loud "leading-zero threshold fails loud (octal/decimal split)"
 run_test test_invalid_octal_threshold_fails_loud_not_crash "invalid-octal threshold fails loud, does not crash"
