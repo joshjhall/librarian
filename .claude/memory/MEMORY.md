@@ -28,6 +28,9 @@
 
 - [Comments assert intent, not code](comment-asserts-intent-not-code.md) — the comment claims what the code lacks, and HIDES the defect (#542/#498)
 - [Harden one knob, grep siblings](harden-one-knob-grep-every-sibling.md) — recurring class (#487/#489/#493): fix one site, sibling stays exposed
+- [Sync script clobbers a nested region](sync-script-clobbers-nested-region.md) — a wholesale region copy deletes the INNER region's sentinels; sync only after resolving
+- [Redirect order leaks the diagnostic](redirect-order-leaks-the-diagnostic.md) — `>>"$f" 2>/dev/null` still prints; absorbed failure, unabsorbed noise
+- [Execute the workflow step, don't grep it](execute-the-workflow-step-dont-grep-it.md) — a `run:` block's regressions are re-orderings every grep survives
 - [Scope-drift check before first commit](scope-drift-check-before-first-commit.md) — `git status` before staging, not `git diff` after (#542/#498)
 - [Anchored regex → tautological test](anchored-regex-tautological-test.md) — a fixture the anchor never matched passes with AND without the fix (#599)
 - [Gate + evidence converge → tautology](gate-and-evidence-converge-tautology.md) — one fixture both ARMS and SATISFIES the gate (#600)
@@ -37,7 +40,10 @@
 - [Config prose satisfies its own assertion](config-prose-satisfies-its-own-assertion.md) — delete the setting, the comment explaining it keeps the raw-text check green (#737)
 - [End-marker indent over-grows the region](end-marker-indent-overgrows-the-region.md) — a moved START delimiter errors loud; a moved END one silently swallows what follows (#737)
 - [Measure a suppression before keeping it](measure-suppression-before-keeping-it.md) — neuter the predicate and diff; a guard can buy 0 rows and cost a false negative (#604)
+- [Stale artifact makes the stub pass](stale-artifact-makes-the-stub-pass.md) — a leftover output file satisfied the check a no-output stub should have failed; delete it and re-run
 - [Reproduce outside the tool first](reproduce-outside-the-tool-first.md) — curl before instrumenting; A/B your own capture; a constant duration is a timeout, not congestion
+- [A preserved fixture can heal](preserved-fixture-can-heal.md) — the kept repro self-healed and proved nothing; capture evidence now, verify against what's broken NOW (#768)
+- [A hanging push is the pre-push suite](push-hang-is-the-prepush-suite.md) — 461s of gates before any bytes move; fetches stay instant. Budget 10 min, never --no-verify
 - [Self-skipping test hides the risky branch](self-skipping-test-hides-the-risky-branch.md) — skip-if-tool-absent covers only the present arm; force absence instead (#543)
 - [Explicit path still honors gitignore](explicit-path-still-honors-gitignore.md) — a DIRECTORY arg re-applies .gitignore; only a FILE is exempt (#578)
 - [Expand before you scope a path](path-guard-must-expand-before-scoping.md) — unexpanded `~` → nonexistent path → fail-open → silent bypass; same target must decide alike in every spelling (#662)
@@ -46,6 +52,7 @@
 - [A surviving mutation may be a real no-op](surviving-mutation-may-be-a-real-no-op.md) — prove unreachable-vs-untested before writing a test that cannot fail (#589) (#663)
 - [A GNU host can't mutate a GNU-ism](gnu-host-cannot-mutate-a-gnu-ism.md) — reverting to the GNU spelling is a NO-OP; mutate to the other platform's outcome (#679)
 - [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)
+- [Pinned behavior may be a bug report](pinned-behavior-may-be-a-bug-report.md) — "recorded, not asserted-as-desirable" is a deferred defect; fix the row, comment, and every runtime together
 - [Test defined but never registered](test-defined-but-never-registered.md) — no `run_test` line = never runs; guard by NAME SETS, not counts (#596)
 - [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry masks later assertions; use `?.`
 - [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice (#544, #549)
