@@ -3,6 +3,9 @@ name: third-party-fix-needs-a-durable-lever
 description: A patch to an installed plugin's files is clobbered by the next update — enumerate the config levers before editing bytes
 metadata:
   type: feedback
+  status: stable
+  stale_after: 2027-02-28
+  stale_check: "The durable-lever TABLE rows, not the lesson. Re-check whether a per-plugin hooks-only toggle (a `hookOverrides` counterpart to `skillOverrides`) has been added to the Claude Code settings schema, and whether the hookify `{}` emission was fixed upstream — either would change which row is the right answer. The method (enumerate config levers before editing installed bytes) does not expire."
 ---
 
 When the fix for a defect lands in a **third-party plugin's installed files**,
