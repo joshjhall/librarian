@@ -266,6 +266,7 @@ run_fragment_test test_status_marks_an_advisory_golem_distinctly "golem-status: 
 run_fragment_test test_status_renders_an_ok_golem_without_a_marker "golem-status: an under-budget golem carries no attention marker (#784)"
 run_fragment_test test_status_renders_unknown_when_no_transcript "golem-status: an unreadable budget renders 'context unknown', never a zero (#784)"
 run_fragment_test test_status_renders_container_golem_as_not_readable "golem-status: a Mode-3 container golem renders not-readable, never scraped (#784)"
+run_fragment_test test_status_rejects_a_traversal_issue_field "golem-status: a traversal .issue degrades to unknown, builds no path (#784)"
 run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: context-budget stderr does not leak into the table (#784)"
 run_fragment_test test_liveness_working "golem-transcript-liveness: turn-in-flight -> working (#248)"
 run_fragment_test test_liveness_idle "golem-transcript-liveness: turn-ended -> idle (#248)"

@@ -9,9 +9,13 @@
 # that reads as healthy.
 #
 # Sourced by tests/validate-golem-scripts.sh, which defines the path consts
-# (LAUNCH / WT_NEW / STATUS / CTX_BUDGET / ...) and sources
-# tests/lib/golem-sandbox.sh for the shared sandbox plumbing (new_sandbox /
-# run_status_scrape / plant_transcript / ...) BEFORE this file. This fragment
+# (LAUNCH / WT_NEW / STATUS / ...) and sources tests/lib/golem-sandbox.sh for the
+# shared sandbox plumbing (new_sandbox / run_status_scrape / plant_transcript /
+# ...) BEFORE this file. Note there is deliberately NO CTX_BUDGET const here:
+# this fragment never invokes context-budget.sh directly, only through
+# golem-status.sh ($STATUS), which resolves it from its own SCRIPT_DIR. The
+# direct-invocation const lives in the separate tests/validate-context-budget.sh.
+# This fragment
 # therefore only DEFINES test functions; the entry point dispatches them from its
 # explicit ordered run_test list.
 
@@ -146,6 +150,43 @@ EOF
         "the host-side transcript is NOT scraped for a container golem"
     assert_not_contains "$RUN_OUT" "HANDOFF DUE" \
         "a container row never renders a verdict it cannot have measured"
+}
+
+# The cache is a co-written JSON file, so `.issue` is untrusted input. A
+# traversal-bearing or non-numeric value must never reach the worktree path this
+# helper builds — it degrades to `unknown` instead. Without the numeric guard the
+# path escapes .worktrees/ and context-budget.sh probes wherever it resolves.
+test_status_rejects_a_traversal_issue_field() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (context budget needs jq)"
+        return 0
+    fi
+    local sb dir slug
+    new_sandbox sb
+    # THE TRAVERSAL MUST REACH A REAL TRANSCRIPT, or this test is a tautology:
+    # an unguarded `../` path resolves to a nonexistent directory, context-budget
+    # exits 2, and the row renders `unknown` — the same output the guard produces,
+    # so the case would pass with AND without the fix (verified: it did).
+    #
+    # So plant a transcript at exactly the slug the ESCAPED path computes. With
+    # the guard the row is `unknown`; without it, golem-status renders a real
+    # reading from outside .worktrees/ — the two arms now differ.
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    slug="$(slug_for "$sb/.worktrees/issue-42/../escaped")"
+    dir="$sb/projects/$slug"
+    command mkdir -p "$dir"
+    command printf '%s\n' "$TRANSCRIPT_CTX_HANDOFF" >"$dir/session.jsonl"
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": "42/../escaped",
+  "branch": "feature/issue-42", "state": "impl", "blocking": false }
+EOF
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "context unknown" \
+        "a non-numeric/traversal .issue degrades to unknown"
+    assert_not_contains "$RUN_OUT" "200100 tokens" \
+        "the escaped path's transcript is NOT read — the guard blocked the path"
+    assert_not_contains "$RUN_OUT" "HANDOFF DUE" \
+        "no verdict is rendered from an out-of-bounds reading"
 }
 
 # The script's stderr must not leak into the rendered table. golem-status

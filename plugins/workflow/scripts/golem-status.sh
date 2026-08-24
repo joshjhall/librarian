@@ -275,6 +275,16 @@ read_context_budget() {
         return 0
     fi
     _rcb_issue="$(jq -r '.issue // empty' "$_rcb_f" 2>/dev/null)"
+    # NUMERIC-GUARD .issue before it builds a path. The cache is a co-written JSON
+    # file, so every field read from it is treated as untrusted here — the same
+    # defense-in-depth the ELAPSED computation below applies to this very field
+    # (see its `case "$_ecr_issue"` guard). Without it a corrupted or hand-edited
+    # `.issue` carrying `../` would build a worktree path outside .worktrees/,
+    # which context-budget.sh then turns into a projects-dir slug and probes. A
+    # non-numeric value degrades to `unknown`, which is the honest answer.
+    case "$_rcb_issue" in
+        '' | *[!0-9]*) _rcb_issue="" ;;
+    esac
     _rcb_out=""
     if [ -n "$_rcb_issue" ] && [ -x "$ctxbudget" ]; then
         _rcb_wt="$root/$GOLEM_WORKTREE_DIR/issue-$_rcb_issue"

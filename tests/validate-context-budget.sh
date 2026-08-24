@@ -346,6 +346,36 @@ test_zero_threshold_fails_loud() {
     assert_exit 1 "$RUN_RC" "a zero threshold exits 1 rather than dividing by zero"
 }
 
+# The documented exit 3 (jq absent). Every other case in this file SKIPS when jq
+# is missing, so without this one the no-jq branch is covered only in an
+# environment that happens to lack jq — where every sibling case skips too and the
+# suite goes dark rather than testing it. That is the
+# self-skipping-test-hides-the-risky-branch class: skip-if-tool-absent covers only
+# the present arm. So FORCE the absence instead, with jq genuinely installed:
+# stub a bash-only PATH (BASH_ENV unset so /etc/bash_env cannot restore it),
+# mirroring gate_age_unit's nojq mode.
+test_missing_jq_exits_3() {
+    if jq_missing; then
+        skip_test "jq genuinely absent — this case must force absence, not observe it"
+        return 0
+    fi
+    local sb stub
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    stub="$sb/stub-bin"
+    command mkdir -p "$stub"
+    command ln -sf "$REAL_BASH" "$stub/bash"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            PATH="$stub" HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$CTX_BUDGET" check "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
+    assert_exit 3 "$RUN_RC" "an absent jq exits 3, its own documented code"
+    assert_contains "$RUN_OUT" "jq not found on PATH" "names the missing tool"
+    assert_not_contains "$RUN_OUT" "verdict=" \
+        "emits no verdict — an unparsable transcript is not a healthy budget"
+}
+
 # --- knobs + drift guard -----------------------------------------------------
 
 test_threshold_and_floor_are_env_overridable() {
@@ -375,6 +405,45 @@ test_emits_the_documented_default_threshold_and_floor() {
     run_ctx_budget "$sb" "$sb/.worktrees/issue-42"
     assert_contains "$RUN_OUT" "threshold=175000" "the derived default threshold"
     assert_contains "$RUN_OUT" "floor=91000" "the measured default floor"
+}
+
+# config.sh's comment claims the two knobs must be EXPORTED because the consumer
+# is reached as a subprocess. Nothing tested that claim: run_ctx_budget passes the
+# vars straight into the child's environment, which works whether or not config.sh
+# exports them — so dropping the `export` would leave every other case green while
+# an operator's override silently reverted to the child's inlined defaults.
+#
+# This drives the real path: set the var, SOURCE config.sh, then invoke
+# context-budget.sh as a plain child with no per-invocation env assignment. Only a
+# genuine `export` carries the value across that boundary.
+test_config_export_propagates_to_the_subprocess() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    # The override is set as a SHELL variable inside the child, NOT as an env
+    # prefix on the invocation. That distinction is the whole test: a var passed
+    # as `VAR=x cmd` is already in cmd's environment and propagates to
+    # grandchildren whether or not config.sh exports it — so an env-prefix
+    # version of this test passes with the `export` line deleted, which a
+    # mutation round caught. Assigning it as a plain shell variable means only
+    # config.sh's own `export` can carry it across the subprocess boundary.
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" -c 'CONTEXT_BUDGET_THRESHOLD=999999; . "$1"; "$2" check "$3"' \
+            _ "$CONFIG_SH" "$CTX_BUDGET" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "the sourced-config subprocess call succeeds"
+    assert_contains "$RUN_OUT" "threshold=999999" \
+        "the override crosses the subprocess boundary — proves the export"
+    assert_not_contains "$RUN_OUT" "threshold=175000" \
+        "the child did NOT fall back to its own inlined default"
+    assert_contains "$RUN_OUT" "verdict=ok" \
+        "and the propagated value actually drove the verdict"
 }
 
 # context-budget.sh inlines its defaults so it runs standalone; config.sh also
@@ -448,6 +517,8 @@ run_test test_leading_zero_floor_fails_loud "leading-zero floor fails loud too (
 run_test test_zero_threshold_fails_loud "zero threshold fails loud"
 run_test test_threshold_and_floor_are_env_overridable "threshold + floor are env-overridable"
 run_test test_emits_the_documented_default_threshold_and_floor "emits the documented defaults"
+run_test test_missing_jq_exits_3 "an absent jq exits 3 (absence forced, not observed)"
+run_test test_config_export_propagates_to_the_subprocess "config.sh export propagates to the subprocess"
 run_test test_defaults_match_config_sh "defaults match config.sh (drift guard)"
 run_test test_reads_the_newest_session_transcript "reads the newest session transcript"
 
