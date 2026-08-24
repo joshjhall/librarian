@@ -68,18 +68,51 @@ Two properties of that gate are deliberate:
 
 ### Mutation round — the gate can fail
 
-A gate that cannot fail is not a gate. Three mutations, on the tree, reverted
-after each:
+A gate that cannot fail is not a gate. Mutations applied to the tree and
+reverted after each:
 
 | # | Mutation | Result |
 | --- | --- | --- |
 | 1 | `printf "{}"` appended at end of `bash-guard.sh` | **SURVIVED** — line is unreachable (script exits earlier); confirmed by direct run: still 0 bytes. Not a gate defect |
-| 2 | `printf "{}"` at the **reachable** allow exit (`[ -z "$matched" ]`) | **CAUGHT** — `bash-guard.sh :: PreToolUse is silent on no-op ... FAIL` |
-| 3 | `_emit_deny "$reason"` replaced with a silent `exit 0` | **CAUGHT** — `worktree-guard.sh still emits on the DENY path ... FAIL` |
+| 2 | `printf "{}"` at the **reachable** allow exit (`[ -z "$matched" ]`) | **CAUGHT** |
+| 3 | `_emit_deny "$reason"` replaced with a silent `exit 0` | **CAUGHT** |
+| 4 | `printf "\n"` (bare newline) at the reachable allow exit | **CAUGHT** — "Observed 1 byte(s)" |
+| 5 | a hook registered with an unresolvable command shape | **CAUGHT** — "command shape is unrecognized" |
 
 Mutation 1 is worth recording rather than discarding: the obvious mutation
 target was dead code, and a round that stopped there would have "proved" the
 gate worked while testing nothing.
+
+Mutations 4 and 5 exist because the **adversarial pre-PR review found three real
+defects in the first version of this gate**, all of which had passed the first
+mutation round. They are recorded here rather than quietly fixed, because each
+is a distinct way a green gate can be hollow:
+
+1. **The deny assertion self-skipped in CI.** It ran only when the *ambient*
+   checkout was already a linked worktree, and called `skip_test` otherwise.
+   `actions/checkout` produces a plain clone where `git-dir == git-common-dir`,
+   so the assertion skipped on **every CI run** — the one environment that gates
+   merge — while passing locally in the golem worktree where mutation 3 was
+   measured. The evidence looked complete and covered nothing where it counted.
+   Fixed by **building** a throwaway superproject + linked worktree inside the
+   sandbox, so the check runs identically in any topology. Verified by running
+   the gate inside a real plain clone (`git-dir: .git`, `common-dir: .git`):
+   6/6 pass, **0 skipped**.
+2. **An unresolvable command shape vanished from the corpus.** A registration
+   whose command lacks the `${CLAUDE_PLUGIN_ROOT}` literal resolved to an empty
+   script path and was silently dropped, while `test_corpus_non_empty` stayed
+   green on its siblings — exactly the "silently exempt" outcome this gate
+   claims to prevent. Now a loud failure naming the command.
+3. **`assert_output_empty` was fed newline-stripped output.** Command
+   substitution strips trailing newlines, so a hook emitting a bare `\n` read as
+   empty and passed against a contract that says *zero bytes*. Now measured with
+   `wc -c` on a captured file.
+
+Fixing (2) surfaced a further bug in the fix itself: a leading **empty** field
+cannot survive `read` with `IFS=<tab>`, because tab is IFS *whitespace* and a
+leading run of it is stripped — every column shifted left and the row was
+misreported as a different hook (`registers Bash -> PostToolUse`). Corrected
+with an explicit `UNRESOLVED` sentinel that keeps the field count fixed.
 
 ## The real emitter — NOT `claude-host-event.sh`
 

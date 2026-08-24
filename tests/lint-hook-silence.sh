@@ -118,7 +118,7 @@ hook_script_path() {
 # --- Corpus: every hook registered in every plugin's hooks.json -------------
 # Flat "<script>\t<event>\t<matcher>" rows (no assoc arrays — bash-3.2 clean).
 build_corpus() {
-    local hj plugin_root
+    local hj plugin_root _resolved
     while IFS= read -r hj; do
         [ -n "$hj" ] || continue
         plugin_root="$(cd "$(dirname "$(dirname "$hj")")" && pwd)"
@@ -130,7 +130,19 @@ build_corpus() {
             | [$ev.key, $m, .command] | @tsv
         ' "$hj" | while IFS="$(printf '\t')" read -r ev matcher cmd; do
             [ -n "$cmd" ] || continue
-            printf '%s\t%s\t%s\n' "$(hook_script_path "$cmd" "$plugin_root")" "$ev" "$matcher"
+            # An unrecognized command shape resolves to an EMPTY script path. Emit
+            # the row anyway, carrying the raw command as a 4th field: the
+            # consumer turns it into a loud failure. Dropping it here instead
+            # would make an unrecognized registration silently exempt — the exact
+            # "covered automatically" claim this gate makes about itself.
+            # NOTE the UNRESOLVED sentinel: an empty first field cannot survive
+            # `read` with IFS=<tab>, because tab is IFS *whitespace* and a
+            # leading run of it is stripped — every column would shift left and
+            # the row would be misread as a different hook. A literal sentinel
+            # keeps the field count fixed.
+            _resolved="$(hook_script_path "$cmd" "$plugin_root")"
+            [ -n "$_resolved" ] || _resolved="UNRESOLVED"
+            printf '%s\t%s\t%s\t%s\n' "$_resolved" "$ev" "$matcher" "$cmd"
         done
     done <<EOF
 $(find "$REPO_ROOT/plugins" -name hooks.json -type f | command sort)
@@ -144,7 +156,7 @@ CUR_SCRIPT=""
 CUR_EVENT=""
 CUR_MATCHER=""
 test_hook_is_silent_on_noop() {
-    local payload out err rc
+    local payload out err rc nbytes
     payload="$SANDBOX/payload.json"
 
     assert_file_exists "$CUR_SCRIPT" \
@@ -157,14 +169,20 @@ test_hook_is_silent_on_noop() {
         return 0
     fi
 
+    # Capture to a FILE and measure bytes. Command substitution strips trailing
+    # newlines, so `out="$(...)"` would read a hook that emits a bare `\n` as
+    # empty — passing a byte-emitting hook against a contract that says "zero
+    # bytes". The byte count is the contract; the string is only for the message.
     set +e
-    out="$(bash "$CUR_SCRIPT" <"$payload" 2>"$SANDBOX/stderr.txt")"
+    bash "$CUR_SCRIPT" <"$payload" >"$SANDBOX/stdout.txt" 2>"$SANDBOX/stderr.txt"
     rc=$?
     set -e
     err="$(cat "$SANDBOX/stderr.txt")"
+    nbytes="$(command wc -c <"$SANDBOX/stdout.txt" | command tr -d '[:space:]')"
+    out="$(command head -c 200 "$SANDBOX/stdout.txt")"
 
-    assert_output_empty "$out" \
-        "$(basename "$CUR_SCRIPT") ($CUR_EVENT) wrote to stdout on its NO-OP path. Every byte here becomes a hook_success attachment re-read for the rest of the session (#782: 574,677 context tokens / 132.5M re-read over 24h for '{}' payloads). Emit nothing when there is no decision to convey; if a payload is genuinely required by the harness for this event, say so in a comment in the hook."
+    assert_equals "0" "$nbytes" \
+        "$(basename "$CUR_SCRIPT") ($CUR_EVENT) wrote to stdout on its NO-OP path. Every byte here becomes a hook_success attachment re-read for the rest of the session (#782: 574,677 context tokens / 132.5M re-read over 24h for '{}' payloads). Emit nothing when there is no decision to convey; if a payload is genuinely required by the harness for this event, say so in a comment in the hook. Observed ${nbytes} byte(s): '$(printf '%s' "$out" | command tr -d '\n')'"
 
     assert_equals "0" "$rc" \
         "$(basename "$CUR_SCRIPT") ($CUR_EVENT) exited $rc on its no-op path; a no-op fire must exit 0. stderr: $(printf '%s' "$err" | command head -2)"
@@ -174,31 +192,73 @@ test_hook_is_silent_on_noop() {
 # Silence-on-no-op alone is satisfiable by a hook that never speaks at all,
 # including when it must DENY. That would be a correctness regression wearing a
 # green gate, so assert the deny path still produces its envelope.
+#
+# THE FIXTURE IS BUILT, NOT BORROWED. An earlier version of this check ran only
+# when the AMBIENT checkout happened to be a linked worktree, and called
+# `skip_test` otherwise. That is the self-skipping-test trap: `actions/checkout`
+# produces a plain clone where git-dir EQUALS git-common-dir, so the assertion
+# skipped on every CI run — the one environment that gates merge — while passing
+# locally in a golem worktree and looking covered. A skip reads the same as a
+# pass at a glance, so the deny direction was unguarded exactly where it
+# mattered. This version CONSTRUCTS a throwaway superproject + linked worktree
+# in the sandbox, so it runs identically in a plain clone, in CI, and inside a
+# golem worktree.
+make_worktree_fixture() {
+    local root="$1"
+    mkdir -p "$root/main" || return 1
+    git -C "$root/main" init -q >/dev/null 2>&1 || return 1
+    git -C "$root/main" config user.email "lint@example.invalid" || return 1
+    git -C "$root/main" config user.name "lint-hook-silence" || return 1
+    printf 'fixture\n' >"$root/main/README.md" || return 1
+    git -C "$root/main" add README.md >/dev/null 2>&1 || return 1
+    git -C "$root/main" commit -qm "fixture" >/dev/null 2>&1 || return 1
+    git -C "$root/main" worktree add -q "$root/wt" -b fixture-wt >/dev/null 2>&1 || return 1
+    return 0
+}
+
 test_deny_path_still_emits() {
-    local guard payload out
+    local guard payload out fixture main_root wt_root
     guard="$REPO_ROOT/plugins/workflow/hooks/worktree-guard.sh"
     assert_file_exists "$guard" "worktree-guard.sh must exist to verify the deny direction"
     [ -f "$guard" ] || return 0
 
-    # A worktree-escaping target: cwd inside a linked worktree, file_path in the
-    # main checkout. Only meaningful when this checkout HAS a linked worktree to
-    # name; otherwise the guard correctly allows and there is nothing to assert.
-    local wt
-    wt="$(git -C "$REPO_ROOT" rev-parse --git-dir 2>/dev/null || true)"
-    if [ "$wt" = "$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || true)" ]; then
-        skip_test "deny-direction check needs a linked worktree; this is a primary checkout"
+    if ! command -v git >/dev/null 2>&1; then
+        skip_test "git unavailable — cannot build the worktree fixture"
         return 0
     fi
 
-    local main_root
-    main_root="$(cd "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)/.." && pwd)"
+    fixture="$SANDBOX/deny-fixture"
+    if ! make_worktree_fixture "$fixture"; then
+        # A fixture that cannot be built is a broken environment, not a reason
+        # to pass: fail loudly rather than silently skipping the half of the
+        # contract this assertion exists to hold.
+        assert_true false \
+            "Could not build the git worktree fixture for the deny-direction check. This assertion must not be skipped — it is the only automated guard that worktree-guard.sh still emits when it must DENY."
+        return 0
+    fi
+
+    main_root="$(cd "$fixture/main" && pwd)"
+    wt_root="$(cd "$fixture/wt" && pwd)"
+
+    # A worktree-escaping target: cwd inside the linked worktree, file_path in
+    # the superproject checkout.
     payload="$SANDBOX/deny.json"
     printf '{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"%s/README.md","old_string":"a","new_string":"b"},"cwd":"%s","session_id":"lint-hook-silence"}\n' \
-        "$main_root" "$REPO_ROOT" >"$payload"
+        "$main_root" "$wt_root" >"$payload"
 
     out="$(bash "$guard" <"$payload" 2>/dev/null || true)"
     assert_contains "$out" '"permissionDecision":"deny"' \
         "worktree-guard.sh must STILL emit a deny envelope for a worktree-escaping edit. Silence-on-no-op must not be achieved by going silent everywhere — that trades a token cost for a correctness hole (#475/#782)."
+}
+
+# A registered hook whose command shape `hook_script_path` cannot resolve must
+# FAIL, never vanish. Otherwise a hook registered with a hardcoded path (or any
+# spelling other than the ${CLAUDE_PLUGIN_ROOT} literal) would be silently
+# exempt while `test_corpus_non_empty` still passed on its siblings.
+CUR_RAWCMD=""
+test_unresolved_command() {
+    assert_true false \
+        "hooks.json registers $CUR_EVENT with a command this gate cannot resolve to a script path: '$CUR_RAWCMD'. Teach hook_script_path() that shape — an unresolved registration must not silently drop out of the corpus."
 }
 
 # --- Guards on the gate itself ----------------------------------------------
@@ -228,11 +288,16 @@ test_detector_fires() {
 run_test test_corpus_non_empty "Hook corpus is non-empty (gate is not a no-op)"
 run_test test_detector_fires "Silence detector distinguishes a '{}' emitter from a silent hook"
 
-while IFS="$(printf '\t')" read -r script event matcher; do
-    [ -n "$script" ] || continue
+while IFS="$(printf '\t')" read -r script event matcher rawcmd; do
+    [ -n "$event" ] || continue
     CUR_SCRIPT="$script"
     CUR_EVENT="$event"
     CUR_MATCHER="$matcher"
+    CUR_RAWCMD="$rawcmd"
+    if [ "$script" = "UNRESOLVED" ]; then
+        run_test test_unresolved_command "$event :: hooks.json command shape is unrecognized"
+        continue
+    fi
     run_test test_hook_is_silent_on_noop "$(basename "$script") :: $event is silent on no-op"
 done <<EOF
 $CORPUS
