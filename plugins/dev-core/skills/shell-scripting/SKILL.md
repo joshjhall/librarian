@@ -197,8 +197,19 @@ examples of the split:
 
 **If a hook genuinely must emit on a no-op path** — because the harness requires
 a payload for that event — say so **in a comment in the hook**, so the emission
-reads as required rather than accidental. Verify it first: empty stdout is
-accepted for `PreToolUse`, `PostToolUse`, and `Notification`.
+reads as required rather than accidental. Verify it first — and expect the
+answer to be that it does not need to. Exit 0 with **no output** is the
+documented way to say "no decision, proceed"; it is not ambiguous and is not an
+error. `{}` is strictly worse than silence: same outcome, plus a JSON
+parse/validate pass, plus the record. Confirmed for `PreToolUse`,
+`PostToolUse`, and `Notification`.
+
+**One class of event inverts the stakes.** On `UserPromptSubmit` and
+`SessionStart`, plain-text stdout is **injected into the model's context** by
+design — that is the mechanism those events exist for. A stray `echo` there is
+not merely a wasted record; it silently becomes instruction-shaped text the
+model reads on every turn. Silence-by-default matters most, not least, on the
+events where output is meaningful.
 
 `tests/lint-hook-silence.sh` enforces this. It **executes** every hook
 registered in `plugins/**/hooks/hooks.json` against a no-op payload and requires

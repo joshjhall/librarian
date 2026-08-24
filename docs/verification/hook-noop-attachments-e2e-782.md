@@ -19,7 +19,7 @@ Measured on `feature/issue-782` at `6c0920f`, 2026-08-24.
 | 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated |
 | 2 | `dev-core` guidance documents silence-by-default with measured rationale | **PASS** — `shell-scripting/SKILL.md` § Hook Output Contract |
 | 3 | A hook that must emit `{}` carries a comment saying why | **PASS (vacuous)** — no shipped hook emits on a no-op path, so none needs the comment; the rule is documented for the case that arises |
-| 4 | Before/after measured with `token-report.sh`, delta recorded | **DEFERRED** → [#793](https://github.com/joshjhall/librarian/issues/793) |
+| 4 | Before/after measured with `token-report.sh`, delta recorded | **PARTIAL** — two pre-fix baselines captured and reconciled; the after-window cannot exist until the fix has been live, so the delta closes on [#793](https://github.com/joshjhall/librarian/issues/793) |
 | 5 | `docs/verification/` records the out-of-tree finding for operator action | **PASS** — this file |
 
 ## AC#1 — the in-tree audit contradicts the premise
@@ -219,76 +219,150 @@ An empty rule set evaluates to `{}`, and `{}` is printed anyway. That is the
 ~281-char, zero-information attachment, 1,645 times in one session.
 
 This matches the issue's own per-hook table, where `PreToolUse:Bash` (771 fires)
-and `PostToolUse:Bash` (768) account for ~428k of the ~463k measured chars — the
-exact two events `hookify` registers.
+and `PostToolUse:Bash` (768) account for ~428k of the ~463k measured chars — two
+of the four events `hookify` registers.
 
-### Operator action (out of this repo's tree)
+A later probe (below) widened this: `hookify` registers **four** events, and all
+four emit. The issue's table lists only the two tool events because those
+dominate by fire count, but `Stop` and `UserPromptSubmit` emit the same `{}`.
 
-`hookify` is a third-party plugin under
-`~/.claude/plugins/marketplaces/claude-plugins-official/`. Librarian ships no
-part of it and cannot patch it. Either fix works:
+### Operator action — APPLIED 2026-08-24
 
-1. **Disable it** if its rules are unused — remove
-   `"hookify@claude-plugins-official": true` from `enabledPlugins` in
-   `~/.claude/settings.json`. This is the whole saving with no behavior change
-   when no rules are configured.
-2. **Patch the two hooks** to print only when there is something to say:
+`hookify` is third-party, under `~/.claude/plugins/`. Librarian ships no part of
+it and cannot patch it durably. The audit widened during this run, and two
+findings changed the recommendation.
 
-   ```python
-   if result:                      # was: always print, "even if empty"
-       print(json.dumps(result), file=sys.stdout)
-   ```
+**All four hooks emit, not two.** #782's table only covered the `PreToolUse` /
+`PostToolUse` pair. Executed against a no-match payload for each registered
+event, with no rule files present:
 
-   Keeps rule evaluation working; removes the empty-payload attachments.
+#### VERIFIED — live
 
-Option 1 is the one to take if `hookify` has no configured rules — check with
-`/hookify:list`.
+| hook | event | rc | stdout |
+| --- | --- | --- | --- |
+| `pretooluse.py` | `PreToolUse:Bash` | 0 | `{}` (2 bytes) |
+| `posttooluse.py` | `PostToolUse:Bash` | 0 | `{}` (2 bytes) |
+| `stop.py` | `Stop` | 0 | `{}` (2 bytes) |
+| `userpromptsubmit.py` | `UserPromptSubmit` | 0 | `{}` (2 bytes) |
 
-Both the operator fix and the measurement that depends on it are tracked in
-[#793](https://github.com/joshjhall/librarian/issues/793), so #782 does not stay
-open on work that lives outside this tree.
+`RuleEngine.evaluate_rules()` documents its own empty case — *"Empty dict `{}` if
+no rules match"* — and all four hooks print it anyway.
 
-## AC#4 — DEFERRED (recipe) → #793
+**A patch cannot be made durable.** Every lever was checked:
 
-`token-report.sh` **is** available (#781 merged as `6c0920f`), so the original
-blocker is gone. AC#4 is still deferred for two reasons, the second more
-important than the first:
+| Lever | Verdict |
+| --- | --- |
+| Patch the hook files | **Clobbered by `plugin update`.** Also **three** md5-identical copies exist (`cache/unknown`, `cache/<sha>`, and the `marketplaces/` checkout) — easy to patch the one that is not executing |
+| Per-plugin hook toggle | **Does not exist.** Enable/disable is whole-plugin only; `skillOverrides` covers skills, with no `hookOverrides` counterpart |
+| `disableAllHooks` | **Global.** Would also kill `worktree-guard.sh` and `bash-guard.sh` — trades a token cost for a correctness hole |
+| `allowedHttpHookUrls` | **N/A** — applies to HTTP-type hooks; these are `command` type |
 
-1. `BIFROST_URL` is unset in this environment and absent from `.env`, and
-   `token-report.sh` requires it with no default (deliberately — see its header:
-   `ANTHROPIC_BASE_URL` is the *proxy* path and answers `/api/logs/stats` with
-   HTML + HTTP 200).
-2. **A #782 before/after would measure ~0 by construction.** No in-tree hook
-   changed behavior in this PR — all three were already silent — so there is no
-   in-tree delta to attribute. Running the harness against this change would
-   produce a number that means nothing.
+So disabling is the only durable fix, and `enabledPlugins` survives updates.
 
-The measurable delta belongs to the **operator fix above**, not to this PR. Run
-this once `hookify` is disabled or patched, on a comparable session:
+**What made it free here:** no `hookify.*.local.md` rule file exists anywhere on
+this machine or in any project tree. With an empty rule set the plugin's entire
+runtime contribution *is* the `{}` — the loader finds nothing and the engine
+returns empty on every fire. Disabling costs no working behavior today; it gives
+up the `/hookify:*` commands and the `conversation-analyzer` agent, and
+re-enabling is a one-line revert whenever a rule is actually wanted.
+
+Applied to `~/.claude/settings.json` (the file is outside this repo; recorded
+here because nothing in-tree can show it):
+
+```diff
+-    "hookify@claude-plugins-official": true,
++    "hookify@claude-plugins-official": false,
+```
+
+Verified: JSON still parses, and the other 14 enabled plugins are untouched.
+
+### Upstream
+
+The one-line fix benefits every user of the plugin, so it belongs upstream at
+`anthropics/claude-plugins-official` rather than only in one operator's settings:
+
+```python
+if result:                      # nothing to say -> say nothing
+    print(json.dumps(result), file=sys.stdout)
+```
+
+`result` is falsy exactly in the documented no-match case, so this is behavior
+preserving for every rule that *does* match; the error paths keep printing,
+since those carry a real message.
+
+A ready-to-file report is committed at `docs/verification/hookify-upstream-report.md`.
+It was **not** filed from this session: the available token is fine-grained and
+scoped to this account's own repos, so `gh issue create` against `anthropics/*`
+returns `Resource not accessible by personal access token`. Filing it by hand is
+tracked as an AC on #793.
+
+## AC#4 — baseline captured, delta deferred to #793
+
+`token-report.sh` is available (#781, `6c0920f`) and a gateway **is** reachable
+from this environment, so the original blocker is gone. Two **pre-fix** windows
+were captured on 2026-08-24, before the operator fix below was applied.
+
+Endpoint deliberately omitted. The gateway is network-local to one operator and
+most users of this repo run no gateway at all, so no host, port, or hostname
+appears here or anywhere in the tree — `token-report.sh` requires `BIFROST_URL`
+with **no default and no fallback**, which is the correct shape. Only the
+resulting numbers are recorded.
+
+### VERIFIED — live (pre-fix baselines)
 
 ```bash
-export BIFROST_URL="http://<gateway-host>:<port>"
+export BIFROST_URL="https://<gateway-host>"   # network-local; never hardcoded
 
-# Baseline: a window BEFORE the hookify change
 plugins/workflow/scripts/token-report.sh window \
   --start 2026-08-23T00:00:00Z --end 2026-08-24T00:00:00Z --json \
   > /tmp/hookify-before.json
+```
 
-# After: an equivalent-length window AFTER it
-plugins/workflow/scripts/token-report.sh window \
-  --start <after-start> --end <after-end> --json \
-  > /tmp/hookify-after.json
+| window | requests | avg prompt tokens / request | reconciliation |
+| --- | --- | --- | --- |
+| 2026-08-23 00:00–24:00Z (full day) | 17,906 | **144,372** | delta 2, tolerance 90 ✅ |
+| 2026-08-24 00:00–19:00Z (partial) | 3,297 | **142,052** | delta 0, tolerance 16 ✅ |
 
+Both reconciled against the unfiltered total. The two windows agree to **1.6%**
+on `avg_prompt_per_request` despite differing in length and request count by
+more than 5x — useful, because it establishes the **noise floor** against which
+any post-fix delta must be judged. A change smaller than roughly 2% is not
+distinguishable from ordinary day-to-day variation on this fleet.
+
+### Why the delta is still deferred
+
+The after-window cannot exist yet: the operator fix was applied at the end of
+this session, so no post-fix period of comparable shape has elapsed. Capturing
+it now would compare a full day against minutes.
+
+**#793 owns the close-out**, using the baselines above rather than re-deriving
+them. Re-run the same command over a post-fix window of similar shape and:
+
+```bash
 plugins/workflow/scripts/token-report.sh compare \
   --baseline /tmp/hookify-before.json \
   --compare  /tmp/hookify-after.json
 ```
 
-Judge on **`avg_prompt_per_request`** (`prompt_tokens / requests`), not cost —
-per that tool's header, cost moves with how hard the fleet is pushed, while the
-average isolates an efficiency change from a workload change.
+Judge on **`avg_prompt_per_request`**, not cost — per that tool's header, cost
+moves with how hard the fleet is pushed, while the average isolates an
+efficiency change from a workload change.
 
-Expect the effect to be **real but modest against session noise**: 574,677
-context tokens over 24h is the accumulated attachment weight, spread across many
-sessions of differing length. Compare windows of similar shape, and treat a
-single pair as indicative rather than conclusive.
+### Predicted effect — and a caveat worth recording
+
+Expect **real but modest** movement, and treat a single pair as indicative.
+
+One tension belongs on the record rather than smoothed over. The hooks reference
+says a hook that exits 0 **with no output** has nothing recorded on
+`PreToolUse`/`PostToolUse` — implying silence costs *zero* context, not merely a
+smaller record. That does not obviously square with #782's measurement, where
+`hook_success` was the single largest attachment category at 574,677 context
+tokens. Either the accounting attributes to `hook_success` something the docs
+describe differently, or the emitting hooks (which printed `{}`, not nothing)
+are the entire category.
+
+The second reading is consistent with both facts and is the working hypothesis:
+**it is the `{}` that creates the record; silence would have created none.** The
+measurement on #793 is what discriminates — a near-zero delta would favor the first
+reading and is a real possible outcome, so it should be reported as found rather
+than fitted to this expectation.
