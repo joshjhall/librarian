@@ -348,6 +348,38 @@ test_bash_guard_deny_path_still_emits() {
         "bash-guard.sh must STILL emit a deny envelope for destructive shell in a read-only subagent. Silence-on-no-op must not be achieved by going silent everywhere (#448/#662/#782)."
 }
 
+# The two FALLBACK branches — hook_script_path()'s UNRESOLVED result and
+# write_noop_payload()'s catch-all — exist to make a registration this gate
+# cannot model fail LOUDLY instead of dropping out of the corpus. But the real
+# corpus matches every case today, so neither branch executes in a normal run:
+# they are dead code in CI, and a regression in either (a ${CLAUDE_PLUGIN_ROOT}
+# spelling that stops resolving, a case arm that drifts from a future event
+# shape) would restore the silent-exemption this gate was written to prevent,
+# with nothing failing to say so. These call the helpers directly so the
+# fallbacks are exercised independently of what happens to be registered.
+test_unresolved_command_detector() {
+    local out
+    out="$(hook_script_path 'python3 /opt/elsewhere/rogue.py' '/plugin/root')"
+    assert_output_empty "$out" \
+        "hook_script_path must return EMPTY for a command with no \${CLAUDE_PLUGIN_ROOT} token, so build_corpus marks the row UNRESOLVED rather than emitting a bogus path"
+
+    out="$(hook_script_path 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/x.sh"' '/plugin/root')"
+    assert_equals "/plugin/root/hooks/x.sh" "$out" \
+        "...and must still resolve the supported spelling (or the check above would pass by being broken for everything)"
+}
+
+test_unmatched_event_detector() {
+    local rc=0
+    write_noop_payload "SomeFutureEvent" "(all)" "$SANDBOX/unused.json" || rc=$?
+    assert_equals "1" "$rc" \
+        "write_noop_payload must return non-zero for an event shape it cannot model, so the consumer turns it into a loud failure instead of skipping the hook"
+
+    rc=0
+    write_noop_payload "PreToolUse" "Bash" "$SANDBOX/matched.json" || rc=$?
+    assert_equals "0" "$rc" \
+        "...and must still succeed for a supported event (or the check above would pass by rejecting everything)"
+}
+
 # --- Guards on the gate itself ----------------------------------------------
 test_corpus_non_empty() {
     assert_not_empty "$CORPUS" \
@@ -392,6 +424,8 @@ test_detector_fires() {
 }
 
 run_test test_corpus_non_empty "Hook corpus is non-empty (gate is not a no-op)"
+run_test test_unresolved_command_detector "Unresolvable command shape is detected (fallback branch is live)"
+run_test test_unmatched_event_detector "Unmodellable event shape is rejected (fallback branch is live)"
 run_test test_detector_fires "Silence detector distinguishes a '{}' emitter from a silent hook"
 
 while IFS="$(printf '\t')" read -r script event matcher rawcmd; do

@@ -82,6 +82,8 @@ reverted after each:
 | 7 | `_emit_deny_reason` neutered at the jq-absent fallback | **SURVIVED** — unreachable with jq present (the jq branch emits and exits first). Not a gate defect |
 | 8 | `_emit_deny_reason` neutered at the **function entry** | **CAUGHT** — `bash-guard.sh still emits on the DENY path ... FAIL` |
 | 9 | sentinel regressed from `exit 77` to `exit 0` | **CAUGHT** — `an absent jq exits 77, not 0 ... FAIL` |
+| 10 | `hook_script_path` returns a bogus path instead of empty | **CAUGHT** |
+| 11 | `write_noop_payload` accepts any event shape | **CAUGHT** |
 
 Mutations 7 and 8 are the same lesson as mutation 1, met a second time: the
 obvious target was dead code. `bash-guard.sh` emits its deny envelope through
@@ -165,6 +167,21 @@ deferrables were taken anyway, two of them guarding the cycle-2 isolation fix:
 - the sentinel-77 contract was asserted only in a comment — now pinned by two
   tests in `tests/validate-lint-gates.sh`, beside the sibling gates that
   implement the same contract.
+
+**Cycle 4 returned `blocking: []` — the loop converged** after two consecutive
+cycles with no real blocker. Two of its deferrables were taken:
+
+- the gate's own **fallback branches were dead code** in every real run. The
+  `UNRESOLVED` path and `write_noop_payload`'s catch-all exist to make an
+  unmodellable registration fail loudly, but the live corpus matches every case,
+  so neither executed in CI — a regression in either would silently restore the
+  exemption this gate exists to prevent. Both are now exercised directly
+  (mutations 10 and 11), independent of what is registered.
+- this file was **renamed** to `hook-noop-attachments-e2e-782.md`. CLAUDE.md
+  documents exactly two shapes for `docs/verification/` — `<skill>-e2e-<issue>.md`
+  and `<topic>-tally-<issue>.md` — and the original name matched neither.
+  [#793](https://github.com/joshjhall/librarian/issues/793) was updated to cite
+  the new path.
 
 ## The real emitter — NOT `claude-host-event.sh`
 
