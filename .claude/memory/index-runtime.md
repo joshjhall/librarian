@@ -41,3 +41,4 @@ to every task, not just this topic.
 - [Skill required_tools vocabulary](skill-required-tools-vocabulary.md) — they are shell-command names; no SKILL.md has a frontmatter tools: field
 - [Model tier: fable is valid](model-tier-fable-valid.md) — agent `model:` accepts fable; aliases track the latest generation
 - [Namespace pkg fakes an import probe](namespace-package-fakes-import-probe.md) — `import X` passes on an empty ./X/ (PEP 420); probe an attribute
+- [Third-party fix needs a durable lever](third-party-fix-needs-a-durable-lever.md) — a patch to installed plugin files is clobbered by `plugin update`; enumerate config levers first
