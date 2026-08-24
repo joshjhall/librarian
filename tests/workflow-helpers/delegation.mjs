@@ -26,7 +26,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ok, throws } from "../lib/mjs-assert.mjs";
+import { eq, ok, throws } from "../lib/mjs-assert.mjs";
 import { harnessSource, repoRoot, SHIP } from "../lib/extract-helpers.mjs";
 
 const SKILL_DIR = "plugins/dev-core/skills/delegating-investigation";
@@ -64,13 +64,42 @@ const OPUS_MULTIPLIER = "1.93x";
 // file that is sitting right there. Anything that is not ENOENT is re-thrown, so
 // it surfaces with its real message; the entry point attributes such a throw to
 // this area and still runs the sibling areas (tests/lib/mjs-assert.mjs).
-function readIfPresent(relPath) {
+// `reader` is a seam for the tests below: it defaults to the real read, and a
+// test substitutes a thrower to drive error codes the filesystem will not
+// conveniently produce (a codeless error, an injected ENOENT). Injecting into
+// the real function is the point — re-implementing this `if` in a test would
+// assert only that the copy matches itself.
+function readIfPresent(relPath, reader = (p) => readFileSync(p, "utf8")) {
   try {
-    return readFileSync(join(repoRoot, relPath), "utf8");
+    return reader(join(repoRoot, relPath));
   } catch (err) {
     if (err?.code !== "ENOENT") throw err;
     return null;
   }
+}
+
+// Strip JS comments, leaving the text that actually reaches an agent: string
+// literals. Named and exported-to-the-block rather than inlined so the leak
+// check below can be run against SYNTHETIC fixtures — see `leaks()`.
+//
+// The trailing-comment arm deliberately skips lines containing a quote, so a
+// `//` inside a string literal (a URL) is never mistaken for a comment start.
+// That is a conservative bias: it under-strips rather than over-strips, because
+// over-stripping would delete prompt text and could hide a real leak.
+function stripComments(js) {
+  return js
+    .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+    .replace(/^[ \t]*\/\/[^\n]*$/gm, "") // whole-line // comments
+    .replace(/[ \t]+\/\/[^\n'"]*$/gm, ""); // trailing // comments (quote-free only)
+}
+
+// The leak predicate itself. Returns the markers found in `js`'s prompt text.
+// Extracting it is what makes the guard testable in both directions: the real
+// assertion runs it against the harness, and the fixtures below run it against
+// strings that are known-leaked and known-clean.
+function leaks(js, markers) {
+  const text = stripComments(js);
+  return markers.filter((m) => text.includes(m));
 }
 
 export function run() {
@@ -92,6 +121,31 @@ export function run() {
   ok(
     readIfPresent(`${SKILL_DIR}/does-not-exist.md`) === null,
     "readIfPresent: a genuinely missing file still returns null",
+  );
+
+  // EISDIR alone is not enough: it is the ONE non-ENOENT code trivially
+  // available from the filesystem, so a condition wrongly narrowed to
+  // `err.code === "EISDIR"` would still pass the assertion above while
+  // swallowing every other failure.
+  //
+  // Test the REAL function against an injected error rather than re-implementing
+  // its `if` here — a copy of the logic asserts only that the copy behaves like
+  // itself, which is the tautology this whole block exists to avoid. `reader` is
+  // the seam: it defaults to readFileSync, and a test may substitute a thrower.
+  throws(
+    () =>
+      readIfPresent("irrelevant", () => {
+        throw new Error("no .code property"); // codeless: what `err?.code` guards
+      }),
+    "readIfPresent: the rethrow is generic — an error with no .code propagates too",
+  );
+  ok(
+    readIfPresent("irrelevant", () => {
+      const e = new Error("gone");
+      e.code = "ENOENT";
+      throw e;
+    }) === null,
+    "readIfPresent: an injected ENOENT still reads as 'absent'",
   );
 
   // ===========================================================================
@@ -304,18 +358,51 @@ export function run() {
     // Stripping comments keeps the assertion aimed at what actually reaches an
     // agent: string literals. Prose in a comment is inert; prose in a prompt is
     // the regression.
-    const promptText = src
-      .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
-      .replace(/^[ \t]*\/\/[^\n]*$/gm, "") // whole-line // comments
-      .replace(/[ \t]+\/\/[^\n'"]*$/gm, ""); // trailing // comments (quote-free only,
-    // so a `//` inside a URL string literal is never mistaken for a comment)
+    const MARKERS = ["/dev-core:delegating-investigation", SPAWN_PREFIX];
+    const found = leaks(src, MARKERS);
     ok(
-      !promptText.includes("/dev-core:delegating-investigation"),
-      "SCOPE_DISCIPLINE: delegation skill ref has NOT leaked into reviewer prompts (#785 AC4)",
+      found.length === 0,
+      `SCOPE_DISCIPLINE: delegation guidance has NOT leaked into reviewer prompts (#785 AC4) — found ${JSON.stringify(found)}`,
     );
-    ok(
-      !promptText.includes(SPAWN_PREFIX),
-      `SCOPE_DISCIPLINE: the ${SPAWN_PREFIX} break-even has NOT leaked into reviewer prompts (#785 AC4)`,
+
+    // ---- The guard's own teeth, proven in-suite -----------------------------
+    //
+    // Everything above asserts an ABSENCE against source that is currently
+    // clean, so it passes trivially if `leaks()` is broken — a stray quantifier
+    // in stripComments that ate the string literals would make the check match
+    // nothing, forever, silently. An absence assertion whose failure path is
+    // never exercised is indistinguishable from a tautology.
+    //
+    // These two fixtures pin both directions in the suite itself, so the
+    // property survives a future refactor of stripComments without anyone
+    // remembering to re-run a mutation by hand.
+    const LEAKED = [
+      "const P =",
+      "  'Review the diff. ' +",
+      `  'Route fan-out reading per ${MARKERS[0]} past ${SPAWN_PREFIX}. ' +`,
+      "  'Report findings.'",
+    ].join("\n");
+    eq(
+      leaks(LEAKED, MARKERS).length,
+      2,
+      "leak check has teeth: guidance inside a prompt literal IS detected",
+    );
+
+    // The counterpart: the same markers in COMMENTS must not trip it. This is
+    // the false positive the narrowing was introduced to remove — a future
+    // editor documenting this boundary (exactly what the new SKILL.md argues
+    // for) must not fail the build.
+    const COMMENTED = [
+      `// See ${MARKERS[0]} (break-even ${SPAWN_PREFIX}) for why this must not change.`,
+      "/*",
+      ` * Also ${MARKERS[0]}, in a block comment, at ${SPAWN_PREFIX}.`,
+      " */",
+      "const P = 'Review the diff.'",
+    ].join("\n");
+    eq(
+      leaks(COMMENTED, MARKERS).length,
+      0,
+      "leak check is narrow: the same markers in comments do NOT trip it",
     );
   }
 }
