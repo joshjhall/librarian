@@ -102,6 +102,38 @@
 #                        absence must fall through to the resolver, so
 #                        golem-status.sh reads it directly rather than defaulting
 #                        it here.                          Default: (unset)
+#   BIFROST_URL          Base URL of the Bifrost gateway's ADMIN API, used by
+#                        token-report.sh (#781). REQUIRED — deliberately has no
+#                        default, because there is no correct one to guess: the
+#                        issue's AC5 forbids a hardcoded hostname, and the
+#                        obvious candidate is wrong. ANTHROPIC_BASE_URL points at
+#                        the *proxy* path (…/anthropic); `/api/logs/stats` under
+#                        it returns the web UI's HTML shell with HTTP 200, not
+#                        JSON — a silent wrong answer, the exact failure class
+#                        #781 exists to prevent. Point this at the gateway ROOT
+#                        (e.g. https://bifrost.example). Unset ⇒ usage error
+#                        (exit 2), which is distinct from unreachable (77).
+#                                                          Default: (unset)
+#   TOKEN_REPORT_TIMEOUT
+#                        Per-request connect+total timeout, seconds, for every
+#                        token-report.sh gateway call. The aggregate endpoint
+#                        answers in ~16ms, so this bounds a hung/black-holed
+#                        gateway rather than slow work.     Default: 30
+#   TOKEN_REPORT_RECONCILE_PCT
+#                        Reconciliation tolerance, PERCENT of the unfiltered
+#                        request total. token-report.sh sums the per-model
+#                        request counts and compares them against the same
+#                        window queried unfiltered; a gap wider than this is a
+#                        hard failure (exit 1). A COMPLETE model list reconciles
+#                        EXACTLY (measured delta 0), so the tolerance is headroom,
+#                        not an observed need — it absorbs a request the gateway
+#                        attributes to no model without turning that into a hard
+#                        failure. Keep it tight: it must stay far below the
+#                        N-fold gap a dropped `models=` filter opens (measured at
+#                        a 14x overstatement). Note an incomplete model list also
+#                        inflates the gap, but that is caught earlier and by
+#                        name — see enumerate_models.
+#                                                          Default: 0.5
 #
 # This file only DEFINES variables (no side effects beyond `export`), so it is
 # safe to source from any script.
@@ -204,6 +236,17 @@
 # spinning keystrokes forever.
 : "${GOLEM_MODE_FIX_ATTEMPTS:=3}"
 : "${GOLEM_MODE_CHECK_INTERVAL:=60}"
+
+# Token-cost measurement over the Bifrost gateway (token-report.sh, #781).
+# BIFROST_URL deliberately gets NO `:=` default — see its entry in the header
+# block above. A guessed default would be a hardcoded hostname (AC5) and the one
+# plausible guess (ANTHROPIC_BASE_URL) resolves to the proxy path, which answers
+# /api/logs/stats with HTML and HTTP 200. Absence must reach the script as
+# absence so it can fail loudly with exit 2.
+: "${TOKEN_REPORT_TIMEOUT:=30}"
+: "${TOKEN_REPORT_RECONCILE_PCT:=0.5}"
+
+export TOKEN_REPORT_TIMEOUT TOKEN_REPORT_RECONCILE_PCT
 
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
