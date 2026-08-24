@@ -461,35 +461,26 @@ test_non_2xx_response_is_failure_not_skip() {
 test_missing_dependency_exits_3() {
     # Exit 3 means "a required dependency is absent", and the message must name
     # WHICH — a caller dispatching on the code alone would otherwise misdiagnose
-    # a curl-less box as a jq-less one. Forces absence with a PATH holding only
-    # the other tool, rather than skipping when the tool happens to be present:
-    # a skip-if-absent test covers only the arm that is already working.
-    # Absence has to be FORCED, and only a minimal PATH does it: prepending a
-    # stub dir does not work, because `command -v` reports a non-executable file
-    # AND still finds the real binary further along PATH (verified both ways
-    # before writing this). So build a PATH containing symlinks to exactly the
-    # tools the script needs, minus the one under test.
+    # a curl-less box as a jq-less one.
     #
-    # Mode matters too: the stub must be answering NORMALLY, or the run fails on
-    # whatever the previous mode was doing and the assertion reads a different
-    # error entirely.
+    # Absence is FORCED rather than skipped-when-present, since a skip-if-absent
+    # test only ever covers the arm that already works. Two things make it stick,
+    # both learned the hard way here:
+    #
+    #   - A minimal PATH of symlinks, not a stub dir prepended to the real PATH:
+    #     `command -v` reports a non-executable placeholder AND still finds the
+    #     real binary further along, so prepending hides nothing.
+    #   - `env -i` (plus --noprofile --norc), because a bare `PATH=… bash script`
+    #     does NOT stay restricted — the child bash re-reads startup files and
+    #     restores the full PATH. Verified: that run found /usr/bin/curl, exit 0.
+    #
+    # The stub must also be in `normal` mode, or the run fails on the previous
+    # mode's behavior and the assertion reads an unrelated error.
     set_mode normal
     local dir tool
     dir="$(command mktemp -d)"
 
     # Everything token-report.sh reaches through PATH, except curl and jq.
-    for tool in bash printf cat dirname tr awk sleep; do
-        command ln -s "$(command -v "$tool")" "$dir/$tool" 2>/dev/null
-    done
-
-    # `env -i` is load-bearing: a bare `PATH=… bash script` does NOT stay
-    # restricted, because the child bash re-reads the user's startup files and
-    # restores the full PATH — verified, the run then found /usr/bin/curl and
-    # exited 0. A cleared environment is what makes the absence stick.
-    #
-    # --noprofile --norc closes the same door from the other side.
-    local dir tool
-    dir="$(command mktemp -d)"
     for tool in bash printf cat dirname tr awk sleep; do
         command ln -s "$(command -v "$tool")" "$dir/$tool" 2>/dev/null
     done
@@ -510,9 +501,30 @@ test_missing_dependency_exits_3() {
         "$dir/bash" --noprofile --norc "$TR_SH" \
         window --start "$W_START" --end "$W_END" 2>&1)"
     TR_RC=$?
-    command rm -rf "$dir"
     assert_exit 3 "$TR_RC" "Still exit 3 when jq is the absent one"
     assert_contains "$TR_OUT" "jq" "and it names jq, the first check"
+
+    # The second call site: `reconcile` runs the same preflights, so a check
+    # dropped from one subcommand cannot hide behind the other's coverage.
+    #
+    # jq must be RESTORED here and only curl left absent. jq is checked first, so
+    # leaving both out exits 3 on jq and never reaches require_curl — the version
+    # of this assertion that did so passed against a mutant with require_curl
+    # deleted from reconcile entirely.
+    #
+    # Why that mutant matters: without the preflight, a missing curl surfaces as
+    # `curl exit 127`, which api_get maps to EXIT_UNREACHABLE — so a broken
+    # install would report 77 and read as a clean SKIP. The preflight is what
+    # keeps "dependency missing" from masquerading as "gateway down".
+    command ln -s "$(command -v jq)" "$dir/jq" 2>/dev/null
+    command rm -f "$dir/curl"
+    TR_OUT="$(command env -i "PATH=$dir" "BIFROST_URL=http://127.0.0.1:$STUB_PORT" \
+        "$dir/bash" --noprofile --norc "$TR_SH" \
+        reconcile --start "$W_START" --end "$W_END" 2>&1)"
+    TR_RC=$?
+    command rm -rf "$dir"
+    assert_exit 3 "$TR_RC" "reconcile enforces the dependency preflight too"
+    assert_contains "$TR_OUT" "curl" "and names curl, not a bogus 77 skip"
 }
 
 test_usage_errors() {
