@@ -154,6 +154,28 @@ serial subagent cycle (measured on PR #642). Reach for the harness by name; do n
 pattern-match on the adjective. `tests/lint-harness-refs.sh` enforces that every
 mention of this review names the harness beside it.
 
+**Context budget — check it at each phase boundary (#784).** A golem is the shape
+that runs 400–800 turns unattended, and a session that runs to exhaustion pays
+~3x per turn at the end for what the start did cheaply. So at each boundary of
+the pipeline above (plan approved, implementation done, review cycle complete):
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/context-budget.sh check "$PWD"
+```
+
+On `handoff`, do **not** start the next step: write the `checkpoint` into the
+existing `.claude/memory/tmp/next-issue-{N}.json` and end the session, so the
+resumed run starts at the ~91k floor instead of at 400k. On `advise`, finish the
+step you are on but do not begin a new one. Resume with `EnterWorktree({ path:
+".worktrees/issue-N" })` then `/workflow:next-issue N` — the checkpoint's
+`next_action` is what stops the fresh session re-deriving the plan. A non-zero
+exit means the budget is **unknown**, not fine: proceed, but say so in one line.
+Full protocol and the threshold's derivation: `next-issue/handoff-protocol.md`.
+
+This is the one place `/workflow:golem` acts on the budget automatically. `/workflow:golem`
+is by definition unattended-shaped work with all its state already in the state
+file; an interactive session is **advised, never cycled** (#784 AC5).
+
 ### Phase D — Teardown (auto after merge, prompt otherwise)
 
 - **L3–L4 (the PR auto-merged this turn):** leave the worktree, then prune it —

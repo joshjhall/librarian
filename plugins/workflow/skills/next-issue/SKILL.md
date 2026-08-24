@@ -12,7 +12,11 @@ issue with open dependencies, or a `Blocked by`/`Depends on`/`status/blocked`
 candidate), load `dependency-queue.md` for the blocked-by exclusion and the
 dependency-queue algorithm. See `escalation-protocol.md` when a **mid-flight**
 architectural or directional decision arises during implementation (the
-escalation gate — human at L1–L3, auto at L4).
+escalation gate — human at L1–L3, auto at L4). See `handoff-protocol.md` at a
+reset point in a **golem or other long unattended run** — it carries the
+context-budget check (`scripts/context-budget.sh`) and the size-triggered handoff
+that lets work cross a session boundary at the derived threshold instead of
+running to 500k (#784). An interactive session is **advised, never cycled**.
 
 Accepts an optional issue number argument: `/workflow:next-issue 123` skips priority
 selection and targets that specific issue.

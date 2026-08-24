@@ -83,6 +83,7 @@ feed="$status_dir/feed.jsonl"
 pool="$status_dir/pool.json"
 tracks="$status_dir/tracks.json"
 scrape="$SCRIPT_DIR/golem-token-scrape.sh"
+ctxbudget="$SCRIPT_DIR/context-budget.sh"
 shopt -s nullglob
 
 # Checkpoint change-suppression state (#488). In a long-lived `--watch` loop the
@@ -246,6 +247,80 @@ collect_cache() {
 #     container (a mechanical frozen render, exactly like Mode 2's `frozen`); a
 #     missing / non-numeric count or absent anchor (not POSTed yet, or a legacy
 #     row) → state=container-pending, a graceful note, never a bogus 0.
+# read_context_budget <cache-file> — the CURRENT context size + verdict for one
+# golem (issue #784), as a TAB tuple:
+#
+#   state ∈ container | unknown | ok | advise | handoff
+#   ctx   = the context-size reading in tokens (empty for container/unknown)
+#   pct   = ctx as a whole-number percent of the threshold (empty likewise)
+#
+# READ-ONLY, unlike its scrape_and_persist_tokens sibling above. There is no
+# "frozen since" anchor to maintain because a context size is a POINT reading of
+# the newest request, not a cumulative counter: the question is "how big is it
+# now", which needs no history and so needs no persisted state. That also means
+# this helper is safe to call from both render paths without the double-sweep
+# hazard that forces the token persist to run exactly once per sweep.
+#
+# Mode 3 (container) golems return `container`: context-budget.sh reads a
+# host-side transcript, and a container golem's transcript lives inside the
+# container. Unlike the token signal there is no POSTed equivalent to fall back
+# on, so this renders a plain not-available note rather than inventing one — the
+# alternative would be a blank where an operator expects a number, which reads as
+# "fine" (see #390 for the token half's history here).
+read_context_budget() {
+    _rcb_f="$1"
+    _rcb_ctr="$(jq -r '.container // empty' "$_rcb_f" 2>/dev/null)"
+    if [ -n "$_rcb_ctr" ]; then
+        command printf 'container\t\t\n'
+        return 0
+    fi
+    _rcb_issue="$(jq -r '.issue // empty' "$_rcb_f" 2>/dev/null)"
+    _rcb_out=""
+    if [ -n "$_rcb_issue" ] && [ -x "$ctxbudget" ]; then
+        _rcb_wt="$root/$GOLEM_WORKTREE_DIR/issue-$_rcb_issue"
+        # `|| true` absorbs the script's fail-loud non-zero exits (2 no
+        # transcript / 3 no jq) into the `unknown` render below. Absorbing the
+        # STATUS is correct here — a status sweep must not die because one golem
+        # has no transcript yet — but the stderr MESSAGE is redirected in the same
+        # breath, deliberately: without the 2>/dev/null it would interleave raw
+        # into the rendered table (the redirect-order-leaks-the-diagnostic class).
+        _rcb_out="$("$ctxbudget" check "$_rcb_wt" 2>/dev/null || true)"
+    fi
+    if [ -z "$_rcb_out" ]; then
+        command printf 'unknown\t\t\n'
+        return 0
+    fi
+    # Parse the `key=value` lines. Field-scoped greps rather than one loose match
+    # so a value can never be picked up from the wrong key.
+    _rcb_ctx="$(command printf '%s\n' "$_rcb_out" | command sed -n 's/^context_tokens=//p')"
+    _rcb_pct="$(command printf '%s\n' "$_rcb_out" | command sed -n 's/^pct_of_threshold=//p')"
+    _rcb_v="$(command printf '%s\n' "$_rcb_out" | command sed -n 's/^verdict=//p')"
+    # Numeric-guard the reading and allowlist the verdict before either reaches
+    # the render. The script is trusted, but a truncated/partial capture must
+    # degrade to `unknown` rather than print a half-parsed row that reads as a
+    # real measurement.
+    case "$_rcb_ctx" in
+        '' | *[!0-9]*)
+            command printf 'unknown\t\t\n'
+            return 0
+            ;;
+    esac
+    case "$_rcb_pct" in
+        '' | *[!0-9]*)
+            command printf 'unknown\t\t\n'
+            return 0
+            ;;
+    esac
+    case "$_rcb_v" in
+        ok | advise | handoff) ;;
+        *)
+            command printf 'unknown\t\t\n'
+            return 0
+            ;;
+    esac
+    command printf '%s\t%s\t%s\n' "$_rcb_v" "$_rcb_ctx" "$_rcb_pct"
+}
+
 scrape_and_persist_tokens() {
     _sapt_f="$1"
     _sapt_ctr="$(jq -r '.container // empty' "$_sapt_f" 2>/dev/null)"
@@ -550,6 +625,44 @@ render_status() {
                     # takeover contract's 45–60 min frozen-window read is now
                     # mechanical for either mode.
                     command echo "  $g — $(_frozen_phrase "$cur" "$at")"
+                    ;;
+            esac
+        done
+    fi
+
+    # CONTEXT BUDGET (issue #784) — the bounded-session-length signal. Distinct
+    # from the TOP-LEVEL TOKENS block above and deliberately adjacent to it: that
+    # one answers "is this golem still producing work?" (a CUMULATIVE output
+    # counter, whose freeze is the interesting event), this one answers "is this
+    # golem's context too big to keep working in?" (a POINT reading of the newest
+    # request's input side, whose GROWTH is the interesting event). Same
+    # transcript, opposite questions — which is why they are two scripts and two
+    # blocks rather than one merged row that would blur them.
+    if command -v jq >/dev/null 2>&1 && [ "${#cache[@]}" -gt 0 ]; then
+        command echo ""
+        command echo "CONTEXT BUDGET (session-length signal — #784 handoff threshold):"
+        for f in "${cache[@]}"; do
+            g="$(jq -r '.golem // "?"' "$f" 2>/dev/null)"
+            IFS=$'\t' read -r cbstate cbctx cbpct < <(read_context_budget "$f")
+            case "$cbstate" in
+                container)
+                    command echo "  $g — context not readable (container golem)"
+                    ;;
+                unknown)
+                    command echo "  $g — context unknown (no transcript)"
+                    ;;
+                ok)
+                    command echo "  $g — ${cbctx} tokens (${cbpct}% of threshold)"
+                    ;;
+                advise)
+                    # Advisory only, at every level and in every mode: an
+                    # interactive session is NEVER force-cycled (#784 AC5), and a
+                    # golem uses this to prefer finishing its current step over
+                    # starting a new one.
+                    command echo "  $g — ${cbctx} tokens (${cbpct}% of threshold — approaching handoff)"
+                    ;;
+                handoff)
+                    command echo "  $g — ${cbctx} tokens (${cbpct}% of threshold — HANDOFF DUE)"
                     ;;
             esac
         done

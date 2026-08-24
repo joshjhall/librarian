@@ -142,7 +142,8 @@ Authoritative status comes from **PR + issue-label state**. The
    burn `Δ`, aggregate `rate/hr`, and `live/blocked/shipped` counts). It gives the
    operator a rolling burn/velocity read without polling. Drop `--checkpoint` to
    fall back to the verbose multi-section render (pool header, flat golem table,
-   BLOCKED list, liveness, per-golem TOP-LEVEL TOKENS, and a one-line **recent
+   BLOCKED list, liveness, per-golem TOP-LEVEL TOKENS, per-golem CONTEXT BUDGET,
+   and a one-line **recent
    feed count** — not a raw JSON tail, #488). The two are
    **mutually exclusive per sweep** — both re-drive the same token scrape, so
    running both in one sweep would reset the burn-Δ baseline. (This
@@ -189,7 +190,23 @@ Authoritative status comes from **PR + issue-label state**. The
    signal (they need golem-status's own prior sample); a container golem (Mode 3)
    POSTs its cumulative top-level count into the cache (#390), so its `TOKENS(Δ)`
    shows the count with a `(frozen)` tag — folded into `Σtokens` but not the Δ —
-   or `n/a` until that POST lands. **Attention markers ride the `STATE` column**
+   or `n/a` until that POST lands.
+
+   **A cycling golem is not a stalled golem (#784).** The `CONTEXT BUDGET` block
+   reports each golem's current context size against the derived handoff
+   threshold. When one reads `HANDOFF DUE`, expect its session to end and a fresh
+   one to start — and expect the two signals that normally mean trouble to fire
+   benignly as it does: the top-level token counter **drops** (a fresh session is
+   a new transcript, which golem-status classifies `reset`), and the liveness
+   proxy goes quiet across the gap. Neither is a stall, and neither warrants a
+   takeover: check the `CONTEXT BUDGET` row before acting on a freeze or a
+   liveness gap, because a golem that just handed off looks exactly like one that
+   wedged. The work is preserved in the issue's `next-issue-{N}.json` checkpoint;
+   the resumed session picks up from `next_action`. A golem still frozen with an
+   `ok` budget and no fresh session is the real thing. See
+   `next-issue/handoff-protocol.md`.
+
+   **Attention markers ride the `STATE` column**
    as plain text (`⚠ BLOCKED`
    at a gate, `⚠ CI` on a failing check, `⚠ gone` when the tmux session vanished)
    — never ANSI colour, so the table stays legible in a log or pipe. **PR/CI/Review
