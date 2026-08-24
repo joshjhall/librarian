@@ -116,6 +116,38 @@ EOF
         "never renders a zero reading for an absent transcript"
 }
 
+# A Mode-3 (container) golem's transcript lives inside its container and is not
+# host-readable, so read_context_budget must short-circuit on the cache row's
+# `container` field and render a plain not-available note. Two things are pinned:
+# the note is VISIBLE (a blank row would read as healthy, the same silent-failure
+# the unknown case guards), and the scrape is never attempted — a container row
+# must not fall through to the Mode-2 path and report another golem's reading.
+test_status_renders_container_golem_as_not_readable() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (context budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "phase": "make-it-work", "blocking": false,
+  "container": "golem-42-ctr" }
+EOF
+    # Plant a transcript the HOST could read. A correct container branch ignores
+    # it; a regression that falls through to the Mode-2 scrape would report
+    # 200100 here — so this fixture is what makes the assertion discriminating
+    # rather than trivially true.
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "context not readable (container golem)" \
+        "a Mode-3 golem renders the not-available note"
+    assert_not_contains "$RUN_OUT" "200100 tokens" \
+        "the host-side transcript is NOT scraped for a container golem"
+    assert_not_contains "$RUN_OUT" "HANDOFF DUE" \
+        "a container row never renders a verdict it cannot have measured"
+}
+
 # The script's stderr must not leak into the rendered table. golem-status
 # redirects it in the same breath as absorbing the exit status; dropping that
 # redirect prints a raw diagnostic mid-table (the

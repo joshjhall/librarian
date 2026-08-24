@@ -280,6 +280,12 @@
 
 export TOKEN_REPORT_TIMEOUT TOKEN_REPORT_RECONCILE_PCT
 
+# Exported, not merely defined — golem-status.sh reaches context-budget.sh as a
+# SUBPROCESS, so an unexported value would stay in the parent shell and the child
+# would silently fall back to its own inlined defaults. An operator's override
+# would appear to be ignored, with no error.
+export CONTEXT_BUDGET_THRESHOLD CONTEXT_BUDGET_FLOOR
+
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL GOLEM_LIVENESS_SUMMARY_INTERVAL \

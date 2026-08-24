@@ -144,14 +144,34 @@ fi
 # must fail loud rather than silently compare against a string: under `[` a
 # non-numeric operand is an "integer expression expected" error that would
 # misclassify the verdict — the same octal/garbage hazard golem-status.sh guards
-# its scraped counts against.
+# its scraped counts against (`'' | 0* | *[!0-9]*`, at its :338 and :396).
+#
+# THE LEADING ZERO IS THE HALF THAT MATTERS, and it is why this guard copies that
+# pattern rather than merely rejecting non-digits. A value like `0400000` is all
+# digits, so a digits-only check passes it — and then the two spellings below
+# disagree about what it means: `$(())` (advise_at, pct) reads a leading-`0`
+# operand as OCTAL, while `[ ... -ge ... ]` compares it as DECIMAL. That
+# disagreement is not theoretical; both arms were reproduced against this script:
+#
+#   * 0400000 -> `pct_of_threshold=231` beside `verdict=advise`. The percent says
+#     the session is past the threshold and the verdict says it is not: two
+#     outputs of one run contradicting each other, and a caller reading only the
+#     verdict silently skips a handoff that is due. This is precisely the "bogus
+#     reading that reads as right" the header forbids.
+#   * 089000 -> an invalid octal literal, so `$(())` errors twice and the script
+#     dies on `pct: unbound variable` under `set -u` — a crash rather than the
+#     actionable message this guard exists to print.
+#
+# Rejecting `0*` also rejects a bare `0`, which is correct here: a zero threshold
+# is separately refused below (it would divide by zero), and a zero floor is
+# meaningless — the floor IS the cost of a fresh session.
 for _cb_pair in "CONTEXT_BUDGET_THRESHOLD:$CONTEXT_BUDGET_THRESHOLD" \
     "CONTEXT_BUDGET_FLOOR:$CONTEXT_BUDGET_FLOOR"; do
     _cb_name="${_cb_pair%%:*}"
     _cb_val="${_cb_pair#*:}"
     case "$_cb_val" in
-        '' | *[!0-9]*)
-            command echo "context-budget: $_cb_name must be a non-negative integer, got '$_cb_val'" >&2
+        '' | 0* | *[!0-9]*)
+            command echo "context-budget: $_cb_name must be a positive integer with no leading zeros, got '$_cb_val'" >&2
             exit 1
             ;;
     esac

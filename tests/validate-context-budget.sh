@@ -270,8 +270,67 @@ test_non_numeric_threshold_fails_loud() {
     plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
     run_ctx_budget "$sb" "$sb/.worktrees/issue-42" CONTEXT_BUDGET_THRESHOLD=175k
     assert_exit 1 "$RUN_RC" "a non-numeric threshold exits 1"
-    assert_contains "$RUN_OUT" "must be a non-negative integer" "names the offending knob"
+    assert_contains "$RUN_OUT" "must be a positive integer" "names the offending knob"
     assert_not_contains "$RUN_OUT" "verdict=" "emits no verdict on a bad knob"
+}
+
+# A LEADING-ZERO knob is all digits, so a digits-only guard passes it — and then
+# `$(())` reads it as octal while `[ -ge ]` reads it as decimal. Two arms, both
+# reproduced against the pre-fix script, both regressions this pins:
+#
+#   0400000 -> emitted `pct_of_threshold=231` beside `verdict=advise`. The two
+#   outputs of a single run CONTRADICTED each other, and a caller reading the
+#   verdict alone would silently skip a handoff that was due — the exact
+#   "plausible-looking wrong number" this script's fail-loud contract forbids.
+test_leading_zero_octal_threshold_fails_loud() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" "$sb/.worktrees/issue-42" CONTEXT_BUDGET_THRESHOLD=0400000
+    assert_exit 1 "$RUN_RC" "a leading-zero (octal-parsed) threshold exits 1"
+    assert_contains "$RUN_OUT" "no leading zeros" "names the leading-zero rule"
+    assert_not_contains "$RUN_OUT" "verdict=" "emits no verdict on an octal-ambiguous knob"
+    assert_not_contains "$RUN_OUT" "pct_of_threshold=" \
+        "emits no percent either — the contradictory pct/verdict pair is the bug"
+}
+
+# The other arm: a leading-zero value containing 8 or 9 is an INVALID octal
+# literal, so `$(())` errored twice and the script died on `pct: unbound
+# variable` under `set -u` — a crash instead of an actionable message.
+test_invalid_octal_threshold_fails_loud_not_crash() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" "$sb/.worktrees/issue-42" CONTEXT_BUDGET_THRESHOLD=089000
+    assert_exit 1 "$RUN_RC" "an invalid-octal threshold exits 1"
+    assert_contains "$RUN_OUT" "no leading zeros" "prints the actionable message"
+    assert_not_contains "$RUN_OUT" "unbound variable" "does not crash under set -u"
+    assert_not_contains "$RUN_OUT" "value too great for base" \
+        "does not leak a raw bash arithmetic error"
+}
+
+# The floor knob takes the same guard — the harden-one-knob-grep-every-sibling
+# class: fixing the threshold and leaving its sibling exposed is the recurring
+# defect this repo has recorded, so both knobs are pinned.
+test_leading_zero_floor_fails_loud() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" "$sb/.worktrees/issue-42" CONTEXT_BUDGET_FLOOR=091000
+    assert_exit 1 "$RUN_RC" "a leading-zero floor exits 1 too, not just the threshold"
+    assert_contains "$RUN_OUT" "CONTEXT_BUDGET_FLOOR" "names the offending knob"
 }
 
 # A zero threshold would divide by zero in the percent computation.
@@ -357,7 +416,13 @@ test_reads_the_newest_session_transcript() {
     # `session.jsonl` and this test is a tautology — caught by a mutation round,
     # which is the only thing that can find it.)
     command printf '%s\n' "$TRANSCRIPT_CTX_OK" >"$dir/zz-newest.jsonl"
-    command touch "$dir/zz-newest.jsonl"
+    # Push the OLD file's mtime into the past rather than touching the new one to
+    # "now". Both files are created within the same second, and `-nt` compares
+    # whole seconds on many filesystems — so a bare `touch` of the newer file
+    # leaves the two mtimes EQUAL, `-nt` is false, and the test fails
+    # intermittently depending on where the second boundary lands. Backdating the
+    # older file makes the ordering unambiguous and the case deterministic.
+    command touch -t 202001010000 "$dir/session.jsonl"
     run_ctx_budget "$sb" "$sb/.worktrees/issue-42"
     assert_contains "$RUN_OUT" "context_tokens=20000" "reads the newest session, not the first"
     assert_contains "$RUN_OUT" "verdict=ok" "a post-handoff session reads back at the floor"
@@ -377,6 +442,9 @@ run_test test_no_toplevel_record_fails_loud "no top-level record fails loud (exi
 run_test test_no_subcommand_exits_1 "no subcommand is a usage error"
 run_test test_unknown_subcommand_exits_1 "unknown subcommand is a usage error"
 run_test test_non_numeric_threshold_fails_loud "non-numeric threshold fails loud"
+run_test test_leading_zero_octal_threshold_fails_loud "leading-zero threshold fails loud (octal/decimal split)"
+run_test test_invalid_octal_threshold_fails_loud_not_crash "invalid-octal threshold fails loud, does not crash"
+run_test test_leading_zero_floor_fails_loud "leading-zero floor fails loud too (sibling knob)"
 run_test test_zero_threshold_fails_loud "zero threshold fails loud"
 run_test test_threshold_and_floor_are_env_overridable "threshold + floor are env-overridable"
 run_test test_emits_the_documented_default_threshold_and_floor "emits the documented defaults"
