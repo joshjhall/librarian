@@ -26,7 +26,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ok } from "../lib/mjs-assert.mjs";
+import { ok, throws } from "../lib/mjs-assert.mjs";
 import { harnessSource, repoRoot, SHIP } from "../lib/extract-helpers.mjs";
 
 const SKILL_DIR = "plugins/dev-core/skills/delegating-investigation";
@@ -48,6 +48,13 @@ const CONSUMERS = [
 // re-derived, so the test pins the CITATION, not an arithmetic result.
 const SPAWN_PREFIX = "24,568";
 
+// The skill's SECOND measured citation: opus-5 costs this multiple of sonnet-5
+// per token on the same fleet window. Pinned for the same reason SPAWN_PREFIX
+// is — it is the number that makes the tier instruction load-bearing rather than
+// a preference, and a partial update during a future re-measurement would
+// otherwise leave a stale figure sitting in the guidance uncaught.
+const OPUS_MULTIPLIER = "1.93x";
+
 // Read a file, returning null ONLY when it genuinely does not exist.
 //
 // A bare `catch { return null }` would map every I/O failure — a permissions
@@ -67,6 +74,26 @@ function readIfPresent(relPath) {
 }
 
 export function run() {
+  // ===========================================================================
+  // readIfPresent distinguishes "absent" from "unreadable" — both branches
+  // ===========================================================================
+  // The comment above readIfPresent claims a safety property; this proves it.
+  // Per the repo's own rule, a suppression is measured before it is kept — a
+  // rethrow nobody exercises is indistinguishable from the bare `catch {}` it
+  // replaced, and a future refactor could restore the swallow with every other
+  // assertion here still green.
+  //
+  // A directory path is the cheapest non-ENOENT error to construct: readFileSync
+  // on one throws EISDIR, needs no sandbox, and mutates nothing.
+  throws(
+    () => readIfPresent(SKILL_DIR),
+    "readIfPresent: a non-ENOENT error propagates instead of reading as 'absent'",
+  );
+  ok(
+    readIfPresent(`${SKILL_DIR}/does-not-exist.md`) === null,
+    "readIfPresent: a genuinely missing file still returns null",
+  );
+
   // ===========================================================================
   // The skill exists and is packaged correctly
   // ===========================================================================
@@ -142,6 +169,10 @@ export function run() {
     ok(
       /agentType|model: 'sonnet'|Explore/.test(skill),
       "delegating-investigation: names a concrete dispatch mechanism, not just a tier",
+    );
+    ok(
+      skill.includes(OPUS_MULTIPLIER),
+      `delegating-investigation: cites the measured opus/sonnet ratio (${OPUS_MULTIPLIER})`,
     );
 
     // =========================================================================
