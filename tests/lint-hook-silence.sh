@@ -200,10 +200,26 @@ test_hook_is_silent_on_noop() {
     #     is ever changed to honor the payload)
     #   - GOLEM_EVENT_SINKS is emptied so an operator env with a real sink
     #     cannot make this gate POST a synthetic event to a live endpoint
+    # The isolation DEPENDS on hookcwd being a real git repo: that is what makes
+    # `git rev-parse --git-common-dir` resolve inside the sandbox instead of
+    # walking up to the real checkout. So a setup failure must FAIL, not be
+    # swallowed — a bare directory with no .git leaves the walk-up free and
+    # silently restores the very escape route this block closes.
     if [ ! -d "$SANDBOX/hookcwd/.git" ]; then
-        mkdir -p "$SANDBOX/hookcwd" 2>/dev/null || true
-        git -C "$SANDBOX/hookcwd" init -q >/dev/null 2>&1 || true
+        if ! mkdir -p "$SANDBOX/hookcwd" 2>/dev/null ||
+            ! git -C "$SANDBOX/hookcwd" init -q >/dev/null 2>&1; then
+            assert_true false \
+                "Could not build the isolated git cwd for hook execution. Refusing to run the hook against the ambient tree: golem-notify.sh resolves its status feed from the process cwd and would write to the real .worktrees/.status/feed.jsonl."
+            return 0
+        fi
     fi
+
+    # Truncate the captures BEFORE the run. If the subshell dies early (a failed
+    # cd), the redirections below never fire and these files would still hold
+    # the PREVIOUS hook's output — reporting one hook's bytes against another's
+    # name.
+    : >"$SANDBOX/stdout.txt"
+    : >"$SANDBOX/stderr.txt"
 
     set +e
     (
@@ -218,6 +234,16 @@ test_hook_is_silent_on_noop() {
     rc=$?
     set -e
     err="$(cat "$SANDBOX/stderr.txt")"
+
+    # 127 is this subshell's own sentinel for "could not cd into the sandbox",
+    # not the hook's exit code. Surface it as itself rather than letting the
+    # assertions below read empty captures as a clean pass.
+    if [ "$rc" -eq 127 ] && [ ! -s "$SANDBOX/stdout.txt" ]; then
+        assert_true false \
+            "Could not cd into the isolated sandbox cwd to run $(basename "$CUR_SCRIPT"). The hook was NOT executed; treating this as a pass would assert silence that was never measured."
+        return 0
+    fi
+
     nbytes="$(command wc -c <"$SANDBOX/stdout.txt" | command tr -d '[:space:]')"
     out="$(command head -c 200 "$SANDBOX/stdout.txt")"
 
@@ -301,6 +327,27 @@ test_unresolved_command() {
         "hooks.json registers $CUR_EVENT with a command this gate cannot resolve to a script path: '$CUR_RAWCMD'. Teach hook_script_path() that shape — an unresolved registration must not silently drop out of the corpus."
 }
 
+# bash-guard.sh is the OTHER hook that can deny, and the higher-stakes one — it
+# guards destructive shell in read-only subagents (#448/#662). Pinning only
+# worktree-guard's deny path would leave the two-sided contract half-enforced on
+# the hook where going silent costs the most.
+test_bash_guard_deny_path_still_emits() {
+    local guard payload out
+    guard="$REPO_ROOT/plugins/workflow/hooks/bash-guard.sh"
+    assert_file_exists "$guard" "bash-guard.sh must exist to verify its deny direction"
+    [ -f "$guard" ] || return 0
+
+    # A read-only subagent (agent_id present) running destructive shell: Rule A,
+    # tree-independent, so this needs no worktree fixture.
+    payload="$SANDBOX/bg-deny.json"
+    printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf src"},"cwd":"%s","session_id":"lint-hook-silence","agent_id":"a-review-1","agent_type":"code-reviewer"}\n' \
+        "$REPO_ROOT" >"$payload"
+
+    out="$(bash "$guard" <"$payload" 2>/dev/null || true)"
+    assert_contains "$out" '"permissionDecision":"deny"' \
+        "bash-guard.sh must STILL emit a deny envelope for destructive shell in a read-only subagent. Silence-on-no-op must not be achieved by going silent everywhere (#448/#662/#782)."
+}
+
 # --- Guards on the gate itself ----------------------------------------------
 test_corpus_non_empty() {
     assert_not_empty "$CORPUS" \
@@ -363,5 +410,6 @@ $CORPUS
 EOF
 
 run_test test_deny_path_still_emits "worktree-guard.sh still emits on the DENY path"
+run_test test_bash_guard_deny_path_still_emits "bash-guard.sh still emits on the DENY path"
 
 generate_report

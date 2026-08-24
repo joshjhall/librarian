@@ -79,6 +79,16 @@ reverted after each:
 | 4 | `printf "\n"` (bare newline) at the reachable allow exit | **CAUGHT** — "Observed 1 byte(s)" |
 | 5 | a hook registered with an unresolvable command shape | **CAUGHT** — "command shape is unrecognized" |
 | 6 | live-feed pollution probe (size/line delta around a gate run) | **delta 0** after isolation; **+1 line / +110 bytes** before |
+| 7 | `_emit_deny_reason` neutered at the jq-absent fallback | **SURVIVED** — unreachable with jq present (the jq branch emits and exits first). Not a gate defect |
+| 8 | `_emit_deny_reason` neutered at the **function entry** | **CAUGHT** — `bash-guard.sh still emits on the DENY path ... FAIL` |
+| 9 | sentinel regressed from `exit 77` to `exit 0` | **CAUGHT** — `an absent jq exits 77, not 0 ... FAIL` |
+
+Mutations 7 and 8 are the same lesson as mutation 1, met a second time: the
+obvious target was dead code. `bash-guard.sh` emits its deny envelope through
+`jq` when `jq` is present and only falls back to a hand-rolled `printf`
+otherwise, so neutering the fallback changes nothing on a host that has `jq`.
+Distinguishing *unreachable* from *untested* is what separates a real coverage
+gap from a mutation that could never have failed.
 
 Mutation 1 is worth recording rather than discarding: the obvious mutation
 target was dead code, and a round that stopped there would have "proved" the
@@ -135,6 +145,26 @@ cannot survive `read` with `IFS=<tab>`, because tab is IFS *whitespace* and a
 leading run of it is stripped — every column shifted left and the row was
 misreported as a different hook (`registers Bash -> PostToolUse`). Corrected
 with an explicit `UNRESOLVED` sentinel that keeps the field count fixed.
+
+**Cycle 3 raised no real blocking finding** — the review loop converged. Its one
+`blocking` row was the AC#4 scope item already resolved by the operator, filed
+by the reviewer itself "purely for traceability rather than as a blocker". Four
+deferrables were taken anyway, two of them guarding the cycle-2 isolation fix:
+
+- a swallowed `git init` failure would leave `hookcwd` without a `.git`, freeing
+  `git rev-parse --git-common-dir` to walk back up to the real checkout and
+  silently restoring the escape route the fix had just closed — now a loud
+  failure rather than `|| true`;
+- a failed `cd` exited the subshell before its redirections fired, so the
+  captures still held the PREVIOUS hook's bytes and would be reported under this
+  hook's name — captures are now truncated before the run and the `127` sentinel
+  is surfaced as itself;
+- `bash-guard.sh` had no deny-path assertion though it is the higher-stakes
+  denier (destructive shell in read-only subagents, #448/#662) — added, and
+  mutation-verified;
+- the sentinel-77 contract was asserted only in a comment — now pinned by two
+  tests in `tests/validate-lint-gates.sh`, beside the sibling gates that
+  implement the same contract.
 
 ## The real emitter — NOT `claude-host-event.sh`
 
