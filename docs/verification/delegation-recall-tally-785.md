@@ -30,6 +30,28 @@ here. That issue — not this file, and not #785 — is what stops this becoming
 "shipped and forgotten": it stays open until the row target below is met and this
 tally is closed with a verdict.
 
+### Why `Closes #785` and not `Contributes to #785`
+
+A reasonable reading says a PR leaving two ACs unmet should say `Contributes`
+(this repo's umbrella-issue convention). The **operator's explicit decision** was
+the other split, and it is recorded here so it is not re-litigated by whoever
+reads this next:
+
+**Issue #785 is the guidance change and closes on it (AC1–AC4). Issue #797 is a
+separate issue that OWNS AC5/AC6 outright** — it does not merely track a
+remainder of #785. The two ACs were moved, not deferred-in-place.
+
+That distinction is what makes `Closes` correct rather than sloppy: the
+alternative would leave #785 open indefinitely as a stale umbrella whose only
+live content had already moved elsewhere, which is exactly the ambiguity
+splitting the issue was meant to remove. The evidence stays separate from the
+change it judges — a measurement issue outliving the change it measures is
+normal.
+
+The thing this must not become is a closed issue with no live owner for the
+unmeasured claim. #797 is that owner, is open, and is linked from every mention
+above.
+
 Shipping the recipe now — while the context that produced it is live — is
 deliberate. Re-deriving the method later is exactly the transcript archaeology
 [#781](https://github.com/joshjhall/librarian/issues/781) was filed to end.

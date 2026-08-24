@@ -48,10 +48,20 @@ const CONSUMERS = [
 // re-derived, so the test pins the CITATION, not an arithmetic result.
 const SPAWN_PREFIX = "24,568";
 
+// Read a file, returning null ONLY when it genuinely does not exist.
+//
+// A bare `catch { return null }` would map every I/O failure — a permissions
+// error, a symlink loop, a corrupted read — onto the same null that means
+// "absent", and the caller then reports the generic "<path> exists" failure. The
+// diagnosis would name the wrong problem: someone would go looking for a missing
+// file that is sitting right there. Anything that is not ENOENT is re-thrown, so
+// it surfaces with its real message; the entry point attributes such a throw to
+// this area and still runs the sibling areas (tests/lib/mjs-assert.mjs).
 function readIfPresent(relPath) {
   try {
     return readFileSync(join(repoRoot, relPath), "utf8");
-  } catch {
+  } catch (err) {
+    if (err?.code !== "ENOENT") throw err;
     return null;
   }
 }
