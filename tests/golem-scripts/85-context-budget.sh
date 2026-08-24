@@ -337,6 +337,96 @@ EOF
         "no raw exec error leaks into the table"
 }
 
+# THREE golems, three different states, one sweep. Every other case plants a
+# single cache row, so the render loop only ever ran one iteration — and the
+# `_rcb_*` variables are function-scoped by prefix convention, not by `local`, so
+# a value can survive into the next iteration. That is precisely the shape that
+# stays invisible with one golem: a container row leaking its short-circuit into
+# the next golem, or a stale reading being reprinted under another golem's name,
+# needs a SECOND iteration to appear at all.
+# context-budget.sh PRESENT but not executable. Pins the DEGRADATION and the
+# absence of stderr leakage, both operator-visible.
+#
+# It does NOT pin the `-x` guard, and that was measured, not assumed: cycle 7's
+# review proposed this case specifically to catch the guard, on the theory that a
+# non-executable file (unlike a missing one) would reach an exec and leak
+# "Permission denied". It does reach an exec — but that message goes to STDERR,
+# which read_context_budget already redirects in the same expression, so stdout is
+# empty either way and deleting the guard leaves this test green. Verified by
+# mutation. The guard is a genuine no-op with respect to output in BOTH the
+# missing and non-executable cases; it avoids a pointless exec, nothing more.
+test_status_handles_a_non_executable_context_budget() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (context budget needs jq)"
+        return 0
+    fi
+    local sb shadow
+    new_sandbox sb
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "blocking": false }
+EOF
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    shadow="$sb/shadow"
+    command mkdir -p "$shadow"
+    command cp "$STATUS" "$shadow/golem-status.sh"
+    command cp "$REPO_ROOT/plugins/workflow/scripts/config.sh" "$shadow/config.sh"
+    command cp "$REPO_ROOT/plugins/workflow/scripts/context-budget.sh" \
+        "$shadow/context-budget.sh"
+    command chmod -x "$shadow/context-budget.sh"
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$shadow/golem-status.sh" 2>&1)" || true
+    assert_contains "$RUN_OUT" "context unknown" \
+        "a non-executable context-budget.sh degrades to unknown"
+    assert_not_contains "$RUN_OUT" "Permission denied" \
+        "the -x guard short-circuits before an exec that would leak this"
+    assert_not_contains "$RUN_OUT" "200100 tokens" \
+        "no reading is rendered from a script that never ran"
+}
+
+test_status_renders_each_golem_independently() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (context budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    # golem-1: a real handoff-due reading.
+    command cat >"$sb/.worktrees/.status/golem-1.json" <<'EOF'
+{ "golem": "golem-1", "issue": 1, "branch": "feature/issue-1",
+  "state": "impl", "blocking": false }
+EOF
+    plant_transcript "$sb" 1 "$TRANSCRIPT_CTX_HANDOFF"
+    # golem-2: a container row, which short-circuits before any scrape. Placed
+    # BETWEEN the other two so a leak of its early return would swallow golem-3.
+    command cat >"$sb/.worktrees/.status/golem-2.json" <<'EOF'
+{ "golem": "golem-2", "issue": 2, "branch": "feature/issue-2",
+  "state": "impl", "blocking": false, "container": "golem-2-ctr" }
+EOF
+    # golem-3: a small, ok-band reading — deliberately DIFFERENT from golem-1's,
+    # so a stale-variable leak renders golem-1's 200100 here and fails.
+    command cat >"$sb/.worktrees/.status/golem-3.json" <<'EOF'
+{ "golem": "golem-3", "issue": 3, "branch": "feature/issue-3",
+  "state": "impl", "blocking": false }
+EOF
+    plant_transcript "$sb" 3 "$TRANSCRIPT_CTX_OK"
+    run_status_scrape "$sb"
+    assert_contains "$RUN_OUT" "golem-1 — 200100 tokens" "golem-1 shows its own reading"
+    assert_contains "$RUN_OUT" "golem-2 — context not readable (container golem)" \
+        "the container row renders its own note"
+    assert_contains "$RUN_OUT" "golem-3 — 20000 tokens" \
+        "golem-3 shows ITS reading, not the one two rows up"
+    assert_not_contains "$RUN_OUT" "golem-3 — 200100 tokens" \
+        "no stale reading leaks across loop iterations"
+    assert_not_contains "$RUN_OUT" "golem-3 — context not readable" \
+        "nor does the container short-circuit leak into the next golem"
+}
+
 # The script's stderr must not leak into the rendered table. golem-status
 # redirects it in the same breath as absorbing the exit status; dropping that
 # redirect prints a raw diagnostic mid-table (the

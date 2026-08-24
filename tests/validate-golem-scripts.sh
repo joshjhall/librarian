@@ -269,6 +269,8 @@ run_fragment_test test_status_renders_container_golem_as_not_readable "golem-sta
 run_fragment_test test_status_rejects_a_traversal_issue_field "golem-status: a traversal .issue degrades to unknown, builds no path (#784)"
 run_fragment_test test_status_rejects_malformed_budget_output "golem-status: a malformed budget row degrades to unknown, never half-parsed (#784)"
 run_fragment_test test_status_handles_a_missing_context_budget_script "golem-status: a missing context-budget.sh degrades to unknown (#784)"
+run_fragment_test test_status_handles_a_non_executable_context_budget "golem-status: a non-executable context-budget.sh degrades without leaking (#784)"
+run_fragment_test test_status_renders_each_golem_independently "golem-status: each golem's row is independent across the render loop (#784)"
 run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: context-budget stderr does not leak into the table (#784)"
 run_fragment_test test_liveness_working "golem-transcript-liveness: turn-in-flight -> working (#248)"
 run_fragment_test test_liveness_idle "golem-transcript-liveness: turn-ended -> idle (#248)"
