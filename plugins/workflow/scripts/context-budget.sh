@@ -32,7 +32,7 @@
 # derivation, not the reading.
 #
 # THE THRESHOLD IS DERIVED, NOT PICKED (issue #784 AC2). Full derivation and its
-# reproduction recipe: docs/verification/context-threshold-derivation-784.md.
+# reproduction recipe: docs/verification/context-threshold-tally-784.md.
 # The short version, because the number invites second-guessing:
 #
 #   * Pure token accounting CANNOT yield a threshold — it is monotonic. Cycling
@@ -177,6 +177,14 @@ for _cb_pair in "CONTEXT_BUDGET_THRESHOLD:$CONTEXT_BUDGET_THRESHOLD" \
     esac
 done
 
+# BACKSTOP, currently unreachable — and deliberately kept. The `0*` arm of the
+# guard above already rejects a literal `0` (and `*[!0-9]*` rejects a leading
+# `-`), so nothing can reach this with a non-positive value today. It stays
+# because the division at `pct` below is only safe while the threshold is
+# positive, and that safety should not depend on a case-pattern several lines up
+# continuing to reject `0*` — a future edit that loosens the leading-zero rule
+# (say, to normalize `0400000` instead of refusing it) would silently
+# reintroduce a divide-by-zero. Cheap insurance against a non-local change.
 if [ "$CONTEXT_BUDGET_THRESHOLD" -le 0 ]; then
     command echo "context-budget: CONTEXT_BUDGET_THRESHOLD must be greater than 0" >&2
     exit 1

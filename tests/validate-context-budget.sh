@@ -344,6 +344,13 @@ test_zero_threshold_fails_loud() {
     plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
     run_ctx_budget "$sb" "$sb/.worktrees/issue-42" CONTEXT_BUDGET_THRESHOLD=0
     assert_exit 1 "$RUN_RC" "a zero threshold exits 1 rather than dividing by zero"
+    # Assert WHICH guard fired. `0` is caught by the leading-zero arm, not by the
+    # `-le 0` backstop below it — so a bare exit-1 assertion would not distinguish
+    # the two, and would keep passing if the leading-zero arm were removed and the
+    # backstop silently became the only thing standing between a bad knob and a
+    # divide-by-zero. Naming the message pins the actual control flow.
+    assert_contains "$RUN_OUT" "no leading zeros" \
+        "the leading-zero guard catches it first; the -le 0 check is a backstop"
 }
 
 # The documented exit 3 (jq absent). Every other case in this file SKIPS when jq

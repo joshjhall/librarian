@@ -82,7 +82,7 @@ than by phase.
 
 Because it was **derived**, and the derivation is worth knowing before anyone
 retunes it (full record + reproduction recipe:
-`docs/verification/context-threshold-derivation-784.md`):
+`docs/verification/context-threshold-tally-784.md`):
 
 - **Token cost alone cannot pick a threshold.** It is monotonic — cycling sooner
   always wins, all the way down to the floor. Any number sweep over pure token

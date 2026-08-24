@@ -149,7 +149,7 @@
 #                        at 150k and 14.5% at 250k). This supersedes the 250-300k
 #                        figure in #784's body, which assumed a 78k floor against
 #                        a measured ~91k. Derivation + reproduction recipe:
-#                        docs/verification/context-threshold-derivation-784.md.
+#                        docs/verification/context-threshold-tally-784.md.
 #                                                          Default: 175000
 #   CONTEXT_BUDGET_FLOOR The measured cost of a session's FIRST request — the
 #                        system prompt, tools, and skill preamble a fresh session
