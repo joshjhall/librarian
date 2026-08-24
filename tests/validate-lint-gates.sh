@@ -36,6 +36,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINT_PYTHON="$SCRIPT_DIR/lint-python.sh"
 LINT_SHELLCHECK="$SCRIPT_DIR/lint-shellcheck.sh"
+LINT_HOOK_SILENCE="$SCRIPT_DIR/lint-hook-silence.sh"
 RUN_ALL="$SCRIPT_DIR/run-all.sh"
 
 REAL_BASH="$(command -v bash)"
@@ -419,6 +420,42 @@ test_shellcheck_gate_skips_with_sentinel() {
         "the skip message states the gate did not run (#571)"
     assert_true "! printf '%s' \"$out\" | command grep -q 'Failed:  [1-9]'" \
         "a skip is not reported as a failure (#571)"
+}
+
+# The hook-silence gate (#782) implements the same absent-runtime contract: it
+# needs jq to parse the hooks.json registrations, and must exit the reserved
+# sentinel rather than a green 0 when jq is missing. Pinned here, beside its
+# siblings, because the sentinel is otherwise asserted only in a code comment —
+# and a gate that silently returns 0 on a missing runtime is indistinguishable
+# from a gate that ran and found nothing, which is the failure #538/#571 exist
+# to prevent.
+test_hook_silence_gate_skips_with_sentinel() {
+    local sb out rc=0
+    stub_dir sb || return 1 # no jq planted
+
+    out="$(/usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+        PATH="$sb/bin" "$REAL_BASH" "$LINT_HOOK_SILENCE" 2>&1)" || rc=$?
+
+    assert_equals "$SKIP_SENTINEL" "$rc" \
+        "an absent jq exits the reserved skip sentinel, not 0 (#782)"
+    assert_contains "$out" "jq not found" \
+        "the skip message names the missing tool (#782)"
+}
+
+# The other half of the contract: with jq present the gate must actually run and
+# check the hooks, or the sentinel test above would also pass on a gate that
+# never does anything.
+test_hook_silence_gate_runs_when_available() {
+    local out rc=0
+    command -v jq >/dev/null 2>&1 || {
+        skip_test "jq absent on this host — cannot exercise the runs-when-available arm"
+        return 0
+    }
+
+    out="$("$REAL_BASH" "$LINT_HOOK_SILENCE" 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "the hook-silence gate passes on a clean tree"
+    assert_contains "$out" "is silent on no-op" \
+        "the gate really executes hooks rather than exiting early"
 }
 
 # The other half of the contract: with shellcheck present the gate must actually
@@ -1163,6 +1200,8 @@ run_test test_run_stage_still_renders_pass_and_fail "pass/fail rendering is undi
 run_test test_sentinel_constant_agreed_by_every_script "the skip sentinel agrees across all three scripts (#571)"
 run_test test_shellcheck_gate_skips_with_sentinel "an absent shellcheck exits 77, not 0 (#571)"
 run_test test_shellcheck_gate_runs_when_available "the shell gate really runs when shellcheck is present (#571)"
+run_test test_hook_silence_gate_skips_with_sentinel "an absent jq exits 77, not 0, in the hook-silence gate (#782)"
+run_test test_hook_silence_gate_runs_when_available "the hook-silence gate really runs when jq is present (#782)"
 run_test test_post_create_ensures_ruff "post-create.sh installs and verifies ruff"
 run_test test_justfile_shares_ruff_resolution "just lint shares the ruff→uvx runner resolution (#544)"
 run_test test_justfile_recipe_body_executes "the just lint recipe body actually parses and resolves (#544)"

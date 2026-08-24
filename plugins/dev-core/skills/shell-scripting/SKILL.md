@@ -153,3 +153,55 @@ if [ "${BASH_VERSION%%.*}" -lt 4 ]; then
     exit 1
 fi
 ```
+
+## Hook Output Contract
+
+**Silence is the default.** A hook writes to stdout only when it has a
+**decision or a message to convey**. Nothing to say → **no output at all**,
+never `{}`.
+
+This is counter-intuitive, which is why it needs stating. A hook is cheap to
+*run* — ~25ms — and at its own call site an empty `{}` looks free and reads as
+defensive. The cost is somewhere else entirely: every byte a hook writes becomes
+a `hook_success` attachment in the session transcript, and that attachment is
+**re-read on every subsequent turn** of a session that may run 800+ turns.
+
+Measured over 24h on one machine (#782): `hook_success` attachments totalled
+**574,677 context tokens** and **132.5M re-read tokens** (size x
+turns-remaining) — the single largest attachment category, ahead of
+`edited_text_file` (27.5M) — for payloads whose entire content was `{}`. One
+session fired 1,645 of them.
+
+The live counter-example is a third-party plugin, not a hypothetical. `hookify`'s
+`hooks/pretooluse.py` says:
+
+```python
+# Always output JSON (even if empty)
+print(json.dumps(result), file=sys.stdout)
+```
+
+That comment is the whole bug: "even if empty" is precisely the case that must
+print nothing.
+
+**Both directions matter.** Silence-on-no-op must not be achieved by going
+silent everywhere — a hook that never speaks, including when it must **deny**,
+has traded a token cost for a correctness hole. The shipped hooks are the worked
+examples of the split:
+
+| Path | Behavior |
+| --- | --- |
+| `bash-guard.sh` — command allowed | exit 0, **0 bytes** |
+| `worktree-guard.sh` — edit in scope | exit 0, **0 bytes** |
+| `worktree-guard.sh` — edit escapes the worktree | exit 0, **emits the deny envelope** |
+| `golem-notify.sh` — no `GOLEM_ID`, or a normal notification | exit 0, **0 bytes** |
+
+**If a hook genuinely must emit on a no-op path** — because the harness requires
+a payload for that event — say so **in a comment in the hook**, so the emission
+reads as required rather than accidental. Verify it first: empty stdout is
+accepted for `PreToolUse`, `PostToolUse`, and `Notification`.
+
+`tests/lint-hook-silence.sh` enforces this. It **executes** every hook
+registered in `plugins/**/hooks/hooks.json` against a no-op payload and requires
+zero bytes — a behavioral check, not a grep, since a grep is satisfiable by a
+comment claiming silence. It drives off `hooks.json` so a newly registered hook
+is covered automatically, and it asserts the deny path still emits.
