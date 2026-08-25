@@ -272,6 +272,7 @@ run_fragment_test test_status_handles_a_missing_context_budget_script "golem-sta
 run_fragment_test test_status_handles_a_non_executable_context_budget "golem-status: a non-executable context-budget.sh degrades without leaking (#784)"
 run_fragment_test test_status_renders_each_golem_independently "golem-status: each golem's row is independent across the render loop (#784)"
 run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: context-budget stderr does not leak into the table (#784)"
+run_fragment_test test_status_sources_the_signals_fragment "golem-status: the per-golem signals fragment is sourced and wired in (#800)"
 run_fragment_test test_liveness_working "golem-transcript-liveness: turn-in-flight -> working (#248)"
 run_fragment_test test_liveness_idle "golem-transcript-liveness: turn-ended -> idle (#248)"
 run_fragment_test test_liveness_errored_api "golem-transcript-liveness: isApiErrorMessage -> errored (#248)"

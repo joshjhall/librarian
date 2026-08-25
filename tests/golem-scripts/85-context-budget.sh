@@ -233,6 +233,12 @@ EOF
     command mkdir -p "$shadow"
     command cp "$STATUS" "$shadow/golem-status.sh"
     command cp "$REPO_ROOT/plugins/workflow/scripts/config.sh" "$shadow/config.sh"
+    # golem-status.sh sources its per-golem signal families from a sibling
+    # fragment (#800), resolved from SCRIPT_DIR like config.sh above — so the
+    # shadow dir needs it too, or the copied script loads neither reader and the
+    # block under test never renders at all.
+    command cp "$REPO_ROOT/plugins/workflow/scripts/golem-status-signals.sh" \
+        "$shadow/golem-status-signals.sh"
     # THE GUARDS ARE ORDERED, so each needs a stub that SATISFIES the preceding
     # ones and trips only its own — a single all-garbage stub trips the first
     # guard and leaves the later two unexercised (they survived mutation that
@@ -321,6 +327,12 @@ EOF
     command mkdir -p "$shadow"
     command cp "$STATUS" "$shadow/golem-status.sh"
     command cp "$REPO_ROOT/plugins/workflow/scripts/config.sh" "$shadow/config.sh"
+    # golem-status.sh sources its per-golem signal families from a sibling
+    # fragment (#800), resolved from SCRIPT_DIR like config.sh above — so the
+    # shadow dir needs it too, or the copied script loads neither reader and the
+    # block under test never renders at all.
+    command cp "$REPO_ROOT/plugins/workflow/scripts/golem-status-signals.sh" \
+        "$shadow/golem-status-signals.sh"
     # Deliberately NO context-budget.sh beside it.
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -371,6 +383,12 @@ EOF
     command mkdir -p "$shadow"
     command cp "$STATUS" "$shadow/golem-status.sh"
     command cp "$REPO_ROOT/plugins/workflow/scripts/config.sh" "$shadow/config.sh"
+    # golem-status.sh sources its per-golem signal families from a sibling
+    # fragment (#800), resolved from SCRIPT_DIR like config.sh above — so the
+    # shadow dir needs it too, or the copied script loads neither reader and the
+    # block under test never renders at all.
+    command cp "$REPO_ROOT/plugins/workflow/scripts/golem-status-signals.sh" \
+        "$shadow/golem-status-signals.sh"
     command cp "$REPO_ROOT/plugins/workflow/scripts/context-budget.sh" \
         "$shadow/context-budget.sh"
     command chmod -x "$shadow/context-budget.sh"
@@ -445,4 +463,58 @@ EOF
     run_status_scrape "$sb"
     assert_not_contains "$RUN_OUT" "context-budget: no transcript dir" \
         "the script's own diagnostic does not leak into the table"
+}
+
+# --- the signals fragment is actually wired in (#800) -----------------------
+
+# Both per-golem signal families live in the sourced fragment
+# plugins/workflow/scripts/golem-status-signals.sh, and golem-status.sh reaches
+# them through ONE `.` line. Every other case in this file and its siblings
+# exercises them through a full render, which means a dropped source line fails
+# only OBLIQUELY — with `set -u` and no `set -e`, an undefined render function is
+# a per-call "command not found" on stderr and the rows simply go missing, so the
+# failure reads as "the context budget stopped working" rather than "the fragment
+# is not loaded". This case names the real cause.
+#
+# It is deliberately a SOURCE test, not a render test: sourcing golem-status.sh
+# runs everything above its main-guard and nothing below, so what it proves is
+# exactly the wiring — the fragment loads, before either render function needs
+# it. `declare -F` (not a rendered string) is what makes the assertion about
+# DEFINITION rather than output, which is why it still fails when a render
+# happens to degrade gracefully.
+#
+# The five names cover both families — each reader, each render half, plus the
+# renderer they share — so relocating any one of them out of the fragment
+# without updating the caller is caught here too.
+test_status_sources_the_signals_fragment() {
+    local sb out
+    new_sandbox sb
+    out="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" -c '
+                source "$1"
+                for fn in scrape_and_persist_tokens read_context_budget \
+                    _frozen_phrase render_token_block render_context_budget_block; do
+                    if declare -F "$fn" >/dev/null 2>&1; then
+                        printf "have:%s\n" "$fn"
+                    else
+                        printf "MISSING:%s\n" "$fn"
+                    fi
+                done
+            ' _ "$STATUS" 2>/dev/null || true)"
+    assert_contains "$out" "have:scrape_and_persist_tokens" \
+        "the token reader is loaded via the fragment"
+    assert_contains "$out" "have:read_context_budget" \
+        "the context reader is loaded via the fragment"
+    assert_contains "$out" "have:_frozen_phrase" \
+        "the shared frozen renderer is loaded via the fragment"
+    assert_contains "$out" "have:render_token_block" \
+        "the token render half is loaded via the fragment"
+    assert_contains "$out" "have:render_context_budget_block" \
+        "the context render half is loaded via the fragment"
+    assert_not_contains "$out" "MISSING:" \
+        "no signal unit is left behind by the source line"
 }
