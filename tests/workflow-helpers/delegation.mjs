@@ -1,0 +1,408 @@
+// delegation — investigation-delegation guidance and its SCOPE_DISCIPLINE
+// boundary (issue #785).
+//
+// Cross-cutting by nature: the guidance is ONE skill in dev-core referenced from
+// two consumer phases in two other plugins, and its correctness claim spans all
+// three plus ship-issue's reviewer prompts. So it lives in its own area module
+// rather than being duplicated into the per-harness ones — the same reasoning
+// that put the model-tier assertions in model-tier.mjs (#564 split shape).
+//
+// It is also why this is a NEW file rather than more lines in ship-issue.mjs:
+// the plan-lens flagged that module at 1,374 production LOC against an 800
+// budget, so growing it to hold a cross-harness area would have been the wrong
+// seam twice over.
+//
+// WHAT THIS GATE PROTECTS. #785 routes read-only investigation to subagents; the
+// measured hazard is that the SAME prose leaks into the review harness's
+// reviewer prompts, where it would undo #553/#557's bounding (per-reviewer Bash
+// calls 31.5 -> 2.2) and re-introduce unbounded exploration at a ~24.5k spawn
+// premium each. #785's AC4 asks for confirmation that reviewer behavior did not
+// regress; an unchanged file is not evidence, so the leak check below is the
+// assertion that makes it one.
+//
+// Assertions are collect-all (they record, never throw), so a failure here does
+// not mask any sibling area — see tests/lib/mjs-assert.mjs.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { eq, ok, throws } from "../lib/mjs-assert.mjs";
+import { harnessSource, repoRoot, SHIP } from "../lib/extract-helpers.mjs";
+
+const SKILL_DIR = "plugins/dev-core/skills/delegating-investigation";
+const SKILL = `${SKILL_DIR}/SKILL.md`;
+const META = `${SKILL_DIR}/metadata.yml`;
+
+// The two consumer phases wired in #785. Named as data so a third consumer is a
+// one-line addition and so a failure message names which phase lost the ref.
+const CONSUMERS = [
+  ["next-issue planning", "plugins/workflow/skills/next-issue/phase2-plan.md"],
+  [
+    "codebase-audit survey",
+    "plugins/review-audit/skills/codebase-audit/orchestration-protocol.md",
+  ],
+];
+
+// The measured break-even. Both figures are cited from the repo's own
+// measurements (#787 n=301 spawns; #785's 24h classification) rather than
+// re-derived, so the test pins the CITATION, not an arithmetic result.
+const SPAWN_PREFIX = "24,568";
+
+// The skill's SECOND measured citation: opus-5 costs this multiple of sonnet-5
+// per token on the same fleet window. Pinned for the same reason SPAWN_PREFIX
+// is — it is the number that makes the tier instruction load-bearing rather than
+// a preference, and a partial update during a future re-measurement would
+// otherwise leave a stale figure sitting in the guidance uncaught.
+const OPUS_MULTIPLIER = "1.93x";
+
+// Read a file, returning null ONLY when it genuinely does not exist.
+//
+// A bare `catch { return null }` would map every I/O failure — a permissions
+// error, a symlink loop, a corrupted read — onto the same null that means
+// "absent", and the caller then reports the generic "<path> exists" failure. The
+// diagnosis would name the wrong problem: someone would go looking for a missing
+// file that is sitting right there. Anything that is not ENOENT is re-thrown, so
+// it surfaces with its real message; the entry point attributes such a throw to
+// this area and still runs the sibling areas (tests/lib/mjs-assert.mjs).
+// `reader` is a seam for the tests below: it defaults to the real read, and a
+// test substitutes a thrower to drive error codes the filesystem will not
+// conveniently produce (a codeless error, an injected ENOENT). Injecting into
+// the real function is the point — re-implementing this `if` in a test would
+// assert only that the copy matches itself.
+function readIfPresent(relPath, reader = (p) => readFileSync(p, "utf8")) {
+  try {
+    return reader(join(repoRoot, relPath));
+  } catch (err) {
+    if (err?.code !== "ENOENT") throw err;
+    return null;
+  }
+}
+
+// Strip JS comments, leaving the text that actually reaches an agent: string
+// literals. Named and exported-to-the-block rather than inlined so the leak
+// check below can be run against SYNTHETIC fixtures — see `leaks()`.
+//
+// The trailing-comment arm deliberately skips lines containing a quote, so a
+// `//` inside a string literal (a URL) is never mistaken for a comment start.
+// That is a conservative bias: it under-strips rather than over-strips, because
+// over-stripping would delete prompt text and could hide a real leak.
+function stripComments(js) {
+  return js
+    .replace(/\/\*[\s\S]*?\*\//g, "") // block comments
+    .replace(/^[ \t]*\/\/[^\n]*$/gm, "") // whole-line // comments
+    .replace(/[ \t]+\/\/[^\n'"]*$/gm, ""); // trailing // comments (quote-free only)
+}
+
+// The leak predicate itself. Returns the markers found in `js`'s prompt text.
+// Extracting it is what makes the guard testable in both directions: the real
+// assertion runs it against the harness, and the fixtures below run it against
+// strings that are known-leaked and known-clean.
+function leaks(js, markers) {
+  const text = stripComments(js);
+  return markers.filter((m) => text.includes(m));
+}
+
+export function run() {
+  // ===========================================================================
+  // readIfPresent distinguishes "absent" from "unreadable" — both branches
+  // ===========================================================================
+  // The comment above readIfPresent claims a safety property; this proves it.
+  // Per the repo's own rule, a suppression is measured before it is kept — a
+  // rethrow nobody exercises is indistinguishable from the bare `catch {}` it
+  // replaced, and a future refactor could restore the swallow with every other
+  // assertion here still green.
+  //
+  // A directory path is the cheapest non-ENOENT error to construct: readFileSync
+  // on one throws EISDIR, needs no sandbox, and mutates nothing.
+  throws(
+    () => readIfPresent(SKILL_DIR),
+    "readIfPresent: a non-ENOENT error propagates instead of reading as 'absent'",
+  );
+  ok(
+    readIfPresent(`${SKILL_DIR}/does-not-exist.md`) === null,
+    "readIfPresent: a genuinely missing file still returns null",
+  );
+
+  // EISDIR alone is not enough: it is the ONE non-ENOENT code trivially
+  // available from the filesystem, so a condition wrongly narrowed to
+  // `err.code === "EISDIR"` would still pass the assertion above while
+  // swallowing every other failure.
+  //
+  // Test the REAL function against an injected error rather than re-implementing
+  // its `if` here — a copy of the logic asserts only that the copy behaves like
+  // itself, which is the tautology this whole block exists to avoid. `reader` is
+  // the seam: it defaults to readFileSync, and a test may substitute a thrower.
+  throws(
+    () =>
+      readIfPresent("irrelevant", () => {
+        throw new Error("no .code property"); // codeless: what `err?.code` guards
+      }),
+    "readIfPresent: the rethrow is generic — an error with no .code propagates too",
+  );
+  ok(
+    readIfPresent("irrelevant", () => {
+      const e = new Error("gone");
+      e.code = "ENOENT";
+      throw e;
+    }) === null,
+    "readIfPresent: an injected ENOENT still reads as 'absent'",
+  );
+
+  // ===========================================================================
+  // The skill exists and is packaged correctly
+  // ===========================================================================
+  // lint-skills-agents.sh enforces the directory shape generally; these two
+  // assertions are here so that a MISSING skill fails as "the delegation skill
+  // is gone" rather than as a wall of confusing content-assertion failures
+  // below, all of which would read as prose regressions.
+  const skill = readIfPresent(SKILL);
+  const meta = readIfPresent(META);
+  ok(skill !== null, `delegating-investigation: ${SKILL} exists`);
+  ok(meta !== null, `delegating-investigation: ${META} exists (lint-skills-agents.sh requires it)`);
+  ok(
+    (meta || "").includes("name: delegating-investigation"),
+    "delegating-investigation: metadata.yml declares the matching skill name",
+  );
+
+  // ===========================================================================
+  // The break-even is STATED, with both of its terms (#785 AC2)
+  // ===========================================================================
+  // AC2 asks for a break-even "computed from measured data and stated in the
+  // guidance". A skill that says "delegate when it's worth it" satisfies the
+  // prose and none of the intent, so each term is pinned separately:
+  //
+  //   cost to delegate  = the median spawn prefix (a fixed, measured number)
+  //   cost not to       = result volume TIMES turns resident (the multiplier)
+  //
+  // The multiplier is the term most likely to be dropped by a well-meaning
+  // trim, and it is the one that usually decides the comparison — a 40k result
+  // is not a 40k cost when it sits in context for another 30 turns.
+  if (skill) {
+    ok(
+      skill.includes(SPAWN_PREFIX),
+      `delegating-investigation: states the measured spawn prefix (${SPAWN_PREFIX}, #787)`,
+    );
+    ok(
+      /re-read debt/i.test(skill),
+      "delegating-investigation: names re-read debt as the other side of the break-even",
+    );
+    ok(
+      /turns_resident|turns it stays resident|turns resident/i.test(skill),
+      "delegating-investigation: the break-even multiplies result volume by turns resident",
+    );
+
+    // =========================================================================
+    // The exclusion is explicit (#785 AC3)
+    // =========================================================================
+    // AC3 exists because over-delegation is the failure mode that makes agents
+    // SLOWER — a one-line lookup routed through a subagent pays the full prefix
+    // to save a few hundred tokens. Guidance that only says when to delegate
+    // reads as "delegate", so the negative case must be present in its own
+    // right.
+    ok(
+      /Do NOT delegate/i.test(skill),
+      "delegating-investigation: carries an explicit do-not-delegate section (AC3)",
+    );
+    ok(
+      /known file|already know|targeted read/i.test(skill),
+      "delegating-investigation: excludes targeted single-file reads from delegation (AC3)",
+    );
+
+    // =========================================================================
+    // The dispatch tier is NAMED (#785's title: "to sonnet subagents")
+    // =========================================================================
+    // The break-even alone is not actionable: an agent that applies it correctly
+    // and then spawns an OPUS subagent forfeits the repricing half of the saving
+    // entirely (opus-5 is 1.93x sonnet-5 per token on this fleet) while still
+    // paying the 24.5k prefix. The guidance must say which tier, and how to set
+    // it, or "delegate to sonnet subagents" is left to inference.
+    ok(
+      /sonnet/i.test(skill),
+      "delegating-investigation: names the sonnet tier for delegated investigation",
+    );
+    ok(
+      /agentType|model: 'sonnet'|Explore/.test(skill),
+      "delegating-investigation: names a concrete dispatch mechanism, not just a tier",
+    );
+    ok(
+      skill.includes(OPUS_MULTIPLIER),
+      `delegating-investigation: cites the measured opus/sonnet ratio (${OPUS_MULTIPLIER})`,
+    );
+
+    // =========================================================================
+    // Conclusions, not transcripts (#785 AC5)
+    // =========================================================================
+    // This is the half of the saving that repricing does not deliver: if the
+    // subagent returns what it read, the parent context absorbs the exploration
+    // anyway and the delegation bought only a spawn prefix.
+    ok(
+      /not a transcript|never a transcript|not transcripts/i.test(skill),
+      "delegating-investigation: subagents return conclusions, not transcripts (AC5)",
+    );
+    ok(
+      /file:line/i.test(skill),
+      "delegating-investigation: conclusions carry file:line anchors",
+    );
+
+    // =========================================================================
+    // The skill names its own boundary against SCOPE_DISCIPLINE
+    // =========================================================================
+    // #785's body warns not to weaken SCOPE_DISCIPLINE in the name of
+    // delegation. The durable protection is not that today's author knew that —
+    // it is that the skill SAYS so, so a future editor reconciling two
+    // apparently-contradictory rules finds the reason they differ instead of
+    // harmonizing them.
+    ok(
+      skill.includes("SCOPE_DISCIPLINE"),
+      "delegating-investigation: names SCOPE_DISCIPLINE and the boundary against it",
+    );
+  }
+
+  // ===========================================================================
+  // Both consumer phases reference the skill, namespaced
+  // ===========================================================================
+  // AC1 routes investigation-heavy phases by default. Guidance that ships
+  // without a reference at the decision point may simply never load at the
+  // moment the decision is made, which is the difference between a rule and a
+  // document. The ref must be NAMESPACED (/dev-core:...) per CLAUDE.md — a bare
+  // /delegating-investigation does not resolve in a marketplace install, and
+  // lint-command-refs.sh enforces the form repo-wide.
+  for (const [label, path] of CONSUMERS) {
+    const src = readIfPresent(path);
+    ok(src !== null, `${label}: ${path} exists`);
+    ok(
+      (src || "").includes("/dev-core:delegating-investigation"),
+      `${label}: references /dev-core:delegating-investigation (namespaced, AC1)`,
+    );
+    ok(
+      (src || "").includes(SPAWN_PREFIX),
+      `${label}: carries the break-even figure at the decision point (AC2)`,
+    );
+  }
+
+  // ===========================================================================
+  // SCOPE_DISCIPLINE did not regress, and the guidance did not leak into it
+  // ===========================================================================
+  // #785 AC4: "SCOPE_DISCIPLINE is unchanged; a test or review note confirms
+  // reviewer behavior did not regress."
+  //
+  // Two DISTINCT claims, and the second is the one with teeth:
+  //
+  //   (a) the bounding clauses are still there  — catches a deletion
+  //   (b) delegation prose did NOT leak in      — catches an ADDITION
+  //
+  // (a) alone would pass a workflow.js that kept every original sentence and
+  // appended "route fan-out reading to a subagent" underneath, which is exactly
+  // the plausible regression: a future editor applying #785 repo-wide, seeing
+  // reviewer prompts full of investigation, and "finishing the job". That
+  // reviewer would then dispatch subagents from inside the fan-out — unbounded
+  // exploration at a 24.5k premium per spawn, the precise cost #553/#557 removed.
+  {
+    const src = harnessSource(SHIP);
+
+    // (a) The bounding clauses survive. Kept deliberately narrow: this area owns
+    // the #785 non-regression claim, while ship-issue.mjs owns SCOPE_DISCIPLINE's
+    // full content contract. Duplicating that contract here would create two
+    // tables over the same text that must agree — the duplication CLAUDE.md's
+    // #663 rule exists to prevent.
+    ok(
+      /const SCOPE_DISCIPLINE\s*=/.test(src),
+      "SCOPE_DISCIPLINE: still defined after #785",
+    );
+    // End the slice at the const's OWN terminator — the next top-level `const`
+    // declaration — not at whatever comment happens to follow it today.
+    //
+    // The tempting anchor is the neighbouring "// `sanitize`" comment, and it is
+    // a trap: re-wording that unrelated comment makes indexOf return -1, which
+    // slices to end-of-file. The two content assertions below would still PASS
+    // (their phrases are in the const either way), so the window would silently
+    // widen to whole-file matching with nothing failing to announce it — the
+    // gate would keep reporting green while no longer checking what it claims.
+    // So a lost boundary is asserted, never absorbed.
+    const sdStart = src.indexOf("const SCOPE_DISCIPLINE =");
+    ok(sdStart !== -1, "SCOPE_DISCIPLINE: start boundary located");
+    const sdRest = sdStart === -1 ? "" : src.slice(sdStart);
+    const sdEnd = sdRest.search(/\n(?:\/\/[^\n]*\n)*const\s/);
+    ok(
+      sdStart === -1 || sdEnd !== -1,
+      "SCOPE_DISCIPLINE: end boundary located (slice is a real window, not the whole file)",
+    );
+    const sd = sdEnd === -1 ? sdRest : sdRest.slice(0, sdEnd);
+
+    // SCOPE_DISCIPLINE is built by concatenating adjacent string literals, so a
+    // sentence can straddle a `' + '` join. Collapsing whitespace alone is NOT
+    // enough — it leaves the quote-plus-quote artifact mid-phrase, and a matcher
+    // that happens to sit inside one literal today silently stops matching when
+    // someone re-wraps the prose. Splice the joins out first, THEN collapse.
+    const sdText = sd.replace(/'\s*\+\s*'/g, "").replace(/\s+/g, " ");
+    ok(
+      /Budget yourself roughly 10 tool calls/i.test(sdText),
+      "SCOPE_DISCIPLINE: reviewers still get an explicit tool-call budget (#785 AC4)",
+    );
+    ok(
+      /Do NOT survey the repo/i.test(sdText),
+      "SCOPE_DISCIPLINE: reviewers are still told not to survey the repo (#785 AC4)",
+    );
+
+    // (b) The leak check, scanned over PROMPT TEXT ONLY — comments stripped.
+    //
+    // Scope is deliberately wider than SCOPE_DISCIPLINE (the hazard is guidance
+    // reaching a reviewer through ANY prompt builder, so a check pinned to one
+    // const would miss it arriving via a sibling), but it must not be the raw
+    // file: a future editor documenting this very boundary in a comment —
+    // "// see /dev-core:delegating-investigation for why this must not change",
+    // exactly the self-documenting comment the new SKILL.md argues for — would
+    // trip a raw-source check while no reviewer prompt had changed. A gate that
+    // fires on correct, desirable edits gets deleted, and then catches nothing.
+    //
+    // Stripping comments keeps the assertion aimed at what actually reaches an
+    // agent: string literals. Prose in a comment is inert; prose in a prompt is
+    // the regression.
+    const MARKERS = ["/dev-core:delegating-investigation", SPAWN_PREFIX];
+    const found = leaks(src, MARKERS);
+    ok(
+      found.length === 0,
+      `SCOPE_DISCIPLINE: delegation guidance has NOT leaked into reviewer prompts (#785 AC4) — found ${JSON.stringify(found)}`,
+    );
+
+    // ---- The guard's own teeth, proven in-suite -----------------------------
+    //
+    // Everything above asserts an ABSENCE against source that is currently
+    // clean, so it passes trivially if `leaks()` is broken — a stray quantifier
+    // in stripComments that ate the string literals would make the check match
+    // nothing, forever, silently. An absence assertion whose failure path is
+    // never exercised is indistinguishable from a tautology.
+    //
+    // These two fixtures pin both directions in the suite itself, so the
+    // property survives a future refactor of stripComments without anyone
+    // remembering to re-run a mutation by hand.
+    const LEAKED = [
+      "const P =",
+      "  'Review the diff. ' +",
+      `  'Route fan-out reading per ${MARKERS[0]} past ${SPAWN_PREFIX}. ' +`,
+      "  'Report findings.'",
+    ].join("\n");
+    eq(
+      leaks(LEAKED, MARKERS).length,
+      2,
+      "leak check has teeth: guidance inside a prompt literal IS detected",
+    );
+
+    // The counterpart: the same markers in COMMENTS must not trip it. This is
+    // the false positive the narrowing was introduced to remove — a future
+    // editor documenting this boundary (exactly what the new SKILL.md argues
+    // for) must not fail the build.
+    const COMMENTED = [
+      `// See ${MARKERS[0]} (break-even ${SPAWN_PREFIX}) for why this must not change.`,
+      "/*",
+      ` * Also ${MARKERS[0]}, in a block comment, at ${SPAWN_PREFIX}.`,
+      " */",
+      "const P = 'Review the diff.'",
+    ].join("\n");
+    eq(
+      leaks(COMMENTED, MARKERS).length,
+      0,
+      "leak check is narrow: the same markers in comments do NOT trip it",
+    );
+  }
+}
