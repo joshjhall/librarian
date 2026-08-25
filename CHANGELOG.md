@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-25
+
+### Added
+
+- OKF conformance validator (epic slice A) (#733)
+- Plan-lens file sizing — catch decomposition needs during planning (#763)
+- Share bundle seam guidance with the review lens (#729) (#773)
+- Token-cost harness over Bifrost /api/logs/stats (#781) (#791)
+- Bound session length with a derived context-handoff threshold (#795)
+- Route fan-out investigation to subagents on a measured break-even (#785) (#798)
+
+### Changed
+
+- Unify the language split-shape table across both decomposition lenses (#751)
+- Split validate-decomposition-detectors.sh into sourced fragments (#769)
+- Multi-file shared regions, then decompose the sizing.py/patterns.py pair (#776)
+- Bring checker.md under the agent prose budget (#717) (#790)
+
+### Documentation
+
+- Record four review/testing lessons and ignore _notes.md (#750)
+- Record that verify-then-refetch is not verified (#759)
+- Close the #768 stale-symlink tally — PASS on a live artifact (#775)
+- Record seven failure-mode lessons from recent runs
+- Apply the hookify fix, capture token baselines, and correct the #782 audit (#796)
+
+### Fixed
+
+- Pin the patterns.py/sizing.py primaries with shared regions (#731)
+- Anchor concept-split target to the source file's directory (#735)
+- Share prose file-type classification with the review lens (#746)
+- Resolve AGENT_ID in golem-notify's identity ladder (#747)
+- Model TypeScript as its own language in both decomposition lenses (#753)
+- Model Swift as its own language in both decomposition lenses (#761)
+- Audit the Rust and Go segmenters in both decomposition lenses (#757)
+- Distinguish stale symlink attrs from real work in worktree-rm (#774)
+- Measure every shipped Python file, not just patterns.py (#777)
+- Keep acronym prefixes whole in family_prefix (#778) (#789)
+- Gate hook no-op silence and correct the #782 cost attribution (#794)
+
+### Improved
+
+- Cache agnix's postinstall binary in ci.yml (#765)
+
+### Miscellaneous
+
+- Clear the 10 pre-existing agnix errors reddening every PR (#736)
+- Verify agnix package signatures at both npm install sites (#758)
+- Record the deliberate decision not to single-source the agnix version (#770)
+
+### Testing
+
+- Add a compensating lint for the CC-SK-006 suppression (#745)
+- Unit-test lint-agnix-clean.sh's agnix_ver_lt and agnix_pin_in (#749)
+- Key lint-agnix-clean.sh's vacuity guard on files_checked (#752)
+- Cover the broken-agnix-binary skip path and surface persistent skips (#764)
+
 ## [0.10.1] - 2026-08-19
 
 ### Added
@@ -662,6 +719,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.11.0]: https://github.com/joshjhall/librarian/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/joshjhall/librarian/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/joshjhall/librarian/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/joshjhall/librarian/compare/v0.8.4...v0.9.0

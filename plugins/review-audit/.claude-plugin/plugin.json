@@ -1,6 +1,6 @@
 {
   "name": "review-audit",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Codebase audit and review: the codebase-audit / check-* / audit-* suite plus the issue writer.",
   "author": {
     "name": "Josh Hall",
