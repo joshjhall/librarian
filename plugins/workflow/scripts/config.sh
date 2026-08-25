@@ -134,6 +134,30 @@
 #                        inflates the gap, but that is caught earlier and by
 #                        name — see enumerate_models.
 #                                                          Default: 0.5
+#   CONTEXT_BUDGET_THRESHOLD
+#                        Session context size, in tokens, at which a golem hands
+#                        off to a fresh session rather than starting new work
+#                        (#784). Read by context-budget.sh, which turns it into
+#                        an ok/advise/handoff verdict; the advisory band opens at
+#                        80% of it.
+#                        DERIVED, NOT PICKED (the issue's AC2). Pure token
+#                        accounting is monotonic — cycling sooner always wins —
+#                        so the sweep only yields a threshold once the
+#                        re-derivation cost of a handoff is priced in. Doing that
+#                        and sweeping the handoff cost across its whole plausible
+#                        range, 175k minimizes WORST-CASE regret (4.1%, vs 6.1%
+#                        at 150k and 14.5% at 250k). This supersedes the 250-300k
+#                        figure in #784's body, which assumed a 78k floor against
+#                        a measured ~91k. Derivation + reproduction recipe:
+#                        docs/verification/context-threshold-tally-784.md.
+#                                                          Default: 175000
+#   CONTEXT_BUDGET_FLOOR The measured cost of a session's FIRST request — the
+#                        system prompt, tools, and skill preamble a fresh session
+#                        re-pays before it does anything (#784). Emitted by
+#                        context-budget.sh as context for the verdict: it is what
+#                        a handoff costs, so it is what makes cycling too eagerly
+#                        a net loss. Measured ~91k across 28 local sessions.
+#                                                          Default: 91000
 #
 # This file only DEFINES variables (no side effects beyond `export`), so it is
 # safe to source from any script.
@@ -246,7 +270,21 @@
 : "${TOKEN_REPORT_TIMEOUT:=30}"
 : "${TOKEN_REPORT_RECONCILE_PCT:=0.5}"
 
+# Session-length bounding (#784) — see the header entries for the derivation.
+# context-budget.sh INLINES these same two defaults so it stays runnable
+# standalone (it is called directly by skills, not only by scripts that source
+# this file); the pair is pinned equivalent by validate-context-budget.sh's drift
+# guard, the same arrangement golem-notify.sh's inlined sink defaults use.
+: "${CONTEXT_BUDGET_THRESHOLD:=175000}"
+: "${CONTEXT_BUDGET_FLOOR:=91000}"
+
 export TOKEN_REPORT_TIMEOUT TOKEN_REPORT_RECONCILE_PCT
+
+# Exported, not merely defined — golem-status.sh reaches context-budget.sh as a
+# SUBPROCESS, so an unexported value would stay in the parent shell and the child
+# would silently fall back to its own inlined defaults. An operator's override
+# would appear to be ignored, with no error.
+export CONTEXT_BUDGET_THRESHOLD CONTEXT_BUDGET_FLOOR
 
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \

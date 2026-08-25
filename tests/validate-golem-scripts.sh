@@ -104,6 +104,7 @@ source_fragments "$SCRIPT_DIR/golem-scripts" \
     60-status.sh \
     70-status-checkpoint.sh \
     80-token-scrape.sh \
+    85-context-budget.sh \
     90-transcript-liveness.sh \
     100-mode-check.sh \
     110-tracks-runbook.sh
@@ -259,6 +260,18 @@ run_fragment_test test_status_frozen_iso_parse_failure_raw_render "golem-status:
 run_fragment_test test_status_fmt_dur_seconds_arm "golem-status: _fmt_dur seconds arm — a sub-60s freeze renders 'frozen Ns' (#392)"
 run_fragment_test test_status_fmt_dur_minute_arm "golem-status: _fmt_dur minutes arm — a >=60s freeze renders 'frozen Nm' (#392)"
 run_fragment_test test_scrape_relative_worktree_path "golem-token-scrape: a relative worktree arg resolves like an absolute one (#392)"
+run_fragment_test test_status_renders_context_budget_block "golem-status: renders the CONTEXT BUDGET block with the reading (#784)"
+run_fragment_test test_status_marks_a_handoff_due_golem "golem-status: a golem past the threshold is marked HANDOFF DUE (#784)"
+run_fragment_test test_status_marks_an_advisory_golem_distinctly "golem-status: the advisory band renders distinctly from handoff (#784)"
+run_fragment_test test_status_renders_an_ok_golem_without_a_marker "golem-status: an under-budget golem carries no attention marker (#784)"
+run_fragment_test test_status_renders_unknown_when_no_transcript "golem-status: an unreadable budget renders 'context unknown', never a zero (#784)"
+run_fragment_test test_status_renders_container_golem_as_not_readable "golem-status: a Mode-3 container golem renders not-readable, never scraped (#784)"
+run_fragment_test test_status_rejects_a_traversal_issue_field "golem-status: a traversal .issue degrades to unknown, builds no path (#784)"
+run_fragment_test test_status_rejects_malformed_budget_output "golem-status: a malformed budget row degrades to unknown, never half-parsed (#784)"
+run_fragment_test test_status_handles_a_missing_context_budget_script "golem-status: a missing context-budget.sh degrades to unknown (#784)"
+run_fragment_test test_status_handles_a_non_executable_context_budget "golem-status: a non-executable context-budget.sh degrades without leaking (#784)"
+run_fragment_test test_status_renders_each_golem_independently "golem-status: each golem's row is independent across the render loop (#784)"
+run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: context-budget stderr does not leak into the table (#784)"
 run_fragment_test test_liveness_working "golem-transcript-liveness: turn-in-flight -> working (#248)"
 run_fragment_test test_liveness_idle "golem-transcript-liveness: turn-ended -> idle (#248)"
 run_fragment_test test_liveness_errored_api "golem-transcript-liveness: isApiErrorMessage -> errored (#248)"

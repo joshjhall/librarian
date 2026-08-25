@@ -361,6 +361,72 @@ TRANSCRIPT_MIXED='{"isSidechain":false,"message":{"id":"m1","usage":{"output_tok
 {"isSidechain":false,"message":{"id":"m2","usage":{"output_tokens":50}}}
 {"type":"summary"}'
 
+# --- context-budget.sh fixtures (#784) --------------------------------------
+#
+# These pin the POINT-READING contract: context size is the LAST top-level
+# record's input side, NOT a sum over the transcript (the opposite of
+# golem-token-scrape.sh, which sums). Every fixture below is built so that a
+# summing regression produces a DIFFERENT number than the correct answer — a
+# fixture whose sum happens to equal its last record would pass under both
+# implementations and pin nothing.
+#
+# Last top-level record: 10000 + 140000 + 10000 = 160000 (91% of the 175000
+# default → `advise`). The earlier top-level record totals 60000 and the
+# sidechain totals 900000: a naive SUM would give 1120000 and a
+# top-level-but-summing regression 220000 — both far from 160000, so either
+# error is caught. The trailing `{"type":"summary"}` record models the real
+# on-disk tail, which carries no usage: reading `.[-1]` blindly instead of the
+# last USAGE-bearing record would find no reading at all and wrongly exit 2.
+TRANSCRIPT_CTX_ADVISE='{"isSidechain":false,"message":{"id":"c1","usage":{"input_tokens":10000,"cache_read_input_tokens":40000,"cache_creation_input_tokens":10000}}}
+{"isSidechain":true,"message":{"id":"s1","usage":{"input_tokens":100000,"cache_read_input_tokens":800000}}}
+{"isSidechain":false,"message":{"id":"c2","usage":{"input_tokens":10000,"cache_read_input_tokens":140000,"cache_creation_input_tokens":10000}}}
+{"type":"summary"}'
+
+# Last top-level record: 5000 + 15000 = 20000 (11% → `ok`). Deliberately has a
+# LARGER earlier record (300000) so a regression that reads the FIRST match, or
+# the max, or the sum lands in `handoff` instead of `ok` — an inverted verdict,
+# the loudest possible failure.
+TRANSCRIPT_CTX_OK='{"isSidechain":false,"message":{"id":"c1","usage":{"input_tokens":100000,"cache_read_input_tokens":200000}}}
+{"isSidechain":false,"message":{"id":"c2","usage":{"input_tokens":5000,"cache_read_input_tokens":15000}}}
+{"type":"summary"}'
+
+# Last top-level record: 200000 + 100 = 200100 (114% → `handoff`).
+TRANSCRIPT_CTX_HANDOFF='{"isSidechain":false,"message":{"id":"c1","usage":{"input_tokens":100,"cache_read_input_tokens":200000}}}
+{"type":"summary"}'
+
+# A transcript with a malformed/partial TRAILING line, as captured mid-write. The
+# `fromjson?` guard must skip it and read the last COMPLETE record (150000), not
+# fail the whole parse.
+TRANSCRIPT_CTX_PARTIAL='{"isSidechain":false,"message":{"id":"c1","usage":{"input_tokens":50000,"cache_read_input_tokens":100000}}}
+{"isSidechain":false,"message":{"id":"c2","usa'
+
+# A transcript whose only usage-bearing records are SUB-WORKFLOWS. There is no
+# top-level reading at all, so this must FAIL LOUD (exit 2) rather than report 0
+# — a silent 0 would say "plenty of headroom" for a session whose real size is
+# unknown, suppressing a handoff that may be due. Note this differs from the
+# token scrape's contract for the same shape, where 0 is a real answer ("no
+# output produced yet"); absence and zero are the same number for a sum and
+# different states for a point reading.
+TRANSCRIPT_CTX_NO_TOPLEVEL='{"isSidechain":true,"message":{"id":"s1","usage":{"input_tokens":100000,"cache_read_input_tokens":50000}}}
+{"type":"summary"}'
+
+# run_ctx_budget <sandbox> <worktree-arg> [env-assignments...] — invoke
+# context-budget.sh with the projects base pointed at the sandbox's fake
+# $sb/projects. Trailing VAR=VAL arguments are passed into the script's
+# environment, so a test can override the threshold/floor knobs. Captures
+# RUN_RC/RUN_OUT.
+run_ctx_budget() {
+    local sb="$1" arg="$2"
+    shift 2
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$@" \
+            "$REAL_BASH" "$CTX_BUDGET" check "$arg" 2>&1)" || RUN_RC=$?
+}
+
 # A transcript whose every usage-bearing record is a SUB-WORKFLOW (isSidechain
 # true) — no top-level output yet. The scrape's `add // 0` must yield the
 # documented `0`, and golem-status must render "0 tokens (first reading)", NOT

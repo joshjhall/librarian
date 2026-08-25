@@ -161,6 +161,16 @@ safely cleared. The state file (with checkpoint) preserves continuity.
 | Between impl. loops | Automatic  | Each loop runs as separate Task invocation (natural boundary)    |
 | After review        | Suggest    | Implementation context is stale; shipping needs only the result  |
 | After ship          | Required   | Everything is stale; clean slate for next issue                  |
+| Context at threshold | Suggest\*\* | Accumulated context now costs ~3x the floor for identical work (#784) |
+
+\*\* **Size-triggered reset (#784).** The rows above are keyed to *phase*; this
+one is keyed to *size*, and it can fire at any of them. Run
+`scripts/context-budget.sh check <worktree>` at a reset point in a golem or other
+long unattended run; on a `handoff` verdict write the checkpoint and end the
+session so the resumed one starts at the floor rather than at 400k. It reuses the
+`checkpoint` object below unchanged — **no new state format**. An **interactive**
+session gets a one-line advisory and is never cycled. Full protocol:
+`handoff-protocol.md`.
 
 \* **`--ship` fast-path exception**: when `/workflow:next-issue` is invoked with `--ship`
 (or `--now`) on an `effort/trivial`/`small` issue, the "After plan approval"

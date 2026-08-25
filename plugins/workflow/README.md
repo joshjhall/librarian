@@ -130,6 +130,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `workflow-wall-timeout.sh check …` | The same decision for one bounded `Workflow` invocation, over `LIBRARIAN_WORKFLOW_WALL_*` (#327) |
 | `threshold-check.sh` | Shared verdict arithmetic behind the two above (sourced) |
 | `token-report.sh window\|compare\|reconcile` | Per-model token/cost measurement over the Bifrost gateway's aggregate `/api/logs/stats`, with a reconciliation guard that turns a silently-ignored filter param into a loud failure (#781). Emits the TSV baseline/compare contract; exits `77` when the gateway is unreachable. Output carries fleet spend — use `compare --percent-only` for anything published to this public repo |
+| `context-budget.sh check <worktree>` | Report a session's CURRENT context size and an `ok`/`advise`/`handoff` verdict against the derived 175k threshold — the session-length bounding signal (#784). A POINT reading of the newest top-level request, deliberately the opposite of `golem-token-scrape.sh`'s cumulative sum; fails loud rather than returning a silent `0` |
 | `config.sh` | Shared env-overridable config + `repo_root` helper (sourced) |
 
 ### Configuration (env-overridable; defaults in `scripts/config.sh`)
@@ -153,6 +154,8 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `BIFROST_URL` | (unset — **required**) | Bifrost gateway **admin API root** for `token-report.sh`. No default by design: AC5 forbids a hardcoded hostname, and the plausible guess is wrong — `ANTHROPIC_BASE_URL` addresses the _proxy_ path, whose `/api/logs/stats` returns the web UI's HTML with HTTP 200. Unset ⇒ exit `2` (usage), distinct from `77` (unreachable) |
 | `TOKEN_REPORT_TIMEOUT` | `30` | Per-request connect+total timeout (seconds) for `token-report.sh` gateway calls |
 | `TOKEN_REPORT_RECONCILE_PCT` | `0.5` | Reconciliation tolerance, percent of the unfiltered request total. Headroom rather than an observed need — a complete model list reconciles exactly (delta 0) — kept far below the N-fold gap a dropped `models=` filter opens (measured at a 14x overstatement) |
+| `CONTEXT_BUDGET_THRESHOLD` | `175000` | Context size, in tokens, at which a golem hands off to a fresh session rather than starting new work (#784). DERIVED, not picked: pure token accounting is monotonic, so the sweep only yields a threshold once a handoff's re-derivation cost is priced in — and across that cost's whole plausible range 175k minimizes worst-case regret (4.1%, vs 14.5% at 250k). Supersedes the 250–300k figure in #784's body. See `docs/verification/context-threshold-tally-784.md` |
+| `CONTEXT_BUDGET_FLOOR` | `91000` | The measured cost of a session's first request — what a fresh session re-pays before doing anything, and therefore what a handoff costs (#784) |
 
 The `GOLEM_*` vars above are sourced by the bundled shell scripts. The vars
 below are **skill-level tunables** for the `ship-issue` skill, following the same
