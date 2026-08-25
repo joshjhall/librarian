@@ -45,6 +45,9 @@
 - [Measure a suppression before keeping it](measure-suppression-before-keeping-it.md) — neuter the predicate and diff; a guard can buy 0 rows and cost a false negative (#604)
 - [Stale artifact makes the stub pass](stale-artifact-makes-the-stub-pass.md) — a leftover output file satisfied the check a no-output stub should have failed; delete it and re-run
 - [Side effect invisible to the assertion](side-effect-invisible-to-the-assertion.md) — a test corrupted the live golem feed while every stdout check passed; isolate, then probe for delta 0 (#782)
+- [Diff the render before and after](render-diff-before-and-after-an-extraction.md) — a green suite pins only what someone asserted; capture whole output, every mode
+- [split-verify proves the split](split-verify-proves-the-split.md) — tests can't show nothing was DROPPED; run it on every extraction, before the reviewer asks
+- [Synthetic SCRIPT_DIR needs the new sibling](synthetic-script-dir-needs-the-new-sibling.md) — a new sourced fragment breaks shadow-dir fixtures; fix the fixture, never the assertion
 - [Reproduce outside the tool first](reproduce-outside-the-tool-first.md) — curl before instrumenting; A/B your own capture; a constant duration is a timeout, not congestion
 - [A preserved fixture can heal](preserved-fixture-can-heal.md) — the kept repro self-healed and proved nothing; capture evidence now, verify against what's broken NOW (#768)
 - [A hanging push is the pre-push suite](push-hang-is-the-prepush-suite.md) — 461s of gates before any bytes move; fetches stay instant. Budget 10 min, never --no-verify
