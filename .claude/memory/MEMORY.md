@@ -33,6 +33,9 @@
 - [Execute the workflow step, don't grep it](execute-the-workflow-step-dont-grep-it.md) — a `run:` block's regressions are re-orderings every grep survives
 - [Scope-drift check before first commit](scope-drift-check-before-first-commit.md) — `git status` before staging, not `git diff` after (#542/#498)
 - [Anchored regex → tautological test](anchored-regex-tautological-test.md) — a fixture the anchor never matched passes with AND without the fix (#599)
+- [Absence assertion needs a leak fixture](absence-assertion-needs-a-leak-fixture.md) — `ok(!includes(X))` is green when the predicate breaks; pin teeth AND narrowness
+- [Concat boundary defeats a phrase matcher](concat-boundary-defeats-phrase-matcher.md) — a phrase straddling `' + '` stops matching; and a comment-anchored slice silently widens to the whole file
+- [Fixture must express the divergent case](fixture-must-express-the-divergent-case.md) — solve for the input where old and new differ; 5 green tautologies in one session
 - [Gate + evidence converge → tautology](gate-and-evidence-converge-tautology.md) — one fixture both ARMS and SATISFIES the gate (#600)
 - [A fix reintroduces its own failure](fix-reintroduces-its-own-failure.md) — the snapshot/trap/rename a silent-loss fix adds is where the loss reappears
 - [Prose contract anchored to prose](prose-contract-anchored-to-prose.md) — heading/sentence anchors block the extraction they should survive; use contract ids

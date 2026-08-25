@@ -45,6 +45,14 @@ Ask, retry **once**, and if it is still denied hand the keystroke to the human
 than looking for another route. The tag must point at the merge commit, so there
 is nothing to do but wait for a real merge.
 
+**It varies in the other direction too: on v0.11.0 the very first `gh pr merge`
+succeeded with no human go-ahead at all.** So do not preemptively park either —
+attempt the merge once when CI is green, and only escalate on an actual denial.
+Treat the classifier's verdict as genuinely per-attempt and unpredictable in
+both directions; the one thing that stays true is never to retry in a loop.
+Note `gh pr merge` also fast-forwards the local checkout to the merge commit, so
+the `git checkout main && git pull` step is usually already done for you.
+
 **Verify the signature, don't just list the assets.** Two present filenames say
 nothing about whether the bundle validates. Run the README recipe against the
 downloaded pair — `cosign verify-blob --bundle <t>.sigstore.json
@@ -59,9 +67,14 @@ VERSION/manifests/CHANGELOG, NO commit) → commit on a `release/vX.Y.Z` branch 
 `chore(release): release version X.Y.Z` (`release` IS a valid conform scope) →
 PR to main → after green CI, squash-merge → `git checkout main && git pull` →
 `git tag -a vX.Y.Z -m "Release version X.Y.Z" <merge-sha> && git push origin
-vX.Y.Z`. The annotated tag is **auto SSH-signed** (git `user.signingkey` config),
-separate from release.yml's cosign artifact signing. `release.yml` fires on the
-`v*` tag → validates, asserts VERSION==tag, cosign-keyless-signs, publishes.
+vX.Y.Z`. The annotated tag is **NOT signed** — this repo configures no
+`user.signingkey`/`tag.gpgsign`, and v0.9.0 through v0.11.0 are all unsigned
+(`git tag -v` → `error: no signature found`). An earlier version of this memory
+claimed the tag was auto SSH-signed; that was wrong, and it matters because it
+would send you hunting for a regression on a clean release. The only signature
+in this flow is release.yml's cosign artifact signing of the tarball.
+`release.yml` fires on the `v*` tag → validates, asserts VERSION==tag,
+cosign-keyless-signs, publishes.
 Verify after: `gh release view vX.Y.Z` shows `librarian-X.Y.Z.tar.gz` +
 `.tar.gz.sigstore.json`, and `gh api repos/joshjhall/librarian/releases/latest -q
 .tag_name` returns the new tag (what containers' LIBRARIAN_REF discovers).
