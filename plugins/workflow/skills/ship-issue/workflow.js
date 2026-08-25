@@ -11,6 +11,67 @@ export const meta = {
 }
 
 // ---------------------------------------------------------------------------
+// SIZE: deliberately monolithic — a RECORDED DECLINE, not an oversight (#712).
+//
+// This file sits above the review lens's 800 production-LOC `high` threshold and
+// will keep being reported there. #712 proposed lifting the two obvious seams out
+// to siblings — NEW_DIMENSIONS to a `dimensions.js`, the `*_SCHEMA` constants to a
+// `schemas.js`. Both are inert data with no closure over module state, so on any
+// ordinary JS file they would move cleanly. Here they cannot move at all: the
+// Workflow engine forbids the import that would read them back. Probed live
+// against the engine, three ways:
+//
+//   import { X } from './dep.js'   ->  SyntaxError: Unexpected token '{'.
+//                                      import call expects one or two arguments.
+//   await import('./dep.js')       ->  SyntaxError: import() is not available in
+//                                      workflow scripts.
+//   import hoisted above `meta`    ->  Invalid workflow script: export const meta
+//                                      must be the FIRST statement in the script
+//
+// The first message is the informative one: a workflow.js is parsed as a SCRIPT,
+// not a module, so `import` is only ever read as the dynamic-call form — and the
+// dynamic form is explicitly disabled. There is no third spelling.
+//
+// This is the same constraint already stated as the reason BUDGET_FLOOR must be
+// duplicated across all six harnesses rather than shared — see
+// tests/lint-skills-agents.sh (the `workflow_budget_floor_value` sweep) and
+// dev-core/skills/workflow-authoring/SKILL.md § Budget Discipline. The
+// deterministic scanner reaches the same verdict on its own axis, reporting
+// `decomposition-seam ... declined: no low-coupling seam found — units are
+// mutually referential`.
+//
+// So the size row on this file is a RESULT, not a to-do: it records that the file
+// was examined and found legitimately long. Do not re-file it as an in-place
+// split, and do not add an `import` here expecting it to work — it fails at
+// parse, before any test or lint gate in this repo gets a chance to run.
+//
+// SCOPED, NOT PERMANENT. The decline says a sibling-module split is impossible;
+// it does NOT say this length is fine indefinitely. Two reasons to expect this
+// row back:
+//
+//   - It grows. #695 alone took it 908 -> 916 production LOC, and each new
+//     protection adds a dimension blob or a schema. Nothing here trends down.
+//   - Size costs EDITING, not just review. This file is edited mostly by agents,
+//     and edit reliability degrades with file length well before any threshold
+//     is the binding constraint. That cost is real today and is not what the
+//     lens row measures.
+//
+// The live option is a BUILD STEP: keep editable fragments and bundle them into
+// this artifact, which sidesteps the import ban because the ARTIFACT contains no
+// imports even though its sources do. Deliberately not done here — it is a
+// different change, and a subtler one than it looks. Note for anyone attempting
+// it that this format is self-contradictory to standard module semantics, so no
+// bundler emits it directly: `export const meta` forces ES-module semantics,
+// under which the harness's own top-level `return` is illegal, and dropping the
+// export to obtain a script makes `import` illegal in turn. The shape that works
+// is bundle-then-unwrap (orchestration body in an exported function, unwrapped
+// back to top level afterwards, `meta` prepended as a banner) — verified against
+// the live engine. It also needs a freshness gate, since plugin install copies
+// this tree as-is and cannot run a build, so a stale artifact would silently run
+// old bytes. Tracked in #806.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Input (passed verbatim as the global `args`):
 //   {
 //     phase:      'pre-pr' | 'pr-cycle',   // default 'pre-pr'
