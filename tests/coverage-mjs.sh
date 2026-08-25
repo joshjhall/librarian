@@ -26,6 +26,12 @@
 # looks exactly like a passing report. Add new .mjs module dirs here when they
 # appear.
 #
+# Each pattern is SINGLE-LEVEL: `tests/workflow-helpers/*.mjs` does NOT match
+# `tests/workflow-helpers/ship-issue/*.mjs`. So a nested sub-split needs its own
+# line — a sub-directory added without one hits the exact cliff above, and does
+# it silently, since the parent glob still matches the thin dispatcher and the
+# report stays green. ship-issue/ (#712) is the first such sub-split.
+#
 # Skips gracefully (exit 0, no report) when node or npx is unavailable — the
 # same skip-if-absent posture as the sibling gates. NOT wired into
 # tests/run-all.sh: additive reporting only, run by CI and `just coverage`.
@@ -82,6 +88,7 @@ if ! npx --yes c8 report \
     --include='tests/validate-manifests.mjs' \
     --include='tests/validate-workflow-helpers.mjs' \
     --include='tests/workflow-helpers/*.mjs' \
+    --include='tests/workflow-helpers/ship-issue/*.mjs' \
     --include='tests/lib/*.mjs' \
     --exclude='node_modules/**' \
     --all=false >/dev/null 2>&1; then
