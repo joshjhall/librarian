@@ -56,8 +56,17 @@
 #
 # THIS FILE IS A THIN ENTRY POINT (issue #564). The synthetic corpora live in
 # per-domain fragments under tests/python-corpus/; this file keeps the runtime
-# gate, the WORKDIR lifecycle, the `coverage run` driver loop and the Cobertura
-# emit. Adding a fixture means editing the ONE fragment for that detector family.
+# gate, the runner resolution, the NON_PATTERNS_TOOLS/IMPORTED_MODULES
+# declarations, the WORKDIR lifecycle, the glob-driven patterns.py driver loop
+# and the Cobertura emit. Adding a fixture means editing the ONE fragment for
+# that detector family.
+#
+# The BESPOKE drivers for the non-patterns.py tools live in a fragment too, as of
+# #779: they had been appended here inline by #748, pushing this file past its
+# shell budget while the paragraph above declared it thin — the comment asserting
+# an intent the code no longer met. They are sourced from their own list further
+# down, in a later phase than the fixture fragments; see that block for why the
+# two lists cannot be merged.
 #
 # Pure bash-3.2 + coreutils + python3; no network, no jq.
 
@@ -671,378 +680,43 @@ AGXEOF
     run_count=$((run_count + 1))
 fi
 
-# --- The non-patterns.py workflow tools (#748) -------------------------------
-# Each is declared in NON_PATTERNS_TOOLS above and driven here. Neither of the
-# first two is file-list shaped in the way the glob loop assumes, which is
-# exactly why they fell out of that loop in the first place: split-verify.py
-# takes <original> <post-split> [results...] and autonomy-resolve.py takes
-# subcommands. Driving them means writing their real CLI, not extending a glob.
-
-# --- ship-issue/sizing.py — the review-lens size scanner ---------------------
-SIZING_PY="$PLUGINS_DIR/workflow/skills/ship-issue/sizing.py"
-if [ -f "$SIZING_PY" ]; then
-    # Thresholds tuned down so the compact fixtures reach the over-budget and
-    # classified-prose arms; the corpus stays small while the branches still fire.
-    #
-    # They are INLINE assignments on each invocation rather than an
-    # `env $VARS run_coverage` prefix: `env` execs a BINARY and cannot invoke a
-    # shell function, so that shape would fail every call — silently, since each
-    # is `|| true`, leaving the driver looking fine while measuring nothing.
-
-    # No numstat at all -> every over-threshold file reported LOW/informational.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        SKILL_WARN=40 SKILL_HIGH=80 DOC_WARN=30 DOC_HIGH=50 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_LIST" >/dev/null 2>&1 || true
-    # BIG growth -> the crossed/blocking disposition.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        SKILL_WARN=40 SKILL_HIGH=80 DOC_WARN=30 DOC_HIGH=50 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_LIST" "$SIZING_NUMSTAT_BIG" >/dev/null 2>&1 || true
-    # TRIVIAL growth -> the pre-existing-debt arm (a one-line touch is not this
-    # PR's debt), the disposition that distinguishes this lens from the audit one.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        SKILL_WARN=40 SKILL_HIGH=80 DOC_WARN=30 DOC_HIGH=50 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_LIST" "$SIZING_NUMSTAT_TRIVIAL" >/dev/null 2>&1 || true
-    # A numstat row matching nothing in the list -> the unmatched-row arm.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        SKILL_WARN=40 SKILL_HIGH=80 DOC_WARN=30 DOC_HIGH=50 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_LIST" "$SIZING_NUMSTAT_ORPHAN" >/dev/null 2>&1 || true
-    # Default (untuned) thresholds -> the under-budget early-return path.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_LIST" >/dev/null 2>&1 || true
-    # --measure mode: the 13-field metrics record plan-lens.py consumes.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        SKILL_WARN=40 SKILL_HIGH=80 DOC_WARN=30 DOC_HIGH=50 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" --measure "$SIZING_LIST" >/dev/null 2>&1 || true
-    # Memory-bundle classification arms (index vs concept), and the opted-out
-    # empty-root early return.
-    MEMORY_BUNDLE_ROOT=".claude/memory" \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_LIST" >/dev/null 2>&1 || true
-    MEMORY_BUNDLE_ROOT='' \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_LIST" >/dev/null 2>&1 || true
-    # Negative-path arms: usage (no argument), list-not-found (OSError), empty
-    # list (early return), unreadable file (per-file OSError read arm).
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_NOFILE_LIST" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_EMPTY_LIST" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SIZING_PY" "$SIZING_UNREAD_LIST" >/dev/null 2>&1 || true
-    run_count=$((run_count + 1))
-fi
-
-# --- ship-issue/plan-lens.py — the plan-lens projection scanner (#756) -------
-PLANLENS_PY="$PLUGINS_DIR/workflow/skills/ship-issue/plan-lens.py"
-if [ -f "$PLANLENS_PY" ]; then
-    # The load-bearing arm: near.py is UNDER budget today and OVER once the
-    # estimate lands. Both other lenses return early for it, so this projection
-    # is the row only this scanner produces — driving it without an estimate that
-    # CROSSES a budget would measure the file while missing its reason to exist.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        PLAN_HEADROOM_MIN_ESTIMATE=1 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" "$SIZING_LIST" "$PLANLENS_EST_CROSS" >/dev/null 2>&1 || true
-    # An estimate that leaves everything under -> the no-row arm.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        PLAN_HEADROOM_MIN_ESTIMATE=1 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" "$SIZING_LIST" "$PLANLENS_EST_SMALL" >/dev/null 2>&1 || true
-    # Malformed estimate rows -> the parse-skip arms.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        PLAN_HEADROOM_MIN_ESTIMATE=1 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" "$SIZING_LIST" "$PLANLENS_EST_BAD" >/dev/null 2>&1 || true
-    # No estimate sidecar at all -> the already-over-budget-only path.
-    REVIEW_LOC_WARN=100 REVIEW_LOC_HIGH=200 AGENT_WARN=50 AGENT_HIGH=100 \
-        PLAN_HEADROOM_MIN_ESTIMATE=1 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" "$SIZING_LIST" >/dev/null 2>&1 || true
-    # Below the minimum-estimate floor -> the too-small-to-report arm.
-    PLAN_HEADROOM_MIN_ESTIMATE=9999 \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" "$SIZING_LIST" "$PLANLENS_EST_CROSS" >/dev/null 2>&1 || true
-    # Negative-path arms: usage, list-not-found, empty list.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" "$SIZING_NOFILE_LIST" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$PLANLENS_PY" "$SIZING_EMPTY_LIST" >/dev/null 2>&1 || true
-    run_count=$((run_count + 1))
-fi
-
-# --- ship-issue/split-verify.py — <original> <post-split> [results...] -------
-SPLITV_PY="$PLUGINS_DIR/workflow/skills/ship-issue/split-verify.py"
-if [ -f "$SPLITV_PY" ]; then
-    # Sound split -> split-verified (all four properties hold).
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_ORIG" "$SPLIT_KEPT" "$SPLIT_MOVED" >/dev/null 2>&1 || true
-    # A unit dropped -> split-unit-lost (+ the LOC-conservation arm).
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_ORIG" "$SPLIT_KEPT" "$SPLIT_LOSSY" >/dev/null 2>&1 || true
-    # A call site left dangling -> split-fanin-dangling.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_ORIG" "$SPLIT_DANGLE" >/dev/null 2>&1 || true
-    # Markdown: heading moved out with NO link back -> split-heading-unreachable;
-    # then the same split WITH the link -> the reachable arm.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_MD_ORIG" "$SPLIT_MD_KEPT_NOLINK" "$SPLIT_MD_MOVED" \
-        >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_MD_ORIG" "$SPLIT_MD_KEPT_LINK" "$SPLIT_MD_MOVED" \
-        >/dev/null 2>&1 || true
-    # Memory bundle (#729): extracted concept with no index line ->
-    # split-memory-orphan; then with MEMORY.md naming it -> the indexed arm.
-    (cd "$SPLIT_MEM_ROOT" && MEMORY_BUNDLE_ROOT=".claude/memory" \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_MEM_ORIG" "$SPLIT_MEM_KEPT" "$SPLIT_MEM_MOVED" \
-        >/dev/null 2>&1) || true
-    (cd "$SPLIT_MEM_ROOT" && MEMORY_BUNDLE_ROOT=".claude/memory" \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_MEM_ORIG" "$SPLIT_MEM_KEPT" "$SPLIT_MEM_MOVED" \
-        "$SPLIT_MEM_INDEX" >/dev/null 2>&1) || true
-    # Negative-path arms: usage (none / one argument) and a named file that does
-    # not exist, on both the original and the result side.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_ORIG" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_GHOST" "$SPLIT_KEPT" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$SPLITV_PY" "$SPLIT_ORIG" "$SPLIT_GHOST" >/dev/null 2>&1 || true
-    run_count=$((run_count + 1))
-fi
-
-# --- scripts/autonomy-resolve.py — subcommand shaped, not file-list shaped ---
-AUTONOMY_PY="$PLUGINS_DIR/workflow/scripts/autonomy-resolve.py"
-if [ -f "$AUTONOMY_PY" ]; then
-    # `level`: each input route (a --level flag inside --from-args, a
-    # --chosen-level from an orchestrator or the operator's setup answer, and no
-    # signal at all -> the L1 fallback).
-    for _lvl in 1 2 3 4; do
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-            "$AUTONOMY_PY" level --from-args "123 --level $_lvl" >/dev/null 2>&1 || true
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-            "$AUTONOMY_PY" level --chosen-level "$_lvl" >/dev/null 2>&1 || true
-    done
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" level >/dev/null 2>&1 || true
-    # The severity/critical CAP (L4 -> L3, capped=true) in both label spellings,
-    # and a non-critical severity that must NOT cap. This is the arm that decides
-    # whether a plan gate is kept or auto-passed, so both sides are driven.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" level --chosen-level 4 --severity critical >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" level --chosen-level 4 --severity severity/critical >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" level --chosen-level 4 --severity low >/dev/null 2>&1 || true
-    # `gate`: routine vs escalation at every level, plus the --dead-end override
-    # that defers to a human at L4 too.
-    for _lvl in 1 2 3 4; do
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-            "$AUTONOMY_PY" gate routine --level "$_lvl" >/dev/null 2>&1 || true
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-            "$AUTONOMY_PY" gate escalation --level "$_lvl" >/dev/null 2>&1 || true
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-            "$AUTONOMY_PY" gate escalation --level "$_lvl" --dead-end >/dev/null 2>&1 || true
-        # `sweep-interval` and `read` across the same level range.
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-            "$AUTONOMY_PY" sweep-interval --level "$_lvl" >/dev/null 2>&1 || true
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-            "$AUTONOMY_PY" read --state-level "$_lvl" >/dev/null 2>&1 || true
-    done
-    # `read` with no state level -> the L1 default.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" read >/dev/null 2>&1 || true
-    # Usage-error arms (exit 2): no subcommand, unknown subcommand, unknown gate
-    # kind, out-of-range level, non-numeric level, missing required flag.
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" bogus-subcommand >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" gate bogus-kind --level 2 >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" gate routine --level 9 >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" gate routine --level abc >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" gate routine >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" sweep-interval >/dev/null 2>&1 || true
-    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$AUTONOMY_PY" level --chosen-level 7 >/dev/null 2>&1 || true
-    unset _lvl
-    run_count=$((run_count + 1))
-fi
-
-# --- scripts/golem-event-listener.py — a BLOCKING HTTP server ----------------
+# --- Driver fragments (#779) -------------------------------------------------
+# The drivers for the non-patterns.py workflow tools (sizing.py, plan-lens.py,
+# split-verify.py, autonomy-resolve.py, golem-event-listener.py). Each is
+# declared in NON_PATTERNS_TOOLS above; none is file-list shaped in the way the
+# glob loop assumes, which is exactly why they fell out of that loop and need
+# bespoke drivers written against their real CLIs.
 #
-# The one tool here that cannot simply be invoked and awaited: it binds a socket
-# and calls serve_forever(). Three properties make driving it safe:
+# A SECOND, SEPARATELY-POSITIONED SOURCE POINT, not an addition to the fixture
+# list above — the two lists are two PHASES, not one list split by accident.
+# Fixture fragments must be sourced BEFORE the glob driver loop (they build what
+# it feeds on); driver fragments must be sourced AFTER it, once COVERAGE_FILE
+# points into WORKDIR. Appending this file to the 10-…80- list would run every
+# invocation in it before COVERAGE_FILE was exported, scattering data files
+# outside WORKDIR where `combine` never finds them — a quiet loss of exactly the
+# measurement the fragment exists to collect.
 #
-#   * EPHEMERAL PORT. The OS hands out a free port (bind :0, read it back, close)
-#     rather than the 8787 default, so a developer already running a listener —
-#     or a second copy of this script — cannot collide.
-#   * BOUNDED READINESS WAIT. /healthz is polled up to ~5s, bailing out early if
-#     the process already died. It never waits on a server that will not arrive.
-#   * SIGTERM SHUTDOWN. The listener installs a SIGTERM handler that raises
-#     KeyboardInterrupt, so serve_forever() unwinds through its `finally` and the
-#     process exits 0. That ordinary exit is what lets coverage.py FLUSH its data
-#     file — a SIGKILL would leave the measurement it just collected unwritten,
-#     which is the whole reason the shutdown path matters here.
+# An explicit ordered list rather than a glob, for the reason tests/lib/fragments.sh
+# states: adding a file must not be enough on its own, you must say where it runs.
+# Fail-loud on a missing fragment (never a silent skip) — under `set -u` an
+# unsourced driver would otherwise surface only as a smaller measurement.
 #
-# If the server does not come up, this block prints one line and moves on. A
-# reporting script must never hang or fail the run over an optional component.
-LISTENER_PY="$PLUGINS_DIR/workflow/scripts/golem-event-listener.py"
-if [ -f "$LISTENER_PY" ]; then
-    # An ephemeral loopback port (same shape as free_port in
-    # tests/validate-golem-event-listener.sh).
-    LISTEN_PORT="$(
-        python3 - <<'PY' 2>/dev/null || true
-import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])
-s.close()
-PY
-    )"
-    if [ -n "$LISTEN_PORT" ]; then
-        # `exec` inside the backgrounded subshell is load-bearing: without it,
-        # $! is the SUBSHELL's pid, the SIGTERM below reaps only that wrapper,
-        # and the real coverage process is ORPHANED — it survives the script and,
-        # never having exited cleanly, never flushes its data file. Measured:
-        # the handler and serve_forever lines came back UNMEASURED while the
-        # driver still reported success, and a stray listener was left running.
-        # exec replaces the subshell, so $! addresses the process that must
-        # receive the signal.
-        (cd "$LISTENER_SB" && export GOLEM_EVENT_LISTEN_ADDR=127.0.0.1 \
-            GOLEM_EVENT_LISTEN_PORT="$LISTEN_PORT" GOLEM_EVENT_MAX_BODY=512 &&
-            exec_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-                "$LISTENER_PY" >/dev/null 2>&1) &
-        LISTENER_PID=$!
+# A space-separated list that happens to hold ONE entry today. Kept as a list —
+# and word-split on purpose — so adding the next bespoke driver is an edit to
+# this line rather than a change of shape.
+DRIVER_FRAGMENTS="90-workflow-tool-drivers"
 
-        # Bounded readiness poll, bailing out early if the process already died.
-        _tries=0
-        _ready=""
-        while [ "$_tries" -lt 50 ]; do
-            if python3 - "$LISTEN_PORT" <<'PY' >/dev/null 2>&1; then
-import sys, urllib.request
-urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz", timeout=1).read()
-PY
-                _ready="yes"
-                break
-            fi
-            kill -0 "$LISTENER_PID" 2>/dev/null || break
-            sleep 0.1
-            _tries=$((_tries + 1))
-        done
-
-        if [ -n "$_ready" ]; then
-            # A valid event, an unknown event kind (defaults to "gate"), the
-            # orphan sentinel (ACKed but never appended), a malformed body, an
-            # oversized body (past GOLEM_EVENT_MAX_BODY), and a GET on /healthz.
-            python3 - "$LISTEN_PORT" <<'PY' >/dev/null 2>&1 || true
-import json, sys, urllib.error, urllib.request
-
-port = sys.argv[1]
-base = f"http://127.0.0.1:{port}"
-
-
-def post(body: bytes, path: str = "/") -> None:
-    req = urllib.request.Request(base + path, data=body, method="POST")
-    try:
-        urllib.request.urlopen(req, timeout=2).read()
-    except urllib.error.HTTPError:
-        pass  # 4xx arms are the point of several of these
-    except OSError:
-        pass
-
-
-post(json.dumps({"golem": "golem-5", "event": "gate",
-                 "message": "Claude needs your permission to push"}).encode())
-post(json.dumps({"golem": "golem-7", "event": "escalation",
-                 "message": "architectural decision"}).encode())
-post(json.dumps({"golem": "golem-9"}).encode())            # absent event -> "gate"
-post(json.dumps({"golem": "golem-?", "event": "gate",
-                 "message": "orphan"}).encode())           # sentinel: ACK, no append
-post(json.dumps({"golem": "golem-1", "event": "gate",
-                 "message": "x" * 4096}).encode())         # oversized -> rejected
-post(b"not json at all {{{")                                # malformed -> rejected
-post(b"")                                                   # empty body
-post(json.dumps([1, 2, 3]).encode())                        # non-object JSON
-post(json.dumps({"golem": "golem-2", "event": "gate",
-                 "message": "m"}).encode(), "/nope")        # unknown path
-try:
-    urllib.request.urlopen(base + "/healthz", timeout=2).read()
-except OSError:
-    pass
-PY
-        else
-            printf '[note] python-coverage — golem-event-listener did not start; skipping its driver\n'
-        fi
-
-        # SIGTERM (never SIGKILL first): the handler raises KeyboardInterrupt so
-        # the process exits cleanly and coverage.py flushes its data file.
-        #
-        # The wait is BOUNDED. A bare `wait` would block forever if that handler
-        # ever stopped firing (a future change swallowing the signal, a process
-        # wedged in a syscall), and this job's only backstop is the 15-minute
-        # workflow timeout — so a stuck listener would burn the whole budget and
-        # report an unattributable job timeout instead of naming itself. SIGKILL
-        # is the last resort: it loses this driver's coverage data, which is
-        # strictly better than losing the entire run's.
-        kill -TERM "$LISTENER_PID" 2>/dev/null || true
-        _waited=0
-        while [ "$_waited" -lt 50 ]; do
-            kill -0 "$LISTENER_PID" 2>/dev/null || break
-            sleep 0.1
-            _waited=$((_waited + 1))
-        done
-        if kill -0 "$LISTENER_PID" 2>/dev/null; then
-            printf '[note] python-coverage — golem-event-listener ignored SIGTERM; killing (its coverage data is lost)\n'
-            kill -KILL "$LISTENER_PID" 2>/dev/null || true
-        fi
-        wait "$LISTENER_PID" 2>/dev/null || true
-
-        # Count the tool as driven ONLY when the server actually served. The
-        # printed `N ports run` is now a load-bearing signal (ci.yml defers to it
-        # rather than restating a count), so incrementing on the did-not-start
-        # path would inflate exactly the number that is supposed to be trustworthy.
-        # An `if`, not `[ ... ] && ...`: under `set -e` the short-circuit form
-        # returns non-zero when _ready is empty, which would abort the script the
-        # moment anything else followed it.
-        if [ -n "$_ready" ]; then
-            run_count=$((run_count + 1))
-        fi
-        unset _tries _ready _waited
-    else
-        printf '[note] python-coverage — no free port; skipping golem-event-listener driver\n'
+# shellcheck disable=SC2086  # deliberate word-splitting: this is a list, not one name
+for _dfrag in $DRIVER_FRAGMENTS; do
+    _dfrag_path="$SCRIPT_DIR/python-corpus/${_dfrag}.sh"
+    if [ ! -f "$_dfrag_path" ]; then
+        printf '[FAIL] python-coverage — driver fragment missing: %s\n' "$_dfrag_path" >&2
+        exit 1
     fi
-
-    # Fail-loud startup arms, driven WITHOUT binding anything: a non-integer port
-    # and a non-integer max-body both exit 2 before the socket is created, and an
-    # unbindable address exits 1. No cleanup needed — none of them starts a server.
-    (cd "$LISTENER_SB" && GOLEM_EVENT_LISTEN_PORT="not-a-port" \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$LISTENER_PY" >/dev/null 2>&1) || true
-    (cd "$LISTENER_SB" && GOLEM_EVENT_MAX_BODY="not-a-number" \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$LISTENER_PY" >/dev/null 2>&1) || true
-    (cd "$LISTENER_SB" && GOLEM_EVENT_LISTEN_ADDR="256.256.256.256" \
-        GOLEM_EVENT_LISTEN_PORT="8787" \
-        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-        "$LISTENER_PY" >/dev/null 2>&1) || true
-fi
+    # shellcheck source=/dev/null  # path is composed at runtime from the list above
+    . "$_dfrag_path"
+done
+unset _dfrag _dfrag_path
 
 # Restore perms so the trap `rm -rf` can clean WORKDIR without warnings.
 chmod 644 "$SIZING_UNREAD" 2>/dev/null || true
