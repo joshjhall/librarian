@@ -462,6 +462,162 @@ test_relative_worktree_arg_resolves_like_absolute() {
     assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
 }
 
+# A trailing `/.` or `/` must NOT change the slug (#809). Every `.` and `/` maps
+# to `-`, so `<wt>/.` and `<wt>/` name the same directory as `<wt>` while
+# producing slugs one and two characters longer — a spurious exit 2 on a
+# transcript that exists. `.` is the natural spelling for "this worktree" and
+# the one a caller reaches for when `$PWD` is unavailable (the golem Phase C
+# case), so it is the spelling most likely to be typed and was the one broken.
+#
+# THE ASSERTION IS SAMENESS, NOT SUCCESS. Checking merely for exit 0 would pass
+# under any prefix bug that still happened to find *a* directory; asserting the
+# same reading (200100 / handoff) as the absolute call is what makes a wrong
+# slug fail — it resolves to a path with no transcript, hence exit 2 and no
+# reading at all. Both cases were reproduced failing before the fix.
+test_dot_worktree_arg_resolves_like_absolute() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    # `cd` into the worktree itself, then name it as `.` — the golem Phase C
+    # shape, where the session's cwd IS the worktree being measured. The dir must
+    # be created here: plant_transcript only stages the PROJECTS side (the
+    # transcript dir named after the slug), never the worktree the slug is
+    # derived from, because every other case in this suite passes the worktree
+    # as a string and never enters it.
+    command mkdir -p "$sb/.worktrees/issue-42"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb/.worktrees/issue-42" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$CTX_BUDGET" check "." 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "a '.' worktree arg resolves and reads cleanly"
+    assert_contains "$RUN_OUT" "context_tokens=200100" \
+        "'.' lands on the same slug as the absolute form (no trailing '--')"
+    assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
+}
+
+test_trailing_slash_worktree_arg_resolves_like_absolute() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" ".worktrees/issue-42/"
+    assert_exit 0 "$RUN_RC" "a trailing-slash worktree arg resolves and reads cleanly"
+    assert_contains "$RUN_OUT" "context_tokens=200100" \
+        "the trailing slash lands on the same slug (no trailing '-')"
+    assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
+}
+
+# THE INTERLEAVED case — the one the two tests above cannot see (#809 review).
+# `/.` and `/` alternate here, so a normalization written as two SEQUENTIAL
+# loops (strip every `/.`, then strip every `/`) cannot converge: the `/.` pass
+# does not match a string ending in `/`, exits, and never runs again after the
+# `/` pass exposes a fresh `/.`. Both spellings agree on a bare trailing `.` or
+# `/` and on `./.`, which is exactly why the single-iteration tests passed
+# against the broken two-pass form — this fixture is the divergent input, and it
+# is what forces the loop to be one pass over both patterns.
+#
+# `.//.`: two-pass leaves `<wt>/.` (slug gains a spurious `-`, exit 2 on a
+# transcript that exists); the interleaved loop lands on `<wt>`.
+test_interleaved_dot_slash_worktree_arg_resolves_like_absolute() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" ".worktrees/issue-42/.//."
+    assert_exit 0 "$RUN_RC" "an interleaved './/.'  worktree arg resolves and reads cleanly"
+    assert_contains "$RUN_OUT" "context_tokens=200100" \
+        "'.//.' lands on the same slug as the absolute form (loop converges)"
+    assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
+}
+
+# The sibling interleaving, one character shorter: a trailing `/./`. Same
+# divergence, reached from the other side (slash-last rather than dot-last).
+test_trailing_dot_slash_worktree_arg_resolves_like_absolute() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" ".worktrees/issue-42/./"
+    assert_exit 0 "$RUN_RC" "a trailing '/./' worktree arg resolves and reads cleanly"
+    assert_contains "$RUN_OUT" "context_tokens=200100" \
+        "'/./' lands on the same slug as the absolute form (loop converges)"
+    assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
+}
+
+# The ROOT GUARD (#809 review). `/` is the one path whose trailing `/` is its
+# own name rather than a separator, so the loop must BREAK on it instead of
+# stripping to the empty string. Untested, that branch could be deleted and
+# every other case would still pass — while `check /` silently probed the
+# projects base itself.
+#
+# ASSERT THE RESOLVED PROJECT DIR, not the exit code and not the echoed
+# argument. Both were tried and both are TAUTOLOGIES here: `/` has no planted
+# transcript with or without the guard, so exit 2 is satisfied either way, and
+# the diagnostic echoes `$worktree` (the argument as typed, always `/`) rather
+# than the normalized `$abs`. Only the PARENTHETICAL carries the difference —
+# it prints `$project_dir`, which is `<base>/-` when the guard holds `/` intact
+# and the bare `<base>/` when the loop strips it to the empty string. Verified
+# by deleting the guard and re-running: the exit-code and echoed-arg forms of
+# this test stayed green, this one fails.
+test_root_worktree_arg_does_not_normalize_to_empty() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    run_ctx_budget "$sb" "/"
+    assert_exit 2 "$RUN_RC" "the root dir has no transcript, so it fails loud"
+    assert_contains "$RUN_OUT" "projects/-)" \
+        "the root guard resolves '/' to the slug '-', not to an empty segment"
+}
+
+# ROOT-ADJACENT paths — reduced TO root by a strip rather than arriving as `/`
+# (#809 review cycle 2). Distinct from the case above and not covered by it: the
+# loop's `/)` arm only matches a path that is ALREADY `/` at the top of an
+# iteration, and `${abs%/.}` on `/.` consumes the whole string in one step, so
+# the arm never sees a `/` to match and `abs` lands on `""`.
+#
+# THE EMPTY STRING IS THE DANGEROUS OUTCOME, which is why this is asserted at
+# all: an empty `abs` yields an empty `slug`, so `project_dir` becomes the
+# projects BASE directory — which exists — and the `[ ! -d ]` fail-loud guard
+# PASSES. The script would then scan the base dir and report a reading from the
+# wrong session instead of failing. Asserting the resolved `projects/-)` is what
+# separates the restored root from that collapse; exit 2 alone does not, since
+# neither path has a transcript planted.
+#
+# The subdirectory tests above cannot reach this: `.worktrees/issue-42/...`
+# always leaves a non-empty leading segment, so no strip can consume the path.
+test_root_adjacent_worktree_args_restore_to_root() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb arg
+    new_sandbox sb
+    for arg in "/." "/./" "/.//."; do
+        run_ctx_budget "$sb" "$arg"
+        assert_exit 2 "$RUN_RC" "'$arg' has no transcript, so it fails loud"
+        assert_contains "$RUN_OUT" "projects/-)" \
+            "'$arg' restores to root (slug '-'), never collapsing to the projects base"
+    done
+}
+
 # --- knobs + drift guard -----------------------------------------------------
 
 test_threshold_and_floor_are_env_overridable() {
@@ -606,6 +762,12 @@ run_test test_zero_threshold_fails_loud "zero threshold fails loud"
 run_test test_threshold_and_floor_are_env_overridable "threshold + floor are env-overridable"
 run_test test_emits_the_documented_default_threshold_and_floor "emits the documented defaults"
 run_test test_relative_worktree_arg_resolves_like_absolute "a relative worktree arg resolves like an absolute one"
+run_test test_dot_worktree_arg_resolves_like_absolute "a '.' worktree arg resolves like an absolute one (#809)"
+run_test test_trailing_slash_worktree_arg_resolves_like_absolute "a trailing-slash worktree arg resolves like an absolute one (#809)"
+run_test test_interleaved_dot_slash_worktree_arg_resolves_like_absolute "an interleaved './/.' worktree arg resolves like an absolute one (#809)"
+run_test test_trailing_dot_slash_worktree_arg_resolves_like_absolute "a trailing '/./' worktree arg resolves like an absolute one (#809)"
+run_test test_root_worktree_arg_does_not_normalize_to_empty "the root '/' guard does not normalize to empty (#809)"
+run_test test_root_adjacent_worktree_args_restore_to_root "root-adjacent args ('/.', '/./') restore to root (#809)"
 run_test test_missing_jq_exits_3 "an absent jq exits 3 (absence forced, not observed)"
 run_test test_config_export_propagates_to_the_subprocess "config.sh export propagates to the subprocess"
 run_test test_defaults_match_config_sh "defaults match config.sh (drift guard)"

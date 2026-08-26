@@ -85,6 +85,15 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   shell scripts via `${CLAUDE_PLUGIN_ROOT}/scripts/...`, NOT via `just`, so they
   run on host / bare-linux / container identically. Env-overridable config
   (`GOLEM_WORKTREE_DIR`, branch naming, state dir) carries the genuine forks.
+  **One documented exception, forced by the harness (#809):** a recipe that runs
+  while the session is **worktree-isolated** must be spelled with **no shell
+  variables at all** — the Bash tool refuses a command it cannot statically
+  verify stays in-tree, and `${CLAUDE_PLUGIN_ROOT}` and `$PWD` both trip it (so
+  does a bare `echo "${HOME}"`); `CLAUDE_PLUGIN_ROOT` is not exported into the
+  Bash environment either. `golem/SKILL.md` § Phase C is that exception and
+  states the full reasoning. It is the only one today because Phase C is the
+  only recipe that runs post-`EnterWorktree` — Phase B/D run from the main
+  checkout — so check that condition before copying the pattern anywhere else.
 - **Versions are semver.** `marketplace.json` and each `plugin.json` must agree
   on name + version; `tests/validate-manifests.mjs` enforces it. Two distinct
   version concepts: **per-plugin** semver (each `plugin.json`, consumed by

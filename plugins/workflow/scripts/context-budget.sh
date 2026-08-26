@@ -199,6 +199,60 @@ case "$worktree" in
     /*) abs="$worktree" ;;
     *) abs="$(command pwd)/$worktree" ;;
 esac
+
+# NORMALIZE the trailing segment before the slug is computed (#809). Every `.`
+# and `/` becomes a `-` below, so a trailing `/.` or `/` that names the SAME
+# directory still produces a DIFFERENT slug — and thus a spurious exit 2 on a
+# transcript that is sitting right there:
+#
+#   check <wt>    -> …/-workspace-librarian--worktrees-issue-809    (correct)
+#   check .       -> …/-workspace-librarian--worktrees-issue-809--  (wrong)
+#   check <wt>/   -> …/-workspace-librarian--worktrees-issue-809-   (wrong)
+#
+# `check .` is the natural spelling for "this worktree" and the one a caller
+# reaches for when `$PWD` is unavailable, so leaving it broken means the budget
+# reads as UNKNOWN for a session whose transcript exists — the fail-loud path
+# firing on a healthy session, which suppresses a handoff exactly as a silent 0
+# would.
+#
+# ONE loop that re-checks BOTH patterns each iteration — not two loops in
+# sequence. The two shapes INTERLEAVE, so a sequential `/.`-pass followed by a
+# `/`-pass cannot converge: for `<wt>/./` the first pass does not match (the
+# string ends in `/`, not `/.`) and exits immediately; the second strips the one
+# `/`, leaving `<wt>/.` — and the first pass has already finished and never runs
+# again, so the dangling `/.` survives into the slug and reproduces the very
+# spurious `-` this block exists to remove. Same for `<wt>/.//.`. Verified by
+# tracing both forms against both spellings: they diverge exactly on the inputs
+# whose trailing run alternates. `./.` and a bare trailing `.` or `/` happen to
+# converge either way, which is why the first two tests did not catch it.
+#
+# The root needs BOTH the in-loop break and the post-loop restore below, because
+# they cover different ways of arriving at it. The `/)` arm only matches a path
+# that IS already `/` at the top of an iteration; it cannot help a path that is
+# REDUCED to root by a strip, because `${abs%/.}` on `/.` consumes the whole
+# string in one step and lands on `""` — the `/)` arm never sees a `/` to match.
+# So `/.`, `/./` and `/.//.` all fell through to an empty `abs`.
+#
+# An empty `abs` is the worst possible outcome here, not a cosmetic one: `slug`
+# becomes empty too, so `project_dir` is `$base/` — the projects BASE DIRECTORY
+# itself, which normally exists. The `[ ! -d "$project_dir" ]` check below then
+# PASSES and the script scans the base dir instead of failing loud, which is the
+# silent-wrong-reading outcome this entire block exists to prevent. Verified by
+# tracing all three inputs: each yields `abs=''`, `slug=''`.
+while :; do
+    case "$abs" in
+        */.) abs="${abs%/.}" ;;
+        /) break ;; # already root: its trailing `/` is its name, not a separator
+        */) abs="${abs%/}" ;;
+        *) break ;;
+    esac
+done
+
+# Restore root when a strip consumed the path down to nothing (see above). Only
+# an absolute input can reach this — a relative arg was prefixed with `$(command
+# pwd)` before the loop — so the empty string unambiguously means `/`.
+[ -n "$abs" ] || abs="/"
+
 # Pattern substitution (`${v//[set]/repl}`) is bash-3.2 available — NOT a banned
 # case-conversion (${v,,}/${v^^}); see tests/lint-shell-portability.sh.
 slug="${abs//[\/.]/-}"
