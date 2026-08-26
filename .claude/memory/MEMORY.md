@@ -28,6 +28,8 @@
 
 - [Comments assert intent, not code](comment-asserts-intent-not-code.md) — the comment claims what the code lacks, and HIDES the defect (#542/#498)
 - [Harden one knob, grep siblings](harden-one-knob-grep-every-sibling.md) — recurring class (#487/#489/#493): fix one site, sibling stays exposed
+- [Survey scoped to a glob misses a plugin](survey-scoped-to-a-glob-misses-a-plugin.md) — grep the defective LINE across plugins/; a `check-*` survey missed four `dev-core` twins
+- [Structural gate where fixtures don't scale](structural-gate-where-fixtures-dont-scale.md) — per-arm × per-site defects need a source-reading gate; narrow the rule, key exemptions off the twin, mutate the vacuity guards
 - [Sync script clobbers a nested region](sync-script-clobbers-nested-region.md) — a wholesale region copy deletes the INNER region's sentinels; sync only after resolving
 - [Redirect order leaks the diagnostic](redirect-order-leaks-the-diagnostic.md) — `>>"$f" 2>/dev/null` still prints; absorbed failure, unabsorbed noise
 - [Execute the workflow step, don't grep it](execute-the-workflow-step-dont-grep-it.md) — a `run:` block's regressions are re-orderings every grep survives
@@ -56,6 +58,7 @@
 - [Expand before you scope a path](path-guard-must-expand-before-scoping.md) — unexpanded `~` → nonexistent path → fail-open → silent bypass; same target must decide alike in every spelling (#662)
 - [Mutate after every security fixture](mutate-after-every-security-fixture.md) — 2 injection fixtures passed without the fix too (#596)
 - [Mutate every RULE, not every test](mutation-round-finds-the-untested-rule.md) — the rule with 0 failures is the one the round exists to find
+- [Two lenses, two thresholds](two-lenses-two-thresholds.md) — a fixture sized for the audit lens leaves the review lens silent; both mutations survive green
 - [A surviving mutation may be a real no-op](surviving-mutation-may-be-a-real-no-op.md) — prove unreachable-vs-untested before writing a test that cannot fail (#589) (#663)
 - [A GNU host can't mutate a GNU-ism](gnu-host-cannot-mutate-a-gnu-ism.md) — reverting to the GNU spelling is a NO-OP; mutate to the other platform's outcome (#679)
 - [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)

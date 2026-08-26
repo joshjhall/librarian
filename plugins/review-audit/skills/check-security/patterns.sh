@@ -144,8 +144,14 @@ while IFS= read -r file; do
     # --- Category: injection-risk ---
 
     # SQL injection: f-string or string concat with SQL keywords
+    #
+    # CASE-INSENSITIVE extension arms (#754), matching patterns.py's `.lower()`
+    # before dispatch. A literal `case` here skipped `Db.PY` under bash while
+    # python scanned it — and in a SECURITY scanner a silently unscanned file is
+    # a false clean report, not a cosmetic gap. Bracket classes keep the match
+    # fork-free and bash-3.2 clean (`${file,,}` is bash 4; macOS ships 3.2).
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             # f"..." or f'...' opening a SQL statement. Quote class ["'] written
             # as ["'\''] so the single quote is literal (see #168 — the old
             # ["\x27] never matched f'SELECT because \x27 is not expanded in a
@@ -160,7 +166,7 @@ while IFS= read -r file; do
                         "SQL in f-string: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.js | *.ts | *.jsx | *.tsx)
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx])
             command grep -nE '`(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\$\{' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
@@ -171,7 +177,7 @@ while IFS= read -r file; do
                         "SQL in template literal: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.rb)
+        *.[Rr][Bb])
             command grep -nE '"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*#\{' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}

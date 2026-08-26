@@ -67,9 +67,17 @@ check_prev_lines() {
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
+    # CASE-INSENSITIVE extension arms (#754), matching patterns.py's `.lower()`
+    # before dispatch. A literal `case` here reported zero undocumented APIs for
+    # `Api.PY` under bash while python reported them — a clean bill of health
+    # that was really an unscanned file. Bracket classes keep the match
+    # fork-free and bash-3.2 clean (`${file,,}` is bash 4; macOS ships 3.2).
+    #
+    # The `*_test.go` check inside the go arm stays literal, matching
+    # patterns.py's own `path.endswith("_test.go")` — both impls agree there.
     case "$file" in
         # --- Python ---
-        *.py)
+        *.[Pp][Yy])
             # Find module-level function/class definitions
             command grep -nE '^(def |class )[A-Za-z_]' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -98,7 +106,7 @@ while IFS= read -r file; do
             ;;
 
         # --- JavaScript/TypeScript ---
-        *.js | *.ts | *.jsx | *.tsx)
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx])
             # Find exported functions, classes, types
             command grep -nE '^export (function|class|const|type|interface|enum) ' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -115,7 +123,7 @@ while IFS= read -r file; do
             ;;
 
         # --- Go ---
-        *.go)
+        *.[Gg][Oo])
             # Find exported functions (capitalized, not in test files)
             case "$file" in *_test.go) continue ;; esac
             command grep -nE '^func [A-Z]' "$file" 2>/dev/null |
@@ -137,7 +145,7 @@ while IFS= read -r file; do
             ;;
 
         # --- Rust ---
-        *.rs)
+        *.[Rr][Ss])
             # Find pub fn and pub struct
             command grep -nE '^pub (fn|struct|enum|trait|type) ' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -154,7 +162,7 @@ while IFS= read -r file; do
             ;;
 
         # --- Shell ---
-        *.sh | *.bash)
+        *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh])
             # Find function definitions
             command grep -nE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -178,7 +186,7 @@ while IFS= read -r file; do
             ;;
 
         # --- Ruby ---
-        *.rb)
+        *.[Rr][Bb])
             command grep -nE '^[[:space:]]*def [a-z]' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
@@ -193,7 +201,7 @@ while IFS= read -r file; do
             ;;
 
         # --- Java/Kotlin ---
-        *.java | *.kt)
+        *.[Jj][Aa][Vv][Aa] | *.[Kk][Tt])
             command grep -nE '^[[:space:]]*public .*(void|int|String|boolean|List|Map|Optional|fun )' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}

@@ -368,12 +368,132 @@ make_prose_fixture "$FIXDIR/prose/.claude/memory/lesson.md" 400
 # tell "classification is shared" from "all markdown is classified".
 make_prose_fixture "$FIXDIR/prose/notes.md" 900
 
+# MIXED-CASE EXTENSION coverage (#754). Every fixture above is lower-case, so
+# the case arm of every port's extension dispatch was asserted VACUOUSLY — the
+# same trap the .mjs/.cjs, .sh and .swift comments above record, reached by a
+# third route: the extension itself was never spelled a second way.
+#
+# What it was hiding: each python primary lowercases the extension before its
+# EXT_LANG lookup while each bash fallback matched it LITERALLY in a `case`, so
+# a mixed-case file segmented under python and as NO LANGUAGE at all under bash.
+# Silent — no error, no empty output, exit 0.
+#
+# TWO extensions, per the issue's AC2: without a NON-python one, a fix that
+# lowercased only the py arm would still pass.
+#
+# Sized and shaped to be non-vacuous in the same way Model.swift above is: a
+# 3-line file is under every threshold, both impls emit nothing, and "they
+# agree" holds trivially between two empty outputs. So Upper.PY carries TWO
+# clusterable unit families and enough bulk to clear the decomposition lenses'
+# LOC thresholds, which makes the divergence observable as real seam rows rather
+# than as a missing metric.
+#
+# The PRELUDE below is a second, independent requirement, found by the mutation
+# round rather than by inspection: reverting check-code-health's, check-security's,
+# check-lifecycle's and loop-make-it-work/secure's py arms to a literal `case`
+# left this suite GREEN, because a file of nothing but well-formed `def`s gives
+# those detectors nothing to find. A mixed-case file they never had a reason to
+# report on cannot demonstrate that they now reach it. So the prelude carries one
+# trigger per detector family — a debug print, a breakpoint, an f-string SQL, an
+# unreaped Popen, an empty body, a swallowed except — which is what turns each of
+# those mutations red.
+#
+# The swallowed `except` earns its own mention: check-code-health has THREE
+# separate `case "$file"` blocks, and the third (empty-handler) sits outside the
+# two shared regions, so neither the sync gate nor the first two conversions
+# touched it. It was missed on the first pass and found by the structural gate
+# (tests/lint-scanner-case-dispatch.sh), not by this corpus.
+command cat >"$FIXDIR/Upper.PY" <<'EOF'
+import subprocess
+
+
+def prelude_debug():
+    print("left in by accident")
+    breakpoint()
+
+
+def prelude_query(uid):
+    cur.execute(f"SELECT * FROM users WHERE id={uid}")
+    p = subprocess.Popen(["ls"])
+    return p
+
+
+def prelude_empty():
+    pass
+
+
+def prelude_swallow():
+    try:
+        do_thing()
+    except ValueError:
+        pass
+EOF
+
+{
+    i=0
+    while [ "$i" -lt 60 ]; do
+        command printf 'def alpha_%s(a, b):\n    x = a + b\n    y = x * 2\n    z = y - a\n    return z\n' "$i"
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt 60 ]; do
+        command printf 'def beta_%s(a, b):\n    x = a - b\n    y = x * 3\n    z = y + a\n    return z\n' "$i"
+        i=$((i + 1))
+    done
+} >>"$FIXDIR/Upper.PY"
+
+# The non-python half. `.TS` rather than another python spelling so the fix has
+# to be general: it reaches the ts arm, and it is ALSO the extension whose
+# lower-case sibling (model.ts) is already in the corpus, so a divergence shows
+# up as two files of the same language disagreeing rather than as one orphan.
+#
+# Same two requirements as Upper.PY, for the same two reasons: a prelude that
+# gives the ts-arm detectors something to FIND (a console.log, an SQL template
+# literal, an empty body, an undocumented export), and padding that carries it
+# over the decomposition lenses' LOC thresholds. Without the padding the ts arm
+# of sizing.sh and split-verify.sh could revert to a literal `case` and this
+# suite stayed green — measured, not assumed.
+command cat >"$FIXDIR/Widget.TS" <<'EOF'
+export interface WidgetShape { id: string }
+export type WidgetUnion = WidgetShape | null
+export const widgetFn = () => 1
+console.log('left in by accident');
+export function widgetQuery(id) {
+  return db.query(`SELECT * FROM widgets WHERE id=${id}`)
+}
+export function widgetEmpty() { }
+EOF
+
+# Two name families so the seam path (not merely file-length) is exercised, the
+# same shape the Model.swift padding above uses.
+#
+# Sized past the REVIEW lens's threshold, not merely the audit lens's. This is
+# the one sizing decision here that inspection would get wrong: the two lenses
+# have DIFFERENT defaults — the audit lens warns at 300 production LOC, the
+# review lens at 500 — so Model.swift's ~330 lines clear the audit lens and
+# leave the review lens silent. At 400 lines this fixture left BOTH
+# `sizing.sh`'s and `split-verify.sh`'s ts arms mutation-SURVIVING while every
+# py arm was killed. 120 units puts it near 600 production LOC, over both.
+{
+    i=0
+    while [ "$i" -lt 60 ]; do
+        command printf 'export function alphaWidget%s(a, b) {\n  const x = a + b\n  const y = x * 2\n  const z = y - a\n  return z\n}\n' "$i"
+        i=$((i + 1))
+    done
+    i=0
+    while [ "$i" -lt 60 ]; do
+        command printf 'export function betaWidget%s(a, b) {\n  const x = a - b\n  const y = x * 3\n  const z = y + a\n  return z\n}\n' "$i"
+        i=$((i + 1))
+    done
+} >>"$FIXDIR/Widget.TS"
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
     "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
+    "$FIXDIR/Upper.PY" "$FIXDIR/Widget.TS" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
     "$FIXDIR/prose/skills/demo/reference.md" "$FIXDIR/prose/docs/guide.md" \
     "$FIXDIR/prose/CLAUDE.md" "$FIXDIR/prose/notes.md" \

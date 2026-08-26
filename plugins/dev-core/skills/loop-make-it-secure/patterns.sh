@@ -96,8 +96,14 @@ while IFS= read -r file; do
 
     # --- Category: string-interpolation-query ---
     # SQL queries built with string concatenation or f-strings
+    #
+    # CASE-INSENSITIVE extension arms (#754), matching patterns.py's `.lower()`
+    # before dispatch. A literal `case` here left `Db.PY` unscanned under bash
+    # while python scanned it — and in a SECURITY detector a silently skipped
+    # file is a false clean report. Bracket classes keep the match fork-free and
+    # bash-3.2 clean (`${file,,}` is bash 4; macOS ships 3.2).
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             # Detect f-string or .format() used with SQL keywords. Quote class
             # ["'] written ["'\''] so a single-quoted f'...' also matches (#183;
             # the old ["\x27] missed f'... because \x27 is not expanded in a
@@ -112,7 +118,7 @@ while IFS= read -r file; do
                         "SQL with string interpolation: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.ts | *.js | *.tsx | *.jsx)
+        *.[Tt][Ss] | *.[Jj][Ss] | *.[Tt][Ss][Xx] | *.[Jj][Ss][Xx])
             # Template literal SQL
             command grep -nE '(query|execute)[[:space:]]*\([[:space:]]*`[^`]*(SELECT|INSERT|UPDATE|DELETE)' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -124,7 +130,7 @@ while IFS= read -r file; do
                         "SQL with string interpolation: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.go)
+        *.[Gg][Oo])
             # fmt.Sprintf with SQL
             command grep -nE '(Exec|Query|QueryRow)[[:space:]]*\([[:space:]]*fmt\.Sprintf' "$file" 2>/dev/null |
                 while IFS= read -r raw; do

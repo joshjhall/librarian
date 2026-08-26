@@ -83,16 +83,24 @@ done
 SPLIT_LOC_TOLERANCE="${SPLIT_LOC_TOLERANCE:-40}"
 
 # lang_of PATH — language key from the extension, mirroring sizing.sh.
+#
+# CASE-INSENSITIVE, matching lang_of() in split-verify.py, which lowercases
+# before the EXT_LANG lookup (#754). A literal `case` here classified `Upper.PY`
+# as no-language under bash while python called it py, so the two runtimes
+# disagreed about whether a split preserved the original's language at all.
+# Same rule as is_decl_file (#726) — the same target must decide alike in every
+# spelling. Bracket classes keep it fork-free and bash-3.2 clean (`${1,,}` is
+# bash 4; this tree targets macOS's stock 3.2).
 lang_of() {
     case "$1" in
-        *.py) echo "py" ;;
-        *.js | *.jsx | *.mjs | *.cjs) echo "js" ;;
-        *.ts | *.tsx) echo "ts" ;;
-        *.rs) echo "rs" ;;
-        *.go) echo "go" ;;
-        *.sh | *.bash) echo "sh" ;;
-        *.md | *.markdown) echo "md" ;;
-        *.swift) echo "swift" ;;
+        *.[Pp][Yy]) echo "py" ;;
+        *.[Jj][Ss] | *.[Jj][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss]) echo "js" ;;
+        *.[Tt][Ss] | *.[Tt][Ss][Xx]) echo "ts" ;;
+        *.[Rr][Ss]) echo "rs" ;;
+        *.[Gg][Oo]) echo "go" ;;
+        *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh]) echo "sh" ;;
+        *.[Mm][Dd] | *.[Mm][Aa][Rr][Kk][Dd][Oo][Ww][Nn]) echo "md" ;;
+        *.[Ss][Ww][Ii][Ff][Tt]) echo "swift" ;;
         *) echo "" ;;
     esac
 }

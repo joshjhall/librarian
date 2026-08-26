@@ -173,6 +173,78 @@ test_sound_split_verifies() {
     assert_not_contains "$VERIFY_OUT" "split-fanin-dangling" "a sound split reports no dangling callers"
 }
 
+# --- Mixed-case extensions (#754) --------------------------------------------
+# Every fixture above is lower-case, so this tool's `lang_of` was exercised in
+# exactly one spelling. It matched the extension LITERALLY in a `case` while
+# split-verify.py lowercased before the EXT_LANG lookup, so `Orig.PY` resolved
+# to py under python and to NO LANGUAGE under bash.
+#
+# That is not a cosmetic label: `ORIG_LANG` feeds both `production_loc` and
+# `unit_names`, so under bash a mixed-case original had ZERO extractable units —
+# and a tool whose entire job is proving no unit was lost then had nothing to
+# compare. It reported a lossy split as fine. Silent, exit 0.
+#
+# split-verify is deliberately OUT of validate-python-ports.sh's corpus (its argv
+# is `<original> <post-split> [results...]`, not a file list), so its parity is
+# asserted here per-case — which is exactly why the corpus fixture added in #754
+# could not reach it, and why this case has to exist separately. Found by the
+# mutation round, not by inspection: with only the corpus fixture, reverting this
+# file's ts arm to a literal `case` left the whole suite green.
+#
+# BOTH arms are needed. The sound arm alone would pass on a broken tool that
+# found no units at all (nothing lost because nothing seen), so the LOSSY arm is
+# what gives the pair teeth, and the sound arm is what proves the tool is not
+# simply reporting loss unconditionally.
+setup_mixed_case_fixtures() {
+    MC_ORIG="$WORKDIR/Orig.PY"
+    {
+        command printf 'def parse_entry(x):\n    return x + 1\n\n'
+        command printf 'def parse_header(x):\n    return x + 2\n\n'
+        command printf 'def parse_body(x):\n    return x + 3\n\n'
+        command printf 'def render_all(x):\n    return parse_entry(x) + parse_header(x) + parse_body(x)\n'
+    } >"$MC_ORIG"
+
+    MC_KEPT="$WORKDIR/Orig-kept.PY"
+    {
+        command printf 'from parse import parse_entry, parse_header, parse_body\n\n'
+        command printf 'def render_all(x):\n    return parse_entry(x) + parse_header(x) + parse_body(x)\n'
+    } >"$MC_KEPT"
+
+    MC_MOVED="$WORKDIR/Parse.PY"
+    {
+        command printf 'def parse_entry(x):\n    return x + 1\n\n'
+        command printf 'def parse_header(x):\n    return x + 2\n\n'
+        command printf 'def parse_body(x):\n    return x + 3\n'
+    } >"$MC_MOVED"
+
+    # parse_body dropped on the way out.
+    MC_LOSSY="$WORKDIR/Parse-lossy.PY"
+    {
+        command printf 'def parse_entry(x):\n    return x + 1\n\n'
+        command printf 'def parse_header(x):\n    return x + 2\n'
+    } >"$MC_LOSSY"
+}
+
+test_mixed_case_lost_unit_is_detected() {
+    setup_mixed_case_fixtures
+    run_verify "$MC_ORIG" "$MC_KEPT" "$MC_LOSSY"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-unit-lost" \
+        "mixed-case: a dropped unit in an .PY split is reported (#754)"
+    assert_contains "$VERIFY_OUT" "parse_body" \
+        "mixed-case: the report NAMES the unit that went missing (#754)"
+}
+
+test_mixed_case_sound_split_verifies() {
+    setup_mixed_case_fixtures
+    run_verify "$MC_ORIG" "$MC_KEPT" "$MC_MOVED"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-verified" \
+        "mixed-case: a sound .PY split is reported as non-lossy (#754)"
+    assert_not_contains "$VERIFY_OUT" "split-unit-lost" \
+        "mixed-case: a sound split reports no lost units (#754)"
+}
+
 # --- Swift (#728) ------------------------------------------------------------
 # split-verify is the THIRD consumer of the shared segmenter table, and the one
 # whose entire job is proving no unit was lost across a split. Its own scan loop
@@ -813,6 +885,8 @@ test_orphan_list_truncates_at_three_with_a_count() {
 
 run_test test_lost_unit_is_detected "Check 2: a dropped top-level unit is detected and named"
 run_test test_sound_split_verifies "Check 2 counter: a sound split verifies clean"
+run_test test_mixed_case_lost_unit_is_detected "mixed-case: a dropped unit in an .PY split is detected and named (#754)"
+run_test test_mixed_case_sound_split_verifies "mixed-case counter: a sound .PY split verifies clean (#754)"
 run_test test_swift_sound_split_verifies "swift: a sound Type+Concern split verifies clean (#728)"
 run_test test_swift_lost_unit_is_detected "swift: a dropped Swift declaration is detected and named (#728)"
 run_test test_swift_reserved_name_and_attribute_paths "swift: reserved-name filter and attribute path in split-verify's own loop (#728)"

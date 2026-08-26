@@ -117,25 +117,33 @@ while IFS= read -r file; do
     # WHOLESALE (unlike check-code-health, which only gates debug-statement).
     is_test_file "$file" && continue
 
+    # CASE-INSENSITIVE extension arms (#754), matching patterns.py's `.lower()`
+    # before dispatch. A literal `case` here left `Server.PY` unscanned under
+    # bash while python scanned it — silent, exit 0, no output. The SKIP block
+    # above stays literal on purpose: both impls already agree there, and
+    # widening it is a separate decision.
+    #
+    # Bracket classes keep the match fork-free and bash-3.2 clean (`${file,,}`
+    # is bash 4; macOS ships 3.2).
     case "$file" in
-        *.swift)
+        *.[Ss][Ww][Ii][Ff][Tt])
             emit_rows '\bProcess[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
             emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '=[[:space:]]*FileHandle[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             emit_rows '\.addObserver[[:space:]]*\(|\bscheduledTimer\b' "unpaired-listener" "$L_LISTENER" "$file"
             ;;
-        *.py)
+        *.[Pp][Yy])
             emit_rows '\b(subprocess\.)?Popen[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
             emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '=[[:space:]]*open[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             ;;
-        *.js | *.ts | *.jsx | *.tsx)
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx])
             emit_rows '\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
             emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '=[[:space:]]*fs\.(openSync|createReadStream|createWriteStream)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             emit_rows '\.addEventListener[[:space:]]*\(|\bsetInterval[[:space:]]*\(|\.on[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
             ;;
-        *.go)
+        *.[Gg][Oo])
             emit_rows '\bexec\.Command[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
             emit_rows '\bos\.Interrupt\b' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '\bos\.(Open|Create)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"

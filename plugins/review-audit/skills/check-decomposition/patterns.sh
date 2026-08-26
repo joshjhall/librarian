@@ -133,16 +133,33 @@ while IFS= read -r file; do
 
     # Language key from the extension — mirrors EXT_LANG in patterns.py. An
     # unrecognized extension yields "" (metrics only, no segmenter).
+    #
+    # CASE-INSENSITIVE, matching patterns.py's `.lower()` before the EXT_LANG
+    # lookup (#754). The bracket classes are not decoration: a literal `case`
+    # here segmented `Upper.PY` as py under python and as NO LANGUAGE under
+    # bash, and because `units` drives the decline arm the bash side reported
+    # "0 top-level units" and dropped every seam row python emitted — a silent
+    # TSV divergence in the one property validate-python-ports.sh exists to pin.
+    # In the review lens it was worse than silence: the generic "extract a
+    # cohesive unit into a sibling module" shape where python named the py
+    # package split, i.e. confidently wrong advice.
+    #
+    # Same rule as is_decl_file below (#726) — the same target must decide
+    # alike in every spelling.
+    #
+    # Spelled as bracket classes rather than a lowercased copy of $file because
+    # this runs PER FILE inside the read loop: `tr` would fork per iteration and
+    # `${file,,}` is bash 4 (this tree targets macOS's stock bash 3.2).
     lang=""
     case "$file" in
-        *.py) lang="py" ;;
-        *.js | *.jsx | *.mjs | *.cjs) lang="js" ;;
-        *.ts | *.tsx) lang="ts" ;;
-        *.rs) lang="rs" ;;
-        *.go) lang="go" ;;
-        *.sh | *.bash) lang="sh" ;;
-        *.md | *.markdown) lang="md" ;;
-        *.swift) lang="swift" ;;
+        *.[Pp][Yy]) lang="py" ;;
+        *.[Jj][Ss] | *.[Jj][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss]) lang="js" ;;
+        *.[Tt][Ss] | *.[Tt][Ss][Xx]) lang="ts" ;;
+        *.[Rr][Ss]) lang="rs" ;;
+        *.[Gg][Oo]) lang="go" ;;
+        *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh]) lang="sh" ;;
+        *.[Mm][Dd] | *.[Mm][Aa][Rr][Kk][Dd][Oo][Ww][Nn]) lang="md" ;;
+        *.[Ss][Ww][Ii][Ff][Tt]) lang="swift" ;;
     esac
 
     # >>> shared:bloat-spec (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)

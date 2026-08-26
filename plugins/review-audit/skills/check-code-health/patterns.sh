@@ -320,8 +320,14 @@ scan_debug_prints() {
     local line_num content evidence
 
     # >>> shared:debug-print-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
+    #
+    # CASE-INSENSITIVE extension arms (#754). patterns.py lowercases the
+    # extension once per file before dispatch, so a literal `case` here scanned
+    # `Debug.PY` under python and skipped it entirely under bash — a silent
+    # parity divergence with no error and exit 0. Bracket classes keep the match
+    # fork-free and bash-3.2 clean (`${file,,}` is bash 4; macOS ships 3.2).
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             # Python: print() used as debug (not in logging context)
             command grep -nE -- '^[[:space:]]*print\(' "$file" 2>/dev/null |
                 command grep -vE '(logging|logger|log\.)' |
@@ -334,7 +340,7 @@ scan_debug_prints() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             # JavaScript/TypeScript: console.log, console.debug, console.warn
             command grep -nE -- '^[[:space:]]*console\.(log|debug|warn|info|trace)\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -346,7 +352,7 @@ scan_debug_prints() {
                         "Console debug statement: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.go)
+        *.[Gg][Oo])
             # Go: fmt.Println used as debug (not in main or test)
             command grep -nE -- '^[[:space:]]*fmt\.Print(ln|f)?\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -358,7 +364,7 @@ scan_debug_prints() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.java | *.kt)
+        *.[Jj][Aa][Vv][Aa] | *.[Kk][Tt])
             # Java/Kotlin: System.out.println, System.err.println
             command grep -nE -- '^[[:space:]]*System\.(out|err)\.print(ln)?\(' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -380,8 +386,11 @@ scan_debugger_statements() {
     local line_num content evidence
 
     # >>> shared:debugger-scan (kept in sync with ship-issue/pre-review-gates.sh by tests/validate-shared-scanner-sync.sh)
+    #
+    # CASE-INSENSITIVE extension arms, same rule and same reason as
+    # shared:debug-print-scan above (#754).
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             # Python: breakpoint(), pdb
             command grep -nE -- '^[[:space:]]*(breakpoint\(\)|import pdb|pdb\.set_trace)' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -393,7 +402,7 @@ scan_debugger_statements() {
                         "Debugger statement: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.js | *.ts | *.jsx | *.tsx | *.mjs | *.cjs)
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             # debugger keyword
             command grep -nE -- '^[[:space:]]*debugger[[:space:]]*;?[[:space:]]*$' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -405,7 +414,7 @@ scan_debugger_statements() {
                         "Debugger keyword: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.rb)
+        *.[Rr][Bb])
             # Ruby: binding.pry, puts used as debug
             command grep -nE -- '^[[:space:]]*(binding\.pry|binding\.irb|byebug)\b' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -461,9 +470,14 @@ while IFS= read -r file; do
     fi
 
     # --- Category: empty-handler ---
-
+    #
+    # CASE-INSENSITIVE extension arms, same rule and same reason as the two
+    # shared debug regions above (#754). This block is NOT inside a shared
+    # region, which is exactly how it was missed on the first pass — the sync
+    # gate had nothing to say about it and the two regions it sits between were
+    # already converted. tests/lint-scanner-case-dispatch.sh is the backstop.
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             # Python: except with only pass
             command grep -nE -- '^[[:space:]]*except' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -479,7 +493,7 @@ while IFS= read -r file; do
                     fi
                 done || true
             ;;
-        *.js | *.ts | *.jsx | *.tsx)
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx])
             # JS/TS: catch with empty body
             command grep -nE -- 'catch[[:space:]]*\([^)]*\)[[:space:]]*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -491,7 +505,7 @@ while IFS= read -r file; do
                         "Empty catch block: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.java | *.kt)
+        *.[Jj][Aa][Vv][Aa] | *.[Kk][Tt])
             # Java/Kotlin: catch with empty body
             command grep -nE -- 'catch[[:space:]]*\([^)]*\)[[:space:]]*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -503,7 +517,7 @@ while IFS= read -r file; do
                         "Empty catch block: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.rb)
+        *.[Rr][Bb])
             # Ruby: rescue with no body
             command grep -nE -- '^[[:space:]]*rescue\b' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -519,7 +533,7 @@ while IFS= read -r file; do
                     fi
                 done || true
             ;;
-        *.go)
+        *.[Gg][Oo])
             # Go: if err != nil with empty body
             command grep -nE -- 'if err != nil[[:space:]]*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
