@@ -213,17 +213,24 @@ esac
 # reaches for when `$PWD` is unavailable, so leaving it broken means the budget
 # reads as UNKNOWN for a session whose transcript exists — the fail-loud path
 # firing on a healthy session, which suppresses a handoff exactly as a silent 0
-# would. Loop the `/.` strip because `.//.` and `./.` are both reachable from a
-# caller that concatenates a base and a relative arg; strip trailing `/` after,
-# and guard the root case so `/` does not normalize to the empty string.
+# would.
+#
+# ONE loop that re-checks BOTH patterns each iteration — not two loops in
+# sequence. The two shapes INTERLEAVE, so a sequential `/.`-pass followed by a
+# `/`-pass cannot converge: for `<wt>/./` the first pass does not match (the
+# string ends in `/`, not `/.`) and exits immediately; the second strips the one
+# `/`, leaving `<wt>/.` — and the first pass has already finished and never runs
+# again, so the dangling `/.` survives into the slug and reproduces the very
+# spurious `-` this block exists to remove. Same for `<wt>/.//.`. Verified by
+# tracing both forms against both spellings: they diverge exactly on the inputs
+# whose trailing run alternates. `./.` and a bare trailing `.` or `/` happen to
+# converge either way, which is why the first two tests did not catch it.
+#
+# The root case breaks the loop rather than stripping, so `/` does not normalize
+# to the empty string.
 while :; do
     case "$abs" in
         */.) abs="${abs%/.}" ;;
-        *) break ;;
-    esac
-done
-while :; do
-    case "$abs" in
         /) break ;; # the filesystem root is its own name, not a trailing slash
         */) abs="${abs%/}" ;;
         *) break ;;
