@@ -10,6 +10,14 @@ default:
 validate:
     node tests/validate-manifests.mjs
 
+# Regenerate the enrolled workflow.js harnesses from their workflow.src/
+# fragments (#806). Run this after editing ANY fragment: the artifact is what
+# the Workflow engine executes and what `claude plugin install` copies, so an
+# unregenerated edit runs stale bytes. `just test` fails the tree until you do
+# (tests/lint-workflow-js-generated.sh).
+gen-workflow-js:
+    node bin/generate-workflow-js.mjs
+
 # Lint everything the pre-commit hooks would (formatting + manifests + python).
 # shellcheck runs as part of `just test` (tests/lint-shellcheck.sh).
 #
