@@ -403,6 +403,23 @@ make_prose_fixture "$FIXDIR/prose/notes.md" 900
 # two shared regions, so neither the sync gate nor the first two conversions
 # touched it. It was missed on the first pass and found by the structural gate
 # (tests/lint-scanner-case-dispatch.sh), not by this corpus.
+#
+# THE PADDING IS LOAD-BEARING TOO, for three detectors the prelude does not feed.
+# They are exercised by properties of the alpha_*/beta_* bodies below rather than
+# by a dedicated trigger, so the coverage is real but easy to delete by accident:
+#
+#   loop-make-it-right      — the single-letter `x`/`y`/`z` locals trip its
+#                             single-char-name arm. Rename them and that arm stops
+#                             running against a mixed-case path.
+#   loop-make-it-documented — every padded def is docstring-less, which is what
+#                             reaches its undocumented-public-function arm.
+#   check-docs-missing-api  — likewise, via its own undocumented-public-api arm.
+#
+# So: do NOT add docstrings to the padding and do NOT rename its locals to
+# multi-character names without checking those three still fire. Their mixed-case
+# dispatch is additionally asserted for CORRECTNESS (not merely parity) in
+# tests/validate-loop-detectors.sh::test_mixed_case_extension_dispatch, which is
+# the gate that would actually go red — this corpus would only go quiet.
 command cat >"$FIXDIR/Upper.PY" <<'EOF'
 import subprocess
 
