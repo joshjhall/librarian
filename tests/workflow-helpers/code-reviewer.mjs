@@ -700,13 +700,30 @@ export async function run() {
       /const manifestAttempt = await attempt\(/.test(orch),
       "code-reviewer: the manifest is dispatched through attempt(), not a bare await (#646)",
     );
+    // Indentation-tolerant on purpose (#718). The orchestration body is now
+    // wrapped in `async function runReview()`, so every statement in it is
+    // indented — a `^`-anchored absence check could never match again and would
+    // stay green whether or not the guarded dispatch survived. Leading-space
+    // tolerance is what keeps this assertion's teeth.
     ok(
-      !/^const manifest = await agent\(/m.test(orch),
+      !/^[ \t]*const manifest = await agent\(/m.test(orch),
       "code-reviewer: the unguarded bare `const manifest = await agent(` is gone (#646)",
     );
     ok(
       /if \(!manifestAttempt\.ok\) \{/.test(orch),
       "code-reviewer: BOTH failure modes take the guarded path",
+    );
+
+    // The dispatch tail is pinned BY NAME, not merely inferred from extraction
+    // not throwing (#718). extractHelpers() does fail loud when the call is
+    // accidentally indented, but that is indirect: a restructure that leaves
+    // some OTHER column-0 statement earlier in the file would still extract
+    // successfully while silently moving which lines count as the pure prefix.
+    // This assertion is what makes the invariant the header comment and
+    // workflow-authoring/SKILL.md both call load-bearing fail on its own terms.
+    ok(
+      /^return runReview\(\)$/m.test(orch),
+      "code-reviewer: the orchestration dispatch tail is a column-0 `return runReview()` (#718 ORCH_BOUNDARY)",
     );
   }
 }

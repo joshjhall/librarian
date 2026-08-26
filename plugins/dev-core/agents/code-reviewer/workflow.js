@@ -11,6 +11,44 @@ export const meta = {
 }
 
 // ---------------------------------------------------------------------------
+// SIZE DECISION (#718, following #503 AC3): STRUCTURABLE — applied.
+//
+// 670 production LOC (1060 raw), over the review lens's 500 `warning` bar and
+// under its 800 `high` bar. The per-harness decision this file records:
+//
+//   - A FILE SPLIT is impossible, for the reason ship-issue/workflow.js states at
+//     length: the Workflow engine parses a workflow.js as a SCRIPT, so `import`
+//     is only ever read as the dynamic-call form and the dynamic form is
+//     explicitly disabled. Probed live in #807; #90/#91 closed on the same
+//     ground. Do not add an `import` here expecting it to work — it fails at
+//     parse, before any test or lint gate runs.
+//
+//   - TRIMMING PROMPT PROSE was measured and rejected. String literals are 190
+//     of 767 non-comment lines (25%) and 11,984 of 26,541 non-comment chars
+//     (45%). That is a normal share for a fan-out harness, not accreted prose:
+//     ship-issue measured the SAME 24%/44% at its 649-line revision as at its
+//     1930-line one, so these harnesses grow proportionally in prompt and
+//     control flow together. There is no prose surplus to reclaim.
+//
+//   - SHARED-LOGIC EXTRACTION is real but blocked by the same import ban. A
+//     6-line-window sweep across all six harnesses finds 151 duplicated lines
+//     here (14%, the highest of the six) — `attempt`, `stableStringify`, the
+//     budget-degradation guard. This is the known BUDGET_FLOOR class, already
+//     gated as duplication-by-necessity by tests/lint-skills-agents.sh.
+//
+// So the applicable lever was the ENTRY-POINT + BANNER pattern, and it is now
+// applied: the orchestration body lives in `runReview()` with a column-0
+// `return runReview()` tail, matching orchestrate/workflow.js. That call must
+// stay at column 0 — it is the ORCH_BOUNDARY tests/lib/extract-helpers.mjs keys
+// on to slice this file into its pure prefix and its side-effecting body.
+//
+// The size row does NOT go away (the wrap adds lines). It is now a RESULT rather
+// than a to-do: the file was examined, the three levers were measured, and the
+// one that applies was applied. Re-file only against a NEW lever — the live one
+// is the build step tracked in #806.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Input (passed verbatim as the global `args`):
 //   {
 //     files?: string[],   // explicit review scope; manifest step derives it if absent
@@ -876,185 +914,203 @@ function reassembleReport(merge, rawFindings, manifest) {
   }
 }
 
-// --- Manifest ---------------------------------------------------------------
-phase('Manifest')
+// -------------------------------------------------------------------------
+// Orchestration entry point.
+// Manifest -> Review -> Rescore -> Merge. The whole side-effecting
+// pipeline; everything above this point is pure (config, schemas, prompt
+// builders, and report assembly).
+// -------------------------------------------------------------------------
+async function runReview() {
+  // --- Manifest ---------------------------------------------------------------
+  phase('Manifest')
 
-// Dispatched through `attempt` so a THROW is reported as an empty report rather
-// than crashing the run (#646). `agent()` fails two ways — a terminal API error
-// returns null, StructuredOutput retry-cap exhaustion throws — and only the
-// first ever reached the guard below.
-const manifestAttempt = await attempt(
-  () =>
-    agent(manifestPrompt(), {
-      label: 'manifest',
-      phase: 'Manifest',
-      agentType: 'dev-core:code-reviewer',
-      schema: MANIFEST_SCHEMA,
-    }),
-  'manifest'
-)
-
-if (!manifestAttempt.ok) {
-  log(manifestFailureNote(manifestAttempt.threw, manifestAttempt.error))
-  return emptyReport(null)
-}
-
-const manifest = manifestAttempt.value
-
-// --- Review (core 4 + conditional specialists as ONE barrier) ---------------
-phase('Review')
-
-const specialists = []
-if (manifest.needs.database) specialists.push('database')
-if (manifest.needs.devops) specialists.push('devops')
-
-// Partial-review signal. Set whenever a reviewer is skipped for budget, a
-// sub-reviewer nulls mid-barrier, or a tail stage truncates — so the returned
-// envelope tells callers a full review from a half-complete one (previously the
-// specialist skip was log-only, contradicting workflow-authoring SKILL.md § the
-// budget_exhausted/partial flag must be surfaced).
-let budgetExhausted = false
-const reviewersSkipped = []
-
-const reviewers = [...CORE_REVIEWERS]
-for (const s of specialists) {
-  if (budget.total && budget.remaining() < BUDGET_FLOOR) {
-    budgetExhausted = true
-    reviewersSkipped.push(s)
-    log(`budget low — skipping conditional specialist "${s}"`)
-    continue
-  }
-  reviewers.push(s)
-}
-
-const reviewResults = await parallel(
-  reviewers.map((reviewer) => () =>
-    agent(reviewerPrompt(reviewer, manifest), {
-      label: `review:${reviewer}`,
-      phase: 'Review',
-      agentType: 'dev-core:code-reviewer',
-      schema: FINDINGS_SCHEMA,
-    }).then((r) => ({ reviewer, findings: (r && r.findings) || [] }))
+  // Dispatched through `attempt` so a THROW is reported as an empty report rather
+  // than crashing the run (#646). `agent()` fails two ways — a terminal API error
+  // returns null, StructuredOutput retry-cap exhaustion throws — and only the
+  // first ever reached the guard below.
+  const manifestAttempt = await attempt(
+    () =>
+      agent(manifestPrompt(), {
+        label: 'manifest',
+        phase: 'Manifest',
+        agentType: 'dev-core:code-reviewer',
+        schema: MANIFEST_SCHEMA,
+      }),
+    'manifest'
   )
-)
 
-// A sub-reviewer that threw resolves to null — log it and proceed with the rest.
-// A null mid-barrier is most often the shared budget running out, so mark the
-// review partial (same treatment as the fan-out harnesses).
-const rawFindings = []
-reviewResults.forEach((res, i) => {
-  if (!res) {
-    budgetExhausted = true
-    reviewersSkipped.push(reviewers[i])
-    log(`sub-reviewer "${reviewers[i]}" failed — continuing without its findings`)
-    return
+  if (!manifestAttempt.ok) {
+    log(manifestFailureNote(manifestAttempt.threw, manifestAttempt.error))
+    return emptyReport(null)
   }
-  for (const f of res.findings) rawFindings.push({ ...f, reviewer: res.reviewer })
-})
 
-if (rawFindings.length === 0) {
-  log('no findings across all reviewers — changes look clean')
-  // Even with no findings the review may be PARTIAL (a specialist skipped, a
-  // sub-reviewer nulled): surface that so "clean" is not confused with "full".
-  return { ...emptyReport(manifest), budget_exhausted: budgetExhausted, reviewers_skipped: reviewersSkipped }
-}
+  const manifest = manifestAttempt.value
 
-// Stamp a UNIQUE, stable ref onto every finding now that the full set is
-// assembled across all reviewers. The index guarantees uniqueness even when
-// file+line+category collide, so the rescore can key certainty back without one
-// finding overwriting another's score.
-rawFindings.forEach((f, i) => {
-  f.ref = `${f.file}:${f.line_start}:${f.category}#${i}`
-})
+  // --- Review (core 4 + conditional specialists as ONE barrier) ---------------
+  phase('Review')
 
-// --- Rescore (fresh judge panel; no producer self-grading) ------------------
-phase('Rescore')
+  const specialists = []
+  if (manifest.needs.database) specialists.push('database')
+  if (manifest.needs.devops) specialists.push('devops')
 
-const rescored = await tailAgent(
-  () =>
-    agent(rescorePrompt(rawFindings), {
-      label: 'rescore',
-      phase: 'Rescore',
-      agentType: 'dev-core:code-reviewer',
-      // Pin the fresh judge panel to opus: it is the last gate before a finding
-      // is surfaced, so its scoring accuracy compounds. That accuracy comes
-      // from rescoring in a fresh context that did not produce the findings,
-      // not from the tier — opus buys it without fable's premium (#526).
-      model: 'opus',
-      schema: RESCORE_SCHEMA,
-    }),
-  'rescore'
-)
+  // Partial-review signal. Set whenever a reviewer is skipped for budget, a
+  // sub-reviewer nulls mid-barrier, or a tail stage truncates — so the returned
+  // envelope tells callers a full review from a half-complete one (previously the
+  // specialist skip was log-only, contradicting workflow-authoring SKILL.md § the
+  // budget_exhausted/partial flag must be surfaced).
+  let budgetExhausted = false
+  const reviewersSkipped = []
 
-if (rescored) {
-  const scoreByRef = new Map(rescored.scores.map((s) => [s.ref, s.certainty]))
-  for (const f of rawFindings) {
-    const next = scoreByRef.get(refOf(f))
-    if (next) {
-      f.certainty = { ...f.certainty, level: next.level, confidence: next.confidence }
+  const reviewers = [...CORE_REVIEWERS]
+  for (const s of specialists) {
+    if (budget.total && budget.remaining() < BUDGET_FLOOR) {
+      budgetExhausted = true
+      reviewersSkipped.push(s)
+      log(`budget low — skipping conditional specialist "${s}"`)
+      continue
     }
+    reviewers.push(s)
   }
-} else {
-  // Rescore skipped/failed: keep producer certainty, and mark the review partial
-  // so the tail truncation is visible in the returned envelope.
-  budgetExhausted = true
-  log('rescore step failed — keeping producer certainty as a fallback')
-}
 
-// --- Merge (acknowledge scan, dedup, correlate, emit finding-schema) --------
-phase('Merge')
-
-const merge = await tailAgent(
-  () =>
-    agent(mergePrompt(rawFindings, manifest), {
-      label: 'merge',
-      phase: 'Merge',
-      agentType: 'dev-core:code-reviewer',
-      schema: MERGE_SCHEMA,
-    }),
-  'merge'
-)
-
-// A merge skip/failure loses the correlated report — fall back to emptyReport
-// (never a throw) and mark the review partial so the empty result is not read as
-// a genuinely clean pass.
-let report = null
-if (merge) {
-  // Reassemble the report from the merge model's REFS and the harness's own
-  // rescored objects — the model never re-serialized a finding, so certainty and
-  // finding fidelity survive verbatim (#266). Any input ref the model failed to
-  // place (dropped), invented (unknown), or double-claimed (duplicate) is logged
-  // loudly and never swallowed — the code-review analog of audit's dropped_groups.
-  const { report: assembled, dropped, unknownRefs, duplicates, invalidMerges, malformedIds, duplicateIds, danglingRefs } = reassembleReport(
-    merge,
-    rawFindings,
-    manifest
+  const reviewResults = await parallel(
+    reviewers.map((reviewer) => () =>
+      agent(reviewerPrompt(reviewer, manifest), {
+        label: `review:${reviewer}`,
+        phase: 'Review',
+        agentType: 'dev-core:code-reviewer',
+        schema: FINDINGS_SCHEMA,
+      }).then((r) => ({ reviewer, findings: (r && r.findings) || [] }))
+    )
   )
-  report = assembled
-  // A dropped OR duplicate ref is a merge-integrity breach: the returned report
-  // is not a faithful, complete rendering of the reviewed findings. Mark the
-  // review partial so a caller consuming ONLY the returned object (not the log
-  // stream) can tell — never let a corrupted merge read as a clean, complete pass.
-  if (dropped.length) {
-    budgetExhausted = true
-    log(`merge DROPPED ${dropped.length} finding(s) — absent from every output bucket: ${dropped.join(', ')}`)
+
+  // A sub-reviewer that threw resolves to null — log it and proceed with the rest.
+  // A null mid-barrier is most often the shared budget running out, so mark the
+  // review partial (same treatment as the fan-out harnesses).
+  const rawFindings = []
+  reviewResults.forEach((res, i) => {
+    if (!res) {
+      budgetExhausted = true
+      reviewersSkipped.push(reviewers[i])
+      log(`sub-reviewer "${reviewers[i]}" failed — continuing without its findings`)
+      return
+    }
+    for (const f of res.findings) rawFindings.push({ ...f, reviewer: res.reviewer })
+  })
+
+  if (rawFindings.length === 0) {
+    log('no findings across all reviewers — changes look clean')
+    // Even with no findings the review may be PARTIAL (a specialist skipped, a
+    // sub-reviewer nulled): surface that so "clean" is not confused with "full".
+    return { ...emptyReport(manifest), budget_exhausted: budgetExhausted, reviewers_skipped: reviewersSkipped }
   }
-  if (duplicates.length) {
+
+  // Stamp a UNIQUE, stable ref onto every finding now that the full set is
+  // assembled across all reviewers. The index guarantees uniqueness even when
+  // file+line+category collide, so the rescore can key certainty back without one
+  // finding overwriting another's score.
+  rawFindings.forEach((f, i) => {
+    f.ref = `${f.file}:${f.line_start}:${f.category}#${i}`
+  })
+
+  // --- Rescore (fresh judge panel; no producer self-grading) ------------------
+  phase('Rescore')
+
+  const rescored = await tailAgent(
+    () =>
+      agent(rescorePrompt(rawFindings), {
+        label: 'rescore',
+        phase: 'Rescore',
+        agentType: 'dev-core:code-reviewer',
+        // Pin the fresh judge panel to opus: it is the last gate before a finding
+        // is surfaced, so its scoring accuracy compounds. That accuracy comes
+        // from rescoring in a fresh context that did not produce the findings,
+        // not from the tier — opus buys it without fable's premium (#526).
+        model: 'opus',
+        schema: RESCORE_SCHEMA,
+      }),
+    'rescore'
+  )
+
+  if (rescored) {
+    const scoreByRef = new Map(rescored.scores.map((s) => [s.ref, s.certainty]))
+    for (const f of rawFindings) {
+      const next = scoreByRef.get(refOf(f))
+      if (next) {
+        f.certainty = { ...f.certainty, level: next.level, confidence: next.confidence }
+      }
+    }
+  } else {
+    // Rescore skipped/failed: keep producer certainty, and mark the review partial
+    // so the tail truncation is visible in the returned envelope.
     budgetExhausted = true
-    log(`merge placed ${duplicates.length} finding ref(s) in more than one bucket (kept first placement, dropped the rest): ${duplicates.join(', ')}`)
+    log('rescore step failed — keeping producer certainty as a fallback')
   }
-  if (unknownRefs.length) log(`merge emitted ${unknownRefs.length} unknown finding ref(s) (not in the input set) — ignored: ${unknownRefs.join(', ')}`)
-  if (invalidMerges.length) log(`merge emitted ${invalidMerges.length} single-ref "merged" entr(ies) — demoted to kept (model content discarded, harness severity/certainty preserved): ${invalidMerges.join(', ')}`)
-  // id/related_findings are the two fields the model authors that the harness
-  // cannot reconstruct (#298). These are metadata-quality only — NOT a merge
-  // integrity breach — so they are surfaced but do NOT mark the review partial.
-  if (malformedIds.length) log(`merge emitted ${malformedIds.length} malformed finding id(s) (expected code-reviewer-<NNN>): ${malformedIds.join(', ')}`)
-  if (duplicateIds.length) log(`merge emitted ${duplicateIds.length} duplicate finding id(s) (id uniqueness breached): ${duplicateIds.join(', ')}`)
-  if (danglingRefs.length) log(`merge referenced ${danglingRefs.length} dangling related_findings id(s) (not in the final set — dropped): ${danglingRefs.join(', ')}`)
-} else {
-  budgetExhausted = true
+
+  // --- Merge (acknowledge scan, dedup, correlate, emit finding-schema) --------
+  phase('Merge')
+
+  const merge = await tailAgent(
+    () =>
+      agent(mergePrompt(rawFindings, manifest), {
+        label: 'merge',
+        phase: 'Merge',
+        agentType: 'dev-core:code-reviewer',
+        schema: MERGE_SCHEMA,
+      }),
+    'merge'
+  )
+
+  // A merge skip/failure loses the correlated report — fall back to emptyReport
+  // (never a throw) and mark the review partial so the empty result is not read as
+  // a genuinely clean pass.
+  let report = null
+  if (merge) {
+    // Reassemble the report from the merge model's REFS and the harness's own
+    // rescored objects — the model never re-serialized a finding, so certainty and
+    // finding fidelity survive verbatim (#266). Any input ref the model failed to
+    // place (dropped), invented (unknown), or double-claimed (duplicate) is logged
+    // loudly and never swallowed — the code-review analog of audit's dropped_groups.
+    const { report: assembled, dropped, unknownRefs, duplicates, invalidMerges, malformedIds, duplicateIds, danglingRefs } = reassembleReport(
+      merge,
+      rawFindings,
+      manifest
+    )
+    report = assembled
+    // A dropped OR duplicate ref is a merge-integrity breach: the returned report
+    // is not a faithful, complete rendering of the reviewed findings. Mark the
+    // review partial so a caller consuming ONLY the returned object (not the log
+    // stream) can tell — never let a corrupted merge read as a clean, complete pass.
+    if (dropped.length) {
+      budgetExhausted = true
+      log(`merge DROPPED ${dropped.length} finding(s) — absent from every output bucket: ${dropped.join(', ')}`)
+    }
+    if (duplicates.length) {
+      budgetExhausted = true
+      log(`merge placed ${duplicates.length} finding ref(s) in more than one bucket (kept first placement, dropped the rest): ${duplicates.join(', ')}`)
+    }
+    if (unknownRefs.length) log(`merge emitted ${unknownRefs.length} unknown finding ref(s) (not in the input set) — ignored: ${unknownRefs.join(', ')}`)
+    if (invalidMerges.length) log(`merge emitted ${invalidMerges.length} single-ref "merged" entr(ies) — demoted to kept (model content discarded, harness severity/certainty preserved): ${invalidMerges.join(', ')}`)
+    // id/related_findings are the two fields the model authors that the harness
+    // cannot reconstruct (#298). These are metadata-quality only — NOT a merge
+    // integrity breach — so they are surfaced but do NOT mark the review partial.
+    if (malformedIds.length) log(`merge emitted ${malformedIds.length} malformed finding id(s) (expected code-reviewer-<NNN>): ${malformedIds.join(', ')}`)
+    if (duplicateIds.length) log(`merge emitted ${duplicateIds.length} duplicate finding id(s) (id uniqueness breached): ${duplicateIds.join(', ')}`)
+    if (danglingRefs.length) log(`merge referenced ${danglingRefs.length} dangling related_findings id(s) (not in the final set — dropped): ${danglingRefs.join(', ')}`)
+  } else {
+    budgetExhausted = true
+  }
+
+  // Splice the partial-review signal onto whatever object we return, so both the
+  // merge and the emptyReport fallback carry it uniformly.
+  return { ...(report || emptyReport(manifest)), budget_exhausted: budgetExhausted, reviewers_skipped: reviewersSkipped }
 }
 
-// Splice the partial-review signal onto whatever object we return, so both the
-// merge and the emptyReport fallback carry it uniformly.
-return { ...(report || emptyReport(manifest)), budget_exhausted: budgetExhausted, reviewers_skipped: reviewersSkipped }
+// -------------------------------------------------------------------------
+// Dispatch — a single linear pipeline, so one entry point. Kept as a named
+// function with a column-0 call below (the shape orchestrate/workflow.js uses)
+// so the file's control flow is one readable line rather than 180 lines of
+// bare top-level statements. The call MUST stay at column 0: it is the
+// ORCH_BOUNDARY that tests/lib/extract-helpers.mjs keys on to slice this file
+// into its pure prefix and its side-effecting body.
+// -------------------------------------------------------------------------
+return runReview()

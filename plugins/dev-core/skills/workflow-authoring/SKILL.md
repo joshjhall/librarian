@@ -63,6 +63,46 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
 - **Never call `workflow()`** — the one nesting level is reserved. A harness may
   itself run inside another (e.g. orchestrate → rebase-agent), so nesting throws.
 
+## File Shape and Size
+
+- **Never split a harness into sibling modules.** The engine parses a
+  `workflow.js` as a *script*, so `import` resolves only to the dynamic-call form
+  and that form is disabled — a split fails at parse, before any gate runs
+  (probed live: #807, #90, #91). Two legitimate shapes exist instead, and which
+  one applies depends on whether the harness is **enrolled in the generator**:
+  - **Enrolled** (`bin/generate-workflow-js.mjs`'s list — currently `ship-issue`
+    and `codebase-audit`): edit the ordered fragments in `workflow.src/` and run
+    `just gen-workflow-js`. Concatenation needs no module system, so it sidesteps
+    the ban entirely (#806). Never edit the generated artifact —
+    `tests/lint-workflow-js-generated.sh` fails the tree as stale.
+  - **Not enrolled** (`orchestrate`, `code-reviewer`, and the two agent
+    harnesses): use the in-file shape — side-effecting body in a named
+    `async function run…()`, banner rules, and a **column-0** dispatch call at
+    the foot. `orchestrate/workflow.js` is the reference.
+- **The dispatch call must stay at column 0.** `tests/lib/extract-helpers.mjs`'s
+  `ORCH_BOUNDARY` is a column-0-anchored regex that slices each harness into its
+  pure prefix (evaluated via `new Function`) and its orchestration body; indenting
+  the call erases the boundary. Two layers cover it, and both are needed: the
+  extractor throws `no orchestration boundary found` on an *indented* tail, and
+  `code-reviewer`'s test area pins the tail literally
+  (`/^return runReview\(\)$/m`). The throw alone is not enough — a restructure
+  leaving some *other* column-0 statement still extracts cleanly while silently
+  moving the prefix boundary, which only the literal pin catches. A repo-wide
+  lint gate was evaluated in #718 and declined as redundant once both exist.
+- **A raw-source assertion over an orchestration body must tolerate indentation.**
+  Anchoring an *absence* check at `^` inside a wrapped body means it can never
+  match, so it stays green whether or not the thing it guards survives. Write
+  `/^[ \t]*const x = await agent\(/m`. Both #646 checks were re-anchored in #718
+  for exactly this reason.
+- **Record a size decision in the header when a harness crosses a lens bar.** The
+  levers are the generator (enrolled harnesses only), the in-file entry-point
+  pattern, cross-harness shared-logic extraction, and prompt-prose trimming. The
+  last two stay blocked even for an enrolled harness: the generated artifact
+  still cannot `import`, so fragments are shareable *within* a harness but never
+  *across* them. Say which lever applies and why, **with measurements** — #718
+  closed prose-trimming on a time series (string share was flat at 24%/44% across
+  a 3x growth in `ship-issue`), not on an estimate. Settled per harness in #718.
+
 ## Budget Discipline
 
 - Define a `BUDGET_FLOOR` (40_000 is the house value) and stop spawning new

@@ -504,10 +504,23 @@ export async function run() {
       /const mapAttempt = await attempt\(/.test(orch),
       "codebase-audit: the map is dispatched through attempt(), not a bare await (#646)",
     );
+    // Indentation-tolerant on purpose (#718). A `^`-anchored ABSENCE check is
+    // only as good as its anchor: the moment the orchestration body is indented
+    // — by a `run…()` wrap, or by #808's fragment layout evolving — the anchor
+    // can never match and this assertion stays green whether or not the guarded
+    // dispatch survived. Leading-space tolerance is what keeps its teeth, and it
+    // is a strict superset of the old anchor, so it costs nothing today.
     ok(
-      !/^const map = await agent\(/m.test(orch),
+      !/^[ \t]*const map = await agent\(/m.test(orch),
       "codebase-audit: the unguarded bare `const map = await agent(` is gone (#646)",
     );
     ok(/if \(!mapAttempt\.ok\) \{/.test(orch), "codebase-audit: BOTH failure modes take the guarded path");
+
+    // No dispatch-tail pin here, deliberately (#718). code-reviewer's area pins
+    // its `return runReview()` because that harness carries the in-file
+    // entry-point shape. This one does not: #808 enrolled codebase-audit in the
+    // #806 generator instead, so its body stays at top level and its boundary is
+    // whatever the last fragment begins with. Pinning a `runAudit()` tail here
+    // would assert a shape this harness deliberately does not have.
   }
 }
