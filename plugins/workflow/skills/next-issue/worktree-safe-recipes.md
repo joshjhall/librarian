@@ -145,4 +145,10 @@ convention.
 `tests/lint-worktree-recipes.sh` (run by `tests/run-all.sh`, so it gates CI and
 pre-push) scans fenced `bash` blocks in the three affected skills and fails on a
 refused spelling. Mark a deliberate exception with a
-`# worktree-safe-exempt: <reason>` comment inside the block.
+`# worktree-safe-exempt: <reason>` comment inside the block — a real reason,
+checkable against the boundary table above, not a blanket suppression.
+
+It does **not** yet flag a **bare** command substitution, only the `eval "$(...)"`
+shape. That remainder is **#819**: a bare `$(...)` is genuinely refused too, but
+it fails *loudly* (the step stops) where the `eval` shape fails *silently*, and
+sweeping it would touch ~31 further recipes.

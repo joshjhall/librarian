@@ -71,9 +71,11 @@ EXEMPT_MARKER='worktree-safe-exempt:'
 # but banning `$(` outright would flag ~25 legitimate recipes across these
 # skills (git plumbing in execute-protocol.md, gh queries in
 # dependency-queue.md), which is a far wider sweep than #815 scopes and would
-# have to land as its own issue with its own respellings. Narrowing here is a
-# STATED limitation, not an oversight: the gate covers the class the issue
-# names and says plainly that it does not cover the neighbouring one.
+# have to land as its own issue with its own respellings — filed as #819.
+# Narrowing here is a STATED limitation, not an oversight: the gate covers the
+# class the issue names and says plainly that it does not cover the neighbouring
+# one. It is also the LOUD half of the class: a bare `$(...)` refusal is visible
+# and stops the step, where the `eval` shape silently yields an empty string.
 #
 # Also NOT flagged: an inline-assigned variable (`cycle=1; script --arg
 # "$cycle"`) or an unbraced `$HOME` — both measured ALLOWED, so a blanket `\$`
