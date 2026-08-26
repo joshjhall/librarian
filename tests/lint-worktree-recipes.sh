@@ -130,9 +130,17 @@ scan_file() {
             # The marker must be FOLLOWED by a reason. A bare `worktree-safe-exempt:`
             # would otherwise be a blanket suppression with no stated argument —
             # exactly what the header says an exemption must never be.
+            #
+            # LEADING trim only, deliberately. The decision is "is anything left",
+            # so a whitespace-ONLY remainder is emptied by the leading trim alone;
+            # a remainder with any non-space character survives either way. A
+            # trailing `[[:space:]]+$` alternation was written here first and a
+            # mutation round proved it could not change the outcome for any input
+            # — an unreachable branch, removed rather than covered by a test that
+            # could never fail.
             if (index($0, marker) > 0) {
                 rest = substr($0, index($0, marker) + length(marker))
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+                gsub(/^[[:space:]]+/, "", rest)
                 if (length(rest) > 0) { exempt = 1 }
             }
             if ($0 ~ /\$\{CLAUDE_PLUGIN_ROOT\}/) { buf[++n] = f ":" NR ":${CLAUDE_PLUGIN_ROOT}" }
@@ -233,7 +241,44 @@ eval "$(/literal/path/autonomy-resolve.sh level)"
 ```
 MD
     assert_contains "$(scan_file "$tmp/cmdsub.md")" 'command substitution' \
-        "A command substitution is flagged"
+        "A quoted eval command substitution is flagged"
+
+    # BRANCH COVERAGE. Each spelling pair below is a SEPARATE awk branch with its
+    # own emitted message, so the fixtures above cover only one side of each. A
+    # typo in an uncovered branch would ship silently.
+    command cat >"$tmp/plugin-root-bare.md" <<'MD'
+```bash
+$CLAUDE_PLUGIN_ROOT/scripts/foo.sh check
+```
+MD
+    assert_contains "$(scan_file "$tmp/plugin-root-bare.md")" 'CLAUDE_PLUGIN_ROOT' \
+        "Unbraced \$CLAUDE_PLUGIN_ROOT is flagged (else-branch)"
+
+    # The eval regex's `\"?` makes the quote OPTIONAL — untested until now.
+    command cat >"$tmp/cmdsub-bare.md" <<'MD'
+```bash
+eval $(/literal/path/autonomy-resolve.sh level)
+```
+MD
+    assert_contains "$(scan_file "$tmp/cmdsub-bare.md")" 'command substitution' \
+        "An UNQUOTED eval command substitution is flagged (optional-quote branch)"
+
+    command cat >"$tmp/pwd-braced.md" <<'MD'
+```bash
+/literal/path/context-budget.sh check "${PWD}"
+```
+MD
+    assert_contains "$(scan_file "$tmp/pwd-braced.md")" 'PWD' \
+        "Braced \${PWD} is flagged (if-branch)"
+
+    # ```sh is accepted by the opener regex alongside ```bash.
+    command cat >"$tmp/sh-fence.md" <<'MD'
+```sh
+${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh
+```
+MD
+    assert_contains "$(scan_file "$tmp/sh-fence.md")" 'CLAUDE_PLUGIN_ROOT' \
+        "A \`\`\`sh fence is in scope, same as \`\`\`bash"
 
     command cat >"$tmp/pwd.md" <<'MD'
 ```bash
@@ -375,13 +420,18 @@ MD
     assert_contains "$(scan_file "$tmp/bare.md")" 'CLAUDE_PLUGIN_ROOT' \
         "A bare marker with no reason does NOT exempt the block"
 
-    # Whitespace after the colon is still bare.
-    command cat >"$tmp/spaces.md" <<'MD'
-```bash
-# worktree-safe-exempt:
-${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh
-```
-MD
+    # Whitespace after the colon is STILL bare — this pins the leading trim.
+    # Built with printf, NOT a heredoc: trailing spaces in a heredoc are
+    # invisible in the source and get stripped by editors and formatters, which
+    # silently collapsed this fixture into a byte-identical copy of the bare case
+    # above (caught in review). The two asserts below are what stop that
+    # recurring — they fail if the fixture ever loses its whitespace.
+    command printf '```bash\n# worktree-safe-exempt:   \t \n${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh\n```\n' \
+        >"$tmp/spaces.md"
+    assert_true "command grep -q 'exempt:   ' '$tmp/spaces.md'" \
+        "The trailing-whitespace fixture really carries trailing whitespace"
+    assert_true "! command cmp -s '$tmp/bare.md' '$tmp/spaces.md'" \
+        "The whitespace fixture DIFFERS from the bare one (not a silent duplicate)"
     assert_contains "$(scan_file "$tmp/spaces.md")" 'CLAUDE_PLUGIN_ROOT' \
         "A marker followed only by whitespace does NOT exempt"
 
