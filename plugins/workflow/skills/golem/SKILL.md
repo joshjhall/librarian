@@ -160,8 +160,29 @@ that runs 400–800 turns unattended, and a session that runs to exhaustion pays
 the pipeline above (plan approved, implementation done, review cycle complete):
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/context-budget.sh check "$PWD"
+<skill-base-dir>/../../scripts/context-budget.sh check .
 ```
+
+**Spell it with NO shell variables — this recipe is the one that runs while
+worktree-isolated (#809).** Substitute `<skill-base-dir>` with the literal path
+in this skill's own invocation header (`Base directory for this skill: …`), so
+the command contains only literal text and `.`. That is deliberate and must not
+be "corrected" back to the repo-wide `${CLAUDE_PLUGIN_ROOT}` convention
+(CLAUDE.md § Key conventions): after Phase B this session is inside the
+worktree, and the Claude Code harness **refuses** a Bash command it cannot
+statically verify stays in-tree — measured, deterministic, and triggered by the
+variable *spelling* rather than by the script. `${CLAUDE_PLUGIN_ROOT}/…` and
+`"$PWD"` are both refused; so is a bare `echo "${HOME}"`. `CLAUDE_PLUGIN_ROOT`
+is also **not exported into the Bash environment at all** (verified: `env |
+grep -c` → 0), so that spelling had two independent reasons to fail and the
+`handoff` verdict never fired in any golem run. The refusal is easy to miss
+because it looks like one stray denial line and the run continues — the failure
+mode this whole block exists to prevent, arriving silently.
+
+`.` is safe as the argument because Phase B left this session's cwd **in** the
+worktree being measured, and `context-budget.sh` normalizes a trailing `/.` or
+`/` before deriving the transcript slug (#809 — without that it probed a
+`…-809--` path and exited 2 on a transcript sitting right there).
 
 On `handoff`, do **not** start the next step: write the `checkpoint` into the
 existing `.claude/memory/tmp/next-issue-{N}.json` and end the session, so the

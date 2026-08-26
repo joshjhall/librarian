@@ -18,6 +18,16 @@ resume in a fresh one that starts at the floor.
 "${CLAUDE_PLUGIN_ROOT}/scripts/context-budget.sh" check <worktree-dir>
 ```
 
+**Inside a worktree, spell it with no shell variables (#809).** The form above
+is correct for a session in the main checkout. A session that has entered a
+worktree — every `/workflow:golem` run past Phase B, which is the main consumer
+of this protocol — must instead use a fully literal path and `.`, as
+`golem/SKILL.md` § Phase C shows: the Claude Code harness refuses a Bash command
+it cannot statically verify stays in-tree, and both `${CLAUDE_PLUGIN_ROOT}` and
+`"$PWD"` trip that check. A refused command is an **unknown** budget, which the
+fail-loud rule below already covers — but it is worth avoiding rather than
+reporting, since it makes the reading unavailable for the entire run.
+
 Emits `key=value` lines — `context_tokens`, `floor`, `threshold`,
 `pct_of_threshold`, `verdict`. Read the **verdict**; do not re-derive it from the
 token count. (Same division of labour as `threshold-check.sh`: the script owns

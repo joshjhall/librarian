@@ -462,6 +462,60 @@ test_relative_worktree_arg_resolves_like_absolute() {
     assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
 }
 
+# A trailing `/.` or `/` must NOT change the slug (#809). Every `.` and `/` maps
+# to `-`, so `<wt>/.` and `<wt>/` name the same directory as `<wt>` while
+# producing slugs one and two characters longer — a spurious exit 2 on a
+# transcript that exists. `.` is the natural spelling for "this worktree" and
+# the one a caller reaches for when `$PWD` is unavailable (the golem Phase C
+# case), so it is the spelling most likely to be typed and was the one broken.
+#
+# THE ASSERTION IS SAMENESS, NOT SUCCESS. Checking merely for exit 0 would pass
+# under any prefix bug that still happened to find *a* directory; asserting the
+# same reading (200100 / handoff) as the absolute call is what makes a wrong
+# slug fail — it resolves to a path with no transcript, hence exit 2 and no
+# reading at all. Both cases were reproduced failing before the fix.
+test_dot_worktree_arg_resolves_like_absolute() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    # `cd` into the worktree itself, then name it as `.` — the golem Phase C
+    # shape, where the session's cwd IS the worktree being measured. The dir must
+    # be created here: plant_transcript only stages the PROJECTS side (the
+    # transcript dir named after the slug), never the worktree the slug is
+    # derived from, because every other case in this suite passes the worktree
+    # as a string and never enters it.
+    command mkdir -p "$sb/.worktrees/issue-42"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb/.worktrees/issue-42" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            "$REAL_BASH" "$CTX_BUDGET" check "." 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "a '.' worktree arg resolves and reads cleanly"
+    assert_contains "$RUN_OUT" "context_tokens=200100" \
+        "'.' lands on the same slug as the absolute form (no trailing '--')"
+    assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
+}
+
+test_trailing_slash_worktree_arg_resolves_like_absolute() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 "$TRANSCRIPT_CTX_HANDOFF"
+    run_ctx_budget "$sb" ".worktrees/issue-42/"
+    assert_exit 0 "$RUN_RC" "a trailing-slash worktree arg resolves and reads cleanly"
+    assert_contains "$RUN_OUT" "context_tokens=200100" \
+        "the trailing slash lands on the same slug (no trailing '-')"
+    assert_contains "$RUN_OUT" "verdict=handoff" "and yields the same verdict"
+}
+
 # --- knobs + drift guard -----------------------------------------------------
 
 test_threshold_and_floor_are_env_overridable() {
@@ -606,6 +660,8 @@ run_test test_zero_threshold_fails_loud "zero threshold fails loud"
 run_test test_threshold_and_floor_are_env_overridable "threshold + floor are env-overridable"
 run_test test_emits_the_documented_default_threshold_and_floor "emits the documented defaults"
 run_test test_relative_worktree_arg_resolves_like_absolute "a relative worktree arg resolves like an absolute one"
+run_test test_dot_worktree_arg_resolves_like_absolute "a '.' worktree arg resolves like an absolute one (#809)"
+run_test test_trailing_slash_worktree_arg_resolves_like_absolute "a trailing-slash worktree arg resolves like an absolute one (#809)"
 run_test test_missing_jq_exits_3 "an absent jq exits 3 (absence forced, not observed)"
 run_test test_config_export_propagates_to_the_subprocess "config.sh export propagates to the subprocess"
 run_test test_defaults_match_config_sh "defaults match config.sh (drift guard)"

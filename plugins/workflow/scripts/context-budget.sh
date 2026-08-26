@@ -199,6 +199,37 @@ case "$worktree" in
     /*) abs="$worktree" ;;
     *) abs="$(command pwd)/$worktree" ;;
 esac
+
+# NORMALIZE the trailing segment before the slug is computed (#809). Every `.`
+# and `/` becomes a `-` below, so a trailing `/.` or `/` that names the SAME
+# directory still produces a DIFFERENT slug — and thus a spurious exit 2 on a
+# transcript that is sitting right there:
+#
+#   check <wt>    -> …/-workspace-librarian--worktrees-issue-809    (correct)
+#   check .       -> …/-workspace-librarian--worktrees-issue-809--  (wrong)
+#   check <wt>/   -> …/-workspace-librarian--worktrees-issue-809-   (wrong)
+#
+# `check .` is the natural spelling for "this worktree" and the one a caller
+# reaches for when `$PWD` is unavailable, so leaving it broken means the budget
+# reads as UNKNOWN for a session whose transcript exists — the fail-loud path
+# firing on a healthy session, which suppresses a handoff exactly as a silent 0
+# would. Loop the `/.` strip because `.//.` and `./.` are both reachable from a
+# caller that concatenates a base and a relative arg; strip trailing `/` after,
+# and guard the root case so `/` does not normalize to the empty string.
+while :; do
+    case "$abs" in
+        */.) abs="${abs%/.}" ;;
+        *) break ;;
+    esac
+done
+while :; do
+    case "$abs" in
+        /) break ;; # the filesystem root is its own name, not a trailing slash
+        */) abs="${abs%/}" ;;
+        *) break ;;
+    esac
+done
+
 # Pattern substitution (`${v//[set]/repl}`) is bash-3.2 available — NOT a banned
 # case-conversion (${v,,}/${v^^}); see tests/lint-shell-portability.sh.
 slug="${abs//[\/.]/-}"
