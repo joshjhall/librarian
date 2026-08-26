@@ -147,12 +147,10 @@ governs.
    # -> PRINTS autonomy_level (1-4)
    ```
 
-   **Run it bare and read the printed value — never `eval "$(...)"` (#815).**
-   Ship is chained in-turn by `/workflow:next-issue` at L3–L4, so it runs inside
-   the golem's worktree, where the Bash tool refuses a command substitution;
-   `eval` of a refusal yields an empty string and the level silently falls back
-   to L1 mid-ship. Substitute `<skill-base-dir>` with this skill's
-   invocation-header path — see `next-issue/worktree-safe-recipes.md`.
+   **Run it bare and read the printed value — never `eval "$(...)"` (#815);**
+   chained in-turn at L3–L4 this runs worktree-isolated, where a refused
+   substitution silently yields L1. Substitution rule:
+   `next-issue/worktree-safe-recipes.md`.
 
    The resolver applies the rule (see
    `next-issue/schemas/next-issue-state.schema.json`): a present `autonomy_level`
