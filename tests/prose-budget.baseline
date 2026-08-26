@@ -33,8 +33,22 @@
 #     extraction would cost more indirection than it saves. Justified in place,
 #     which #503 AC2 explicitly permits ("or an explicit justification why not").
 #     It is under its 400 high bar, so it is not a ledger entry.
-#   * The four workflow.js harnesses (#503 AC3) are untouched: they have no
-#     module system and cannot be split into importable files (#90, #91). The
-#     per-harness structurable-vs-irreducible decision is #718.
+#   * No workflow.js can be split into importable siblings (#90, #91, re-probed
+#     live in #807). #718 settled the per-harness decision (#503 AC3); #808 then
+#     landed the #806 generator, so the recorded answers now split by whether a
+#     harness is ENROLLED in it:
+#       - ship-issue, codebase-audit: STRUCTURABLE, applied via the workflow.src/
+#         fragment layout. Their decisions live in the fragments (05-provenance.js
+#         and 10-config.js), never in the generated artifact.
+#       - orchestrate: STRUCTURABLE, already applied — the in-file entry-point +
+#         banner shape, and the reference for anything not enrolled.
+#       - code-reviewer: STRUCTURABLE, applied in-file (runReview() + a column-0
+#         dispatch tail, pinned by name in its test area).
+#     #718 also closed the other two levers by measurement, and the generator does
+#     NOT reopen either: prompt-string share is flat over time (ship-issue was
+#     24%/44% at 649 raw lines and 24%/44% at 1930), so there is no accreted prose
+#     to trim; and the 382 cross-harness duplicated lines stay the BUDGET_FLOOR
+#     class, because the generated artifact still cannot import — fragments are
+#     shareable within a harness, never across them.
 plugins/workflow/skills/orchestrate/mode-protocol.md 877 # carries all orchestration modes; splitting per-mode would scatter one decision table an operator reads end-to-end
 plugins/workflow/skills/ship-issue/ci-review-protocol.md 749 # the CI-wait + multi-cycle review contract; its length is the protocol, and every ship path loads it whole

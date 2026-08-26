@@ -27,6 +27,33 @@ export const meta = {
 }
 
 // ---------------------------------------------------------------------------
+// SIZE DECISION (#718, following #503 AC3): STRUCTURABLE — already applied.
+//
+// 797 production LOC (1419 raw), over the review lens's 500 `warning` bar and
+// just under its 800 `high` bar. This harness is the REFERENCE SHAPE the other
+// two structurable ones were brought to, so it needed no change:
+//
+//   - Named entry points per mode (`runPool`, `runTracks`, `runTrain`,
+//     `runPollSweep`) with a four-line column-0 dispatch tail, so the whole
+//     control flow of a 1400-line file reads in four lines.
+//   - 28 banner rules sectioning config, gates, prompt builders, and each mode.
+//
+// The other two levers were measured here as well, and both are closed:
+//
+//   - TRIMMING PROMPT PROSE: string literals are 120 of 955 non-comment lines
+//     (13%) and 8,906 of 30,098 non-comment chars (30%) — the LOWEST share of
+//     the four harnesses. There is no prose surplus to reclaim.
+//   - SHARED-LOGIC EXTRACTION: only 21 duplicated lines (1%, the lowest of the
+//     six harnesses), and blocked anyway by the import ban that
+//     ship-issue/workflow.js documents at length (#807; #90/#91).
+//
+// So this file's size row is a RESULT, not a to-do. Do not add an `import` here
+// expecting it to work — it fails at parse, before any test or lint gate runs.
+// The dispatch calls at the foot of this file must stay at column 0: they are
+// the ORCH_BOUNDARY tests/lib/extract-helpers.mjs keys on.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Input (passed verbatim as the global `args`):
 //   {
 //     prs: [{                 // the OPEN-PR set the orchestrator already enumerated

@@ -700,8 +700,13 @@ export async function run() {
       /const manifestAttempt = await attempt\(/.test(orch),
       "code-reviewer: the manifest is dispatched through attempt(), not a bare await (#646)",
     );
+    // Indentation-tolerant on purpose (#718). The orchestration body is now
+    // wrapped in `async function runReview()`, so every statement in it is
+    // indented — a `^`-anchored absence check could never match again and would
+    // stay green whether or not the guarded dispatch survived. Leading-space
+    // tolerance is what keeps this assertion's teeth.
     ok(
-      !/^const manifest = await agent\(/m.test(orch),
+      !/^[ \t]*const manifest = await agent\(/m.test(orch),
       "code-reviewer: the unguarded bare `const manifest = await agent(` is gone (#646)",
     );
     ok(
