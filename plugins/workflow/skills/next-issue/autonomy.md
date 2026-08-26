@@ -28,9 +28,12 @@ the critical cap in one shot) by calling the resolver:
 # {ARGS} = this invocation's raw flag string (may hold --level N);
 # {SEV} = the issue's severity label ("critical" or "" — fetched in Phase 1).
 <skill-base-dir>/../../scripts/autonomy-resolve.sh level \
-    --from-args {ARGS} --severity {SEV}
+    --from-args "{ARGS}" --severity "{SEV}"
 # -> PRINTS autonomy_level, autonomous, plan_gated, capped, perm_mode
 ```
+
+**Keep the quotes when substituting `{ARGS}`** — it is a multi-word string, and
+unquoted it truncates to one token and the resolver exits 2.
 
 **Run it bare and read the printed `key=value` lines — never `eval "$(...)"`
 (#815).** A worktree-isolated session refuses the command substitution, and

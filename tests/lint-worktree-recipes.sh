@@ -37,6 +37,15 @@
 # discussion, not instruction. Gating prose would make the documentation of the
 # rule violate the rule — the same self-contradiction lint-command-refs.sh
 # avoids by exempting docs/verification/**.
+#
+# THE COST OF THAT SCOPING, STATED. A few inline directives genuinely instruct
+# an invocation mid-sentence ("Resolve the disposition with `${CLAUDE_PLUGIN_ROOT}
+# /scripts/autonomy-resolve.sh gate …`") and are therefore invisible here even
+# though they are instructions, not discussion — three exist today, in
+# escalation-protocol.md, ship-issue/SKILL.md, and ci-review-protocol.md. They
+# are covered by hand, and worktree-safe-recipes.md § Enforcement tells the
+# reader so. This is a known, bounded gap rather than an unnoticed one; widening
+# the corpus to prose would flag the documentation of the rule itself.
 
 set -euo pipefail
 
@@ -118,13 +127,27 @@ scan_file() {
             infence = 0; n = 0; next
         }
         infence {
-            if (index($0, marker) > 0) { exempt = 1 }
+            # The marker must be FOLLOWED by a reason. A bare `worktree-safe-exempt:`
+            # would otherwise be a blanket suppression with no stated argument —
+            # exactly what the header says an exemption must never be.
+            if (index($0, marker) > 0) {
+                rest = substr($0, index($0, marker) + length(marker))
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", rest)
+                if (length(rest) > 0) { exempt = 1 }
+            }
             if ($0 ~ /\$\{CLAUDE_PLUGIN_ROOT\}/) { buf[++n] = f ":" NR ":${CLAUDE_PLUGIN_ROOT}" }
             else if ($0 ~ /\$CLAUDE_PLUGIN_ROOT/) { buf[++n] = f ":" NR ":$CLAUDE_PLUGIN_ROOT" }
             # `eval "$(...)"` ONLY — not a bare command substitution. See header.
             if ($0 ~ /eval[[:space:]]+"?\$\(/) { buf[++n] = f ":" NR ":eval command substitution" }
             if ($0 ~ /\$\{PWD\}/)     { buf[++n] = f ":" NR ":${PWD}" }
             else if ($0 ~ /\$PWD/)    { buf[++n] = f ":" NR ":$PWD" }
+            # Braced ${HOME} and $USER are measured-refused too (the companion
+            # table). Note the asymmetry that makes ${HOME} easy to miss:
+            # UNBRACED "$HOME" is ALLOWED, so only the braced spelling is a
+            # violation — which is why this is a distinct pattern and not a
+            # HOME-anywhere match.
+            if ($0 ~ /\$\{HOME\}/)    { buf[++n] = f ":" NR ":${HOME} (braced; bare $HOME is fine)" }
+            if ($0 ~ /\$\{USER\}/ || $0 ~ /\$USER/) { buf[++n] = f ":" NR ":$USER" }
         }
     ' "$file"
 }
@@ -219,6 +242,44 @@ MD
 MD
     assert_contains "$(scan_file "$tmp/pwd.md")" 'PWD' \
         "\$PWD is flagged"
+
+    command cat >"$tmp/home.md" <<'MD'
+```bash
+echo "${HOME}"
+```
+MD
+    assert_contains "$(scan_file "$tmp/home.md")" 'HOME' \
+        "Braced \${HOME} is flagged"
+
+    command cat >"$tmp/user.md" <<'MD'
+```bash
+echo "$USER"
+```
+MD
+    assert_contains "$(scan_file "$tmp/user.md")" 'USER' \
+        "\$USER is flagged"
+}
+
+# The ${HOME} rule is the one most likely to be over-applied, because the
+# UNBRACED spelling is measured ALLOWED. Pin the asymmetry explicitly: without
+# this, widening the rule to a HOME-anywhere match would still pass every other
+# test in the file.
+test_unbraced_home_is_not_flagged() {
+    local tmp
+    tmp="$(command mktemp -d 2>/dev/null)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/bare-home.md" <<'MD'
+```bash
+echo "$HOME/scripts/foo.sh"
+```
+MD
+    assert_equals "" "$(scan_file "$tmp/bare-home.md")" \
+        "Unbraced \$HOME is NOT flagged (measured allowed)"
 }
 
 # NARROWNESS. A gate that flags everything is as useless as one that flags
@@ -294,6 +355,46 @@ MD
         "The exemption does NOT leak into the next block"
 }
 
+test_marker_requires_a_reason() {
+    local tmp
+    tmp="$(command mktemp -d 2>/dev/null)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    # A BARE marker grants no exemption — otherwise it is a blanket suppression
+    # with no argument attached, which the header forbids.
+    command cat >"$tmp/bare.md" <<'MD'
+```bash
+# worktree-safe-exempt:
+${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh
+```
+MD
+    assert_contains "$(scan_file "$tmp/bare.md")" 'CLAUDE_PLUGIN_ROOT' \
+        "A bare marker with no reason does NOT exempt the block"
+
+    # Whitespace after the colon is still bare.
+    command cat >"$tmp/spaces.md" <<'MD'
+```bash
+# worktree-safe-exempt:
+${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh
+```
+MD
+    assert_contains "$(scan_file "$tmp/spaces.md")" 'CLAUDE_PLUGIN_ROOT' \
+        "A marker followed only by whitespace does NOT exempt"
+
+    command cat >"$tmp/reason.md" <<'MD'
+```bash
+# worktree-safe-exempt: runs pre-EnterWorktree from the main checkout
+${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh
+```
+MD
+    assert_equals "" "$(scan_file "$tmp/reason.md")" \
+        "A marker WITH a reason exempts the block"
+}
+
 test_marker_exempts_whole_block_not_one_line() {
     local tmp
     tmp="$(command mktemp -d 2>/dev/null)" || {
@@ -336,7 +437,9 @@ run_test test_no_refused_recipes "No isolated recipe carries a refused spelling"
 run_test test_no_eval_command_substitution "No recipe uses the silent eval \"\$(...)\" shape"
 run_test test_scanner_detects_each_refused_pattern "The scanner fires on each refused pattern"
 run_test test_scanner_passes_the_safe_spellings "The scanner passes the safe spellings"
+run_test test_unbraced_home_is_not_flagged "Unbraced \$HOME stays allowed (braced/unbraced asymmetry)"
 run_test test_exemption_marker_works "The exemption marker works and does not leak"
+run_test test_marker_requires_a_reason "A bare marker with no reason grants no exemption"
 run_test test_marker_exempts_whole_block_not_one_line "The marker exempts per block, not per line"
 run_test test_companion_documents_the_rule "The companion exists and documents the marker"
 run_test test_claude_md_note_is_corrected "CLAUDE.md's false 'only one' claim is gone"

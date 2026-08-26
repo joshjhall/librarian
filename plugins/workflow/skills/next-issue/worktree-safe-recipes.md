@@ -148,7 +148,19 @@ refused spelling. Mark a deliberate exception with a
 `# worktree-safe-exempt: <reason>` comment inside the block — a real reason,
 checkable against the boundary table above, not a blanket suppression.
 
-It does **not** yet flag a **bare** command substitution, only the `eval "$(...)"`
-shape. That remainder is **#819**: a bare `$(...)` is genuinely refused too, but
-it fails *loudly* (the step stops) where the `eval` shape fails *silently*, and
-sweeping it would touch ~31 further recipes.
+Two gaps the gate cannot close, both stated rather than left implicit:
+
+- **Bare command substitution** (only the `eval "$(...)"` shape is flagged).
+  A bare `$(...)` is genuinely refused too, but it fails *loudly* (the step
+  stops) where the `eval` shape fails *silently*, and sweeping it would touch
+  ~31 further recipes. Filed as **#819**.
+- **Inline prose directives.** The gate scans fenced `bash` blocks only, so a
+  sentence like *"Resolve the disposition with
+  `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate …`"* is invisible to
+  it — yet it instructs an invocation just as a fenced block does. Three such
+  directives exist today (`escalation-protocol.md`, `ship-issue/SKILL.md`,
+  `ci-review-protocol.md`, all naming `autonomy-resolve.sh`). **When you follow
+  one inside a worktree, apply Pattern 1 or 2 by hand** — the gate will not
+  remind you. Widening the corpus to prose is not the fix: it would flag this
+  very file, and every discussion of the rule, which is the self-contradiction
+  the fenced-block scoping exists to avoid.

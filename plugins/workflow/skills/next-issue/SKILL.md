@@ -338,8 +338,13 @@ or has no `files_planned` (nothing to re-present).
 
    ```bash
    <skill-base-dir>/../../scripts/autonomy-resolve.sh level \
-       --from-args {ARGS} --severity {SEV} [--chosen-level {CHOSEN}]
+       --from-args "{ARGS}" --severity "{SEV}" [--chosen-level {CHOSEN}]
    ```
+
+   **Keep the quotes when you substitute.** `{ARGS}` is a multi-word string
+   (`--level 3`), so an unquoted substitution truncates it to its first token and
+   the resolver exits 2 with `level must be 1-4, got ''`. `{CHOSEN}` is a bare
+   integer and needs none.
 
    **Run it bare and READ the `key=value` lines it prints — never wrap it in
    `eval "$(...)"` (#815).** Inside a worktree the Bash tool refuses a command
