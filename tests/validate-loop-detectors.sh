@@ -878,6 +878,24 @@ test_mixed_case_extension_dispatch() {
     list="$(make_list "$d/l" "$d/Api.PY")"
     assert_fires "$SK_DOC" undocumented-public-function "No docstring" \
         "documented: an .PY file reaches the py docstring arm via the tr-lowercase path (#754)" -- "$list"
+
+    # A NON-PYTHON extension. Without one, a fix that lowercased only the py arm
+    # would pass every assertion above — the same reason #754's corpus fixture
+    # carries a .TS beside its .PY. `.TS` also exercises a multi-extension arm
+    # (`*.[Tt][Ss] | *.[Jj][Ss] | ...`), where a bracket-class typo can convert
+    # one alternative and leave its siblings literal.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const widgetEmpty = () => {}' >"$d/Widget.TS"
+    list="$(make_list "$d/l" "$d/Widget.TS")"
+    assert_fires "$SK_WORK" empty-body "Empty function body" \
+        "work: a .TS file reaches the ts empty-body arm (#754)" -- "$list"
+
+    # Counter, same as the py pair: identical content under a lower-case name.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const widgetEmpty = () => {}' >"$d/widget.ts"
+    list="$(make_list "$d/l" "$d/widget.ts")"
+    assert_fires "$SK_WORK" empty-body "Empty function body" \
+        "work: the same content as .ts fires identically (counter, #754)" -- "$list"
 }
 
 run_test test_mixed_case_extension_dispatch "mixed-case: .PY/.TS reach the same arms as .py/.ts, asserted per-impl (#754)"
