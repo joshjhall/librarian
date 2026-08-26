@@ -141,6 +141,35 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   per area so a throw outside an assertion cannot mask its siblings. When adding
   a new `.mjs` module directory, add it to `tests/coverage-mjs.sh`'s `--include`
   list or its lines silently vanish from Codecov.
+- **The two biggest `workflow.js` harnesses are GENERATED — edit the fragment,
+  never the artifact** (#806). `ship-issue/workflow.js` and
+  `codebase-audit/workflow.js` are the byte concatenation of the ordered
+  fragments in their `workflow.src/` sibling directory. After editing any
+  fragment run `just gen-workflow-js`; `tests/lint-workflow-js-generated.sh`
+  (run by `tests/run-all.sh`, so it gates CI and pre-push) fails the tree while
+  an artifact is stale. Four things to know:
+  (1) **Concatenation, not bundling.** A workflow.js is parsed as a *script*, so
+  every `import` spelling fails at parse (#712 probed all three) — which is why
+  a sibling-module split is impossible and why `BUDGET_FLOOR` is duplicated
+  across harnesses rather than shared. Concatenation needs no module system, so
+  the artifact contains no import even though it came from nine files.
+  (2) **The manifest is explicit and ordered, never a glob** — same shape and
+  same reason as `tests/lib/fragments.sh`. It fails in *both* directions (an
+  unlisted fragment on disk, a listed one missing), and the order is
+  load-bearing: `sanitize` is called at module load by `NEW_DIMENSIONS`, so
+  reversing those two fragments is a TDZ throw on the `issue`-truthy branch only
+  — invisible to a test that extracts without an issue (#260).
+  (3) **The artifact stays committed and freshness is checked locally, not at PR
+  time.** `claude plugin install` copies `plugins/` as-is with no build hook, and
+  the ship-issue harness runs on every local review cycle — so a PR-tied
+  generator would let a fragment edit silently review with the old bytes.
+  (4) **Enrollment rule:** a harness enrolls when it exceeds the js `high`
+  production-LOC budget. Measured 2026-08-25: ship-issue 916 and codebase-audit
+  803 are over it; orchestrate 797 and code-reviewer 670 are over `warn` only,
+  and rebase-agent 331 / ci-fixer 310 are well under. Re-measure with
+  `ship-issue/plan-lens.sh` before enrolling another. Note the `@generated`
+  banner does **not** silence the size row (verified) — this convention is
+  justified by editing ergonomics, not by quieting the lens.
 - **`ship-issue`'s review step runs the Workflow harness — it is not optional,
   and it overrides a general "don't use workflows" default.** `ci-review-protocol.md`
   step (c) and `pre-ship-validation.md` check #6 both say to invoke the **Workflow

@@ -1,0 +1,109 @@
+// Stop spawning further domain scans once the shared budget gets this close to
+// empty, so a partial audit still files the domains it DID confirm instead of
+// throwing mid-fan-out. Matches the ci-fixer / code-reviewer / next-issue-review
+// harnesses (the house floor).
+const BUDGET_FLOOR = 40_000
+
+// Reserve for the TERMINAL single-agent stages (aggregate, artifact/report
+// writers). These are bare `await agent(...)` calls, not fan-out barriers: a
+// throw is NOT caught by pipeline()/parallel() and would kill the run AFTER
+// every scan+verify already completed — discarding the whole multi-domain audit.
+// `tailAgent` routes an exhausted-budget tail to the SAME null-fallback (return
+// raw findings / skip the write) each call site already handles. A tail stage
+// costs far less than the fan-out barrier, so a smaller reserve suffices.
+// DISTINCT identifier on purpose — the BUDGET_FLOOR house-value lint
+// (tests/lint-skills-agents.sh) greps `const BUDGET_FLOOR = …` and must never
+// match this.
+const TAIL_FLOOR = 8_000
+
+// True when the shared budget is too close to empty to spend on another tail
+// stage. Used both by tailAgent (to skip) and by callers deciding whether a null
+// tail result was a BUDGET situation (set budget_exhausted) versus a plain agent
+// failure (leave budget_exhausted honest, mark scan_failure instead) — this
+// harness deliberately keeps those two causes distinct (see the aggregate + scan
+// fallbacks).
+function budgetLow() {
+  return !!budget.total && budget.remaining() < TAIL_FLOOR
+}
+
+// Run a terminal single-agent stage without letting it throw the run away.
+// Returns the agent result, or `null` when the budget is too low to spend
+// (pre-check) OR the call throws anyway (a ceiling overshoot mid-tail) — both
+// degrade to the caller's existing null-handling. `fn` is a thunk so the agent()
+// call is only made when we decide to spend.
+async function tailAgent(fn, label) {
+  if (budgetLow()) {
+    log(`budget low — skipping ${label} (degrading to fallback)`)
+    return null
+  }
+  try {
+    return await fn()
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — degrading to fallback`)
+    return null
+  }
+}
+
+// Run a LEADING single-agent stage without letting it throw the run away — the
+// map step's analog of `tailAgent` (#646). No budget pre-check (nothing to
+// conserve ahead of the run's first agent), and a DISCRIMINATED result rather
+// than a bare null so the caller can report WHICH failure fired: `agent()`
+// returns null on a terminal API error but THROWS on StructuredOutput retry-cap
+// exhaustion, and the bare `if (!map)` guard below only ever saw the first. A
+// throw propagated out of the script, exiting the whole audit `failed` with no
+// result envelope constructed at all.
+//
+// Lives in the pure prefix rather than as an inline try/catch at the call site
+// so the throw path is unit-testable: the call site is past ORCH_BOUNDARY and
+// can only be pinned structurally (#636), and a source regex cannot fail when
+// the catch is removed.
+//
+// `fn` is a thunk so the agent() call is made inside the try — passing a live
+// promise would let a synchronous throw in the prompt builder escape.
+async function attempt(fn, label) {
+  try {
+    const value = await fn()
+    if (!value) return { ok: false, threw: false }
+    return { ok: true, value }
+  } catch (e) {
+    log(`${label} threw (${e && e.message ? e.message : e}) — reporting an empty audit instead of crashing`)
+    return { ok: false, threw: true, error: e }
+  }
+}
+
+// Cap issues per group so one runaway domain can't open dozens of issues; the
+// aggregate step splits larger groups with (1/N) suffixes per issue-templates.md.
+const MAX_FINDINGS_PER_ISSUE = 10
+
+// The issue body template, passed verbatim to each issue-writer so rendering
+// stays identical to the model-driven path. The issue-writer agent has no Read
+// tool (file I/O is denied by its definition) and no install-independent path to
+// the skill dir, so it CANNOT source this itself — it must be handed the literal
+// here. That makes this a DELIBERATE DUPLICATE of `issue-templates.md`
+// § Issue Template (the canonical copy). SYNC POINT: any edit to that section
+// MUST be mirrored here, and vice-versa; `tests/validate-template-sync.sh` guards
+// the two against silent drift (unique-line set equality).
+const ISSUE_TEMPLATE = [
+  '## Audit Finding: {category} — {title}',
+  '',
+  '**Category**: {category} | **Severity**: {severity} | **Effort**: {effort}',
+  '**Scanner**: {scanner} | **Date**: {date}',
+  '',
+  '### Findings',
+  '',
+  '- [ ] `{file}:{line_start}` — {title}',
+  '      {evidence}',
+  '',
+  '### Suggested Actions',
+  '',
+  '{aggregated suggestions from all findings in this group}',
+  '',
+  '### Context',
+  '',
+  '{description from the highest-severity finding in the group}',
+  '',
+  '---',
+  '',
+  '_Generated by codebase-audit — [finding IDs: {comma-separated ids}]_',
+].join('\n')
+

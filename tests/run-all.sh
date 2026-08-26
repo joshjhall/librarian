@@ -53,6 +53,7 @@
 #  11f. Lint-gate integrity — runner resolution + skip reporting (tests/validate-lint-gates.sh)
 #  11f2. Skip visibility — step summary + agnix install branches (tests/validate-skip-visibility.sh)
 #  11g. bounded-run.sh copy sync (tests/lint-bounded-run-sync.sh)
+#  11g2. Generated workflow.js freshness (tests/lint-workflow-js-generated.sh)
 #  11h. Markdown lint — .claude/memory/ (tests/lint-markdown.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
 #  13. seed-worktree-trust path validation (tests/validate-seed-worktree-trust.sh)
@@ -284,6 +285,7 @@ run_stage "Spell check (typos)" bash "$SCRIPT_DIR/lint-typos.sh"
 run_stage "Lint-gate integrity (resolution + skip reporting)" bash "$SCRIPT_DIR/validate-lint-gates.sh"
 run_stage "Skip visibility (step summary + agnix install branches)" bash "$SCRIPT_DIR/validate-skip-visibility.sh"
 run_stage "bounded-run.sh copy sync" bash "$SCRIPT_DIR/lint-bounded-run-sync.sh"
+run_stage "Generated workflow.js freshness" bash "$SCRIPT_DIR/lint-workflow-js-generated.sh"
 run_stage "Markdown lint (.claude/memory/)" bash "$SCRIPT_DIR/lint-markdown.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-worktree-trust.sh"
