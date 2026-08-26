@@ -413,11 +413,16 @@ behavior is noted inline per check; environment variables referenced here
      run's autonomy level, and how many extensions it has already granted:
 
      ```bash
-     "${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh" check \
-       --elapsed-min "$elapsed" --level "$level" --extensions-used "$ext"
+     <skill-base-dir>/../../scripts/workflow-wall-timeout.sh check \
+       --elapsed-min {elapsed} --level {level} --extensions-used {ext}
      # -> verdict=continue|extend|stop|checkpoint
      #    ceiling_min=<hard cap>  next_deadline_min=<poll to here>  extensions_used=<K'>
      ```
+
+     Substitute `<skill-base-dir>` with this skill's invocation-header path and
+     the `{...}` placeholders with literal values — this polls from inside the
+     golem's worktree when ship is chained in-turn (#815,
+     `next-issue/worktree-safe-recipes.md`).
 
      It reads `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` (default 20) and
      `LIBRARIAN_WORKFLOW_WALL_MAX_EXTENSIONS` (default 1 → 40 min ceiling) itself.
@@ -457,8 +462,12 @@ behavior is noted inline per check; environment variables referenced here
    invariant are documented once in `ci-review-protocol.md` § "Multi-cycle PR
    review loop" step (f), and in the script header:
 
+   Substitute `<skill-base-dir>` and the `{...}` placeholders with literal values
+   — worktree-isolated when ship is chained in-turn (#815,
+   `next-issue/worktree-safe-recipes.md`).
+
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
+   <skill-base-dir>/../../scripts/review-convergence.sh check \
      --cycle "$cycle" --max-cycles "$cap" \
      --result "$cycle_result_json" \
      --delta-lines "$delta_lines" \

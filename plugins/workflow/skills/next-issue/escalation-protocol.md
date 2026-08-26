@@ -90,6 +90,8 @@ Read the run's level from `autonomy_level` in the state file (see
      eventual answer:
 
      ```bash
+     # worktree-safe-exempt: detached-golem feed path — a tmux/container golem
+     # sets cwd via `tmux new-session -c` and is never EnterWorktree-isolated
      GATE_ID="$("${CLAUDE_PLUGIN_ROOT}/scripts/golem-inbox.sh" gateid)"
      ```
 
@@ -106,6 +108,7 @@ Read the run's level from `autonomy_level` in the state file (see
      reads — pipe a synthesized Notification payload to the hook:
 
      ```bash
+     # worktree-safe-exempt: detached-golem feed path (see gate-id block above)
      printf '%s' "{\"message\":\"ESCALATION: [$GATE_ID] <one-line decision> — see issue comment\"}" \
        | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
      ```
@@ -128,6 +131,7 @@ Read the run's level from `autonomy_level` in the state file (see
      **no `golem-attach` required**:
 
      ```bash
+     # worktree-safe-exempt: detached-golem feed path (see gate-id block above)
      # Re-invoke on the NO-DECISION sentinel, forever — never default.
      # $GOLEM_ID is stamped into this golem's env at launch (golem-{N}); use it
      # rather than hand-substituting an id.

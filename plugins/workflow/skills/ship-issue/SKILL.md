@@ -141,11 +141,18 @@ governs.
    level by hand:
 
    ```bash
-   # $STATE_LEVEL = the state file's autonomy_level ("" if absent).
-   eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh read \
-       --state-level "$STATE_LEVEL")"
-   # -> sets autonomy_level (1-4)
+   # {STATE_LEVEL} = the state file's autonomy_level ("" if absent).
+   <skill-base-dir>/../../scripts/autonomy-resolve.sh read \
+       --state-level {STATE_LEVEL}
+   # -> PRINTS autonomy_level (1-4)
    ```
+
+   **Run it bare and read the printed value — never `eval "$(...)"` (#815).**
+   Ship is chained in-turn by `/workflow:next-issue` at L3–L4, so it runs inside
+   the golem's worktree, where the Bash tool refuses a command substitution;
+   `eval` of a refusal yields an empty string and the level silently falls back
+   to L1 mid-ship. Substitute `<skill-base-dir>` with this skill's
+   invocation-header path — see `next-issue/worktree-safe-recipes.md`.
 
    The resolver applies the rule (see
    `next-issue/schemas/next-issue-state.schema.json`): a present `autonomy_level`

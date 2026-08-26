@@ -38,9 +38,13 @@ review lens rejecting finished implementations.
    reach into `review-audit`, which installs separately):
 
    ```bash
-   "${CLAUDE_PLUGIN_ROOT}/skills/ship-issue/plan-lens.sh" \
+   <skill-base-dir>/../ship-issue/plan-lens.sh \
      /tmp/plan-files.txt /tmp/plan-estimates.tsv
    ```
+
+   Inside a golem worktree, substitute `<skill-base-dir>` with this skill's
+   invocation-header path — `${CLAUDE_PLUGIN_ROOT}` is refused there (#815, see
+   `worktree-safe-recipes.md`).
 
 1. **Parse the TSV** — `file\tline\tcategory\tevidence\tcertainty`:
 
@@ -94,8 +98,11 @@ Resolve the disposition with the standard ladder — do **not** re-derive the
 cutoff:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh" gate escalation --level {N}
+<skill-base-dir>/../../scripts/autonomy-resolve.sh gate escalation --level {N}
 ```
+
+Substitute `<skill-base-dir>` with this skill's invocation-header path — this
+recipe runs worktree-isolated in a golem (#815, `worktree-safe-recipes.md`).
 
 **Payload** — assemble exactly the shape `escalation-protocol.md` § *Escalation
 payload format* specifies: a one-line **decision**, the **options** each with a

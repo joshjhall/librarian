@@ -85,15 +85,25 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   shell scripts via `${CLAUDE_PLUGIN_ROOT}/scripts/...`, NOT via `just`, so they
   run on host / bare-linux / container identically. Env-overridable config
   (`GOLEM_WORKTREE_DIR`, branch naming, state dir) carries the genuine forks.
-  **One documented exception, forced by the harness (#809):** a recipe that runs
-  while the session is **worktree-isolated** must be spelled with **no shell
-  variables at all** — the Bash tool refuses a command it cannot statically
-  verify stays in-tree, and `${CLAUDE_PLUGIN_ROOT}` and `$PWD` both trip it (so
-  does a bare `echo "${HOME}"`); `CLAUDE_PLUGIN_ROOT` is not exported into the
-  Bash environment either. `golem/SKILL.md` § Phase C is that exception and
-  states the full reasoning. It is the only one today because Phase C is the
-  only recipe that runs post-`EnterWorktree` — Phase B/D run from the main
-  checkout — so check that condition before copying the pattern anywhere else.
+  **One documented exception, forced by the harness (#809, corrected by #815):**
+  a recipe that runs while the session is **`EnterWorktree`-isolated** must be
+  spelled so the Bash tool can **statically evaluate** it — that tool refuses a
+  command it cannot verify stays in-tree, and `${CLAUDE_PLUGIN_ROOT}` trips it
+  (`CLAUDE_PLUGIN_ROOT` is not exported into the Bash environment either, so that
+  spelling has two independent reasons to fail). The operative property is
+  evaluability, **not** the presence of a `$`: an inline-assigned variable is
+  fine, while a command substitution is not.
+  **This is many recipes, not one.** `golem/SKILL.md` § Phase C was merely the
+  first found: Phase C delegates to `/workflow:next-issue`, which chains
+  `/workflow:ship-issue` in-turn at L3–L4, so **every** recipe those two skills
+  execute runs worktree-isolated too. The boundary is isolation, not cwd — a
+  detached tmux/container golem sets its cwd at launch and is **not** affected.
+  The measured spelling matrix, the boundary condition, and the two safe
+  rewriting patterns live in **one** companion,
+  `next-issue/worktree-safe-recipes.md`; read it before adding or editing a
+  recipe in `next-issue/`, `ship-issue/`, or `golem/`, and do not re-derive the
+  rule from memory. `tests/lint-worktree-recipes.sh` (run by `tests/run-all.sh`,
+  so it gates CI and pre-push) enforces it.
 - **Versions are semver.** `marketplace.json` and each `plugin.json` must agree
   on name + version; `tests/validate-manifests.mjs` enforces it. Two distinct
   version concepts: **per-plugin** semver (each `plugin.json`, consumed by

@@ -39,6 +39,7 @@
 #  11b3. Prose-vs-code env var drift (tests/lint-env-var-drift.sh)
 #  11b4. Adversarial-review harness refs (tests/lint-harness-refs.sh)
 #  11b5. Plugin prose budget ratchet (tests/lint-prose-budget.sh)
+#  11b5b. Worktree-safe recipes (tests/lint-worktree-recipes.sh)
 #  11b6. Prose-budget gate behavior (tests/validate-prose-budget.sh)
 #  11b7. Hook no-op silence (tests/lint-hook-silence.sh)
 #  11b8. Scanner extension-dispatch case parity (tests/lint-scanner-case-dispatch.sh)
@@ -272,6 +273,7 @@ run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
 run_stage "Prose-vs-code env var drift" bash "$SCRIPT_DIR/lint-env-var-drift.sh"
 run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.sh"
 run_stage "Plugin prose budget (ratchet)" bash "$SCRIPT_DIR/lint-prose-budget.sh"
+run_stage "Worktree-safe recipes" bash "$SCRIPT_DIR/lint-worktree-recipes.sh"
 run_stage "Prose-budget gate behavior" bash "$SCRIPT_DIR/validate-prose-budget.sh"
 run_stage "Hook no-op silence" bash "$SCRIPT_DIR/lint-hook-silence.sh"
 # Structural backstop for the extension-dispatch half of that parity (#754). The

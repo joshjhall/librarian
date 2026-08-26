@@ -42,7 +42,8 @@ slow CI run never blocks indefinitely):
   poll and act on its verdict:
 
   ```bash
-  ${CLAUDE_PLUGIN_ROOT}/scripts/ci-wait-timeout.sh check \
+  # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
+  <skill-base-dir>/../../scripts/ci-wait-timeout.sh check \
       --elapsed-min {cumulative} --level {N} --extensions-used {K}
   ```
 
@@ -171,6 +172,7 @@ iteration counter by hand.
     flags it distinctly (message begins `DEAD-END:`):
 
     ```bash
+    # worktree-safe-exempt: detached-golem feed path, never worktree-isolated
     printf '%s' '{"message":"DEAD-END: CI check {check} red after ci-fixer cap — see summary"}' \
       | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
     ```
@@ -460,7 +462,8 @@ defeating the early-stop half of #596.
 Carry the value forward as the next cycle's `--prev-delta-lines`.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
+# substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
+<skill-base-dir>/../../scripts/review-convergence.sh check \
   --cycle "$cycle" --max-cycles "$cap" \
   --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
@@ -616,6 +619,7 @@ that the review was still productive when the budget ran out (#635).
 Surface it on the feed as a `dead-end` event (message begins `DEAD-END:`):
 
 ```bash
+# worktree-safe-exempt: detached-golem feed path (see the CI dead-end block)
 printf '%s' '{"message":"DEAD-END: review still blocking after {cap} cycles — see summary"}' \
   | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
 ```

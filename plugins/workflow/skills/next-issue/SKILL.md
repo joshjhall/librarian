@@ -337,13 +337,21 @@ or has no `files_planned` (nothing to re-present).
    `autonomy.md` § Level selection):
 
    ```bash
-   eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level \
-       --from-args "$ARGS" --severity "$SEV" [--chosen-level "$CHOSEN"])"
+   <skill-base-dir>/../../scripts/autonomy-resolve.sh level \
+       --from-args {ARGS} --severity {SEV} [--chosen-level {CHOSEN}]
    ```
 
-   where `$ARGS` is this invocation's raw flag string (carrying any `--level N`),
-   `$SEV` is the issue's severity label (`critical` or empty), and `$CHOSEN` is a
-   level chosen at setup — an orchestrator-passed `--level` or the **operator's
+   **Run it bare and READ the `key=value` lines it prints — never wrap it in
+   `eval "$(...)"` (#815).** Inside a worktree the Bash tool refuses a command
+   substitution, and `eval` of a refused substitution yields an **empty string**:
+   `autonomy_level` would silently stay unset and the run would fall back to L1,
+   so an L4 golem quietly starts gating on prompts nobody is watching. Substitute
+   the braces with literal values, and `<skill-base-dir>` with this skill's own
+   invocation header path. Full rule: `worktree-safe-recipes.md`.
+
+   `{ARGS}` is this invocation's raw flag string (carrying any `--level N`),
+   `{SEV}` is the issue's severity label (`critical` or empty), and `{CHOSEN}` is
+   a level chosen at setup — an orchestrator-passed `--level` or the **operator's
    answer to the L1–L4 rules-of-engagement question** asked above (omit it for a
    pure-CLI run; with no signal at all the resolver returns the **L1** fallback).
    The call sets `autonomy_level`, `plan_gated`, `capped`, and `perm_mode`; write

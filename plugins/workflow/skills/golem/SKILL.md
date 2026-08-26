@@ -44,6 +44,7 @@ For 2+ issues in parallel, or detached/headless work, use **`/workflow:orchestra
    don't nest golem worktrees:
 
    ```bash
+   # worktree-safe-exempt: Phase A runs BEFORE EnterWorktree (main checkout)
    [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] \
      && echo "Already in a linked worktree — run /workflow:golem from the main checkout." && exit
    ```
@@ -79,6 +80,8 @@ For 2+ issues in parallel, or detached/headless work, use **`/workflow:orchestra
    submodules initialized — all handled by the script):
 
    ```bash
+   # worktree-safe-exempt: Phase B runs BEFORE EnterWorktree — this command is
+   # what CREATES the worktree, so it cannot already be inside one
    ${CLAUDE_PLUGIN_ROOT}/scripts/worktree-new.sh N
    ```
 
@@ -207,6 +210,8 @@ file; an interactive session is **advised, never cycled** (#784 AC5).
   ```
 
   ```bash
+  # worktree-safe-exempt: runs AFTER ExitWorktree — the session is back in the
+  # main checkout by then, which is exactly why the order is load-bearing below
   ${CLAUDE_PLUGIN_ROOT}/scripts/worktree-rm.sh N
   ```
 
