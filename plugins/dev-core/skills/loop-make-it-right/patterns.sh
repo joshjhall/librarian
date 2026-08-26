@@ -68,8 +68,14 @@ while IFS= read -r file; do
 
     # --- Category: long-function ---
     # Detect function definitions and count lines until closing
+    #
+    # CASE-INSENSITIVE extension arms (#754), matching patterns.py's `.lower()`
+    # before dispatch. A literal `case` here skipped `Mod.PY` under bash while
+    # python scanned it — silent, exit 0, reported as a clean file. Bracket
+    # classes keep the match fork-free and bash-3.2 clean (`${file,,}` is
+    # bash 4; macOS ships 3.2). Same rule at every `case "$file"` below.
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             # Python: count lines from def to next def/class or dedent
             command grep -nE '^[[:space:]]*def [[:alnum:]_]+' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -94,7 +100,7 @@ while IFS= read -r file; do
                     fi
                 done || true
             ;;
-        *.ts | *.js | *.tsx | *.jsx | *.go | *.rs)
+        *.[Tt][Ss] | *.[Jj][Ss] | *.[Tt][Ss][Xx] | *.[Jj][Ss][Xx] | *.[Gg][Oo] | *.[Rr][Ss])
             # Brace-delimited languages: count from opening { to closing }
             command grep -nE '^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?function[[:space:]]+[[:alnum:]_]+|^func[[:space:]]+|^(pub[[:space:]]+)?fn[[:space:]]+' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
@@ -129,8 +135,8 @@ while IFS= read -r file; do
     # `read -r ... rawline` captures the (possibly tab-bearing) line whole.
     nest_unit=0
     case "$file" in
-        *.py) nest_unit=4 ;;
-        *.ts | *.js | *.tsx | *.jsx | *.go | *.rs) nest_unit=2 ;;
+        *.[Pp][Yy]) nest_unit=4 ;;
+        *.[Tt][Ss] | *.[Jj][Ss] | *.[Tt][Ss][Xx] | *.[Jj][Ss][Xx] | *.[Gg][Oo] | *.[Rr][Ss]) nest_unit=2 ;;
     esac
     if [ "$nest_unit" -ne 0 ]; then
         command awk -v max="$MAX_NESTING_DEPTH" -v unit="$nest_unit" '
@@ -153,7 +159,7 @@ while IFS= read -r file; do
     # --- Category: single-char-name ---
     # Single-character variable names outside common loop patterns
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             command grep -nE '^[[:space:]]+[a-zA-Z][[:space:]]*=' "$file" 2>/dev/null |
                 command grep -vE '^[[:space:]]*(for|with)[[:space:]]+[a-zA-Z][[:space:]]+in\b|_[[:space:]]*=' |
                 while IFS= read -r raw; do

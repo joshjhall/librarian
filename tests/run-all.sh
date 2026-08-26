@@ -41,6 +41,7 @@
 #  11b5. Plugin prose budget ratchet (tests/lint-prose-budget.sh)
 #  11b6. Prose-budget gate behavior (tests/validate-prose-budget.sh)
 #  11b7. Hook no-op silence (tests/lint-hook-silence.sh)
+#  11b8. Scanner extension-dispatch case parity (tests/lint-scanner-case-dispatch.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
 #  11c2. Pre-scan bash<->python differential (tests/validate-prescan-differential.sh)
 #  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
@@ -273,6 +274,11 @@ run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.
 run_stage "Plugin prose budget (ratchet)" bash "$SCRIPT_DIR/lint-prose-budget.sh"
 run_stage "Prose-budget gate behavior" bash "$SCRIPT_DIR/validate-prose-budget.sh"
 run_stage "Hook no-op silence" bash "$SCRIPT_DIR/lint-hook-silence.sh"
+# Structural backstop for the extension-dispatch half of that parity (#754). The
+# behavioral suites below can only pin the languages their corpus happens to
+# contain, and a mutation round showed arms revert INDEPENDENTLY — so this reads
+# the source instead, and covers every arm at every site.
+run_stage "Scanner extension-dispatch case parity" bash "$SCRIPT_DIR/lint-scanner-case-dispatch.sh"
 run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
 run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-prescan-differential.sh"
 run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner-category-parity.sh"

@@ -813,6 +813,92 @@ test_drift_clean() {
         "drift: a fully-covered plan emits no unplanned-modification" -- "$actual" "$planned"
 }
 
+# ============================================================================
+# Mixed-case extension dispatch (#754)
+# ============================================================================
+# CORRECTNESS, not parity. tests/validate-python-ports.sh compares bash output to
+# python output over a shared corpus, and its own header records what that cannot
+# prove: a defect present in BOTH impls passes, because parity never compares
+# either one to what the pattern was MEANT to match. That header also names where
+# such a case belongs — "the per-detector suites (validate-loop-detectors.sh et
+# al.)" — which is here.
+#
+# So this asserts the SPECIFIC finding each detector must emit for a mixed-case
+# file, in each runtime independently (assert_fires checks both). A shared
+# normalization bug that silently produced zero findings under both impls would
+# pass the corpus diff and fail here.
+#
+# The counter-fixture in each pair is what keeps it honest: the same content under
+# a lower-case name must fire identically. Without it, a detector that fired on
+# EVERYTHING (or a fixture that happened to match some unrelated arm) would look
+# the same as one that correctly normalizes the extension.
+test_mixed_case_extension_dispatch() {
+    local d list
+
+    # loop-make-it-work / empty-body — the py arm, reached by an UPPER-CASE .PY.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'def prelude_empty():' '    pass' >"$d/Mod.PY"
+    list="$(make_list "$d/l" "$d/Mod.PY")"
+    assert_fires "$SK_WORK" empty-body "Empty function body" \
+        "work: an .PY file reaches the py empty-body arm (#754)" -- "$list"
+
+    # Counter: the same content as .py fires identically. This is what proves the
+    # assertion above is about the EXTENSION and nothing else.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'def prelude_empty():' '    pass' >"$d/mod.py"
+    list="$(make_list "$d/l" "$d/mod.py")"
+    assert_fires "$SK_WORK" empty-body "Empty function body" \
+        "work: the same content as .py fires identically (counter, #754)" -- "$list"
+
+    # loop-make-it-secure / string-interpolation-query — a SECURITY arm, where a
+    # silently unscanned file is a false clean report rather than a missing metric.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'def q(uid):' '    cur.execute(f"SELECT * FROM users WHERE id={uid}")' >"$d/Db.PY"
+    list="$(make_list "$d/l" "$d/Db.PY")"
+    assert_fires "$SK_SEC" string-interpolation-query "SQL with string interpolation" \
+        "secure: an .PY file reaches the py interpolation-query arm (#754)" -- "$list"
+
+    # loop-make-it-right / single-char-name — a THIRD detector, and the one whose
+    # bash side carries several separate `case "$file"` blocks (long-function,
+    # nesting, single-char); an arm converted in one and missed in another is
+    # exactly the shape #754 kept finding.
+    d="$(fresh_dir)"
+    command printf '%s\n' '    z = compute()' >"$d/S.PY"
+    list="$(make_list "$d/l" "$d/S.PY")"
+    assert_fires "$SK_RIGHT" single-char-name "Single-character variable 'z'" \
+        "right: an .PY file reaches the py single-char arm (#754)" \
+        LOOP_MAX_FUNCTION_LINES=999 LOOP_MAX_NESTING_DEPTH=999 -- "$list"
+
+    # loop-make-it-documented — the one detector in this family that does NOT use
+    # a `*.ext` glob: it splits the extension into `$ext` and switches on a bare
+    # word, so its fix is a `tr` lowercase rather than bracket classes. Different
+    # mechanism, same contract, so it needs its own case.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'def public_thing(a):' '    return a' >"$d/Api.PY"
+    list="$(make_list "$d/l" "$d/Api.PY")"
+    assert_fires "$SK_DOC" undocumented-public-function "No docstring" \
+        "documented: an .PY file reaches the py docstring arm via the tr-lowercase path (#754)" -- "$list"
+
+    # A NON-PYTHON extension. Without one, a fix that lowercased only the py arm
+    # would pass every assertion above — the same reason #754's corpus fixture
+    # carries a .TS beside its .PY. `.TS` also exercises a multi-extension arm
+    # (`*.[Tt][Ss] | *.[Jj][Ss] | ...`), where a bracket-class typo can convert
+    # one alternative and leave its siblings literal.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const widgetEmpty = () => {}' >"$d/Widget.TS"
+    list="$(make_list "$d/l" "$d/Widget.TS")"
+    assert_fires "$SK_WORK" empty-body "Empty function body" \
+        "work: a .TS file reaches the ts empty-body arm (#754)" -- "$list"
+
+    # Counter, same as the py pair: identical content under a lower-case name.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const widgetEmpty = () => {}' >"$d/widget.ts"
+    list="$(make_list "$d/l" "$d/widget.ts")"
+    assert_fires "$SK_WORK" empty-body "Empty function body" \
+        "work: the same content as .ts fires identically (counter, #754)" -- "$list"
+}
+
+run_test test_mixed_case_extension_dispatch "mixed-case: .PY/.TS reach the same arms as .py/.ts, asserted per-impl (#754)"
 run_test test_work_stub_and_body "loop-make-it-work: stub + py/js/go empty-body + EOF boundary"
 run_test test_work_no_assertions "loop-make-it-work: py/js/go no-assertions + has-assert negative"
 run_test test_right_long_function "loop-make-it-right: py + brace long-function (colon-stripped)"

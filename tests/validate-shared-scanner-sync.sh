@@ -413,15 +413,21 @@ test_all_regions_match() {
 # languages with a stdout-writing idiom appear in the print region (go/java
 # have no breakpoint arm), and only languages with a breakpoint idiom appear in
 # the debugger region (ruby has no print arm here).
+# The arms are spelled as POSIX bracket classes since #754, and this test is
+# deliberately keyed to that spelling rather than loosened to match either form.
+# The bracket class is what makes the bash dispatch agree with patterns.py's
+# `.lower()`; asserting on `*.py)` again would pass on a tree that had silently
+# reverted to a case-SENSITIVE `case`, which is the exact defect #754 fixed. So
+# the arm list doubles as the case-insensitivity pin at this dispatch site.
 test_debug_region_has_all_language_arms() {
     local body arm
     body="$(extract_shared "$HEALTH_PATTERNS" debug-print-scan)"
-    for arm in '*.py)' '*.js' '*.go)' '*.java'; do
+    for arm in '*.[Pp][Yy])' '*.[Jj][Ss]' '*.[Gg][Oo])' '*.[Jj][Aa][Vv][Aa]'; do
         assert_contains "$body" "$arm" "debug-print region covers the ${arm} arm"
     done
 
     body="$(extract_shared "$HEALTH_PATTERNS" debugger-scan)"
-    for arm in '*.py)' '*.js' '*.rb)'; do
+    for arm in '*.[Pp][Yy])' '*.[Jj][Ss]' '*.[Rr][Bb])'; do
         assert_contains "$body" "$arm" "debugger region covers the ${arm} arm"
     done
 }

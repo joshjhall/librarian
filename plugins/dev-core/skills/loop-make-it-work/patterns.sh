@@ -76,8 +76,17 @@ while IFS= read -r file; do
 
     # --- Category: empty-body ---
     # Python: function with only pass or ellipsis body
+    #
+    # CASE-INSENSITIVE extension arms (#754), matching patterns.py's `.lower()`
+    # before dispatch. A literal `case` here skipped `Mod.PY` under bash while
+    # python scanned it — silent, exit 0. Bracket classes keep the match
+    # fork-free and bash-3.2 clean (`${file,,}` is bash 4; macOS ships 3.2).
+    #
+    # The no-assertions arms further down stay LITERAL on purpose: they mirror
+    # patterns.py's own literal `fnmatch(path, "*.test.ts")` globs, so both
+    # impls already agree there and changing one alone would CREATE drift.
     case "$file" in
-        *.py)
+        *.[Pp][Yy])
             command grep -nE '^[[:space:]]*def[[:space:]]+[[:alnum:]_]+' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
@@ -96,7 +105,7 @@ while IFS= read -r file; do
                     fi
                 done || true
             ;;
-        *.ts | *.js | *.tsx | *.jsx)
+        *.[Tt][Ss] | *.[Jj][Ss] | *.[Tt][Ss][Xx] | *.[Jj][Ss][Xx])
             # TypeScript/JavaScript: function with empty braces {}. Uses
             # [[:space:]]* for the inner whitespace — the old `[\s]*` was a bracket
             # class of literal backslash/'s', not whitespace, so `{ }` (a real
@@ -111,7 +120,7 @@ while IFS= read -r file; do
                         "Empty function body: ${evidence}" "HIGH"
                 done || true
             ;;
-        *.go)
+        *.[Gg][Oo])
             # Go: function with empty braces ([[:space:]]* not [\s]*, see #183).
             command grep -nE '^func[[:space:]]+.*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do

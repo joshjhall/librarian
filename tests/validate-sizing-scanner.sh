@@ -310,27 +310,26 @@ test_declaration_file_declines_in_review_lens() {
     # which nothing pinned behaviorally. Drop tolower()/.lower() from either
     # is_decl_file and this goes red.
     #
-    # Asserted per-impl rather than through assert_parity, deliberately. A
-    # mixed-case EXTENSION diverges between the two runtimes for an unrelated,
-    # PRE-EXISTING reason: sizing.py's lang_of lowercases the extension before
-    # the EXT_LANG lookup while the shell `case` matches literally, so `.D.TS`
-    # segments as ts under python and as no-language under bash. That is not a
-    # #726 defect — `.PY` vs `.py` diverges identically on the pre-#726 tree —
-    # and it is filed separately. What IS #726's to hold is that the declaration
-    # predicate itself decides alike in every spelling, and that holds in both
-    # runtimes independently, which is what these two assertions check.
+    # Asserted through assert_parity like every other case here, as of #754.
+    # It could not be, before: a mixed-case EXTENSION diverged between the two
+    # runtimes for an unrelated, PRE-EXISTING reason — lang_of lowercased while
+    # the shell `case` matched literally, so `.D.TS` segmented as ts under python
+    # and as no-language under bash — so this block asserted the decline per-impl
+    # to avoid absorbing that defect into a #726 test. #754 made the extension
+    # dispatch case-insensitive in both runtimes, which is exactly the condition
+    # that workaround was waiting on, so the two per-impl assertions collapse
+    # back into one parity assertion and this fixture now pins BOTH properties at
+    # once: the predicate is case-insensitive, AND the two runtimes agree about
+    # what `.D.TS` is.
     local u="$WORKDIR/Weird.D.TS" ulist="$WORKDIR/uc-list.txt" uns="$WORKDIR/ns-uc.txt"
     command cp "$f" "$u"
     command printf '%s\n' "$u" >"$ulist"
     make_numstat "$uns" "$u" 1200
     run_scan "$ulist" "$uns"
+    assert_parity
 
     assert_contains "$SCAN_OUT" "declined: type declaration file — no runtime units to extract" \
-        "review lens: .D.TS declines like .d.ts (case-insensitive, bash, #726)"
-    if [ "$HAVE_PY" = "1" ]; then
-        assert_contains "$SCAN_PY_OUT" "declined: type declaration file — no runtime units to extract" \
-            "review lens: .D.TS declines like .d.ts (case-insensitive, python, #726)"
-    fi
+        "review lens: .D.TS declines like .d.ts (case-insensitive, #726/#754)"
 
     # Counter-fixture, and it is what makes the assertions above non-vacuous: a
     # BYTE-IDENTICAL body under a plain .ts name takes the shape branch instead.

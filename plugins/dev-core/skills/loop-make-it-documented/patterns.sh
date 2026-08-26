@@ -70,6 +70,16 @@ while IFS= read -r file; do
     basename=$(command basename "$file")
     ext="${basename##*.}"
 
+    # CASE-INSENSITIVE dispatch (#754), matching patterns.py's `.lower()` on the
+    # same extension. Without it `Api.PY` was scanned under python and skipped
+    # under bash — silent, exit 0, and reported as a clean file.
+    #
+    # This detector switches on a BARE word rather than a `*.ext` glob, so the
+    # normalization happens once here instead of as bracket classes in the arms.
+    # `tr` is affordable at this site (once per file, and a `basename` fork
+    # already happens two lines up); `${ext,,}` is bash 4 and macOS ships 3.2.
+    ext=$(command printf '%s' "$ext" | LC_ALL=C command tr '[:upper:]' '[:lower:]')
+
     case "$ext" in
         py)
             # --- Python: public functions without docstrings ---

@@ -223,16 +223,28 @@ while IFS= read -r file; do
 
     # Language key from the extension — mirrors EXT_LANG in sizing.py. An
     # unrecognized extension yields "" (metrics only, no segmenter).
+    #
+    # CASE-INSENSITIVE, matching sizing.py's `.lower()` before the EXT_LANG
+    # lookup (#754). A literal `case` here made `Upper.PY` no-language under
+    # bash and py under python, which in THIS lens is confidently wrong rather
+    # than merely silent: the shape row degraded to the generic "extract a
+    # cohesive unit into a sibling module" where python named the py package
+    # split. Same rule as is_decl_file below (#726) — the same target must
+    # decide alike in every spelling.
+    #
+    # Bracket classes, not a lowercased copy of $file: this runs PER FILE inside
+    # the read loop, so `tr` would fork per iteration, and `${file,,}` is bash 4
+    # (this tree targets macOS's stock bash 3.2).
     lang=""
     case "$file" in
-        *.py) lang="py" ;;
-        *.js | *.jsx | *.mjs | *.cjs) lang="js" ;;
-        *.ts | *.tsx) lang="ts" ;;
-        *.rs) lang="rs" ;;
-        *.go) lang="go" ;;
-        *.sh | *.bash) lang="sh" ;;
-        *.md | *.markdown) lang="md" ;;
-        *.swift) lang="swift" ;;
+        *.[Pp][Yy]) lang="py" ;;
+        *.[Jj][Ss] | *.[Jj][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss]) lang="js" ;;
+        *.[Tt][Ss] | *.[Tt][Ss][Xx]) lang="ts" ;;
+        *.[Rr][Ss]) lang="rs" ;;
+        *.[Gg][Oo]) lang="go" ;;
+        *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh]) lang="sh" ;;
+        *.[Mm][Dd] | *.[Mm][Aa][Rr][Kk][Dd][Oo][Ww][Nn]) lang="md" ;;
+        *.[Ss][Ww][Ii][Ff][Tt]) lang="swift" ;;
     esac
 
     # Per-language threshold selection, mirroring PER_LANG_THRESHOLDS.
