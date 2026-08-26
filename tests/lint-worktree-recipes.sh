@@ -38,14 +38,22 @@
 # rule violate the rule — the same self-contradiction lint-command-refs.sh
 # avoids by exempting docs/verification/**.
 #
-# THE COST OF THAT SCOPING, STATED. A few inline directives genuinely instruct
-# an invocation mid-sentence ("Resolve the disposition with `${CLAUDE_PLUGIN_ROOT}
-# /scripts/autonomy-resolve.sh gate …`") and are therefore invisible here even
-# though they are instructions, not discussion — three exist today, in
-# escalation-protocol.md, ship-issue/SKILL.md, and ci-review-protocol.md. They
-# are covered by hand, and worktree-safe-recipes.md § Enforcement tells the
-# reader so. This is a known, bounded gap rather than an unnoticed one; widening
-# the corpus to prose would flag the documentation of the rule itself.
+# THE COST OF THAT SCOPING, MEASURED RATHER THAN COUNTED BY HAND. Some inline
+# directives genuinely instruct an invocation mid-sentence ("Resolve the
+# disposition with `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate …`")
+# and are invisible here even though they are instructions, not discussion.
+#
+# An earlier draft of this comment asserted "three exist today, all naming
+# autonomy-resolve.sh". That was WRONG — workflow-wall-timeout.sh and
+# recover-journal-partials.sh have inline directives too — and a hand-maintained
+# census in prose is exactly the thing that rots into the same false-confidence
+# note #815 exists to correct. So instead of a number, the gate MEASURES the
+# inline population (test_inline_directive_census) and fails when it GROWS past
+# a recorded baseline. Growth is the thing worth catching: a new inline
+# directive is a new hand-applied site nobody was told about.
+#
+# Widening the fenced-block corpus to prose is still not the fix — it would flag
+# the documentation of the rule itself, this header included.
 
 set -euo pipefail
 
@@ -466,6 +474,28 @@ MD
         "A marker anywhere in the block exempts the whole block"
 }
 
+# INLINE-DIRECTIVE CENSUS (see the header). The fenced-block corpus cannot see a
+# mid-sentence `${CLAUDE_PLUGIN_ROOT}/…` directive, so those are hand-applied.
+# This does not try to judge which inline mentions are directives versus
+# discussion — that judgment is what a prose scanner cannot make, and pretending
+# otherwise is how the last false census happened. It pins the POPULATION so the
+# set cannot GROW unnoticed; shrinking is always fine.
+INLINE_CENSUS_BASELINE=27
+
+test_inline_directive_census() {
+    local count
+    count="$(command grep -c '`\${CLAUDE_PLUGIN_ROOT}' \
+        "$SKILLS_DIR"/next-issue/*.md \
+        "$SKILLS_DIR"/ship-issue/*.md \
+        "$SKILLS_DIR"/golem/*.md 2>/dev/null |
+        command awk -F: '{s+=$2} END {print s+0}')"
+
+    assert_true "[ \"$count\" -gt 0 ]" \
+        "The census actually finds inline mentions (not a vacuous 0)"
+    assert_true "[ \"$count\" -le $INLINE_CENSUS_BASELINE ]" \
+        "Inline \${CLAUDE_PLUGIN_ROOT} mentions have not grown past $INLINE_CENSUS_BASELINE (found $count) — a new one is a new hand-applied site; if intended, lower/raise the baseline deliberately"
+}
+
 test_companion_documents_the_rule() {
     local companion="$SKILLS_DIR/next-issue/worktree-safe-recipes.md"
     assert_file_exists "$companion" "The companion the gate points readers at exists"
@@ -491,6 +521,7 @@ run_test test_unbraced_home_is_not_flagged "Unbraced \$HOME stays allowed (brace
 run_test test_exemption_marker_works "The exemption marker works and does not leak"
 run_test test_marker_requires_a_reason "A bare marker with no reason grants no exemption"
 run_test test_marker_exempts_whole_block_not_one_line "The marker exempts per block, not per line"
+run_test test_inline_directive_census "Inline \${CLAUDE_PLUGIN_ROOT} mentions have not grown"
 run_test test_companion_documents_the_rule "The companion exists and documents the marker"
 run_test test_claude_md_note_is_corrected "CLAUDE.md's false 'only one' claim is gone"
 

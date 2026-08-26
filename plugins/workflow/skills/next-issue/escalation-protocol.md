@@ -8,7 +8,9 @@ gate** defined in `orchestrate/autonomy-levels.md` (#174): a judgement call that
 is human at **L1–L3** and auto-resolved (the agent picks its recommendation) at
 **L4**, except a **dead-end**, which blocks at every level including L4. Resolve
 the disposition with
-`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate escalation --level {N} [--dead-end]`
+`<skill-base-dir>/../../scripts/autonomy-resolve.sh gate escalation --level {N} [--dead-end]`
+(substitute `<skill-base-dir>` per `worktree-safe-recipes.md` — this fires
+mid-implementation, inside the worktree, #815)
 (→ `disposition=auto|human`, #190) rather than re-deriving the cutoff.
 
 The plan-approval checkpoint is also an escalation gate, but it is handled

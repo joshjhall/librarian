@@ -157,10 +157,24 @@ Two gaps the gate cannot close, both stated rather than left implicit:
 - **Inline prose directives.** The gate scans fenced `bash` blocks only, so a
   sentence like *"Resolve the disposition with
   `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate …`"* is invisible to
-  it — yet it instructs an invocation just as a fenced block does. Three such
-  directives exist today (`escalation-protocol.md`, `ship-issue/SKILL.md`,
-  `ci-review-protocol.md`, all naming `autonomy-resolve.sh`). **When you follow
-  one inside a worktree, apply Pattern 1 or 2 by hand** — the gate will not
-  remind you. Widening the corpus to prose is not the fix: it would flag this
-  very file, and every discussion of the rule, which is the self-contradiction
-  the fenced-block scoping exists to avoid.
+  it — yet it instructs an invocation just as a fenced block does. These span
+  several scripts, not just `autonomy-resolve.sh`: `workflow-wall-timeout.sh`
+  and `recover-journal-partials.sh` have them too. **Whenever you follow an
+  inline `${CLAUDE_PLUGIN_ROOT}` reference inside a worktree, apply Pattern 1 or
+  2 by hand** — the gate will not remind you.
+
+  **Deliberately not enumerated here.** An earlier draft named a count and a
+  file list; it was wrong within one review cycle, which is precisely how #809's
+  false note came about. Distinguishing a directive from a discussion is a
+  judgment a prose scanner cannot make, so instead of a census that rots,
+  `tests/lint-worktree-recipes.sh` pins the inline **population** and fails when
+  it grows — re-derive the current set with:
+
+  ```bash
+  # worktree-safe-exempt: a grep OVER the corpus, not a recipe that runs in one
+  grep -rn '`${CLAUDE_PLUGIN_ROOT}' plugins/workflow/skills/{next-issue,ship-issue,golem}/
+  ```
+
+  Widening the fenced corpus to prose is not the fix: it would flag this very
+  file, and every discussion of the rule — the self-contradiction the
+  fenced-block scoping exists to avoid.
