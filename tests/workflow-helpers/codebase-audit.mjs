@@ -515,5 +515,12 @@ export async function run() {
       "codebase-audit: the unguarded bare `const map = await agent(` is gone (#646)",
     );
     ok(/if \(!mapAttempt\.ok\) \{/.test(orch), "codebase-audit: BOTH failure modes take the guarded path");
+
+    // No dispatch-tail pin here, deliberately (#718). code-reviewer's area pins
+    // its `return runReview()` because that harness carries the in-file
+    // entry-point shape. This one does not: #808 enrolled codebase-audit in the
+    // #806 generator instead, so its body stays at top level and its boundary is
+    // whatever the last fragment begins with. Pinning a `runAudit()` tail here
+    // would assert a shape this harness deliberately does not have.
   }
 }
