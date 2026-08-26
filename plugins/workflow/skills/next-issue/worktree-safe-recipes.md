@@ -172,7 +172,7 @@ Two gaps the gate cannot close, both stated rather than left implicit:
 
   ```bash
   # worktree-safe-exempt: a grep OVER the corpus, not a recipe that runs in one
-  grep -rn '`${CLAUDE_PLUGIN_ROOT}' plugins/workflow/skills/{next-issue,ship-issue,golem}/
+  grep -rn 'CLAUDE_PLUGIN_ROOT' plugins/workflow/skills/{next-issue,ship-issue,golem}/
   ```
 
   Widening the fenced corpus to prose is not the fix: it would flag this very

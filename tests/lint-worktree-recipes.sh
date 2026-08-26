@@ -474,26 +474,47 @@ MD
         "A marker anywhere in the block exempts the whole block"
 }
 
-# INLINE-DIRECTIVE CENSUS (see the header). The fenced-block corpus cannot see a
-# mid-sentence `${CLAUDE_PLUGIN_ROOT}/…` directive, so those are hand-applied.
-# This does not try to judge which inline mentions are directives versus
-# discussion — that judgment is what a prose scanner cannot make, and pretending
-# otherwise is how the last false census happened. It pins the POPULATION so the
-# set cannot GROW unnoticed; shrinking is always fine.
-INLINE_CENSUS_BASELINE=27
+# CENSUS (see the header). The fenced-block corpus cannot see a mid-sentence
+# `${CLAUDE_PLUGIN_ROOT}/…` directive, so those are hand-applied. This does not
+# try to judge which mentions are directives versus discussion — that judgment
+# is what a prose scanner cannot make, and pretending otherwise is how the last
+# false census happened. It pins the POPULATION so the set cannot GROW
+# unnoticed; shrinking is always fine.
+#
+# COUNTS EVERY SPELLING, not just the backtick-prefixed one. A first draft
+# counted only `` `${CLAUDE_PLUGIN_ROOT} ``, which silently missed the quoted
+# inline form ("${CLAUDE_PLUGIN_ROOT}/scripts/…") that appears in prose in these
+# same files — a census narrower than its own description, which is the exact
+# defect class this test was written to retire. Counting the bare token cannot
+# have that gap.
+#
+# WHY A HAND-UPDATED BASELINE IS NOT JUST THE HAND-COUNT AGAIN. The number here
+# is not a claim about the world that a reader must trust; it is a threshold the
+# suite RE-DERIVES from the tree on every run. A stale baseline fails loudly
+# instead of misinforming, which is precisely what the prose census could not do.
+# Same contract as tests/prose-budget.baseline.
+CENSUS_BASELINE=42
+CENSUS_FLOOR=38
 
 test_inline_directive_census() {
     local count
-    count="$(command grep -c '`\${CLAUDE_PLUGIN_ROOT}' \
+    count="$(command grep -c 'CLAUDE_PLUGIN_ROOT' \
         "$SKILLS_DIR"/next-issue/*.md \
         "$SKILLS_DIR"/ship-issue/*.md \
         "$SKILLS_DIR"/golem/*.md 2>/dev/null |
         command awk -F: '{s+=$2} END {print s+0}')"
 
-    assert_true "[ \"$count\" -gt 0 ]" \
-        "The census actually finds inline mentions (not a vacuous 0)"
-    assert_true "[ \"$count\" -le $INLINE_CENSUS_BASELINE ]" \
-        "Inline \${CLAUDE_PLUGIN_ROOT} mentions have not grown past $INLINE_CENSUS_BASELINE (found $count) — a new one is a new hand-applied site; if intended, lower/raise the baseline deliberately"
+    # A FLOOR AS WELL AS A CEILING. A `<=` ratchet alone cannot detect
+    # UNDER-counting: narrowing the pattern just yields a smaller number, which
+    # passes. Verified by mutation — narrowing the grep back to the
+    # backtick-only spelling survived a ceiling-only check. The floor is what
+    # makes a quietly-narrowed pattern fail instead of reading as progress.
+    # Keep the window tight: a genuine cleanup should move BOTH bounds
+    # deliberately, not slip under a loose floor.
+    assert_true "[ \"$count\" -ge $CENSUS_FLOOR ]" \
+        "The census still sees at least $CENSUS_FLOOR mentions (found $count) — a sudden drop means the PATTERN broke, not that the corpus improved; if the drop is real, lower the floor deliberately"
+    assert_true "[ \"$count\" -le $CENSUS_BASELINE ]" \
+        "\${CLAUDE_PLUGIN_ROOT} mentions have not grown past $CENSUS_BASELINE (found $count) — a new one may be a new hand-applied site; if intended, adjust the baseline deliberately"
 }
 
 test_companion_documents_the_rule() {
