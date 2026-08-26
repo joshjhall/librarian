@@ -226,16 +226,32 @@ esac
 # whose trailing run alternates. `./.` and a bare trailing `.` or `/` happen to
 # converge either way, which is why the first two tests did not catch it.
 #
-# The root case breaks the loop rather than stripping, so `/` does not normalize
-# to the empty string.
+# The root needs BOTH the in-loop break and the post-loop restore below, because
+# they cover different ways of arriving at it. The `/)` arm only matches a path
+# that IS already `/` at the top of an iteration; it cannot help a path that is
+# REDUCED to root by a strip, because `${abs%/.}` on `/.` consumes the whole
+# string in one step and lands on `""` — the `/)` arm never sees a `/` to match.
+# So `/.`, `/./` and `/.//.` all fell through to an empty `abs`.
+#
+# An empty `abs` is the worst possible outcome here, not a cosmetic one: `slug`
+# becomes empty too, so `project_dir` is `$base/` — the projects BASE DIRECTORY
+# itself, which normally exists. The `[ ! -d "$project_dir" ]` check below then
+# PASSES and the script scans the base dir instead of failing loud, which is the
+# silent-wrong-reading outcome this entire block exists to prevent. Verified by
+# tracing all three inputs: each yields `abs=''`, `slug=''`.
 while :; do
     case "$abs" in
         */.) abs="${abs%/.}" ;;
-        /) break ;; # the filesystem root is its own name, not a trailing slash
+        /) break ;; # already root: its trailing `/` is its name, not a separator
         */) abs="${abs%/}" ;;
         *) break ;;
     esac
 done
+
+# Restore root when a strip consumed the path down to nothing (see above). Only
+# an absolute input can reach this — a relative arg was prefixed with `$(command
+# pwd)` before the loop — so the empty string unambiguously means `/`.
+[ -n "$abs" ] || abs="/"
 
 # Pattern substitution (`${v//[set]/repl}`) is bash-3.2 available — NOT a banned
 # case-conversion (${v,,}/${v^^}); see tests/lint-shell-portability.sh.

@@ -587,6 +587,37 @@ test_root_worktree_arg_does_not_normalize_to_empty() {
         "the root guard resolves '/' to the slug '-', not to an empty segment"
 }
 
+# ROOT-ADJACENT paths — reduced TO root by a strip rather than arriving as `/`
+# (#809 review cycle 2). Distinct from the case above and not covered by it: the
+# loop's `/)` arm only matches a path that is ALREADY `/` at the top of an
+# iteration, and `${abs%/.}` on `/.` consumes the whole string in one step, so
+# the arm never sees a `/` to match and `abs` lands on `""`.
+#
+# THE EMPTY STRING IS THE DANGEROUS OUTCOME, which is why this is asserted at
+# all: an empty `abs` yields an empty `slug`, so `project_dir` becomes the
+# projects BASE directory — which exists — and the `[ ! -d ]` fail-loud guard
+# PASSES. The script would then scan the base dir and report a reading from the
+# wrong session instead of failing. Asserting the resolved `projects/-)` is what
+# separates the restored root from that collapse; exit 2 alone does not, since
+# neither path has a transcript planted.
+#
+# The subdirectory tests above cannot reach this: `.worktrees/issue-42/...`
+# always leaves a non-empty leading segment, so no strip can consume the path.
+test_root_adjacent_worktree_args_restore_to_root() {
+    if jq_missing; then
+        skip_test "jq not available (context-budget needs jq)"
+        return 0
+    fi
+    local sb arg
+    new_sandbox sb
+    for arg in "/." "/./" "/.//."; do
+        run_ctx_budget "$sb" "$arg"
+        assert_exit 2 "$RUN_RC" "'$arg' has no transcript, so it fails loud"
+        assert_contains "$RUN_OUT" "projects/-)" \
+            "'$arg' restores to root (slug '-'), never collapsing to the projects base"
+    done
+}
+
 # --- knobs + drift guard -----------------------------------------------------
 
 test_threshold_and_floor_are_env_overridable() {
@@ -736,6 +767,7 @@ run_test test_trailing_slash_worktree_arg_resolves_like_absolute "a trailing-sla
 run_test test_interleaved_dot_slash_worktree_arg_resolves_like_absolute "an interleaved './/.' worktree arg resolves like an absolute one (#809)"
 run_test test_trailing_dot_slash_worktree_arg_resolves_like_absolute "a trailing '/./' worktree arg resolves like an absolute one (#809)"
 run_test test_root_worktree_arg_does_not_normalize_to_empty "the root '/' guard does not normalize to empty (#809)"
+run_test test_root_adjacent_worktree_args_restore_to_root "root-adjacent args ('/.', '/./') restore to root (#809)"
 run_test test_missing_jq_exits_3 "an absent jq exits 3 (absence forced, not observed)"
 run_test test_config_export_propagates_to_the_subprocess "config.sh export propagates to the subprocess"
 run_test test_defaults_match_config_sh "defaults match config.sh (drift guard)"
