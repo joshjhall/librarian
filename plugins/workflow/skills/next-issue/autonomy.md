@@ -25,12 +25,21 @@ The run's **autonomy level** is an integer **1–4**, chosen once and persisted 
 the critical cap in one shot) by calling the resolver:
 
 ```bash
-# $ARGS = this invocation's raw flag string (may hold --level N);
-# $SEV = the issue's severity label ("critical" or "" — fetched in Phase 1).
-eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh level \
-    --from-args "$ARGS" --severity "$SEV")"
-# -> sets autonomy_level, autonomous, plan_gated, capped, perm_mode
+# {ARGS} = this invocation's raw flag string (may hold --level N);
+# {SEV} = the issue's severity label ("critical" or "" — fetched in Phase 1).
+<skill-base-dir>/../../scripts/autonomy-resolve.sh level \
+    --from-args "{ARGS}" --severity "{SEV}"
+# -> PRINTS autonomy_level, autonomous, plan_gated, capped, perm_mode
 ```
+
+**Keep the quotes when substituting `{ARGS}`** — it is a multi-word string, and
+unquoted it truncates to one token and the resolver exits 2.
+
+**Run it bare and read the printed `key=value` lines — never `eval "$(...)"`
+(#815).** A worktree-isolated session refuses the command substitution, and
+`eval` of a refusal yields an empty string, leaving `autonomy_level` silently
+unset and the run defaulted to L1. Substitute `<skill-base-dir>` with this
+skill's invocation-header path; see `worktree-safe-recipes.md`.
 
 For a level chosen at setup (an orchestrator dispatch or the operator's
 interactive L1–L4 answer) with no CLI flag, pass it as `--chosen-level {N}`. The

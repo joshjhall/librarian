@@ -25,7 +25,7 @@ Ask the user:
 
 At **L3–L4**, do not prompt — ALWAYS wait for CI and auto-fix (proceed
 as if the user chose "Wait for CI"). **L1–L2** asks. (The CI-wait is a routine
-gate; `${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate routine --level {N}`
+gate; `<skill-base-dir>/../../scripts/autonomy-resolve.sh gate routine --level {N}`
 → `disposition=auto|human` is the shared source of the L3–L4-auto cutoff, #190.)
 
 If the user chooses to wait:
@@ -42,7 +42,8 @@ slow CI run never blocks indefinitely):
   poll and act on its verdict:
 
   ```bash
-  ${CLAUDE_PLUGIN_ROOT}/scripts/ci-wait-timeout.sh check \
+  # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
+  <skill-base-dir>/../../scripts/ci-wait-timeout.sh check \
       --elapsed-min {cumulative} --level {N} --extensions-used {K}
   ```
 
@@ -172,8 +173,12 @@ iteration counter by hand.
 
     ```bash
     printf '%s' '{"message":"DEAD-END: CI check {check} red after ci-fixer cap — see summary"}' \
-      | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
+      | <skill-base-dir>/../../hooks/golem-notify.sh
     ```
+
+    Substitute `<skill-base-dir>` per `next-issue/worktree-safe-recipes.md`
+    (#815). The feed's *reader* (the orchestrator) is in the main checkout; its
+    **writer — this golem — is isolated**, so the plain spelling is refused here.
 
     At **L1–L2** additionally ask the user, after presenting the summary: **Fix
     manually now, or ship with failing CI (no merge)?** If fix manually, pause
@@ -460,7 +465,8 @@ defeating the early-stop half of #596.
 Carry the value forward as the next cycle's `--prev-delta-lines`.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/review-convergence.sh" check \
+# substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
+<skill-base-dir>/../../scripts/review-convergence.sh check \
   --cycle "$cycle" --max-cycles "$cap" \
   --attempt "$attempt" --max-attempts "$attempt_cap" \
   --result "$cycle_result_json" \
@@ -617,7 +623,7 @@ Surface it on the feed as a `dead-end` event (message begins `DEAD-END:`):
 
 ```bash
 printf '%s' '{"message":"DEAD-END: review still blocking after {cap} cycles — see summary"}' \
-  | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
+  | <skill-base-dir>/../../hooks/golem-notify.sh
 ```
 
 At **L1–L2** (interactive): after presenting the summary, ask **Keep fixing,

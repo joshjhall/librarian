@@ -39,8 +39,10 @@ Ship reads the run's **autonomy level** (L1–L4) from the state file's
 `autonomy_level` (Step 1); absent, it defaults to L1. The level — not a binary
 flag — decides how each gate below is dispatched, per the contract in
 `orchestrate/autonomy-levels.md` (#174). Resolve a routine-gate disposition with
-`${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh gate routine --level {N}`
-(→ `disposition=auto|human`, #190) rather than re-deriving the L3–L4 cutoff.
+`<skill-base-dir>/../../scripts/autonomy-resolve.sh gate routine --level {N}`
+(→ `disposition=auto|human`, #190) rather than re-deriving the L3–L4 cutoff —
+substituting `<skill-base-dir>` per `next-issue/worktree-safe-recipes.md`, since
+ship runs worktree-isolated when chained in-turn (#815).
 `autonomy_level` is the sole control — the old binary `autonomous`/`plan_gated`
 mirrors and the `--autonomous`/`--auto`/`NEXT_ISSUE_AUTONOMOUS` aliases were
 removed in #215 (and GitHub's `gh pr merge --auto` / the harness's
@@ -141,11 +143,16 @@ governs.
    level by hand:
 
    ```bash
-   # $STATE_LEVEL = the state file's autonomy_level ("" if absent).
-   eval "$(${CLAUDE_PLUGIN_ROOT}/scripts/autonomy-resolve.sh read \
-       --state-level "$STATE_LEVEL")"
-   # -> sets autonomy_level (1-4)
+   # {STATE_LEVEL} = the state file's autonomy_level ("" if absent).
+   <skill-base-dir>/../../scripts/autonomy-resolve.sh read \
+       --state-level {STATE_LEVEL}
+   # -> PRINTS autonomy_level (1-4)
    ```
+
+   **Run it bare and read the printed value — never `eval "$(...)"` (#815);**
+   chained in-turn at L3–L4 this runs worktree-isolated, where a refused
+   substitution silently yields L1. Substitution rule:
+   `next-issue/worktree-safe-recipes.md`.
 
    The resolver applies the rule (see
    `next-issue/schemas/next-issue-state.schema.json`): a present `autonomy_level`

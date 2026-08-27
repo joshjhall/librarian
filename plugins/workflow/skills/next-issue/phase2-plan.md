@@ -29,7 +29,8 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
 1. **Run the plan-lens sizing step** — load `plan-sizing.md` and follow it.
    Build the candidate file list from the exploration you just did, estimate the
    lines the plan adds to each, and run
-   `${CLAUDE_PLUGIN_ROOT}/skills/ship-issue/plan-lens.sh`. It reports files
+   `<skill-base-dir>/../ship-issue/plan-lens.sh` (substitute per
+   `worktree-safe-recipes.md`, #815). It reports files
    already over budget **and** — the row no other lens can produce — files
    *under* budget that this plan would push over.
 
