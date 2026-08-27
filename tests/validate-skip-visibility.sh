@@ -227,6 +227,14 @@ npm_global_root() {
 # before that loop cannot disturb the existing `npm install -g` cases: their $1
 # is `install`, so they never reach this branch.
 #
+# This branch deliberately exits 0 rather than honouring NPM_GLOBAL_RC, even
+# though `npm root -g` does carry `-g`. That knob is documented above as the
+# `npm install -g …` exit code, and the two are different operations: a case
+# simulating a FAILED GLOBAL INSTALL would otherwise also break the root lookup,
+# so one knob could no longer express "the install failed" without also
+# expressing "npm cannot report its root". Simulating a failing `npm root -g`
+# wants its own variable; nothing needs one yet, so none is added.
+#
 # It also CREATES the directory it names, and the scratch tree for a
 # `--prefix` install, because the step treats both as real: `-f` guards and `cp`
 # targets. A stub that only printed a path would leave the staging block reading
@@ -243,12 +251,20 @@ plant_npm() {
         # package tree the step then reads and copies into. Without it the
         # restore branch's seeding `cp` would fail for a reason unrelated to the
         # branch under test, and the staging case could not plant its decoy.
+        #
+        # Gated on NPM_SCRATCH_RC being 0, because a real install that FAILS
+        # leaves no package tree behind. A stub that populated it either way
+        # would let a future NPM_SCRATCH_RC!=0 case find the artifacts of a
+        # success it did not get — which could mask a step that forgot to check
+        # the scratch install's exit code and only "worked" because the tree
+        # happened to be there. No case sets it non-zero today; the guard is
+        # here so the first one that does measures the real thing.
         command printf 'prefix=""; take=""\n'
         command printf 'for a in "$@"; do\n'
         command printf '    if [ -n "$take" ]; then prefix="$a"; take=""; continue; fi\n'
         command printf '    if [ "$a" = "--prefix" ]; then take=1; fi\n'
         command printf 'done\n'
-        command printf 'if [ -n "$prefix" ]; then\n'
+        command printf 'if [ -n "$prefix" ] && [ "${NPM_SCRATCH_RC:-0}" -eq 0 ]; then\n'
         command printf '    mkdir -p "$prefix/node_modules/agnix/bin"\n'
         # NPM_DECOY_BYTES plants a binary at the PRE-#766 `$verify_dir` spelling.
         # A real `--ignore-scripts` install leaves no binary here (that is the
