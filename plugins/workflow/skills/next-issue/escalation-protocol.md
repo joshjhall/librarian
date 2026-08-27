@@ -92,36 +92,37 @@ Read the run's level from `autonomy_level` in the state file (see
      eventual answer:
 
      ```bash
-     # worktree-safe-exempt: command substitution — the bare-$( gap, #819
-     GATE_ID="$(<skill-base-dir>/../../scripts/golem-inbox.sh gateid)"
+     <skill-base-dir>/../../scripts/golem-inbox.sh gateid
      ```
 
-     Substitute `<skill-base-dir>` per `worktree-safe-recipes.md`. **The golem
-     minting this gate-id is the isolated one** (#815) — a solo
-     `/workflow:golem` escalation fires mid-implementation, inside the worktree.
-     The command substitution here is separately refused there; that is the
-     bare-`$(` gap tracked in #819, so read the id from the script's output
-     rather than assuming the assignment took.
+     **Run it bare and READ the printed id** — do not wrap it in
+     `GATE_ID="$(…)"`. **The golem minting this gate-id is the isolated one**
+     (#815): a solo `/workflow:golem` escalation fires mid-implementation,
+     inside the worktree, where a command substitution is refused (#819). Carry
+     the printed value forward as `{GATE_ID}` in the three steps below,
+     substituting it literally the same way `<skill-base-dir>` is substituted
+     (`worktree-safe-recipes.md`, Pattern 1).
 
-     Carry the **same** `$GATE_ID` in all three of the next steps (the feed
-     message, the issue comment, and your own later `consume` call) — one id,
-     three carriers, so the orchestrator's answer can never be mis-delivered to
-     another golem or another gate (#227).
+     Carry the **same** `{GATE_ID}` through all three of the next steps (the
+     feed message, the issue comment, and your own later `consume` call) — one
+     id, three carriers, so the orchestrator's answer can never be mis-delivered
+     to another golem or another gate (#227).
   2. Emit the payload to the orchestrate feed classified as an `escalation` (so
      the orchestrator, `${CLAUDE_PLUGIN_ROOT}/scripts/golem-status.sh`, and
      `${CLAUDE_PLUGIN_ROOT}/scripts/golem-gate-watch.sh` surface it distinctly
      from a routine permission `gate`). The message **must begin `ESCALATION:`**
-     so `golem-notify.sh` classifies it, and **embed the `$GATE_ID` in
+     so `golem-notify.sh` classifies it, and **embed the `{GATE_ID}` in
      brackets** so the orchestrator can parse it off the feed line it already
-     reads — pipe a synthesized Notification payload to the hook:
+     reads — pipe a synthesized Notification payload to the hook (substituting
+     the id literally, as printed in step 1):
 
      ```bash
-     printf '%s' "{\"message\":\"ESCALATION: [$GATE_ID] <one-line decision> — see issue comment\"}" \
+     printf '%s' '{"message":"ESCALATION: [{GATE_ID}] <one-line decision> — see issue comment"}' \
        | <skill-base-dir>/../../hooks/golem-notify.sh
      ```
 
   3. Post the full payload (decision + options + recommendation) as an **issue
-     comment** for traceability, prefixing it with the `$GATE_ID` so a human
+     comment** for traceability, prefixing it with the `{GATE_ID}` so a human
      reading the issue can match it to the feed line (`gh issue comment {N}
      --body …` / `glab issue note {N} --message …`).
   4. For a **lone `/workflow:next-issue`** with no orchestrator, also surface the payload
@@ -138,7 +139,12 @@ Read the run's level from `autonomy_level` in the state file (see
      **no `golem-attach` required**:
 
      ```bash
-     # worktree-safe-exempt: command substitution — the bare-$( gap, #819
+     # worktree-safe-exempt: ORCHESTRATOR-ONLY path (step 5 gates on "under an
+     # orchestrator only"), and an orchestrated golem is launched by
+     # golem-launch.sh with `tmux new-session -c`, never EnterWorktree — so it
+     # is not isolated and the substitution is not refused here. Unlike the
+     # single-shot `gateid` call above, a POLL LOOP cannot use Pattern 1: it must
+     # re-read the value each iteration, which is what the substitution is for.
      # Re-invoke on the NO-DECISION sentinel, forever — never default.
      # $GOLEM_ID is stamped into this golem's env at launch (golem-{N}); use it
      # rather than hand-substituting an id.

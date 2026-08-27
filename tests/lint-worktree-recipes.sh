@@ -426,7 +426,7 @@ MD
 # itself, where the marker is being DOCUMENTED rather than used; the census
 # cannot tell those apart, and a pattern that tried to would be the kind of
 # cleverness that silently stops matching.
-EXEMPTION_BUDGET=9
+EXEMPTION_BUDGET=8
 
 test_exemption_population_is_bounded() {
     local count
@@ -524,8 +524,8 @@ MD
 # suite RE-DERIVES from the tree on every run. A stale baseline fails loudly
 # instead of misinforming, which is precisely what the prose census could not do.
 # Same contract as tests/prose-budget.baseline.
-CENSUS_BASELINE=38
-CENSUS_FLOOR=34
+CENSUS_BASELINE=36
+CENSUS_FLOOR=32
 
 test_inline_directive_census() {
     local count
