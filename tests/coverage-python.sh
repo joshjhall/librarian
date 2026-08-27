@@ -76,6 +76,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGINS_DIR="$REPO_ROOT/plugins"
 
+# free_port / with_free_port — ephemeral port allocation with retry (#780), used
+# by the golem-event-listener driver in the 90- fragment. Sourced HERE, in the
+# entry point, not in that fragment: under the #564 split-suite contract a
+# sourced fragment declares cases, it does not pull in its own plumbing.
+# shellcheck source=tests/lib/free-port.sh
+. "$SCRIPT_DIR/lib/free-port.sh"
+
 # --- Runtime gate: python3>=3.11 + a coverage.py RUNNER, else skip cleanly ---
 #
 # die_or_skip <reason> — skip (exit 0) normally; FAIL LOUD when the caller
