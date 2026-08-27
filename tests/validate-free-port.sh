@@ -513,6 +513,63 @@ test_attempt_count_renders_into_both_diagnostics() {
 # something if the value it reads is defined in the file both call sites already
 # source — a second definition in either suite would let them drift apart again,
 # which is the exact failure mode #825 item 2 describes.
+# The EXTRACTION PATTERN itself, pinned against synthetic fixtures.
+#
+# test_attempt_count_renders_into_both_diagnostics exercises the sed range
+# against the real gate file only, whose closing brace happens to be a bare `}`.
+# So the tolerance the pattern was widened to provide — trailing whitespace, an
+# inline comment — is currently demonstrated by nothing: a future edit that
+# reverted `\(#.*\)*`, or mis-escaped it for another sed flavour, would leave
+# every existing assertion green because the real file has no trailing content to
+# trip over. The mutations that proved it were run by hand, once, and hand-run
+# mutations do not survive into the suite.
+#
+# These fixtures are that proof, persisted. Each is a three-line function whose
+# closing brace is spelled a different plausible way; the correct capture is
+# always exactly those three lines. The last case is the DIVERGENCE ARM — a brace
+# the pattern must NOT accept — because tolerance that accepted everything would
+# pass all three positive cases while capturing to the end of the file.
+test_extraction_pattern_tolerates_brace_spellings() {
+    local f="$WORKDIR/extract-fixture.sh" got
+    local end='/^}[[:space:]]*\(#.*\)*$/'
+
+    # A trailing DECOY function: over-capture has somewhere to run to. Without it
+    # a broken end pattern would simply hit EOF at the same 3 lines and every
+    # case would pass regardless.
+    _write_fixture() {
+        command cat >"$f" <<EOF
+target() {
+    command printf 'x'
+$1
+decoy() {
+    command printf 'y'
+}
+EOF
+    }
+
+    _write_fixture '}'
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_equals "3" "$got" "A bare closing brace ends the range"
+
+    _write_fixture '}   '
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_equals "3" "$got" "Trailing whitespace on the brace still ends it (else the range swallows the decoy)"
+
+    _write_fixture '}  # end of target'
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_equals "3" "$got" "An inline comment on the brace still ends it"
+
+    # Teeth: the pattern is anchored, so an INDENTED brace is not an end marker.
+    # If this captured 3, the pattern would be matching any brace anywhere and
+    # the three cases above would prove nothing.
+    _write_fixture '    }'
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_true "[ \"$got\" -gt 3 ]" \
+        "An INDENTED brace is not an end marker — the tolerance is not blanket"
+
+    unset -f _write_fixture
+}
+
 test_attempt_count_has_one_home() {
     # ANCHORED to the start of the line. An unanchored match is satisfied by the
     # COMMENT explaining the setting, so deleting the assignment while leaving
@@ -681,6 +738,7 @@ run_test test_no_third_copy_of_the_idiom "No third copy of the allocation idiom"
 run_test test_both_call_sites_use_the_helper "Both call sites route through the helper"
 run_test test_attempt_count_has_one_home "The attempt count is defined once, in the shared helper"
 run_test test_attempt_count_renders_into_both_diagnostics "The attempt count RENDERS into both diagnostics"
+run_test test_extraction_pattern_tolerates_brace_spellings "The extraction pattern handles every brace spelling (and only those)"
 run_test test_both_reaps_are_bounded "Both failed-attempt reaps are bounded, not a bare wait"
 run_test test_bounded_reap_survives_a_sigterm_ignorer "A bounded reap terminates on a SIGTERM-ignoring child"
 run_test test_readiness_probe_cannot_hang "The readiness probe is bounded and identity-checked"
