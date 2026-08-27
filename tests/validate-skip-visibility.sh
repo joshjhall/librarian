@@ -418,6 +418,62 @@ test_ci_broken_binary_is_visible_in_the_step_summary() {
         "a persistent skip is surfaced on the run page (\$GITHUB_STEP_SUMMARY), not only in log output (#741)"
 }
 
+# The OTHER arm of the outer `if`: the scratch install itself fails (registry
+# outage, offline runner), so `npm audit signatures` is never reached.
+#
+# Two things are pinned. First the STEP's behaviour: a failed scratch install
+# must warn-and-skip rather than fail the job, and must not go on to install
+# globally — the same best-effort contract the signature case covers, reached by
+# the other route.
+#
+# Second the FIXTURE's: NPM_SCRATCH_RC=1 must leave no scratch package tree
+# behind, because a real failed `npm install --prefix` leaves none. That guard
+# had no case exercising it — it was verified only by an ad-hoc probe while
+# writing it, and an unexercised guard in a fixture the whole suite trusts is
+# how a fixture silently stops modelling what it claims to.
+test_ci_scratch_install_failure_warns_and_leaves_no_tree() {
+    local sb body
+    stub_dir sb || return 1
+    plant_npm "$sb"
+    plant_agnix "$sb"
+    load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
+
+    NPM_SCRATCH_RC=1 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
+
+    assert_equals "0" "$STEP_RC" \
+        "a failed scratch install does not fail the job (agnix is best-effort, ADR 0001 §2/§4)"
+    assert_contains "$STEP_OUT" "::warning::" \
+        "the failed install is announced"
+    assert_not_contains "$STEP_LOG" "npm install -g" \
+        "a failed scratch install must NOT reach the global install (#740: the audited bytes are the installed bytes)"
+    assert_not_contains "$STEP_OUTPUT" "installed=true" \
+        "a failed install must not arm the did-the-gate-run assertion (#766)"
+
+    # The FIXTURE half, asserted by driving the stub directly rather than by
+    # inspecting the step's $verify_dir: that directory is a `mktemp -d` created
+    # inside the step body, in TMPDIR and not under $sb, so a glob out here
+    # would match nothing and pass whether or not the guard worked — the
+    # vacuous-assertion trap this suite is built to avoid. Calling the stub with
+    # a prefix we choose keeps the check deterministic and in our own control.
+    local probe
+    probe="$sb/scratch-probe"
+    (NPM_SCRATCH_RC=1 "$sb/bin/npm" install --prefix "$probe" --ignore-scripts "agnix@0.0.0" >/dev/null 2>&1) || true
+    local made
+    made=0
+    [ -d "$probe/node_modules/agnix/bin" ] && made=1
+    assert_equals "0" "$made" \
+        "a FAILED scratch install leaves no package tree behind, as a real npm install does not (the NPM_SCRATCH_RC guard in plant_npm)"
+
+    # …and the same call with RC=0 DOES build it. Without this arm the check
+    # above would pass against a stub that had simply stopped creating the tree
+    # at all, which would silently break the staging case's decoy.
+    (NPM_SCRATCH_RC=0 "$sb/bin/npm" install --prefix "$sb/scratch-ok" --ignore-scripts "agnix@0.0.0" >/dev/null 2>&1) || true
+    made=0
+    [ -d "$sb/scratch-ok/node_modules/agnix/bin" ] && made=1
+    assert_equals "1" "$made" \
+        "a SUCCEEDING scratch install still builds the package tree (else the guard would have disabled the fixture wholesale)"
+}
+
 test_ci_signature_failure_is_its_own_event() {
     local sb body
     stub_dir sb || return 1
@@ -1028,6 +1084,8 @@ run_test test_ci_broken_binary_skips_without_failing \
     "ci.yml: a broken agnix binary skips instead of failing the job (#734)"
 run_test test_ci_broken_binary_is_visible_in_the_step_summary \
     "ci.yml: the broken-binary skip reaches the run-page summary"
+run_test test_ci_scratch_install_failure_warns_and_leaves_no_tree \
+    "ci.yml: a failed scratch install warns, skips the global install, and leaves no tree"
 run_test test_ci_signature_failure_is_its_own_event \
     "ci.yml: a signature failure is distinct, and blocks the global install"
 run_test test_ci_wrong_version_binary_skips \
