@@ -63,6 +63,10 @@ source "$SCRIPT_DIR/lib/harness.sh"
 # shellcheck source=tests/lib/free-port.sh
 source "$SCRIPT_DIR/lib/free-port.sh"
 
+# Keep the real allocator under a second name so the contention test below can
+# shadow free_port and still delegate to it for the second, genuinely-free port.
+eval "real_free_port() $(declare -f free_port | command sed '1d')"
+
 test_suite "golem-event-listener.sh receiver (#407)"
 
 # --- Prerequisites ----------------------------------------------------------
@@ -169,9 +173,31 @@ start_listener() {
 # A never-came-up listener may still be ALIVE but wedged (the readiness poll
 # simply timed out), so kill before waiting; a bind collision has already exited
 # and the kill is an absorbed no-op.
+#
+# THE WAIT IS BOUNDED, for the reason the sibling shutdown in
+# tests/python-corpus/90-workflow-tool-drivers.sh already states: a bare `wait`
+# blocks forever if the SIGTERM handler ever stops firing (a future change
+# swallowing the signal, a process wedged in a syscall). That risk is HIGHER
+# here, not lower — this gate runs on every CI invocation of tests/run-all.sh,
+# whereas the coverage driver is an optional reporting step — and the wedged
+# call site is exactly the one this function exists to serve. An unbounded wait
+# would turn a diagnosable failure into a whole-suite hang with no attribution.
+# SIGKILL is the last resort; unlike the coverage driver there is no coverage
+# data to lose by using it.
 _reap_failed_listener() {
     [ -n "$LISTENER_PID" ] || return 0
+    local waited=0
     command kill "$LISTENER_PID" 2>/dev/null || true
+    while [ "$waited" -lt 50 ]; do
+        command kill -0 "$LISTENER_PID" 2>/dev/null || break
+        command sleep 0.1
+        waited=$((waited + 1))
+    done
+    if command kill -0 "$LISTENER_PID" 2>/dev/null; then
+        command printf 'listener %s ignored SIGTERM after 5s; killing\n' \
+            "$LISTENER_PID" >&2
+        command kill -KILL "$LISTENER_PID" 2>/dev/null || true
+    fi
     wait "$LISTENER_PID" 2>/dev/null || true
     LISTENER_PID=""
 }
@@ -408,6 +434,145 @@ test_shim_fails_loud_without_python() {
     assert_contains "$out" "python3>=3.11" "shim message names the Python floor"
 }
 
+# The retry path against the REAL listener (#780). Every case above exercises the
+# happy path where the first port wins, so start_listener's failure branch — and
+# _reap_failed_listener with it — is never reached by them.
+#
+# tests/validate-free-port.sh proves the with_free_port PRIMITIVE recovers, but
+# only through a throwaway bind callback. That leaves the integration unproven:
+# whether a lost race against the actual listener process reaps cleanly and the
+# second attempt genuinely serves. Asserting the wiring with a source grep is not
+# the same claim, and this is the one that matters at runtime.
+#
+# So: squat a real port, shadow the allocator to hand it out first, and drive the
+# real start_listener through with_free_port. Attempt 1 must fail on the occupied
+# port, be reaped, and attempt 2 must come up and answer a POST.
+test_retry_recovers_against_the_real_listener() {
+    if python_unavailable || curl_unavailable; then
+        skip_test "python3>=3.11 / curl not available"
+        return 0
+    fi
+    local dir squatted squat_pid code
+    new_sandbox dir
+    command printf '{"issue":5,"golem":"golem-5"}\n' >"$dir/.worktrees/.status/golem-5.json"
+
+    # Hold a real port open for the duration.
+    command cat >"$WORKDIR/squat.py" <<'PY'
+import socket, sys, time
+s = socket.socket()
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen(1)
+with open(sys.argv[2], "w") as fh:
+    fh.write(sys.argv[1])
+time.sleep(120)
+PY
+    squatted="$(free_port)"
+    command python3 "$WORKDIR/squat.py" "$squatted" "$WORKDIR/squatted" >/dev/null 2>&1 &
+    squat_pid=$!
+    local waited=0
+    while [ ! -s "$WORKDIR/squatted" ]; do
+        command kill -0 "$squat_pid" 2>/dev/null || break
+        command sleep 0.1
+        waited=$((waited + 1))
+        [ "$waited" -gt 50 ] && break
+    done
+    if [ ! -s "$WORKDIR/squatted" ]; then
+        command kill "$squat_pid" 2>/dev/null || true
+        skip_test "could not squat a port to simulate contention"
+        return 0
+    fi
+
+    # Hand out the OCCUPIED port first, a real one after. The count lives in a
+    # file because with_free_port calls the allocator in a command substitution
+    # — a subshell, where a variable increment would be discarded.
+    command printf '0\n' >"$WORKDIR/rl-calls"
+    eval 'free_port() {
+        local n
+        n=$(( $(command cat "'"$WORKDIR"'/rl-calls") + 1 ))
+        command printf "%s\n" "$n" >"'"$WORKDIR"'/rl-calls"
+        if [ "$n" -eq 1 ]; then
+            command printf "%s\n" "'"$squatted"'"
+            return 0
+        fi
+        real_free_port
+    }'
+
+    if with_free_port 2 start_listener "$dir"; then
+        assert_equals "2" "$(command cat "$WORKDIR/rl-calls")" \
+            "The real listener lost the first port and retried exactly once"
+        assert_true "[ \"$FREE_PORT\" != \"$squatted\" ]" \
+            "It came up on a DIFFERENT port than the occupied one"
+        code="$(post "$FREE_PORT" "/" '{"golem":"golem-5","event":"gate","message":"after retry"}')"
+        assert_equals "204" "$code" "The retried listener actually serves"
+        assert_file_contains "$dir/.worktrees/.status/feed.jsonl" '"message":"after retry"' \
+            "and its POST reaches the feed"
+        stop_listener
+    else
+        _fail "start_listener did not recover from an occupied port" \
+            "log: $(command cat "$dir/listener.log" 2>/dev/null)"
+    fi
+
+    eval 'free_port() { real_free_port; }'
+    command kill "$squat_pid" 2>/dev/null || true
+    wait "$squat_pid" 2>/dev/null || true
+}
+
+# _reap_failed_listener must leave NOTHING for the retry to trip over. The stale
+# pid is the sharp end: with LISTENER_PID uncleared, the EXIT trap and the next
+# stop_listener would signal a number that, after enough pid churn, belongs to an
+# unrelated process.
+test_failed_start_is_reaped_and_pid_cleared() {
+    if python_unavailable; then
+        skip_test "python3>=3.11 not available"
+        return 0
+    fi
+    local dir squatted squat_pid
+    new_sandbox dir
+
+    # FORCE the failure rather than skipping when it cannot be observed. The
+    # obvious lever — bind privileged port 1 — is NOT usable: this suite runs as
+    # root in the devcontainer, where port 1 binds fine and the case would skip
+    # exactly where it needs to run (the self-skipping-test-hides-the-risky-branch
+    # class). A squatted port fails for root and non-root alike.
+    command cat >"$WORKDIR/squat2.py" <<'PY'
+import socket, sys, time
+s = socket.socket()
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen(1)
+with open(sys.argv[2], "w") as fh:
+    fh.write(sys.argv[1])
+time.sleep(60)
+PY
+    squatted="$(free_port)"
+    command rm -f "$WORKDIR/squatted2"
+    command python3 "$WORKDIR/squat2.py" "$squatted" "$WORKDIR/squatted2" >/dev/null 2>&1 &
+    squat_pid=$!
+    local waited=0
+    while [ ! -s "$WORKDIR/squatted2" ]; do
+        command kill -0 "$squat_pid" 2>/dev/null || break
+        command sleep 0.1
+        waited=$((waited + 1))
+        [ "$waited" -gt 50 ] && break
+    done
+    if [ ! -s "$WORKDIR/squatted2" ]; then
+        command kill "$squat_pid" 2>/dev/null || true
+        _fail "could not squat a port to force a start failure"
+        return 1
+    fi
+
+    if start_listener "$dir" "$squatted"; then
+        stop_listener
+        _fail "listener started on an OCCUPIED port" \
+            "the fixture is not producing contention, so this case proves nothing"
+    else
+        assert_equals "" "$LISTENER_PID" \
+            "A failed start clears LISTENER_PID, so no stale pid is ever signalled"
+    fi
+
+    command kill "$squat_pid" 2>/dev/null || true
+    wait "$squat_pid" 2>/dev/null || true
+}
+
 # --- Runner -----------------------------------------------------------------
 
 run_test test_prereqs "prerequisites: python3>=3.11 + curl + files present"
@@ -419,5 +584,7 @@ run_test test_orphan_sentinel_not_appended "orphan golem-? ACKed but not appende
 run_test test_bad_requests_rejected_without_crash "bad/oversized/wrong-method rejected without crash"
 run_test test_healthz "GET /healthz liveness probe"
 run_test test_shim_fails_loud_without_python "shim fails loud when python3>=3.11 absent (no bash fallback)"
+run_test test_retry_recovers_against_the_real_listener "retry recovers against the REAL listener (#780)"
+run_test test_failed_start_is_reaped_and_pid_cleared "a failed start is reaped and clears LISTENER_PID (#780)"
 
 generate_report
