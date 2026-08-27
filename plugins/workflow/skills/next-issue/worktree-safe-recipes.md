@@ -120,17 +120,32 @@ slug (#809).
 > repo copy, suspect a **stale install** before suspecting the script: an
 > installed plugin can predate a fix in the tree.
 
-## What is deliberately NOT rewritten
+## The feed-path exemption that was wrong
 
-The `golem-status.sh`, `golem-attach.sh`, `golem-inbox.sh`, and
-`golem-notify.sh` recipes in `escalation-protocol.md` and
-`ci-review-protocol.md` keep their `${CLAUDE_PLUGIN_ROOT}` spelling. They are the
-**detached-golem feed path** — run by the orchestrator or by a human in the main
-checkout, per the table above — so they are not isolated and the refusal never
-applies.
+An earlier draft of this file exempted the `golem-notify.sh` and
+`golem-inbox.sh` recipes as "the **detached-golem feed path** — run by the
+orchestrator or by a human in the main checkout, so never isolated."
 
-This is an exclusion by **stated reason**, checkable against the table's `tmux -c`
-mechanism. It is not the "these do not exist" claim #809 made.
+**That was false, and it was measured false**: piping to `golem-notify.sh` with
+a `${CLAUDE_PLUGIN_ROOT}` path *is* refused in an isolated session. The error was
+confusing the **reader** of the feed with its **writer**. The orchestrator reads
+the feed from the main checkout — but the golem that *emits* a `DEAD-END:` or
+`ESCALATION:` event is the isolated one, and in a solo `/workflow:golem` run
+there is no orchestrator at all. Those recipes are now respelled like every
+other isolated one.
+
+Two lessons worth keeping, since this is the third time in one change that an
+asserted boundary turned out wrong:
+
+- **"Which actor runs this?" is the question**, not "which subsystem does this
+  belong to?" A script's *name* says nothing about the session that invokes it.
+- **An exemption is a claim about runtime behavior, so measure it.** This one
+  cost nothing to check — one refused command in an isolated session — and it
+  had been sitting in the issue's own evidence table the whole time.
+
+`golem-status.sh` and `golem-attach.sh` genuinely are human/orchestrator-side
+(the human runs them to *watch* or *attach to* a golem, from the main checkout),
+which is why they keep the plain spelling.
 
 ## The upstream fix
 

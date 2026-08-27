@@ -493,8 +493,8 @@ MD
 # suite RE-DERIVES from the tree on every run. A stale baseline fails loudly
 # instead of misinforming, which is precisely what the prose census could not do.
 # Same contract as tests/prose-budget.baseline.
-CENSUS_BASELINE=42
-CENSUS_FLOOR=38
+CENSUS_BASELINE=38
+CENSUS_FLOOR=34
 
 test_inline_directive_census() {
     local count

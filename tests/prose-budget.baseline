@@ -51,4 +51,4 @@
 #     class, because the generated artifact still cannot import — fragments are
 #     shareable within a harness, never across them.
 plugins/workflow/skills/orchestrate/mode-protocol.md 877 # carries all orchestration modes; splitting per-mode would scatter one decision table an operator reads end-to-end
-plugins/workflow/skills/ship-issue/ci-review-protocol.md 753 # the CI-wait + multi-cycle review contract; its length is the protocol, and every ship path loads it whole. +4 in #815: two worktree-safe-exempt markers the lint-worktree-recipes.sh gate requires, and two <skill-base-dir> substitution notes on recipes that run worktree-isolated
+plugins/workflow/skills/ship-issue/ci-review-protocol.md 755 # the CI-wait + multi-cycle review contract; its length is the protocol, and every ship path loads it whole. +6 in #815: <skill-base-dir> substitution notes on the four recipes here that run worktree-isolated, plus the reader-vs-writer sentence on the golem-notify pipe (an exemption asserted in an earlier draft and measured FALSE in review — the note is what stops it being re-asserted)

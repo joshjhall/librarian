@@ -172,10 +172,13 @@ iteration counter by hand.
     flags it distinctly (message begins `DEAD-END:`):
 
     ```bash
-    # worktree-safe-exempt: detached-golem feed path, never worktree-isolated
     printf '%s' '{"message":"DEAD-END: CI check {check} red after ci-fixer cap — see summary"}' \
-      | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
+      | <skill-base-dir>/../../hooks/golem-notify.sh
     ```
+
+    Substitute `<skill-base-dir>` per `next-issue/worktree-safe-recipes.md`
+    (#815). The feed's *reader* (the orchestrator) is in the main checkout; its
+    **writer — this golem — is isolated**, so the plain spelling is refused here.
 
     At **L1–L2** additionally ask the user, after presenting the summary: **Fix
     manually now, or ship with failing CI (no merge)?** If fix manually, pause
@@ -619,9 +622,8 @@ that the review was still productive when the budget ran out (#635).
 Surface it on the feed as a `dead-end` event (message begins `DEAD-END:`):
 
 ```bash
-# worktree-safe-exempt: detached-golem feed path (see the CI dead-end block)
 printf '%s' '{"message":"DEAD-END: review still blocking after {cap} cycles — see summary"}' \
-  | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
+  | <skill-base-dir>/../../hooks/golem-notify.sh
 ```
 
 At **L1–L2** (interactive): after presenting the summary, ask **Keep fixing,

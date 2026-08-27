@@ -92,10 +92,16 @@ Read the run's level from `autonomy_level` in the state file (see
      eventual answer:
 
      ```bash
-     # worktree-safe-exempt: detached-golem feed path — a tmux/container golem
-     # sets cwd via `tmux new-session -c` and is never EnterWorktree-isolated
-     GATE_ID="$("${CLAUDE_PLUGIN_ROOT}/scripts/golem-inbox.sh" gateid)"
+     # worktree-safe-exempt: command substitution — the bare-$( gap, #819
+     GATE_ID="$(<skill-base-dir>/../../scripts/golem-inbox.sh gateid)"
      ```
+
+     Substitute `<skill-base-dir>` per `worktree-safe-recipes.md`. **The golem
+     minting this gate-id is the isolated one** (#815) — a solo
+     `/workflow:golem` escalation fires mid-implementation, inside the worktree.
+     The command substitution here is separately refused there; that is the
+     bare-`$(` gap tracked in #819, so read the id from the script's output
+     rather than assuming the assignment took.
 
      Carry the **same** `$GATE_ID` in all three of the next steps (the feed
      message, the issue comment, and your own later `consume` call) — one id,
@@ -110,9 +116,8 @@ Read the run's level from `autonomy_level` in the state file (see
      reads — pipe a synthesized Notification payload to the hook:
 
      ```bash
-     # worktree-safe-exempt: detached-golem feed path (see gate-id block above)
      printf '%s' "{\"message\":\"ESCALATION: [$GATE_ID] <one-line decision> — see issue comment\"}" \
-       | "${CLAUDE_PLUGIN_ROOT}/hooks/golem-notify.sh"
+       | <skill-base-dir>/../../hooks/golem-notify.sh
      ```
 
   3. Post the full payload (decision + options + recommendation) as an **issue
@@ -133,13 +138,13 @@ Read the run's level from `autonomy_level` in the state file (see
      **no `golem-attach` required**:
 
      ```bash
-     # worktree-safe-exempt: detached-golem feed path (see gate-id block above)
+     # worktree-safe-exempt: command substitution — the bare-$( gap, #819
      # Re-invoke on the NO-DECISION sentinel, forever — never default.
      # $GOLEM_ID is stamped into this golem's env at launch (golem-{N}); use it
      # rather than hand-substituting an id.
      ans="NO-DECISION"
      while [ "$ans" = "NO-DECISION" ]; do
-       ans="$("${CLAUDE_PLUGIN_ROOT}/scripts/golem-inbox.sh" consume "$GOLEM_ID" "$GATE_ID")"
+       ans="$(<skill-base-dir>/../../scripts/golem-inbox.sh consume "$GOLEM_ID" "$GATE_ID")"
      done
      # $ans is now "DECISION: <option>" (+ optional "NOTE: <text>") — proceed on it.
      ```
