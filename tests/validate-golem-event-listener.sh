@@ -145,9 +145,24 @@ start_listener() {
     ) >"$dir/listener.log" 2>&1 &
     LISTENER_PID=$!
     while [ "$tries" -lt 50 ]; do
-        if curl -s -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; then
-            return 0
-        fi
+        # --max-time is LOAD-BEARING, not defensive tidiness. A port can be held
+        # by a socket that listen()s but never replies — which is exactly what
+        # the #780 contention fixture creates, and what a real racing process
+        # may be. TCP connect then SUCCEEDS and curl blocks forever on a response
+        # that never comes, so an unbounded curl turns this bounded poll into an
+        # infinite one and start_listener never returns. Observed in CI: the job
+        # hung after this suite and was cancelled at 15m with orphan curl/python3
+        # processes. Reproduced outside the suite before fixing.
+        #
+        # The readiness check also requires the "ok" BODY, not merely a
+        # successful curl. Whoever holds a contended port may be a listening
+        # socket that is not this listener, and treating "something answered" as
+        # "our listener is up" would return success for a port we never got —
+        # the retry would then never fire and the test would talk to a stranger.
+        # (The listener replies "ok\n"; `$(...)` strips the trailing newline.)
+        case "$(curl -s --max-time 2 "http://127.0.0.1:$port/healthz" 2>/dev/null)" in
+            *ok*) return 0 ;;
+        esac
         # Bail early if the process already died (e.g. bind collision).
         command kill -0 "$LISTENER_PID" 2>/dev/null || {
             _reap_failed_listener
@@ -210,7 +225,7 @@ stop_listener() {
 # post <port> <path> <body> — POST <body> to the listener; echo the HTTP status.
 post() {
     local port="$1" path="$2" body="$3"
-    curl -s -o /dev/null -w '%{http_code}' \
+    curl -s --max-time 5 -o /dev/null -w '%{http_code}' \
         -X POST -H 'Content-Type: application/json' \
         --data-raw "$body" "http://127.0.0.1:$port$path" 2>/dev/null || echo "000"
 }
@@ -384,7 +399,7 @@ test_bad_requests_rejected_without_crash() {
     big="$(python3 -c 'print("{\"golem\":\"golem-8\",\"message\":\"" + "z"*70000 + "\"}")')"
     assert_equals "413" "$(post "$port" "/" "$big")" "oversized body → 413"
     # Wrong method on POST-only path.
-    assert_equals "404" "$(curl -s -o /dev/null -w '%{http_code}' \
+    assert_equals "404" "$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' \
         "http://127.0.0.1:$port/nope" 2>/dev/null)" "unknown GET path → 404"
     # The server is still alive: a valid POST now succeeds and lands a line.
     assert_equals "204" "$(post "$port" "/" '{"golem":"golem-8","event":"gate","message":"still alive"}')" \
@@ -407,7 +422,7 @@ test_healthz() {
         return 1
     }
     port="$FREE_PORT"
-    out="$(curl -s "http://127.0.0.1:$port/healthz" 2>/dev/null || true)"
+    out="$(curl -s --max-time 5 "http://127.0.0.1:$port/healthz" 2>/dev/null || true)"
     assert_contains "$out" "ok" "GET /healthz → ok"
     stop_listener
 }

@@ -464,6 +464,39 @@ PY
         "The bounded reap terminated it instead of blocking forever"
 }
 
+# REGRESSION (found in CI, not by review). A retry fixture squats a port with a
+# socket that listen()s, so a probe's TCP connect SUCCEEDS and then blocks
+# forever on a response that never arrives. An unbounded `curl` in the readiness
+# poll therefore turns a bounded 50-iteration loop into an infinite one:
+# start_listener never returns, the suite hangs, and CI cancels the job at 15
+# minutes with orphan curl/python3 processes and no attribution.
+#
+# Measured on this branch: with the bound removed the gate had to be killed at
+# 90s; with it, the same suite finishes in ~5.5s.
+#
+# Two independent properties, because bounding alone is not enough:
+#   * BOUNDED — every probe carries --max-time, so no single probe can outlive
+#     the loop that owns it;
+#   * IDENTITY-CHECKED — readiness requires the "ok" BODY, not merely a
+#     successful connect. Whoever holds a contended port may be a listening
+#     socket that is not this listener, and accepting "something answered" as
+#     "our listener is up" would return success for a port we never won — the
+#     retry would never fire and the test would talk to a stranger.
+test_readiness_probe_cannot_hang() {
+    local gate="$REPO_ROOT/tests/validate-golem-event-listener.sh"
+    local unbounded
+    # Every curl in the gate must be bounded. Counting the UNBOUNDED ones (rather
+    # than asserting a fixed number of bounded ones) keeps the check correct when
+    # a curl is added or removed.
+    unbounded="$(command grep -c 'curl -s [^-]' "$gate" || true)"
+    assert_equals "0" "$unbounded" \
+        "No unbounded curl in the listener gate — one can block forever on a squatted port"
+    assert_file_contains "$gate" "max-time 2" \
+        "The readiness poll itself is bounded"
+    assert_file_contains "$gate" 'ok\*) return 0' \
+        "Readiness requires the ok BODY, so another process holding the port is not mistaken for ours"
+}
+
 run_test test_free_port_allocates_a_bindable_port "free_port yields a bindable port"
 run_test test_missing_runtime_fails_loud "Absent python3 fails loud, never an empty port"
 run_test test_retry_recovers_from_an_occupied_port "Retry recovers from a genuinely occupied port"
@@ -475,5 +508,6 @@ run_test test_no_third_copy_of_the_idiom "No third copy of the allocation idiom"
 run_test test_both_call_sites_use_the_helper "Both call sites route through the helper"
 run_test test_both_reaps_are_bounded "Both failed-attempt reaps are bounded, not a bare wait"
 run_test test_bounded_reap_survives_a_sigterm_ignorer "A bounded reap terminates on a SIGTERM-ignoring child"
+run_test test_readiness_probe_cannot_hang "The readiness probe is bounded and identity-checked"
 
 generate_report
