@@ -283,80 +283,12 @@ fi
 # reporting script must never hang or fail the run over an optional component.
 LISTENER_PY="$PLUGINS_DIR/workflow/scripts/golem-event-listener.py"
 if [ -f "$LISTENER_PY" ]; then
-    # _cov_start_listener <sandbox> <port> — one START ATTEMPT: background the
-    # listener under coverage on <port> and poll /healthz until it answers.
-    # Returns 0 when it served, non-zero otherwise (setting LISTENER_PID for the
-    # caller to signal on success).
-    #
-    # Extracted into a function so with_free_port can RE-RUN it (#780). The retry
-    # has to wrap the start, not the allocation: `free_port` succeeds whether or
-    # not the race was lost — it is this bind that fails.
-    #
-    # Port LAST in the signature, per the with_free_port contract, so
-    # `with_free_port 2 _cov_start_listener "$LISTENER_SB"` composes directly.
-    _cov_start_listener() {
-        # `local`, so the scope is enforced structurally rather than by every
-        # call site remembering to `unset`. LISTENER_PID stays global on purpose
-        # — the shutdown block below and the caller both need it.
-        local _csl_sb="$1" _csl_port="$2" _csl_tries=0 _csl_waited=0
+    # _cov_start_listener lives in tests/lib/cov-listener.sh (#825), sourced by
+    # the entry point. It was defined HERE until it needed a behavioral test and
+    # could not have one: a fragment is sourced mid-run, so nothing could call
+    # it and its failed-attempt reap was never executed. See that file's header.
 
-        # `exec` inside the backgrounded subshell is load-bearing: without it,
-        # $! is the SUBSHELL's pid, the SIGTERM below reaps only that wrapper,
-        # and the real coverage process is ORPHANED — it survives the script and,
-        # never having exited cleanly, never flushes its data file. Measured:
-        # the handler and serve_forever lines came back UNMEASURED while the
-        # driver still reported success, and a stray listener was left running.
-        # exec replaces the subshell, so $! addresses the process that must
-        # receive the signal.
-        (cd "$_csl_sb" && export GOLEM_EVENT_LISTEN_ADDR=127.0.0.1 \
-            GOLEM_EVENT_LISTEN_PORT="$_csl_port" GOLEM_EVENT_MAX_BODY=512 &&
-            exec_coverage run --parallel-mode --source="$PLUGINS_DIR" \
-                "$LISTENER_PY" >/dev/null 2>&1) &
-        LISTENER_PID=$!
-
-        # Bounded readiness poll, bailing out early if the process already died.
-        while [ "$_csl_tries" -lt 50 ]; do
-            if python3 - "$_csl_port" <<'PY' >/dev/null 2>&1; then
-import sys, urllib.request
-urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/healthz", timeout=1).read()
-PY
-                return 0
-            fi
-            kill -0 "$LISTENER_PID" 2>/dev/null || break
-            sleep 0.1
-            _csl_tries=$((_csl_tries + 1))
-        done
-
-        # A FAILED attempt must leave nothing behind for the retry to trip over:
-        # reap the child (it may be a bind-collision corpse, or alive but wedged
-        # past the readiness poll) and clear LISTENER_PID so the SIGTERM block
-        # below cannot later signal a stale pid that another process has since
-        # inherited.
-        #
-        # BOUNDED, for the same reason the success-path shutdown below is — and
-        # the reason matters MORE on this path, not less. This branch is reached
-        # precisely when the process is alive but never answered /healthz, so a
-        # bare `wait` after one SIGTERM is a hang on exactly the case the branch
-        # exists to handle, in a script whose own header promises it "must never
-        # hang or fail the run over an optional component". SIGKILL is the last
-        # resort; this attempt produced no coverage data worth preserving, so
-        # unlike the success path there is nothing lost by using it.
-        kill "$LISTENER_PID" 2>/dev/null || true
-        while [ "$_csl_waited" -lt 50 ]; do
-            kill -0 "$LISTENER_PID" 2>/dev/null || break
-            sleep 0.1
-            _csl_waited=$((_csl_waited + 1))
-        done
-        if kill -0 "$LISTENER_PID" 2>/dev/null; then
-            printf '[note] python-coverage — a failed listener attempt ignored SIGTERM; killing\n'
-            kill -KILL "$LISTENER_PID" 2>/dev/null || true
-        fi
-        wait "$LISTENER_PID" 2>/dev/null || true
-        LISTENER_PID=""
-        return 1
-    }
-
-    if with_free_port 2 _cov_start_listener "$LISTENER_SB"; then
+    if with_free_port "$PORT_ATTEMPTS" _cov_start_listener "$LISTENER_SB"; then
         LISTEN_PORT="$FREE_PORT"
 
         # A valid event, an unknown event kind (defaults to "gate"), the
@@ -434,10 +366,11 @@ PY
         # DEGRADED, NOT FATAL (#780 AC3): a reporting script must not fail the run
         # over an optional component — so this stays a note and the script goes on
         # to the fail-loud arms and the Cobertura emit. But it must stay VISIBLE,
-        # and it now names the retry: "did not start" after two independent ports
+        # and it now names the retry: "did not start" after PORT_ATTEMPTS independent ports
         # is a broken listener, not a lost race, which is a materially different
         # diagnosis from the pre-#780 message.
-        printf '[note] python-coverage — golem-event-listener did not start after 2 port attempts; skipping its driver\n'
+        printf '[note] python-coverage — golem-event-listener did not start after %s port attempts; skipping its driver\n' \
+            "$PORT_ATTEMPTS"
     fi
 
     # Fail-loud startup arms, driven WITHOUT binding anything: a non-integer port

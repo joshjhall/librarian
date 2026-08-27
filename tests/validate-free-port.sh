@@ -361,24 +361,83 @@ test_no_third_copy_of_the_idiom() {
 
 # The two real call sites route through the helper. Asserted statically so it
 # holds on a host that skips the behavioral suites for want of a runtime.
+#
+# Both now spell the count as "$PORT_ATTEMPTS" rather than a literal 2 (#825
+# item 2). The ABSENCE arms below are what give that its teeth: a call site that
+# regressed to a literal would still satisfy a `with_free_port` substring check,
+# so the pair — contains the variable, does NOT contain the literal — is the
+# claim. They are deliberately narrow ("after 2 port attempts", " 2 start_",
+# " 2 _cov_") so that a legitimate `with_free_port 3` in a fixture, or prose
+# mentioning the number, cannot trip them.
 test_both_call_sites_use_the_helper() {
-    assert_file_contains "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
-        "with_free_port 2 start_listener" \
+    local gate="$REPO_ROOT/tests/validate-golem-event-listener.sh"
+    local drv="$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh"
+
+    assert_file_contains "$gate" \
+        'with_free_port "$PORT_ATTEMPTS" start_listener' \
         "The behavioral gate starts its listener through the retry helper"
+    assert_file_not_contains "$gate" "with_free_port 2 start_listener" \
+        "and does not restate the attempt count as a literal"
+
     assert_file_contains "$REPO_ROOT/tests/coverage-python.sh" \
         "lib/free-port.sh" \
         "The coverage entry point sources the helper (not the sourced fragment)"
-    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
-        "with_free_port 2 _cov_start_listener" \
+    assert_file_contains "$REPO_ROOT/tests/coverage-python.sh" \
+        "lib/cov-listener.sh" \
+        "and sources the listener's start attempt, which #825 extracted so it could be tested"
+
+    assert_file_contains "$drv" \
+        'with_free_port "$PORT_ATTEMPTS" _cov_start_listener' \
         "The coverage driver starts its listener through the retry helper"
+    assert_file_not_contains "$drv" "with_free_port 2 _cov_start_listener" \
+        "and does not restate the attempt count as a literal"
+
     # AC3: the degraded path stays non-fatal AND visible. A `[FAIL]`/`exit 1`
     # here would fail a run over an optional component.
-    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
-        "did not start after 2 port attempts" \
-        "The coverage driver's degraded note names the retry"
-    assert_file_not_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+    assert_file_contains "$drv" \
+        "did not start after %s port attempts" \
+        "The coverage driver's degraded note names the retry, with the count interpolated"
+    assert_file_not_contains "$drv" "did not start after 2 port attempts" \
+        "not hardcoded — a literal would keep saying 2 after the count was raised"
+    assert_file_contains "$gate" \
+        "did not start after %s port attempts" \
+        "The behavioral gate's diagnostic interpolates it too"
+    assert_file_not_contains "$gate" "did not start after 2 port attempts" \
+        "and no call site of it restates the literal"
+
+    assert_file_not_contains "$drv" \
         "no free port; skipping" \
         "The old un-retried allocation-failure note is gone"
+}
+
+# PORT_ATTEMPTS has ONE home. The interpolation above is only worth something if
+# the value it reads is defined in the file both call sites already source — a
+# second definition in either suite would let them drift apart again, which is
+# the exact failure mode #825 item 2 describes.
+test_attempt_count_has_one_home() {
+    # ANCHORED to the start of the line. An unanchored match is satisfied by the
+    # COMMENT explaining the setting, so deleting the assignment while leaving
+    # the prose keeps this green — found by mutation, and the exact
+    # config-prose-satisfies-its-own-assertion shape this repo has hit before.
+    assert_file_contains "$REPO_ROOT/tests/lib/free-port.sh" \
+        '^PORT_ATTEMPTS="${PORT_ATTEMPTS:-' \
+        "The attempt count is defined in the shared helper, and is env-overridable"
+    # The value is REACHABLE, not merely present. Sourcing the helper in a
+    # subshell under `set -u` is the same condition every consumer runs under, so
+    # an assignment that is commented out, misspelled, or guarded away fails here
+    # rather than surfacing as a suite that dies mid-case with no diagnostic.
+    assert_true \
+        "(set -u; . '$REPO_ROOT/tests/lib/free-port.sh'; [ -n \"\$PORT_ATTEMPTS\" ])" \
+        "and sourcing the helper actually defines it"
+    local f
+    for f in "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
+        "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+        "$REPO_ROOT/tests/coverage-python.sh"; do
+        # An ASSIGNMENT, not a mention: the consumers must read the value, never
+        # set it. Anchored so `"$PORT_ATTEMPTS"` reads cannot match.
+        assert_file_not_contains "$f" "^PORT_ATTEMPTS=" \
+            "$(command basename "$f") reads the count, never redefines it"
+    done
 }
 
 # BOTH failed-attempt reaps must be bounded — the harden-one-knob-and-leave-the-
@@ -389,23 +448,38 @@ test_both_call_sites_use_the_helper() {
 # coverage driver's identical cleanup was left as a bare wait — in the same
 # change that added the comment explaining why not to.
 #
-# Structural, since neither reap is callable from here: the point is that adding
+# Structural, since neither reap was callable from here: the point is that adding
 # a THIRD reap, or relaxing one back to a bare wait, must fail rather than pass
 # quietly.
+#
+# Both are now driven BEHAVIORALLY too, which this check does not replace: #825
+# added test_reap_escalates_to_sigkill (validate-golem-event-listener.sh) and
+# test_wedged_attempt_escalates_to_sigkill (validate-cov-listener.sh), each
+# running its production reap down the real SIGKILL branch. Those prove the two
+# reaps that EXIST behave; this proves a third one cannot appear unbounded, and
+# holds on a host that skips both behavioral suites for want of a runtime.
+#
+# The coverage driver's FAILED-attempt reap moved to tests/lib/cov-listener.sh
+# (#825) — the path below follows it. The driver fragment retains its
+# SUCCESS-path shutdown, which is a separate bounded wait and still checked here.
 test_both_reaps_are_bounded() {
     local f
     for f in "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
-        "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh"; do
+        "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+        "$REPO_ROOT/tests/lib/cov-listener.sh"; do
         assert_file_contains "$f" "kill -KILL" \
             "$(command basename "$f") escalates to SIGKILL rather than waiting forever"
     done
-    # The listener gate's reap polls before waiting; the driver's does too.
+    # The listener gate's reap polls before waiting; both coverage-side ones do.
     assert_file_contains "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
         'waited" -lt 50' \
         "The behavioral gate's reap bounds its wait with a poll loop"
-    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+    assert_file_contains "$REPO_ROOT/tests/lib/cov-listener.sh" \
         '_csl_waited" -lt 50' \
         "The coverage driver's FAILED-attempt reap bounds its wait too"
+    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+        '_waited" -lt 50' \
+        "and its SUCCESS-path shutdown stays bounded where it lives"
 }
 
 # The bounded-reap SHAPE, driven for real against a child that ignores SIGTERM —
@@ -506,6 +580,7 @@ run_test test_zero_attempts_is_rejected "attempts<1 is rejected"
 run_test test_non_numeric_attempts_is_rejected "Non-numeric attempts fails loud, not silently"
 run_test test_no_third_copy_of_the_idiom "No third copy of the allocation idiom"
 run_test test_both_call_sites_use_the_helper "Both call sites route through the helper"
+run_test test_attempt_count_has_one_home "The attempt count is defined once, in the shared helper"
 run_test test_both_reaps_are_bounded "Both failed-attempt reaps are bounded, not a bare wait"
 run_test test_bounded_reap_survives_a_sigterm_ignorer "A bounded reap terminates on a SIGTERM-ignoring child"
 run_test test_readiness_probe_cannot_hang "The readiness probe is bounded and identity-checked"

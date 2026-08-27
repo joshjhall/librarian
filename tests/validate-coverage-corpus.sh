@@ -61,6 +61,13 @@ COVERAGE_SH="$SCRIPT_DIR/coverage-python.sh"
 # the driver-invocation search below spans the two files.
 DRIVERS_SH="$SCRIPT_DIR/python-corpus/90-workflow-tool-drivers.sh"
 
+# The listener's start-attempt lib (#825), searched for the SAME reason and by
+# the same precedent: the golem-event-listener.py invocation moved out of the
+# fragment into tests/lib/cov-listener.sh so a test could finally call it, and a
+# search that did not follow it would report that tool `declared-but-never-
+# invoked` — a loud failure about a corpus that is in fact complete.
+COV_LISTENER_SH="$SCRIPT_DIR/lib/cov-listener.sh"
+
 test_suite "Coverage corpus completeness (#748)"
 
 # --- readers -----------------------------------------------------------------
@@ -208,8 +215,8 @@ test_declared_tools_have_drivers() {
     local declared tool base var joined sources missing=""
     declared="$(declared_tools)"
 
-    # The searchable body: the entry point AND the driver fragment, CONCATENATED
-    # INTO ONE STREAM (#779).
+    # The searchable body: the entry point, the driver fragment AND the listener
+    # start-attempt lib, CONCATENATED INTO ONE STREAM (#779, #825).
     #
     # `cat` into the pipe rather than passing both paths to grep, and the
     # difference is load-bearing rather than stylistic: grep prefixes every match
@@ -219,7 +226,7 @@ test_declared_tools_have_drivers() {
     # not exist, be reported `no-driver-variable`, and this gate would fail on a
     # perfectly well-driven corpus. Concatenated content has no filenames in it
     # and cannot acquire that prefix.
-    sources="$(command cat "$COVERAGE_SH" "$DRIVERS_SH" 2>/dev/null)"
+    sources="$(command cat "$COVERAGE_SH" "$DRIVERS_SH" "$COV_LISTENER_SH" 2>/dev/null)"
 
     # Strip comment-only lines, then fold continuations into logical lines.
     joined="$(printf '%s\n' "$sources" | command grep -v '^[[:space:]]*#' |

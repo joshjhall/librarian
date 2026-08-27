@@ -76,6 +76,7 @@
 #  14e. token-cost reconciliation harness (tests/validate-token-report.sh)
 #  14f. context-budget session-length signal (tests/validate-context-budget.sh)
 #  14g. Ephemeral-port allocation + retry (tests/validate-free-port.sh)
+#  14h. Coverage-driver listener start attempt (tests/validate-cov-listener.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -316,6 +317,7 @@ run_stage "golem-watch streaming dispatcher" bash "$SCRIPT_DIR/validate-golem-wa
 run_stage "token-cost reconciliation harness" bash "$SCRIPT_DIR/validate-token-report.sh"
 run_stage "context-budget session-length signal" bash "$SCRIPT_DIR/validate-context-budget.sh"
 run_stage "ephemeral-port allocation + retry" bash "$SCRIPT_DIR/validate-free-port.sh"
+run_stage "coverage-driver listener start attempt" bash "$SCRIPT_DIR/validate-cov-listener.sh"
 
 printf '\n========================================\n'
 if [ "$rc" -eq 0 ]; then
