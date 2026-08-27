@@ -431,6 +431,17 @@ test_ci_broken_binary_is_visible_in_the_step_summary() {
 # had no case exercising it — it was verified only by an ad-hoc probe while
 # writing it, and an unexercised guard in a fixture the whole suite trusts is
 # how a fixture silently stops modelling what it claims to.
+#
+# RECORDED, NOT ENDORSED: the message asserted below says "signature
+# verification failed", but this case never reaches `npm audit signatures` — the
+# scratch install failed first. Both routes share one `else`, so a plain
+# registry outage is announced as a supply-chain event, which is exactly the
+# conflation the #740 comment beside that branch says must not happen ("a
+# supply-chain signal must not read as an outage") — in the other direction.
+# The assertion pins what ci.yml ACTUALLY emits, because a test that asserted
+# the desirable text would fail today and this is a tests-only change (#827).
+# Splitting the branch is a ci.yml fix and wants its own issue; when it lands,
+# this expectation changes with it.
 test_ci_scratch_install_failure_warns_and_leaves_no_tree() {
     local sb body
     stub_dir sb || return 1
@@ -442,8 +453,19 @@ test_ci_scratch_install_failure_warns_and_leaves_no_tree() {
 
     assert_equals "0" "$STEP_RC" \
         "a failed scratch install does not fail the job (agnix is best-effort, ADR 0001 §2/§4)"
-    assert_contains "$STEP_OUT" "::warning::" \
-        "the failed install is announced"
+    # Pinned on the FULL message, not a bare `::warning::`. That substring alone
+    # would pass against any warning text whatsoever, including one rewritten to
+    # something unrelated — a matcher with no teeth.
+    assert_contains "$STEP_OUT" "::warning::agnix signature verification failed" \
+        "the failed install is announced with the shared else-branch's message"
+    # THE #741 ASSERTION, which every sibling skip case carries and which this
+    # suite exists for: a persistent skip must reach the RUN PAGE, not only the
+    # job log nobody scrolls on a green run. A scratch-install failure is such a
+    # skip, and it reaches the summary by a DIFFERENT route than the audit
+    # failure, so a regression that stopped writing the line on this route only
+    # would be invisible without a case here.
+    assert_contains "$STEP_SUMMARY" "signature verification failed" \
+        "the scratch-install skip reaches \$GITHUB_STEP_SUMMARY too (#741) — the audit-failure route is a separate path through the same block"
     assert_not_contains "$STEP_LOG" "npm install -g" \
         "a failed scratch install must NOT reach the global install (#740: the audited bytes are the installed bytes)"
     assert_not_contains "$STEP_OUTPUT" "installed=true" \
