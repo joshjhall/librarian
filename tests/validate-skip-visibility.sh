@@ -312,6 +312,13 @@ test_ci_broken_binary_skips_without_failing() {
     # for some other reason and this case proves nothing about it.
     assert_contains "$STEP_LOG" "agnix --version" \
         "the smoke-test was genuinely invoked"
+    # #766: and it must NOT claim agnix installed. This is the arm that keeps
+    # agnix best-effort (ADR 0001 §2/§4): the "Assert the agnix gate actually
+    # ran" step fires only on installed=true, so writing it here — where the
+    # binary is broken — would turn a legitimate skip into a failed job on
+    # every runner that cannot install agnix.
+    assert_not_contains "$STEP_OUTPUT" "installed=true" \
+        "a broken binary must NOT record installed=true (#766) — that output arms the did-the-gate-run assertion, which would then fail the job on a legitimate skip"
 }
 
 test_ci_broken_binary_is_visible_in_the_step_summary() {
@@ -353,6 +360,10 @@ test_ci_signature_failure_is_its_own_event() {
     # guard actually holds.
     assert_not_contains "$STEP_LOG" "npm install -g" \
         "a failed signature check must prevent the global install entirely (#740)"
+    # #766: no install means no installed=true, so the did-the-gate-run
+    # assertion stays disarmed and the gate's 77 skip remains legitimate.
+    assert_not_contains "$STEP_OUTPUT" "installed=true" \
+        "a signature failure must NOT record installed=true (#766) — agnix was never installed, so the gate's skip is legitimate and must not fail the job"
 }
 
 test_ci_wrong_version_binary_skips() {
@@ -429,6 +440,113 @@ test_ci_happy_path_is_quiet() {
     # #740: the audited bytes must be the installed bytes.
     assert_contains "$STEP_LOG" "node_modules/agnix" \
         "the global install reads the VERIFIED tree, not a re-resolved registry fetch (#740)"
+    # #766: the success branch records that agnix genuinely installed. The
+    # "Assert the agnix gate actually ran" step is gated on this output, so a
+    # success path that stopped writing it would silently DISARM that step —
+    # the gate could go inert again and nothing would fail. Pinned here on the
+    # positive arm; the negative arm is pinned by the failure cases below.
+    assert_contains "$STEP_OUTPUT" "installed=true" \
+        "a healthy install records installed=true (#766) — the regression-detection step is gated on it, so losing this output disarms the check without failing anything"
+}
+
+# --- ci.yml: the did-the-gate-actually-run assertion (#766) ------------------
+
+# assert_gate_ran_step <gate-exit-code> <expected-step-rc> <label> — drive the
+# "Assert the agnix gate actually ran" step body with a STUB
+# tests/lint-agnix-clean.sh that exits the given code.
+#
+# The step is the regression-detection mechanism #766 asks for, so leaving it to
+# a live CI run for its first coverage would mean shipping the one check whose
+# whole job is catching a silent failure with no evidence that it fires. The
+# stub is what makes all three outcomes reachable here: on a real tree the gate
+# exits 0 (agnix present) or 77 (absent), and 77 cannot be produced on a runner
+# that has agnix without uninstalling it.
+#
+# `cd`ing into the sandbox is load-bearing: the step invokes the gate by
+# RELATIVE path (`bash tests/lint-agnix-clean.sh`), so a stub at that relative
+# path inside a scratch cwd is what the body actually runs. Without the cd it
+# would execute the repo's real gate and this case would measure the host's
+# agnix instead of the branch under test.
+assert_gate_ran_step() {
+    local gate_rc="$1" want_rc="$2" label="$3"
+    local sb body
+    stub_dir sb || return 1
+    load_step_body "$WORKFLOW_DIR/ci.yml" "Assert the agnix gate actually ran" body || return 1
+
+    # NON-VACUITY FLOOR, same rationale as the install cases: a slice that no
+    # longer reaches the gate invocation would drive a body that checks nothing
+    # and pass every assertion below.
+    assert_contains "$body" 'tests/lint-agnix-clean.sh' \
+        "$label: the sliced step body reaches the gate invocation"
+
+    command mkdir -p "$sb/tests"
+    {
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'exit %s\n' "$gate_rc"
+    } >"$sb/tests/lint-agnix-clean.sh"
+    command chmod +x "$sb/tests/lint-agnix-clean.sh"
+
+    STEP_RC=0
+    STEP_OUT="$(cd "$sb" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        --unset=BASH_ENV \
+        HOME="$sb" \
+        PATH="$sb/bin" \
+        "$REAL_BASH" -e -c "$body" 2>&1)" || STEP_RC=$?
+
+    assert_equals "$want_rc" "$STEP_RC" "$label: step exit code"
+}
+
+test_gate_inert_fails_the_job() {
+    # THE case this step exists for: agnix installed (the step only runs when
+    # the install wrote installed=true) and the gate STILL reported 77. That
+    # combination is always the #766 defect, and it must be loud.
+    assert_gate_ran_step 77 1 "gate skipped despite a successful install"
+    assert_contains "$STEP_OUT" "::error::" \
+        "an inert gate is reported as an ::error:: annotation, not a silent non-zero exit"
+    assert_contains "$STEP_OUT" "inert" \
+        "the error names the condition (an inert gate), so the reader is not left to infer it"
+}
+
+test_gate_ran_clean_passes() {
+    assert_gate_ran_step 0 0 "gate ran and found nothing"
+    assert_not_contains "$STEP_OUT" "::error::" \
+        "a gate that ran clean emits no error annotation"
+}
+
+test_gate_real_failure_is_not_swallowed_as_inert() {
+    # A gate that RAN and found real errors exits non-zero but NOT 77. This step
+    # must not convert that into its own inert-gate error: the suite has already
+    # failed the job on the real finding, and relabelling it "the gate did not
+    # run" would misdirect whoever reads the annotation. Exit 0 here is correct
+    # precisely because this step's question ("did it run?") was answered yes.
+    assert_gate_ran_step 1 0 "gate ran and reported findings"
+    assert_not_contains "$STEP_OUT" "::error::" \
+        "a real gate failure is not relabelled as an inert gate (the suite already failed the job on it)"
+}
+
+assert_global_install_uses_install_links() {
+    local wf="$1" label="$2"
+    local sb body
+    stub_dir sb || return 1
+    plant_npm "$sb"
+    plant_agnix "$sb"
+    load_step_body "$WORKFLOW_DIR/$wf" "$3" body || return 1
+
+    NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
+
+    # Asserted on the ARGV the step actually invoked, not on the workflow file's
+    # text. tests/lint-agnix-clean.sh already greps the file; duplicating that
+    # here would add a second reader of the same bytes and prove nothing new.
+    # What this suite can prove — and that one cannot — is that the flag rides
+    # the global install as EXECUTED, through whatever quoting and line
+    # continuations the YAML slice carries.
+    #
+    # The two needles are checked on one logged line, because the property is
+    # "the global install carried the flag", not "both strings appear somewhere
+    # in the log". A scratch install that happened to log --install-links
+    # elsewhere would satisfy a split assertion while the -g call went without.
+    assert_contains "$STEP_LOG" "npm install -g --install-links" \
+        "$label: the global install must carry --install-links (#766) — without it npm symlinks the package into \$verify_dir, the step's own 'rm -rf \"\$verify_dir\"' dangles it, and agnix resolves nowhere for every later step while this step still reports success"
 }
 
 # assert_summary_write_failure_is_survivable <workflow-file> <label> — drive the
@@ -472,6 +590,14 @@ assert_summary_write_failure_is_survivable() {
     # noise, landing a spurious error in the job log of an otherwise fine run.
     assert_not_contains "$out" "Is a directory" \
         "$label: the failed append is silent, not merely non-fatal (stderr is redirected BEFORE the open)"
+}
+
+test_ci_global_install_uses_install_links() {
+    assert_global_install_uses_install_links "ci.yml" "ci.yml" "Install agnix (pinned)"
+}
+
+test_code_scanning_global_install_uses_install_links() {
+    assert_global_install_uses_install_links "code-scanning.yml" "code-scanning.yml" "Install agnix (pinned)"
 }
 
 test_ci_summary_write_failure_does_not_fail_the_job() {
@@ -747,6 +873,16 @@ run_test test_ci_wrong_version_binary_skips \
     "ci.yml: a runnable but WRONG-version binary skips (stale cache, #742)"
 run_test test_ci_happy_path_is_quiet \
     "ci.yml: a healthy install announces no skip and installs the verified tree"
+run_test test_gate_inert_fails_the_job \
+    "ci.yml: an installed-but-inert agnix gate FAILS the job (#766)"
+run_test test_gate_ran_clean_passes \
+    "ci.yml: a gate that ran clean passes the assertion step"
+run_test test_gate_real_failure_is_not_swallowed_as_inert \
+    "ci.yml: a real gate failure is not relabelled as an inert gate"
+run_test test_ci_global_install_uses_install_links \
+    "ci.yml: the global install carries --install-links as executed (#766)"
+run_test test_code_scanning_global_install_uses_install_links \
+    "code-scanning.yml: the global install carries --install-links as executed (#766)"
 run_test test_ci_summary_write_failure_does_not_fail_the_job \
     "ci.yml: an unwritable step summary does not fail the job"
 run_test test_code_scanning_summary_write_failure_does_not_fail_the_job \
