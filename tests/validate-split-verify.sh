@@ -331,6 +331,110 @@ test_swift_reserved_name_and_attribute_paths() {
         "swift: an unchanged file with a reserved-name header still verifies (#728)"
 }
 
+# --- TypeScript (#755) -------------------------------------------------------
+# #726 gave split-verify a `ts` arm — in is_unit_header/unit_name inside the
+# shared:unit-segmenters-awk region on the bash side, and transitively via
+# sizing.py -> loc_engine.py's UNIT_RE["ts"] on the python side — and this suite
+# gained no .ts fixture at all. Neither neighbouring gate covers it:
+#
+#   - validate-shared-scanner-sync.sh proves the `ts` copy here is BYTE-IDENTICAL
+#     to sizing.sh's. That is a textual property. Three copies wrong in the same
+#     way still compare equal ([[parity-gate-hides-shared-defect]]).
+#   - validate-python-ports.sh is scoped to sizing.{py,sh}'s own TSV output and
+#     never invokes split-verify — its argv is `<original> <post-split>
+#     [results...]`, not a file list. That is the same reason #754's corpus
+#     fixture could not reach this tool, and why that issue needed its own case
+#     here too.
+#
+# It matters more for ts than for most languages: #726 made the `types/` dir +
+# re-exporting barrel the recommended TS remedy, so a types.ts broken into domain
+# modules is now the split shape a decomposition-seam row is MOST likely to hand
+# this tool — and it was the one shape never tested.
+#
+# THE SOUND ARM ASSERTS THE UNIT COUNT, NOT MERELY `split-verified`. Measured by
+# reverting the ts arm on a scratch copy: the sound split still reports
+# `split-verified`, because with no ts segmenter NOTHING is a unit and nothing
+# can be missing — the only tell is the count falling from `all 4` to `all 0`.
+# An arm asserting just `split-verified` would pass with AND without the fix
+# ([[fixture-must-express-the-divergent-case]]). The lossy arm needs no such care:
+# reverting turns a genuinely dropped `type Theme` into a clean `split-verified`.
+#
+# The declaration mix is deliberate. `interface`/`type`/`enum` are the type-level
+# forms the ts arm added OVER the js arm; `function` is the one form js would also
+# catch. A fixture of only functions would pass on a tool that classified .ts as
+# js, and so could not tell the two arms apart.
+setup_ts_fixtures() {
+    # The pre-split original: three type-level declarations plus a function that
+    # consumes one of them.
+    TS_ORIG="$WORKDIR/types.ts"
+    {
+        command printf 'export interface UserProfile {\n  id: string;\n}\n\n'
+        command printf 'export type Theme = "dark" | "light";\n\n'
+        command printf 'export enum Role {\n  Admin,\n  Guest,\n}\n\n'
+        command printf 'export function describeUser(u: UserProfile): string {\n  return u.id;\n}\n'
+    } >"$TS_ORIG"
+
+    # The post-split original: a re-exporting barrel plus the function that
+    # stayed — the types/ + barrel shape #726 recommends. It names Theme, so a
+    # Theme that lands nowhere leaves a live reference dangling.
+    TS_KEPT="$WORKDIR/types-kept.ts"
+    {
+        command printf 'export type { UserProfile, Theme } from "./user";\n'
+        command printf 'export { Role } from "./user";\n\n'
+        command printf 'import type { UserProfile } from "./user";\n\n'
+        command printf 'export function describeUser(u: UserProfile): string {\n  return u.id;\n}\n'
+    } >"$TS_KEPT"
+
+    # The domain module the three type-level declarations moved into.
+    TS_MOVED="$WORKDIR/user.ts"
+    {
+        command printf 'export interface UserProfile {\n  id: string;\n}\n\n'
+        command printf 'export type Theme = "dark" | "light";\n\n'
+        command printf 'export enum Role {\n  Admin,\n  Guest,\n}\n'
+    } >"$TS_MOVED"
+
+    # LOSSY: `type Theme` never made it into the destination, while the barrel
+    # still re-exports it.
+    TS_LOSSY="$WORKDIR/user-lossy.ts"
+    {
+        command printf 'export interface UserProfile {\n  id: string;\n}\n\n'
+        command printf 'export enum Role {\n  Admin,\n  Guest,\n}\n'
+    } >"$TS_LOSSY"
+}
+
+test_ts_sound_split_verifies() {
+    setup_ts_fixtures
+    run_verify "$TS_ORIG" "$TS_KEPT" "$TS_MOVED"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-verified" \
+        "ts: a sound types/ + barrel split is reported as non-lossy (#755)"
+    # THE assertion that gives this arm teeth — see the block comment above.
+    # Without the ts segmenter this reads "all 0", and every other assertion
+    # here still passes.
+    assert_contains "$VERIFY_OUT" "all 4 top-level unit(s) preserved" \
+        "ts: interface/type/enum/function are all seen as units (#755)"
+    assert_not_contains "$VERIFY_OUT" "split-unit-lost" \
+        "ts: a sound split reports no lost units (#755)"
+    assert_not_contains "$VERIFY_OUT" "split-fanin-dangling" \
+        "ts: a sound split reports no dangling callers (#755)"
+}
+
+test_ts_lost_unit_is_detected() {
+    setup_ts_fixtures
+    run_verify "$TS_ORIG" "$TS_KEPT" "$TS_LOSSY"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-unit-lost" \
+        "ts: a dropped type alias is reported as a lost unit (#755)"
+    assert_contains "$VERIFY_OUT" "Theme" \
+        "ts: the report NAMES the type that went missing (#755)"
+    # The barrel still re-exports Theme, so the loss ALSO dangles a live
+    # reference — check 3 over ts, not just check 2.
+    assert_contains "$VERIFY_OUT" "split-fanin-dangling" \
+        "ts: the surviving re-export of a dropped type dangles (#755)"
+    assert_not_contains "$VERIFY_OUT" "split-verified" \
+        "ts: a lossy split is not reported as verified (#755)"
+}
+
 # --- checks 2/3 over the Rust and Go segmenters (#727) -----------------------
 # Every case above drives .py fixtures, so split-verify's OWN use of unit_name
 # was exercised for one language only. The rs/go arms are the most-edited lines
@@ -890,6 +994,8 @@ run_test test_mixed_case_sound_split_verifies "mixed-case counter: a sound .PY s
 run_test test_swift_sound_split_verifies "swift: a sound Type+Concern split verifies clean (#728)"
 run_test test_swift_lost_unit_is_detected "swift: a dropped Swift declaration is detected and named (#728)"
 run_test test_swift_reserved_name_and_attribute_paths "swift: reserved-name filter and attribute path in split-verify's own loop (#728)"
+run_test test_ts_sound_split_verifies "ts: a sound types/ + barrel split verifies clean (#755)"
+run_test test_ts_lost_unit_is_detected "ts: a dropped type alias is detected, named, and dangles (#755)"
 run_test test_rust_split_is_verified_by_unit_name "Check 2 (rust): impl moves as one unit, named by type (#727)"
 run_test test_go_method_split_is_verified_by_receiver_name "Check 2 (go): a lost receiver method is named Receiver_Method (#727)"
 run_test test_rust_midfile_test_region_in_production_loc "Check 1 (rust): a mid-file test module excludes only itself (#727)"
