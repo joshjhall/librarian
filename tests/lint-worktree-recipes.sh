@@ -408,6 +408,37 @@ MD
         "The exemption does NOT leak into the next block"
 }
 
+# EXEMPTION SURFACE. A reason-required marker is a SOFT control: any
+# plausible-sounding sentence satisfies it. This PR proved that risk is real
+# rather than theoretical — a "detached-golem feed path, never worktree-isolated"
+# exemption read perfectly and was measured FALSE in review, and it would have
+# sat in the corpus permanently because an exemption is exactly what stops the
+# gate looking.
+#
+# The fix is not to parse reasons (a regex cannot tell a true claim from a
+# plausible one). It is to keep the exemption population SMALL and visible, so
+# every addition is a diff a human weighs. A new exemption must move this number
+# deliberately.
+#
+# Measured, not guessed — a first draft of this line said 6 and the test failed
+# on 9, which is the same reflex (assert the number, skip the count) that this
+# whole change exists to correct. Three of the nine are in worktree-safe-recipes.md
+# itself, where the marker is being DOCUMENTED rather than used; the census
+# cannot tell those apart, and a pattern that tried to would be the kind of
+# cleverness that silently stops matching.
+EXEMPTION_BUDGET=9
+
+test_exemption_population_is_bounded() {
+    local count
+    count="$(command grep -rc 'worktree-safe-exempt:' \
+        "$SKILLS_DIR"/next-issue "$SKILLS_DIR"/ship-issue "$SKILLS_DIR"/golem \
+        --include='*.md' 2>/dev/null |
+        command awk -F: '{s+=$2} END {print s+0}')"
+
+    assert_true "[ \"$count\" -le $EXEMPTION_BUDGET ]" \
+        "Exemptions have not grown past $EXEMPTION_BUDGET (found $count) — each one stops the gate looking, so a new one needs a deliberate budget bump and a reason a reviewer checked"
+}
+
 test_marker_requires_a_reason() {
     local tmp
     tmp="$(command mktemp -d 2>/dev/null)" || {
@@ -541,6 +572,7 @@ run_test test_scanner_passes_the_safe_spellings "The scanner passes the safe spe
 run_test test_unbraced_home_is_not_flagged "Unbraced \$HOME stays allowed (braced/unbraced asymmetry)"
 run_test test_exemption_marker_works "The exemption marker works and does not leak"
 run_test test_marker_requires_a_reason "A bare marker with no reason grants no exemption"
+run_test test_exemption_population_is_bounded "Exemptions stay within budget (each one blinds the gate)"
 run_test test_marker_exempts_whole_block_not_one_line "The marker exempts per block, not per line"
 run_test test_inline_directive_census "Inline \${CLAUDE_PLUGIN_ROOT} mentions have not grown"
 run_test test_companion_documents_the_rule "The companion exists and documents the marker"
