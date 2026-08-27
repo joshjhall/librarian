@@ -381,6 +381,89 @@ test_both_call_sites_use_the_helper() {
         "The old un-retried allocation-failure note is gone"
 }
 
+# BOTH failed-attempt reaps must be bounded — the harden-one-knob-and-leave-the-
+# sibling-exposed class, caught here on the second pass. A retry loop is exactly
+# where an unbounded `wait` bites: the branch runs when the child is alive but
+# never became ready, so one SIGTERM plus a bare `wait` hangs on the very case
+# the branch exists to handle. `_reap_failed_listener` was bounded first and the
+# coverage driver's identical cleanup was left as a bare wait — in the same
+# change that added the comment explaining why not to.
+#
+# Structural, since neither reap is callable from here: the point is that adding
+# a THIRD reap, or relaxing one back to a bare wait, must fail rather than pass
+# quietly.
+test_both_reaps_are_bounded() {
+    local f
+    for f in "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
+        "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh"; do
+        assert_file_contains "$f" "kill -KILL" \
+            "$(command basename "$f") escalates to SIGKILL rather than waiting forever"
+    done
+    # The listener gate's reap polls before waiting; the driver's does too.
+    assert_file_contains "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
+        'waited" -lt 50' \
+        "The behavioral gate's reap bounds its wait with a poll loop"
+    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+        '_csl_waited" -lt 50' \
+        "The coverage driver's FAILED-attempt reap bounds its wait too"
+}
+
+# The bounded-reap SHAPE, driven for real against a child that ignores SIGTERM —
+# the case a poll-then-SIGKILL exists for and a bare `wait` hangs on.
+#
+# The two production reaps are not callable from this suite (one is a function in
+# another entry point, the other lives inside a sourced coverage fragment), so
+# this drives an equivalent reap over a genuinely SIGTERM-immune process. It
+# proves the shape terminates; test_both_reaps_are_bounded proves both sites use
+# it. Neither claim alone is enough.
+test_bounded_reap_survives_a_sigterm_ignorer() {
+    if python_missing; then
+        skip_test "python3 not available"
+        return 0
+    fi
+    command cat >"$WORKDIR/deaf.py" <<'PY'
+import signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(sys.argv[1], "w") as fh:
+    fh.write("up")
+time.sleep(120)
+PY
+    command rm -f "$WORKDIR/deaf-up"
+    command python3 "$WORKDIR/deaf.py" "$WORKDIR/deaf-up" >/dev/null 2>&1 &
+    local pid=$! waited=0
+    while [ ! -s "$WORKDIR/deaf-up" ]; do
+        command kill -0 "$pid" 2>/dev/null || break
+        command sleep 0.1
+        waited=$((waited + 1))
+        [ "$waited" -gt 50 ] && break
+    done
+    if [ ! -s "$WORKDIR/deaf-up" ]; then
+        command kill -9 "$pid" 2>/dev/null || true
+        _fail "could not start a SIGTERM-ignoring child"
+        return 1
+    fi
+
+    # A short bound (1s, not 5s) keeps the case fast; the shape is what is under
+    # test, not the constant.
+    command kill "$pid" 2>/dev/null || true
+    local polled=0 escalated=""
+    while [ "$polled" -lt 10 ]; do
+        command kill -0 "$pid" 2>/dev/null || break
+        command sleep 0.1
+        polled=$((polled + 1))
+    done
+    if command kill -0 "$pid" 2>/dev/null; then
+        escalated="yes"
+        command kill -KILL "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+
+    assert_equals "yes" "$escalated" \
+        "SIGTERM alone did NOT stop it — the fixture really is signal-immune, so this case has teeth"
+    assert_true "! command kill -0 $pid 2>/dev/null" \
+        "The bounded reap terminated it instead of blocking forever"
+}
+
 run_test test_free_port_allocates_a_bindable_port "free_port yields a bindable port"
 run_test test_missing_runtime_fails_loud "Absent python3 fails loud, never an empty port"
 run_test test_retry_recovers_from_an_occupied_port "Retry recovers from a genuinely occupied port"
@@ -390,5 +473,7 @@ run_test test_zero_attempts_is_rejected "attempts<1 is rejected"
 run_test test_non_numeric_attempts_is_rejected "Non-numeric attempts fails loud, not silently"
 run_test test_no_third_copy_of_the_idiom "No third copy of the allocation idiom"
 run_test test_both_call_sites_use_the_helper "Both call sites route through the helper"
+run_test test_both_reaps_are_bounded "Both failed-attempt reaps are bounded, not a bare wait"
+run_test test_bounded_reap_survives_a_sigterm_ignorer "A bounded reap terminates on a SIGTERM-ignoring child"
 
 generate_report

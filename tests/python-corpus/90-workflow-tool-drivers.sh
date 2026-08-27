@@ -331,7 +331,26 @@ PY
         # past the readiness poll) and clear LISTENER_PID so the SIGTERM block
         # below cannot later signal a stale pid that another process has since
         # inherited.
+        #
+        # BOUNDED, for the same reason the success-path shutdown below is — and
+        # the reason matters MORE on this path, not less. This branch is reached
+        # precisely when the process is alive but never answered /healthz, so a
+        # bare `wait` after one SIGTERM is a hang on exactly the case the branch
+        # exists to handle, in a script whose own header promises it "must never
+        # hang or fail the run over an optional component". SIGKILL is the last
+        # resort; this attempt produced no coverage data worth preserving, so
+        # unlike the success path there is nothing lost by using it.
         kill "$LISTENER_PID" 2>/dev/null || true
+        _csl_waited=0
+        while [ "$_csl_waited" -lt 50 ]; do
+            kill -0 "$LISTENER_PID" 2>/dev/null || break
+            sleep 0.1
+            _csl_waited=$((_csl_waited + 1))
+        done
+        if kill -0 "$LISTENER_PID" 2>/dev/null; then
+            printf '[note] python-coverage — a failed listener attempt ignored SIGTERM; killing\n'
+            kill -KILL "$LISTENER_PID" 2>/dev/null || true
+        fi
         wait "$LISTENER_PID" 2>/dev/null || true
         LISTENER_PID=""
         return 1
@@ -410,7 +429,7 @@ PY
         # This increment is now inside the SERVED branch, which is what makes that
         # true structurally rather than by a re-checked flag.
         run_count=$((run_count + 1))
-        unset _waited _csl_sb _csl_port _csl_tries
+        unset _waited _csl_sb _csl_port _csl_tries _csl_waited
     else
         # DEGRADED, NOT FATAL (#780 AC3): a reporting script must not fail the run
         # over an optional component — so this stays a note and the script goes on
@@ -419,7 +438,7 @@ PY
         # is a broken listener, not a lost race, which is a materially different
         # diagnosis from the pre-#780 message.
         printf '[note] python-coverage — golem-event-listener did not start after 2 port attempts; skipping its driver\n'
-        unset _csl_sb _csl_port _csl_tries
+        unset _csl_sb _csl_port _csl_tries _csl_waited
     fi
 
     # Fail-loud startup arms, driven WITHOUT binding anything: a non-integer port
