@@ -441,9 +441,18 @@ test_attempt_count_renders_into_both_diagnostics() {
     # sourcing it would execute a whole second test suite (it calls run_test at
     # load), which is both wrong and slow. sed prints the definition from its
     # header to its closing brace.
-    gate_fn="$(command sed -n '/^_port_attempts_msg() {/,/^}/p' "$gate")"
+    gate_fn="$(command sed -n '/^_port_attempts_msg() {/,/^}$/p' "$gate")"
     assert_not_empty "$gate_fn" \
         "The gate's _port_attempts_msg was found (else nothing below is evidence)"
+    # Non-emptiness is not enough for a RANGE extraction. If the body ever grows
+    # a line that starts with `}` (a nested block, a here-doc), the range would
+    # end early and capture a truncated fragment that is still non-empty — a
+    # silent wrong-bytes read, where the grep extraction below would merely come
+    # back empty and trip its guard. So the end pattern requires the brace to be
+    # the WHOLE line (`^}$`), and the captured text must parse: `bash -n` turns a
+    # truncation into a loud failure here rather than a confusing eval error.
+    assert_true "command printf '%s' \"\$gate_fn\" | bash -n" \
+        "and the captured text is a syntactically complete function, not a truncated range"
 
     # The driver's printf, lifted by its distinguishing text plus the operand
     # line that continues it. Two lines, because the statement is wrapped — and
