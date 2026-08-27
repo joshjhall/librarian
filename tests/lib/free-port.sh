@@ -90,7 +90,22 @@ with_free_port() {
 
     FREE_PORT=""
 
-    if [ "$attempts" -lt 1 ] 2>/dev/null; then
+    # Validate SHAPE before value. `[ "$attempts" -lt 1 ]` on a non-numeric
+    # argument is not false — it ERRORS (exit 2), which `if` then treats as
+    # false, so a `[ ... ] -lt` guard alone lets an empty or non-numeric
+    # `attempts` fall straight through to the loop, where the same comparison
+    # errors on every iteration, the body never runs, and the function returns 1
+    # with FREE_PORT empty and NO diagnostic. That is precisely the silent
+    # failure the fail-loud posture above exists to prevent — the guard would
+    # have been asserting an intent the code did not implement.
+    case "$attempts" in
+        '' | *[!0-9]*)
+            command printf 'with_free_port: attempts must be a positive integer (got %s)\n' \
+                "$attempts" >&2
+            return 1
+            ;;
+    esac
+    if [ "$attempts" -lt 1 ]; then
         command printf 'with_free_port: attempts must be >= 1 (got %s)\n' "$attempts" >&2
         return 1
     fi

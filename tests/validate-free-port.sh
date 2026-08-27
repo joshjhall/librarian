@@ -305,6 +305,34 @@ test_zero_attempts_is_rejected() {
         "The rejection says what was wrong, not just that something was"
 }
 
+# A NON-NUMERIC attempts must fail the same loud way — the arm a `-lt` guard
+# alone does not cover.
+#
+# `[ "$attempts" -lt 1 ]` on a non-numeric argument does not evaluate false, it
+# ERRORS (exit 2), and `if` reads that as false — so the guard is skipped, the
+# loop's identical comparison errors on every iteration, the body never runs, and
+# the function returns 1 with no diagnostic at all. Empty string and a word are
+# both checked: empty is the likelier real bug (an unset variable under a caller
+# that forgot `set -u`), and it is the case a `*[!0-9]*` pattern alone would miss.
+test_non_numeric_attempts_is_rejected() {
+    local bad
+    for bad in "" "two" "2x" "-1"; do
+        FREE_PORT="sentinel-not-cleared"
+        if with_free_port "$bad" true 2>"$WORKDIR/nan.err"; then
+            _fail "with_free_port '$bad' succeeded" "a non-numeric attempts must fail loud"
+            continue
+        fi
+        assert_equals "" "$FREE_PORT" \
+            "attempts='$bad' leaves FREE_PORT empty"
+        assert_file_contains "$WORKDIR/nan.err" "with_free_port: attempts must be" \
+            "attempts='$bad' explains itself on stderr"
+        # The bare `[: integer expression expected` leak is what a shape-blind
+        # guard produces; its absence is the point of the fix.
+        assert_file_not_contains "$WORKDIR/nan.err" "integer expression expected" \
+            "attempts='$bad' does not leak a raw bash test error"
+    done
+}
+
 # AC2 — the retry logic is SHARED, not a third copy. #780 exists because the
 # second call site copied the first rather than inventing it; the third copy is
 # the thing to prevent structurally instead of by review.
@@ -359,6 +387,7 @@ run_test test_retry_recovers_from_an_occupied_port "Retry recovers from a genuin
 run_test test_single_attempt_fails_on_the_same_fixture "attempts=1 fails on the same fixture (teeth)"
 run_test test_port_is_appended_after_leading_args "Port is appended after the caller's args"
 run_test test_zero_attempts_is_rejected "attempts<1 is rejected"
+run_test test_non_numeric_attempts_is_rejected "Non-numeric attempts fails loud, not silently"
 run_test test_no_third_copy_of_the_idiom "No third copy of the allocation idiom"
 run_test test_both_call_sites_use_the_helper "Both call sites route through the helper"
 
