@@ -371,6 +371,28 @@ agnix_code_line_no() {
         command head -n 1 || true
 }
 
+# agnix_code_line_no2 <file> <needle-a> <needle-b> — like agnix_code_line_no,
+# but matches a non-comment line containing BOTH fixed strings, in either order
+# and not necessarily adjacent.
+#
+# Exists because of #766. Several assertions here searched one long literal that
+# spanned an argument boundary (`npm install -g "$verify_dir/node_modules/..."`),
+# so inserting a flag between the two halves broke the match and failed the gate
+# on a change that STRENGTHENED the property being guarded. Splitting the needle
+# lets a test say "this command, with this argument" without also freezing the
+# flags in between — which are a separate property, pinned by a separate test.
+#
+# Both greps are -F (never a regex), and the comment filter is applied once, on
+# the first stage, exactly as above: prose describing a command must never stand
+# in for the command. Same `|| true` rationale as agnix_code_line_no.
+agnix_code_line_no2() {
+    command grep -nF -e "$2" "$1" 2>/dev/null |
+        command grep -v '^[0-9][0-9]*:[[:space:]]*#' |
+        command grep -F -e "$3" |
+        command sed -n 's/^\([0-9][0-9]*\):.*/\1/p' |
+        command head -n 1 || true
+}
+
 test_signature_check_present() {
     local f
     for f in ci.yml code-scanning.yml; do
@@ -405,9 +427,19 @@ test_global_install_uses_the_verified_tree() {
     # Asserted as a positive match on the verified path rather than as an
     # absence of `"$pin"`: an absence check would also pass if the install line
     # were deleted outright.
+    #
+    # Matched WITHOUT the `-g`..path prefix being contiguous (#766). The old
+    # spelling searched the single literal `npm install -g
+    # "$verify_dir/node_modules/agnix"`, which silently stopped matching the
+    # moment a flag was inserted between the two halves — a false failure on a
+    # change that strengthened the very property it guards. What this test
+    # actually cares about is the ARGUMENT: that the install reads the verified
+    # directory rather than re-resolving $pin. Flags between `-g` and the path
+    # are orthogonal to that, so they must not break it. (The flag that belongs
+    # there is pinned by test_global_install_copies_not_symlinks.)
     local f
     for f in ci.yml code-scanning.yml; do
-        assert_not_empty "$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'npm install -g "$verify_dir/node_modules/agnix"')" \
+        assert_not_empty "$(agnix_code_line_no2 "$WORKFLOW_DIR/$f" 'npm install -g' '"$verify_dir/node_modules/agnix"')" \
             "$f's global install must read the VERIFIED tree (\$verify_dir/node_modules/agnix), not re-resolve \$pin from the registry (#740) — re-resolving audits one fetch and installs another, leaving the postinstall that actually runs unverified."
     done
 }
@@ -422,13 +454,22 @@ test_scratch_dir_is_cleaned_up() {
     # global install READS $verify_dir: a cleanup hoisted above that install
     # would delete the verified tree before it is consumed. Presence alone would
     # stay green through that regression.
+    #
+    # KNOW WHAT THIS TEST CANNOT SEE (#766). Correct ordering does not mean the
+    # install survives. While the global install SYMLINKED, this test passed on
+    # every run and agnix was still gone two steps later, because the cleanup
+    # broke a consumer outside the window these line numbers describe. That
+    # property belongs to the install MODE, and it is pinned separately by
+    # test_global_install_copies_not_symlinks. Do not read a green result here
+    # as "agnix is available downstream" — that inference is exactly what #766
+    # was, and it held for weeks.
     local f cleanup_line install_line ok
     for f in ci.yml code-scanning.yml; do
         cleanup_line="$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'rm -rf "$verify_dir"')"
         assert_not_empty "$cleanup_line" \
             "$f creates a scratch \$verify_dir with mktemp -d and must remove it (#740) — found no non-comment 'rm -rf \"\$verify_dir\"'."
 
-        install_line="$(agnix_code_line_no "$WORKFLOW_DIR/$f" 'npm install -g "$verify_dir/node_modules/agnix"')"
+        install_line="$(agnix_code_line_no2 "$WORKFLOW_DIR/$f" 'npm install -g' '"$verify_dir/node_modules/agnix"')"
         # Fail loud rather than pass vacuously when either line is missing —
         # comparing two empty strings would report correct ordering between two
         # things that do not exist.
@@ -475,7 +516,36 @@ test_signature_check_precedes_global_install() {
     done
 }
 
+test_global_install_copies_not_symlinks() {
+    # #766. Without `--install-links`, `npm install -g <local-dir>` SYMLINKS the
+    # package into $verify_dir — and the `rm -rf "$verify_dir"` that ends the
+    # step dangles it, so agnix resolves nowhere for every later consumer. In
+    # ci.yml that consumer is this very gate (it took its absent-binary 77 skip
+    # and reported `[SKIP] … did not run` on a green job for weeks); in
+    # code-scanning.yml it is the scan step (`produced no valid SARIF`).
+    #
+    # This is the assertion that would have caught #766, and it is deliberately
+    # NOT an ordering check. test_scratch_dir_is_cleaned_up already pins that
+    # the cleanup follows the install — and it PASSED throughout, because the
+    # ordering was never wrong. A symlinked install is broken by a perfectly
+    # ordered cleanup. Only the install MODE distinguishes the two states, so
+    # only the flag's presence can carry this property.
+    #
+    # Matched on the `npm install -g` line itself rather than anywhere in the
+    # file, so a `--install-links` that drifted into some unrelated command (or
+    # into prose) cannot satisfy it. agnix_code_line_no already strips comments,
+    # which is what stops the paragraph EXPLAINING the flag from standing in for
+    # the flag — the exact substitution this gate family exists to prevent.
+    local f line
+    for f in ci.yml code-scanning.yml; do
+        line="$(agnix_code_line_no2 "$WORKFLOW_DIR/$f" 'npm install -g' '--install-links')"
+        assert_not_empty "$line" \
+            "$f's global agnix install must pass --install-links (#766) — without it npm symlinks into \$verify_dir, the step's own 'rm -rf \"\$verify_dir\"' dangles the link, and agnix silently resolves nowhere for every later step (the gate skips, the scan emits no SARIF, the job stays green)."
+    done
+}
+
 run_test test_signature_check_present "Both workflows verify agnix's registry signature"
+run_test test_global_install_copies_not_symlinks "Global install passes --install-links (survives cleanup, #766)"
 run_test test_signature_check_is_scoped_to_the_scratch_tree "Signature check runs inside \$verify_dir"
 run_test test_scratch_install_ignores_scripts "Pre-verification install passes --ignore-scripts"
 run_test test_global_install_uses_the_verified_tree "Global install reads the verified tree, not the registry"

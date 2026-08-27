@@ -104,9 +104,11 @@ jobs:
       # right and protects nothing.
       #
       # The global install then reads the VERIFIED DIRECTORY, not the registry:
-      # `npm install -g "$verify_dir/node_modules/agnix"`. This is the whole
-      # point of the sequence and is not interchangeable with re-installing
-      # `"$pin"` globally.
+      # `npm install -g --install-links "$verify_dir/node_modules/agnix"`. This
+      # is the whole point of the sequence and is not interchangeable with
+      # re-installing `"$pin"` globally. (`--install-links` copies rather than
+      # symlinks so the install survives this step's cleanup — #766; it does not
+      # reach the registry, so the guarantee below is unaffected.)
       #
       # Re-resolving `"$pin"` would be two independent fetches — the audit would
       # describe bytes the first fetch received while a second, unaudited fetch
@@ -118,7 +120,10 @@ jobs:
       # bytes by construction, so the guarantee holds without that assumption.
       #
       # SCOPE OF THAT GUARANTEE, stated exactly because the general case is
-      # weaker than it looks: `npm install -g <local-dir>` PACKS the directory,
+      # weaker than it looks: `npm install -g --install-links <local-dir>` PACKS
+      # the directory (measured — note that WITHOUT `--install-links` npm
+      # symlinks instead and packs nothing, which is the #766 defect; ci.yml's
+      # comment and this one disagreed on this point until #766 measured it),
       # and a pack conventionally excludes `node_modules`. For a package with
       # runtime dependencies, npm would re-resolve that dependency closure from
       # the registry — a second unaudited fetch, the same TOCTOU shape one level
@@ -126,8 +131,9 @@ jobs:
       # `optionalDependencies`, or `peerDependencies`; its lockfile closure in
       # the scratch tree is the single entry `node_modules/agnix`), so the
       # audited closure and the installed closure are the same one package.
-      # Confirmed empirically: `npm install -g --offline` from the verified tree
-      # succeeds, which it could not do if any byte still had to be fetched.
+      # Confirmed empirically: `npm install -g --install-links --offline` from
+      # the verified tree succeeds, which it could not do if any byte still had
+      # to be fetched. Re-confirmed with `--install-links` when #766 added it.
       #
       # This is therefore a property of agnix, not of the pattern. Should agnix
       # ever gain a dependency, this reasoning stops holding and the step needs
@@ -160,7 +166,13 @@ jobs:
           # events, and a supply-chain signal must not read as an outage.
           if npm install --prefix "$verify_dir" --ignore-scripts "$pin" \
             && (cd "$verify_dir" && npm audit signatures); then
-            if npm install -g "$verify_dir/node_modules/agnix" && agnix --version; then
+            # `--install-links` for the same reason as ci.yml's install (#766):
+            # without it npm SYMLINKS the package into $verify_dir, and the
+            # `rm -rf "$verify_dir"` that ends this step dangles the link. agnix
+            # then resolves nowhere in the scan step below, which showed up as
+            # `agnix produced no valid SARIF (crash or empty output)` on a green
+            # job — the identical defect ci.yml had, reached by the other route.
+            if npm install -g --install-links "$verify_dir/node_modules/agnix" && agnix --version; then
               echo "present=true" >> "$GITHUB_OUTPUT"
             else
               echo "present=false" >> "$GITHUB_OUTPUT"

@@ -431,6 +431,31 @@ test_ci_happy_path_is_quiet() {
         "the global install reads the VERIFIED tree, not a re-resolved registry fetch (#740)"
 }
 
+assert_global_install_uses_install_links() {
+    local wf="$1" label="$2"
+    local sb body
+    stub_dir sb || return 1
+    plant_npm "$sb"
+    plant_agnix "$sb"
+    load_step_body "$WORKFLOW_DIR/$wf" "$3" body || return 1
+
+    NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
+
+    # Asserted on the ARGV the step actually invoked, not on the workflow file's
+    # text. tests/lint-agnix-clean.sh already greps the file; duplicating that
+    # here would add a second reader of the same bytes and prove nothing new.
+    # What this suite can prove — and that one cannot — is that the flag rides
+    # the global install as EXECUTED, through whatever quoting and line
+    # continuations the YAML slice carries.
+    #
+    # The two needles are checked on one logged line, because the property is
+    # "the global install carried the flag", not "both strings appear somewhere
+    # in the log". A scratch install that happened to log --install-links
+    # elsewhere would satisfy a split assertion while the -g call went without.
+    assert_contains "$STEP_LOG" "npm install -g --install-links" \
+        "$label: the global install must carry --install-links (#766) — without it npm symlinks the package into \$verify_dir, the step's own 'rm -rf \"\$verify_dir\"' dangles it, and agnix resolves nowhere for every later step while this step still reports success"
+}
+
 # assert_summary_write_failure_is_survivable <workflow-file> <label> — drive the
 # named workflow's install step with an unwritable $GITHUB_STEP_SUMMARY.
 #
@@ -472,6 +497,14 @@ assert_summary_write_failure_is_survivable() {
     # noise, landing a spurious error in the job log of an otherwise fine run.
     assert_not_contains "$out" "Is a directory" \
         "$label: the failed append is silent, not merely non-fatal (stderr is redirected BEFORE the open)"
+}
+
+test_ci_global_install_uses_install_links() {
+    assert_global_install_uses_install_links "ci.yml" "ci.yml" "Install agnix (pinned)"
+}
+
+test_code_scanning_global_install_uses_install_links() {
+    assert_global_install_uses_install_links "code-scanning.yml" "code-scanning.yml" "Install agnix (pinned)"
 }
 
 test_ci_summary_write_failure_does_not_fail_the_job() {
@@ -747,6 +780,10 @@ run_test test_ci_wrong_version_binary_skips \
     "ci.yml: a runnable but WRONG-version binary skips (stale cache, #742)"
 run_test test_ci_happy_path_is_quiet \
     "ci.yml: a healthy install announces no skip and installs the verified tree"
+run_test test_ci_global_install_uses_install_links \
+    "ci.yml: the global install carries --install-links as executed (#766)"
+run_test test_code_scanning_global_install_uses_install_links \
+    "code-scanning.yml: the global install carries --install-links as executed (#766)"
 run_test test_ci_summary_write_failure_does_not_fail_the_job \
     "ci.yml: an unwritable step summary does not fail the job"
 run_test test_code_scanning_summary_write_failure_does_not_fail_the_job \

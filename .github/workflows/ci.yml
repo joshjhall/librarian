@@ -182,9 +182,11 @@ jobs:
       # right and protects nothing.
       #
       # The global install then reads the VERIFIED DIRECTORY, not the registry:
-      # `npm install -g "$verify_dir/node_modules/agnix"`. This is the whole
-      # point of the sequence and is not interchangeable with re-installing
-      # `"$pin"` globally.
+      # `npm install -g --install-links "$verify_dir/node_modules/agnix"`. This
+      # is the whole point of the sequence and is not interchangeable with
+      # re-installing `"$pin"` globally. (`--install-links` copies rather than
+      # symlinks so the install survives this step's cleanup — #766; it does not
+      # reach the registry, so the guarantee below is unaffected.)
       #
       # Re-resolving `"$pin"` would be two independent fetches — the audit would
       # describe bytes the first fetch received while a second, unaudited fetch
@@ -228,9 +230,12 @@ jobs:
       # THE SEAM: install.js returns early when `bin/agnix-binary` already
       # exists ("agnix binary already installed"), and agnix's `files:` array
       # includes `bin/`, so a binary seeded into the verified scratch tree is
-      # packed through by `npm install -g "$verify_dir/node_modules/agnix"` and
-      # the download never happens. Verified empirically in both directions: a
-      # seeded tree short-circuits, an unseeded one downloads.
+      # carried through by `npm install -g --install-links
+      # "$verify_dir/node_modules/agnix"` and the download never happens.
+      # Verified empirically in both directions: a seeded tree short-circuits,
+      # an unseeded one downloads. Re-verified after #766 added
+      # `--install-links` — the copy carries the seeded binary just as the
+      # symlink did, so the cache-HIT path is unaffected by that change.
       #
       # NO `restore-keys`, deliberately. A prefix fallback could restore a
       # DIFFERENT version's binary under a bumped pin — precisely the drift the
@@ -287,6 +292,7 @@ jobs:
           key: agnix-bin-${{ runner.os }}-${{ runner.arch }}-0.49.0
 
       - name: Install agnix (pinned)
+        id: agnix-install
         # No `env:` bridge for the cache-hit output on purpose. An earlier draft
         # passed `steps.agnix-cache.outputs.cache-hit` in and branched the save
         # on it, but that output answers "did the KEY exist?", not "is the
@@ -456,26 +462,60 @@ jobs:
             # second copy of the version — the drift channel this file works
             # hard to avoid. A mismatch takes the same notice-and-skip path as a
             # failed install: the gate SKIPs (77), the job stays green.
-            if npm install -g "$verify_dir/node_modules/agnix" \
+            # `--install-links` is what makes this install SURVIVE (#766).
+            # Without it `npm install -g <local-dir>` SYMLINKS the directory:
+            # `npm root -g`/agnix becomes a link into $verify_dir, and the
+            # `rm -rf "$verify_dir"` that ends this step dangles it. agnix then
+            # resolves nowhere by the time the test suite runs two steps later,
+            # so tests/lint-agnix-clean.sh took its absent-binary 77 skip and
+            # reported `[SKIP] … did not run` on a GREEN job — for weeks.
+            #
+            # The failure was invisible precisely because this step SUCCEEDS.
+            # The install works, the smoke test passes, no notice is emitted;
+            # the breakage happens afterward, in the cleanup, to a consumer this
+            # step cannot see. Do not read a passing install here as proof that
+            # agnix is available downstream — that inference is what #766 was.
+            #
+            # `--install-links` makes npm COPY the package instead, so the
+            # global tree is a real directory that outlives $verify_dir.
+            # Verified: `agnix --version` prints the pin both before and after
+            # the cleanup, where the symlinked install printed
+            # `command not found` after it.
+            #
+            # It does NOT weaken the #740 guarantee: `npm install -g
+            # --install-links --offline` from the verified tree succeeds, which
+            # it could not do if any byte still had to be fetched. The audited
+            # bytes remain the installed bytes. (That is the same `--offline`
+            # probe code-scanning.yml's comment nominates for this question —
+            # reuse it if agnix ever gains a dependency.)
+            if npm install -g --install-links "$verify_dir/node_modules/agnix" \
               && agnix --version | grep -qF "${pin#agnix@}"; then
-              # Populate the cache on a miss, reading from $verify_dir rather
-              # than from `npm root -g`. That is load-bearing, not stylistic.
+              # Record that agnix genuinely installed, for the did-the-gate-run
+              # assertion after the suite (#766). Written on the success branch
+              # only, so an outage/fork/skip leaves it unset and the assertion
+              # stays quiet — agnix remains best-effort (ADR 0001 §2/§4).
+              echo "installed=true" >> "$GITHUB_OUTPUT"
+              # Populate the cache on a miss, reading from the GLOBAL install
+              # root rather than from $verify_dir. That is load-bearing, not
+              # stylistic, and it is the half of #766 that would otherwise
+              # regress silently.
               #
-              # `npm install -g <local-dir>` SYMLINKS the directory rather than
-              # copying it (verified on npm 11, which node-version 24 ships).
-              # Two consequences, both relied on here:
+              # `--install-links` (added above) makes `npm install -g
+              # <local-dir>` COPY the package. The postinstall therefore runs
+              # against the COPY and writes bin/agnix-binary into `npm root -g`,
+              # NOT into $verify_dir. An earlier revision of this block read
+              # $verify_dir, which was correct only while the install symlinked;
+              # left unchanged it would find no file, take the `-f` guard's
+              # silent no-op branch, and quietly stop populating the cache —
+              # green, and never a cache hit again.
               #
-              #   1. The postinstall's download therefore writes THROUGH the
-              #      link and lands in $verify_dir/node_modules/agnix/bin/ —
-              #      so $staged_bin below is exactly the freshly downloaded
-              #      binary that install.js just verified against the publisher's
-              #      .sha256 sidecar. The cache is seeded with checksum-verified
-              #      bytes, not with something scavenged from elsewhere.
-              #   2. `npm root -g`/agnix is only a link INTO $verify_dir, so it
-              #      dangles the instant the `rm -rf` below runs. Reading it here
-              #      would work solely because that cleanup happens later — a
-              #      spatial coupling nothing enforces, silently broken if the
-              #      cleanup ever moved up. $verify_dir has no such dependency.
+              # What still holds: the file read here is exactly the binary
+              # install.js just downloaded and verified against the publisher's
+              # .sha256 sidecar, so the cache is seeded with checksum-verified
+              # bytes rather than something scavenged from elsewhere. What
+              # changes: the copy outlives the `rm -rf` below, so unlike the old
+              # symlink path this read has no ordering coupling to the cleanup
+              # at all.
               #
               # The install also passed `agnix --version` just above, so a binary
               # is only ever cached after being proven to run on this runner.
@@ -488,8 +528,8 @@ jobs:
               # AFTER A CORRUPT RESTORE. There, the digest check has deleted the
               # local files, so a `cache-hit`-keyed guard would skip staging and
               # leave ~/.cache/agnix-bin EMPTY while a perfectly good binary sat
-              # in $verify_dir — the on-disk state would then disagree with the
-              # binary this job actually installed.
+              # in the global install root — the on-disk state would then
+              # disagree with the binary this job actually installed.
               #
               # Be clear about the limit, though: staging here only prepares the
               # directory for the post-job save. On an exact key hit that save
@@ -502,7 +542,7 @@ jobs:
               # a failed copy must never convert a working agnix install into a
               # failed CI job.
               if [ "$agnix_cache_usable" != "1" ]; then
-                staged_bin="$verify_dir/node_modules/agnix/bin/agnix-binary"
+                staged_bin="$(npm root -g)/agnix/bin/agnix-binary"
                 if [ -f "$staged_bin" ]; then
                   mkdir -p "$HOME/.cache/agnix-bin" \
                     && cp "$staged_bin" "$HOME/.cache/agnix-bin/agnix-binary" \
@@ -558,6 +598,46 @@ jobs:
       # suite when a stage is added or renamed.
       - name: Run test suite
         run: bash tests/run-all.sh
+
+      # DID THE agnix GATE ACTUALLY RUN? (#766)
+      #
+      # The bug this closes was invisible for weeks: tests/lint-agnix-clean.sh
+      # reported `[SKIP] … did not run`, the job stayed GREEN, and a skip reads
+      # as "agnix is optional here" rather than "the gate you added stopped
+      # working". Sentinel 77 makes a skip legible in the log; it cannot make
+      # anyone LOOK at the log of a passing run. This step is the signal that
+      # does not need a reader.
+      #
+      # Deliberately NOT part of "Verify linters are on PATH" above. That step
+      # asserts a HARD requirement, and agnix is a best-effort enrichment (ADR
+      # 0001 §2/§4) — a registry outage or a network-restricted runner must
+      # still skip, not red the build. So the condition is not "is agnix
+      # present" but "did agnix install successfully AND the gate still not
+      # run" — a combination that is always a defect, and exactly the #766
+      # state. When the install did not succeed, `installed` is unset, this
+      # step does not run, and the skip stays legitimate.
+      #
+      # Re-running the gate is what makes this a real check rather than log
+      # scraping: its exit code IS the answer (77 = did not run), it is
+      # side-effect free, and it costs a second on a tree the suite already
+      # validated. Grepping run-all.sh's output for a skip line would couple
+      # this to that renderer's wording, which is precisely the kind of
+      # prose-anchored assertion that rots.
+      - name: Assert the agnix gate actually ran
+        if: steps.agnix-install.outputs.installed == 'true'
+        run: |
+          # `rc=""` first, then `${rc:-0}`: the step runs under `bash -e`, where
+          # a non-zero exit must be captured with `|| rc=$?` rather than read
+          # after the fact. Initialising explicitly keeps the fallback about THIS
+          # run's exit code rather than about whatever `rc` might already hold.
+          rc=""
+          bash tests/lint-agnix-clean.sh >/dev/null 2>&1 || rc=$?
+          rc="${rc:-0}"
+          if [ "$rc" = "77" ]; then
+            echo "::error::agnix installed successfully, but tests/lint-agnix-clean.sh still reported SKIP (exit 77) — the gate is inert (#766). This is the failure that hid behind a green job for weeks: check that the global install survives this job's own 'rm -rf \$verify_dir' (it needs --install-links)."
+            exit 1
+          fi
+          echo "agnix gate ran (exit $rc)."
 
   # Coverage reporting (issue #186). INFORMATIONAL, never a merge gate: this job
   # is deliberately absent from merge-gate's `needs:` below, and codecov.yml
