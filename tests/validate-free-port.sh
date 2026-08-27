@@ -410,10 +410,6 @@ test_both_call_sites_use_the_helper() {
         "The old un-retried allocation-failure note is gone"
 }
 
-# PORT_ATTEMPTS has ONE home. The interpolation above is only worth something if
-# the value it reads is defined in the file both call sites already source — a
-# second definition in either suite would let them drift apart again, which is
-# the exact failure mode #825 item 2 describes.
 # The diagnostic RENDERS. Everything above checks the format string as SOURCE
 # TEXT, which cannot distinguish a working `printf '%s' "$PORT_ATTEMPTS"` from a
 # broken one: a swapped argument order, a dropped operand, or a `%d` fed a
@@ -427,11 +423,11 @@ test_both_call_sites_use_the_helper() {
 # leaves this file's own rendering untouched, so the case would stay green
 # against exactly the defect it names. (Observed — that was the first draft.)
 #
-# So each message is extracted FROM ITS OWN FILE and eval'd. The gate ships a
-# `_port_attempts_msg` function, which `declare -f` can lift wholesale after
-# sourcing nothing else. The driver's `printf` is a bare statement inside a
-# fragment that cannot be sourced, so its two lines are pulled out by line range
-# and eval'd on their own — reading the bytes that ship, either way.
+# So each message is extracted FROM ITS OWN FILE and eval'd — the bytes that
+# ship, in both cases. Neither file can simply be sourced: the gate would run a
+# whole second test suite (it calls run_test at load), and the driver is a
+# fragment that presupposes a coverage run. So each is lifted as text instead,
+# by the shape that fits it — see the two extractions below.
 #
 # PORT_ATTEMPTS is overridden to a value that CANNOT be confused with the
 # default: asserting "2" would pass against a printf that ignored its operand
@@ -484,6 +480,10 @@ test_attempt_count_renders_into_both_diagnostics() {
         "and leaves no unsubstituted placeholder"
 }
 
+# PORT_ATTEMPTS has ONE home. The interpolation proven above is only worth
+# something if the value it reads is defined in the file both call sites already
+# source — a second definition in either suite would let them drift apart again,
+# which is the exact failure mode #825 item 2 describes.
 test_attempt_count_has_one_home() {
     # ANCHORED to the start of the line. An unanchored match is satisfied by the
     # COMMENT explaining the setting, so deleting the assignment while leaving
