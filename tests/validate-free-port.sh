@@ -441,18 +441,38 @@ test_attempt_count_renders_into_both_diagnostics() {
     # sourcing it would execute a whole second test suite (it calls run_test at
     # load), which is both wrong and slow. sed prints the definition from its
     # header to its closing brace.
-    gate_fn="$(command sed -n '/^_port_attempts_msg() {/,/^}$/p' "$gate")"
+    gate_fn="$(command sed -n '/^_port_attempts_msg() {/,/^}[[:space:]]*\(#.*\)*$/p' "$gate")"
     assert_not_empty "$gate_fn" \
         "The gate's _port_attempts_msg was found (else nothing below is evidence)"
-    # Non-emptiness is not enough for a RANGE extraction. If the body ever grows
-    # a line that starts with `}` (a nested block, a here-doc), the range would
-    # end early and capture a truncated fragment that is still non-empty — a
-    # silent wrong-bytes read, where the grep extraction below would merely come
-    # back empty and trip its guard. So the end pattern requires the brace to be
-    # the WHOLE line (`^}$`), and the captured text must parse: `bash -n` turns a
-    # truncation into a loud failure here rather than a confusing eval error.
+
+    # A RANGE extraction fails in BOTH directions, and non-emptiness catches
+    # neither. Too short: a body line beginning with `}` ends the range early and
+    # captures a truncated fragment. Too long: an end pattern the real brace no
+    # longer matches runs on to the NEXT match and swallows everything between.
+    #
+    # The over-grown direction is the dangerous one, and it is not theoretical —
+    # measured here: with the end pattern written `/^}$/`, adding ONE trailing
+    # space to the closing brace grew the capture from 3 lines to 56, and the
+    # case still PASSED, because the swallowed text happened to parse and still
+    # defined the function. A `bash -n` guard alone cannot see that; only a
+    # length bound can. This is the end-marker-overgrows-the-region shape, where
+    # a moved END delimiter is silent while a moved START one errors loudly.
+    #
+    # Note `bash -n` cannot see the over-grown direction at all: two complete
+    # function definitions concatenated parse exactly as cleanly as one. Only the
+    # bound distinguishes them, which is why both guards are here rather than
+    # either alone.
+    #
+    # So: the end pattern tolerates trailing whitespace AND an inline comment on
+    # the closing brace (the two ways it plausibly drifts), the capture is
+    # bounded to a handful of lines, and the text must parse. A body that
+    # legitimately outgrows the bound should raise it deliberately — a visible
+    # edit, not a silent swallow. BRE `\(...\)` with `*`, not ERE `(...)?`,
+    # because BSD sed on macOS reads the ERE spelling as literals.
+    assert_true "[ \"\$(command printf '%s\\n' \"\$gate_fn\" | command wc -l)\" -le 8 ]" \
+        "and the capture is BOUNDED — an end pattern that stopped matching would swallow the file"
     assert_true "command printf '%s' \"\$gate_fn\" | bash -n" \
-        "and the captured text is a syntactically complete function, not a truncated range"
+        "and parses as a complete function, so a truncated range fails loud rather than mid-eval"
 
     # The driver's printf, lifted by its distinguishing text plus the operand
     # line that continues it. Two lines, because the statement is wrapped — and
