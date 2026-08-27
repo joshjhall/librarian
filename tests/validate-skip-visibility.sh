@@ -172,15 +172,42 @@ load_step_body() {
 # resolves through this PATH, and with the stub dir as the ENTIRE PATH an absent
 # bash makes every stub silently unexecutable — every case would then fail for a
 # reason unrelated to what it tests. `mktemp`/`rm` are what the step itself runs.
+#
+# `mkdir`/`cp`/`chmod`/`sha256sum`/`cut` are the CACHE chain's tools — the
+# restore branch's digest re-check and seeding copy, and the #742 staging block
+# that populates ~/.cache/agnix-bin on a miss. They are planted for every case
+# rather than only the cache ones because their absence is INVISIBLE: the
+# staging chain ends in `|| true`, so a missing `cp` would silently produce the
+# no-op the staging case exists to rule out, and the case would pass having
+# proven nothing. Planting them unconditionally cannot perturb the other cases —
+# the restore branch is still gated behind a `~/.cache/agnix-bin` that no case
+# plants, and the staging block behind a `$staged_bin` only the staging case
+# creates.
 stub_dir() {
     local __out="$1" dir tool src
     dir="$(command mktemp -d "$WORKDIR/stub.XXXXXX")" || return 1
     command mkdir -p "$dir/bin"
-    for tool in bash env mktemp rm cat printf grep sed dirname basename; do
+    for tool in bash env mktemp rm cat printf grep sed dirname basename \
+        mkdir cp chmod sha256sum cut; do
         src="$(command -v "$tool" 2>/dev/null)" || continue
         command ln -sf "$src" "$dir/bin/$tool" 2>/dev/null || true
     done
     printf -v "$__out" '%s' "$dir"
+}
+
+# npm_global_root <stubdir> — the directory this sandbox's `npm root -g` answers
+# with. Shaped like a real global root (`…/lib/node_modules`, the tail of the
+# `/cache/npm-global/lib/node_modules` recorded on the runner in #827) so a
+# reader is not misled into thinking the staging path is a flat one.
+#
+# A function rather than a literal because BOTH sides need it and they must not
+# drift: the stub prints it, and the staging case plants the binary the step is
+# expected to read from it. Two copies of the path would let a typo make the
+# case vacuous — the `-f` guard would find nothing and the staging chain would
+# take its silent no-op, which is precisely the #766 regression this case exists
+# to detect.
+npm_global_root() {
+    printf '%s\n' "$1/npm-global/lib/node_modules"
 }
 
 # plant_npm <dir> — an npm that logs its argv and takes its exit code from the
@@ -190,11 +217,65 @@ stub_dir() {
 #   NPM_GLOBAL_RC    `npm install -g …`
 # Dispatching on the ARGV the step actually passes (rather than call order) keeps
 # the stub honest if the step is ever reordered.
+#
+# `npm root -g` is answered FIRST, dispatching on the SUBCOMMAND at $1, and that
+# ordering is the whole point (#827). The generic loop below matches `-g`
+# anywhere in argv and exits with NPM_GLOBAL_RC — `npm root -g` hits that branch
+# and exits printing NOTHING, so `staged_bin` in the #742 staging block would
+# resolve to a bogus `/agnix/bin/agnix-binary`, the `-f` guard would no-op, and a
+# case written against the stub as-is would measure nothing. Dispatching on `root`
+# before that loop cannot disturb the existing `npm install -g` cases: their $1
+# is `install`, so they never reach this branch.
+#
+# This branch deliberately exits 0 rather than honouring NPM_GLOBAL_RC, even
+# though `npm root -g` does carry `-g`. That knob is documented above as the
+# `npm install -g …` exit code, and the two are different operations: a case
+# simulating a FAILED GLOBAL INSTALL would otherwise also break the root lookup,
+# so one knob could no longer express "the install failed" without also
+# expressing "npm cannot report its root". Simulating a failing `npm root -g`
+# wants its own variable; nothing needs one yet, so none is added.
+#
+# It also CREATES the directory it names, and the scratch tree for a
+# `--prefix` install, because the step treats both as real: `-f` guards and `cp`
+# targets. A stub that only printed a path would leave the staging block reading
+# a directory that does not exist.
 plant_npm() {
     local dir="$1"
+    command mkdir -p "$(npm_global_root "$dir")"
     {
         command printf '#!/usr/bin/env bash\n'
         command printf 'printf "npm %%s\\n" "$*" >>"%s/calls.log"\n' "$dir"
+        command printf 'if [ "${1:-}" = "root" ]; then printf "%%s\\n" "%s"; exit 0; fi\n' \
+            "$(npm_global_root "$dir")"
+        # Stand in for what a real `npm install --prefix DIR` produces: the
+        # package tree the step then reads and copies into. Without it the
+        # restore branch's seeding `cp` would fail for a reason unrelated to the
+        # branch under test, and the staging case could not plant its decoy.
+        #
+        # Gated on NPM_SCRATCH_RC being 0, because a real install that FAILS
+        # leaves no package tree behind. A stub that populated it either way
+        # would let a future NPM_SCRATCH_RC!=0 case find the artifacts of a
+        # success it did not get — which could mask a step that forgot to check
+        # the scratch install's exit code and only "worked" because the tree
+        # happened to be there. No case sets it non-zero today; the guard is
+        # here so the first one that does measures the real thing.
+        command printf 'prefix=""; take=""\n'
+        command printf 'for a in "$@"; do\n'
+        command printf '    if [ -n "$take" ]; then prefix="$a"; take=""; continue; fi\n'
+        command printf '    if [ "$a" = "--prefix" ]; then take=1; fi\n'
+        command printf 'done\n'
+        command printf 'if [ -n "$prefix" ] && [ "${NPM_SCRATCH_RC:-0}" -eq 0 ]; then\n'
+        command printf '    mkdir -p "$prefix/node_modules/agnix/bin"\n'
+        # NPM_DECOY_BYTES plants a binary at the PRE-#766 `$verify_dir` spelling.
+        # A real `--ignore-scripts` install leaves no binary here (that is the
+        # whole point of #766), so this is deliberately artificial: it exists so
+        # the staging case can tell the two SOURCES apart by content instead of
+        # resting on the wrong path happening to be empty. Off unless a case
+        # asks for it, so no other case sees a file it does not expect.
+        command printf '    if [ -n "${NPM_DECOY_BYTES:-}" ]; then\n'
+        command printf '        printf "%%s\\n" "$NPM_DECOY_BYTES" >"$prefix/node_modules/agnix/bin/agnix-binary"\n'
+        command printf '    fi\n'
+        command printf 'fi\n'
         command printf 'for a in "$@"; do\n'
         command printf '    if [ "$a" = "audit" ]; then exit "${NPM_AUDIT_RC:-0}"; fi\n'
         command printf '    if [ "$a" = "-g" ]; then exit "${NPM_GLOBAL_RC:-0}"; fi\n'
@@ -274,6 +355,7 @@ run_step() {
         NPM_SCRATCH_RC="${NPM_SCRATCH_RC:-0}" \
         NPM_AUDIT_RC="${NPM_AUDIT_RC:-0}" \
         NPM_GLOBAL_RC="${NPM_GLOBAL_RC:-0}" \
+        NPM_DECOY_BYTES="${NPM_DECOY_BYTES:-}" \
         AGNIX_RC="${AGNIX_RC:-0}" \
         "$REAL_BASH" -e -c "$body" 2>&1)" || STEP_RC=$?
     STEP_LOG="$(command cat "$dir/calls.log" 2>/dev/null || true)"
@@ -334,6 +416,84 @@ test_ci_broken_binary_is_visible_in_the_step_summary() {
     # run; the step summary renders on the run page itself.
     assert_contains "$STEP_SUMMARY" "agnix unavailable" \
         "a persistent skip is surfaced on the run page (\$GITHUB_STEP_SUMMARY), not only in log output (#741)"
+}
+
+# The OTHER arm of the outer `if`: the scratch install itself fails (registry
+# outage, offline runner), so `npm audit signatures` is never reached.
+#
+# Two things are pinned. First the STEP's behaviour: a failed scratch install
+# must warn-and-skip rather than fail the job, and must not go on to install
+# globally — the same best-effort contract the signature case covers, reached by
+# the other route.
+#
+# Second the FIXTURE's: NPM_SCRATCH_RC=1 must leave no scratch package tree
+# behind, because a real failed `npm install --prefix` leaves none. That guard
+# had no case exercising it — it was verified only by an ad-hoc probe while
+# writing it, and an unexercised guard in a fixture the whole suite trusts is
+# how a fixture silently stops modelling what it claims to.
+#
+# RECORDED, NOT ENDORSED: the message asserted below says "signature
+# verification failed", but this case never reaches `npm audit signatures` — the
+# scratch install failed first. Both routes share one `else`, so a plain
+# registry outage is announced as a supply-chain event, which is exactly the
+# conflation the #740 comment beside that branch says must not happen ("a
+# supply-chain signal must not read as an outage") — in the other direction.
+# The assertion pins what ci.yml ACTUALLY emits, because a test that asserted
+# the desirable text would fail today and this is a tests-only change (#827).
+# Splitting the branch is a ci.yml fix and wants its own issue; when it lands,
+# this expectation changes with it.
+test_ci_scratch_install_failure_warns_and_leaves_no_tree() {
+    local sb body
+    stub_dir sb || return 1
+    plant_npm "$sb"
+    plant_agnix "$sb"
+    load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
+
+    NPM_SCRATCH_RC=1 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
+
+    assert_equals "0" "$STEP_RC" \
+        "a failed scratch install does not fail the job (agnix is best-effort, ADR 0001 §2/§4)"
+    # Pinned on the FULL message, not a bare `::warning::`. That substring alone
+    # would pass against any warning text whatsoever, including one rewritten to
+    # something unrelated — a matcher with no teeth.
+    assert_contains "$STEP_OUT" "::warning::agnix signature verification failed" \
+        "the failed install is announced with the shared else-branch's message"
+    # THE #741 ASSERTION, which every sibling skip case carries and which this
+    # suite exists for: a persistent skip must reach the RUN PAGE, not only the
+    # job log nobody scrolls on a green run. A scratch-install failure is such a
+    # skip, and it reaches the summary by a DIFFERENT route than the audit
+    # failure, so a regression that stopped writing the line on this route only
+    # would be invisible without a case here.
+    assert_contains "$STEP_SUMMARY" "signature verification failed" \
+        "the scratch-install skip reaches \$GITHUB_STEP_SUMMARY too (#741) — the audit-failure route is a separate path through the same block"
+    assert_not_contains "$STEP_LOG" "npm install -g" \
+        "a failed scratch install must NOT reach the global install (#740: the audited bytes are the installed bytes)"
+    assert_not_contains "$STEP_OUTPUT" "installed=true" \
+        "a failed install must not arm the did-the-gate-run assertion (#766)"
+
+    # The FIXTURE half, asserted by driving the stub directly rather than by
+    # inspecting the step's $verify_dir: that directory is a `mktemp -d` created
+    # inside the step body, in TMPDIR and not under $sb, so a glob out here
+    # would match nothing and pass whether or not the guard worked — the
+    # vacuous-assertion trap this suite is built to avoid. Calling the stub with
+    # a prefix we choose keeps the check deterministic and in our own control.
+    local probe
+    probe="$sb/scratch-probe"
+    (NPM_SCRATCH_RC=1 "$sb/bin/npm" install --prefix "$probe" --ignore-scripts "agnix@0.0.0" >/dev/null 2>&1) || true
+    local made
+    made=0
+    [ -d "$probe/node_modules/agnix/bin" ] && made=1
+    assert_equals "0" "$made" \
+        "a FAILED scratch install leaves no package tree behind, as a real npm install does not (the NPM_SCRATCH_RC guard in plant_npm)"
+
+    # …and the same call with RC=0 DOES build it. Without this arm the check
+    # above would pass against a stub that had simply stopped creating the tree
+    # at all, which would silently break the staging case's decoy.
+    (NPM_SCRATCH_RC=0 "$sb/bin/npm" install --prefix "$sb/scratch-ok" --ignore-scripts "agnix@0.0.0" >/dev/null 2>&1) || true
+    made=0
+    [ -d "$sb/scratch-ok/node_modules/agnix/bin" ] && made=1
+    assert_equals "1" "$made" \
+        "a SUCCEEDING scratch install still builds the package tree (else the guard would have disabled the fixture wholesale)"
 }
 
 test_ci_signature_failure_is_its_own_event() {
@@ -447,6 +607,85 @@ test_ci_happy_path_is_quiet() {
     # positive arm; the negative arm is pinned by the failure cases below.
     assert_contains "$STEP_OUTPUT" "installed=true" \
         "a healthy install records installed=true (#766) — the regression-detection step is gated on it, so losing this output disarms the check without failing anything"
+}
+
+# --- ci.yml: the #742 cache-staging source (#827) ---------------------------
+
+# The staging block populates ~/.cache/agnix-bin on a cache MISS, reading from
+# the GLOBAL install root:
+#
+#     staged_bin="$(npm root -g)/agnix/bin/agnix-binary"
+#
+# That spelling is the half of #766 that would otherwise regress silently.
+# Under `--install-links` npm COPIES the package, so the postinstall writes
+# bin/agnix-binary into `npm root -g`, NOT into $verify_dir. Reverting to the
+# old `$verify_dir` spelling finds no file, takes the `-f` guard's silent no-op,
+# and quietly stops populating the cache — green, and never a cache hit again.
+#
+# WHY THIS ASSERTS ON CONTENT, NOT EXISTENCE. Existence alone would be a
+# one-directional test: the reverted spelling reads a path that (in a bare
+# sandbox) holds nothing, so `[ -f ]` is false and the case fails — but only
+# because the wrong path happened to be EMPTY, not because the test can tell the
+# two sources apart. So this case plants a DECOY at the $verify_dir spelling
+# with different bytes. The revert then finds a file, stages it, and the case
+# fails on the CONTENT mismatch. That is what makes the mutation distinguishable
+# in both directions rather than resting on an accident of the fixture.
+test_ci_cache_staging_reads_the_global_root() {
+    local sb body groot staged sidecar want_digest got_digest
+    stub_dir sb || return 1
+    plant_npm "$sb"
+    plant_agnix "$sb"
+    load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
+
+    # NON-VACUITY FLOOR. If the slice no longer reaches the staging block, every
+    # assertion below would compare against a cache that was never written for a
+    # reason this case is not testing.
+    assert_contains "$body" 'npm root -g' \
+        "the sliced step body reaches the cache-staging source (#742/#827)"
+
+    # The binary the step SHOULD read: the global install root, where the
+    # postinstall writes under --install-links.
+    groot="$(npm_global_root "$sb")"
+    command mkdir -p "$groot/agnix/bin"
+    command printf 'GLOBAL-ROOT-BYTES\n' >"$groot/agnix/bin/agnix-binary"
+
+    # THE DECOY, at the pre-#766 `$verify_dir` spelling. $verify_dir is a
+    # `mktemp -d` created INSIDE the step body, so no fixture out here can
+    # address it — the npm stub plants the decoy from within, on the same
+    # `--prefix` install the step performs.
+    #
+    # No ~/.cache/agnix-bin is planted, so agnix_cache_usable stays 0 — this is
+    # the cache-MISS arm, the only arm that performs the staging cp.
+    NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 \
+        NPM_DECOY_BYTES="VERIFY-DIR-BYTES" run_step "$sb" "$body"
+
+    assert_equals "0" "$STEP_RC" "the cache-miss staging path succeeds"
+    assert_contains "$STEP_LOG" "npm root -g" \
+        "the staging block queried npm root -g for its source (#827)"
+    assert_contains "$STEP_OUT" "agnix binary staged for cache save" \
+        "the staging cp chain ran to completion (its trailing || true would otherwise absorb a no-op silently)"
+
+    staged="$sb/.cache/agnix-bin/agnix-binary"
+    assert_file_exists "$staged" \
+        "the cache directory was populated on a miss"
+    # THE ASSERTION THIS CASE EXISTS FOR: the staged bytes came from the global
+    # install root, not from $verify_dir.
+    assert_file_contains "$staged" "GLOBAL-ROOT-BYTES" \
+        "the staged binary was read from \$(npm root -g), the half of #766 that would otherwise regress silently (#742/#827)"
+    assert_file_not_contains "$staged" "VERIFY-DIR-BYTES" \
+        "the staged binary is NOT the pre-#766 \$verify_dir source — reverting staged_bin must fail here, not merely find an empty path"
+
+    # The sidecar the restore branch re-checks against. A digest that did not
+    # describe the staged bytes would make the next run's re-check discard a
+    # perfectly good entry, so it is asserted as a real digest of a real file
+    # rather than merely present.
+    sidecar="$staged.sha256"
+    assert_file_exists "$sidecar" \
+        "the sha256 sidecar is written beside the staged binary"
+    want_digest="$(command sha256sum "$staged" | command cut -d' ' -f1)"
+    got_digest="$(command cut -d' ' -f1 <"$sidecar" 2>/dev/null || true)"
+    assert_equals "$want_digest" "$got_digest" \
+        "the sidecar digest describes the staged bytes (the restore branch re-checks against it)"
 }
 
 # --- ci.yml: the did-the-gate-actually-run assertion (#766) ------------------
@@ -867,12 +1106,16 @@ run_test test_ci_broken_binary_skips_without_failing \
     "ci.yml: a broken agnix binary skips instead of failing the job (#734)"
 run_test test_ci_broken_binary_is_visible_in_the_step_summary \
     "ci.yml: the broken-binary skip reaches the run-page summary"
+run_test test_ci_scratch_install_failure_warns_and_leaves_no_tree \
+    "ci.yml: a failed scratch install warns, skips the global install, and leaves no tree"
 run_test test_ci_signature_failure_is_its_own_event \
     "ci.yml: a signature failure is distinct, and blocks the global install"
 run_test test_ci_wrong_version_binary_skips \
     "ci.yml: a runnable but WRONG-version binary skips (stale cache, #742)"
 run_test test_ci_happy_path_is_quiet \
     "ci.yml: a healthy install announces no skip and installs the verified tree"
+run_test test_ci_cache_staging_reads_the_global_root \
+    "ci.yml: the cache-miss staging cp reads \$(npm root -g), not \$verify_dir (#742/#827)"
 run_test test_gate_inert_fails_the_job \
     "ci.yml: an installed-but-inert agnix gate FAILS the job (#766)"
 run_test test_gate_ran_clean_passes \
