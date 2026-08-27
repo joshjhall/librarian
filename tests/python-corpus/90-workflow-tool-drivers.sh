@@ -295,9 +295,10 @@ if [ -f "$LISTENER_PY" ]; then
     # Port LAST in the signature, per the with_free_port contract, so
     # `with_free_port 2 _cov_start_listener "$LISTENER_SB"` composes directly.
     _cov_start_listener() {
-        _csl_sb="$1"
-        _csl_port="$2"
-        _csl_tries=0
+        # `local`, so the scope is enforced structurally rather than by every
+        # call site remembering to `unset`. LISTENER_PID stays global on purpose
+        # — the shutdown block below and the caller both need it.
+        local _csl_sb="$1" _csl_port="$2" _csl_tries=0 _csl_waited=0
 
         # `exec` inside the backgrounded subshell is load-bearing: without it,
         # $! is the SUBSHELL's pid, the SIGTERM below reaps only that wrapper,
@@ -341,7 +342,6 @@ PY
         # resort; this attempt produced no coverage data worth preserving, so
         # unlike the success path there is nothing lost by using it.
         kill "$LISTENER_PID" 2>/dev/null || true
-        _csl_waited=0
         while [ "$_csl_waited" -lt 50 ]; do
             kill -0 "$LISTENER_PID" 2>/dev/null || break
             sleep 0.1
@@ -429,7 +429,7 @@ PY
         # This increment is now inside the SERVED branch, which is what makes that
         # true structurally rather than by a re-checked flag.
         run_count=$((run_count + 1))
-        unset _waited _csl_sb _csl_port _csl_tries _csl_waited
+        unset _waited
     else
         # DEGRADED, NOT FATAL (#780 AC3): a reporting script must not fail the run
         # over an optional component — so this stays a note and the script goes on
@@ -438,7 +438,6 @@ PY
         # is a broken listener, not a lost race, which is a materially different
         # diagnosis from the pre-#780 message.
         printf '[note] python-coverage — golem-event-listener did not start after 2 port attempts; skipping its driver\n'
-        unset _csl_sb _csl_port _csl_tries _csl_waited
     fi
 
     # Fail-loud startup arms, driven WITHOUT binding anything: a non-integer port
