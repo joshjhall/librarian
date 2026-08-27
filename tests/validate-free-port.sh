@@ -414,6 +414,76 @@ test_both_call_sites_use_the_helper() {
 # the value it reads is defined in the file both call sites already source — a
 # second definition in either suite would let them drift apart again, which is
 # the exact failure mode #825 item 2 describes.
+# The diagnostic RENDERS. Everything above checks the format string as SOURCE
+# TEXT, which cannot distinguish a working `printf '%s' "$PORT_ATTEMPTS"` from a
+# broken one: a swapped argument order, a dropped operand, or a `%d` fed a
+# non-numeric override all leave the literal unchanged and satisfy every static
+# assertion while printing the wrong thing. The message exists to tell an
+# operator how many ports were really tried, so the number reaching the terminal
+# is the whole point — and it is the one thing a source grep can never see.
+#
+# The PRODUCTION statements are executed, not re-typed. Rendering a copy of the
+# message here would test the copy: an operand dropped from the real `printf`
+# leaves this file's own rendering untouched, so the case would stay green
+# against exactly the defect it names. (Observed — that was the first draft.)
+#
+# So each message is extracted FROM ITS OWN FILE and eval'd. The gate ships a
+# `_port_attempts_msg` function, which `declare -f` can lift wholesale after
+# sourcing nothing else. The driver's `printf` is a bare statement inside a
+# fragment that cannot be sourced, so its two lines are pulled out by line range
+# and eval'd on their own — reading the bytes that ship, either way.
+#
+# PORT_ATTEMPTS is overridden to a value that CANNOT be confused with the
+# default: asserting "2" would pass against a printf that ignored its operand
+# and hardcoded 2, which is the tautology this case exists to avoid.
+test_attempt_count_renders_into_both_diagnostics() {
+    local gate="$REPO_ROOT/tests/validate-golem-event-listener.sh"
+    local drv="$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh"
+    local gate_fn drv_stmt gate_msg drv_msg
+
+    # The gate's helper, lifted by TEXT RANGE rather than by sourcing the file:
+    # sourcing it would execute a whole second test suite (it calls run_test at
+    # load), which is both wrong and slow. sed prints the definition from its
+    # header to its closing brace.
+    gate_fn="$(command sed -n '/^_port_attempts_msg() {/,/^}/p' "$gate")"
+    assert_not_empty "$gate_fn" \
+        "The gate's _port_attempts_msg was found (else nothing below is evidence)"
+
+    # The driver's printf, lifted by its distinguishing text plus the operand
+    # line that continues it. Two lines, because the statement is wrapped — and
+    # the trailing backslash is KEPT, since it is what joins them into one
+    # statement. Only leading indentation is stripped.
+    drv_stmt="$(command grep -A 1 -e 'did not start after %s port attempts' "$drv" |
+        command sed -e 's/^[[:space:]]*//')"
+    assert_not_empty "$drv_stmt" \
+        "The driver's printf statement was found"
+
+    gate_msg="$(
+        # Consumed by the eval'd production statement below, which shellcheck
+        # cannot see into.
+        # shellcheck disable=SC2034
+        PORT_ATTEMPTS=7
+        eval "$gate_fn"
+        _port_attempts_msg
+    )"
+    drv_msg="$(
+        # Consumed by the eval'd production statement below, which shellcheck
+        # cannot see into.
+        # shellcheck disable=SC2034
+        PORT_ATTEMPTS=7
+        eval "$drv_stmt"
+    )"
+
+    assert_contains "$gate_msg" "after 7 port attempts" \
+        "The behavioral gate's diagnostic renders the ATTEMPT COUNT, not the format string"
+    assert_not_contains "$gate_msg" "%s" \
+        "and leaves no unsubstituted placeholder"
+    assert_contains "$drv_msg" "after 7 port attempts" \
+        "The coverage driver's note renders it too"
+    assert_not_contains "$drv_msg" "%s" \
+        "and leaves no unsubstituted placeholder"
+}
+
 test_attempt_count_has_one_home() {
     # ANCHORED to the start of the line. An unanchored match is satisfied by the
     # COMMENT explaining the setting, so deleting the assignment while leaving
@@ -581,6 +651,7 @@ run_test test_non_numeric_attempts_is_rejected "Non-numeric attempts fails loud,
 run_test test_no_third_copy_of_the_idiom "No third copy of the allocation idiom"
 run_test test_both_call_sites_use_the_helper "Both call sites route through the helper"
 run_test test_attempt_count_has_one_home "The attempt count is defined once, in the shared helper"
+run_test test_attempt_count_renders_into_both_diagnostics "The attempt count RENDERS into both diagnostics"
 run_test test_both_reaps_are_bounded "Both failed-attempt reaps are bounded, not a bare wait"
 run_test test_bounded_reap_survives_a_sigterm_ignorer "A bounded reap terminates on a SIGTERM-ignoring child"
 run_test test_readiness_probe_cannot_hang "The readiness probe is bounded and identity-checked"
