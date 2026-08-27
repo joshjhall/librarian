@@ -536,6 +536,13 @@ test_extraction_pattern_tolerates_brace_spellings() {
     # A trailing DECOY function: over-capture has somewhere to run to. Without it
     # a broken end pattern would simply hit EOF at the same 3 lines and every
     # case would pass regardless.
+    #
+    # The heredoc is UNQUOTED because interpolating `$1` is the point — it is how
+    # each brace spelling reaches the fixture. The consequence is that every
+    # caller's argument must stay a plain literal: a `$`, a backtick or a `$(...)`
+    # in a future spelling would be EXPANDED rather than written, and the fixture
+    # would silently no longer contain what the case says it does. The four
+    # spellings below are literals; keep them that way.
     _write_fixture() {
         command cat >"$f" <<EOF
 target() {
