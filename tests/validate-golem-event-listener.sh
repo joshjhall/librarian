@@ -58,6 +58,11 @@ GOLEM_SCRUB=(GOLEM_STATUS_DIR GOLEM_WORKTREE_DIR
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
+# free_port / with_free_port — ephemeral port allocation with retry (#780). This
+# suite is an ENTRY POINT, so it sources the helper itself.
+# shellcheck source=tests/lib/free-port.sh
+source "$SCRIPT_DIR/lib/free-port.sh"
+
 test_suite "golem-event-listener.sh receiver (#407)"
 
 # --- Prerequisites ----------------------------------------------------------
@@ -107,18 +112,11 @@ new_sandbox() {
     printf -v "$__out" '%s' "$_newdir"
 }
 
-# free_port — an ephemeral loopback port the OS hands out (bind :0, read it back,
-# close). A tiny race between close and the listener's bind is acceptable for a
-# test; the listener FAILS LOUD on a bind collision, which the caller detects.
-free_port() {
-    python3 - <<'PY'
-import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])
-s.close()
-PY
-}
+# free_port lives in tests/lib/free-port.sh (#780) — sourced above. Callers use
+# `with_free_port <attempts> start_listener "$dir"`, which re-allocates and
+# re-attempts when the listener loses the bind-0-then-rebind race. The listener
+# FAILS LOUD on a bind collision, which is what makes start_listener a correct
+# retry predicate.
 
 # start_listener <sandbox> <port> — launch the listener in <sandbox> bound to
 # 127.0.0.1:<port>, wait until /healthz answers (bounded), set LISTENER_PID.
@@ -147,11 +145,35 @@ start_listener() {
             return 0
         fi
         # Bail early if the process already died (e.g. bind collision).
-        command kill -0 "$LISTENER_PID" 2>/dev/null || return 1
+        command kill -0 "$LISTENER_PID" 2>/dev/null || {
+            _reap_failed_listener
+            return 1
+        }
         command sleep 0.1
         tries=$((tries + 1))
     done
+    _reap_failed_listener
     return 1
+}
+
+# _reap_failed_listener — clear a FAILED start so a with_free_port retry begins
+# clean. Two things must happen, and neither is optional under retry:
+#
+#   * `wait` the pid, so the dead child is reaped rather than left a zombie for
+#     the rest of the suite (a one-shot start could leave it to the EXIT trap;
+#     a retry loop cannot, because it will start another one immediately);
+#   * clear LISTENER_PID, so the EXIT trap and the next stop_listener cannot
+#     signal a stale pid — which, after enough pid churn, is a signal aimed at
+#     whatever process inherited that number.
+#
+# A never-came-up listener may still be ALIVE but wedged (the readiness poll
+# simply timed out), so kill before waiting; a bind collision has already exited
+# and the kill is an absorbed no-op.
+_reap_failed_listener() {
+    [ -n "$LISTENER_PID" ] || return 0
+    command kill "$LISTENER_PID" 2>/dev/null || true
+    wait "$LISTENER_PID" 2>/dev/null || true
+    LISTENER_PID=""
 }
 
 stop_listener() {
@@ -184,14 +206,14 @@ test_post_gate_surfaces_via_gatewatch() {
     local dir port code out
     new_sandbox dir
     command printf '{"issue":5,"golem":"golem-5"}\n' >"$dir/.worktrees/.status/golem-5.json"
-    port="$(free_port)"
-    if ! start_listener "$dir" "$port"; then
-        _fail "listener did not start" "log: $(
+    if ! with_free_port 2 start_listener "$dir"; then
+        _fail "listener did not start after 2 port attempts" "log: $(
             feed_of "$dir"
             command cat "$dir/listener.log" 2>/dev/null
         )"
         return 1
     fi
+    port="$FREE_PORT"
     code="$(post "$port" "/" '{"golem":"golem-5","event":"gate","message":"Claude needs your permission to push"}')"
     assert_equals "204" "$code" "POST gate → 204"
     assert_file_contains "$dir/.worktrees/.status/feed.jsonl" '"golem":"golem-5"' \
@@ -216,11 +238,11 @@ test_post_escalation_preserves_kind() {
     fi
     local dir port code
     new_sandbox dir
-    port="$(free_port)"
-    start_listener "$dir" "$port" || {
-        _fail "listener did not start"
+    with_free_port 2 start_listener "$dir" || {
+        _fail "listener did not start after 2 port attempts"
         return 1
     }
+    port="$FREE_PORT"
     code="$(post "$port" "/" '{"golem":"golem-7","event":"escalation","message":"ESCALATION: pick an approach [gate-1-a]"}')"
     assert_equals "204" "$code" "POST escalation → 204"
     assert_file_contains "$dir/.worktrees/.status/feed.jsonl" '"event":"escalation"' \
@@ -237,11 +259,11 @@ test_normalization_defaults() {
     fi
     local dir port line
     new_sandbox dir
-    port="$(free_port)"
-    start_listener "$dir" "$port" || {
-        _fail "listener did not start"
+    with_free_port 2 start_listener "$dir" || {
+        _fail "listener did not start after 2 port attempts"
         return 1
     }
+    port="$FREE_PORT"
     post "$port" "/" '{"golem":"golem-3","message":"no event, no ts"}' >/dev/null
     line="$(feed_of "$dir")"
     assert_contains "$line" '"event":"gate"' "absent event defaults to gate"
@@ -271,11 +293,11 @@ test_malformed_ts_does_not_blank_floor() {
     new_sandbox dir
     command printf '{"issue":1,"golem":"golem-1"}\n' >"$dir/.worktrees/.status/golem-1.json"
     command printf '{"issue":2,"golem":"golem-2"}\n' >"$dir/.worktrees/.status/golem-2.json"
-    port="$(free_port)"
-    start_listener "$dir" "$port" || {
-        _fail "listener did not start"
+    with_free_port 2 start_listener "$dir" || {
+        _fail "listener did not start after 2 port attempts"
         return 1
     }
+    port="$FREE_PORT"
     # golem-1 sends a hostile/buggy fractional-second ts fromdateiso8601 cannot
     # parse; golem-2 sends none (listener stamps a fresh valid one).
     post "$port" "/" '{"ts":"2026-07-21T10:00:00.123456Z","golem":"golem-1","event":"gate","message":"gate one"}' >/dev/null
@@ -301,11 +323,11 @@ test_orphan_sentinel_not_appended() {
     fi
     local dir port code
     new_sandbox dir
-    port="$(free_port)"
-    start_listener "$dir" "$port" || {
-        _fail "listener did not start"
+    with_free_port 2 start_listener "$dir" || {
+        _fail "listener did not start after 2 port attempts"
         return 1
     }
+    port="$FREE_PORT"
     code="$(post "$port" "/" '{"golem":"golem-?","event":"gate","message":"x"}')"
     assert_equals "204" "$code" "orphan sentinel POST is ACKed (204)"
     assert_true "[ ! -s '$dir/.worktrees/.status/feed.jsonl' ]" \
@@ -324,11 +346,11 @@ test_bad_requests_rejected_without_crash() {
     local dir port code
     new_sandbox dir
     command printf '{"issue":8,"golem":"golem-8"}\n' >"$dir/.worktrees/.status/golem-8.json"
-    port="$(free_port)"
-    start_listener "$dir" "$port" || {
-        _fail "listener did not start"
+    with_free_port 2 start_listener "$dir" || {
+        _fail "listener did not start after 2 port attempts"
         return 1
     }
+    port="$FREE_PORT"
     assert_equals "400" "$(post "$port" "/" 'not json')" "invalid JSON → 400"
     assert_equals "400" "$(post "$port" "/" '[1,2,3]')" "non-object JSON → 400"
     # Oversized: exceed GOLEM_EVENT_MAX_BODY (default 65536) → 413.
@@ -354,11 +376,11 @@ test_healthz() {
     fi
     local dir port out
     new_sandbox dir
-    port="$(free_port)"
-    start_listener "$dir" "$port" || {
-        _fail "listener did not start"
+    with_free_port 2 start_listener "$dir" || {
+        _fail "listener did not start after 2 port attempts"
         return 1
     }
+    port="$FREE_PORT"
     out="$(curl -s "http://127.0.0.1:$port/healthz" 2>/dev/null || true)"
     assert_contains "$out" "ok" "GET /healthz → ok"
     stop_listener
