@@ -198,16 +198,20 @@ jobs:
       # bytes by construction, so the guarantee holds without that assumption.
       #
       # SCOPE OF THAT GUARANTEE, stated exactly because the general case is
-      # weaker than it looks: `npm install -g <local-dir>` PACKS the directory,
-      # and a pack conventionally excludes `node_modules`. For a package with
-      # runtime dependencies, npm would re-resolve that dependency closure from
+      # weaker than it looks: `npm install -g --install-links <local-dir>` PACKS
+      # the directory (measured — note that WITHOUT `--install-links` npm
+      # symlinks instead and packs nothing, which is the #766 defect; this
+      # comment and code-scanning.yml's twin disagreed on this point until #766
+      # measured it), and a pack conventionally excludes `node_modules`. For a
+      # package with runtime dependencies, npm would re-resolve that closure from
       # the registry — a second unaudited fetch, the same TOCTOU shape one level
       # down. agnix has NO dependencies of any kind (no `dependencies`,
       # `optionalDependencies`, or `peerDependencies`; its lockfile closure in
       # the scratch tree is the single entry `node_modules/agnix`), so the
       # audited closure and the installed closure are the same one package.
-      # Confirmed empirically: `npm install -g --offline` from the verified tree
-      # succeeds, which it could not do if any byte still had to be fetched.
+      # Confirmed empirically: `npm install -g --install-links --offline` from
+      # the verified tree succeeds, which it could not do if any byte still had
+      # to be fetched. Re-confirmed with `--install-links` when #766 added it.
       #
       # This is therefore a property of agnix, not of the pattern. Should agnix
       # ever gain a dependency, this reasoning stops holding and the step needs

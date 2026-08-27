@@ -130,6 +130,15 @@ the two workflows' comments **contradicted each other** on this point
 (`ci.yml` "SYMLINKS" vs `code-scanning.yml` "PACKS") — measurement settled it and
 both now say the same thing.
 
+**Review cycle 1 caught this claim being half-true**, which is worth recording
+rather than quietly fixing. The first pass updated `code-scanning.yml`'s "SCOPE
+OF THAT GUARANTEE" block but left `ci.yml`'s twin describing the *un-flagged*
+command, while this document already asserted both agreed. Two independent
+dimensions (correctness and conventions) flagged it, naming the repo's own
+`harden-one-knob-grep-every-sibling` lesson: the sibling **code** was fixed in
+both files, but the sibling **comment** was refreshed in only one. The fix
+sweeps both `PACKS the directory` and the `--offline` line in `ci.yml`.
+
 ## Local evidence, before and after
 
 The gate could not be exercised in-session until agnix was installed **with the
@@ -177,6 +186,27 @@ assertion fires only on the combination that is always a defect — **agnix
 installed, and the gate still did not run** — and stays silent whenever agnix is
 legitimately unavailable.
 
+**Both halves are covered locally, not deferred to a live run** (added in review
+cycle 1, which correctly flagged that shipping an untested regression-detector is
+self-defeating — it is the one check whose whole job is catching a silent
+failure):
+
+- `installed=true` is asserted **present** on the healthy path and **absent** on
+  the broken-binary and signature-failure paths. The negative arms are what keep
+  agnix best-effort: writing the output on a failed install would arm the
+  assertion and fail the job on every runner that legitimately cannot install
+  agnix.
+- The step's own logic is driven with a **stubbed gate** exiting 77 / 0 / 1.
+  The stub is what makes all three reachable — on a real tree the gate cannot
+  return 77 without uninstalling agnix. The 1 case pins that a *real* gate
+  failure is **not** relabelled as an inert gate: the suite already failed the
+  job on the finding, and mislabelling it would misdirect whoever reads the
+  annotation.
+
+Mutation-tested: neutering the `77` comparison fails the inert-gate case while
+both control cases stay green; deleting the `installed=true` write fails the
+healthy-path case.
+
 ## Remaining CI-only confirmation
 
 Everything above is local or from pre-fix CI logs. The post-fix CI signal must be
@@ -185,8 +215,10 @@ read off the PR run:
 - `Skill/agent quality gates` → `[ok] agnix error-free`, **not** `[SKIP] … did
   not run`.
 - `agnix → code scanning` → uploads SARIF, **not** `produced no valid SARIF`.
-- `Assert the agnix gate actually ran` → passes (proving it is armed, since it
-  runs only when the install reported success).
+- `Assert the agnix gate actually ran` → passes **and is not skipped**. Its
+  local coverage proves the logic; only a live run proves the `installed=true`
+  wiring reaches it through the real `steps.<id>.outputs` plumbing, so check the
+  step ran rather than that it merely did not fail.
 
 Both were failing signals before this change, so they are genuine before/after
 evidence rather than a check that was always green.
