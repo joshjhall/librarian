@@ -218,7 +218,13 @@ test_scanner_agrees_on_companion() {
 # dated transcripts in and pressure someone to edit a session log to fit a
 # budget. Asserts the shipped default is the plugins dir specifically.
 test_verification_docs_out_of_scope() {
-    assert_file_contains "$GATE" 'PLUGINS_DIR="${PROSE_BUDGET_PLUGINS_DIR:-$REPO_ROOT/plugins}"' \
+    # assert_file_DEFINES, not _contains (#830). This one was a LIVE hole, not a
+    # masked one: every behavioural sibling in this suite OVERRIDES
+    # PROSE_BUDGET_PLUGINS_DIR, so none exercises the shipped default and this
+    # text match was the only thing pinning it. Widening the root to $REPO_ROOT —
+    # exactly the regression described above — while leaving the old text in a
+    # trailing comment kept the whole suite 26/26 green.
+    assert_file_defines "$GATE" 'PLUGINS_DIR="${PROSE_BUDGET_PLUGINS_DIR:-$REPO_ROOT/plugins}"' \
         "The walked root is plugins/, not the repo root (keeps docs/verification out)"
     assert_file_not_contains "$GATE" 'find "$REPO_ROOT" -type f -name' \
         "The gate never walks the whole repo"
