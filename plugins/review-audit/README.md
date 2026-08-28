@@ -36,6 +36,14 @@ deterministic `patterns.sh` pre-scan with LLM analysis:
 - `check-docs-staleness` — comments contradicting code, outdated refs, expired
   dates
 
+Which languages each scanner models, and what it does with a file whose language
+it does not model, is governed by
+[`docs/adr/0002-scanner-language-support.md`](docs/adr/0002-scanner-language-support.md).
+Every `check-*` scanner listed above with per-language dispatch declares its
+coverage in a `## Language Support` matrix in its own `contract.md`; those
+matrices are gate-checked against both runtimes by
+`tests/lint-language-table-sync.sh`.
+
 ## Agents (9)
 
 The `codebase-audit` orchestrator fans out to per-dimension audit agents, then
