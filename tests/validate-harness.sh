@@ -539,6 +539,42 @@ test_assert_file_defines_value_form_pins_the_value() {
     command rm -rf "$d"
 }
 
+# index()==1 is a PREFIX test, so the value form needs a right-hand boundary or
+# a superset value satisfies the pin: `=770` would satisfy a pin of `=77`, and
+# `|| exit 10` a pin of `|| exit 1` — the latter live in the swept ci.yml /
+# release.yml assertion. Both were reproduced before the boundary was added.
+# The earlier value test cannot catch this: it compares 77 against 99, which
+# share no prefix, so it passes with and without the guard.
+test_assert_file_defines_value_form_rejects_a_superset() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'SKIP_EXIT_CODE=770'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" "SKIP_EXIT_CODE=77" "770 is not 77")"
+    assert_contains "$out" "770 is not 77" \
+        "assert_file_defines: a LONGER value does not satisfy the pinned one"
+    defines_fixture "$d" ci.yml 'ruff_version="$(bash bin/ruff-version.sh)" || exit 10'
+    out="$(capture_assert assert_file_defines "$d/ci.yml" \
+        'ruff_version="$(bash bin/ruff-version.sh)" || exit 1' "exit 10 is not exit 1")"
+    assert_contains "$out" "exit 10 is not exit 1" \
+        "assert_file_defines: '|| exit 10' does not satisfy a pin of '|| exit 1'"
+    command rm -rf "$d"
+}
+
+# The boundary must tolerate what is invisible to the value: trailing whitespace
+# and a `\` line continuation. Without this the guard would reject the real
+# wrapped call sites it was added to protect.
+test_assert_file_defines_value_form_tolerates_continuation() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'SKIP_EXIT_CODE=77   '
+    out="$(capture_assert assert_file_defines "$d/gate.sh" "SKIP_EXIT_CODE=77")"
+    assert_equals "" "$out" "assert_file_defines: trailing whitespace does not break the pin"
+    defines_fixture "$d" wrapped.sh 'SKIP_EXIT_CODE=77 \'
+    out="$(capture_assert assert_file_defines "$d/wrapped.sh" "SKIP_EXIT_CODE=77")"
+    assert_equals "" "$out" "assert_file_defines: a trailing continuation does not break the pin"
+    command rm -rf "$d"
+}
+
 # The value form must still exclude comments — this is the exact shape of the
 # swept call sites, and the exact defect #830 reported.
 test_assert_file_defines_value_form_excludes_comments() {
@@ -624,6 +660,8 @@ run_test test_assert_file_defines_prefix_does_not_satisfy "assert_file_defines: 
 run_test test_assert_file_defines_longer_name_does_not_satisfy "assert_file_defines: a longer suffixed name does not satisfy"
 run_test test_assert_file_defines_name_is_literal_not_regex "assert_file_defines: the name matches literally, not as a regex"
 run_test test_assert_file_defines_value_form_pins_the_value "assert_file_defines: a NAME=value form pins the value"
+run_test test_assert_file_defines_value_form_rejects_a_superset "assert_file_defines: the value form rejects a superset value"
+run_test test_assert_file_defines_value_form_tolerates_continuation "assert_file_defines: the value form tolerates trailing space and continuation"
 run_test test_assert_file_defines_value_form_excludes_comments "assert_file_defines: the value form still excludes comments"
 run_test test_assert_file_defines_missing_file_fails "assert_file_defines: a missing file fails"
 run_test test_assert_file_defines_failure_names_the_near_miss "assert_file_defines: the failure names the commented near-miss"

@@ -150,13 +150,34 @@ function pattern_of(line,   rest) {
     return ""
 }
 {
-    line = $0
+    # JOIN CONTINUATION LINES FIRST. These assertions routinely wrap with a
+    # trailing backslash — tests/validate-free-port.sh:376 puts the call and
+    # "$gate" on one line and the PATTERN on the next — and a per-line scan sees
+    # neither half: the call line has no closing quote for the pattern, and the
+    # pattern line does not contain the function name. The gate would then be
+    # blind to exactly the wrapped style this repo writes most, which is the same
+    # silent false-negative #830 exists to prevent, reached by a different route.
+    #
+    # Accumulate into `buf` until a line does not end in `\`, then judge the
+    # joined text. `first_nr` keeps the report pointing at the line the call
+    # STARTS on, which is where a reader has to go to fix it.
+    raw = $0
+    if (buf == "") first_nr = NR
+    stripped = raw
+    cont = (stripped ~ /\\[[:space:]]*$/)
+    sub(/[[:space:]]*\\[[:space:]]*$/, "", stripped)
+    buf = (buf == "") ? stripped : buf " " stripped
+    if (cont) next
+
+    line = buf
+    buf = ""
+
     pat = (line ~ /assert_file_(not_)?contains/) ? pattern_of(line) : ""
 
     if (pat != "" && is_definition(pat)) {
         # Exempt when the marker is on this line, or anywhere in the contiguous
         # comment block directly above it.
-        if (!is_exempt(line) && !block_exempt) printf "%d:%s\n", NR, pat
+        if (!is_exempt(line) && !block_exempt) printf "%d:%s\n", first_nr, pat
     }
 
     # Maintain the comment-block state AFTER judging this line, so a marker on
@@ -165,6 +186,15 @@ function pattern_of(line,   rest) {
         if (is_exempt(line)) block_exempt = 1
     } else {
         block_exempt = 0
+    }
+}
+END {
+    # A file whose last line ends in a backslash leaves buf unjudged. Rare, but
+    # dropping it silently is the failure mode this whole gate is about.
+    if (buf != "") {
+        pat = (buf ~ /assert_file_(not_)?contains/) ? pattern_of(buf) : ""
+        if (pat != "" && is_definition(pat) && !is_exempt(buf) && !block_exempt)
+            printf "%d:%s\n", first_nr, pat
     }
 }
 '
@@ -298,6 +328,32 @@ FIXTURE
     command rm -rf "$d"
 }
 
+# These assertions routinely WRAP with a trailing backslash — the call and the
+# file argument on one line, the pattern on the next (tests/validate-free-port.sh
+# writes 5 calls in exactly this shape). A per-line scan sees neither half and
+# the gate is silently blind to the style this repo writes most. Measured: the
+# joined scan sees 98 patterns in the real corpus where the per-line scan saw 82.
+test_wrapped_call_is_detected() {
+    local d
+    d="$(command mktemp -d)"
+    command cat >"$d/w.sh" <<'FIXTURE'
+    assert_file_contains "$gate" \
+        "WRAPPED_DEFN=77" \
+        "a definition-shaped pattern on a continuation line"
+    assert_file_contains "$gate" \
+        'with_free_port "$PORT_ATTEMPTS" start_listener' \
+        "a wrapped PHRASE assertion stays unflagged"
+FIXTURE
+    scan_file "$d/w.sh"
+    assert_contains "$CUR_VIOLATIONS" "WRAPPED_DEFN=77" \
+        "a wrapped definition-shaped assertion is detected"
+    assert_contains "$CUR_VIOLATIONS" ":1:" \
+        "the violation is reported at the line the CALL starts on"
+    assert_not_contains "$CUR_VIOLATIONS" "with_free_port" \
+        "a wrapped phrase assertion is still spared"
+    command rm -rf "$d"
+}
+
 # The exemption works from either line, and a BARE marker does not exempt —
 # the reason is what separates a considered exception from a silenced failure.
 test_exemption_requires_a_reason() {
@@ -378,6 +434,7 @@ run_test test_corpus_non_empty "Corpus discovery is non-empty (gate is not a no-
 run_test test_exclusions_are_deliberate "Exclusions are two explicit paths, not globs"
 run_test test_real_corpus_is_clean "No unanchored definition-shaped assertions in tests/"
 run_test test_detection_fires_and_is_narrow "Detection flags definitions and spares phrases"
+run_test test_wrapped_call_is_detected "A backslash-wrapped call is detected, not skipped"
 run_test test_exemption_requires_a_reason "lint-allow-unanchored exempts only with a reason"
 run_test test_scanner_regexes_are_portable "The scanner's own regexes are BSD-clean"
 if [ -z "${LINT_DEFN_NO_RESPAWN:-}" ]; then

@@ -306,15 +306,31 @@ assert_file_defines() {
     # The trailing `=` is load-bearing and NOT redundant with index()==1: without
     # it, `NAMEX=1` matches `NAME` at index 1. A NAME that already carries an
     # `=` (pinning a value) is used as-is rather than gaining a second one.
-    local needle="$name"
+    #
+    # The VALUE form additionally needs a RIGHT-hand boundary. index()==1 is a
+    # prefix test, so without it a pin of `SKIP_EXIT_CODE=77` is satisfied by a
+    # file saying `SKIP_EXIT_CODE=770`, and a pin of `... || exit 1` by
+    # `... || exit 10` — the assertion silently degrades to the presence check
+    # the value form exists to avoid. Both were reproduced before this guard.
+    # The line must therefore END at the needle (trailing whitespace and a
+    # trailing `\` continuation are tolerated, since both are invisible to the
+    # value being pinned). The BARE form needs no such check: its appended `=`
+    # already terminates the name.
+    local needle="$name" exact=0
     case "$name" in
-        *=*) ;;
+        *=*) exact=1 ;;
         *) needle="$name=" ;;
     esac
-    if command awk -v n="$needle" '
+    if command awk -v n="$needle" -v exact="$exact" '
         { line = $0
           sub(/^[[:space:]]+/, "", line)
-          if (index(line, n) == 1) { found = 1; exit } }
+          if (index(line, n) != 1) next
+          if (exact) {
+              rest = substr(line, length(n) + 1)
+              sub(/[[:space:]]*\\?[[:space:]]*$/, "", rest)
+              if (rest != "") next
+          }
+          found = 1; exit }
         END { exit !found }' "$file"; then
         return 0
     fi
