@@ -83,6 +83,15 @@ PLUGINS_DIR="$REPO_ROOT/plugins"
 # shellcheck source=tests/lib/free-port.sh
 . "$SCRIPT_DIR/lib/free-port.sh"
 
+# _cov_start_listener — the listener's one-start-attempt callback (#825). Sourced
+# HERE for the same reason free-port.sh is, and additionally because it must be
+# reachable from tests/validate-cov-listener.sh: while it lived in the 90-
+# fragment nothing could call it, so its failed-attempt reap was never executed
+# by any test. It consumes exec_coverage/PLUGINS_DIR/LISTENER_PY, all of which
+# the driver fragment establishes before invoking it.
+# shellcheck source=tests/lib/cov-listener.sh
+. "$SCRIPT_DIR/lib/cov-listener.sh"
+
 # --- Runtime gate: python3>=3.11 + a coverage.py RUNNER, else skip cleanly ---
 #
 # die_or_skip <reason> — skip (exit 0) normally; FAIL LOUD when the caller

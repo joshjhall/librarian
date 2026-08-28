@@ -361,24 +361,246 @@ test_no_third_copy_of_the_idiom() {
 
 # The two real call sites route through the helper. Asserted statically so it
 # holds on a host that skips the behavioral suites for want of a runtime.
+#
+# Both now spell the count as "$PORT_ATTEMPTS" rather than a literal 2 (#825
+# item 2). The ABSENCE arms below are what give that its teeth: a call site that
+# regressed to a literal would still satisfy a `with_free_port` substring check,
+# so the pair — contains the variable, does NOT contain the literal — is the
+# claim. They are deliberately narrow ("after 2 port attempts", " 2 start_",
+# " 2 _cov_") so that a legitimate `with_free_port 3` in a fixture, or prose
+# mentioning the number, cannot trip them.
 test_both_call_sites_use_the_helper() {
-    assert_file_contains "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
-        "with_free_port 2 start_listener" \
+    local gate="$REPO_ROOT/tests/validate-golem-event-listener.sh"
+    local drv="$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh"
+
+    assert_file_contains "$gate" \
+        'with_free_port "$PORT_ATTEMPTS" start_listener' \
         "The behavioral gate starts its listener through the retry helper"
+    assert_file_not_contains "$gate" "with_free_port 2 start_listener" \
+        "and does not restate the attempt count as a literal"
+
     assert_file_contains "$REPO_ROOT/tests/coverage-python.sh" \
         "lib/free-port.sh" \
         "The coverage entry point sources the helper (not the sourced fragment)"
-    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
-        "with_free_port 2 _cov_start_listener" \
+    assert_file_contains "$REPO_ROOT/tests/coverage-python.sh" \
+        "lib/cov-listener.sh" \
+        "and sources the listener's start attempt, which #825 extracted so it could be tested"
+
+    assert_file_contains "$drv" \
+        'with_free_port "$PORT_ATTEMPTS" _cov_start_listener' \
         "The coverage driver starts its listener through the retry helper"
+    assert_file_not_contains "$drv" "with_free_port 2 _cov_start_listener" \
+        "and does not restate the attempt count as a literal"
+
     # AC3: the degraded path stays non-fatal AND visible. A `[FAIL]`/`exit 1`
     # here would fail a run over an optional component.
-    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
-        "did not start after 2 port attempts" \
-        "The coverage driver's degraded note names the retry"
-    assert_file_not_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+    assert_file_contains "$drv" \
+        "did not start after %s port attempts" \
+        "The coverage driver's degraded note names the retry, with the count interpolated"
+    assert_file_not_contains "$drv" "did not start after 2 port attempts" \
+        "not hardcoded — a literal would keep saying 2 after the count was raised"
+    assert_file_contains "$gate" \
+        "did not start after %s port attempts" \
+        "The behavioral gate's diagnostic interpolates it too"
+    assert_file_not_contains "$gate" "did not start after 2 port attempts" \
+        "and no call site of it restates the literal"
+
+    assert_file_not_contains "$drv" \
         "no free port; skipping" \
         "The old un-retried allocation-failure note is gone"
+}
+
+# The diagnostic RENDERS. Everything above checks the format string as SOURCE
+# TEXT, which cannot distinguish a working `printf '%s' "$PORT_ATTEMPTS"` from a
+# broken one: a swapped argument order, a dropped operand, or a `%d` fed a
+# non-numeric override all leave the literal unchanged and satisfy every static
+# assertion while printing the wrong thing. The message exists to tell an
+# operator how many ports were really tried, so the number reaching the terminal
+# is the whole point — and it is the one thing a source grep can never see.
+#
+# The PRODUCTION statements are executed, not re-typed. Rendering a copy of the
+# message here would test the copy: an operand dropped from the real `printf`
+# leaves this file's own rendering untouched, so the case would stay green
+# against exactly the defect it names. (Observed — that was the first draft.)
+#
+# So each message is extracted FROM ITS OWN FILE and eval'd — the bytes that
+# ship, in both cases. Neither file can simply be sourced: the gate would run a
+# whole second test suite (it calls run_test at load), and the driver is a
+# fragment that presupposes a coverage run. So each is lifted as text instead,
+# by the shape that fits it — see the two extractions below.
+#
+# PORT_ATTEMPTS is overridden to a value that CANNOT be confused with the
+# default: asserting "2" would pass against a printf that ignored its operand
+# and hardcoded 2, which is the tautology this case exists to avoid.
+test_attempt_count_renders_into_both_diagnostics() {
+    local gate="$REPO_ROOT/tests/validate-golem-event-listener.sh"
+    local drv="$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh"
+    local gate_fn drv_stmt gate_msg drv_msg
+
+    # The gate's helper, lifted by TEXT RANGE rather than by sourcing the file:
+    # sourcing it would execute a whole second test suite (it calls run_test at
+    # load), which is both wrong and slow. sed prints the definition from its
+    # header to its closing brace.
+    gate_fn="$(command sed -n '/^_port_attempts_msg() {/,/^}[[:space:]]*\(#.*\)*$/p' "$gate")"
+    assert_not_empty "$gate_fn" \
+        "The gate's _port_attempts_msg was found (else nothing below is evidence)"
+
+    # A RANGE extraction fails in BOTH directions, and non-emptiness catches
+    # neither. Too short: a body line beginning with `}` ends the range early and
+    # captures a truncated fragment. Too long: an end pattern the real brace no
+    # longer matches runs on to the NEXT match and swallows everything between.
+    #
+    # The over-grown direction is the dangerous one, and it is not theoretical —
+    # measured here: with the end pattern written `/^}$/`, adding ONE trailing
+    # space to the closing brace grew the capture from 3 lines to 56, and the
+    # case still PASSED, because the swallowed text happened to parse and still
+    # defined the function. A `bash -n` guard alone cannot see that; only a
+    # length bound can. This is the end-marker-overgrows-the-region shape, where
+    # a moved END delimiter is silent while a moved START one errors loudly.
+    #
+    # Note `bash -n` cannot see the over-grown direction at all: two complete
+    # function definitions concatenated parse exactly as cleanly as one. Only the
+    # bound distinguishes them, which is why both guards are here rather than
+    # either alone.
+    #
+    # So: the end pattern tolerates trailing whitespace AND an inline comment on
+    # the closing brace (the two ways it plausibly drifts), the capture is
+    # bounded to a handful of lines, and the text must parse. A body that
+    # legitimately outgrows the bound should raise it deliberately — a visible
+    # edit, not a silent swallow. BRE `\(...\)` with `*`, not ERE `(...)?`,
+    # because BSD sed on macOS reads the ERE spelling as literals.
+    assert_true "[ \"\$(command printf '%s\\n' \"\$gate_fn\" | command wc -l)\" -le 8 ]" \
+        "and the capture is BOUNDED — an end pattern that stopped matching would swallow the file"
+    assert_true "command printf '%s' \"\$gate_fn\" | bash -n" \
+        "and parses as a complete function, so a truncated range fails loud rather than mid-eval"
+
+    # The driver's printf, lifted by its distinguishing text plus the operand
+    # line that continues it. Two lines, because the statement is wrapped — and
+    # the trailing backslash is KEPT, since it is what joins them into one
+    # statement. Only leading indentation is stripped.
+    drv_stmt="$(command grep -A 1 -e 'did not start after %s port attempts' "$drv" |
+        command sed -e 's/^[[:space:]]*//')"
+    assert_not_empty "$drv_stmt" \
+        "The driver's printf statement was found"
+
+    gate_msg="$(
+        # Consumed by the eval'd production statement below, which shellcheck
+        # cannot see into.
+        # shellcheck disable=SC2034
+        PORT_ATTEMPTS=7
+        eval "$gate_fn"
+        _port_attempts_msg
+    )"
+    drv_msg="$(
+        # Consumed by the eval'd production statement below, which shellcheck
+        # cannot see into.
+        # shellcheck disable=SC2034
+        PORT_ATTEMPTS=7
+        eval "$drv_stmt"
+    )"
+
+    assert_contains "$gate_msg" "after 7 port attempts" \
+        "The behavioral gate's diagnostic renders the ATTEMPT COUNT, not the format string"
+    assert_not_contains "$gate_msg" "%s" \
+        "and leaves no unsubstituted placeholder"
+    assert_contains "$drv_msg" "after 7 port attempts" \
+        "The coverage driver's note renders it too"
+    assert_not_contains "$drv_msg" "%s" \
+        "and leaves no unsubstituted placeholder"
+}
+
+# PORT_ATTEMPTS has ONE home. The interpolation proven above is only worth
+# something if the value it reads is defined in the file both call sites already
+# source — a second definition in either suite would let them drift apart again,
+# which is the exact failure mode #825 item 2 describes.
+# The EXTRACTION PATTERN itself, pinned against synthetic fixtures.
+#
+# test_attempt_count_renders_into_both_diagnostics exercises the sed range
+# against the real gate file only, whose closing brace happens to be a bare `}`.
+# So the tolerance the pattern was widened to provide — trailing whitespace, an
+# inline comment — is currently demonstrated by nothing: a future edit that
+# reverted `\(#.*\)*`, or mis-escaped it for another sed flavour, would leave
+# every existing assertion green because the real file has no trailing content to
+# trip over. The mutations that proved it were run by hand, once, and hand-run
+# mutations do not survive into the suite.
+#
+# These fixtures are that proof, persisted. Each is a three-line function whose
+# closing brace is spelled a different plausible way; the correct capture is
+# always exactly those three lines. The last case is the DIVERGENCE ARM — a brace
+# the pattern must NOT accept — because tolerance that accepted everything would
+# pass all three positive cases while capturing to the end of the file.
+test_extraction_pattern_tolerates_brace_spellings() {
+    local f="$WORKDIR/extract-fixture.sh" got
+    local end='/^}[[:space:]]*\(#.*\)*$/'
+
+    # A trailing DECOY function: over-capture has somewhere to run to. Without it
+    # a broken end pattern would simply hit EOF at the same 3 lines and every
+    # case would pass regardless.
+    #
+    # The heredoc is UNQUOTED because interpolating `$1` is the point — it is how
+    # each brace spelling reaches the fixture. The consequence is that every
+    # caller's argument must stay a plain literal: a `$`, a backtick or a `$(...)`
+    # in a future spelling would be EXPANDED rather than written, and the fixture
+    # would silently no longer contain what the case says it does. The four
+    # spellings below are literals; keep them that way.
+    _write_fixture() {
+        command cat >"$f" <<EOF
+target() {
+    command printf 'x'
+$1
+decoy() {
+    command printf 'y'
+}
+EOF
+    }
+
+    _write_fixture '}'
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_equals "3" "$got" "A bare closing brace ends the range"
+
+    _write_fixture '}   '
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_equals "3" "$got" "Trailing whitespace on the brace still ends it (else the range swallows the decoy)"
+
+    _write_fixture '}  # end of target'
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_equals "3" "$got" "An inline comment on the brace still ends it"
+
+    # Teeth: the pattern is anchored, so an INDENTED brace is not an end marker.
+    # If this captured 3, the pattern would be matching any brace anywhere and
+    # the three cases above would prove nothing.
+    _write_fixture '    }'
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    assert_true "[ \"$got\" -gt 3 ]" \
+        "An INDENTED brace is not an end marker — the tolerance is not blanket"
+
+    unset -f _write_fixture
+}
+
+test_attempt_count_has_one_home() {
+    # ANCHORED to the start of the line. An unanchored match is satisfied by the
+    # COMMENT explaining the setting, so deleting the assignment while leaving
+    # the prose keeps this green — found by mutation, and the exact
+    # config-prose-satisfies-its-own-assertion shape this repo has hit before.
+    assert_file_contains "$REPO_ROOT/tests/lib/free-port.sh" \
+        '^PORT_ATTEMPTS="${PORT_ATTEMPTS:-' \
+        "The attempt count is defined in the shared helper, and is env-overridable"
+    # The value is REACHABLE, not merely present. Sourcing the helper in a
+    # subshell under `set -u` is the same condition every consumer runs under, so
+    # an assignment that is commented out, misspelled, or guarded away fails here
+    # rather than surfacing as a suite that dies mid-case with no diagnostic.
+    assert_true \
+        "(set -u; . '$REPO_ROOT/tests/lib/free-port.sh'; [ -n \"\$PORT_ATTEMPTS\" ])" \
+        "and sourcing the helper actually defines it"
+    local f
+    for f in "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
+        "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+        "$REPO_ROOT/tests/coverage-python.sh"; do
+        # An ASSIGNMENT, not a mention: the consumers must read the value, never
+        # set it. Anchored so `"$PORT_ATTEMPTS"` reads cannot match.
+        assert_file_not_contains "$f" "^PORT_ATTEMPTS=" \
+            "$(command basename "$f") reads the count, never redefines it"
+    done
 }
 
 # BOTH failed-attempt reaps must be bounded — the harden-one-knob-and-leave-the-
@@ -389,23 +611,38 @@ test_both_call_sites_use_the_helper() {
 # coverage driver's identical cleanup was left as a bare wait — in the same
 # change that added the comment explaining why not to.
 #
-# Structural, since neither reap is callable from here: the point is that adding
+# Structural, since neither reap was callable from here: the point is that adding
 # a THIRD reap, or relaxing one back to a bare wait, must fail rather than pass
 # quietly.
+#
+# Both are now driven BEHAVIORALLY too, which this check does not replace: #825
+# added test_reap_escalates_to_sigkill (validate-golem-event-listener.sh) and
+# test_wedged_attempt_escalates_to_sigkill (validate-cov-listener.sh), each
+# running its production reap down the real SIGKILL branch. Those prove the two
+# reaps that EXIST behave; this proves a third one cannot appear unbounded, and
+# holds on a host that skips both behavioral suites for want of a runtime.
+#
+# The coverage driver's FAILED-attempt reap moved to tests/lib/cov-listener.sh
+# (#825) — the path below follows it. The driver fragment retains its
+# SUCCESS-path shutdown, which is a separate bounded wait and still checked here.
 test_both_reaps_are_bounded() {
     local f
     for f in "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
-        "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh"; do
+        "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+        "$REPO_ROOT/tests/lib/cov-listener.sh"; do
         assert_file_contains "$f" "kill -KILL" \
             "$(command basename "$f") escalates to SIGKILL rather than waiting forever"
     done
-    # The listener gate's reap polls before waiting; the driver's does too.
+    # The listener gate's reap polls before waiting; both coverage-side ones do.
     assert_file_contains "$REPO_ROOT/tests/validate-golem-event-listener.sh" \
         'waited" -lt 50' \
         "The behavioral gate's reap bounds its wait with a poll loop"
-    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+    assert_file_contains "$REPO_ROOT/tests/lib/cov-listener.sh" \
         '_csl_waited" -lt 50' \
         "The coverage driver's FAILED-attempt reap bounds its wait too"
+    assert_file_contains "$REPO_ROOT/tests/python-corpus/90-workflow-tool-drivers.sh" \
+        '_waited" -lt 50' \
+        "and its SUCCESS-path shutdown stays bounded where it lives"
 }
 
 # The bounded-reap SHAPE, driven for real against a child that ignores SIGTERM —
@@ -506,6 +743,9 @@ run_test test_zero_attempts_is_rejected "attempts<1 is rejected"
 run_test test_non_numeric_attempts_is_rejected "Non-numeric attempts fails loud, not silently"
 run_test test_no_third_copy_of_the_idiom "No third copy of the allocation idiom"
 run_test test_both_call_sites_use_the_helper "Both call sites route through the helper"
+run_test test_attempt_count_has_one_home "The attempt count is defined once, in the shared helper"
+run_test test_attempt_count_renders_into_both_diagnostics "The attempt count RENDERS into both diagnostics"
+run_test test_extraction_pattern_tolerates_brace_spellings "The extraction pattern handles every brace spelling (and only those)"
 run_test test_both_reaps_are_bounded "Both failed-attempt reaps are bounded, not a bare wait"
 run_test test_bounded_reap_survives_a_sigterm_ignorer "A bounded reap terminates on a SIGTERM-ignoring child"
 run_test test_readiness_probe_cannot_hang "The readiness probe is bounded and identity-checked"

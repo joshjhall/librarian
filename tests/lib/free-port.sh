@@ -29,10 +29,27 @@
 # home of the idiom.
 #
 # Sourced by ENTRY POINTS only (tests/validate-golem-event-listener.sh,
-# tests/coverage-python.sh) — never by a sourced fragment, per the #564
-# split-suite contract.
+# tests/coverage-python.sh, tests/validate-cov-listener.sh) — never by a sourced
+# fragment, per the #564 split-suite contract.
 #
 # Pure bash-3.2 + python3. `command`-prefixed tool calls per project convention.
+
+# PORT_ATTEMPTS — how many allocate-and-start attempts a call site makes. ONE
+# home, because the count is not just an argument: every diagnostic names it
+# ("did not start after N port attempts"), across 8 message sites in two files
+# (#825 item 2). Written independently, a bump to the call and a missed bump to a
+# message leaves a diagnostic that MISREPORTS how many ports were really tried —
+# and misreporting the attempt count is exactly what makes "did not start" read
+# as a lost race instead of a broken listener. Every message interpolates this
+# value with %s rather than restating it, so the two cannot diverge.
+#
+# Overridable from the environment for a flakier runner, which is the other
+# reason it is a variable rather than a literal: raising it is one edit here, not
+# a hunt through both suites.
+#
+# Read by the SOURCING suites, which shellcheck cannot see from here.
+# shellcheck disable=SC2034
+PORT_ATTEMPTS="${PORT_ATTEMPTS:-2}"
 
 # FREE_PORT — set by with_free_port to the port whose attempt SUCCEEDED. Empty
 # when every attempt failed, so a caller cannot mistake an exhausted retry for a
@@ -70,8 +87,8 @@ PY
 #
 # The port is appended as the LAST argument, after the caller's leading args.
 # That ordering is what lets both call sites pass their existing
-# `<sandbox> <port>` starter unchanged — `with_free_port 2 start_listener "$dir"`
-# composes with no wrapper closure, which matters because a closure would have to
+# `<sandbox> <port>` starter unchanged — `with_free_port "$PORT_ATTEMPTS"
+# start_listener "$dir"` composes with no wrapper closure, which matters because a closure would have to
 # capture a dynamically-scoped local from the calling test function.
 #
 # `free_port` is called BY NAME, not inlined, so a test can shadow the allocator

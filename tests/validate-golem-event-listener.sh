@@ -117,10 +117,18 @@ new_sandbox() {
 }
 
 # free_port lives in tests/lib/free-port.sh (#780) — sourced above. Callers use
-# `with_free_port <attempts> start_listener "$dir"`, which re-allocates and
+# `with_free_port "$PORT_ATTEMPTS" start_listener "$dir"`, which re-allocates and
 # re-attempts when the listener loses the bind-0-then-rebind race. The listener
 # FAILS LOUD on a bind collision, which is what makes start_listener a correct
 # retry predicate.
+
+# _port_attempts_msg — the exhausted-retry diagnostic, with the attempt count
+# INTERPOLATED from PORT_ATTEMPTS rather than restated (#825 item 2). Seven
+# call sites print it; a literal in any of them would keep saying "2" after the count
+# was raised, turning "a broken listener" into a misreported diagnosis.
+_port_attempts_msg() {
+    command printf 'listener did not start after %s port attempts' "$PORT_ATTEMPTS"
+}
 
 # start_listener <sandbox> <port> — launch the listener in <sandbox> bound to
 # 127.0.0.1:<port>, wait until /healthz answers (bounded), set LISTENER_PID.
@@ -247,8 +255,8 @@ test_post_gate_surfaces_via_gatewatch() {
     local dir port code out
     new_sandbox dir
     command printf '{"issue":5,"golem":"golem-5"}\n' >"$dir/.worktrees/.status/golem-5.json"
-    if ! with_free_port 2 start_listener "$dir"; then
-        _fail "listener did not start after 2 port attempts" "log: $(
+    if ! with_free_port "$PORT_ATTEMPTS" start_listener "$dir"; then
+        _fail "$(_port_attempts_msg)" "log: $(
             feed_of "$dir"
             command cat "$dir/listener.log" 2>/dev/null
         )"
@@ -279,8 +287,8 @@ test_post_escalation_preserves_kind() {
     fi
     local dir port code
     new_sandbox dir
-    with_free_port 2 start_listener "$dir" || {
-        _fail "listener did not start after 2 port attempts"
+    with_free_port "$PORT_ATTEMPTS" start_listener "$dir" || {
+        _fail "$(_port_attempts_msg)"
         return 1
     }
     port="$FREE_PORT"
@@ -300,8 +308,8 @@ test_normalization_defaults() {
     fi
     local dir port line
     new_sandbox dir
-    with_free_port 2 start_listener "$dir" || {
-        _fail "listener did not start after 2 port attempts"
+    with_free_port "$PORT_ATTEMPTS" start_listener "$dir" || {
+        _fail "$(_port_attempts_msg)"
         return 1
     }
     port="$FREE_PORT"
@@ -334,8 +342,8 @@ test_malformed_ts_does_not_blank_floor() {
     new_sandbox dir
     command printf '{"issue":1,"golem":"golem-1"}\n' >"$dir/.worktrees/.status/golem-1.json"
     command printf '{"issue":2,"golem":"golem-2"}\n' >"$dir/.worktrees/.status/golem-2.json"
-    with_free_port 2 start_listener "$dir" || {
-        _fail "listener did not start after 2 port attempts"
+    with_free_port "$PORT_ATTEMPTS" start_listener "$dir" || {
+        _fail "$(_port_attempts_msg)"
         return 1
     }
     port="$FREE_PORT"
@@ -364,8 +372,8 @@ test_orphan_sentinel_not_appended() {
     fi
     local dir port code
     new_sandbox dir
-    with_free_port 2 start_listener "$dir" || {
-        _fail "listener did not start after 2 port attempts"
+    with_free_port "$PORT_ATTEMPTS" start_listener "$dir" || {
+        _fail "$(_port_attempts_msg)"
         return 1
     }
     port="$FREE_PORT"
@@ -387,8 +395,8 @@ test_bad_requests_rejected_without_crash() {
     local dir port code
     new_sandbox dir
     command printf '{"issue":8,"golem":"golem-8"}\n' >"$dir/.worktrees/.status/golem-8.json"
-    with_free_port 2 start_listener "$dir" || {
-        _fail "listener did not start after 2 port attempts"
+    with_free_port "$PORT_ATTEMPTS" start_listener "$dir" || {
+        _fail "$(_port_attempts_msg)"
         return 1
     }
     port="$FREE_PORT"
@@ -417,8 +425,8 @@ test_healthz() {
     fi
     local dir port out
     new_sandbox dir
-    with_free_port 2 start_listener "$dir" || {
-        _fail "listener did not start after 2 port attempts"
+    with_free_port "$PORT_ATTEMPTS" start_listener "$dir" || {
+        _fail "$(_port_attempts_msg)"
         return 1
     }
     port="$FREE_PORT"
@@ -512,7 +520,7 @@ PY
         real_free_port
     }'
 
-    if with_free_port 2 start_listener "$dir"; then
+    if with_free_port "$PORT_ATTEMPTS" start_listener "$dir"; then
         assert_equals "2" "$(command cat "$WORKDIR/rl-calls")" \
             "The real listener lost the first port and retried exactly once"
         assert_true "[ \"$FREE_PORT\" != \"$squatted\" ]" \
@@ -588,6 +596,72 @@ PY
     wait "$squat_pid" 2>/dev/null || true
 }
 
+# _reap_failed_listener's SIGKILL ESCALATION, driven for real (#825 item 3).
+#
+# test_failed_start_is_reaped_and_pid_cleared above forces its failure with a
+# squatted port, so the listener fails to BIND and exits immediately: the poll
+# loop breaks on its first iteration and the escalation branch is never reached.
+# tests/validate-free-port.sh proves the bounded-reap SHAPE terminates against a
+# SIGTERM-ignoring child, and that both sites use that shape — but neither claim
+# drives THIS function down its own SIGKILL path. Between them a defect in the
+# escalation (a missing `kill -KILL`, a diagnostic that never prints, a wait that
+# blocks after it) would pass every test in the repo.
+#
+# So substitute a genuinely signal-immune child for the listener: set
+# LISTENER_PID to a real process that ignores SIGTERM, call the production
+# function, and require that it says so and terminates it anyway.
+#
+# It costs the production 5s bound (50 x 0.1s) on purpose. The alternative — a
+# test-only knob shortening the poll — would mean the number under test is not
+# the number that ships.
+test_reap_escalates_to_sigkill() {
+    if python_unavailable; then
+        skip_test "python3>=3.11 not available"
+        return 0
+    fi
+    command cat >"$WORKDIR/deaf.py" <<'PY'
+import signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+with open(sys.argv[1], "w") as fh:
+    fh.write("up")
+time.sleep(120)
+PY
+    command rm -f "$WORKDIR/deaf-up"
+    command python3 "$WORKDIR/deaf.py" "$WORKDIR/deaf-up" >/dev/null 2>&1 &
+    local deaf_pid=$! waited=0
+    while [ ! -s "$WORKDIR/deaf-up" ]; do
+        command kill -0 "$deaf_pid" 2>/dev/null || break
+        command sleep 0.1
+        waited=$((waited + 1))
+        [ "$waited" -gt 50 ] && break
+    done
+    if [ ! -s "$WORKDIR/deaf-up" ]; then
+        command kill -9 "$deaf_pid" 2>/dev/null || true
+        _fail "could not start a SIGTERM-ignoring child to stand in for the listener"
+        return 1
+    fi
+
+    # The child really is immune, so this case cannot pass by the SIGTERM alone
+    # working — without that arm, a reap that never escalated would still see a
+    # dead process and look correct.
+    command kill -TERM "$deaf_pid" 2>/dev/null || true
+    command sleep 0.5
+    assert_true "command kill -0 $deaf_pid 2>/dev/null" \
+        "The stand-in ignores SIGTERM, so reaching SIGKILL is the only way it dies"
+
+    LISTENER_PID="$deaf_pid"
+    _reap_failed_listener 2>"$WORKDIR/reap.err"
+
+    assert_file_contains "$WORKDIR/reap.err" "ignored SIGTERM" \
+        "The escalation announces itself rather than killing silently"
+    assert_contains "$(command cat "$WORKDIR/reap.err")" "$deaf_pid" \
+        "and names the pid it had to SIGKILL"
+    assert_true "! command kill -0 $deaf_pid 2>/dev/null" \
+        "The wedged listener is dead — the reap escalated instead of blocking"
+    assert_equals "" "$LISTENER_PID" \
+        "and LISTENER_PID is cleared, so no stale pid is ever signalled"
+}
+
 # --- Runner -----------------------------------------------------------------
 
 run_test test_prereqs "prerequisites: python3>=3.11 + curl + files present"
@@ -601,5 +675,6 @@ run_test test_healthz "GET /healthz liveness probe"
 run_test test_shim_fails_loud_without_python "shim fails loud when python3>=3.11 absent (no bash fallback)"
 run_test test_retry_recovers_against_the_real_listener "retry recovers against the REAL listener (#780)"
 run_test test_failed_start_is_reaped_and_pid_cleared "a failed start is reaped and clears LISTENER_PID (#780)"
+run_test test_reap_escalates_to_sigkill "the reap escalates to SIGKILL on a SIGTERM-immune listener (#825)"
 
 generate_report
