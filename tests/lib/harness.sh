@@ -339,8 +339,22 @@ assert_file_defines() {
     # escaping reason as the match above.
     local commented
     commented=$(command grep -nF -- "$needle" "$file" 2>/dev/null | command head -1)
+    # Name the ACTUAL cause. On the value form the near-miss is often a live,
+    # uncommented definition carrying a different value (`=770` against a pin of
+    # `=77`), and reporting "no non-comment line defines it" there sends the
+    # reader hunting for a commented-out definition that does not exist. Decide
+    # from the near-miss itself: a non-comment near-miss means the name IS
+    # defined and the value drifted.
+    local reason="no non-comment line defines it"
+    if [ "$exact" -eq 1 ] && [ -n "$commented" ]; then
+        local near_text="${commented#*:}"
+        case "$near_text" in
+            [[:space:]]*"#"* | "#"*) ;;
+            *) reason="defined, but not with this exact value" ;;
+        esac
+    fi
     _fail "$message" "File:     '$file'" "Name:     '$name'" \
-        "Error:    no non-comment line defines it" \
+        "Error:    $reason" \
         "Nearest:  ${commented:-(no occurrence at all)}"
     return 0
 }

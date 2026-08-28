@@ -378,6 +378,83 @@ FIXTURE
     command rm -rf "$d"
 }
 
+# The header justifies scanning the whole contiguous comment BLOCK rather than
+# one line back, on the grounds that a reason often runs to two or three lines —
+# a claim the single-line fixture above cannot support. Both halves are pinned:
+# the marker still reaches across further comment lines, and it does NOT reach
+# across code (or a blank line, which ends the block).
+test_exemption_spans_a_multi_line_comment_block() {
+    local d
+    d="$(command mktemp -d)"
+    command cat >"$d/m.sh" <<'FIXTURE'
+# lint-allow-unanchored: the assignment is mid-line in a joined recipe
+# so no line-anchored helper can match it, and there is no comment
+# occurrence in the target to collide with.
+assert_file_contains "$F" "MULTILINE_OK=1" "marker three lines up, same block"
+FIXTURE
+    scan_file "$d/m.sh"
+    assert_not_contains "$CUR_VIOLATIONS" "MULTILINE_OK" \
+        "a marker earlier in the same comment block still exempts"
+
+    command cat >"$d/g.sh" <<'FIXTURE'
+# lint-allow-unanchored: a reason that belongs to the assertion below it
+some_unrelated_command "here"
+assert_file_contains "$F" "ACROSS_CODE=1" "marker separated by code"
+FIXTURE
+    scan_file "$d/g.sh"
+    assert_contains "$CUR_VIOLATIONS" "ACROSS_CODE=1" \
+        "a marker does NOT reach across an intervening code line"
+
+    command cat >"$d/b.sh" <<'FIXTURE'
+# lint-allow-unanchored: a reason orphaned by a blank line
+
+assert_file_contains "$F" "ACROSS_BLANK=1" "marker separated by a blank line"
+FIXTURE
+    scan_file "$d/b.sh"
+    assert_contains "$CUR_VIOLATIONS" "ACROSS_BLANK=1" \
+        "a blank line ends the comment block, so the marker does not carry"
+    command rm -rf "$d"
+}
+
+# is_definition's char class allows a dot so dotted config keys count. That is a
+# SECOND implementation of the concept assert_file_defines implements, so it can
+# regress independently — pin it on the scanner side too.
+test_dotted_name_is_definition_shaped() {
+    local d
+    d="$(command mktemp -d)"
+    command cat >"$d/d.sh" <<'FIXTURE'
+assert_file_contains "$F" "tool.ruff=1" "a dotted config key is a definition"
+assert_file_contains "$F" "a.b.c=2" "so is a multi-dotted one"
+FIXTURE
+    scan_file "$d/d.sh"
+    assert_contains "$CUR_VIOLATIONS" "tool.ruff=1" \
+        "a dotted config key is treated as definition-shaped"
+    assert_contains "$CUR_VIOLATIONS" "a.b.c=2" \
+        "so is a multi-segment dotted key"
+    command rm -rf "$d"
+}
+
+# MAX_DETAIL caps the reported lines so a large regression stays readable. An
+# off-by-one in the cap or the remainder would misreport how much was hidden.
+test_detail_truncation() {
+    local violations="" i
+    i=1
+    while [ "$i" -le 45 ]; do
+        violations+="tests/f.sh:${i}: SETTING${i}=1"$'\n'
+        i=$((i + 1))
+    done
+    build_detail "$violations"
+    assert_equals "45" "$DETAIL_TOTAL" "every violation is counted, not just the shown ones"
+    assert_equals "$((MAX_DETAIL + 1))" "${#DETAIL_LINES[@]}" \
+        "MAX_DETAIL lines are shown, plus one summary line"
+    assert_contains "${DETAIL_LINES[$MAX_DETAIL]}" "and 5 more" \
+        "the summary reports the exact remainder"
+    # Under the cap there is no summary line at all.
+    build_detail "tests/f.sh:1: ONE=1"$'\n'
+    assert_equals "1" "$DETAIL_TOTAL" "a single violation counts as one"
+    assert_equals "1" "${#DETAIL_LINES[@]}" "and adds no '… and N more' line"
+}
+
 # The gate's own regexes must be BSD-clean. A GNU-only construct here would
 # match nothing on macOS and report a clean scan of zero rows — silent, and
 # exactly the class CLAUDE.md flags as dangerous.
@@ -436,6 +513,9 @@ run_test test_real_corpus_is_clean "No unanchored definition-shaped assertions i
 run_test test_detection_fires_and_is_narrow "Detection flags definitions and spares phrases"
 run_test test_wrapped_call_is_detected "A backslash-wrapped call is detected, not skipped"
 run_test test_exemption_requires_a_reason "lint-allow-unanchored exempts only with a reason"
+run_test test_exemption_spans_a_multi_line_comment_block "A marker spans its comment block but not code or a blank"
+run_test test_dotted_name_is_definition_shaped "A dotted config key is definition-shaped to the scanner"
+run_test test_detail_truncation "Violation detail truncates at MAX_DETAIL with an accurate remainder"
 run_test test_scanner_regexes_are_portable "The scanner's own regexes are BSD-clean"
 if [ -z "${LINT_DEFN_NO_RESPAWN:-}" ]; then
     run_test test_missing_awk_exits_77 "With awk absent the gate exits 77, not 0"

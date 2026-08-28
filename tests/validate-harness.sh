@@ -575,6 +575,27 @@ test_assert_file_defines_value_form_tolerates_continuation() {
     command rm -rf "$d"
 }
 
+# The failure must name the ACTUAL cause. A value mismatch and a commented-out
+# definition are different problems with different fixes, and reporting "no
+# non-comment line defines it" above a live definition sends the reader hunting
+# for a commented-out one that does not exist. Both arms are asserted, since a
+# diagnostic that says the same thing either way carries no information.
+test_assert_file_defines_failure_distinguishes_cause() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" drift.sh 'SKIP_EXIT_CODE=770'
+    out="$(capture_assert assert_file_defines "$d/drift.sh" "SKIP_EXIT_CODE=77")"
+    assert_contains "$out" "not with this exact value" \
+        "assert_file_defines: a live definition with a different value says so"
+    assert_not_contains "$out" "no non-comment line defines it" \
+        "assert_file_defines: and does NOT claim the definition is missing"
+    defines_fixture "$d" commented.sh '# SKIP_EXIT_CODE=77'
+    out="$(capture_assert assert_file_defines "$d/commented.sh" "SKIP_EXIT_CODE=77")"
+    assert_contains "$out" "no non-comment line defines it" \
+        "assert_file_defines: a commented-out definition still reports as such"
+    command rm -rf "$d"
+}
+
 # The value form must still exclude comments — this is the exact shape of the
 # swept call sites, and the exact defect #830 reported.
 test_assert_file_defines_value_form_excludes_comments() {
@@ -661,6 +682,7 @@ run_test test_assert_file_defines_longer_name_does_not_satisfy "assert_file_defi
 run_test test_assert_file_defines_name_is_literal_not_regex "assert_file_defines: the name matches literally, not as a regex"
 run_test test_assert_file_defines_value_form_pins_the_value "assert_file_defines: a NAME=value form pins the value"
 run_test test_assert_file_defines_value_form_rejects_a_superset "assert_file_defines: the value form rejects a superset value"
+run_test test_assert_file_defines_failure_distinguishes_cause "assert_file_defines: the failure names value-drift vs commented-out"
 run_test test_assert_file_defines_value_form_tolerates_continuation "assert_file_defines: the value form tolerates trailing space and continuation"
 run_test test_assert_file_defines_value_form_excludes_comments "assert_file_defines: the value form still excludes comments"
 run_test test_assert_file_defines_missing_file_fails "assert_file_defines: a missing file fails"
