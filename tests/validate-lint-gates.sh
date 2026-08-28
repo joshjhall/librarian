@@ -388,11 +388,16 @@ test_run_stage_still_renders_pass_and_fail() {
 # --- Wiring: the sentinel constant stays in sync ----------------------------
 
 test_sentinel_constant_agreed_by_every_script() {
-    assert_file_contains "$LINT_PYTHON" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
+    # assert_file_DEFINES, not _contains (#830). As a raw grep this was satisfied
+    # by the comment above each definition: commenting out `SKIP_EXIT_CODE=77` in
+    # lint-python.sh left this case GREEN while four behavioural cases went red.
+    # Those siblings masked it here — an assertion of this shape in a static-only
+    # gate would have escaped silently.
+    assert_file_defines "$LINT_PYTHON" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
         "lint-python.sh defines the shared skip sentinel"
-    assert_file_contains "$LINT_SHELLCHECK" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
+    assert_file_defines "$LINT_SHELLCHECK" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
         "lint-shellcheck.sh defines the same skip sentinel (#571)"
-    assert_file_contains "$RUN_ALL" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
+    assert_file_defines "$RUN_ALL" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
         "run-all.sh defines the same skip sentinel"
 }
 
@@ -511,6 +516,13 @@ test_justfile_shares_ruff_resolution() {
         "just lint prefers a ruff binary on PATH"
     assert_file_contains "$jf" 'uvx "ruff@$RUFF_PIN" --version' \
         "just lint PROBES uvx before selecting it (an unprobed uvx hard-fails when offline)"
+    # Deliberately assert_file_contains, NOT assert_file_defines (#830): this
+    # assignment sits mid-line inside a backslash-joined POSIX-sh recipe, so it
+    # is not line-initial and no line-anchored helper can match it. The pattern
+    # is a distinctive multi-token string with no comment occurrence in the
+    # justfile, so the prose-collision risk that motivated the sweep does not
+    # apply here.
+    # lint-allow-unanchored: mid-line assignment in a joined justfile recipe
     assert_file_contains "$jf" 'RUFF="uvx ruff@$RUFF_PIN"' \
         "just lint falls back to the pinned uvx ruff"
     assert_file_contains "$jf" '$RUFF check plugins' \
@@ -800,7 +812,10 @@ test_every_install_path_reads_the_pin() {
     # argument error instead of surfacing ruff-version.sh's own diagnostic.
     local w
     for w in "$ci" "$rel"; do
-        assert_file_contains "$w" 'ruff_version="$(bash bin/ruff-version.sh)" || exit 1' \
+        # assert_file_DEFINES (#830) — this is a definition, and the paragraph
+        # above quotes the inline form it exists to exclude, so a raw grep here
+        # is one prose edit away from satisfying itself.
+        assert_file_defines "$w" 'ruff_version="$(bash bin/ruff-version.sh)" || exit 1' \
             "$(command basename "$w") resolves the pin with an explicit failure check"
         assert_file_contains "$w" 'pipx install "ruff==$ruff_version"' \
             "$(command basename "$w") installs the resolved pin"

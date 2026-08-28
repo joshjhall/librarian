@@ -43,6 +43,7 @@
 #  11b6. Prose-budget gate behavior (tests/validate-prose-budget.sh)
 #  11b7. Hook no-op silence (tests/lint-hook-silence.sh)
 #  11b8. Scanner extension-dispatch case parity (tests/lint-scanner-case-dispatch.sh)
+#  11b9. Definition-shaped assertions (tests/lint-definition-assertions.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
 #  11c2. Pre-scan bash<->python differential (tests/validate-prescan-differential.sh)
 #  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
@@ -278,6 +279,9 @@ run_stage "Plugin prose budget (ratchet)" bash "$SCRIPT_DIR/lint-prose-budget.sh
 run_stage "Worktree-safe recipes" bash "$SCRIPT_DIR/lint-worktree-recipes.sh"
 run_stage "Prose-budget gate behavior" bash "$SCRIPT_DIR/validate-prose-budget.sh"
 run_stage "Hook no-op silence" bash "$SCRIPT_DIR/lint-hook-silence.sh"
+# Steers definition-shaped assertions to assert_file_defines, so the comment
+# explaining a setting can never satisfy the test that the setting exists (#830).
+run_stage "Definition-shaped assertions" bash "$SCRIPT_DIR/lint-definition-assertions.sh"
 # Structural backstop for the extension-dispatch half of that parity (#754). The
 # behavioral suites below can only pin the languages their corpus happens to
 # contain, and a mutation round showed arms revert INDEPENDENTLY — so this reads

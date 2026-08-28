@@ -407,6 +407,231 @@ test_assert_contract_carries_empty_region_fails() {
     assert_contains "$out" "FAIL" "assert_contract_carries: an empty region fails"
 }
 
+# --- assert_file_defines (#830) ---------------------------------------------
+#
+# The helper exists to close a hole in `assert_file_contains`, so every case
+# here is written as the DIVERGENT one — an input where the old raw-grep and the
+# new helper disagree. A fixture that would pass under both proves nothing, and
+# is precisely the defect #830 was filed about.
+#
+# defines_fixture <dir> <name> <line...> — write a throwaway fixture file.
+defines_fixture() {
+    local dir="$1" name="$2"
+    shift 2
+    command mkdir -p "$dir"
+    command printf '%s\n' "$@" >"$dir/$name"
+}
+
+# THE case. The old assertion greps the whole file, so the comment explaining
+# the setting satisfies it with the definition deleted. Anchoring alone is not
+# enough — `# SKIP=77` is still line-initial after the `#`.
+test_assert_file_defines_comment_does_not_satisfy() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh \
+        '# Reserved exit code meaning "did NOT run".' \
+        '# SKIP_EXIT_CODE=77'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" SKIP_EXIT_CODE "must not be satisfied by prose")"
+    assert_contains "$out" "must not be satisfied by prose" \
+        "assert_file_defines: a commented-out definition does NOT satisfy it"
+    # Discriminator: the old helper is green on this very fixture, so the two
+    # genuinely diverge here rather than the fixture being trivially broken.
+    local old
+    # lint-allow-unanchored: the control arm — this MUST be the old raw-text
+    # helper, since the point is that it is satisfied where the new one is not.
+    old="$(capture_assert assert_file_contains "$d/gate.sh" "SKIP_EXIT_CODE=77" "raw grep")"
+    assert_equals "" "$old" \
+        "assert_file_defines: (control) the raw-text assertion IS satisfied by the comment"
+    command rm -rf "$d"
+}
+
+test_assert_file_defines_real_definition_passes() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh \
+        '# Reserved exit code meaning "did NOT run".' \
+        'SKIP_EXIT_CODE=77'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" SKIP_EXIT_CODE)"
+    assert_equals "" "$out" "assert_file_defines: a real definition passes silently"
+    command rm -rf "$d"
+}
+
+# Leading indentation is legitimate (a definition inside a function or block),
+# so the anchor must allow it while still rejecting mid-line occurrences.
+test_assert_file_defines_indented_definition_passes() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh '    INDENTED_SETTING=1'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" INDENTED_SETTING)"
+    assert_equals "" "$out" "assert_file_defines: an indented definition passes"
+    command rm -rf "$d"
+}
+
+# A `NAME=` appearing mid-command is a USE, not a definition.
+test_assert_file_defines_midline_does_not_satisfy() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'echo SETTING=1'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" SETTING "mid-line is not a definition")"
+    assert_contains "$out" "mid-line is not a definition" \
+        "assert_file_defines: a mid-line occurrence does NOT satisfy it"
+    command rm -rf "$d"
+}
+
+# A longer name that merely CONTAINS the sought one must not satisfy it. Both
+# ends are needed and they pin DIFFERENT rules:
+#   PREFIX_SETTING  — pinned by the index()==1 anchor (the name is not at col 1)
+#   SETTING_EXTRA   — pinned by the trailing `=` (the name IS at col 1, and only
+#                     requiring `NAME=` rather than `NAME` rejects it)
+# Testing only the prefix end leaves the `=` rule unexercised — found by
+# mutation: dropping the `=` survived a prefix-only test.
+test_assert_file_defines_prefix_does_not_satisfy() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'PREFIX_SETTING=1'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" SETTING "prefix is not the name")"
+    assert_contains "$out" "prefix is not the name" \
+        "assert_file_defines: PREFIX_SETTING does NOT satisfy SETTING"
+    command rm -rf "$d"
+}
+
+test_assert_file_defines_longer_name_does_not_satisfy() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'SETTING_EXTRA=1'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" SETTING "a longer name is not this name")"
+    assert_contains "$out" "a longer name is not this name" \
+        "assert_file_defines: SETTING_EXTRA does NOT satisfy SETTING (the '=' is required)"
+    command rm -rf "$d"
+}
+
+# Matching is FIXED-STRING. A `.` in the name is a literal, not any-char — the
+# BSD/GNU regex divergence CLAUDE.md flags is sidestepped by never building a
+# pattern. Both arms are needed: that the literal matches, and that it does not
+# match what a regex would have.
+test_assert_file_defines_name_is_literal_not_regex() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" a.toml 'tool.ruff=1'
+    out="$(capture_assert assert_file_defines "$d/a.toml" "tool.ruff")"
+    assert_equals "" "$out" "assert_file_defines: a dotted name matches literally"
+    defines_fixture "$d" b.toml 'toolXruff=1'
+    out="$(capture_assert assert_file_defines "$d/b.toml" "tool.ruff" "dot is not any-char")"
+    assert_contains "$out" "dot is not any-char" \
+        "assert_file_defines: the '.' does NOT match an arbitrary character"
+    command rm -rf "$d"
+}
+
+# A NAME carrying its own `=` pins the VALUE, not just the presence. Both arms
+# are needed: the right value passes, and a DIFFERENT value fails — otherwise
+# the assertion would silently degrade to a presence check, which is how the
+# swept call sites (pinning one sentinel across three files) would lose their
+# teeth without anyone noticing.
+test_assert_file_defines_value_form_pins_the_value() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'SKIP_EXIT_CODE=77'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" "SKIP_EXIT_CODE=77")"
+    assert_equals "" "$out" "assert_file_defines: the pinned value passes"
+    out="$(capture_assert assert_file_defines "$d/gate.sh" "SKIP_EXIT_CODE=99" "wrong value")"
+    assert_contains "$out" "wrong value" \
+        "assert_file_defines: a DIFFERENT value fails (the value is really pinned)"
+    command rm -rf "$d"
+}
+
+# index()==1 is a PREFIX test, so the value form needs a right-hand boundary or
+# a superset value satisfies the pin: `=770` would satisfy a pin of `=77`, and
+# `|| exit 10` a pin of `|| exit 1` — the latter live in the swept ci.yml /
+# release.yml assertion. Both were reproduced before the boundary was added.
+# The earlier value test cannot catch this: it compares 77 against 99, which
+# share no prefix, so it passes with and without the guard.
+test_assert_file_defines_value_form_rejects_a_superset() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'SKIP_EXIT_CODE=770'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" "SKIP_EXIT_CODE=77" "770 is not 77")"
+    assert_contains "$out" "770 is not 77" \
+        "assert_file_defines: a LONGER value does not satisfy the pinned one"
+    defines_fixture "$d" ci.yml 'ruff_version="$(bash bin/ruff-version.sh)" || exit 10'
+    out="$(capture_assert assert_file_defines "$d/ci.yml" \
+        'ruff_version="$(bash bin/ruff-version.sh)" || exit 1' "exit 10 is not exit 1")"
+    assert_contains "$out" "exit 10 is not exit 1" \
+        "assert_file_defines: '|| exit 10' does not satisfy a pin of '|| exit 1'"
+    command rm -rf "$d"
+}
+
+# The boundary must tolerate what is invisible to the value: trailing whitespace
+# and a `\` line continuation. Without this the guard would reject the real
+# wrapped call sites it was added to protect.
+test_assert_file_defines_value_form_tolerates_continuation() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh 'SKIP_EXIT_CODE=77   '
+    out="$(capture_assert assert_file_defines "$d/gate.sh" "SKIP_EXIT_CODE=77")"
+    assert_equals "" "$out" "assert_file_defines: trailing whitespace does not break the pin"
+    defines_fixture "$d" wrapped.sh 'SKIP_EXIT_CODE=77 \'
+    out="$(capture_assert assert_file_defines "$d/wrapped.sh" "SKIP_EXIT_CODE=77")"
+    assert_equals "" "$out" "assert_file_defines: a trailing continuation does not break the pin"
+    command rm -rf "$d"
+}
+
+# The failure must name the ACTUAL cause. A value mismatch and a commented-out
+# definition are different problems with different fixes, and reporting "no
+# non-comment line defines it" above a live definition sends the reader hunting
+# for a commented-out one that does not exist. Both arms are asserted, since a
+# diagnostic that says the same thing either way carries no information.
+test_assert_file_defines_failure_distinguishes_cause() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" drift.sh 'SKIP_EXIT_CODE=770'
+    out="$(capture_assert assert_file_defines "$d/drift.sh" "SKIP_EXIT_CODE=77")"
+    assert_contains "$out" "not with this exact value" \
+        "assert_file_defines: a live definition with a different value says so"
+    assert_not_contains "$out" "no non-comment line defines it" \
+        "assert_file_defines: and does NOT claim the definition is missing"
+    defines_fixture "$d" commented.sh '# SKIP_EXIT_CODE=77'
+    out="$(capture_assert assert_file_defines "$d/commented.sh" "SKIP_EXIT_CODE=77")"
+    assert_contains "$out" "no non-comment line defines it" \
+        "assert_file_defines: a commented-out definition still reports as such"
+    command rm -rf "$d"
+}
+
+# The value form must still exclude comments — this is the exact shape of the
+# swept call sites, and the exact defect #830 reported.
+test_assert_file_defines_value_form_excludes_comments() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh \
+        '# run-all.sh renders it as [SKIP].' \
+        '# SKIP_EXIT_CODE=77'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" "SKIP_EXIT_CODE=77" "commented value")"
+    assert_contains "$out" "commented value" \
+        "assert_file_defines: a commented-out valued definition does NOT satisfy it"
+    command rm -rf "$d"
+}
+
+test_assert_file_defines_missing_file_fails() {
+    local d out
+    d="$(command mktemp -d)"
+    out="$(capture_assert assert_file_defines "$d/absent.sh" SETTING "missing file")"
+    assert_contains "$out" "missing file" "assert_file_defines: a missing file fails"
+    assert_contains "$out" "File does not exist" \
+        "assert_file_defines: the missing-file failure says so explicitly"
+    command rm -rf "$d"
+}
+
+# The failure block must point at the comment that would have satisfied the old
+# assertion — that is the line the reader needs to see to understand the hole.
+test_assert_file_defines_failure_names_the_near_miss() {
+    local d out
+    d="$(command mktemp -d)"
+    defines_fixture "$d" gate.sh '# SKIP_EXIT_CODE=77'
+    out="$(capture_assert assert_file_defines "$d/gate.sh" SKIP_EXIT_CODE)"
+    assert_contains "$out" "# SKIP_EXIT_CODE=77" \
+        "assert_file_defines: the failure reports the commented near-miss"
+    command rm -rf "$d"
+}
+
 # --- Run all tests ----------------------------------------------------------
 
 run_test test_assert_true_whitespace_is_message "assert_true: whitespace last-arg is the message"
@@ -447,5 +672,20 @@ run_test test_extract_contract_explicit_file_scopes_the_search "extract_contract
 run_test test_assert_contract_carries_present_is_silent "assert_contract_carries: present token is silent"
 run_test test_assert_contract_carries_absent_token_fails "assert_contract_carries: absent token fails"
 run_test test_assert_contract_carries_empty_region_fails "assert_contract_carries: empty region fails"
+
+run_test test_assert_file_defines_comment_does_not_satisfy "assert_file_defines: a commented-out definition does not satisfy (#830)"
+run_test test_assert_file_defines_real_definition_passes "assert_file_defines: a real definition passes"
+run_test test_assert_file_defines_indented_definition_passes "assert_file_defines: an indented definition passes"
+run_test test_assert_file_defines_midline_does_not_satisfy "assert_file_defines: a mid-line use is not a definition"
+run_test test_assert_file_defines_prefix_does_not_satisfy "assert_file_defines: a longer prefixed name does not satisfy"
+run_test test_assert_file_defines_longer_name_does_not_satisfy "assert_file_defines: a longer suffixed name does not satisfy"
+run_test test_assert_file_defines_name_is_literal_not_regex "assert_file_defines: the name matches literally, not as a regex"
+run_test test_assert_file_defines_value_form_pins_the_value "assert_file_defines: a NAME=value form pins the value"
+run_test test_assert_file_defines_value_form_rejects_a_superset "assert_file_defines: the value form rejects a superset value"
+run_test test_assert_file_defines_failure_distinguishes_cause "assert_file_defines: the failure names value-drift vs commented-out"
+run_test test_assert_file_defines_value_form_tolerates_continuation "assert_file_defines: the value form tolerates trailing space and continuation"
+run_test test_assert_file_defines_value_form_excludes_comments "assert_file_defines: the value form still excludes comments"
+run_test test_assert_file_defines_missing_file_fails "assert_file_defines: a missing file fails"
+run_test test_assert_file_defines_failure_names_the_near_miss "assert_file_defines: the failure names the commented near-miss"
 
 generate_report

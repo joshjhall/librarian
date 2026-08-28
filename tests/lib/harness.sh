@@ -13,6 +13,7 @@
 #   assert_valid_json                         — no-eval JSON validation (untrusted-safe)
 #   assert_file_exists                        — filesystem assertion
 #   assert_file_contains / _not_contains      — grep-based file assertions
+#   assert_file_defines                       — anchored, comment-excluding (#830)
 #   skip_test                                 — record a skipped test
 #
 # Semantics match the containers framework so the relocated gate bodies run
@@ -244,6 +245,117 @@ assert_file_exists() {
         return 0
     fi
     _fail "$message" "File:     '$file'"
+    return 0
+}
+
+# Assert that FILE *defines* NAME — i.e. contains an assignment `NAME=...` on a
+# line that is not a comment.
+#
+# This exists because `assert_file_contains` is a raw grep over the whole file,
+# so it matches COMMENTS as readily as code. When the assertion's job is "this
+# setting is defined", the prose explaining that setting satisfies it on its
+# own: delete the definition, keep the comment, and the test stays green (#830,
+# the same shape as #737). This repo's convention is to explain every non-obvious
+# setting directly above it, so a definition-shaped assertion and its
+# explanatory prose reliably co-occur — which is what makes the hole systematic
+# rather than incidental.
+#
+# Two constraints by construction, so a caller cannot reintroduce the hole:
+#
+#   1. LINE-INITIAL (leading whitespace allowed). A `NAME=` mentioned mid-prose
+#      or mid-command does not count as a definition.
+#   2. NOT A COMMENT. A `#`-initial line is excluded, so `# NAME=77` can never
+#      satisfy the assertion. This scopes the helper to `#`-commented formats —
+#      shell, justfile, YAML, TOML — which is every definition-shaped target in
+#      this repo. Do NOT use it on a format with other comment syntax.
+#
+# NAME may pin the VALUE too by including an `=`: `SKIP_EXIT_CODE=77` requires
+# that exact assignment, where a bare `SKIP_EXIT_CODE` accepts any value. The
+# distinction matters at the call sites this replaced, several of which were
+# pinning a constant's value across files and would silently weaken to a
+# presence check if the value were dropped.
+#
+# Matching is FIXED-STRING, for the same reason extract_contract's marker search
+# is (see the long note there): NAME is caller-supplied, so building a regex out
+# of one means escaping it, and a backslash-escaped `+ ? | ( ) { }` means
+# OPPOSITE things in BRE and ERE (GNU-only operators in BRE, literals on
+# BSD/macOS). That is the silent GNU-vs-BSD divergence CLAUDE.md singles out —
+# the pattern quietly stops matching and the assertion reports a clean nothing.
+# `awk` with `index()` sidesteps the class: there is no pattern to escape.
+assert_file_defines() {
+    local file="$1"
+    local name="$2"
+    local message="${3:-File should define name}"
+    if [ ! -f "$file" ]; then
+        _fail "$message" "File:     '$file'" "Error:    File does not exist"
+        return 0
+    fi
+    # Strip leading whitespace, then require the line to START with exactly
+    # `NAME=` — by literal index(), never a regex.
+    #
+    # This single check delivers BOTH guarantees. Comment-exclusion needs no
+    # separate `#` test: once indentation is stripped, a comment line starts
+    # with `#`, so `NAME=` sits at index 2 or later and can never be at index 1.
+    # An explicit `substr(line,1,1) == "#"` here is provably dead code — verified
+    # by mutating it to a no-op and observing zero test failures, then confirming
+    # by hand that `# NAME=1` yields index 3 and `#NAME=1` index 2. It is left
+    # out rather than kept as belt-and-braces: an unreachable branch reads as a
+    # tested guarantee and invites a future edit to weaken the anchor it hides
+    # behind.
+    #
+    # The trailing `=` is load-bearing and NOT redundant with index()==1: without
+    # it, `NAMEX=1` matches `NAME` at index 1. A NAME that already carries an
+    # `=` (pinning a value) is used as-is rather than gaining a second one.
+    #
+    # The VALUE form additionally needs a RIGHT-hand boundary. index()==1 is a
+    # prefix test, so without it a pin of `SKIP_EXIT_CODE=77` is satisfied by a
+    # file saying `SKIP_EXIT_CODE=770`, and a pin of `... || exit 1` by
+    # `... || exit 10` — the assertion silently degrades to the presence check
+    # the value form exists to avoid. Both were reproduced before this guard.
+    # The line must therefore END at the needle (trailing whitespace and a
+    # trailing `\` continuation are tolerated, since both are invisible to the
+    # value being pinned). The BARE form needs no such check: its appended `=`
+    # already terminates the name.
+    local needle="$name" exact=0
+    case "$name" in
+        *=*) exact=1 ;;
+        *) needle="$name=" ;;
+    esac
+    if command awk -v n="$needle" -v exact="$exact" '
+        { line = $0
+          sub(/^[[:space:]]+/, "", line)
+          if (index(line, n) != 1) next
+          if (exact) {
+              rest = substr(line, length(n) + 1)
+              sub(/[[:space:]]*\\?[[:space:]]*$/, "", rest)
+              if (rest != "") next
+          }
+          found = 1; exit }
+        END { exit !found }' "$file"; then
+        return 0
+    fi
+    # Diagnostic only — the nearest occurrence anywhere, usually the comment that
+    # would have satisfied the old raw-text assertion. -F for the same
+    # escaping reason as the match above.
+    local commented
+    commented=$(command grep -nF -- "$needle" "$file" 2>/dev/null | command head -1)
+    # Name the ACTUAL cause. On the value form the near-miss is often a live,
+    # uncommented definition carrying a different value (`=770` against a pin of
+    # `=77`), and reporting "no non-comment line defines it" there sends the
+    # reader hunting for a commented-out definition that does not exist. Decide
+    # from the near-miss itself: a non-comment near-miss means the name IS
+    # defined and the value drifted.
+    local reason="no non-comment line defines it"
+    if [ "$exact" -eq 1 ] && [ -n "$commented" ]; then
+        local near_text="${commented#*:}"
+        case "$near_text" in
+            [[:space:]]*"#"* | "#"*) ;;
+            *) reason="defined, but not with this exact value" ;;
+        esac
+    fi
+    _fail "$message" "File:     '$file'" "Name:     '$name'" \
+        "Error:    $reason" \
+        "Nearest:  ${commented:-(no occurrence at all)}"
     return 0
 }
 
