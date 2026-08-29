@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: c5ce24e2-e77c-45fa-a057-bc727ea834d8
-  modified: 2026-08-22T06:52:46.508Z
+  modified: 2026-08-28T00:16:34.150Z
 ---
 
 When a test asserts "config C still has setting S" with a raw text match
@@ -32,6 +32,25 @@ match. Where two tests read the same config, have both call one shared extractor
 so they cannot drift apart about what the setting IS. And prove it: delete the
 setting and confirm the test fails. If it still passes, the assertion was
 describing the documentation.
+
+**Two cheap remedies, in order of strength.** Anchoring the pattern (`"^VAR="`
+rather than `"VAR="`) kills the commented-out and prose cases for one line of
+diff. Stronger, where the file can be sourced in isolation: assert
+**reachability**, not text — `(set -u; . "$f"; [ -n "$VAR" ])` proves the value
+actually resolves under the same condition every consumer runs under, which no
+text match can do.
+
+**It is a whole-repo class, not a per-case slip** (#830, measured 2026-08-27 on
+librarian): ~86 `assert_file_contains`/`assert_file_not_contains` calls across
+`tests/`, of which **exactly one** anchored its pattern. Any repo whose
+convention is "explain every non-obvious setting directly above it" — i.e. this
+one — has the collision everywhere by construction, so on finding one instance
+assume siblings and grep ([[harden-one-knob-grep-every-sibling]]).
+
+It also recurs in **freshly written** tests, not just old ones: #825's mutation
+round caught it in an assertion added in that very PR, minutes after its author
+had read this rule. Writing the assertion and writing the paragraph above it are
+the same motion — which is why review does not catch it and mutation does.
 
 The sibling of [[comment-asserts-intent-not-code]] with the direction reversed:
 there the comment claims what the code lacks; here the comment SATISFIES the
