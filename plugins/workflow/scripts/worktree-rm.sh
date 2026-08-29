@@ -10,7 +10,12 @@
 # so worktree teardown and session teardown are ONE step and finished golems
 # don't linger in `tmux ls` / golem-status.sh after a merge+prune (#27).
 # Refuses to remove a worktree with uncommitted changes (re-run after
-# committing, or force with `git worktree remove --force`).
+# committing). The dirty check runs BEFORE any removal and classifies three
+# ways — clean / dirty / unverifiable (#813) — so a probe that cannot run is
+# never reported as dirtiness, and a refusal is always one the operator can
+# still verify with their own `git status`. A worktree git no longer lists has
+# nothing git-tracked left to lose, so its leftover directory is cleaned rather
+# than skipped.
 #
 # Belt-and-suspenders: after teardown it repairs a polluted main-repo
 # `core.worktree` (#258). An interrupted `git worktree remove --force` can leave
@@ -140,14 +145,399 @@ symlink_is_false_dirty() {
     [ "$idx" = "$target" ]
 }
 
+# worktree_dirty_state <worktree> — classify a worktree as exactly one of
+# `clean` / `dirty` / `unverifiable`, echoed on stdout (#813).
+#
+# The two-way "empty status means clean" read this replaces produced a FALSE
+# `has uncommitted changes` on a demonstrably clean tree, and did it in the most
+# dangerous direction: the message names the one condition that makes an
+# operator reach for `--force`, in precisely the situation where the claim can no
+# longer be verified (status does not run anymore). A guard that cannot evaluate
+# its condition must say THAT, never the alarming branch.
+#
+# Two pathologies converged on that message, both reproduced on git 2.55.0:
+#
+#   probe cannot run       dangling .git -> `fatal: not a git repository: (null)`
+#                          -> `2>/dev/null || true` maps it to EMPTY -> empty
+#                          reads as clean -> the `&&` force-remove then fails
+#                          `not a working tree` -> the else-arm prints the lie.
+#   probe answers about
+#   the WRONG repo         with the .git file gone, git walks UP and resolves the
+#                          MAIN checkout; the naive probe returned `?? .worktrees/`
+#                          — main's untracked files reported as this worktree's
+#                          uncommitted work. Worse than the first: it is non-empty,
+#                          so it refuses "legitimately" while describing another tree.
+#
+# Hence TWO guards before the status call, not one:
+#
+#   1. `rev-parse --show-toplevel` must SUCCEED. A dangling or missing .git fails
+#      here loudly instead of yielding a misread empty string.
+#   2. The resolved toplevel must BE this worktree. That is what stops the
+#      walk-up; guard 1 alone passes happily while answering about the parent.
+#      Both sides go through `pwd -P` so a symlinked path compares equal rather
+#      than reporting a spurious mismatch.
+#
+# The status exit code is then CHECKED rather than `|| true`-swallowed, so a
+# status that fails for any other reason lands on `unverifiable` too.
+#
+# `git worktree repair` is NOT attempted: it cannot recover this state
+# (`unable to locate repository; .git file does not reference a repository`,
+# verified). Recovery is unavailable, which is exactly why the caller must run
+# this check BEFORE the removal that deregisters the worktree.
+#
+# Pure: no mutations, no globals, verdict on stdout only — so the tests can
+# slice it out and drive all three branches directly, the same shape as
+# tmux_kill_outcome below.
+#
+# MUTATION-VERIFIED, and the coverage split is worth stating so a later reader
+# does not mistake it for a gap. Neutering EITHER guard — the toplevel anchor,
+# or `rev-parse` failing through as `clean` — turns the sliced classifier test
+# red, and ONLY that test. The two end-to-end tests survive both mutations
+# because they exercise the already-deregistered path, where git no longer
+# lists the worktree and this function is never consulted. So the guards are
+# pinned at the unit level and the leftover-directory path is pinned end-to-end;
+# reverting the check/mutate ORDER turns the reorder test red plus eight of the
+# #768/#325 tests, and dropping the leftover cleanup turns both end-to-end #813
+# tests red.
+worktree_dirty_state() {
+    local wtdir="$1" top wt_real top_real out rc=0
+
+    top="$(command git -C "$wtdir" rev-parse --show-toplevel 2>/dev/null)" || {
+        command echo "unverifiable"
+        return 0
+    }
+    [ -n "$top" ] || {
+        command echo "unverifiable"
+        return 0
+    }
+
+    wt_real="$(cd "$wtdir" 2>/dev/null && command pwd -P)" || wt_real=""
+    top_real="$(cd "$top" 2>/dev/null && command pwd -P)" || top_real=""
+    if [ -z "$wt_real" ] || [ -z "$top_real" ] || [ "$wt_real" != "$top_real" ]; then
+        command echo "unverifiable"
+        return 0
+    fi
+
+    out="$(command git -C "$wtdir" -c core.quotePath=false \
+        status --porcelain --ignore-submodules=all 2>/dev/null)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        command echo "unverifiable"
+        return 0
+    fi
+
+    if [ -n "$out" ]; then
+        command echo "dirty"
+    else
+        command echo "clean"
+    fi
+}
+
+# filter_stale_symlinks <worktree> <status-output> — set the globals
+# `filtered_residue` (the status lines representing REAL work) and `stale_links`
+# (how many ` M <path>` lines were stale-attribute symlink artifacts, #768).
+#
+# Filtering the residue rather than short-circuiting on "all lines are symlinks"
+# is load-bearing: a worktree with BOTH a stale symlink AND a dirty regular file
+# keeps the regular file in the residue and is still refused, so a force can
+# never silently discard real work.
+#
+# Results come back through GLOBALS, not stdout, on purpose. Echoing the residue
+# would force the caller into `residue="$(filter_stale_symlinks …)"`, and a
+# command substitution runs in a SUBSHELL — every `stale_links` increment would
+# be discarded, silently reporting 0 stale links no matter how many were found
+# (caught by the #768 disclosure tests, which assert the count reaches the
+# operator). The `while` loop stays in the caller's shell for the same reason.
+filter_stale_symlinks() {
+    local wtdir="$1" status_out="$2" line
+    filtered_residue=""
+    stale_links=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        # Only an unstaged modification (` M path`) can be this artifact.
+        # Staged/added/deleted states are real work by construction.
+        case "$line" in
+            " M "*)
+                if symlink_is_false_dirty "$wtdir" "${line#???}"; then
+                    stale_links=$((stale_links + 1))
+                    continue
+                fi
+                ;;
+        esac
+        filtered_residue="$filtered_residue$line
+"
+    done <<EOF
+$status_out
+EOF
+}
+
 root="$(repo_root)"
 cd "$root"
 wt="$GOLEM_WORKTREE_DIR/issue-$N"
 br="${GOLEM_BRANCH_PREFIX}${N}"
 removed=0
 
+listed=0
 if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then
-    if command git worktree remove "$wt" 2>/dev/null; then
+    listed=1
+fi
+
+# CHECK BEFORE MUTATING (#813). A failing `git worktree remove` DEREGISTERS the
+# worktree before it reports failure — verified on git 2.55.0: with directory
+# deletion blocked, remove printed `failed to delete …: Permission denied`,
+# exited 255, and .git/worktrees/issue-N was already gone. So the dirty check
+# must run here, while the worktree is still registered and the probe still
+# works; behind the removal it is aimed at something that no longer exists.
+# Refusing at this point also leaves the operator's own `git status` working, so
+# the claim in the refusal is verifiable — the whole point of the issue.
+state=""
+stale_links=0
+if [ "$listed" -eq 1 ]; then
+    state="$(worktree_dirty_state "$wt")"
+    if [ "$state" = "dirty" ]; then
+        # Re-read the status to get the LINES (the classifier returns only a
+        # verdict). Deliberately NOT `|| true`: swallowing a failure here would
+        # yield an empty `dirty`, an empty residue, and a fall-through to
+        # `state="clean"` — re-creating this issue's exact bug (a probe that
+        # could not run silently reading as clean) one layer down, and this time
+        # ending in a force-remove rather than a false refusal. The classifier
+        # just proved the status runs, so a failure now is a genuine anomaly:
+        # fail closed.
+        dirty_rc=0
+        dirty="$(command git -C "$wt" -c core.quotePath=false \
+            status --porcelain --ignore-submodules=all 2>/dev/null)" || dirty_rc=$?
+        if [ "$dirty_rc" -ne 0 ]; then
+            command echo "worktree-rm: cannot re-read the status of $wt to classify its changes." >&2
+            command echo "  It was reported dirty a moment ago; refusing rather than forcing." >&2
+            command echo "  Inspect: git -C $wt status" >&2
+            exit 1
+        fi
+        # Distinguished from the failure above on purpose: here the re-read
+        # SUCCEEDED and simply found nothing, meaning the tree changed between
+        # the two probes. Refusing is still the safe call — something else is
+        # writing to this worktree right now — but saying "cannot re-read" would
+        # describe a failure that did not happen.
+        if [ -z "$dirty" ]; then
+            command echo "worktree-rm: $wt changed between two status checks." >&2
+            command echo "  It read dirty, then clean; something else is writing to it." >&2
+            command echo "  Refusing rather than racing — re-run once it settles." >&2
+            exit 1
+        fi
+        filter_stale_symlinks "$wt" "$dirty"
+        dirty="$filtered_residue"
+        if [ -n "$dirty" ]; then
+            command echo "worktree-rm: $wt has uncommitted changes." >&2
+            command echo "  Re-run after committing, or inspect with: git -C $wt status" >&2
+            exit 1
+        fi
+        # Only stale symlink artifacts remained — treat as clean and carry the
+        # count through to the force-remove message below.
+        state="clean"
+    fi
+fi
+
+# leftover_is_worktree_residue <root> <worktree> — true only when <worktree> is
+# safe to `rm -rf` as the residue of a deregistered git worktree (#813 review).
+#
+# "git does not list it" is NOT sufficient evidence on its own, and getting this
+# wrong is unrecoverable. Before this change an unlisted path was simply never
+# touched, so the cleanup below is the script's first unconditional `rm -rf` and
+# needs to earn it. Two independent things can go wrong:
+#
+#   never a worktree     `$wt` is `$GOLEM_WORKTREE_DIR/issue-$N`, a predictable
+#                        path. An operator's scratch directory, a stray editor
+#                        copy, or a worktree-new.sh run that crashed after
+#                        `mkdir` but before `git worktree add` all look
+#                        identical to genuine residue — and can hold real,
+#                        never-tracked work that no git probe can see.
+#   escaped the repo     GOLEM_WORKTREE_DIR is env-overridable and never
+#                        validated. Set to an absolute path, `$wt` becomes
+#                        absolute and the `rm -rf` lands wherever it points.
+#
+# So require BOTH: the path must resolve INSIDE the repo root (containment,
+# which kills the absolute-path case and any `../` escape), and it must carry a
+# worktree FINGERPRINT — a `.git` entry, even a broken one, since a deregistered
+# worktree keeps its dangling `.git` file (that dangling pointer is the very
+# state #813 is about). A directory with no `.git` at all was never a worktree,
+# so it is left alone.
+#
+# Fails CLOSED and LOUD per this repo's convention: anything unrecognized is
+# reported and kept, never deleted. Refusing costs an operator one manual `rm`;
+# guessing wrong costs them their data.
+# sanitize_stderr <text> — echo <text> with C0 controls and DEL stripped, so
+# captured subprocess stderr can be shown to an operator without smuggling ANSI
+# escapes or CR line-overwrites into their terminal (#813 review).
+#
+# TAB (\011) and NEWLINE (\012) are deliberately KEPT so a genuine multi-line
+# error stays legible — which is why this is not `[:cntrl:]`, a class that would
+# eat both. `\013-\037` is ONE contiguous range on purpose: enumerating it
+# byte-by-byte previously skipped \015 (CR), which a terminal renders by
+# returning the cursor to column 0, letting crafted text overwrite the line and
+# read as something else entirely. The C1 range (\200-\237) is NOT stripped —
+# those bytes are also UTF-8 continuation bytes, so removing them would corrupt
+# any multibyte character in a path.
+#
+# Mirrors the tmux-stderr sanitizer below; both exist because this script echoes
+# captured subprocess stderr that embeds PATHS, and a crafted filename is enough
+# to reach a terminal. Octal ranges rather than named classes so GNU and BSD
+# `tr` agree. `printf '%s'` keeps the format string fixed, so text containing a
+# literal `%s` or a backslash is data, never format. `|| true` because a bare
+# command substitution IS subject to `set -e`: were `tr` unavailable this would
+# abort teardown at 127 AFTER the destructive git mutations, and sanitizing is
+# best-effort diagnostics that must never fail teardown.
+sanitize_stderr() {
+    local text="$1" safe
+    [ -n "$text" ] || return 0
+    safe="$(command printf '%s' "$text" | command tr -d '\000-\010\013-\037\177' || true)"
+    command printf '%s' "${safe:-(stderr present but unprintable)}"
+}
+
+# Echoes WHICH guard tripped so the caller's message can name the actual cause
+# rather than reusing one sentence for three different states — the same
+# principle this issue is about, applied to its own refusal. `residue` means
+# safe to remove; every other value is a distinct refusal reason.
+leftover_is_worktree_residue() {
+    local rootdir="$1" wtdir="$2" wt_real root_real parent
+
+    # A SYMLINK at the worktree path is never residue. Refusing it outright is
+    # what closes the leaf-symlink bypass: the resolution below only canonicalizes
+    # the PARENT, so a symlinked leaf would keep an in-repo-looking `wt_real`
+    # while `[ -e "$wtdir/.git" ]` followed the link and let an out-of-tree
+    # `.git` satisfy the fingerprint — containment satisfied by a lie. Today's
+    # `rm -rf` would only unlink the link node, not recurse through it, but that
+    # is a property of `rm`, not a guarantee this function makes; a future switch
+    # to `find "$wt" -delete` or a `"$wt"/*` glob would silently reopen the
+    # escape. worktree-new.sh never creates the worktree as a symlink, so a real
+    # teardown loses nothing by refusing here.
+    if [ -L "$wtdir" ]; then
+        command echo "symlink"
+        return 1
+    fi
+
+    # Resolve without requiring the path itself to be resolvable as a dir.
+    parent="$(cd "$(command dirname "$wtdir")" 2>/dev/null && command pwd -P)" || {
+        command echo "unresolvable"
+        return 1
+    }
+    [ -n "$parent" ] || {
+        command echo "unresolvable"
+        return 1
+    }
+    wt_real="$parent/$(command basename "$wtdir")"
+    root_real="$(cd "$rootdir" 2>/dev/null && command pwd -P)" || {
+        command echo "unresolvable"
+        return 1
+    }
+    [ -n "$root_real" ] || {
+        command echo "unresolvable"
+        return 1
+    }
+
+    # Containment: must sit strictly INSIDE the repo root, never at or above it.
+    #
+    # `"$root_real"` is QUOTED, so glob metacharacters in the repo path are
+    # matched LITERALLY rather than as wildcards — a root at `/home/u/proj[12]`
+    # matches only a literal `proj[12]`, never `proj1`/`proj2` (verified against
+    # `*`, `?`, and `[...]` roots). The `/?*` tail requires at least one
+    # character after the separator, so `wt_real == root_real` and any parent
+    # both fall through to the refusal, as does the `/a/b` vs `/a/bb` prefix trap.
+    case "$wt_real" in
+        "$root_real"/?*) ;;
+        *)
+            command echo "outside-root"
+            return 1
+            ;;
+    esac
+
+    # Fingerprint: a worktree — even a deregistered one — has a `.git` entry.
+    if [ ! -e "$wtdir/.git" ]; then
+        command echo "no-fingerprint"
+        return 1
+    fi
+
+    command echo "residue"
+}
+
+# A worktree git no longer lists cannot hold unmerged commits to lose, so there
+# is nothing git-tracked left to protect — but the directory may still be on
+# disk. Before this fix the whole removal block was gated on being listed, so
+# such a leftover was NEVER cleaned: re-running worktree-rm.sh reported "nothing
+# to remove" while the directory sat there, which is why the #813 reporter had to
+# `rm -rf` by hand. Clean it up and prune, then continue to branch/tmux teardown
+# — but only once the guard above confirms it really is worktree residue.
+if [ "$listed" -eq 0 ] && { [ -e "$wt" ] || [ -L "$wt" ]; }; then
+    residue_reason="$(leftover_is_worktree_residue "$root" "$wt")" || true
+    if [ "$residue_reason" != "residue" ]; then
+        # Name the guard that actually tripped. One sentence covering all three
+        # would misdescribe two of them — a symlinked path may well HAVE a valid
+        # `.git` at its target and resolve inside the root, so telling the
+        # operator to look for a missing fingerprint or an out-of-tree path
+        # would be false on both counts. Misreporting a state you did not
+        # evaluate is the very defect this issue exists to fix; the refusal must
+        # not commit it.
+        case "$residue_reason" in
+            symlink)
+                command echo "worktree-rm: $wt is a symlink, not a worktree directory." >&2
+                command echo "  Teardown never deletes through a symlink." >&2
+                ;;
+            outside-root)
+                command echo "worktree-rm: $wt resolves outside the repo root ($root)." >&2
+                command echo "  Check GOLEM_WORKTREE_DIR — teardown only removes paths inside the repo." >&2
+                ;;
+            no-fingerprint)
+                command echo "worktree-rm: $wt has no .git entry, so it may never have been a worktree." >&2
+                command echo "  It is not registered either, so there is nothing to confirm it is stale residue." >&2
+                ;;
+            *)
+                command echo "worktree-rm: $wt could not be resolved for the residue check." >&2
+                ;;
+        esac
+        command echo "  Refusing to delete it — inspect and remove by hand if it is stale." >&2
+        exit 1
+    fi
+fi
+
+# The condition here is `-e` alone while the refusal above is `-e || -L`, and
+# the asymmetry is deliberate: a symlink (dangling or not) can never reach this
+# point, because leftover_is_worktree_residue refuses every symlink and the
+# block above exits on that refusal. Widening this one to match would therefore
+# change nothing today — but it would quietly become the branch that `rm -rf`s a
+# symlink if that guard were ever relaxed, so it stays narrow on purpose.
+if [ "$listed" -eq 0 ] && [ -e "$wt" ]; then
+    command echo "worktree-rm: $wt is no longer registered as a worktree" >&2
+    command echo "  (nothing git-tracked left to lose) — removing the leftover directory" >&2
+    if command rm -rf "$wt"; then
+        command echo "  removed leftover directory $wt"
+        removed=1
+    else
+        # A partial removal is expected on a bindfs/FUSE overlay, where stale
+        # dentries return EBADF on unlink while still showing up in readdir —
+        # harmless (git has no record, .worktrees/ is gitignored, and the
+        # collision guard reads `git worktree list`), but currently reported as
+        # a warning. Whether to tolerate it silently or skip build-output dirs
+        # outright is #834.
+        command echo "worktree-rm: WARNING: could not fully remove $wt" >&2
+    fi
+    command git worktree prune || true
+fi
+
+if [ "$listed" -eq 1 ]; then
+    # The probe could not be evaluated, yet git still lists the worktree — a
+    # genuinely unexplained state. Say THAT and fail closed; never claim
+    # "uncommitted changes" for a condition the guard could not evaluate, and
+    # never advertise a blind `--force` as the remedy (the issue's central
+    # complaint: it is exactly what a careful operator must not run blind).
+    if [ "$state" = "unverifiable" ]; then
+        command echo "worktree-rm: cannot verify whether $wt has uncommitted changes." >&2
+        command echo "  git could not resolve it as a work tree, but it is still registered." >&2
+        command echo "  Inspect before removing anything: git -C $wt status; git worktree list" >&2
+        exit 1
+    fi
+    # Capture the first attempt's stderr rather than discarding it. When this
+    # removal fails it may ALSO have deregistered the worktree (#813), in which
+    # case the force below can only report the CONSEQUENCE ("is not a working
+    # tree") and this message holds the actual cause.
+    first_err="$(command git worktree remove "$wt" 2>&1)" && first_rc=0 || first_rc=$?
+    if [ "$first_rc" -eq 0 ]; then
         command echo "  removed worktree $wt"
         removed=1
     else
@@ -155,61 +545,63 @@ if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"
         # POPULATED submodule ("working trees containing submodules cannot be
         # moved or removed") even when the submodule is clean — and
         # worktree-new.sh now populates submodules on creation (#325), so this
-        # now fires on ORDINARY teardown, not just on genuine uncommitted work.
-        # Distinguish the two before forcing: `status --ignore-submodules=all`
-        # reports only NON-submodule changes, so an EMPTY result means the
-        # submodule presence is the sole blocker → safe to force-remove; a
-        # NON-EMPTY result is real uncommitted regular-file work → refuse as
-        # before. This gate is load-bearing: when a worktree has BOTH a dirty
-        # regular file AND a populated submodule, git prints the submodule
-        # message, so a bare `--force` would SILENTLY discard the user's changes
-        # (verified) — the ignore-submodules status is what tells them apart.
-        # `-c core.quotePath=false` so a non-ASCII path arrives verbatim rather
-        # than C-quoted-and-octal-escaped (#768 review). At git's default
-        # `core.quotePath=true`, `café.md` is reported as ` M "caf\303\251.md"`,
-        # and the `${line#???}` strip below then yields that literal escaped
-        # string — a path no `[ -L ]` will ever find. That fails CLOSED (teardown
-        # refuses, no work is discarded), but it means the carve-out silently
-        # never fires for an internationalized filename, re-creating the exact
-        # deadlock this fix exists to remove. Verified both ways.
-        dirty="$(command git -C "$wt" -c core.quotePath=false \
-            status --porcelain --ignore-submodules=all 2>/dev/null || true)"
-
-        # Subtract stale-attribute symlinks from the dirty set (#768). Each ` M
-        # <path>` line whose path is a symlink with an index-identical target is
-        # a filesystem artifact, not work; everything else — a modified regular
-        # file, an added/deleted path, a genuinely retargeted symlink — stays in
-        # the RESIDUE and still refuses below.
+        # fires on ORDINARY teardown, not just on genuine uncommitted work.
         #
-        # Filtering the residue rather than short-circuiting on "all lines are
-        # symlinks" is what preserves the load-bearing gate above: a worktree
-        # with BOTH a stale symlink AND a dirty regular file keeps the regular
-        # file in the residue and is refused, so the force can never silently
-        # discard real work.
-        stale_links=0
-        if [ -n "$dirty" ]; then
-            residue=""
-            while IFS= read -r line; do
-                [ -n "$line" ] || continue
-                # Only an unstaged modification (` M path`) can be this artifact.
-                # Staged/added/deleted states are real work by construction.
-                case "$line" in
-                    " M "*)
-                        if symlink_is_false_dirty "$wt" "${line#???}"; then
-                            stale_links=$((stale_links + 1))
-                            continue
-                        fi
-                        ;;
-                esac
-                residue="$residue$line
-"
-            done <<EOF
-$dirty
-EOF
-            dirty="$(command printf '%s' "$residue")"
+        # RE-VERIFY IMMEDIATELY BEFORE FORCING (#813 review cycle 5). The
+        # up-front classification is what fixes this issue's ordering bug, but
+        # it is NOT sufficient authority to force: the plain removal above can
+        # fail precisely BECAUSE the tree became dirty after the classification,
+        # and `git worktree remove` without `--force` refuses on uncommitted
+        # changes. Trusting the older verdict there would silently discard work
+        # that landed in the window — demonstrated, not theorized: with a writer
+        # appending to a tracked file between the two steps, the old ordering
+        # removed the worktree and destroyed the change.
+        #
+        # This restores the freshness the pre-#813 code had for free by reading
+        # status inside this failure branch (the #325 gate: a worktree with BOTH
+        # a dirty regular file AND a populated submodule prints the same
+        # submodule message, so only an ignore-submodules status tells them
+        # apart). #813 moved that read EARLIER so a deregistering failure could
+        # not corrupt it; it must still also happen HERE, so the force is
+        # authorized by the freshest possible read rather than a stale one.
+        # The re-read goes through the SAME stale-symlink filter the up-front
+        # check uses (#768). A stale-attr symlink reads `dirty` from the raw
+        # classifier by construction — that is the false positive #768 exists to
+        # absorb — so re-verifying with the bare classifier would refuse every
+        # teardown on a macOS bind mount and re-create the deadlock #768 closed.
+        # What must block here is REAL work: the residue after filtering.
+        force_state="$(worktree_dirty_state "$wt")"
+        if [ "$force_state" = "dirty" ]; then
+            force_dirty_rc=0
+            force_dirty="$(command git -C "$wt" -c core.quotePath=false \
+                status --porcelain --ignore-submodules=all 2>/dev/null)" || force_dirty_rc=$?
+            if [ "$force_dirty_rc" -ne 0 ]; then
+                command echo "worktree-rm: cannot re-check $wt before forcing; refusing." >&2
+                command echo "  Nothing was removed. Inspect: git -C $wt status" >&2
+                exit 1
+            fi
+            filter_stale_symlinks "$wt" "$force_dirty"
+            if [ -n "$filtered_residue" ]; then
+                command echo "worktree-rm: $wt gained uncommitted changes after it was checked." >&2
+                command echo "  Refusing to force past work that appeared in the meantime." >&2
+                command echo "  Nothing was removed. Inspect: git -C $wt status" >&2
+                exit 1
+            fi
+            # `filter_stale_symlinks` reset and recomputed `stale_links` here,
+            # and the disclosure message below reads it. That is deliberate: the
+            # count it reports now comes from the freshest read rather than the
+            # up-front one, so the number matches the tree actually being
+            # forced. (Pinned by the #768 "counts TWO stale symlinks" test,
+            # which still passes through this path.)
+            force_state="clean"
         fi
-
-        if [ -z "$dirty" ] && command git worktree remove --force "$wt" 2>/dev/null; then
+        if [ "$force_state" != "clean" ]; then
+            command echo "worktree-rm: $wt could not be re-checked before forcing (it read $force_state)." >&2
+            command echo "  Nothing was removed. Inspect: git -C $wt status" >&2
+            exit 1
+        fi
+        rm_err="$(command git worktree remove --force "$wt" 2>&1)" && rm_rc=0 || rm_rc=$?
+        if [ "$rm_rc" -eq 0 ]; then
             if [ "$stale_links" -gt 0 ]; then
                 command echo "  removed worktree $wt (forced past $stale_links stale symlink attr(s))"
             else
@@ -217,8 +609,27 @@ EOF
             fi
             removed=1
         else
-            command echo "worktree-rm: $wt has uncommitted changes." >&2
-            command echo "  Re-run after committing, or force: git worktree remove --force $wt" >&2
+            # The tree was verified clean, so this is NOT uncommitted work — it
+            # is a removal that failed for some other reason (an undeletable
+            # path under a FUSE/bindfs overlay is the observed one). Report what
+            # git actually said instead of the false dirtiness claim #813 was
+            # filed about. Note git may ALREADY have deregistered the worktree
+            # while failing, so a re-run takes the leftover-directory path above
+            # rather than looping on this message.
+            command echo "worktree-rm: could not remove $wt (the tree was verified clean)." >&2
+            # Sanitized for the same reason the tmux failure text is: captured
+            # subprocess stderr embeds PATHS, so a crafted filename could
+            # otherwise smuggle ANSI escapes or a CR line-overwrite into the
+            # operator's terminal.
+            first_err_safe="$(sanitize_stderr "$first_err")"
+            command echo "  git said: ${first_err_safe:-(no output)}" >&2
+            # Only worth printing when it adds something: after a first attempt
+            # that already deregistered the worktree, the force's message is the
+            # downstream "is not a working tree", not the cause.
+            if [ -n "$rm_err" ] && [ "$rm_err" != "$first_err" ]; then
+                rm_err_safe="$(sanitize_stderr "$rm_err")"
+                command echo "  then, with --force: ${rm_err_safe:-(unprintable)}" >&2
+            fi
             exit 1
         fi
     fi

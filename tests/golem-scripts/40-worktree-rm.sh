@@ -941,3 +941,658 @@ test_worktree_rm_preserves_valid_core_worktree() {
         git -C "$sb" config --get core.worktree || true)"
     assert_equals "$sb" "$val" "a valid, existing core.worktree is left untouched"
 }
+
+# --- #813: the dirty gate must precede the mutation and classify three ways ---
+
+# Slice worktree_dirty_state out of the script and drive it directly, the same
+# way run_kill_outcome slices the tmux classifier. Runs in the caller's cwd so a
+# relative worktree path resolves the way the script uses it.
+run_dirty_state() {
+    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+        eval "$(command sed -n "/^worktree_dirty_state() {/,/^}/p" "$1")"
+        worktree_dirty_state "$2"
+    ' _ "$WT_RM" "$1" 2>&1
+}
+
+# The three-way classifier (#813). The two-way "empty status means clean" read
+# this replaces is what produced a false `has uncommitted changes`: a probe that
+# could not run returned empty, empty read as clean, and the force-remove that
+# followed then failed into the dirty branch.
+#
+# The `unverifiable` cases are the point. Asserting only clean/dirty would pass
+# against the OLD two-way logic too, so they are what give this test teeth.
+test_worktree_rm_dirty_state_classifier() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 80
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    local st
+    st="$(cd "$sb" && run_dirty_state ".worktrees/issue-80")"
+    assert_equals "clean" "$st" "a fresh worktree classifies clean"
+
+    command printf 'work\n' >>"$sb/.worktrees/issue-80/seed.txt"
+    st="$(cd "$sb" && run_dirty_state ".worktrees/issue-80")"
+    assert_equals "dirty" "$st" "a modified tracked file classifies dirty"
+
+    # A path that is not a worktree at all cannot be probed.
+    st="$(cd "$sb" && run_dirty_state ".worktrees/issue-does-not-exist")"
+    assert_equals "unverifiable" "$st" "a missing path is unverifiable, never clean"
+
+    # The reported state: the admin dir is gone, so the worktree's .git file
+    # dangles and `git status` reports `fatal: not a git repository: (null)`.
+    # The old code mapped that to empty and read it as CLEAN.
+    command rm -rf "$sb/.git/worktrees/issue-80"
+    st="$(cd "$sb" && run_dirty_state ".worktrees/issue-80")"
+    assert_equals "unverifiable" "$st" \
+        "a deregistered worktree is unverifiable, never clean"
+
+    # The walk-up case: with the .git file gone entirely, git resolves the MAIN
+    # checkout and answers about the WRONG repo — non-empty output that would
+    # read as this worktree's dirtiness. The toplevel-anchor guard catches it.
+    command rm -f "$sb/.worktrees/issue-80/.git"
+    st="$(cd "$sb" && run_dirty_state ".worktrees/issue-80")"
+    assert_equals "unverifiable" "$st" \
+        "a directory whose git resolves the MAIN repo is unverifiable, not dirty"
+}
+
+# Regression (#813), the reported bug: a CLEAN worktree that git no longer lists
+# must never be reported as having uncommitted changes. Before the fix the probe
+# failed, read as clean, the force-remove failed `not a working tree`, and the
+# else-arm printed the false claim.
+#
+# It also must not be skipped: the removal block used to be gated entirely on the
+# worktree being listed, so a leftover directory was never cleaned and a re-run
+# said "nothing to remove" while the directory sat on disk.
+test_worktree_rm_deregistered_clean_is_not_reported_dirty() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 81
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    # Deregister exactly as an interrupted/failed `git worktree remove` does.
+    command rm -rf "$sb/.git/worktrees/issue-81"
+
+    run_in "$sb" "$WT_RM" 81
+    assert_exit 0 "$RUN_RC" "worktree-rm succeeds on a deregistered clean worktree"
+    assert_not_contains "$RUN_OUT" "uncommitted changes" \
+        "never claims uncommitted changes for a state it could not probe"
+    assert_contains "$RUN_OUT" "no longer registered" "names the actual state"
+    assert_true "[ ! -e '$sb/.worktrees/issue-81' ]" \
+        "the leftover directory is removed rather than skipped"
+    local branches
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb" branch --list "feature/issue-81")"
+    assert_equals "" "$branches" "teardown continues to the branch after the leftover cleanup"
+}
+
+# Regression (#813), the walk-up half END TO END: with the worktree's own `.git`
+# file broken, git walks UP and resolves the MAIN checkout, so an unanchored
+# probe reports MAIN's untracked files as this worktree's uncommitted work — a
+# refusal that looks legitimate while describing a different tree entirely.
+#
+# The ADMIN DIR IS LEFT INTACT ON PURPOSE, and that is the whole design of this
+# fixture. Removing it (the obvious way to break the worktree) flips `listed` to
+# 0 and routes the run into the leftover-directory branch, which refuses on the
+# fingerprint check WITHOUT EVER CALLING worktree_dirty_state — so the
+# assert_not_contains below would pass trivially, green whether or not the
+# walk-up guard exists. Keeping the worktree listed is what forces execution
+# through the classifier and gives this test teeth. (Verified: with the
+# toplevel-anchor guard neutered, this test goes red.)
+test_worktree_rm_leftover_dir_does_not_probe_main_repo() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 82
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    # REMOVE the worktree-side .git file but leave .git/worktrees/issue-82 in
+    # place, so the worktree stays REGISTERED (classifier is consulted) while
+    # git has nothing to resolve locally and walks UP to the main checkout.
+    # Verified this is the genuine walk-up: `rev-parse --show-toplevel` from the
+    # worktree answers with the MAIN root, and `status --porcelain` there
+    # returns main's own `?? .worktrees/` — i.e. an unanchored probe would call
+    # this worktree dirty on the strength of the main checkout's untracked files.
+    #
+    # Note a `.git` file pointing at the main `.git` does NOT reproduce this
+    # (git resolves it correctly via core.worktree and reads clean); only the
+    # absent pointer produces the walk-up.
+    command rm -f "$sb/.worktrees/issue-82/.git"
+    # An untracked file in MAIN — what the walk-up probe would wrongly report.
+    command printf 'main-only\n' >"$sb/untracked-in-main.txt"
+
+    run_in "$sb" "$WT_RM" 82
+    assert_exit 1 "$RUN_RC" "an unprobeable worktree is refused, not removed"
+    # The load-bearing assertion: whatever teardown decides, it must never
+    # describe MAIN's untracked files as this worktree's dirtiness. Anchored on
+    # the sentence start, because the correct "cannot verify whether X has
+    # uncommitted changes" message legitimately contains the bare phrase.
+    assert_not_contains "$RUN_OUT" "worktree-rm: .worktrees/issue-82 has uncommitted" \
+        "main's untracked files are never reported as the worktree's dirtiness"
+    assert_contains "$RUN_OUT" "cannot verify" "reports the unverifiable state instead"
+    assert_file_exists "$sb/untracked-in-main.txt" "the main checkout is left untouched"
+}
+
+# The fingerprint gate end to end (#813 review): a leftover directory with no
+# `.git` at all may never have been a worktree, so it is refused rather than
+# deleted. Split out of the walk-up test above, which used to conflate the two
+# by deleting both the admin dir and the .git file.
+test_worktree_rm_leftover_dir_without_fingerprint_is_refused() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 85
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-85"
+    command rm -f "$sb/.worktrees/issue-85/.git"
+
+    run_in "$sb" "$WT_RM" 85
+    assert_exit 1 "$RUN_RC" "a directory with no worktree fingerprint is refused, not deleted"
+    assert_contains "$RUN_OUT" "has no .git entry" \
+        "the refusal names the FINGERPRINT as the reason, not a generic message"
+    assert_true "[ -e '$sb/.worktrees/issue-85' ]" \
+        "the unrecognized directory is left in place for inspection"
+}
+
+# A SYMLINK at the worktree path is never residue (#813 review). Only the parent
+# is canonicalized, so a symlinked leaf would otherwise keep an in-repo-looking
+# path for the containment check while the fingerprint test followed the link to
+# an out-of-tree `.git` — containment satisfied by a lie. The fixture gives the
+# target a `.git` ON PURPOSE so the fingerprint alone cannot refuse it, leaving
+# the symlink guard as the only thing that can.
+test_worktree_rm_refuses_a_symlinked_worktree_path() {
+    local sb outside
+    new_sandbox sb
+    outside="$(command mktemp -d "$WORKDIR/linktarget.XXXXXX")" || return 1
+    command printf 'OUTSIDE VIA SYMLINK\n' >"$outside/precious.txt"
+    command touch "$outside/.git"
+    command mkdir -p "$sb/.worktrees"
+    command ln -s "$outside" "$sb/.worktrees/issue-86"
+
+    run_in "$sb" "$WT_RM" 86
+    assert_exit 1 "$RUN_RC" "a symlink at the worktree path is refused"
+    assert_file_contains "$outside/precious.txt" "OUTSIDE VIA SYMLINK" \
+        "the symlink target's contents are never touched"
+    assert_true "[ -L '$sb/.worktrees/issue-86' ]" "the symlink itself is left in place"
+}
+
+# Path safety for the leftover-directory cleanup (#813 review). "git does not
+# list it" is NOT sufficient evidence to `rm -rf` a path: before this change an
+# unlisted path was never touched at all, so the cleanup is the script's first
+# unconditional recursive delete and has to earn it.
+#
+# Each case below is a distinct data-loss vector, and each is verified by the
+# SURVIVAL of a file that only exists to be destroyed — an assertion that cannot
+# pass if the guard is removed.
+test_worktree_rm_refuses_to_delete_a_non_worktree_directory() {
+    local sb
+    new_sandbox sb
+    # A directory at the predictable worktree path that was NEVER a worktree:
+    # an operator's scratch dir, a stray editor copy, or a worktree-new.sh run
+    # that died after mkdir but before `git worktree add`. It holds real,
+    # never-tracked work that no git probe can see.
+    command mkdir -p "$sb/.worktrees/issue-77"
+    command printf 'IRREPLACEABLE USER WORK\n' >"$sb/.worktrees/issue-77/notes.txt"
+
+    run_in "$sb" "$WT_RM" 77
+    assert_exit 1 "$RUN_RC" "a directory with no .git fingerprint is refused"
+    assert_contains "$RUN_OUT" "has no .git entry" \
+        "the refusal names the FINGERPRINT as the reason"
+    assert_file_contains "$sb/.worktrees/issue-77/notes.txt" "IRREPLACEABLE USER WORK" \
+        "never-tracked work in a non-worktree directory survives teardown"
+}
+
+# The containment half: GOLEM_WORKTREE_DIR is env-overridable and never
+# validated, so an absolute value makes `$wt` absolute and would aim the
+# `rm -rf` outside the repo entirely. The fixture gives the target a `.git`
+# fingerprint ON PURPOSE, so the fingerprint check alone cannot save it and only
+# containment can — without that, this test would pass for the wrong reason.
+test_worktree_rm_refuses_a_worktree_dir_outside_the_repo() {
+    local sb outside
+    new_sandbox sb
+    outside="$(command mktemp -d "$WORKDIR/outside.XXXXXX")" || return 1
+    command mkdir -p "$outside/issue-55"
+    command printf 'OUTSIDE THE REPO\n' >"$outside/issue-55/precious.txt"
+    command touch "$outside/issue-55/.git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR="$outside" \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 55 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" "a target resolving outside the repo root is refused"
+    assert_contains "$RUN_OUT" "resolves outside the repo root" \
+        "the refusal names CONTAINMENT as the reason"
+    assert_file_contains "$outside/issue-55/precious.txt" "OUTSIDE THE REPO" \
+        "a path outside the repo is never deleted, even with a .git fingerprint"
+}
+
+# The end-to-end `unverifiable` refusal (#813 review, coverage gap). The two
+# other e2e tests both remove the admin dir, which flips `listed` to 0 and
+# routes into the leftover path — so neither ever reaches the branch that fires
+# when git STILL LISTS the worktree but the probe cannot be evaluated. That
+# branch prints the operator-facing "still registered" guidance, so its wording
+# and exit code deserve a test of their own.
+test_worktree_rm_listed_but_unprobeable_refuses_with_cannot_verify() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 84
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    # Leave the ADMIN dir intact (so the worktree stays listed) but break the
+    # working-tree side, so rev-parse cannot resolve it.
+    command printf 'gitdir: /nonexistent/admin/dir\n' >"$sb/.worktrees/issue-84/.git"
+
+    run_in "$sb" "$WT_RM" 84
+    assert_exit 1 "$RUN_RC" "a listed but unprobeable worktree is refused"
+    assert_contains "$RUN_OUT" "cannot verify" "says it cannot verify, not that it is dirty"
+    # Anchoring this absence is genuinely fiddly, and the two obvious spellings
+    # are both WRONG — worth recording so nobody "fixes" it back:
+    #
+    #   has uncommitted changes            appears inside the CORRECT message
+    #   issue-84 has uncommitted changes   ditto — "cannot verify whether
+    #                                      .worktrees/issue-84 has uncommitted
+    #                                      changes" ends in exactly that
+    #
+    # The dirty claim and its negation share their whole tail, so no
+    # path-plus-phrase anchor can separate them. What differs is the SENTENCE
+    # START: the false claim is `worktree-rm: <path> has uncommitted changes.`,
+    # with the script's own `worktree-rm: ` prefix immediately before the path.
+    assert_not_contains "$RUN_OUT" "worktree-rm: .worktrees/issue-84 has uncommitted" \
+        "never claims dirtiness for a condition it could not evaluate"
+    assert_true "[ -e '$sb/.worktrees/issue-84' ]" "the worktree is left in place for inspection"
+    assert_true "[ -e '$sb/.git/worktrees/issue-84' ]" \
+        "the still-registered worktree is not deregistered by the refusal"
+}
+
+# Regression (#813), the reorder itself: a genuinely dirty worktree must be
+# refused BEFORE anything is mutated. The still-registered assertion is what
+# pins the ordering — under the old mutate-then-check code the failed
+# `git worktree remove` had already deregistered the worktree by the time the
+# refusal printed, leaving the operator unable to run the very `git status` the
+# message asks them to act on.
+test_worktree_rm_dirty_refusal_leaves_worktree_registered() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 83
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command printf 'REAL USER WORK\n' >>"$sb/.worktrees/issue-83/seed.txt"
+
+    run_in "$sb" "$WT_RM" 83
+    assert_exit 1 "$RUN_RC" "worktree-rm still refuses a genuinely dirty worktree"
+    assert_contains "$RUN_OUT" "uncommitted changes" "reports the real dirtiness"
+    assert_file_contains "$sb/.worktrees/issue-83/seed.txt" "REAL USER WORK" \
+        "the uncommitted work is preserved"
+
+    # The load-bearing half: the refusal happened before any mutation, so the
+    # worktree is still registered and the operator's own `git status` works.
+    local listed
+    listed="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb" worktree list --porcelain | command grep -c "issue-83" || true)"
+    assert_true "[ '$listed' -gt 0 ]" \
+        "the worktree is still registered after the refusal (check ran before the mutation)"
+    assert_true "[ -e '$sb/.git/worktrees/issue-83' ]" \
+        "the worktree admin dir survives the refusal"
+
+    # And the refusal no longer advertises a blind --force, which is exactly what
+    # a careful operator must not run when the claim cannot be verified.
+    assert_not_contains "$RUN_OUT" "worktree remove --force" \
+        "the refusal does not advertise a blind --force"
+}
+
+# The clean-but-unremovable branch (#813 review cycle 3). When the tree is
+# classified CLEAN but both `git worktree remove` and its `--force` retry fail
+# — the FUSE/bindfs undeletable-path case #834 tracks — teardown must report
+# what GIT actually said, never the false dirtiness claim this issue is about.
+#
+# A `git` stub is what makes this drivable: it forwards every subcommand to the
+# real git EXCEPT `worktree remove`, which it fails with a recognizable message.
+# The tree is genuinely clean, so the classifier passes it through and the
+# failure lands squarely on the new branch.
+test_worktree_rm_clean_but_unremovable_reports_gits_error() {
+    local sb real_git
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 87
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<EOF
+#!/usr/bin/env bash
+# Test stub: fail only \`worktree remove\`; forward everything else to real git.
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ]; then
+    command echo "fatal: STUBBED REMOVAL FAILURE" >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+EOF
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 87 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" "an unremovable clean worktree exits 1"
+    assert_contains "$RUN_OUT" "the tree was verified clean" \
+        "says the tree was clean rather than claiming uncommitted changes"
+    assert_contains "$RUN_OUT" "STUBBED REMOVAL FAILURE" \
+        "surfaces git's actual error instead of swallowing it"
+    # The whole point of #813: a removal that failed for a non-dirtiness reason
+    # must never be reported as dirtiness.
+    assert_not_contains "$RUN_OUT" "worktree-rm: .worktrees/issue-87 has uncommitted" \
+        "never reports a non-dirtiness failure as uncommitted changes"
+}
+
+# The re-read guard (#813 review cycle 3). Between the classifier's `dirty`
+# verdict and the second status read that fetches the LINES, a failure must not
+# fall through to `clean` — that would be this issue's own bug one layer down,
+# and ending in a force-remove rather than a false refusal.
+#
+# The stub makes the FIRST status call succeed (so the classifier says dirty)
+# and every later one fail, which is exactly the window being guarded.
+test_worktree_rm_status_reread_failure_refuses() {
+    local sb real_git
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 88
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command printf 'REAL USER WORK\n' >>"$sb/.worktrees/issue-88/seed.txt"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<EOF
+#!/usr/bin/env bash
+# Test stub: let the FIRST \`status\` through (classifier reads dirty), then fail
+# every subsequent one — the re-read the guard under test protects.
+_seen="\$HOME/.status-calls"
+for _a in "\$@"; do
+    if [ "\$_a" = "status" ]; then
+        if [ -e "\$_seen" ]; then
+            command echo "fatal: STUBBED STATUS FAILURE" >&2
+            exit 128
+        fi
+        : >"\$_seen"
+        break
+    fi
+done
+exec "$real_git" "\$@"
+EOF
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 88 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" "a failed status re-read refuses rather than falling through"
+    assert_contains "$RUN_OUT" "cannot re-read the status" "names the re-read failure"
+    assert_file_contains "$sb/.worktrees/issue-88/seed.txt" "REAL USER WORK" \
+        "the uncommitted work is preserved, never force-removed"
+    assert_true "[ -e '$sb/.worktrees/issue-88' ]" "the worktree is left in place"
+}
+
+# The refusal message must name the guard that ACTUALLY tripped (#813 review
+# cycle 3). A symlinked path can legitimately carry a valid `.git` at its target
+# and resolve inside the root, so the fingerprint/containment wording would be
+# false on both counts — misreporting a state you did not evaluate is the very
+# defect this issue exists to fix.
+test_worktree_rm_residue_refusal_names_the_actual_reason() {
+    local sb outside
+    new_sandbox sb
+
+    # symlink -> a target that HAS a .git, so only the symlink guard can refuse.
+    outside="$(command mktemp -d "$WORKDIR/reason.XXXXXX")" || return 1
+    command touch "$outside/.git"
+    command mkdir -p "$sb/.worktrees"
+    command ln -s "$outside" "$sb/.worktrees/issue-90"
+    run_in "$sb" "$WT_RM" 90
+    assert_exit 1 "$RUN_RC" "a symlinked path is refused"
+    assert_contains "$RUN_OUT" "is a symlink" "the symlink refusal says SYMLINK"
+    assert_not_contains "$RUN_OUT" "has no .git entry" \
+        "does not blame a missing fingerprint the target actually has"
+
+    # A plain directory with no .git — the fingerprint reason.
+    command mkdir -p "$sb/.worktrees/issue-91"
+    run_in "$sb" "$WT_RM" 91
+    assert_exit 1 "$RUN_RC" "a non-worktree directory is refused"
+    assert_contains "$RUN_OUT" "has no .git entry" "the fingerprint refusal says FINGERPRINT"
+    assert_not_contains "$RUN_OUT" "is a symlink" "does not call a plain directory a symlink"
+}
+
+# Captured git stderr is SANITIZED before it reaches the operator's terminal
+# (#813 review cycle 4). The tmux failure path in this same script already
+# strips C0 controls and DEL because its message embeds a socket path; the git
+# removal errors embed FILE paths and reach the terminal the same way, so a
+# crafted filename would otherwise smuggle ANSI escapes or a CR line-overwrite
+# into the operator's session.
+#
+# The stub emits a CR and an ANSI sequence in its error text. CR is the
+# load-bearing one: a terminal renders it by returning the cursor to column 0,
+# letting the tail of the message overwrite the warning that preceded it.
+test_worktree_rm_sanitizes_git_error_text() {
+    local sb real_git
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 92
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<EOF
+#!/usr/bin/env bash
+# Test stub: fail \`worktree remove\` with control characters in the message.
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ]; then
+    command printf 'fatal: BEGINMARK\\033[31m\\rOVERWRITE ENDMARK\\n' >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+EOF
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 92 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" "the removal failure still exits 1"
+    # The TEXT survives — sanitizing must not swallow the diagnostic.
+    assert_contains "$RUN_OUT" "BEGINMARK" "the error text still reaches the operator"
+    assert_contains "$RUN_OUT" "ENDMARK" "the whole message survives, not just its head"
+
+    # The CONTROL BYTES do not. Checked with printf-built literals so the test
+    # cannot accidentally assert against its own escaped source text.
+    local cr esc
+    cr="$(command printf '\r')"
+    esc="$(command printf '\033')"
+    case "$RUN_OUT" in
+        *"$cr"*) assert_true "false" "a CR must not reach the terminal (line-overwrite spoofing)" ;;
+        *) assert_true "true" "CR is stripped from the reported git error" ;;
+    esac
+    case "$RUN_OUT" in
+        *"$esc"*) assert_true "false" "an ESC must not reach the terminal (ANSI injection)" ;;
+        *) assert_true "true" "ESC is stripped from the reported git error" ;;
+    esac
+}
+
+# The force path re-verifies (#813 review cycle 5). The up-front classification
+# fixes this issue's ordering bug, but it is NOT sufficient authority to force:
+# the plain removal can fail precisely BECAUSE the tree went dirty after that
+# classification, and forcing on the stale verdict would silently discard work
+# that landed in the window. Pre-#813 this freshness came for free, because the
+# old code read status inside this same failure branch; moving the read earlier
+# is what created the gap.
+#
+# THE FIXTURE MUST DIRTY THE TREE MID-RUN, and getting this wrong is easy: an
+# earlier version of this test dirtied the file BEFORE invoking worktree-rm, so
+# the UP-FRONT check refused it and the force re-verify never executed at all.
+# It passed with and without the guard — a fixture that both armed and satisfied
+# its own gate. The stub below is what actually reaches the force path: the tree
+# is clean when the classifier reads it, and a writer lands only when git is
+# asked to REMOVE it.
+test_worktree_rm_force_reverifies_before_discarding() {
+    local sb real_git
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 93
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<EOF
+#!/usr/bin/env bash
+# Test stub: the tree is clean when the classifier reads it; a concurrent writer
+# lands just before the removal, exactly the window the guard covers. The plain
+# removal then fails on the new dirt (git refuses without --force), so execution
+# reaches the force path — where the re-check must refuse.
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ]; then
+    command printf 'WORK THAT LANDED AFTER THE CHECK\n' \
+        >>"$sb/.worktrees/issue-93/seed.txt"
+fi
+exec "$real_git" "\$@"
+EOF
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 93 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" "teardown refuses rather than forcing past the new work"
+    assert_contains "$RUN_OUT" "after it was checked" \
+        "names the re-check, not the up-front classification"
+    assert_file_contains "$sb/.worktrees/issue-93/seed.txt" "WORK THAT LANDED AFTER THE CHECK" \
+        "work that appeared after the check is never silently discarded"
+    assert_true "[ -e '$sb/.worktrees/issue-93' ]" "the worktree is left in place"
+}
+
+# The "changed between two status checks" branch (#813 review cycle 5). Distinct
+# from a re-read that FAILS: here the re-read SUCCEEDS and finds nothing, i.e.
+# the tree went dirty-then-clean between the two probes. Refusing is right —
+# something else is writing — but the message must say that rather than claim a
+# read failure that did not happen.
+#
+# The stub lets the classifier's first `status` through (so it reads dirty) and
+# returns EMPTY, exit 0, for every later one — precisely the succeed-but-empty
+# shape, which no other test produces.
+test_worktree_rm_status_changed_between_checks_refuses() {
+    local sb real_git
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 94
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command printf 'REAL USER WORK\n' >>"$sb/.worktrees/issue-94/seed.txt"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<EOF
+#!/usr/bin/env bash
+# Test stub: first \`status\` passes through (classifier reads dirty); every
+# later one SUCCEEDS with empty output — the succeed-but-empty race shape.
+_seen="\$HOME/.status-calls"
+for _a in "\$@"; do
+    if [ "\$_a" = "status" ]; then
+        if [ -e "\$_seen" ]; then
+            exit 0
+        fi
+        : >"\$_seen"
+        break
+    fi
+done
+exec "$real_git" "\$@"
+EOF
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 94 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" "a tree that changed between checks is refused"
+    assert_contains "$RUN_OUT" "changed between two status checks" \
+        "names the race rather than claiming a read failure"
+    assert_not_contains "$RUN_OUT" "cannot re-read the status" \
+        "does not report a failure that did not happen"
+    assert_file_contains "$sb/.worktrees/issue-94/seed.txt" "REAL USER WORK" \
+        "the work is preserved"
+}
+
+# The force-path `unverifiable` refusal (#813 review cycle 6). The force re-check
+# has three outcomes — dirty (residue-filtered), clean (proceed), and anything
+# else, which lands on the "could not be re-checked before forcing" refusal.
+#
+# That third branch is NOT hypothetical: it is the very condition this issue was
+# filed about, arriving one step later. A failing `git worktree remove`
+# DEREGISTERS the worktree before reporting failure (verified on git 2.55.0), so
+# the re-check that follows can find a worktree git no longer resolves. Forcing
+# on an unevaluable state is exactly what must not happen.
+#
+# The stub reproduces that sequence faithfully: the plain removal fails AND
+# breaks the worktree's .git pointer, so the re-check cannot resolve it.
+test_worktree_rm_force_recheck_unverifiable_refuses() {
+    local sb real_git
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 95
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+
+    real_git="$(command -v git)"
+    command mkdir -p "$sb/bin"
+    command cat >"$sb/bin/git" <<EOF
+#!/usr/bin/env bash
+# Test stub: the plain \`worktree remove\` fails AND deregisters as it goes —
+# the observed git behavior this issue documents. The force re-check then finds
+# a worktree it cannot resolve.
+if [ "\${1:-}" = "worktree" ] && [ "\${2:-}" = "remove" ]; then
+    command printf 'gitdir: /nonexistent/admin/dir\n' >"$sb/.worktrees/issue-95/.git"
+    command echo "fatal: STUBBED REMOVAL FAILURE" >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+EOF
+    command chmod +x "$sb/bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$sb/bin:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_RM" 95 2>&1)" || RUN_RC=$?
+
+    assert_exit 1 "$RUN_RC" "an unverifiable re-check refuses rather than forcing"
+    assert_contains "$RUN_OUT" "re-check" "names the re-check as what could not be completed"
+    # The defining property of this whole issue: never claim dirtiness for a
+    # state the guard could not evaluate.
+    assert_not_contains "$RUN_OUT" "worktree-rm: .worktrees/issue-95 has uncommitted" \
+        "never claims uncommitted changes for an unevaluable state"
+    assert_true "[ -e '$sb/.worktrees/issue-95' ]" "nothing is removed"
+}
