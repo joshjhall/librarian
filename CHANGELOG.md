@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-29
+
+### Added
+
+- Language-support contract for the check-* scanners (#622 Phase 0) (#849)
+- Phase 1 — model Rust across the four check-* scanners (#856)
+
+### Changed
+
+- Extract golem-status.sh's per-golem signal families to a sourced fragment (#803)
+- Split coverage-python.sh's driver blocks into a fragment (#779) (#804)
+- Split ship-issue.mjs per-area; record the workflow.js decline (#807)
+- Generate the two largest workflow.js harnesses from editable fragments (#808)
+- Record the per-harness workflow.js size decision (#718) (#812)
+
+### Documentation
+
+- Record three test-fixture lessons and correct the release memory
+- Add nine memories and refresh four from recent sessions
+
+### Fixed
+
+- Make the golem context-budget check runnable in a worktree (#809) (#814)
+- Dispatch mixed-case extensions alike in both runtimes (#818)
+- Correct the worktree-refusal boundary, kill the silent eval shape, and gate it (#815) (#821)
+- Install agnix with --install-links so the gate stops skipping (#826)
+- Check worktree dirtiness before the removal that deregisters it (#848)
+- Tolerate a partial leftover removal under bindfs/FUSE, keeping the residue fingerprint (#850)
+- Count separate-file tests as production LOC (#851) (#857)
+
+### Miscellaneous
+
+- Bump containers submodule to v4.19.26
+
+### Testing
+
+- Add a TypeScript fixture pair to validate-split-verify.sh (#822)
+- Share an allocate-and-retry helper across both listener port sites (#823)
+- Cover the #742 cache-staging path's `npm root -g` source (#831)
+- Make _cov_start_listener callable and drive both reaps' SIGKILL branch (#832)
+- Add assert_file_defines and steer definition assertions to it (#830) (#835)
+- Check the language matrix per category cell, not per language (#852)
+
 ## [0.11.0] - 2026-08-25
 
 ### Added
@@ -719,6 +762,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.12.0]: https://github.com/joshjhall/librarian/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/joshjhall/librarian/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/joshjhall/librarian/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/joshjhall/librarian/compare/v0.9.0...v0.10.0
