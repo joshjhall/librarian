@@ -130,10 +130,52 @@ EXT_LANG = {
     "hpp": "cfamily",
     "cs": "cfamily",
     "scala": "cfamily",
+    "m": "cfamily",
+    "mm": "cfamily",
+    "dart": "cfamily",
+    "groovy": "cfamily",
+    "gradle": "cfamily",
+    "v": "cfamily",
+    "zig": "cfamily",
+    "cr": "cfamily",
+    # `#`-COMMENT LANGUAGES beyond py/sh/rb. Same rule, same reason. Grouped
+    # under the existing `hash` family rather than given individual keys — the
+    # lexical fact IS the comment marker, so languages that share one share an
+    # entry.
+    "pl": "hash",
+    "pm": "hash",
+    "r": "hash",
+    "jl": "hash",
+    "ex": "hash",
+    "exs": "hash",
+    "nim": "hash",
+    "tcl": "hash",
+    "zsh": "hash",
+    "fish": "hash",
+    "ps1": "hash",
+    "psm1": "hash",
+    "tf": "hash",
+    "tfvars": "hash",
+    # MISCELLANEOUS MARKERS — one family per distinct spelling.
+    "lua": "dashdash",  # -- line comments (the ADR's motivating false positive)
+    "sql": "dashdash",
+    "hs": "dashdash",
+    "elm": "dashdash",
+    "vb": "quote",  # ' line comments
+    "bas": "quote",
+    "erl": "percent",  # % line comments
+    "clj": "semicolon",  # ; line comments
+    "asm": "semicolon",
+    "bat": "rem",  # REM / :: line comments
+    "vue": "html",  # <!-- --> plus the JS/CSS blocks inside
+    "svelte": "html",
+    "html": "html",
+    "xml": "html",
+    "pas": "brace",  # { } and (* *) comments
     # JSON has NO comment syntax at all, so no line can be a comment and the
-    # empty pattern below is the honest model rather than a missing one. It is
-    # modeled because a checked-in service-account key or npm token is exactly
-    # the kind of credential this detector exists to catch.
+    # never-matching pattern below is the honest model rather than a missing one.
+    # It is modeled because a checked-in service-account key or npm token is
+    # exactly the kind of credential this detector exists to catch.
     "json": "json",
 }
 
@@ -153,6 +195,14 @@ COMMENT_RE = {
     "java": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "swift": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "cfamily": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "hash": re.compile(r"^[ \t]*#"),
+    "dashdash": re.compile(r"^[ \t]*--"),
+    "quote": re.compile(r"^[ \t]*'"),
+    "percent": re.compile(r"^[ \t]*%"),
+    "semicolon": re.compile(r"^[ \t]*;"),
+    "rem": re.compile(r"^[ \t]*([Rr][Ee][Mm][ \t]|::)"),
+    "html": re.compile(r"^[ \t]*(?:<!--|//|/\*|\*)"),
+    "brace": re.compile(r"^[ \t]*(?:\{|\(\*)"),
     # JSON has no comment syntax, so NO line opens a comment. `(?!)` never
     # matches — the explicit "this language has no comments" model, distinct
     # from a missing entry (which would make lang resolve but is_comment fall

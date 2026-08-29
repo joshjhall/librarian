@@ -101,7 +101,26 @@ lang_of() {
         *.[Pp][Hh][Pp]) command printf 'cfamily' ;;
         *.[Cc] | *.[Hh] | *.[Cc][Cc]) command printf 'cfamily' ;;
         *.[Cc][Pp][Pp] | *.[Hh][Pp][Pp] | *.[Cc][Ss]) command printf 'cfamily' ;;
-        *.[Ss][Cc][Aa][Ll][Aa]) command printf 'cfamily' ;;
+        *.[Ss][Cc][Aa][Ll][Aa] | *.[Mm] | *.[Mm][Mm]) command printf 'cfamily' ;;
+        *.[Dd][Aa][Rr][Tt] | *.[Vv] | *.[Zz][Ii][Gg] | *.[Cc][Rr]) command printf 'cfamily' ;;
+        *.[Gg][Rr][Oo][Oo][Vv][Yy] | *.[Gg][Rr][Aa][Dd][Ll][Ee]) command printf 'cfamily' ;;
+        # `#`-COMMENT LANGUAGES beyond py/sh/rb — grouped by MARKER, since the
+        # lexical fact is the marker itself.
+        *.[Pp][Ll] | *.[Pp][Mm] | *.[Rr] | *.[Jj][Ll]) command printf 'hash' ;;
+        *.[Ee][Xx] | *.[Ee][Xx][Ss] | *.[Nn][Ii][Mm] | *.[Tt][Cc][Ll]) command printf 'hash' ;;
+        *.[Zz][Ss][Hh] | *.[Ff][Ii][Ss][Hh]) command printf 'hash' ;;
+        *.[Pp][Ss]1 | *.[Pp][Ss][Mm]1) command printf 'hash' ;;
+        *.[Tt][Ff] | *.[Tt][Ff][Vv][Aa][Rr][Ss]) command printf 'hash' ;;
+        # MISCELLANEOUS MARKERS — one family per distinct spelling.
+        *.[Ll][Uu][Aa] | *.[Ss][Qq][Ll]) command printf 'dashdash' ;;
+        *.[Hh][Ss] | *.[Ee][Ll][Mm]) command printf 'dashdash' ;;
+        *.[Vv][Bb] | *.[Bb][Aa][Ss]) command printf 'quote' ;;
+        *.[Ee][Rr][Ll]) command printf 'percent' ;;
+        *.[Cc][Ll][Jj] | *.[Aa][Ss][Mm]) command printf 'semicolon' ;;
+        *.[Bb][Aa][Tt]) command printf 'rem' ;;
+        *.[Vv][Uu][Ee] | *.[Ss][Vv][Ee][Ll][Tt][Ee]) command printf 'html' ;;
+        *.[Hh][Tt][Mm][Ll] | *.[Xx][Mm][Ll]) command printf 'html' ;;
+        *.[Pp][Aa][Ss]) command printf 'brace' ;;
         # JSON has NO comment syntax at all — see comment_re's json arm.
         *.[Jj][Ss][Oo][Nn]) command printf 'json' ;;
         *) command printf '' ;;
@@ -114,8 +133,15 @@ lang_of() {
 # — BSD grep reads \s as a literal `s` (#679).
 comment_re() {
     case "$1" in
-        py | sh | rb | conf) command printf '^[0-9]+:[[:space:]]*#' ;;
+        py | sh | rb | conf | hash) command printf '^[0-9]+:[[:space:]]*#' ;;
         js | ts | rs | go | java | swift | cfamily) command printf '^[0-9]+:[[:space:]]*(//|/\*|\*)' ;;
+        dashdash) command printf '^[0-9]+:[[:space:]]*--' ;;
+        quote) command printf "^[0-9]+:[[:space:]]*'" ;;
+        percent) command printf '^[0-9]+:[[:space:]]*%%' ;;
+        semicolon) command printf '^[0-9]+:[[:space:]]*;' ;;
+        rem) command printf '^[0-9]+:[[:space:]]*([Rr][Ee][Mm][[:space:]]|::)' ;;
+        html) command printf '^[0-9]+:[[:space:]]*(<!--|//|/\*|\*)' ;;
+        brace) command printf '^[0-9]+:[[:space:]]*(\{|\(\*)' ;;
         # JSON has no comment syntax, so NO line opens a comment. This must be a
         # NEVER-MATCHING pattern, not an empty one: the consumers pipe through
         # `grep -vE "$file_comment_re"`, and an empty ERE matches EVERY line, so

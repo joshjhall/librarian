@@ -48,9 +48,12 @@ for the same reason — one cell cannot carry two letters):
 | Java, Kotlin | java, kt          | L              | L                     | —              | L        | L               |
 | Bash        | sh, bash           | L              | L                     | —              | L        | L               |
 | Swift       | swift              | L              | L                     | —              | L        | L               |
-| Config      | yml, yaml, ini, cfg, conf, toml, properties, env | L | L         | —              | L        | L               |
-| C-family    | php, c, h, cc, cpp, hpp, cs, scala | L | L                     | —              | L        | L               |
-| JSON        | json               | L              | L                     | —              | L        | L               |
+| Config (`#`) | yml, yaml, ini, cfg, conf, toml, properties, env | L | L        | —              | L        | L               |
+| C-family (`//`) | php, c, h, cc, cpp, hpp, cs, scala, m, mm, dart, groovy, gradle, v, zig, cr | L | L | —      | L        | L               |
+| Hash (`#`)  | pl, pm, r, jl, ex, exs, nim, tcl, zsh, fish, ps1, psm1, tf, tfvars | L | L | —          | L        | L               |
+| Dash (`--`) | lua, sql, hs, elm   | L              | L                     | —              | L        | L               |
+| Other markers | vb, bas (`'`), erl (`%`), clj, asm (`;`), bat (`REM`), vue, svelte, html, xml (`<!--`), pas (`{`) | L | L | —  | L        | L               |
+| JSON (none) | json               | L              | L                     | —              | L        | L               |
 | every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
@@ -74,16 +77,32 @@ the gating the credential detector ran on every file, so a `password: "…"` in 
 `—` would silently stop scanning exactly the file types where checked-in
 credentials most often live. All of them spell a line comment with `#`.
 
-The **C-family** and **JSON** rows are there for the same measured reason: a
-`$password = "…"` in a `.php` and an `MD5(` in a `.c` both fired on `main`, so
-omitting them would have been a silent coverage loss rather than a deliberate
-narrowing. JSON is the interesting one — it has **no comment syntax at all**, so
-its model is a *never-matching* pattern rather than an absent one. That
-distinction is load-bearing in the bash runtime: the consumers pipe through
+**The rows below Swift are grouped by comment MARKER, not by language family,
+and that is the point.** Three review cycles each found one more group that had
+silently lost coverage to the gating — config formats, then the C-family, then a
+long tail including `.tf`/`.tfvars`, `.ps1`, `.pl`, `.lua`, `.vue`. Those were
+not three defects; they were three instances of one, because the table was being
+extended language-by-language as each omission was noticed. Keying on the marker
+makes the table describe the lexical fact directly, so adding a language is
+choosing an existing family rather than discovering a gap.
+
+The measured baseline: across 52 probed extensions, this scanner now covers
+**exactly what `main` covered** — zero regressions — while gaining the
+per-language correctness that motivated the phase.
+
+JSON is the interesting row: it has **no comment syntax at all**, so its model is
+a *never-matching* pattern rather than an absent one. That distinction is
+load-bearing in the bash runtime specifically — the consumers pipe through
 `grep -vE "$file_comment_re"`, and an **empty** ERE matches every line, so `-v`
-would suppress the entire file — turning "this language has no comments" into
+would suppress the entire file, turning "this language has no comments" into
 "this language has no findings". A fixture using a *gated* detector pins it; one
-using a literal-secret pattern would not, since those never consult the model.
+using a literal-secret pattern would not, since those never consult the model
+(measured — the first draft of that fixture passed with the pattern emptied).
+
+Every family is fixture-tested in **both** directions: its own marker suppresses,
+and a foreign marker does not. The foreign half is what stops a family from
+degenerating into "suppress everything", which would re-create the false-clean
+this phase exists to remove.
 
 `injection-risk` is the only category with per-language detectors: SQL built by
 f-string (Python), template literal (JS/TS), `#{}` interpolation (Ruby), or

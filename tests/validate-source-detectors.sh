@@ -288,6 +288,45 @@ test_security_secrets() {
     assert_silent "$SK_SEC" "$list" insecure-crypto \
         "security: a // comment in .c stays silent"
 
+    # THE COMMENT-FAMILY TABLE, both directions per family. Three review cycles
+    # each found one more language group that had lost coverage to the gating
+    # (config, then C-family, then this set) — instances of one structural
+    # problem, so the table is now organised by MARKER and this loop tests the
+    # property rather than the instances.
+    #
+    # Each row: an extension, ITS marker (must suppress), and a FOREIGN marker
+    # (must NOT). The foreign half is what stops a family from degenerating into
+    # "suppress everything", which would silently re-create the false-clean this
+    # whole phase exists to remove.
+    while read -r _ext _own _foreign; do
+        [ -n "$_ext" ] || continue
+        d="$(fresh_dir)"
+        command printf '%s digest = md5(x)\n' "$_own" >"$d/own.$_ext"
+        list="$(make_list "$d/l" "$d/own.$_ext")"
+        assert_silent "$SK_SEC" "$list" insecure-crypto \
+            "security: .$_ext own comment marker '$_own' suppresses"
+
+        d="$(fresh_dir)"
+        command printf '%s digest = md5(x)\n' "$_foreign" >"$d/foreign.$_ext"
+        list="$(make_list "$d/l" "$d/foreign.$_ext")"
+        assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
+            "security: .$_ext foreign marker '$_foreign' is NOT a comment"
+    done <<'COMMENT_FAMILIES'
+lua -- //
+sql -- //
+hs -- //
+pl # //
+tf # //
+ps1 # //
+erl % //
+clj ; //
+vb ' //
+vue <!-- --
+pas { --
+dart // --
+COMMENT_FAMILIES
+    unset _ext _own _foreign
+
     # JSON has NO comment syntax, so its model must be a NEVER-matching pattern.
     # An EMPTY one would be catastrophic in the bash runtime specifically: the
     # consumers pipe through `grep -vE "$file_comment_re"`, an empty ERE matches
