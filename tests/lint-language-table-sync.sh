@@ -306,13 +306,15 @@ test_normative_table_populated() {
     # No assert_true anywhere in this gate: it evals its command string, and
     # every value here is analyzer-derived. Compare in bash, report via a
     # parameter-taking assertion. See the NOTE above test_no_contradiction.
+    # `case` on a quoted value, then assert_equals on the VERDICT — neither evals.
+    # A non-digit or absent count is as much a failure as a zero one: it means the
+    # analyzer did not report, which is precisely the vacuity this guards.
+    local verdict="populated"
     case "$count" in
-        '' | *[!0-9]*) assert_output_empty "normative EXT_LANG unparseable (got: '${count:-<none>}')" \
-            "normative EXT_LANG parsed and non-empty" ;;
-        0) assert_output_empty "normative EXT_LANG parsed but EMPTY" \
-            "normative EXT_LANG parsed and non-empty" ;;
-        *) : ;; # a positive integer — the only passing shape
+        '' | *[!0-9]*) verdict="unparseable (got: '${count:-<none>}')" ;;
+        0) verdict="parsed but EMPTY" ;;
     esac
+    assert_equals "populated" "$verdict" "normative EXT_LANG parsed and non-empty"
 }
 
 # --- Assertion 2: anti-vacuity, the matrices --------------------------------
@@ -332,7 +334,7 @@ test_no_unmatched_scanner() {
 }
 
 test_matrices_present() {
-    local found skill
+    local found skill declared
     if [ "$LANG_TABLE_ROOT" != "$REPO_ROOT" ]; then
         skip_test "fixture root — the four-scanner roster applies to the real tree"
         return 0
@@ -340,26 +342,27 @@ test_matrices_present() {
     found="$(report_lines MATRIX | command awk '{print $2}' | command sort)"
     for skill in check-security check-code-health check-lifecycle check-docs-missing-api; do
         if command printf '%s\n' "$found" | command grep -qx "$skill"; then
-            :
+            declared="yes"
         else
-            assert_output_empty "no matrix declared" \
-                "$skill declares a Language Support matrix"
+            declared="no"
         fi
+        assert_equals "yes" "$declared" "$skill declares a Language Support matrix"
     done
 }
 
 test_matrices_non_empty() {
-    local line skill count
+    local line skill count nonempty
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         skill="$(command printf '%s' "$line" | command awk '{print $2}')"
         count="$(command printf '%s' "$line" | command awk '{print $3}')"
         if [ "$count" -gt 0 ] 2>/dev/null; then
-            :
+            nonempty="yes"
         else
-            assert_output_empty "matrix is empty (count=$count)" \
-                "$skill's matrix names at least one language"
+            nonempty="no"
         fi
+        assert_equals "yes" "$nonempty" \
+            "$skill's matrix names at least one language (got $count)"
     done <<EOF
 $(report_lines MATRIX)
 EOF
