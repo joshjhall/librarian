@@ -74,6 +74,7 @@ from sizing import (  # noqa: E402
     bundle_kind,
     emit,
     find_units,
+    is_test_file,
     lang_of,
     measure,
 )
@@ -117,7 +118,7 @@ def md_anchor(text: str) -> str:
     return slug.strip().replace(" ", "-")
 
 
-def unit_names(lines: list[str], lang: str) -> set[str]:
+def unit_names(lines: list[str], lang: str, test_file: bool = False) -> set[str]:
     """Non-test top-level unit names.
 
     Markdown is EXCLUDED deliberately, and the reason OUTLIVED its original
@@ -131,7 +132,12 @@ def unit_names(lines: list[str], lang: str) -> set[str]:
     """
     if lang == "md":
         return set()
-    return set(u.name for u in find_units(lines, lang) if not u.is_test)
+    # TEST_FILE (#851): in a separate-file test the suites ARE the units, so
+    # dropping them would compare an empty name set against an empty one — LOC
+    # conservation would flag a lost half while unit conservation reported
+    # nothing missing. Both halves of one verification must agree about what a
+    # unit is.
+    return set(u.name for u in find_units(lines, lang) if test_file or not u.is_test)
 
 
 def referenced_tokens(lines: list[str]) -> set[str]:
@@ -159,8 +165,9 @@ def main(argv: list[str]) -> int:
     orig_lines = read_lines(original)
     orig_lang = lang_of(original)
     orig_units = find_units(orig_lines, orig_lang)
-    orig_measure = measure(orig_lines, orig_lang, orig_units)
-    orig_names = unit_names(orig_lines, orig_lang)
+    orig_test_file = is_test_file(original)
+    orig_measure = measure(orig_lines, orig_lang, orig_units, orig_test_file)
+    orig_names = unit_names(orig_lines, orig_lang, orig_test_file)
 
     # --- gather the result side ---------------------------------------------
     result_production = 0
@@ -170,8 +177,9 @@ def main(argv: list[str]) -> int:
         lines = read_lines(path)
         lang = lang_of(path)
         units = find_units(lines, lang)
-        result_production += measure(lines, lang, units)["production"]
-        result_names |= unit_names(lines, lang)
+        tf = is_test_file(path)
+        result_production += measure(lines, lang, units, tf)["production"]
+        result_names |= unit_names(lines, lang, tf)
         result_tokens |= referenced_tokens(lines)
 
     findings = 0

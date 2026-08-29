@@ -77,6 +77,7 @@ from loc_engine import (  # noqa: E402
     emit,
     find_units,
     is_decl_file,
+    is_test_file,
     lang_of,
     measure,
     split_shape,
@@ -384,7 +385,7 @@ def scan_file(path: str, lines: list[str], added: int, have_growth: bool) -> Non
     """
     lang = lang_of(path)
     units = find_units(lines, lang)
-    m = measure(lines, lang, units)
+    m = measure(lines, lang, units, is_test_file(path))
     warn, high = thresholds_for(lang)
     production = m["production"]
     min_added = _int_env("REVIEW_GROWTH_MIN_ADDED", 50)
@@ -543,7 +544,7 @@ def measure_record(path: str, lines: list[str]) -> str:
     """
     lang = lang_of(path)
     units = find_units(lines, lang)
-    m = measure(lines, lang, units)
+    m = measure(lines, lang, units, is_test_file(path))
     warn, high = thresholds_for(lang)
     spec = bloat_spec(path)
     b_warn, b_high, b_type, b_cat = spec if spec is not None else (0, 0, "", "")

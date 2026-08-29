@@ -59,6 +59,7 @@ from loc_engine import (  # noqa: E402
     emit,
     find_units,
     is_decl_file,
+    is_test_file,
     lang_of,
     measure,
     split_shape,
@@ -138,7 +139,7 @@ class Cluster:
         self.end = units[-1].end
 
 
-def cluster_units(units: list[Unit]) -> list[Cluster]:
+def cluster_units(units: list[Unit], test_file: bool = False) -> list[Cluster]:
     """Group ADJACENT units sharing a family prefix.
 
     Adjacency is by unit INDEX, not merely by same-prefix order: a test unit (or
@@ -146,12 +147,19 @@ def cluster_units(units: list[Unit]) -> list[Cluster]:
     matters because the span is meant to be a single mechanical move — a
     `render_*` trio interleaved with eight test functions spans 230 lines that
     cannot be lifted out without dragging the tests along, so it is not a seam.
+
+    TEST_FILE (#851) makes the test units PARTICIPATE rather than break runs.
+    In a separate-file test the suites ARE the content, so skipping them would
+    leave an oversized `foo.test.ts` measured at full production LOC with no
+    seam to propose — a file-length row and nothing actionable beside it, which
+    is the half-fix this argument exists to prevent. Same gate as measure()'s:
+    the classification is unchanged, only whether it EXCLUDES.
     """
     clusters: list[Cluster] = []
     run: list[Unit] = []
     last_idx = -2
     for idx, u in enumerate(units):
-        if u.is_test:
+        if u.is_test and not test_file:
             continue
         if run and run[-1].prefix == u.prefix and idx == last_idx + 1:
             run.append(u)
@@ -207,7 +215,8 @@ def target_path(path: str, prefix: str) -> str:
 def scan_file(path: str, lines: list[str]) -> None:
     lang = lang_of(path)
     units = find_units(lines, lang)
-    m = measure(lines, lang, units)
+    test_file = is_test_file(path)
+    m = measure(lines, lang, units, test_file)
 
     warn = _int_env("DECOMP_LOC_WARN", 300)
     high = _int_env("DECOMP_LOC_HIGH", 500)
@@ -317,7 +326,7 @@ def scan_file(path: str, lines: list[str]) -> None:
     if not lang:
         return
 
-    clusters = cluster_units(units)
+    clusters = cluster_units(units, test_file)
     prefixes = []
     for c in clusters:
         if c.prefix not in prefixes:

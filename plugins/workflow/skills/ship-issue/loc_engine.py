@@ -33,17 +33,57 @@ from __future__ import annotations
 import os
 import re
 import sys
+from fnmatch import fnmatchcase as _fnmatch
 
 # >>> shared:loc-tables-py (sync: check-decomposition/loc_engine.py)
 # Per-language unit headers. Each maps a language key to the regex that starts a
 # TOP-LEVEL unit. Anchored at line start (no leading indent) so nested defs are
 # not mistaken for top-level ones — that anchoring is what makes a unit span a
 # genuine cut point.
+#
+# The JS/TS SUITE-CALL unit header (#851) — `describe("...", () => {` and its
+# siblings, spelled ONCE so the js and ts arms cannot drift apart.
+#
+# WHY A UNIT AT ALL. TEST_UNIT_RE["js"]/["ts"] could never fire before this arm
+# existed: `is_test` is evaluated PER UNIT, and the declaration-keyword patterns
+# below match only DECLARATIONS — a call expression is not one, so find_units
+# returned ZERO units for a describe-only test file and the test classifier was
+# unreachable through that path. In a file MIXING a production function with a
+# describe block, the function's unit swallowed the block whole and reported
+# is_test=False, test_excluded=0. So defect 1 (the unconditional subtraction)
+# was MASKED here by defect 2, and fixing either alone makes TS worse.
+#
+# THE CAPTURED NAME IS THE LEADING IDENTIFIER OF THE TITLE, not the keyword:
+# `describe("scoring rules", ...)` -> `scoring`. The name becomes the seam
+# FAMILY and the proposed destination filename, so keying on the keyword would
+# put every block in ONE family and make a 3,000-line test file emit a single
+# cluster spanning itself — a seam row that is technically emitted and useless
+# as advice. Reading the title yields by-area seams, #851's motivating case. A
+# title opening on a non-identifier character matches no name here in EITHER
+# runtime, so the two agree on the fallback rather than one inventing a unit the
+# other cannot see.
+#
+# COLUMN-ZERO like every other unit header, and that is what sets the
+# granularity: a top-level `describe` is a unit while its nested `it`s are
+# INDENTED and therefore absorbed into its span. One suite = one cut point,
+# which is how a test file is actually split.
+#
+# The alternation is placed LAST in each arm, after the declaration forms, for
+# the ordering reason the `const enum` note below states: Python re is
+# leftmost-FIRST while POSIX awk ERE is leftmost-LONGEST, and keeping the
+# declaration alternatives ahead of it makes both runtimes agree by
+# construction rather than by dialect luck.
+SUITE_CALL_SRC = (
+    r"(?:describe|it|test|suite|context)[ \t]*\([ \t]*"
+    r"[\"'`]([A-Za-z_$][A-Za-z0-9_$]*)"
+)
+
 UNIT_RE = {
     "py": re.compile(r"^(?:async[ \t]+)?(?:def|class)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"),
     "js": re.compile(
-        r"^(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?"
+        r"^(?:(?:export[ \t]+)?(?:default[ \t]+)?(?:async[ \t]+)?"
         r"(?:function|class|const|let|var)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)"
+        r"|" + SUITE_CALL_SRC + r")"
     ),
     # TypeScript is its OWN key, not a js alias (#726). The js arm above matches
     # only value-level forms, so every TYPE-level declaration — interface, type,
@@ -59,9 +99,10 @@ UNIT_RE = {
     # forms FIRST makes both runtimes agree by construction rather than by
     # dialect luck. Same reason `abstract class` precedes `class`.
     "ts": re.compile(
-        r"^(?:export[ \t]+)?(?:default[ \t]+)?(?:declare[ \t]+)?(?:async[ \t]+)?"
+        r"^(?:(?:export[ \t]+)?(?:default[ \t]+)?(?:declare[ \t]+)?(?:async[ \t]+)?"
         r"(?:const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var"
         r"|interface|type|enum|namespace|module)[ \t]+([A-Za-z_$][A-Za-z0-9_$]*)"
+        r"|" + SUITE_CALL_SRC + r")"
     ),
     # Rust (#727). `impl` is deliberately ONE unit spanning header -> next
     # top-level header, NOT its methods. This decision is load-bearing and will
@@ -506,6 +547,52 @@ def is_decl_file(path: str) -> bool:
     return path.lower().endswith(DECL_SUFFIX)
 
 
+# Directory segments and basename globs that make a file a TEST FILE by path
+# convention. Transcribed from the `>>> shared:is-test-file` region in
+# ship-issue/pre-review-gates.sh and its twin in check-code-health/patterns.py
+# (#568) rather than written afresh: a second, subtly different spelling of
+# "which paths are tests" is exactly the sibling drift this repo keeps paying
+# for, and that rule already covers every case #851 names.
+TEST_DIR_SEGMENTS = ("tests", "test", "__tests__", "spec", "__pycache__")
+TEST_BASENAME_GLOBS = ("test_*.*", "*_test.*", "*_spec.*", "*.test.*", "*.spec.*")
+
+
+def is_test_file(path: str) -> bool:
+    """A file whose TESTS ARE ITS CONTENT, decided on path convention alone
+    (#851).
+
+    THIS IS NOT `Unit.is_test`, and the distinction is the whole fix. `is_test`
+    classifies a UNIT by its content; this classifies a FILE by its path, and
+    only the second decides whether that classification SUBTRACTS. In an
+    ecosystem where tests live in separate files — `*.test.ts`, `test_*.py`,
+    `*_test.go`, `tests/**` — a test file's test code IS its production
+    content: a 3,000-line `foo.test.ts` is a 3,000-line file that should be
+    split by area like any other, and subtracting its units scored it near zero
+    so it never appeared. Where the convention is SAME-FILE (Rust
+    `#[cfg(test)]`, py's trailing `if __name__`, sh's `# --- tests ---` banner)
+    the exclusion is right and is untouched: that path keys off the file's
+    CONTENT, so a same-file region inside a non-test-file path still subtracts
+    exactly as before.
+
+    PATH-ONLY, deliberately. Content-colocated tests are `is_test`'s job, and
+    collapsing the two questions into one predicate is what made the old
+    unconditional subtraction look reasonable.
+
+    Segment-anchored, so `contest.py` / `latest.js` / `attestation.go` are NOT
+    matched while `tests/helper.py` IS. The directory arms cross `/` on purpose;
+    the name arms are matched against the BASENAME so they cannot — without that
+    split, a DIRECTORY named `test_helpers/` would make real source under it
+    read as test code (#568)."""
+    for seg in TEST_DIR_SEGMENTS:
+        if path.startswith(seg + "/") or ("/" + seg + "/") in path:
+            return True
+    base = path.rsplit("/", 1)[-1]
+    for pat in TEST_BASENAME_GLOBS:
+        if _fnmatch(base, pat):
+            return True
+    return False
+
+
 # <<< shared:loc-helpers-py
 
 
@@ -691,9 +778,27 @@ def find_units(lines: list[str], lang: str) -> list[Unit]:
 
 
 # >>> shared:loc-measure-py (sync: check-decomposition/loc_engine.py)
-def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
+def measure(
+    lines: list[str], lang: str, units: list[Unit], test_file: bool = False
+) -> dict:
     """The generic sizing layer: total / blank / comment / test-excluded /
     production LOC, max nesting depth, and top-level unit count.
+
+    TEST_FILE (#851) is is_test_file(path) — "the tests ARE this file's
+    content". It does NOT change what gets CLASSIFIED as test code; it changes
+    whether that classification SUBTRACTS. `test_excluded` is reported either
+    way, because it stays a truthful diagnostic, but in a test file those lines
+    count toward production and its test units count toward `units`.
+
+    Keeping the two questions separate is what preserves the same-file path
+    untouched: a Rust `#[cfg(test)]` region or a py `if __name__` block inside a
+    NON-test-file path still subtracts exactly as before, because TEST_REGION_RE
+    keys off CONTENT while test_file keys off PATH. The old code answered only
+    the content question and then subtracted unconditionally, which is why a
+    separate-file test measured ~0 production LOC.
+
+    Defaults to False so a caller holding no path (a raw line list) keeps the
+    pre-#851 arithmetic rather than silently reclassifying.
 
     The audit lens (check-decomposition/patterns.py) and the review lens
     (ship-issue/sizing.py) carry byte-identical copies, pinned by
@@ -739,7 +844,12 @@ def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
     for idx, line in enumerate(lines, start=1):
         if idx in test_lines:
             test_excluded += 1
-            continue
+            # In a TEST FILE the line still counts toward production, so it must
+            # not skip the blank/comment/depth tally the way an excluded line
+            # does — otherwise its blanks and comments would fall through into
+            # `production` below and be counted as code (#851).
+            if not test_file:
+                continue
         if BLANK_RE.match(line):
             blank += 1
             continue
@@ -750,7 +860,7 @@ def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
         if depth > max_depth:
             max_depth = depth
 
-    production = total - blank - comment - test_excluded
+    production = total - blank - comment - (0 if test_file else test_excluded)
     return {
         "total": total,
         "blank": blank,
@@ -758,7 +868,7 @@ def measure(lines: list[str], lang: str, units: list[Unit]) -> dict:
         "test_excluded": test_excluded,
         "production": production,
         "max_depth": max_depth,
-        "units": len([u for u in units if not u.is_test]),
+        "units": len([u for u in units if test_file or not u.is_test]),
         "comment_pct": (comment * 100 // total) if total else 0,
     }
 

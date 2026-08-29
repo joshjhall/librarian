@@ -113,8 +113,8 @@ awk_lib() {
     # >>> shared:unit-segmenters-awk (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
     function is_unit_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
-        if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
-        if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
+        if (lang == "js") return line ~ /^((export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*|(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`][A-Za-z_$][A-Za-z0-9_$]*)/
+        if (lang == "ts") return line ~ /^((export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*|(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`][A-Za-z_$][A-Za-z0-9_$]*)/
         if (lang == "rs") return line ~ /^((pub(\([a-z:_ ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*(macro_rules![ \t]+[A-Za-z_][A-Za-z0-9_]*|impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+([^ \t].*[ \t]for[ \t]+)?(&[ \t]*)?([\047][A-Za-z_][A-Za-z0-9_]*[ \t]+)?(mut[ \t]+)?(dyn[ \t]+)?([A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*|extern[ \t]+crate[ \t]+[A-Za-z_][A-Za-z0-9_]*|(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+[A-Za-z_][A-Za-z0-9_]*)/
         if (lang == "go") return line ~ /^func[ \t]*\([ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]+)?\*?[ \t]*[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?[ \t]*\)[ \t]*[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(var|const|type)[ \t]*\(/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
@@ -127,8 +127,8 @@ awk_lib() {
     function unit_name(line, lang,   s, r, recv) {
         s = line
         if (lang == "py") { sub(/^(async[ \t]+)?(def|class)[ \t]+/, "", s) }
-        else if (lang == "js") { sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
-        else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
+        else if (lang == "js") { if (s ~ /^(describe|it|test|suite|context)[ \t]*\(/) sub(/^(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`]/, "", s); else sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
+        else if (lang == "ts") { if (s ~ /^(describe|it|test|suite|context)[ \t]*\(/) sub(/^(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`]/, "", s); else sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
         else if (lang == "rs") {
             # Strip modifiers, then the item keyword. `impl` additionally drops
             # its generics, an optional `Trait for`, and a leading `&`, so the
@@ -235,13 +235,50 @@ awk_lib() {
         if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go" || lang == "swift") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
         return 0
     }
+    # is_test_file: a file whose TESTS ARE ITS CONTENT, by PATH convention alone
+    # (#851). The awk half of is_test_file() in the .py primaries.
+    #
+    # NOT is_test_header above: that classifies a UNIT by its content, this
+    # classifies a FILE by its path, and only the second decides whether the
+    # classification SUBTRACTS from production LOC. In a separate-file ecosystem
+    # (*.test.ts, test_*.py, *_test.go, tests/**) a test files test code IS its
+    # production content, so subtracting it scored the file near zero and it
+    # never appeared. The same-file conventions (rs cfg-test, py __name__, sh
+    # banner) key off CONTENT and are untouched.
+    #
+    # Segment-anchored, so contest.py / latest.js / attestation.go are NOT
+    # matched while tests/helper.py IS. Directory arms cross a slash on purpose;
+    # the name arms are matched against the BASENAME so they cannot — without
+    # that split a DIRECTORY named test_helpers/ would make real source under it
+    # read as test code (#568).
+    #
+    # NB: no apostrophes in this region — the awk program is a single-quoted
+    # shell string, so one would end it.
+    function is_test_file(p,   base, i, seg, segs, n) {
+        n = split("tests test __tests__ spec __pycache__", segs, " ")
+        for (i = 1; i <= n; i++) {
+            seg = segs[i]
+            if (index(p, seg "/") == 1) return 1
+            if (index(p, "/" seg "/") > 0) return 1
+        }
+        base = p
+        sub(/^.*\//, "", base)
+        if (base ~ /^test_[^\/]*\.[^\/]*$/) return 1
+        if (base ~ /(_test|_spec|\.test|\.spec)\.[^\/]*$/) return 1
+        return 0
+    }
     # <<< shared:unit-segmenters-awk
 AWKLIB
 }
 
 # production_loc FILE LANG — production LOC (total minus blank/comment/test).
 production_loc() {
-    LC_ALL=C command awk -v lang="$2" "$(awk_lib)"'
+    # `-v path` (#851): is_test_file() decides whether test units SUBTRACT
+    # from production LOC, and it keys off the PATH. Without it every file
+    # would look like a non-test file here while sizing.sh saw the truth —
+    # the two halves of one verification disagreeing, which is exactly what
+    # the parity gate exists to catch.
+    LC_ALL=C command awk -v lang="$2" -v path="$1" "$(awk_lib)"'
     { L[NR] = $0 }
     END {
         total = NR
@@ -302,13 +339,19 @@ production_loc() {
                 break
             }
         }
+        # tf (#851): a TEST FILE by path convention counts its test lines as
+        # production — the same rule sizing.sh and the .py primaries apply, and
+        # a divergence here surfaces as a parity failure. A test line still
+        # falls through to the blank/comment tally when tf, or its blanks and
+        # comments would be counted as code.
+        tf = is_test_file(path)
         blank = 0; comment = 0; test_excluded = 0
         for (i = 1; i <= total; i++) {
-            if (i in tl) { test_excluded++; continue }
+            if (i in tl) { test_excluded++; if (!tf) continue }
             if (L[i] ~ /^[ \t]*$/) { blank++; continue }
             if (is_comment(L[i], lang)) { comment++; continue }
         }
-        print total - blank - comment - test_excluded
+        print total - blank - comment - (tf ? 0 : test_excluded)
     }
     ' "$1"
 }
@@ -316,7 +359,8 @@ production_loc() {
 # unit_names FILE LANG — non-test top-level unit names, one per line.
 unit_names() {
     [ -n "$2" ] && [ "$2" != "md" ] || return 0
-    LC_ALL=C command awk -v lang="$2" "$(awk_lib)"'
+    # `-v path` for is_test_file(), same reason as production_loc() above.
+    LC_ALL=C command awk -v lang="$2" -v path="$1" "$(awk_lib)"'
     {
         # SECOND segmenter loop in this file — production_loc() above has its
         # own. Both must apply the same rules or the two halves of one
@@ -338,8 +382,15 @@ unit_names() {
         # dropped header is what the attribute was marking, so leaving it set
         # would carry the mark onto the next genuine unit.
         if (is_reserved_name(nm, lang)) { pending = 0; next }
-        if (pending) { pending = 0; next }
-        if (is_test_header($0, lang)) next
+        # `!tf` (#851): in a TEST FILE the suites ARE the units, so dropping
+        # them would compare an empty name set against an empty one — LOC
+        # conservation would flag a lost half while unit conservation reported
+        # nothing missing. Both halves of one verification must agree about
+        # what a unit is. Mirrors unit_names(lines, lang, test_file) in the
+        # .py port.
+        tf = is_test_file(path)
+        if (pending) { pending = 0; if (!tf) next }
+        else if (is_test_header($0, lang) && !tf) next
         print nm
     }
     ' "$1"

@@ -38,6 +38,36 @@ different numbers.
 *verdict*, not the segmentation. An oversized `SKILL.md` still yields a seam, and
 the seam-or-decline pairing holds for whichever size category fired.
 
+### What counts as production LOC in a TEST FILE (#851)
+
+`production` is `total - blank - comment - test_excluded`, **except in a test
+file, where `test_excluded` is not subtracted**. The two cases turn on how the
+ecosystem places its tests, and both are deliberate:
+
+- **Same-file conventions** — Rust `#[cfg(test)]`, Python's trailing
+  `if __name__`, shell's `# --- tests ---` banner — still **subtract**. Those
+  tests are not what makes the production file too big, and the exclusion keys
+  off the file's **content**.
+- **Separate-file conventions** — `*.test.ts`, `*.spec.js`, `test_*.py`,
+  `*_test.go`, anything under `tests/**` — **do not**. There the test code *is*
+  the file's content: a 3,000-line `foo.test.ts` is a 3,000-line file and splits
+  by area like any other. The predicate keys off the **path** only.
+
+`test-excluded` is still reported in every row, in both cases — it stays a
+truthful diagnostic of what was classified as test code. In a test file it is
+therefore **non-zero while contributing nothing to the subtraction**, so a
+consumer must not re-derive `production` from the other four numbers. The
+`top-level units` count follows the same rule: a test file's suites and test
+functions are counted, and they cluster into seams, so an oversized test file
+gets an actionable destination rather than a bare size row.
+
+Before #851 the subtraction was unconditional and two defects compounded: a
+`test_*.py` measured **0** production LOC, while a `describe`-only `.test.ts`
+was never even segmented (a call expression was not a unit header, so the test
+classifier was unreachable) and measured its full size by accident. The two
+languages disagreed on the same construct and neither answer was the one the
+sizing lens wanted.
+
 ### Memory-bundle rows (#700)
 
 A bundle file under the configured root (`MEMORY_BUNDLE_ROOT`, default

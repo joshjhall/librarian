@@ -442,6 +442,90 @@ test_ts_lost_unit_is_detected() {
 # is a DRIFT detector, not a behavior detector: three copies wrong in the same
 # way still compare equal ([[parity-gate-hides-shared-defect]]). These two cases
 # pin the behavior here, where the region is actually consumed.
+# --- #851: splitting a TEST FILE is verified like any other split -------------
+# Until #851 a separate-file test measured ~0 production LOC and yielded no
+# units, so BOTH halves of this tool went blind on it in the same direction: LOC
+# conservation compared 0 against 0 and unit conservation compared an empty set
+# against an empty one. A split that dropped an entire suite verified clean.
+#
+# That mutual blindness is why the two assertions below must be read together —
+# `all N top-level unit(s) preserved` is what gives the sound case teeth, since
+# a regression that zeroed the units again would still print "split-verified".
+setup_testfile_fixtures() {
+    TF_DIR="$WORKDIR/tf"
+    command mkdir -p "$TF_DIR"
+
+    TF_ORIG="$TF_DIR/app.test.ts"
+    {
+        command printf 'describe("alpha", () => {\n  it("a", () => { expect(1).toBe(1); });\n});\n\n'
+        command printf 'describe("beta", () => {\n  it("b", () => { expect(2).toBe(2); });\n});\n\n'
+        command printf 'describe("gamma", () => {\n  it("c", () => { expect(3).toBe(3); });\n});\n'
+    } >"$TF_ORIG"
+
+    # Sound: alpha stays, beta+gamma move to a sibling test file.
+    TF_KEPT="$TF_DIR/app-kept.test.ts"
+    {
+        command printf 'describe("alpha", () => {\n  it("a", () => { expect(1).toBe(1); });\n});\n'
+    } >"$TF_KEPT"
+    TF_MOVED="$TF_DIR/rest.test.ts"
+    {
+        command printf 'describe("beta", () => {\n  it("b", () => { expect(2).toBe(2); });\n});\n\n'
+        command printf 'describe("gamma", () => {\n  it("c", () => { expect(3).toBe(3); });\n});\n'
+    } >"$TF_MOVED"
+
+    # Lossy: gamma is dropped on the way.
+    TF_LOSSY="$TF_DIR/rest-lossy.test.ts"
+    {
+        command printf 'describe("beta", () => {\n  it("b", () => { expect(2).toBe(2); });\n});\n'
+    } >"$TF_LOSSY"
+}
+
+test_testfile_sound_split_verifies() {
+    setup_testfile_fixtures
+    run_verify "$TF_ORIG" "$TF_KEPT" "$TF_MOVED"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-verified" \
+        "test file: a sound by-suite split is reported as non-lossy (#851)"
+    # THE teeth. Before #851 this read "all 0" — the describe blocks were not
+    # units at all — and every other assertion here still passed.
+    assert_contains "$VERIFY_OUT" "all 3 top-level unit(s) preserved" \
+        "test file: describe() suites are seen as units by split-verify (#851)"
+}
+
+test_testfile_lost_suite_is_detected() {
+    setup_testfile_fixtures
+    run_verify "$TF_ORIG" "$TF_KEPT" "$TF_LOSSY"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "split-unit-lost" \
+        "test file: a dropped describe() suite is reported as a lost unit (#851)"
+    assert_contains "$VERIFY_OUT" "gamma" \
+        "test file: the report NAMES the suite that went missing (#851)"
+    assert_not_contains "$VERIFY_OUT" "split-verified" \
+        "test file: a lossy split of a test file is not reported as verified (#851)"
+}
+
+# The COUNTERPART, and the reason the pair exists: the same content at a
+# NON-test path keeps the old disposition, where the suites are test units and
+# so are excluded from both LOC and the unit set. A regression dropping the path
+# predicate entirely — or dropping `-v path` from either awk invocation, which
+# makes is_test_file() see an empty string — turns exactly one of these two
+# cases red, which is what tells the two failures apart.
+test_non_testfile_suites_are_still_excluded() {
+    setup_testfile_fixtures
+    local orig kept moved
+    orig="$WORKDIR/tf-prod/helpers.ts"
+    kept="$WORKDIR/tf-prod/helpers-kept.ts"
+    moved="$WORKDIR/tf-prod/rest.ts"
+    command mkdir -p "$WORKDIR/tf-prod"
+    command cp "$TF_ORIG" "$orig"
+    command cp "$TF_KEPT" "$kept"
+    command cp "$TF_MOVED" "$moved"
+    run_verify "$orig" "$kept" "$moved"
+    assert_parity
+    assert_contains "$VERIFY_OUT" "all 0 top-level unit(s) preserved" \
+        "non-test path: describe() suites stay test-classified and excluded (#851)"
+}
+
 test_rust_split_is_verified_by_unit_name() {
     local orig kept moved lossy
     orig="$WORKDIR/rs-orig.rs"
@@ -996,6 +1080,9 @@ run_test test_swift_lost_unit_is_detected "swift: a dropped Swift declaration is
 run_test test_swift_reserved_name_and_attribute_paths "swift: reserved-name filter and attribute path in split-verify's own loop (#728)"
 run_test test_ts_sound_split_verifies "ts: a sound types/ + barrel split verifies clean (#755)"
 run_test test_ts_lost_unit_is_detected "ts: a dropped type alias is detected, named, and dangles (#755)"
+run_test test_testfile_sound_split_verifies "Test file: a sound by-suite split of a .test.ts verifies (#851)"
+run_test test_testfile_lost_suite_is_detected "Test file: a dropped describe() suite is named as lost (#851)"
+run_test test_non_testfile_suites_are_still_excluded "Non-test path: describe() suites stay excluded (#851)"
 run_test test_rust_split_is_verified_by_unit_name "Check 2 (rust): impl moves as one unit, named by type (#727)"
 run_test test_go_method_split_is_verified_by_receiver_name "Check 2 (go): a lost receiver method is named Receiver_Method (#727)"
 run_test test_rust_midfile_test_region_in_production_loc "Check 1 (rust): a mid-file test module excludes only itself (#727)"

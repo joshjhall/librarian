@@ -665,7 +665,7 @@ test_detector_fires_on_loc_region_drift() {
     assert_equals "matches" "$baseline" "the untampered loc-measure-awk pair matches (tamper is the only variable)"
 
     tampered="$(extract_shared "$SIZING" loc-measure-awk |
-        command sed 's/production = total - blank - comment - test_excluded/production = total/' | normalize)"
+        command sed 's/production = total - blank - comment - (tf ? 0 : test_excluded)/production = total/' | normalize)"
     assert_not_empty "$tampered" "tampered loc-measure-awk extract is non-empty (extract still works)"
 
     tamper_took="no"
@@ -988,7 +988,11 @@ test_detector_fires_on_python_primary_drift() {
                 sed_expr='s/            out.append(ch)/            out.append("x")/'
                 ;;
             loc-measure-py)
-                sed_expr='s/    production = total - blank - comment - test_excluded/    production = total/'
+                # Retargeted by #851: the subtraction is now CONDITIONAL on
+                # test_file, so the old literal no longer exists and the tamper
+                # would silently stop taking — a drift check that is green and
+                # vacuous, which is the failure this suite exists to prevent.
+                sed_expr='s/    production = total - blank - comment - (0 if test_file else test_excluded)/    production = total/'
                 ;;
             bloat-spec-py)
                 # Targets the AGENT budget — the arm #724's headline fixture

@@ -71,6 +71,8 @@
 - [Expand before you scope a path](path-guard-must-expand-before-scoping.md) — unexpanded `~` → nonexistent path → fail-open → silent bypass; same target must decide alike in every spelling (#662)
 - [Mutate after every security fixture](mutate-after-every-security-fixture.md) — 2 injection fixtures passed without the fix too (#596)
 - [Mutate every RULE, not every test](mutation-round-finds-the-untested-rule.md) — the rule with 0 failures is the one the round exists to find
+- [Mutation restore is never git checkout](mutation-restore-must-not-be-git-checkout.md) — reverts to HEAD and DELETES the uncommitted fix; snapshot-copy instead
+- [Asymmetric mutation reads as untested](asymmetric-mutation-reads-as-untested.md) — a partially-neutered predicate survives; mutate all arms, then each alone
 - [Two lenses, two thresholds](two-lenses-two-thresholds.md) — a fixture sized for the audit lens leaves the review lens silent; both mutations survive green
 - [A surviving mutation may be a real no-op](surviving-mutation-may-be-a-real-no-op.md) — prove unreachable-vs-untested before writing a test that cannot fail (#589) (#663)
 - [A GNU host can't mutate a GNU-ism](gnu-host-cannot-mutate-a-gnu-ism.md) — reverting to the GNU spelling is a NO-OP; mutate to the other platform's outcome (#679)
