@@ -238,6 +238,7 @@ run_fragment_test test_worktree_rm_full_leftover_removal_is_unchanged "worktree-
 run_fragment_test test_worktree_rm_counts_a_git_the_filesystem_refused "worktree-rm: a .git the filesystem refused is counted, not excluded (#834)"
 run_fragment_test test_worktree_rm_emptied_but_undeletable_dir_is_not_reported_as_zero "worktree-rm: an emptied but undeletable directory is not reported as zero (#834)"
 run_fragment_test test_worktree_rm_total_removal_failure_counts_everything "worktree-rm: a total removal failure counts every survivor, .git included (#834)"
+run_fragment_test test_worktree_rm_single_survivor_reads_singular "worktree-rm: a single survivor reads singular at the n=1 boundary (#834)"
 run_fragment_test test_worktree_rm_repairs_stale_core_worktree "worktree-rm: repairs a stale main-repo core.worktree (#258)"
 run_fragment_test test_worktree_rm_preserves_valid_core_worktree "worktree-rm: preserves a valid core.worktree (#258)"
 run_fragment_test test_attach_non_integer_exits_2 "golem-attach: non-integer arg exits 2"

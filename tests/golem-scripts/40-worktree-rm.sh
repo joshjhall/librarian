@@ -1896,3 +1896,43 @@ test_worktree_rm_total_removal_failure_counts_everything() {
     assert_true "[ ! -e '$wt/sub/f' ]" \
         "a nested file whose own parent stays writable is still removed"
 }
+
+# #834 review cycle 3: the n=1 boundary — exactly one entry survives.
+#
+# Two reasons this case is worth its own fixture. It reads correctly ("1 entry",
+# not "1 entries"), and it is the numeric edge where an off-by-one in the
+# survivor count would show up most plainly: the other fixtures assert 0, 3, and
+# 5, none of which distinguishes a count from a count-plus-or-minus-one as
+# obviously as the singular boundary does.
+#
+# Fixture: the worktree holds only the deliberately-kept `.git` plus one
+# undeletable directory. `seed.txt` is removable and goes, leaving exactly one
+# survivor beside `.git`... which is itself counted, so the total is 2. To get a
+# true n=1 the `.git` must be the ONLY survivor — reached by making the worktree
+# directory unwritable AFTER emptying everything else, which is what this does.
+test_worktree_rm_single_survivor_reads_singular() {
+    local sb wt
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 98
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-98"
+
+    wt="$sb/.worktrees/issue-98"
+    # Empty the worktree of everything except `.git`, then make the directory
+    # unwritable so the one remaining entry cannot be unlinked either.
+    command rm -f "$wt/seed.txt"
+    command chmod 500 "$wt"
+
+    run_in "$sb" "$WT_RM" 98
+    restore_undeletable "$wt"
+
+    assert_exit 0 "$RUN_RC" "a single undeletable entry is tolerated"
+    assert_contains "$RUN_OUT" "1 entry could not be removed" \
+        "reads singular at the n=1 boundary, and pins the count against an off-by-one"
+    assert_not_contains "$RUN_OUT" "1 entries" \
+        "never the ungrammatical plural"
+}

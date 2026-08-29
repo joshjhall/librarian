@@ -556,6 +556,8 @@ remove_leftover_dir() {
         # parent is the realistic cause). Saying "0 entries remain" here would
         # describe a clean sweep while the directory is still on disk.
         command echo "  emptied leftover directory $wtdir, but could not remove the directory itself"
+    elif [ "$survivors" -eq 1 ]; then
+        command echo "  cleared leftover directory $wtdir (1 entry could not be removed)"
     else
         command echo "  cleared leftover directory $wtdir ($survivors entries could not be removed)"
     fi
