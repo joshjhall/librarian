@@ -116,6 +116,25 @@ EXT_LANG = {
     "toml": "conf",
     "properties": "conf",
     "env": "conf",
+    # MAINSTREAM C-FAMILY LANGUAGES, for the same reason and by the same rule:
+    # scanner-local keys, absent from the normative table so they cannot
+    # contradict it, present because main DID scan them and dropping them is a
+    # security regression (measured: a `$password = "…"` in .php and an `MD5(`
+    # in .c both fired before this branch). All spell a line comment `//` with
+    # `/* */` blocks — the model already written for js/ts/rs/go/java/swift.
+    "php": "cfamily",
+    "c": "cfamily",
+    "h": "cfamily",
+    "cc": "cfamily",
+    "cpp": "cfamily",
+    "hpp": "cfamily",
+    "cs": "cfamily",
+    "scala": "cfamily",
+    # JSON has NO comment syntax at all, so no line can be a comment and the
+    # empty pattern below is the honest model rather than a missing one. It is
+    # modeled because a checked-in service-account key or npm token is exactly
+    # the kind of credential this detector exists to catch.
+    "json": "json",
 }
 
 # How each language opens a LINE comment. Anchored at line start (modulo
@@ -133,6 +152,12 @@ COMMENT_RE = {
     "go": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "java": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "swift": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "cfamily": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    # JSON has no comment syntax, so NO line opens a comment. `(?!)` never
+    # matches — the explicit "this language has no comments" model, distinct
+    # from a missing entry (which would make lang resolve but is_comment fall
+    # through to False for the wrong reason).
+    "json": re.compile(r"(?!)"),
 }
 
 

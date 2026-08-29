@@ -253,6 +253,57 @@ test_security_secrets() {
     list="$(make_list "$d/l" "$d/commented.ini")"
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: a # comment in .ini stays silent"
+
+    # The remaining six config extensions share ONE dispatch arm with .yml/.ini,
+    # so a fixture per extension is what stops a future edit from dropping or
+    # misspelling one silently — the arm would still cover the two that are
+    # tested. Caught in review.
+    for _cfg_ext in yaml cfg conf toml properties env; do
+        d="$(fresh_dir)"
+        command printf '%s\n' 'password = "realsecret123"' >"$d/app.$_cfg_ext"
+        list="$(make_list "$d/l" "$d/app.$_cfg_ext")"
+        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+            "security: a credential in .$_cfg_ext fires (config arm covers all eight)"
+    done
+    unset _cfg_ext
+
+    # MAINSTREAM C-FAMILY. Verified against origin/main: both of these fired
+    # before this branch, so omitting them from the lexical model would have been
+    # a silent coverage regression rather than a deliberate narrowing.
+    d="$(fresh_dir)"
+    command printf '%s\n' '$password = "realsecret123";' >"$d/conf.php"
+    list="$(make_list "$d/l" "$d/conf.php")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in .php still fires after gating"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'MD5(buf);' >"$d/hash.c"
+    list="$(make_list "$d/l" "$d/hash.c")"
+    assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
+        "security: weak crypto in .c still fires after gating"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' '// MD5(buf) in a comment' >"$d/comment.c"
+    list="$(make_list "$d/l" "$d/comment.c")"
+    assert_silent "$SK_SEC" "$list" insecure-crypto \
+        "security: a // comment in .c stays silent"
+
+    # JSON has NO comment syntax, so its model must be a NEVER-matching pattern.
+    # An EMPTY one would be catastrophic in the bash runtime specifically: the
+    # consumers pipe through `grep -vE "$file_comment_re"`, an empty ERE matches
+    # every line, and `-v` would then suppress the entire file — turning "this
+    # language has no comments" into "this language has no findings". A .json
+    # carrying a literal secret is the input that catches it.
+    # The fixture must use a LEXICAL-DEPENDENT detector. A literal-secret row
+    # (AWS/GitHub/Stripe) proves nothing here: those never consult the comment
+    # model, so they keep firing even with the pattern broken — measured, the
+    # first draft of this fixture passed under the mutation. insecure-crypto IS
+    # gated, so it goes silent exactly when the model misbehaves.
+    d="$(fresh_dir)"
+    command printf '%s\n' '  "hash": "MD5(payload)"' >"$d/creds.json"
+    list="$(make_list "$d/l" "$d/creds.json")"
+    assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
+        "security: a gated .json finding fires (its no-comment model suppresses nothing)"
 }
 
 # ============================================================================

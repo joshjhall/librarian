@@ -94,6 +94,16 @@ lang_of() {
         *.[Ii][Nn][Ii] | *.[Cc][Ff][Gg] | *.[Cc][Oo][Nn][Ff]) command printf 'conf' ;;
         *.[Tt][Oo][Mm][Ll] | *.[Pp][Rr][Oo][Pp][Ee][Rr][Tt][Ii][Ee][Ss]) command printf 'conf' ;;
         *.[Ee][Nn][Vv]) command printf 'conf' ;;
+        # MAINSTREAM C-FAMILY — see the note beside patterns.py's EXT_LANG.
+        # Scanner-local, and present because main DID scan them: a
+        # `$password = "…"` in .php and an `MD5(` in .c both fired before this
+        # branch. All spell `//` line comments with `/* */` blocks.
+        *.[Pp][Hh][Pp]) command printf 'cfamily' ;;
+        *.[Cc] | *.[Hh] | *.[Cc][Cc]) command printf 'cfamily' ;;
+        *.[Cc][Pp][Pp] | *.[Hh][Pp][Pp] | *.[Cc][Ss]) command printf 'cfamily' ;;
+        *.[Ss][Cc][Aa][Ll][Aa]) command printf 'cfamily' ;;
+        # JSON has NO comment syntax at all — see comment_re's json arm.
+        *.[Jj][Ss][Oo][Nn]) command printf 'json' ;;
         *) command printf '' ;;
     esac
 }
@@ -105,7 +115,14 @@ lang_of() {
 comment_re() {
     case "$1" in
         py | sh | rb | conf) command printf '^[0-9]+:[[:space:]]*#' ;;
-        js | ts | rs | go | java | swift) command printf '^[0-9]+:[[:space:]]*(//|/\*|\*)' ;;
+        js | ts | rs | go | java | swift | cfamily) command printf '^[0-9]+:[[:space:]]*(//|/\*|\*)' ;;
+        # JSON has no comment syntax, so NO line opens a comment. This must be a
+        # NEVER-MATCHING pattern, not an empty one: the consumers pipe through
+        # `grep -vE "$file_comment_re"`, and an empty ERE matches EVERY line, so
+        # `-v` would suppress the whole file — silently turning "no comments" into
+        # "no findings". Every line here has come through `grep -n`, so it starts
+        # with a digit; a `^Z`-anchored pattern therefore cannot match.
+        json) command printf '^ZZ_JSON_HAS_NO_COMMENTS_ZZ' ;;
         *) command printf '' ;;
     esac
 }

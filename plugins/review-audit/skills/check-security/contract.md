@@ -49,6 +49,8 @@ for the same reason — one cell cannot carry two letters):
 | Bash        | sh, bash           | L              | L                     | —              | L        | L               |
 | Swift       | swift              | L              | L                     | —              | L        | L               |
 | Config      | yml, yaml, ini, cfg, conf, toml, properties, env | L | L         | —              | L        | L               |
+| C-family    | php, c, h, cc, cpp, hpp, cs, scala | L | L                     | —              | L        | L               |
+| JSON        | json               | L              | L                     | —              | L        | L               |
 | every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
@@ -71,6 +73,17 @@ the gating the credential detector ran on every file, so a `password: "…"` in 
 `docker-compose.yml` or an `application.properties` was flagged. Dropping them to
 `—` would silently stop scanning exactly the file types where checked-in
 credentials most often live. All of them spell a line comment with `#`.
+
+The **C-family** and **JSON** rows are there for the same measured reason: a
+`$password = "…"` in a `.php` and an `MD5(` in a `.c` both fired on `main`, so
+omitting them would have been a silent coverage loss rather than a deliberate
+narrowing. JSON is the interesting one — it has **no comment syntax at all**, so
+its model is a *never-matching* pattern rather than an absent one. That
+distinction is load-bearing in the bash runtime: the consumers pipe through
+`grep -vE "$file_comment_re"`, and an **empty** ERE matches every line, so `-v`
+would suppress the entire file — turning "this language has no comments" into
+"this language has no findings". A fixture using a *gated* detector pins it; one
+using a literal-secret pattern would not, since those never consult the model.
 
 `injection-risk` is the only category with per-language detectors: SQL built by
 f-string (Python), template literal (JS/TS), `#{}` interpolation (Ruby), or
