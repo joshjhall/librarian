@@ -16,6 +16,14 @@ proves the gate is alive on every future run, not only on the day it was written
 | `no-marker/` | assertion 2 | `contract.md` has a Language Support section but no `<!-- contract: -->` marker — the matrix does not resolve |
 | `contradiction/` | assertion 3 | `sizing.sh` maps `.rs` to `go` while the normative table says `rs` |
 | `one-runtime/` | assertion 4 | `.rs` is marked `M` and has a `patterns.py` arm but no `patterns.sh` arm — the exact shape of #836 |
+| `missing-roster/` | the four-scanner roster | no governed scanner exists at all, so all four must be reported undeclared |
+
+`missing-roster/` needs `LANG_TABLE_EXPECT_ROSTER=1` alongside `LANG_TABLE_ROOT`.
+The roster check skips under a fixture root by default — a fixture tree carries a
+deliberate subset — but "skips under every fixture" would mean its **failing**
+branch is executed by nothing, which is the self-skipping-hides-the-risky-branch
+shape (#543): the arm that matters is the one no test reaches. The flag exists so
+that arm is genuinely exercised.
 
 Each tree is minimal: only the files the analyzer reads. The scanners here are
 stubs, not runnable — the gate parses source, it never executes it.

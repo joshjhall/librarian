@@ -333,9 +333,17 @@ test_no_unmatched_scanner() {
         "every present scanner resolves a Language Support matrix"
 }
 
+# LANG_TABLE_EXPECT_ROSTER — force the four-scanner roster check ON under a
+# fixture root. Without it the check skips there, since a fixture tree carries a
+# deliberate subset. But "skips under every fixture" means its FAILING branch is
+# never executed by anything, which is the self-skipping-hides-the-risky-branch
+# shape (#543): the arm that matters is the one no test reaches. The
+# missing-roster fixture sets this so the branch is genuinely exercised.
+LANG_TABLE_EXPECT_ROSTER="${LANG_TABLE_EXPECT_ROSTER:-}"
+
 test_matrices_present() {
     local found skill declared
-    if [ "$LANG_TABLE_ROOT" != "$REPO_ROOT" ]; then
+    if [ "$LANG_TABLE_ROOT" != "$REPO_ROOT" ] && [ -z "$LANG_TABLE_EXPECT_ROSTER" ]; then
         skip_test "fixture root — the four-scanner roster applies to the real tree"
         return 0
     fi
@@ -418,8 +426,12 @@ FIXROOT="$SCRIPT_DIR/fixtures/language-table"
 # selftest_report FIXTURE — the analyzer's findings for one fixture tree, via a
 # recursive call to this script with LANG_TABLE_ROOT redirected. Prints the
 # harness output; callers grep it for the specific failing assertion.
+# selftest_report FIXTURE [ROSTER] — pass a non-empty second arg to also set
+# LANG_TABLE_EXPECT_ROSTER, which arms the roster check that otherwise skips
+# under a fixture root.
 selftest_report() {
-    LANG_TABLE_ROOT="$FIXROOT/$1" command bash "$SCRIPT_DIR/$(command basename "${BASH_SOURCE[0]}")" 2>&1 || true
+    LANG_TABLE_ROOT="$FIXROOT/$1" LANG_TABLE_EXPECT_ROSTER="${2:-}" \
+        command bash "$SCRIPT_DIR/$(command basename "${BASH_SOURCE[0]}")" 2>&1 || true
 }
 
 test_selftest_fixtures() {
@@ -447,6 +459,15 @@ test_selftest_fixtures() {
         "one-runtime fixture must fail the matrix<->source assertion"
     assert_contains "$out" "no patterns.sh arm" \
         "one-runtime fixture must name the missing bash arm specifically"
+
+    # The roster check skips under every OTHER fixture root, so without this its
+    # failing branch is executed by nothing — the self-skipping-hides-the-risky-
+    # branch shape (#543). Armed explicitly here.
+    out="$(selftest_report missing-roster 1)"
+    assert_contains "$out" "all four governed scanners declare a matrix (anti-vacuity) ... FAIL" \
+        "missing-roster fixture must fail the four-scanner roster assertion"
+    assert_contains "$out" "check-security declares a Language Support matrix" \
+        "missing-roster fixture must name the undeclared scanner"
 }
 
 run_test test_selftest_fixtures "self-test: each assertion fires on its fixture"
