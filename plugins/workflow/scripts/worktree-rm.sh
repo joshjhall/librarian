@@ -493,15 +493,15 @@ leftover_is_worktree_residue() {
 # residue guard is NOT relaxed to compensate: its fingerprint rule is what
 # protects an operator's scratch directory from an unconditional `rm -rf`.
 #
-# Tolerating is not swallowing. The surviving-entry COUNT is reported, so the
-# expected few-stale-dentries case stays visible rather than being absorbed
-# silently. The count is the ONLY signal that varies — the wording does not
-# change with it, so an operator reading a large number against a small worktree
-# is what distinguishes a removal that accomplished nothing from one that hit a
-# few stale dentries. That is a weaker distinction than a dedicated message
-# would give, and it is deliberate: teardown has no way to know what SHOULD have
-# been in a deregistered directory, so any "nothing was removed" claim would be
-# guessing at a denominator it does not have.
+# Tolerating is not swallowing. What remains on disk is REPORTED — the count of
+# surviving entries, or the distinct "could not remove the directory itself"
+# when the directory was emptied but its own node would not go. Both are stated
+# as observations, never as inferences about WHY something survived: the removal
+# calls here are best-effort and report one status for many operations, so this
+# function cannot distinguish "refused by the filesystem" from "never attempted"
+# after the fact. Two review cycles were spent learning that — each attempt to
+# scope the count by intent printed "0 undeletable entries remain" about a
+# directory still plainly on disk.
 #
 # `find -exec rm -rf {} +` rather than a `"$wt"/*` glob: the glob misses
 # dotfiles, and `.git` is precisely what must be controlled here. `-mindepth 1
@@ -530,30 +530,35 @@ remove_leftover_dir() {
         return 0
     fi
 
-    # Still present: count what the filesystem would not release. Teardown
-    # CONTINUES (removed=1, exit 0) to the branch and tmux steps — the worktree
-    # is deregistered and nothing git-tracked remains, which is the whole
-    # definition of done here.
+    # Still present. Teardown CONTINUES (removed=1, exit 0) to the branch and
+    # tmux steps — the worktree is deregistered and nothing git-tracked remains,
+    # which is the whole definition of done here.
     #
-    # `.git` is excluded from the count ONLY when it was kept deliberately —
-    # i.e. when non-`.git` entries survived, so the block above never attempted
-    # it. Counting a deliberate retention would overstate the condition by one
-    # on every partial removal. But when the contents pass fully succeeded, the
-    # removal WAS attempted and the filesystem refused it, which is a genuine
-    # undeletable entry. Excluding it unconditionally would print the
-    # self-contradictory "0 undeletable entries remain" about a directory that
-    # is still on disk — an outcome reported as clean while a real removal
-    # failure went uncounted, which is the misreporting class this script exists
-    # to avoid. So decide by the same OBSERVED state the removal was gated on,
-    # never by assuming which branch we came from.
-    if [ -n "$(command find "$wtdir" -mindepth 1 -maxdepth 1 ! -name .git 2>/dev/null)" ]; then
-        survivors="$(command find "$wtdir" -mindepth 1 -not -path "$wtdir/.git" \
-            -not -path "$wtdir/.git/*" 2>/dev/null | command wc -l | command tr -d '[:space:]')"
+    # REPORT WHAT IS ON DISK, and let the two facts that matter carry the
+    # message: how many entries remain, and whether the directory itself could
+    # be removed. Two earlier attempts scoped this count cleverly — excluding
+    # `.git` because it was "kept by choice" — and each printed the
+    # self-contradictory "0 undeletable entries remain" about a directory the
+    # operator can plainly see, once via a refused `.git` and once via a refused
+    # `rmdir` on an emptied directory. Every such exclusion is a claim about WHY
+    # something survived, and this function cannot know that: `rm -rf`/`rmdir`
+    # are best-effort here and report one status for many operations. So it
+    # states only what it can observe.
+    #
+    # The `.git` this function deliberately keeps IS counted, and the message
+    # says so rather than silently netting it out — an operator who sees "1
+    # entry" on a partial removal should be able to reconcile it with the one
+    # file in the directory.
+    survivors="$(command find "$wtdir" -mindepth 1 2>/dev/null |
+        command wc -l | command tr -d '[:space:]')"
+    if [ "$survivors" -eq 0 ]; then
+        # Emptied, but the directory node itself would not go (an unwritable
+        # parent is the realistic cause). Saying "0 entries remain" here would
+        # describe a clean sweep while the directory is still on disk.
+        command echo "  emptied leftover directory $wtdir, but could not remove the directory itself"
     else
-        survivors="$(command find "$wtdir" -mindepth 1 2>/dev/null |
-            command wc -l | command tr -d '[:space:]')"
+        command echo "  cleared leftover directory $wtdir ($survivors entries could not be removed)"
     fi
-    command echo "  cleared leftover directory $wtdir ($survivors undeletable entries remain)"
     command echo "  (expected on a bindfs/FUSE overlay — nothing git-tracked is at risk)"
     removed=1
 }

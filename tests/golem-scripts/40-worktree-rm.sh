@@ -1653,14 +1653,16 @@ test_worktree_rm_partial_leftover_removal_is_tolerated() {
     assert_exit 0 "$RUN_RC" "a partial leftover removal is tolerated, not a failure"
     assert_not_contains "$RUN_OUT" "WARNING" \
         "no scary warning for a condition that is expected on this platform"
-    # The COUNT is asserted exactly, not just its presence. The fixture leaves
-    # precisely four entries the filesystem will not release — `target`,
-    # `target/debug`, `target/debug/incremental`, and `stale.o` — and `.git`
-    # survives by this script's own choice, so counting it would report 5 and
-    # overstate the condition. A bare "contains a number" assertion cannot tell
-    # those apart (mutation-verified: dropping the `.git` exclusion survives it).
-    assert_contains "$RUN_OUT" "4 undeletable entries remain" \
-        "reports the exact count, excluding the .git it deliberately kept"
+    # The COUNT is asserted exactly, not just its presence — a bare "contains a
+    # number" assertion would pass for any scoping of the count. The fixture
+    # leaves five entries on disk: `target`, `target/debug`,
+    # `target/debug/incremental`, `stale.o`, and the `.git` this script keeps on
+    # purpose. All five are counted, because the message reports what is
+    # OBSERVABLE rather than asserting why each entry survived (see the
+    # function's comment — two review cycles were spent on counts scoped by
+    # intent, each of which could report zero for a surviving directory).
+    assert_contains "$RUN_OUT" "5 entries could not be removed" \
+        "reports every entry still on disk, including the .git it kept"
     assert_contains "$RUN_OUT" "bindfs" "names the expected cause so it reads as benign"
     local branches
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -1792,9 +1794,105 @@ test_worktree_rm_counts_a_git_the_filesystem_refused() {
     assert_exit 0 "$RUN_RC" "an undeletable .git is still tolerated, not a failure"
     # The defining assertion: never report zero survivors for a directory that
     # is still on disk.
-    assert_not_contains "$RUN_OUT" "0 undeletable entries remain" \
-        "never reports zero undeletable entries while the directory survives"
-    assert_contains "$RUN_OUT" "3 undeletable entries remain" \
+    assert_not_contains "$RUN_OUT" "0 entries" \
+        "never reports zero entries while the directory survives"
+    assert_contains "$RUN_OUT" "3 entries could not be removed" \
         "counts the refused .git subtree (.git, objects, blob) rather than excluding it"
     assert_true "[ -e '$sb/.worktrees/issue-94' ]" "the directory really did survive"
+}
+
+# #834 review cycle 2: an EMPTIED but still-present directory gets its own
+# message, never a count of zero.
+#
+# Third route to the same misreport, and the reason the count is no longer
+# scoped by intent at all. Here the contents pass AND the `.git` removal both
+# succeed, so the directory is genuinely empty — but `rmdir` fails because the
+# PARENT is unwritable (removing a directory's contents needs write on the
+# directory; removing the directory itself needs write on its parent). A count
+# then reports 0 while the directory is plainly still on disk, which is the
+# self-contradiction the previous two cycles each produced by a different route.
+#
+# Asserting the distinct wording is what pins the branch: a count-only message
+# cannot express "emptied, but the node itself would not go".
+test_worktree_rm_emptied_but_undeletable_dir_is_not_reported_as_zero() {
+    local sb parent
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rmdir fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 96
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-96"
+
+    # $wt stays writable (its contents can be cleared); its PARENT does not, so
+    # the trailing rmdir on $wt fails.
+    parent="$sb/.worktrees"
+    command chmod 500 "$parent"
+
+    run_in "$sb" "$WT_RM" 96
+    restore_undeletable "$parent"
+
+    assert_exit 0 "$RUN_RC" "an undeletable directory node is tolerated, not a failure"
+    assert_not_contains "$RUN_OUT" "0 entries" \
+        "never reports zero entries for a directory still on disk"
+    assert_contains "$RUN_OUT" "could not remove the directory itself" \
+        "names the actual condition: emptied, but the directory node would not go"
+    assert_true "[ -e '$sb/.worktrees/issue-96' ]" "the directory really did survive"
+}
+
+# #834 review cycles 1+2, the total-failure end of the range: NOTHING could be
+# removed, including a plain-file `.git`.
+#
+# Covers the "genuine misconfiguration" case (a removal that accomplished
+# nothing at all) and, with it, the realistic `.git`-as-a-FILE shape — a
+# worktree's `.git` is normally a file, while the sibling test above has to make
+# it a directory to keep it undeletable on its own.
+#
+# Why the two cannot be separated with permission bits: unlinking ANY direct
+# child requires write on the parent directory, so the same `chmod` that saves
+# `.git` necessarily saves its siblings too. A file-`.git`-refused-while-
+# siblings-go fixture would need an immutable flag (`chattr +i`, root-only), so
+# that split is genuinely unreachable here rather than merely untested — which
+# is also why the message reports observable state instead of trying to
+# attribute a reason to each survivor.
+#
+# The assertion that matters is the count: it must equal everything on disk,
+# `.git` included. A count scoped to "entries the filesystem refused" would have
+# to decide whether the never-attempted `.git` belongs, and both earlier
+# attempts at that got it wrong.
+test_worktree_rm_total_removal_failure_counts_everything() {
+    local sb wt
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 97
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-97"
+
+    wt="$sb/.worktrees/issue-97"
+    command mkdir -p "$wt/sub"
+    command touch "$wt/sub/f"
+    # Unwritable worktree dir: no direct child can be unlinked, `.git` included.
+    command chmod 500 "$wt"
+
+    run_in "$sb" "$WT_RM" 97
+    restore_undeletable "$wt"
+
+    assert_exit 0 "$RUN_RC" "a total removal failure is still tolerated, not a hard failure"
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "still no scary warning — the operator cannot act on this either"
+    # Three survive: `.git`, `seed.txt` (worktree-new checks the seed commit
+    # out), and `sub`. NOT `sub/f` — unlinking it needs write on `sub`, which is
+    # untouched, so `rm -rf` reaches through and deletes it while the
+    # directory-shaped `sub` above it stays. That asymmetry is why the count is
+    # asserted against the observed tree rather than against "what the fixture
+    # created": the two differ, and only the former is what the operator sees.
+    assert_contains "$RUN_OUT" "3 entries could not be removed" \
+        "counts every surviving entry, including the plain-file .git"
+    assert_true "[ -e '$wt/.git' ]" "the file-shaped .git is among the survivors"
+    assert_true "[ ! -e '$wt/sub/f' ]" \
+        "a nested file whose own parent stays writable is still removed"
 }
