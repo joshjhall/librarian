@@ -55,6 +55,7 @@ for the same reason — one cell cannot carry two letters):
 | Other markers | vb, bas (`'`), erl (`%`), clj, asm (`;`), bat (`REM`), vue, svelte, html, xml (`<!--`), pas (`{`) | L | L | —  | L        | L               |
 | JSON (none) | json               | L              | L                     | —              | L        | L               |
 | Extensionless (`#`) | Dockerfile, Containerfile, Makefile, Jenkinsfile, Vagrantfile, Procfile, Rakefile, Gemfile, Brewfile, Justfile, Caddyfile, CMakeLists.txt | L | L | —      | L        | L               |
+| Dotfiles (`#`) | .env, .npmrc, .netrc, .yarnrc, .pypirc, .dockerignore, .gitconfig, .gitignore, .editorconfig, .bashrc, .zshrc, .profile, .bash_profile, .htaccess, .mailmap | L | L | —  | L        | L               |
 | every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
@@ -87,16 +88,30 @@ extended language-by-language as each omission was noticed. Keying on the marker
 makes the table describe the lexical fact directly, so adding a language is
 choosing an existing family rather than discovering a gap.
 
-The **Extensionless** row is dispatched by **basename**, not extension, and it is
-the one an extension-keyed probe cannot find *by construction* — a `Dockerfile`
-has no extension to look up. It was caught only by review, after a 52-extension
-sweep had already reported the table clean. `ENV PASSWORD="…"` in a Dockerfile is
-about as canonical a checked-in credential as exists, so this row matters.
-Matching is on the **exact** basename: `Dockerfile.prod` has extension `prod` and
-does not resolve, pinned by a fixture so widening to a prefix match later is
-deliberate.
+**A path can defeat extension keying in four different ways**, and the resolver
+handles each in order — this is the part worth understanding before extending it:
 
-The measured baseline, over both extensions **and** extensionless basenames: this
+| shape | example | `ext` resolves to |
+| --- | --- | --- |
+| extension | `app.py` | `py` — the ordinary case |
+| exact basename | `Dockerfile` | `""` — no extension at all |
+| dotfile | `.npmrc` | `npmrc` — a **wrong** key |
+| suffixed variant | `Dockerfile.prod`, `.env.local` | `prod` / `local` — also wrong |
+
+The last two are the dangerous ones, because they produce a key that *looks*
+valid and resolves to nothing, which is indistinguishable from "unmodeled" unless
+you go looking. Each was found by a separate review cycle after the previous
+sweep had reported the table clean — an extension-keyed probe cannot reach any of
+them by construction.
+
+Suffixed variants match by **prefix** because the suffix names a *variant of the
+same artifact* by universal convention: a `Dockerfile.prod` is a Dockerfile, a
+`.env.local` is an env file. An earlier draft matched `.env.*` this way while
+excluding `Dockerfile.*` — that was inconsistent and measurably wrong (`ENV
+PASSWORD="…"` in a `Dockerfile.prod` fired on `main` and went silent). A name that
+genuinely re-keys on its suffix belongs in the exact-basename table instead.
+
+The measured baseline, over all four shapes — 111 probe inputs: this
 scanner covers **exactly what `main` covered**, with one intended class of
 exception — plain-prose files (`.md`, `.txt`, `LICENSE`, `README`, `CHANGELOG`)
 no longer get the *lexical-dependent* detectors, because prose is not code and

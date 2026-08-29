@@ -129,10 +129,14 @@ lang_of() {
         # Measured: `ENV PASSWORD="…"` fired on main and went silent here.
         # A `*/` prefix is required so the arm matches a full path, not just a
         # bare basename; both spellings reach this function.
-        Dockerfile | */Dockerfile) command printf 'hash' ;;
-        Containerfile | */Containerfile) command printf 'hash' ;;
-        Makefile | */Makefile) command printf 'hash' ;;
-        makefile | */makefile) command printf 'hash' ;;
+        # The `.*` arms are the PREFIX family (patterns.py's PREFIX_LANG): the
+        # suffix names a VARIANT of the same artifact by universal convention —
+        # a `Dockerfile.prod` is a Dockerfile. Measured: `ENV PASSWORD="…"` in a
+        # Dockerfile.prod fired on main and went silent without this.
+        Dockerfile | */Dockerfile | Dockerfile.* | */Dockerfile.*) command printf 'hash' ;;
+        Containerfile | */Containerfile | Containerfile.* | */Containerfile.*) command printf 'hash' ;;
+        Makefile | */Makefile | Makefile.* | */Makefile.*) command printf 'hash' ;;
+        makefile | */makefile | makefile.* | */makefile.*) command printf 'hash' ;;
         GNUmakefile | */GNUmakefile) command printf 'hash' ;;
         Jenkinsfile | */Jenkinsfile) command printf 'hash' ;;
         Vagrantfile | */Vagrantfile) command printf 'hash' ;;
@@ -144,6 +148,25 @@ lang_of() {
         justfile | */justfile) command printf 'hash' ;;
         Caddyfile | */Caddyfile) command printf 'hash' ;;
         CMakeLists.txt | */CMakeLists.txt) command printf 'hash' ;;
+        # DOTFILES — mirroring patterns.py's BASENAME_LANG / DOT_PREFIX_LANG.
+        # A leading-dot name defeats extension keying in a subtler way than an
+        # extensionless one: `.npmrc` yields ext `npmrc` and `.env.local` yields
+        # `local`, so both resolve to a WRONG key rather than an empty one.
+        # Measured: all three fired on main and went silent. `.netrc`/`.npmrc`
+        # exist to hold credentials. All are `#`-comment formats.
+        #
+        # `.env.*` is a PREFIX arm on purpose: `.env.local` / `.env.production`
+        # are env files by convention. (`.env.example` and friends are dropped
+        # earlier by the SKIP_GLOBS block, which runs before this function.)
+        .env | */.env | .env.* | */.env.*) command printf 'hash' ;;
+        .npmrc | */.npmrc | .netrc | */.netrc) command printf 'hash' ;;
+        .yarnrc | */.yarnrc | .pypirc | */.pypirc) command printf 'hash' ;;
+        .dockerignore | */.dockerignore) command printf 'hash' ;;
+        .gitconfig | */.gitconfig | .gitignore | */.gitignore) command printf 'hash' ;;
+        .editorconfig | */.editorconfig) command printf 'hash' ;;
+        .bashrc | */.bashrc | .zshrc | */.zshrc) command printf 'hash' ;;
+        .profile | */.profile | .bash_profile | */.bash_profile) command printf 'hash' ;;
+        .htaccess | */.htaccess | .mailmap | */.mailmap) command printf 'hash' ;;
         *) command printf '' ;;
     esac
 }

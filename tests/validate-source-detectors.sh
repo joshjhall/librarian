@@ -317,14 +317,52 @@ test_security_secrets() {
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: a # comment in a Dockerfile stays silent"
 
-    # BOUNDARY: the rule is EXACT basename, not a prefix. `Dockerfile.prod` has
-    # extension `prod`, which resolves to nothing — pinned so that widening this
-    # to a prefix match later is a deliberate change rather than a drift.
+    # SUFFIXED VARIANTS. `Dockerfile.prod` has extension `prod` — a WRONG key
+    # rather than an empty one, so it defeats extension dispatch the same way a
+    # dotfile does. An earlier draft asserted this should stay SILENT, reasoning
+    # that the suffix "names a different artifact"; that was wrong (a
+    # Dockerfile.prod is a Dockerfile) and inconsistent with `.env.local`, which
+    # the same commit matched by prefix for exactly the convention argument.
+    # Measured: it fired on main. The assertion is inverted rather than deleted,
+    # so the corrected rule is pinned rather than merely un-pinned.
+    for _variant in Dockerfile.prod Dockerfile.dev Makefile.include; do
+        d="$(fresh_dir)"
+        command printf '%s\n' 'ENV PASSWORD="realsecret123"' >"$d/$_variant"
+        list="$(make_list "$d/l" "$d/$_variant")"
+        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+            "security: a credential in $_variant fires (suffix is a variant, not a new artifact)"
+    done
+    unset _variant
+
+    # DOTFILES. A leading-dot name defeats extension keying in a SUBTLER way
+    # than an extensionless one: it produces a WRONG key rather than an empty
+    # one (`.npmrc` -> ext `npmrc`, `.env.local` -> ext `local`). Measured
+    # against origin/main: all three of these fired there and went silent here.
+    # `.netrc` and `.npmrc` exist to hold credentials.
+    for _dot in .npmrc .netrc .env.local; do
+        d="$(fresh_dir)"
+        command printf '%s\n' 'password = "realsecret123"' >"$d/$_dot"
+        list="$(make_list "$d/l" "$d/$_dot")"
+        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+            "security: a credential in $_dot fires"
+    done
+    unset _dot
+
+    # ...and their comment model is `#`.
     d="$(fresh_dir)"
-    command printf '%s\n' 'ENV PASSWORD="realsecret123"' >"$d/Dockerfile.prod"
-    list="$(make_list "$d/l" "$d/Dockerfile.prod")"
+    command printf '%s\n' '# password = "realsecret123"' >"$d/.npmrc"
+    list="$(make_list "$d/l" "$d/.npmrc")"
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: Dockerfile.prod is NOT matched (exact basename, not prefix)"
+        "security: a # comment in .npmrc stays silent"
+
+    # BOUNDARY: SKIP_GLOBS runs BEFORE the language resolver, so `.env.example`
+    # stays skipped even though `.env.*` now resolves. Pinned because the new
+    # prefix arm is exactly what could have re-enabled it.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"' >"$d/.env.example"
+    list="$(make_list "$d/l" "$d/.env.example")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: .env.example is still skipped (SKIP_GLOBS precedes the resolver)"
 
     # THE COMMENT-FAMILY TABLE, both directions per family. Three review cycles
     # each found one more language group that had lost coverage to the gating

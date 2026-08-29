@@ -241,6 +241,46 @@ BASENAME_LANG = {
     "justfile": "hash",
     "Caddyfile": "hash",
     "CMakeLists.txt": "hash",
+    # DOTFILES. A leading-dot name defeats extension keying in a second, subtler
+    # way than an extensionless one: `.npmrc`.rsplit(".") yields `npmrc` and
+    # `.env.local` yields `local`, so both resolve to a WRONG key rather than an
+    # empty one. Measured — all three below fired on main and went silent.
+    # These are prime credential carriers (`.netrc` and `.npmrc` exist to hold
+    # credentials), and all are `#`-comment formats.
+    ".env": "hash",
+    ".npmrc": "hash",
+    ".netrc": "hash",
+    ".yarnrc": "hash",
+    ".pypirc": "hash",
+    ".dockerignore": "hash",
+    ".gitconfig": "hash",
+    ".gitignore": "hash",
+    ".editorconfig": "hash",
+    ".bashrc": "hash",
+    ".zshrc": "hash",
+    ".profile": "hash",
+    ".bash_profile": "hash",
+    ".htaccess": "hash",  # Apache config — AuthUserFile and friends
+    ".mailmap": "hash",
+}
+
+# Basename families whose SUFFIX varies: `.env.local`, `.env.production`,
+# `Dockerfile.dev`, `Dockerfile.prod`, `Makefile.include`. Keyed on the leading
+# component and checked after the exact-basename table.
+#
+# The suffix here names a VARIANT of the same artifact, by universal convention —
+# a `Dockerfile.prod` is a Dockerfile. An earlier draft matched `.env.*` this way
+# but excluded `Dockerfile.*`, on the reasoning that its suffix "names a different
+# artifact". That was wrong, and inconsistent with the very next line of the same
+# table: measured, `ENV PASSWORD="…"` in a `Dockerfile.prod` fired on main and
+# went silent. If a future name genuinely does re-key on its suffix, it belongs
+# in BASENAME_LANG as an exact entry, not here.
+PREFIX_LANG = {
+    ".env": "hash",
+    "Dockerfile": "hash",
+    "Containerfile": "hash",
+    "Makefile": "hash",
+    "makefile": "hash",
 }
 
 
@@ -251,14 +291,30 @@ def lang_of(path: str, ext: str) -> str:
     return is the ADR § 1 `—` state and is the gate every lexical-dependent
     detector consults before running.
 
-    A `Dockerfile.prod`-style suffix is deliberately NOT matched: its `ext` is
-    `prod`, which resolves to nothing, and guessing from a prefix would be a
-    different rule than the exact-basename one stated here.
+    Three shapes, in order, because a real path can defeat extension keying in
+    three different ways:
+
+      1. EXTENSION      `app.py`          -> the ordinary case
+      2. EXACT BASENAME `Dockerfile`      -> no extension at all, so ext is ""
+      3. PREFIX         `Dockerfile.prod` -> ext is `prod`, a WRONG key
+                        `.npmrc`          -> ext is `npmrc`, also wrong
+                        `.env.local`      -> ext is `local`, also wrong
+
+    Shape 3 is the subtle one: a leading dot or a variant suffix yields a key
+    that looks valid and resolves to nothing, which is indistinguishable from
+    "unmodeled" unless you look for it.
     """
     lang = EXT_LANG.get(ext, "")
     if lang:
         return lang
-    return BASENAME_LANG.get(path.rsplit("/", 1)[-1], "")
+    base = path.rsplit("/", 1)[-1]
+    lang = BASENAME_LANG.get(base, "")
+    if lang:
+        return lang
+    for prefix, plang in PREFIX_LANG.items():
+        if base.startswith(prefix + "."):
+            return plang
+    return ""
 
 
 def is_comment(lang: str, line: str) -> bool:
