@@ -281,6 +281,23 @@ test_security_injection() {
     assert_fires "$SK_SEC" "$list" injection-risk "SQL in format! interpolation" \
         "security: Rust format! SQL interpolation fires"
 
+    # write!/writeln! take the Write DESTINATION first and the format string
+    # SECOND, so they need their own pattern — folded into one alternation with
+    # format! their branches are dead, because no valid call has its format
+    # string in argument one. Caught in review; this fixture is the one input
+    # that distinguishes the two spellings.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'write!(f, "SELECT * FROM t WHERE id={}", id);' >"$d/w.rs"
+    list="$(make_list "$d/l" "$d/w.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in write! interpolation" \
+        "security: Rust write! SQL interpolation fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'writeln!(out, "INSERT INTO t VALUES ({})", v);' >"$d/wl.rs"
+    list="$(make_list "$d/l" "$d/wl.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in write! interpolation" \
+        "security: Rust writeln! SQL interpolation fires"
+
     d="$(fresh_dir)"
     command printf '%s\n' 'q.push_str("SELECT * FROM t WHERE id=");' >"$d/p.rs"
     list="$(make_list "$d/l" "$d/p.rs")"

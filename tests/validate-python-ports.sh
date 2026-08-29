@@ -517,6 +517,7 @@ pub fn undocumented_rust() {}
 /// documented
 pub fn documented_rust() {}
 let q = format!("SELECT * FROM t WHERE id={}", id);
+write!(f, "SELECT * FROM t WHERE id={}", id);
 q.push_str("INSERT INTO t VALUES (");
 let concat = "SELECT a FROM t" + tail;
 println!("debug output");

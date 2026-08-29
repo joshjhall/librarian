@@ -62,8 +62,15 @@ one.
 
 `injection-risk` is the only category with per-language detectors: SQL built by
 f-string (Python), template literal (JS/TS), `#{}` interpolation (Ruby), or
-`format!`/`push_str` (Rust). Its string-concatenation arm is lexical-dependent
-and gated. The JS narrowing is real: the template-literal arm dispatches on
+`format!` / `write!` / `push_str` (Rust). Its string-concatenation arm is
+lexical-dependent and gated.
+
+Rust needs **two** interpolation patterns rather than one alternation, because
+the macros differ in argument position: `format!` takes the format string first,
+while `write!`/`writeln!` take the `Write` destination first and the format
+string second. A single `(format!|write!|writeln!)\s*\(\s*"` alternation makes
+the `write!`/`writeln!` branches dead code — no valid call has its format string
+in argument one. The JS narrowing is real: the template-literal arm dispatches on
 `js`/`jsx`/`ts`/`tsx` only, so `.mjs`/`.cjs` reach the lexical-independent
 detectors but not that arm.
 

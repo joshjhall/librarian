@@ -223,11 +223,19 @@ def scan_file(path: str) -> None:
                     "SQL with string interpolation: " + cap(line),
                 )
         elif ext == "rs":
-            # Rust builds SQL with format!/write! interpolation ({} holes) or by
+            # Rust builds SQL with format!-family interpolation ({} holes) or by
             # push_str onto a String. Both are the idiomatic spelling of the same
             # unsanitized-concatenation defect the other arms catch (#838).
+            #
+            # TWO patterns, because the macros differ in ARGUMENT POSITION and a
+            # single alternation cannot cover both: `format!` takes the format
+            # string FIRST, while `write!`/`writeln!` take the `Write`
+            # destination first and the format string SECOND. Folding them into
+            # one `(format!|write!|writeln!)\s*\(\s*"` alternation makes the
+            # write!/writeln! branches dead — no valid call has its format
+            # string in argument one.
             if re.search(
-                r'(format!|write!|writeln!)\s*\(\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
+                r'format!\s*\(\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
                 line,
             ):
                 emit(
@@ -235,6 +243,16 @@ def scan_file(path: str) -> None:
                     idx,
                     "injection-risk",
                     "SQL in format! interpolation: " + cap(line),
+                )
+            if re.search(
+                r'(write|writeln)!\s*\([^,]+,\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
+                line,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "injection-risk",
+                    "SQL in write! interpolation: " + cap(line),
                 )
             if re.search(
                 r'push_str\s*\(\s*&?(format!\s*\(\s*)?"(SELECT|INSERT|UPDATE|DELETE|DROP)\b',

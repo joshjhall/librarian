@@ -267,10 +267,18 @@ while IFS= read -r file; do
                 done || true
             ;;
         *.[Rr][Ss])
-            # Rust builds SQL with format!/write! interpolation ({} holes) or by
+            # Rust builds SQL with format!-family interpolation ({} holes) or by
             # push_str onto a String — the idiomatic spelling of the same
             # unsanitized-concatenation defect the other arms catch (#838).
-            command grep -nE '(format!|write!|writeln!)[[:space:]]*\([[:space:]]*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{' "$file" 2>/dev/null |
+            #
+            # TWO patterns, because the macros differ in ARGUMENT POSITION and a
+            # single alternation cannot cover both: `format!` takes the format
+            # string FIRST, while `write!`/`writeln!` take the `Write`
+            # destination first and the format string SECOND. Folding them into
+            # one `(format!|write!|writeln!)[[:space:]]*\([[:space:]]*"`
+            # alternation makes the write!/writeln! branches dead — no valid
+            # call has its format string in argument one.
+            command grep -nE 'format![[:space:]]*\([[:space:]]*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
@@ -278,6 +286,15 @@ while IFS= read -r file; do
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "injection-risk" \
                         "SQL in format! interpolation: ${evidence}" "HIGH"
+                done || true
+            command grep -nE '(write|writeln)![[:space:]]*\([^,]+,[[:space:]]*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "injection-risk" \
+                        "SQL in write! interpolation: ${evidence}" "HIGH"
                 done || true
             command grep -nE 'push_str[[:space:]]*\([[:space:]]*&?(format![[:space:]]*\([[:space:]]*)?"(SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
