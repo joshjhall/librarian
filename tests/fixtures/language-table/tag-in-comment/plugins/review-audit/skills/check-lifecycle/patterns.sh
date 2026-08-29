@@ -9,10 +9,13 @@ scan_file() {
     case "$1" in
         *.[Pp][Yy])
             emit_row "$1" "unreaped-subprocess" "stub"
-            emit_row "$1" "unclosed-handle" "stub"
+            # Same-line `#` inside a string, BEFORE the tag - see the py twin.
+            emit_row "$1" "#{interp}" "unclosed-handle"
             ;;
         *.[Rr][Ss])
-            emit_row "$1" "unreaped-subprocess" "stub"
+            # Trailing comment on a line that emits a DIFFERENT category — the
+            # case a whole-line-only stripper misses.
+            emit_row "$1" "unreaped-subprocess" "stub" # not "unclosed-handle" yet
             # TODO: also emit "unclosed-handle" here once the Rust arms land.
             ;;
     esac

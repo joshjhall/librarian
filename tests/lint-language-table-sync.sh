@@ -195,19 +195,44 @@ BINDINGS = {
 
 
 def strip_comments(body):
-    """Drop whole-line `#` and `//` comments from an arm body.
+    """Drop `#` and `//` comments from an arm body — whole-line AND trailing.
 
-    Line-level only, deliberately: it serves the tag match below, where the
-    question is "does this arm emit the category", and a full lexer would be
-    disproportionate. A trailing comment after real code keeps its line, which is
-    harmless — the line already carries the emit that makes it a true match.
+    Trailing comments are stripped too, and that is not thoroughness for its own
+    sake. An earlier version kept them, on the reasoning that a line with a
+    trailing comment "already carries the emit that makes it a true match". That
+    is false whenever the comment names a DIFFERENT category than the code emits:
+
+        emit(path, idx, "unreaped-subprocess", ...)  # see also "unclosed-handle"
+
+    keeps `"unclosed-handle"` in the searched text and proves coverage the arm
+    does not have — the exact false-coverage failure this stripping exists to
+    close, reintroduced by the fix for it. Measured, not reasoned about.
+
+    Quote-aware rather than a plain `#`/`//` find, because a `#` INSIDE a string
+    literal is code: Ruby interpolation (`"...#{x}"`) and any regex containing
+    `#` or `//` would otherwise truncate the line and lose a real emit — turning
+    a false positive into a false negative, which is the worse direction.
     """
     kept = []
     for line in body.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("#") or stripped.startswith("//"):
-            continue
-        kept.append(line)
+        quote = None
+        cut = None
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch in ("'", '"'):
+                quote = ch
+            elif ch == "#" or line.startswith("//", i):
+                cut = i
+                break
+            i += 1
+        kept.append(line if cut is None else line[:cut])
     return "\n".join(kept)
 
 
