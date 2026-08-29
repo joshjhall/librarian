@@ -18,6 +18,11 @@ proves the gate is alive on every future run, not only on the day it was written
 | `one-runtime/` | assertion 4 | `.rs` is marked `M` and has a `patterns.py` arm but no `patterns.sh` arm — the exact shape of #836 |
 | `per-category/` | assertion 4, per **cell** | `.rs` is `M` in two columns but only has an arm in one. The **only** multi-category matrix here (#847) |
 | `sameline-arm/` | the bash arm splitter | **positive** — must PASS. A `case` arm whose `;;` is on the pattern line must not leak the next arm's coverage |
+| `vacuous-binding/` | assertion 5 (py) | a tag binding that matches no `patterns.py` arm |
+| `vacuous-binding-sh/` | assertion 5 (sh) | the mirror image — vacuous in the bash runtime only |
+| `unbound-column/` | assertion 6 | an `M` cell in a column absent from `BINDINGS`, so nothing can check it |
+| `fn-file-kinds/` | the `fn` + `file` binding kinds | **positive** — also pins the escaped-pipe splitter and the narrowing parenthetical |
+| `tag-in-comment/` | comment stripping in the `tag` binding | **positive** — a tag named in a comment is not an emission |
 | `missing-roster/` | the four-scanner roster | no governed scanner exists at all, so all four must be reported undeclared |
 
 Two of these are worth extra words.
@@ -37,6 +42,16 @@ neutering it silently added `md`/`json`/`yaml` coverage to every real
 `check-lifecycle` category and nothing failed, since those extensions appear in
 neither the matrix nor `EXT_LANG`. The fixture puts the phantom extension
 somewhere the assertions can see it.
+
+**`vacuous-binding/` and `vacuous-binding-sh/` are a pair, and the asymmetry is
+the point.** Assertion 5 has two detection branches — one per runtime — and a
+fixture vacuous in *both* cannot tell them apart: either branch alone still
+reports, so deleting one is a mutation that survives (measured: with a single
+symmetric fixture, both single-branch mutations survived and only the
+both-branches mutation was caught). Each tree is therefore vacuous in exactly one
+runtime, and the self-tests assert the runtime *name* in the finding. Both also
+trip assertion 4 — unavoidable rather than sloppy, since a column vacuous in one
+runtime disagrees with whatever cells it carries whichever value they take.
 
 `missing-roster/` needs `LANG_TABLE_EXPECT_ROSTER=1` alongside `LANG_TABLE_ROOT`.
 The roster check skips under a fixture root by default — a fixture tree carries a

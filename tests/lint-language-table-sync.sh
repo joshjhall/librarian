@@ -67,6 +67,10 @@
 #     the rest of the row.
 #   - An `M` cell in a column with no binding is reported (assertion 6) rather
 #     than skipped, so a new modeled column cannot go quietly unchecked.
+#   - A `tag` binding matches the category literal only OUTSIDE comments. A tag
+#     named in a comment is not an emission, and treating it as one would prove
+#     coverage an arm does not have — silencing the MISMATCH this gate exists to
+#     raise. Pinned by tests/fixtures/language-table/tag-in-comment/.
 #
 # STILL NOT CHECKED: `L` cells. They assert both the absence of a detector and
 # the presence of correct lexical gating, and that gating does not exist until
@@ -190,6 +194,23 @@ BINDINGS = {
 }
 
 
+def strip_comments(body):
+    """Drop whole-line `#` and `//` comments from an arm body.
+
+    Line-level only, deliberately: it serves the tag match below, where the
+    question is "does this arm emit the category", and a full lexer would be
+    disproportionate. A trailing comment after real code keeps its line, which is
+    harmless — the line already carries the emit that makes it a true match.
+    """
+    kept = []
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#") or stripped.startswith("//"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def bound_exts(kind, key, arms, runtime):
     """Extensions dispatched by the region this binding names.
 
@@ -201,7 +222,13 @@ def bound_exts(kind, key, arms, runtime):
     out = set()
     for exts, body, fn in arms:
         if kind == "tag":
-            if '"%s"' % key in body:
+            # Comment lines are stripped before the match. The tag literal is
+            # evidence that this arm EMITS the category, and a mention in a
+            # comment ("# TODO: also emit "unclosed-handle" here") is not that —
+            # it would prove coverage the arm does not have, silencing the very
+            # MISMATCH this assertion exists to raise. Cheap to exclude, and the
+            # failure it prevents is silent.
+            if '"%s"' % key in strip_comments(body):
                 out |= exts
         elif kind == "fn":
             if fn == key[runtime]:
@@ -384,6 +411,36 @@ CELL_M = "M"
 CELL_NONE = "—"  # em dash
 
 
+def split_row(row):
+    """Split a markdown table row on UNESCAPED pipes.
+
+    An ODD number of preceding backslashes escapes the pipe; an EVEN number is
+    literal backslashes followed by a real separator. A one-character lookbehind
+    (`(?<!\\\\)`) gets `...\\\\|` wrong in exactly the way a bare `.split("|")`
+    gets `\\|` wrong — columns shift left and a prose fragment is read as the
+    cell state. Written as a scan rather than a regex because Python's `re` has
+    no `\\K`, and the lookbehind alternative is unreadable.
+
+    No contract row exercises `\\\\|` today; spelled correctly because the
+    failure mode is silent misalignment, not an error.
+    """
+    out, buf, i = [], [], 0
+    while i < len(row):
+        ch = row[i]
+        if ch == "\\" and i + 1 < len(row):
+            buf.append(row[i : i + 2])  # keep the escape pair intact
+            i += 2
+            continue
+        if ch == "|":
+            out.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    out.append("".join(buf))
+    return out
+
+
 def parse_matrix(md, skill):
     """Return {(ext, column): 'M'|'-'} for one scanner's Language Support matrix.
 
@@ -415,10 +472,7 @@ def parse_matrix(md, skill):
         # cell left, so the parser reads a prose fragment where the M/— state
         # should be. The row-level check never saw this because it OR-ed the
         # whole row; per-cell alignment makes it load-bearing.
-        cols = [
-            c.strip().replace("\\|", "|")
-            for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))
-        ]
+        cols = [c.strip().replace("\\|", "|") for c in split_row(line.strip().strip("|"))]
         if len(cols) < 3:
             continue
         if cols[0] == "Language":
@@ -779,6 +833,63 @@ test_selftest_fixtures() {
         "sameline-arm fixture must pass — a same-line ';;' arm must not leak coverage"
     assert_contains "$out" "matrix M/unsupported cells match both runtimes ... PASS" \
         "sameline-arm fixture must actually REACH the per-cell assertion"
+
+    # Assertions 5 and 6 get the same treatment as 1-4. Without these two
+    # fixtures both were trivially green on every tree this repo will ever run —
+    # BINDINGS is hand-curated to match the live matrices, so neither FAIL branch
+    # was reachable, and deleting the detection outright kept the suite green
+    # (verified). That is the self-skipping-hides-the-risky-branch shape (#543)
+    # this file already fixes for the roster check, applied to the assertions
+    # added alongside it.
+    # TWO fixtures, one per runtime, each vacuous in ONE half only. A tree
+    # vacuous in BOTH cannot separate the detection branches: `if not got_py` and
+    # `if not got_sh` each report it alone, so deleting either survives —
+    # measured, both single-branch mutations survived a symmetric fixture. The
+    # asymmetric pair is what pins each branch. Assert the RUNTIME NAME, not just
+    # the column, or the pair collapses back into one test.
+    out="$(selftest_report vacuous-binding)"
+    assert_contains "$out" "every column binding resolves in both runtimes (anti-vacuity) ... FAIL" \
+        "vacuous-binding fixture must fail the binding anti-vacuity assertion"
+    assert_contains "$out" "column 'unclosed-handle' matches no patterns.py arm" \
+        "vacuous-binding fixture must name the empty PYTHON binding specifically"
+    assert_not_contains "$out" "matches no patterns.sh arm" \
+        "vacuous-binding fixture must leave the bash half non-vacuous (pins the py branch)"
+
+    out="$(selftest_report vacuous-binding-sh)"
+    assert_contains "$out" "every column binding resolves in both runtimes (anti-vacuity) ... FAIL" \
+        "vacuous-binding-sh fixture must fail the binding anti-vacuity assertion"
+    assert_contains "$out" "column 'unclosed-handle' matches no patterns.sh arm" \
+        "vacuous-binding-sh fixture must name the empty BASH binding specifically"
+    assert_not_contains "$out" "matches no patterns.py arm" \
+        "vacuous-binding-sh fixture must leave the python half non-vacuous (pins the sh branch)"
+
+    out="$(selftest_report unbound-column)"
+    assert_contains "$out" "every modeled column has a binding ... FAIL" \
+        "unbound-column fixture must fail the modeled-column-bound assertion"
+    assert_contains "$out" "column 'future-detector'" \
+        "unbound-column fixture must name the unbound column"
+    assert_contains "$out" "every column binding resolves in both runtimes (anti-vacuity) ... PASS" \
+        "unbound-column fixture must arm ONLY assertion 6, not the vacuity check"
+
+    # The `fn` and `file` binding kinds, plus the two parse behaviors that ride
+    # on the same tree. POSITIVE (must pass) for the reason sameline-arm is: a
+    # regression here shows up as a spurious finding against a correct tree.
+    # Mutation-verified — collapsing fn tracking, reverting the escaped-pipe
+    # splitter, and dropping the narrowing parenthetical are each caught.
+    out="$(selftest_report fn-file-kinds)"
+    assert_not_contains "$out" "FAIL" \
+        "fn-file-kinds fixture must pass — fn/file bindings and cell parsing are correct"
+    assert_contains "$out" "matrix M/unsupported cells match both runtimes ... PASS" \
+        "fn-file-kinds fixture must actually REACH the per-cell assertion"
+
+    # A tag MENTIONED in a comment is not an emission. Positive fixture, same
+    # shape as the two above: the failure it guards against is a false claim of
+    # coverage, which shows up as a spurious MISMATCH against a truthful matrix.
+    out="$(selftest_report tag-in-comment)"
+    assert_not_contains "$out" "FAIL" \
+        "tag-in-comment fixture must pass — a tag in a comment is not coverage"
+    assert_contains "$out" "matrix M/unsupported cells match both runtimes ... PASS" \
+        "tag-in-comment fixture must actually REACH the per-cell assertion"
 
     # The roster check skips under every OTHER fixture root, so without this its
     # failing branch is executed by nothing — the self-skipping-hides-the-risky-
