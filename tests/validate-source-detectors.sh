@@ -288,6 +288,44 @@ test_security_secrets() {
     assert_silent "$SK_SEC" "$list" insecure-crypto \
         "security: a // comment in .c stays silent"
 
+    # EXTENSIONLESS FILES, dispatched by BASENAME. An extension-keyed table
+    # cannot reach these at all, so without the basename fallback a Dockerfile
+    # loses every lexical-dependent detector. Verified against origin/main: the
+    # ENV line below fired there and went silent on this branch.
+    #
+    # This is the one that a 52-EXTENSION probe could not have found — an
+    # extensionless file has no extension to probe, so the sweep that caught the
+    # config/C-family/long-tail regressions was blind to it by construction.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'ENV PASSWORD="realsecret123"' >"$d/Dockerfile"
+    list="$(make_list "$d/l" "$d/Dockerfile")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in an extensionless Dockerfile fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'PASSWORD = "realsecret123"' >"$d/Makefile"
+    list="$(make_list "$d/l" "$d/Makefile")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in an extensionless Makefile fires"
+
+    # ...and the basename family's comment model is `#`, so a commented line
+    # stays silent. Without this the arm could resolve the language and then
+    # apply no model at all, which is the defect one layer down.
+    d="$(fresh_dir)"
+    command printf '%s\n' '# PASSWORD = "realsecret123"' >"$d/Dockerfile"
+    list="$(make_list "$d/l" "$d/Dockerfile")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a # comment in a Dockerfile stays silent"
+
+    # BOUNDARY: the rule is EXACT basename, not a prefix. `Dockerfile.prod` has
+    # extension `prod`, which resolves to nothing — pinned so that widening this
+    # to a prefix match later is a deliberate change rather than a drift.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'ENV PASSWORD="realsecret123"' >"$d/Dockerfile.prod"
+    list="$(make_list "$d/l" "$d/Dockerfile.prod")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: Dockerfile.prod is NOT matched (exact basename, not prefix)"
+
     # THE COMMENT-FAMILY TABLE, both directions per family. Three review cycles
     # each found one more language group that had lost coverage to the gating
     # (config, then C-family, then this set) — instances of one structural

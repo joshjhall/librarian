@@ -54,6 +54,7 @@ for the same reason — one cell cannot carry two letters):
 | Dash (`--`) | lua, sql, hs, elm   | L              | L                     | —              | L        | L               |
 | Other markers | vb, bas (`'`), erl (`%`), clj, asm (`;`), bat (`REM`), vue, svelte, html, xml (`<!--`), pas (`{`) | L | L | —  | L        | L               |
 | JSON (none) | json               | L              | L                     | —              | L        | L               |
+| Extensionless (`#`) | Dockerfile, Containerfile, Makefile, Jenkinsfile, Vagrantfile, Procfile, Rakefile, Gemfile, Brewfile, Justfile, Caddyfile, CMakeLists.txt | L | L | —      | L        | L               |
 | every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
@@ -86,9 +87,23 @@ extended language-by-language as each omission was noticed. Keying on the marker
 makes the table describe the lexical fact directly, so adding a language is
 choosing an existing family rather than discovering a gap.
 
-The measured baseline: across 52 probed extensions, this scanner now covers
-**exactly what `main` covered** — zero regressions — while gaining the
-per-language correctness that motivated the phase.
+The **Extensionless** row is dispatched by **basename**, not extension, and it is
+the one an extension-keyed probe cannot find *by construction* — a `Dockerfile`
+has no extension to look up. It was caught only by review, after a 52-extension
+sweep had already reported the table clean. `ENV PASSWORD="…"` in a Dockerfile is
+about as canonical a checked-in credential as exists, so this row matters.
+Matching is on the **exact** basename: `Dockerfile.prod` has extension `prod` and
+does not resolve, pinned by a fixture so widening to a prefix match later is
+deliberate.
+
+The measured baseline, over both extensions **and** extensionless basenames: this
+scanner covers **exactly what `main` covered**, with one intended class of
+exception — plain-prose files (`.md`, `.txt`, `LICENSE`, `README`, `CHANGELOG`)
+no longer get the *lexical-dependent* detectors, because prose is not code and
+applying a comment model to it is what produced the ADR's motivating false
+positives. A **real** leaked key in one of those files still fires, through the
+lexical-*independent* literal patterns. That asymmetry is the three-state model
+working as designed rather than a coverage loss.
 
 JSON is the interesting row: it has **no comment syntax at all**, so its model is
 a *never-matching* pattern rather than an absent one. That distinction is

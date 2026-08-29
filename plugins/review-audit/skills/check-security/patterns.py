@@ -211,13 +211,54 @@ COMMENT_RE = {
 }
 
 
-def lang_of(ext: str) -> str:
-    """Language key for EXT, or "" when this scanner has no lexical model for it.
+# EXTENSIONLESS FILES, dispatched by BASENAME. An extension-keyed table cannot
+# reach these at all — `Dockerfile` has no extension to look up — so without this
+# they resolve to the `—` state and lose every lexical-dependent detector.
+#
+# That is a real regression and a measured one: `ENV PASSWORD="…"` in a
+# Dockerfile fired on main and went silent here. Dockerfiles are among the most
+# common homes for a checked-in credential (`ENV`/`ARG` lines), so this is the
+# same class as the config-format carve-out, reached by a route an
+# extension-keyed probe is blind to BY CONSTRUCTION — which is exactly why it
+# survived the 52-extension sweep that caught the others.
+#
+# All of these spell a line comment with `#`. Matched case-sensitively: the
+# conventional spellings are capitalized, and a lowercase `makefile` is also
+# accepted since GNU make honors it.
+BASENAME_LANG = {
+    "Dockerfile": "hash",
+    "Containerfile": "hash",
+    "Makefile": "hash",
+    "makefile": "hash",
+    "GNUmakefile": "hash",
+    "Jenkinsfile": "hash",
+    "Vagrantfile": "hash",
+    "Procfile": "hash",
+    "Rakefile": "hash",
+    "Gemfile": "hash",
+    "Brewfile": "hash",
+    "Justfile": "hash",
+    "justfile": "hash",
+    "Caddyfile": "hash",
+    "CMakeLists.txt": "hash",
+}
 
-    An empty return is the ADR § 1 `—` state and is the gate every
-    lexical-dependent detector consults before running.
+
+def lang_of(path: str, ext: str) -> str:
+    """Language key for PATH, or "" when this scanner has no lexical model.
+
+    Extension first, then a BASENAME fallback for extensionless files. An empty
+    return is the ADR § 1 `—` state and is the gate every lexical-dependent
+    detector consults before running.
+
+    A `Dockerfile.prod`-style suffix is deliberately NOT matched: its `ext` is
+    `prod`, which resolves to nothing, and guessing from a prefix would be a
+    different rule than the exact-basename one stated here.
     """
-    return EXT_LANG.get(ext, "")
+    lang = EXT_LANG.get(ext, "")
+    if lang:
+        return lang
+    return BASENAME_LANG.get(path.rsplit("/", 1)[-1], "")
 
 
 def is_comment(lang: str, line: str) -> bool:
@@ -242,7 +283,7 @@ def scan_file(path: str) -> None:
     # Resolved ONCE PER FILE — the language is a property of the path, not of a
     # line. "" means this scanner has no lexical model for the file, which gates
     # every lexical-dependent detector below (ADR 0002 § 1, the `—` state).
-    lang = lang_of(ext)
+    lang = lang_of(path, ext)
 
     for idx, line in enumerate(lines, start=1):
         # --- Category: hardcoded-secret ---

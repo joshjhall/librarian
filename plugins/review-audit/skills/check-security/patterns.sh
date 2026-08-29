@@ -123,6 +123,27 @@ lang_of() {
         *.[Pp][Aa][Ss]) command printf 'brace' ;;
         # JSON has NO comment syntax at all — see comment_re's json arm.
         *.[Jj][Ss][Oo][Nn]) command printf 'json' ;;
+        # EXTENSIONLESS FILES, dispatched by BASENAME — mirroring patterns.py's
+        # BASENAME_LANG. An extension-keyed table cannot reach these at all, so
+        # without them a Dockerfile loses every lexical-dependent detector.
+        # Measured: `ENV PASSWORD="…"` fired on main and went silent here.
+        # A `*/` prefix is required so the arm matches a full path, not just a
+        # bare basename; both spellings reach this function.
+        Dockerfile | */Dockerfile) command printf 'hash' ;;
+        Containerfile | */Containerfile) command printf 'hash' ;;
+        Makefile | */Makefile) command printf 'hash' ;;
+        makefile | */makefile) command printf 'hash' ;;
+        GNUmakefile | */GNUmakefile) command printf 'hash' ;;
+        Jenkinsfile | */Jenkinsfile) command printf 'hash' ;;
+        Vagrantfile | */Vagrantfile) command printf 'hash' ;;
+        Procfile | */Procfile) command printf 'hash' ;;
+        Rakefile | */Rakefile) command printf 'hash' ;;
+        Gemfile | */Gemfile) command printf 'hash' ;;
+        Brewfile | */Brewfile) command printf 'hash' ;;
+        Justfile | */Justfile) command printf 'hash' ;;
+        justfile | */justfile) command printf 'hash' ;;
+        Caddyfile | */Caddyfile) command printf 'hash' ;;
+        CMakeLists.txt | */CMakeLists.txt) command printf 'hash' ;;
         *) command printf '' ;;
     esac
 }
