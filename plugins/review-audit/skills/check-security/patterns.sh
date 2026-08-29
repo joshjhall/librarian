@@ -296,7 +296,13 @@ while IFS= read -r file; do
                         "$file" "$line_num" "injection-risk" \
                         "SQL in format! interpolation: ${evidence}" "HIGH"
                 done || true
-            command grep -nE '(write|writeln)![[:space:]]*\([^,]+,[[:space:]]*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{' "$file" 2>/dev/null |
+            # The destination is skipped with `.*` rather than `[^,]+`: a
+            # destination expression may itself contain a comma
+            # (`write!(conn.buffer(a, b), "SELECT …", id)`), and a
+            # comma-free-argument class stops at the FIRST comma, never reaching
+            # the format string. Anchoring on the quoted SQL keyword is what
+            # actually identifies the argument, so let `.*` reach it.
+            command grep -nE '(write|writeln)![[:space:]]*\(.*,[[:space:]]*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}

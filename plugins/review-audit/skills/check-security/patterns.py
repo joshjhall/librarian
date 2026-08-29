@@ -266,8 +266,14 @@ def scan_file(path: str) -> None:
                     "injection-risk",
                     "SQL in format! interpolation: " + cap(line),
                 )
+            # The destination is skipped with `.*` rather than `[^,]+`: a
+            # destination expression may itself contain a comma
+            # (`write!(conn.buffer(a, b), "SELECT …", id)`), and a
+            # comma-free-argument class stops at the FIRST comma, never reaching
+            # the format string. Anchoring on the quoted SQL keyword is what
+            # actually identifies the argument, so let `.*` reach it.
             if re.search(
-                r'(write|writeln)!\s*\([^,]+,\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
+                r'(write|writeln)!\s*\(.*,\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
                 line,
             ):
                 emit(

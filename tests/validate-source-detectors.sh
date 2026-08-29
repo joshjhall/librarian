@@ -323,6 +323,24 @@ test_security_injection() {
     assert_fires "$SK_SEC" "$list" injection-risk "SQL in write! interpolation" \
         "security: Rust writeln! SQL interpolation fires"
 
+    # BOUNDARY: the destination expression may itself contain a comma. Skipping
+    # it with a comma-free class (`[^,]+`) stops at the FIRST comma and never
+    # reaches the format string — a silent false negative. Caught in review;
+    # this is the input on which `[^,]+` and `.*` diverge.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'write!(conn.buffer(a, b), "SELECT * FROM t WHERE id={}", id);' >"$d/wcomma.rs"
+    list="$(make_list "$d/l" "$d/wcomma.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in write! interpolation" \
+        "security: Rust write! with a comma in the destination still fires"
+
+    # ...and a write! whose format string is not SQL stays silent, so the
+    # widened `.*` did not turn the arm into a match-anything.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'write!(f, "plain text {}", x);' >"$d/wplain.rs"
+    list="$(make_list "$d/l" "$d/wplain.rs")"
+    assert_silent "$SK_SEC" "$list" injection-risk \
+        "security: a non-SQL write! stays silent"
+
     d="$(fresh_dir)"
     command printf '%s\n' 'q.push_str("SELECT * FROM t WHERE id=");' >"$d/p.rs"
     list="$(make_list "$d/l" "$d/p.rs")"
