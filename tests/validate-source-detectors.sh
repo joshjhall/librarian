@@ -193,6 +193,232 @@ test_security_secrets() {
     list="$(make_list "$d/l" "$d/secrets.env.example")"
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: a secret inside *.env.example is skipped (SKIP_GLOBS)"
+
+    # #837: the denylist was an UNANCHORED SUBSTRING test over the whole line, so
+    # a `#` ANYWHERE suppressed the finding — a false-clean in a security
+    # scanner. Both spellings below emitted ZERO rows before #838 and fire now;
+    # the negative above pins that the fix did not simply delete the denylist.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "Str0ng#Pass#Value"' >"$d/hash.py"
+    list="$(make_list "$d/l" "$d/hash.py")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a # INSIDE the secret value no longer suppresses (#837)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"  # noqa' >"$d/noqa.py"
+    list="$(make_list "$d/l" "$d/noqa.py")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a trailing # comment no longer suppresses (#837)"
+
+    # The placeholder test now matches the VALUE only, so a placeholder token in
+    # a trailing comment must NOT suppress a real credential. This is the exact
+    # input on which "match the value" and "match the line" diverge — without it
+    # a value-anchored fix and a line-anchored one both pass.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"  # not a placeholder' >"$d/word.py"
+    list="$(make_list "$d/l" "$d/word.py")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a placeholder word OUTSIDE the value does not suppress (#837)"
+
+    # A language with no lexical model is not scanned by this lexical-dependent
+    # detector at all (ADR 0002 § 1). `--` is a SQL comment the old hardcoded
+    # C-family model never knew, so this fired as a false positive before #838.
+    d="$(fresh_dir)"
+    command printf '%s\n' '-- password = "supersecret1"' >"$d/q.sql"
+    list="$(make_list "$d/l" "$d/q.sql")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: an unmodeled language is not scanned for credentials"
+
+    # CONFIG FORMATS keep their coverage through the gating. Caught in review:
+    # scoping the lexical model to source languages alone would have silently
+    # stopped scanning docker-compose.yml / application.properties / .env — the
+    # file types where checked-in credentials most often live — and ADR § 5
+    # makes that silence total. Verified against origin/main: both of these DID
+    # fire before this change.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password: "realsecret123"' >"$d/compose.yml"
+    list="$(make_list "$d/l" "$d/compose.yml")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in .yml still fires after gating"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"' >"$d/app.ini"
+    list="$(make_list "$d/l" "$d/app.ini")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in .ini still fires after gating"
+
+    # ...and the config comment model is `#`, applied in both directions.
+    d="$(fresh_dir)"
+    command printf '%s\n' '# password = "realsecret123"' >"$d/commented.ini"
+    list="$(make_list "$d/l" "$d/commented.ini")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a # comment in .ini stays silent"
+
+    # The remaining six config extensions share ONE dispatch arm with .yml/.ini,
+    # so a fixture per extension is what stops a future edit from dropping or
+    # misspelling one silently — the arm would still cover the two that are
+    # tested. Caught in review.
+    for _cfg_ext in yaml cfg conf toml properties env; do
+        d="$(fresh_dir)"
+        command printf '%s\n' 'password = "realsecret123"' >"$d/app.$_cfg_ext"
+        list="$(make_list "$d/l" "$d/app.$_cfg_ext")"
+        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+            "security: a credential in .$_cfg_ext fires (config arm covers all eight)"
+    done
+    unset _cfg_ext
+
+    # MAINSTREAM C-FAMILY. Verified against origin/main: both of these fired
+    # before this branch, so omitting them from the lexical model would have been
+    # a silent coverage regression rather than a deliberate narrowing.
+    d="$(fresh_dir)"
+    command printf '%s\n' '$password = "realsecret123";' >"$d/conf.php"
+    list="$(make_list "$d/l" "$d/conf.php")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in .php still fires after gating"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'MD5(buf);' >"$d/hash.c"
+    list="$(make_list "$d/l" "$d/hash.c")"
+    assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
+        "security: weak crypto in .c still fires after gating"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' '// MD5(buf) in a comment' >"$d/comment.c"
+    list="$(make_list "$d/l" "$d/comment.c")"
+    assert_silent "$SK_SEC" "$list" insecure-crypto \
+        "security: a // comment in .c stays silent"
+
+    # EXTENSIONLESS FILES, dispatched by BASENAME. An extension-keyed table
+    # cannot reach these at all, so without the basename fallback a Dockerfile
+    # loses every lexical-dependent detector. Verified against origin/main: the
+    # ENV line below fired there and went silent on this branch.
+    #
+    # This is the one that a 52-EXTENSION probe could not have found — an
+    # extensionless file has no extension to probe, so the sweep that caught the
+    # config/C-family/long-tail regressions was blind to it by construction.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'ENV PASSWORD="realsecret123"' >"$d/Dockerfile"
+    list="$(make_list "$d/l" "$d/Dockerfile")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in an extensionless Dockerfile fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'PASSWORD = "realsecret123"' >"$d/Makefile"
+    list="$(make_list "$d/l" "$d/Makefile")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in an extensionless Makefile fires"
+
+    # ...and the basename family's comment model is `#`, so a commented line
+    # stays silent. Without this the arm could resolve the language and then
+    # apply no model at all, which is the defect one layer down.
+    d="$(fresh_dir)"
+    command printf '%s\n' '# PASSWORD = "realsecret123"' >"$d/Dockerfile"
+    list="$(make_list "$d/l" "$d/Dockerfile")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a # comment in a Dockerfile stays silent"
+
+    # SUFFIXED VARIANTS. `Dockerfile.prod` has extension `prod` — a WRONG key
+    # rather than an empty one, so it defeats extension dispatch the same way a
+    # dotfile does. An earlier draft asserted this should stay SILENT, reasoning
+    # that the suffix "names a different artifact"; that was wrong (a
+    # Dockerfile.prod is a Dockerfile) and inconsistent with `.env.local`, which
+    # the same commit matched by prefix for exactly the convention argument.
+    # Measured: it fired on main. The assertion is inverted rather than deleted,
+    # so the corrected rule is pinned rather than merely un-pinned.
+    for _variant in Dockerfile.prod Dockerfile.dev Makefile.include; do
+        d="$(fresh_dir)"
+        command printf '%s\n' 'ENV PASSWORD="realsecret123"' >"$d/$_variant"
+        list="$(make_list "$d/l" "$d/$_variant")"
+        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+            "security: a credential in $_variant fires (suffix is a variant, not a new artifact)"
+    done
+    unset _variant
+
+    # DOTFILES. A leading-dot name defeats extension keying in a SUBTLER way
+    # than an extensionless one: it produces a WRONG key rather than an empty
+    # one (`.npmrc` -> ext `npmrc`, `.env.local` -> ext `local`). Measured
+    # against origin/main: all three of these fired there and went silent here.
+    # `.netrc` and `.npmrc` exist to hold credentials.
+    for _dot in .npmrc .netrc .env.local; do
+        d="$(fresh_dir)"
+        command printf '%s\n' 'password = "realsecret123"' >"$d/$_dot"
+        list="$(make_list "$d/l" "$d/$_dot")"
+        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+            "security: a credential in $_dot fires"
+    done
+    unset _dot
+
+    # ...and their comment model is `#`.
+    d="$(fresh_dir)"
+    command printf '%s\n' '# password = "realsecret123"' >"$d/.npmrc"
+    list="$(make_list "$d/l" "$d/.npmrc")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a # comment in .npmrc stays silent"
+
+    # BOUNDARY: SKIP_GLOBS runs BEFORE the language resolver, so `.env.example`
+    # stays skipped even though `.env.*` now resolves. Pinned because the new
+    # prefix arm is exactly what could have re-enabled it.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"' >"$d/.env.example"
+    list="$(make_list "$d/l" "$d/.env.example")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: .env.example is still skipped (SKIP_GLOBS precedes the resolver)"
+
+    # THE COMMENT-FAMILY TABLE, both directions per family. Three review cycles
+    # each found one more language group that had lost coverage to the gating
+    # (config, then C-family, then this set) — instances of one structural
+    # problem, so the table is now organised by MARKER and this loop tests the
+    # property rather than the instances.
+    #
+    # Each row: an extension, ITS marker (must suppress), and a FOREIGN marker
+    # (must NOT). The foreign half is what stops a family from degenerating into
+    # "suppress everything", which would silently re-create the false-clean this
+    # whole phase exists to remove.
+    while read -r _ext _own _foreign; do
+        [ -n "$_ext" ] || continue
+        d="$(fresh_dir)"
+        command printf '%s digest = md5(x)\n' "$_own" >"$d/own.$_ext"
+        list="$(make_list "$d/l" "$d/own.$_ext")"
+        assert_silent "$SK_SEC" "$list" insecure-crypto \
+            "security: .$_ext own comment marker '$_own' suppresses"
+
+        d="$(fresh_dir)"
+        command printf '%s digest = md5(x)\n' "$_foreign" >"$d/foreign.$_ext"
+        list="$(make_list "$d/l" "$d/foreign.$_ext")"
+        assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
+            "security: .$_ext foreign marker '$_foreign' is NOT a comment"
+    done <<'COMMENT_FAMILIES'
+lua -- //
+sql -- //
+hs -- //
+pl # //
+tf # //
+ps1 # //
+erl % //
+clj ; //
+vb ' //
+vue <!-- --
+pas { --
+dart // --
+COMMENT_FAMILIES
+    unset _ext _own _foreign
+
+    # JSON has NO comment syntax, so its model must be a NEVER-matching pattern.
+    # An EMPTY one would be catastrophic in the bash runtime specifically: the
+    # consumers pipe through `grep -vE "$file_comment_re"`, an empty ERE matches
+    # every line, and `-v` would then suppress the entire file — turning "this
+    # language has no comments" into "this language has no findings". A .json
+    # carrying a literal secret is the input that catches it.
+    # The fixture must use a LEXICAL-DEPENDENT detector. A literal-secret row
+    # (AWS/GitHub/Stripe) proves nothing here: those never consult the comment
+    # model, so they keep firing even with the pattern broken — measured, the
+    # first draft of this fixture passed under the mutation. insecure-crypto IS
+    # gated, so it goes silent exactly when the model misbehaves.
+    d="$(fresh_dir)"
+    command printf '%s\n' '  "hash": "MD5(payload)"' >"$d/creds.json"
+    list="$(make_list "$d/l" "$d/creds.json")"
+    assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
+        "security: a gated .json finding fires (its no-comment model suppresses nothing)"
 }
 
 # ============================================================================
@@ -235,6 +461,65 @@ test_security_injection() {
     list="$(make_list "$d/l" "$d/safe.py")"
     assert_silent "$SK_SEC" "$list" injection-risk \
         "security: a parameterized query stays silent"
+
+    # Rust SQL idioms (#838). format!/write! interpolation and push_str onto a
+    # String are how Rust spells the same unsanitized concatenation the arms
+    # above catch. Both emitted zero rows before this phase — .rs reached no
+    # injection-risk arm at all.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let q = format!("SELECT * FROM t WHERE id={}", id);' >"$d/q.rs"
+    list="$(make_list "$d/l" "$d/q.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in format! interpolation" \
+        "security: Rust format! SQL interpolation fires"
+
+    # write!/writeln! take the Write DESTINATION first and the format string
+    # SECOND, so they need their own pattern — folded into one alternation with
+    # format! their branches are dead, because no valid call has its format
+    # string in argument one. Caught in review; this fixture is the one input
+    # that distinguishes the two spellings.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'write!(f, "SELECT * FROM t WHERE id={}", id);' >"$d/w.rs"
+    list="$(make_list "$d/l" "$d/w.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in write! interpolation" \
+        "security: Rust write! SQL interpolation fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'writeln!(out, "INSERT INTO t VALUES ({})", v);' >"$d/wl.rs"
+    list="$(make_list "$d/l" "$d/wl.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in write! interpolation" \
+        "security: Rust writeln! SQL interpolation fires"
+
+    # BOUNDARY: the destination expression may itself contain a comma. Skipping
+    # it with a comma-free class (`[^,]+`) stops at the FIRST comma and never
+    # reaches the format string — a silent false negative. Caught in review;
+    # this is the input on which `[^,]+` and `.*` diverge.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'write!(conn.buffer(a, b), "SELECT * FROM t WHERE id={}", id);' >"$d/wcomma.rs"
+    list="$(make_list "$d/l" "$d/wcomma.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in write! interpolation" \
+        "security: Rust write! with a comma in the destination still fires"
+
+    # ...and a write! whose format string is not SQL stays silent, so the
+    # widened `.*` did not turn the arm into a match-anything.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'write!(f, "plain text {}", x);' >"$d/wplain.rs"
+    list="$(make_list "$d/l" "$d/wplain.rs")"
+    assert_silent "$SK_SEC" "$list" injection-risk \
+        "security: a non-SQL write! stays silent"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'q.push_str("SELECT * FROM t WHERE id=");' >"$d/p.rs"
+    list="$(make_list "$d/l" "$d/p.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL appended to String" \
+        "security: Rust push_str SQL append fires"
+
+    # A Rust parameterized query stays silent — the arm must key on the
+    # interpolation hole, not merely on the SQL keyword.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let rows = client.query("SELECT * FROM t WHERE id=$1", &[&id]);' >"$d/safe.rs"
+    list="$(make_list "$d/l" "$d/safe.rs")"
+    assert_silent "$SK_SEC" "$list" injection-risk \
+        "security: a Rust parameterized query stays silent"
 }
 
 # ============================================================================
@@ -291,14 +576,45 @@ test_security_crypto() {
     assert_fires "$SK_SEC" "$list" insecure-crypto "ECB mode encryption" \
         "security: ECB mode fires"
 
-    # BOUNDARY: a comment-only line mentioning md5/ECB is skipped (is_comment).
+    # BOUNDARY: a comment line mentioning md5/ECB is skipped (is_comment).
+    #
+    # Each marker sits in a file of the language where it ACTUALLY opens a
+    # comment (#838). This fixture used to put a `//` line in a `.py` file and
+    # expect silence — which only held because the scanner applied ONE hardcoded
+    # C-family model to every file. Under the per-language model of ADR 0002 § 3
+    # `//` is not a Python comment, so that spelling now (correctly) fires and
+    # the fixture had to be split rather than the detector loosened.
     d="$(fresh_dir)"
-    command printf '%s\n' \
-        '# md5(commented) must be skipped' \
-        '// ECB in a comment must be skipped' >"$d/c.py"
+    command printf '%s\n' '# md5(commented) must be skipped' >"$d/c.py"
     list="$(make_list "$d/l" "$d/c.py")"
     assert_silent "$SK_SEC" "$list" insecure-crypto \
-        "security: commented md5/ECB stay silent (comment-skip boundary)"
+        "security: a # comment in .py stays silent (comment-skip boundary)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' '// ECB in a comment must be skipped' >"$d/c.rs"
+    list="$(make_list "$d/l" "$d/c.rs")"
+    assert_silent "$SK_SEC" "$list" insecure-crypto \
+        "security: a // comment in .rs stays silent (comment-skip boundary)"
+
+    # THE OTHER DIRECTION (#838/#837): `//` is NOT a comment in Python, so a line
+    # that only LOOKED skippable under the old C-family model must now fire.
+    # Without this the split above could be satisfied by a detector that skips
+    # every marker in every language — the old bug, spelled differently.
+    d="$(fresh_dir)"
+    command printf '%s\n' '// ECB is not a Python comment' >"$d/n.py"
+    list="$(make_list "$d/l" "$d/n.py")"
+    assert_fires "$SK_SEC" "$list" insecure-crypto "ECB mode encryption" \
+        "security: a // line in .py is NOT a comment and fires"
+
+    # A language with NO lexical model in this scanner is not scanned by a
+    # lexical-dependent detector at all (ADR 0002 § 1, the `—` state; silent per
+    # § 5). `--` is a SQL comment the old hardcoded model never knew, so this
+    # line was emitted as a false positive before #838.
+    d="$(fresh_dir)"
+    command printf '%s\n' '-- md5(x) in a SQL comment' >"$d/q.sql"
+    list="$(make_list "$d/l" "$d/q.sql")"
+    assert_silent "$SK_SEC" "$list" insecure-crypto \
+        "security: an unmodeled language is not scanned for insecure-crypto"
 }
 
 # ============================================================================
@@ -391,6 +707,32 @@ test_health_debug() {
     assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
         "health: Java System.out.println fires"
 
+    # Rust print macros (#838) — the stdout family, so `stdout_is_output` can
+    # exempt them. Both spellings asserted independently: the arm is one regex
+    # with an optional `e` prefix and an optional `ln` suffix, so a composite
+    # fixture would stay green with either half broken.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'println!("x");' >"$d/p.rs"
+    list="$(make_list "$d/l" "$d/p.rs")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
+        "health: Rust println! fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'eprintln!("x");' >"$d/ep.rs"
+    list="$(make_list "$d/l" "$d/ep.rs")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
+        "health: Rust eprintln! fires"
+
+    # Rust dbg! — the DEBUGGER family, never exempted (#680 AC3). Its distinct
+    # label is what pins that it landed in the right family: a dbg! misfiled
+    # under the print family would still emit a debug-statement row, so only the
+    # label distinguishes the two.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'dbg!(value);' >"$d/dg.rs"
+    list="$(make_list "$d/l" "$d/dg.rs")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Rust debug macro" \
+        "health: Rust dbg! fires in the debugger family"
+
     # BOUNDARY: a debug print inside a TEST file is suppressed (not test_file only
     # applies debug scanning to non-test files).
     d="$(fresh_dir)"
@@ -437,6 +779,39 @@ test_health_empty_handler() {
     list="$(make_list "$d/l" "$d/g.go")"
     assert_fires "$SK_HEALTH" "$list" empty-handler "Swallowed error" \
         "health: Go swallowed error fires"
+
+    # Rust empty Err arm (#838), both body spellings asserted independently —
+    # one regex with an alternation, so a composite fixture would stay green
+    # with either half broken.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'match r { Err(_) => {}, Ok(v) => use_it(v) }' >"$d/m.rs"
+    list="$(make_list "$d/l" "$d/m.rs")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty Err match arm" \
+        "health: Rust empty Err(_) => {} match arm fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'match r { Err(_) => (), Ok(v) => use_it(v) }' >"$d/u.rs"
+    list="$(make_list "$d/l" "$d/u.rs")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty Err match arm" \
+        "health: Rust empty Err(_) => () match arm fires"
+
+    # BOUNDARY: a HANDLED Err arm stays silent.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'match r { Err(e) => log(e), Ok(v) => use_it(v) }' >"$d/h.rs"
+    list="$(make_list "$d/l" "$d/h.rs")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Rust handled Err arm stays silent"
+
+    # BOUNDARY: `let _ = fallible();` is NOT implemented (see the note in
+    # patterns.py) — it is a deliberate idiom far more often than a swallow, and
+    # this scanner has no certainty tier low enough to carry it. Pinned so that
+    # adding it later is a conscious decision with this fixture to update, not an
+    # accident.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let _ = write!(buf, "{}", x);' >"$d/k.rs"
+    list="$(make_list "$d/l" "$d/k.rs")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Rust let _ = discard is deliberately not flagged at HIGH"
 }
 
 test_health_test_file_and_skip() {

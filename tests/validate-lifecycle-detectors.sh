@@ -150,6 +150,24 @@ test_unreaped_subprocess() {
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: Go exec.Command fires"
 
+    # Rust Command::new (#838)
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let mut child = Command::new("ls");' >"$d/e.rs"
+    list="$(make_list "$d/l" "$d/e.rs")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: Rust Command::new fires"
+
+    # KNOWN TRADE-OFF (pinned): the arm also matches `clap::Command::new`, the
+    # CLI-builder idiom, which spawns nothing. A DELIBERATE false positive the
+    # MEDIUM certainty + LLM pass-2 absorbs — the same treatment the broad JS
+    # `.on(` alternative gets below. Pinned so a future narrowing is intentional
+    # rather than an accidental behavior change.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let m = clap::Command::new("app").version("1.0");' >"$d/clap.rs"
+    list="$(make_list "$d/l" "$d/clap.rs")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: clap::Command::new also fires (documented trade-off)"
+
     # The remaining JS spawn-family alternatives (spawnSync/execFileSync/execSync)
     # asserted independently so a regression dropping one can't hide behind
     # another (same isolation principle as the listener category).
@@ -222,6 +240,23 @@ test_terminate_without_kill() {
     list="$(make_list "$d/l" "$d/d.go")"
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
         "lifecycle: Go os.Interrupt fires"
+
+    # Rust explicit SIGTERM (#838) — the graceful send site, which is what this
+    # category asks about.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'signal::kill(pid, Signal::SIGTERM)?;' >"$d/e.rs"
+    list="$(make_list "$d/l" "$d/e.rs")"
+    assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
+        "lifecycle: Rust SIGTERM send fires"
+
+    # BOUNDARY: `Child::kill()` IS SIGKILL in std::process — it is the
+    # ESCALATION this category checks for, not a graceful stop missing one. An
+    # arm keying on `.kill()` would invert the question, so it must stay silent.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'child.kill();' >"$d/k.rs"
+    list="$(make_list "$d/l" "$d/k.rs")"
+    assert_silent "$list" terminate-without-kill \
+        "lifecycle: Rust child.kill() is SIGKILL itself and stays silent"
 }
 
 # ============================================================================
@@ -283,6 +318,28 @@ test_unclosed_handle() {
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: JS fs.createWriteStream fires"
 
+    # Rust File::open / File::create assignment fires (#838).
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let f = File::open("x.txt")?;' >"$d/e.rs"
+    list="$(make_list "$d/l" "$d/e.rs")"
+    assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
+        "lifecycle: Rust File::open fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let f = File::create("x.txt")?;' >"$d/c2.rs"
+    list="$(make_list "$d/l" "$d/c2.rs")"
+    assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
+        "lifecycle: Rust File::create fires"
+
+    # BOUNDARY: the arm requires the ASSIGNMENT form, matching every other
+    # language here — a bare `File::open(p)?;` whose result is consumed inline
+    # binds no handle to outlive the statement and stays silent.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'read_to_string(File::open("x.txt")?)?;' >"$d/inline.rs"
+    list="$(make_list "$d/l" "$d/inline.rs")"
+    assert_silent "$list" unclosed-handle \
+        "lifecycle: Rust non-assignment File::open is silent (assignment-anchored)"
+
     # Go os.Create alternative asserted independently (os.Open covered above).
     d="$(fresh_dir)"
     command printf '%s\n' 'g, err := os.Create("y.txt")' >"$d/cr.go"
@@ -337,6 +394,28 @@ test_unpaired_listener() {
     list="$(make_list "$d/l" "$d/tmr.swift")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Swift scheduledTimer fires"
+
+    # Rust registration forms (#838), each in its own fixture for the same
+    # isolation reason as the JS alternatives above. Rust has no DOM-style
+    # addEventListener — the real long-lived registrations are a bound listening
+    # socket and an installed signal handler.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let l = TcpListener::bind(addr)?;' >"$d/tcp.rs"
+    list="$(make_list "$d/l" "$d/tcp.rs")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Rust TcpListener::bind fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let l = UnixListener::bind(path)?;' >"$d/unix.rs"
+    list="$(make_list "$d/l" "$d/unix.rs")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Rust UnixListener::bind fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let mut s = signal::unix::signal(SignalKind::terminate())?;' >"$d/sig.rs"
+    list="$(make_list "$d/l" "$d/sig.rs")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: Rust signal handler registration fires"
 
     # KNOWN TRADE-OFF (pinned): the broad `\.on\s*\(` alternative also matches any
     # object's `.on()` method (state-machine DSLs, promise-like APIs), not just

@@ -46,6 +46,7 @@ per-language dispatch to declare.
 | JavaScript | js, jsx         | M                   | M                      | M               | M                 |
 | TypeScript | ts, tsx         | M                   | M                      | M               | M                 |
 | Go         | go              | M                   | M                      | M               | —                 |
+| Rust       | rs              | M                   | M                      | M               | M                 |
 | every other | —               | —                   | —                      | —               | —                 |
 
 <!-- contract: end-check-lifecycle-language-support -->
@@ -59,6 +60,25 @@ clean end of the spectrum described in ADR 0002 § Context.
 Two gaps are visible above and are not yet fixed: Python and Go have no
 `unpaired-listener` arm, though both languages have listener/timer registration
 idioms worth detecting.
+
+Rust (#838) is `M` for all four, but two of its arms are spelled differently from
+every other language's and the reason is worth recording:
+
+- **`terminate-without-kill` keys on `SIGTERM`, not on `.kill()`.** This category
+  asks whether a *graceful* stop escalates to SIGKILL. `std::process` has no
+  graceful stop — `Child::kill()` **is** SIGKILL — so keying on `.kill()` would
+  invert the question, flagging the escalation as though it were the thing
+  missing one. The graceful send site in Rust is an explicit `SIGTERM` through
+  `libc`/`nix`, so that is what the arm matches.
+- **`unpaired-listener` keys on bound sockets and signal handlers.** Rust has no
+  DOM-style `addEventListener`; the registrations that genuinely outlive their
+  statement and want a teardown are `TcpListener::bind` / `UnixListener::bind`
+  and an installed `signal::unix::signal` handler.
+
+`Command::new` will also match `clap::Command::new`, common in Rust CLIs. That is
+within this scanner's declared tolerance — every row is `MEDIUM`, a candidate the
+LLM pass-2 confirms or dismisses — but it is worth knowing before reading a
+report.
 
 > **Known defect — the two runtimes disagree.** This scanner skips test files
 > wholesale, and its **bash** `is_test_file` uses a path-crossing glob while its

@@ -504,11 +504,44 @@ EOF
     done
 } >>"$FIXDIR/Widget.TS"
 
+# Rust coverage (#838). Phase 1 of #622 added Rust arms to check-security
+# (injection-risk), check-code-health (debug-print, debugger, empty-handler) and
+# check-lifecycle (all four categories) — and this corpus carried NO .rs file at
+# all, so every one of those branches would have been asserted VACUOUSLY: the
+# parity diff passes trivially when neither impl ever reaches the arm. Same
+# failure the .mjs/.cjs (#568), .sh (#598) and Model.swift comments above record,
+# reached by a new route. One line per Rust arm, so a divergence in any single
+# arm shows up as a diff rather than being masked by the others.
+command cat >"$FIXDIR/app.rs" <<'EOF'
+pub fn undocumented_rust() {}
+/// documented
+pub fn documented_rust() {}
+let q = format!("SELECT * FROM t WHERE id={}", id);
+write!(f, "SELECT * FROM t WHERE id={}", id);
+q.push_str("INSERT INTO t VALUES (");
+let concat = "SELECT a FROM t" + tail;
+println!("debug output");
+eprintln!("debug error");
+dbg!(value);
+let _ = fallible_call();
+let _kept = deliberate_silencer();
+match r { Err(_) => {}, Ok(v) => use_it(v) }
+let mut child = Command::new("ls");
+child.kill();
+let f = File::open("path")?;
+bus.on("event", handler);
+let digest = md5(payload);
+let cipher = new_cipher("AES-128-ECB");
+password = "Str0ng#Pass#Value"
+// md5(commented) is skipped — // IS a Rust comment
+EOF
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
+    "$FIXDIR/app.rs" \
     "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
     "$FIXDIR/Upper.PY" "$FIXDIR/Widget.TS" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \

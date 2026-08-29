@@ -66,6 +66,264 @@ def cap(content: str) -> str:
     return content[:EVIDENCE_CAP]
 
 
+# --- the lexical model (ADR 0002 § 2, #622 Phase 1) --------------------------
+# A SUBSET of the normative EXT_LANG / COMMENT_RE in
+# check-decomposition/loc_engine.py. Deliberately NOT imported from there: that
+# file is one half of a byte-identical pair pinned against ship-issue's copy, and
+# adding a third consumer would make the pinning tripartite (ADR 0002 § 2). It is
+# also not a new table in the #663 sense — tests/lint-language-table-sync.sh
+# asserts this copy is a consistent SUBSET, so it may cover fewer extensions than
+# the normative table but may never contradict it.
+#
+# Covers every extension this scanner dispatches on, plus rs. A language absent
+# here does not resolve, and every LEXICAL-DEPENDENT detector below is skipped
+# for its files — the ADR § 1 `—` state. Per ADR § 5 that is SILENT: an
+# unsupported file emits no TSV row at all, never an `unsupported-language` one.
+EXT_LANG = {
+    "py": "py",
+    "js": "js",
+    "jsx": "js",
+    "mjs": "js",
+    "cjs": "js",
+    "ts": "ts",
+    "tsx": "ts",
+    "rs": "rs",
+    "go": "go",
+    "rb": "rb",
+    "sh": "sh",
+    "bash": "sh",
+    "java": "java",
+    "kt": "java",
+    "swift": "swift",
+    # CONFIG FORMATS. Not source languages, and absent from the normative
+    # EXT_LANG (which serves the decomposition lenses, where they are not units
+    # of code) — so they are scanner-local additions, permitted because
+    # lint-language-table-sync.sh checks SUBSET-consistency: a key the normative
+    # table does not carry cannot contradict it.
+    #
+    # They are here because leaving them out is a SECURITY REGRESSION, caught in
+    # review. Before the gating, the credential detector ran on every file; a
+    # `password: "…"` in a docker-compose.yml or an application.properties was
+    # flagged. Scoping the lexical model to source languages would silently stop
+    # scanning exactly the file types where checked-in credentials most often
+    # live — and ADR § 5 makes that silence total. All of these spell a line
+    # comment with `#`.
+    "yml": "conf",
+    "yaml": "conf",
+    "ini": "conf",
+    "cfg": "conf",
+    "conf": "conf",
+    "toml": "conf",
+    "properties": "conf",
+    "env": "conf",
+    # MAINSTREAM C-FAMILY LANGUAGES, for the same reason and by the same rule:
+    # scanner-local keys, absent from the normative table so they cannot
+    # contradict it, present because main DID scan them and dropping them is a
+    # security regression (measured: a `$password = "…"` in .php and an `MD5(`
+    # in .c both fired before this branch). All spell a line comment `//` with
+    # `/* */` blocks — the model already written for js/ts/rs/go/java/swift.
+    "php": "cfamily",
+    "c": "cfamily",
+    "h": "cfamily",
+    "cc": "cfamily",
+    "cpp": "cfamily",
+    "hpp": "cfamily",
+    "cs": "cfamily",
+    "scala": "cfamily",
+    "m": "cfamily",
+    "mm": "cfamily",
+    "dart": "cfamily",
+    "groovy": "cfamily",
+    "gradle": "cfamily",
+    "v": "cfamily",
+    "zig": "cfamily",
+    "cr": "cfamily",
+    # `#`-COMMENT LANGUAGES beyond py/sh/rb. Same rule, same reason. Grouped
+    # under the existing `hash` family rather than given individual keys — the
+    # lexical fact IS the comment marker, so languages that share one share an
+    # entry.
+    "pl": "hash",
+    "pm": "hash",
+    "r": "hash",
+    "jl": "hash",
+    "ex": "hash",
+    "exs": "hash",
+    "nim": "hash",
+    "tcl": "hash",
+    "zsh": "hash",
+    "fish": "hash",
+    "ps1": "hash",
+    "psm1": "hash",
+    "tf": "hash",
+    "tfvars": "hash",
+    # MISCELLANEOUS MARKERS — one family per distinct spelling.
+    "lua": "dashdash",  # -- line comments (the ADR's motivating false positive)
+    "sql": "dashdash",
+    "hs": "dashdash",
+    "elm": "dashdash",
+    "vb": "quote",  # ' line comments
+    "bas": "quote",
+    "erl": "percent",  # % line comments
+    "clj": "semicolon",  # ; line comments
+    "asm": "semicolon",
+    "bat": "rem",  # REM / :: line comments
+    "vue": "html",  # <!-- --> plus the JS/CSS blocks inside
+    "svelte": "html",
+    "html": "html",
+    "xml": "html",
+    "pas": "brace",  # { } and (* *) comments
+    # JSON has NO comment syntax at all, so no line can be a comment and the
+    # never-matching pattern below is the honest model rather than a missing one.
+    # It is modeled because a checked-in service-account key or npm token is
+    # exactly the kind of credential this detector exists to catch.
+    "json": "json",
+}
+
+# How each language opens a LINE comment. Anchored at line start (modulo
+# indentation) on purpose: the #837 defect was an UNANCHORED substring test, so a
+# `#` anywhere on the line — inside the secret value, or a trailing `# noqa` —
+# suppressed a real finding. Matching loc_engine.COMMENT_RE's spellings exactly.
+COMMENT_RE = {
+    "py": re.compile(r"^[ \t]*#"),
+    "sh": re.compile(r"^[ \t]*#"),
+    "rb": re.compile(r"^[ \t]*#"),
+    "conf": re.compile(r"^[ \t]*#"),
+    "js": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "ts": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "rs": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "go": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "java": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "swift": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "cfamily": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "hash": re.compile(r"^[ \t]*#"),
+    "dashdash": re.compile(r"^[ \t]*--"),
+    "quote": re.compile(r"^[ \t]*'"),
+    "percent": re.compile(r"^[ \t]*%"),
+    "semicolon": re.compile(r"^[ \t]*;"),
+    "rem": re.compile(r"^[ \t]*([Rr][Ee][Mm][ \t]|::)"),
+    "html": re.compile(r"^[ \t]*(?:<!--|//|/\*|\*)"),
+    "brace": re.compile(r"^[ \t]*(?:\{|\(\*)"),
+    # JSON has no comment syntax, so NO line opens a comment. `(?!)` never
+    # matches — the explicit "this language has no comments" model, distinct
+    # from a missing entry (which would make lang resolve but is_comment fall
+    # through to False for the wrong reason).
+    "json": re.compile(r"(?!)"),
+}
+
+
+# EXTENSIONLESS FILES, dispatched by BASENAME. An extension-keyed table cannot
+# reach these at all — `Dockerfile` has no extension to look up — so without this
+# they resolve to the `—` state and lose every lexical-dependent detector.
+#
+# That is a real regression and a measured one: `ENV PASSWORD="…"` in a
+# Dockerfile fired on main and went silent here. Dockerfiles are among the most
+# common homes for a checked-in credential (`ENV`/`ARG` lines), so this is the
+# same class as the config-format carve-out, reached by a route an
+# extension-keyed probe is blind to BY CONSTRUCTION — which is exactly why it
+# survived the 52-extension sweep that caught the others.
+#
+# All of these spell a line comment with `#`. Matched case-sensitively: the
+# conventional spellings are capitalized, and a lowercase `makefile` is also
+# accepted since GNU make honors it.
+BASENAME_LANG = {
+    "Dockerfile": "hash",
+    "Containerfile": "hash",
+    "Makefile": "hash",
+    "makefile": "hash",
+    "GNUmakefile": "hash",
+    "Jenkinsfile": "hash",
+    "Vagrantfile": "hash",
+    "Procfile": "hash",
+    "Rakefile": "hash",
+    "Gemfile": "hash",
+    "Brewfile": "hash",
+    "Justfile": "hash",
+    "justfile": "hash",
+    "Caddyfile": "hash",
+    "CMakeLists.txt": "hash",
+    # DOTFILES. A leading-dot name defeats extension keying in a second, subtler
+    # way than an extensionless one: `.npmrc`.rsplit(".") yields `npmrc` and
+    # `.env.local` yields `local`, so both resolve to a WRONG key rather than an
+    # empty one. Measured — all three below fired on main and went silent.
+    # These are prime credential carriers (`.netrc` and `.npmrc` exist to hold
+    # credentials), and all are `#`-comment formats.
+    ".env": "hash",
+    ".npmrc": "hash",
+    ".netrc": "hash",
+    ".yarnrc": "hash",
+    ".pypirc": "hash",
+    ".dockerignore": "hash",
+    ".gitconfig": "hash",
+    ".gitignore": "hash",
+    ".editorconfig": "hash",
+    ".bashrc": "hash",
+    ".zshrc": "hash",
+    ".profile": "hash",
+    ".bash_profile": "hash",
+    ".htaccess": "hash",  # Apache config — AuthUserFile and friends
+    ".mailmap": "hash",
+}
+
+# Basename families whose SUFFIX varies: `.env.local`, `.env.production`,
+# `Dockerfile.dev`, `Dockerfile.prod`, `Makefile.include`. Keyed on the leading
+# component and checked after the exact-basename table.
+#
+# The suffix here names a VARIANT of the same artifact, by universal convention —
+# a `Dockerfile.prod` is a Dockerfile. An earlier draft matched `.env.*` this way
+# but excluded `Dockerfile.*`, on the reasoning that its suffix "names a different
+# artifact". That was wrong, and inconsistent with the very next line of the same
+# table: measured, `ENV PASSWORD="…"` in a `Dockerfile.prod` fired on main and
+# went silent. If a future name genuinely does re-key on its suffix, it belongs
+# in BASENAME_LANG as an exact entry, not here.
+PREFIX_LANG = {
+    ".env": "hash",
+    "Dockerfile": "hash",
+    "Containerfile": "hash",
+    "Makefile": "hash",
+    "makefile": "hash",
+}
+
+
+def lang_of(path: str, ext: str) -> str:
+    """Language key for PATH, or "" when this scanner has no lexical model.
+
+    Extension first, then a BASENAME fallback for extensionless files. An empty
+    return is the ADR § 1 `—` state and is the gate every lexical-dependent
+    detector consults before running.
+
+    Three shapes, in order, because a real path can defeat extension keying in
+    three different ways:
+
+      1. EXTENSION      `app.py`          -> the ordinary case
+      2. EXACT BASENAME `Dockerfile`      -> no extension at all, so ext is ""
+      3. PREFIX         `Dockerfile.prod` -> ext is `prod`, a WRONG key
+                        `.npmrc`          -> ext is `npmrc`, also wrong
+                        `.env.local`      -> ext is `local`, also wrong
+
+    Shape 3 is the subtle one: a leading dot or a variant suffix yields a key
+    that looks valid and resolves to nothing, which is indistinguishable from
+    "unmodeled" unless you look for it.
+    """
+    lang = EXT_LANG.get(ext, "")
+    if lang:
+        return lang
+    base = path.rsplit("/", 1)[-1]
+    lang = BASENAME_LANG.get(base, "")
+    if lang:
+        return lang
+    for prefix, plang in PREFIX_LANG.items():
+        if base.startswith(prefix + "."):
+            return plang
+    return ""
+
+
+def is_comment(lang: str, line: str) -> bool:
+    """True if LINE opens a comment in LANG. False for an unresolved LANG —
+    callers must gate on lang_of() first, so a `—` file never reaches here."""
+    rx = COMMENT_RE.get(lang)
+    return rx is not None and rx.match(line) is not None
+
+
 def scan_file(path: str) -> None:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -78,9 +336,17 @@ def scan_file(path: str) -> None:
         return
 
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    # Resolved ONCE PER FILE — the language is a property of the path, not of a
+    # line. "" means this scanner has no lexical model for the file, which gates
+    # every lexical-dependent detector below (ADR 0002 § 1, the `—` state).
+    lang = lang_of(path, ext)
 
     for idx, line in enumerate(lines, start=1):
-        # --- Category: hardcoded-secret (all files) ---
+        # --- Category: hardcoded-secret ---
+        # The four literal patterns below are LEXICAL-INDEPENDENT (ADR 0002 § 3)
+        # and run on every file, gated on nothing: `AKIA[0-9A-Z]{16}` is a leaked
+        # key wherever it appears, and a commented-out one is arguably MORE
+        # interesting, not less.
 
         if re.search(r"AKIA[0-9A-Z]{16}", line):
             emit(path, idx, "hardcoded-secret", "AWS access key pattern: " + cap(line))
@@ -94,27 +360,39 @@ def scan_file(path: str) -> None:
         if re.search(r"BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY", line):
             emit(path, idx, "hardcoded-secret", "Private key header: " + cap(line))
 
-        # Generic credential assignment with a string-literal value. Two-stage,
-        # mirroring the `grep -nEi ... | grep -viE <denylist>` pipe: a positive
-        # match that is NOT a placeholder/env-read/comment line. The quote
-        # delimiter class is ["'] — a double- or single-quote (matches the bash
-        # regex fixed in #168).
-        if re.search(
-            r"(password|passwd|secret|api_key|apikey|auth_token|access_token)"
-            r"""\s*[=:]\s*["'][^"']{8,}["']""",
-            line,
-            re.IGNORECASE,
-        ) and not re.search(
-            r"(changeme|placeholder|xxx|todo|example|replace|your_|test_|fake_|dummy_|#|//|/\*)",
-            line,
-            re.IGNORECASE,
-        ):
-            emit(
-                path,
-                idx,
-                "hardcoded-secret",
-                "Possible hardcoded credential: " + cap(line),
+        # Generic credential assignment with a string-literal value.
+        # LEXICAL-DEPENDENT (ADR 0002 § 3) — gated on the resolved language, and
+        # skipped entirely for a file whose lexical model this scanner lacks.
+        #
+        # #837: the old denylist conflated two unrelated tests in ONE unanchored
+        # substring match over the WHOLE line —
+        #   (changeme|placeholder|...|#|//|/\*)
+        # which failed in both directions:
+        #   FALSE NEGATIVE  password = "Str0ng#Pass#Value"   (# inside the value)
+        #   FALSE NEGATIVE  password = "realsecret123"  # noqa  (trailing comment)
+        #   FALSE POSITIVE  -- password = "x"   in .lua/.sql (`--` not modeled)
+        # A false-clean in a security scanner, so the two tests are now separate:
+        #   1. the COMMENT test is line-start anchored and per-language (above);
+        #   2. the PLACEHOLDER test matches only the captured VALUE, never the
+        #      whole line, so a `#` outside the value can no longer suppress.
+        if lang and not is_comment(lang, line):
+            m = re.search(
+                r"(password|passwd|secret|api_key|apikey|auth_token|access_token)"
+                r"""\s*[=:]\s*["']([^"']{8,})["']""",
+                line,
+                re.IGNORECASE,
             )
+            if m and not re.search(
+                r"(changeme|placeholder|xxx|todo|example|replace|your_|test_|fake_|dummy_)",
+                m.group(2),
+                re.IGNORECASE,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "hardcoded-secret",
+                    "Possible hardcoded credential: " + cap(line),
+                )
 
         # --- Category: injection-risk ---
 
@@ -138,9 +416,63 @@ def scan_file(path: str) -> None:
                     "injection-risk",
                     "SQL with string interpolation: " + cap(line),
                 )
+        elif ext == "rs":
+            # Rust builds SQL with format!-family interpolation ({} holes) or by
+            # push_str onto a String. Both are the idiomatic spelling of the same
+            # unsanitized-concatenation defect the other arms catch (#838).
+            #
+            # TWO patterns, because the macros differ in ARGUMENT POSITION and a
+            # single alternation cannot cover both: `format!` takes the format
+            # string FIRST, while `write!`/`writeln!` take the `Write`
+            # destination first and the format string SECOND. Folding them into
+            # one `(format!|write!|writeln!)\s*\(\s*"` alternation makes the
+            # write!/writeln! branches dead — no valid call has its format
+            # string in argument one.
+            if re.search(
+                r'format!\s*\(\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
+                line,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "injection-risk",
+                    "SQL in format! interpolation: " + cap(line),
+                )
+            # The destination is skipped with `.*` rather than `[^,]+`: a
+            # destination expression may itself contain a comma
+            # (`write!(conn.buffer(a, b), "SELECT …", id)`), and a
+            # comma-free-argument class stops at the FIRST comma, never reaching
+            # the format string. Anchoring on the quoted SQL keyword is what
+            # actually identifies the argument, so let `.*` reach it.
+            if re.search(
+                r'(write|writeln)!\s*\(.*,\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
+                line,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "injection-risk",
+                    "SQL in write! interpolation: " + cap(line),
+                )
+            if re.search(
+                r'push_str\s*\(\s*&?(format!\s*\(\s*)?"(SELECT|INSERT|UPDATE|DELETE|DROP)\b',
+                line,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "injection-risk",
+                    "SQL appended to String: " + cap(line),
+                )
 
-        # String concatenation with SQL keywords (all languages).
-        if re.search(r'"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*', line):
+        # String concatenation with SQL keywords. LEXICAL-DEPENDENT (ADR 0002
+        # § 3) — it reasons about string-literal form, so it is gated on the
+        # resolved language and skipped on a comment line.
+        if (
+            lang
+            and not is_comment(lang, line)
+            and re.search(r'"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*', line)
+        ):
             emit(
                 path,
                 idx,
@@ -167,20 +499,18 @@ def scan_file(path: str) -> None:
         if XSS_BLADE in line:
             emit(path, idx, "xss-risk", "Blade unescaped output: " + cap(line))
 
-        # --- Category: insecure-crypto (skip comment-only lines) ---
-        # A line whose first non-space character opens a comment (#, //, /*, *)
-        # is skipped — matches the fixed bash `grep -v '^[0-9]+:\s*(#|...)'`
-        # filter (see #168; the earlier anchor never fired against grep -n's
-        # line-number prefix, so comment lines were wrongly flagged).
-        is_comment = re.match(r"\s*(#|//|/\*|\*)", line) is not None
+        # --- Category: insecure-crypto (skip comment lines) ---
+        # LEXICAL-DEPENDENT (ADR 0002 § 3). This detector always ATTEMPTED to
+        # consult a comment model, but the model was hardcoded C-family
+        # (`#|//|/\*|\*`) and applied to every file regardless of language — so a
+        # `--` comment in .lua/.sql was scanned as code. It now consults the
+        # language's own model and does not run at all on an unresolved one.
+        if lang and not is_comment(lang, line):
+            if re.search(r"\b(md5|sha1)\s*\(", line, re.IGNORECASE):
+                emit(path, idx, "insecure-crypto", "Weak hash algorithm: " + cap(line))
 
-        if not is_comment and re.search(r"\b(md5|sha1)\s*\(", line, re.IGNORECASE):
-            emit(path, idx, "insecure-crypto", "Weak hash algorithm: " + cap(line))
-
-        if not is_comment and re.search(
-            r"\bECB\b|MODE_ECB|mode.*ecb", line, re.IGNORECASE
-        ):
-            emit(path, idx, "insecure-crypto", "ECB mode encryption: " + cap(line))
+            if re.search(r"\bECB\b|MODE_ECB|mode.*ecb", line, re.IGNORECASE):
+                emit(path, idx, "insecure-crypto", "ECB mode encryption: " + cap(line))
 
 
 def main(argv: list[str]) -> int:

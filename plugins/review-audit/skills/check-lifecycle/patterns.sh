@@ -148,6 +148,25 @@ while IFS= read -r file; do
             emit_rows '\bos\.Interrupt\b' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '\bos\.(Open|Create)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             ;;
+        *.[Rr][Ss])
+            # Rust (#838). std::process::Command is the spawn site.
+            #
+            # terminate-without-kill asks whether a GRACEFUL stop escalates to
+            # SIGKILL (SKILL.md: "confirm the timeout/cancel branch escalates to
+            # SIGKILL and issues a final wait"). std::process has no graceful
+            # stop at all — `Child::kill()` IS SIGKILL — so keying on `.kill()`
+            # would invert the question, flagging the escalation as if it were
+            # the thing missing it. The graceful send site in Rust is an explicit
+            # SIGTERM via libc/nix, so that is what this arm matches.
+            emit_rows '\bCommand::new[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
+            emit_rows '\bSIGTERM\b' "terminate-without-kill" "$L_TERMINATE" "$file"
+            emit_rows '=[[:space:]]*File::(open|create)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
+            # Registration sites. Rust has no DOM-style addEventListener; the
+            # real long-lived registrations are a bound listening socket and an
+            # installed signal handler, both of which outlive the statement and
+            # want a matching teardown.
+            emit_rows '\b(TcpListener|UnixListener)::bind[[:space:]]*\(|\bsignal::unix::signal[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
+            ;;
     esac
 
 done <"$FILE_LIST"

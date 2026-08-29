@@ -684,6 +684,19 @@ scan_debug_prints() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
+        *.[Rr][Ss])
+            # Rust: the print!/println!/eprint!/eprintln! macro family (#838).
+            # The `!` is part of the macro name and anchors the match.
+            command grep -nE -- '^[[:space:]]*e?print(ln)?![[:space:]]*\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
     esac
     # <<< shared:debug-print-scan
 }
@@ -733,6 +746,19 @@ scan_debugger_statements() {
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Ruby debugger: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.[Rr][Ss])
+            # Rust: the dbg! macro is a debugging aid, never program output, so
+            # it belongs in this never-exempted family (#680 AC3, #838).
+            command grep -nE -- '^[[:space:]]*dbg![[:space:]]*\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Rust debug macro: ${evidence}" "HIGH"
                 done || true
             ;;
     esac

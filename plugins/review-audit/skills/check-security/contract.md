@@ -26,21 +26,127 @@ Governed by [ADR 0002](../../docs/adr/0002-scanner-language-support.md).
 detector; the language-agnostic detectors run under its comment model).
 `—` = unsupported (not scanned).
 
+`hardcoded-secret` is **two detector families with different classifications**,
+so it is two columns here (the same treatment #847 gave `debug-statement`, and
+for the same reason — one cell cannot carry two letters):
+
+- `secret-literal` — the AWS / GitHub / Stripe / private-key patterns.
+  Lexical-**independent**, so it runs on every file including unmodeled ones.
+- `credential-assignment` — the generic `password = "…"` detector.
+  Lexical-**dependent**, so it runs only where the comment model is known.
+
 <!-- contract: check-security-language-support -->
 
-| Language   | ext(s)             | hardcoded-secret | injection-risk | xss-risk | insecure-crypto |
-| ---------- | ------------------ | ---------------- | -------------- | -------- | --------------- |
-| Python     | py                 | L                | M              | L        | L               |
-| JavaScript | js, jsx            | L                | M              | L        | L               |
-| TypeScript | ts, tsx            | L                | M              | L        | L               |
-| Ruby       | rb                 | L                | M              | L        | L               |
-| every other  | —                  | L                | —              | L        | L               |
+| Language    | ext(s)             | secret-literal | credential-assignment | injection-risk | xss-risk | insecure-crypto |
+| ----------- | ------------------ | -------------- | --------------------- | -------------- | -------- | --------------- |
+| Python      | py                 | L              | L                     | M              | L        | L               |
+| JavaScript  | js, jsx, mjs, cjs  | L              | L                     | M (js/jsx only) | L        | L               |
+| TypeScript  | ts, tsx            | L              | L                     | M              | L        | L               |
+| Ruby        | rb                 | L              | L                     | M              | L        | L               |
+| Rust        | rs                 | L              | L                     | M              | L        | L               |
+| Go          | go                 | L              | L                     | —              | L        | L               |
+| Java, Kotlin | java, kt          | L              | L                     | —              | L        | L               |
+| Bash        | sh, bash           | L              | L                     | —              | L        | L               |
+| Swift       | swift              | L              | L                     | —              | L        | L               |
+| Config (`#`) | yml, yaml, ini, cfg, conf, toml, properties, env | L | L        | —              | L        | L               |
+| C-family (`//`) | php, c, h, cc, cpp, hpp, cs, scala, m, mm, dart, groovy, gradle, v, zig, cr | L | L | —      | L        | L               |
+| Hash (`#`)  | pl, pm, r, jl, ex, exs, nim, tcl, zsh, fish, ps1, psm1, tf, tfvars | L | L | —          | L        | L               |
+| Dash (`--`) | lua, sql, hs, elm   | L              | L                     | —              | L        | L               |
+| Other markers | vb, bas (`'`), erl (`%`), clj, asm (`;`), bat (`REM`), vue, svelte, html, xml (`<!--`), pas (`{`) | L | L | —  | L        | L               |
+| JSON (none) | json               | L              | L                     | —              | L        | L               |
+| Extensionless (`#`) | Dockerfile, Containerfile, Makefile, Jenkinsfile, Vagrantfile, Procfile, Rakefile, Gemfile, Brewfile, Justfile, Caddyfile, CMakeLists.txt | L | L | —      | L        | L               |
+| Dotfiles (`#`) | .env, .npmrc, .netrc, .yarnrc, .pypirc, .dockerignore, .gitconfig, .gitignore, .editorconfig, .bashrc, .zshrc, .profile, .bash_profile, .htaccess, .mailmap | L | L | —  | L        | L               |
+| every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
 
+The `every other` row is where the three states differ visibly. An unmodeled
+language keeps `secret-literal` and `xss-risk` (both lexical-independent — an
+`AKIA…` key is a leaked key in any syntax) but loses `credential-assignment` and
+`insecure-crypto` entirely, because running them would mean applying some other
+language's comment model to the file. That is ADR 0002 § 1's `—` state, and it
+is **silent** per § 5: no TSV row is emitted, not even an `unsupported-language`
+one.
+
+The **Config** row is why that silence has to be reasoned about rather than
+accepted. These are not source languages and are absent from the normative
+`EXT_LANG` (which serves the decomposition lenses, where a `.yml` is not a unit
+of code) — they are scanner-local keys, permitted because the sync gate checks
+*subset*-consistency and a key the normative table lacks cannot contradict it.
+They are modeled here because omitting them is a **security regression**: before
+the gating the credential detector ran on every file, so a `password: "…"` in a
+`docker-compose.yml` or an `application.properties` was flagged. Dropping them to
+`—` would silently stop scanning exactly the file types where checked-in
+credentials most often live. All of them spell a line comment with `#`.
+
+**The rows below Swift are grouped by comment MARKER, not by language family,
+and that is the point.** Three review cycles each found one more group that had
+silently lost coverage to the gating — config formats, then the C-family, then a
+long tail including `.tf`/`.tfvars`, `.ps1`, `.pl`, `.lua`, `.vue`. Those were
+not three defects; they were three instances of one, because the table was being
+extended language-by-language as each omission was noticed. Keying on the marker
+makes the table describe the lexical fact directly, so adding a language is
+choosing an existing family rather than discovering a gap.
+
+**A path can defeat extension keying in four different ways**, and the resolver
+handles each in order — this is the part worth understanding before extending it:
+
+| shape | example | `ext` resolves to |
+| --- | --- | --- |
+| extension | `app.py` | `py` — the ordinary case |
+| exact basename | `Dockerfile` | `""` — no extension at all |
+| dotfile | `.npmrc` | `npmrc` — a **wrong** key |
+| suffixed variant | `Dockerfile.prod`, `.env.local` | `prod` / `local` — also wrong |
+
+The last two are the dangerous ones, because they produce a key that *looks*
+valid and resolves to nothing, which is indistinguishable from "unmodeled" unless
+you go looking. Each was found by a separate review cycle after the previous
+sweep had reported the table clean — an extension-keyed probe cannot reach any of
+them by construction.
+
+Suffixed variants match by **prefix** because the suffix names a *variant of the
+same artifact* by universal convention: a `Dockerfile.prod` is a Dockerfile, a
+`.env.local` is an env file. An earlier draft matched `.env.*` this way while
+excluding `Dockerfile.*` — that was inconsistent and measurably wrong (`ENV
+PASSWORD="…"` in a `Dockerfile.prod` fired on `main` and went silent). A name that
+genuinely re-keys on its suffix belongs in the exact-basename table instead.
+
+The measured baseline, over all four shapes — 111 probe inputs: this
+scanner covers **exactly what `main` covered**, with one intended class of
+exception — plain-prose files (`.md`, `.txt`, `LICENSE`, `README`, `CHANGELOG`)
+no longer get the *lexical-dependent* detectors, because prose is not code and
+applying a comment model to it is what produced the ADR's motivating false
+positives. A **real** leaked key in one of those files still fires, through the
+lexical-*independent* literal patterns. That asymmetry is the three-state model
+working as designed rather than a coverage loss.
+
+JSON is the interesting row: it has **no comment syntax at all**, so its model is
+a *never-matching* pattern rather than an absent one. That distinction is
+load-bearing in the bash runtime specifically — the consumers pipe through
+`grep -vE "$file_comment_re"`, and an **empty** ERE matches every line, so `-v`
+would suppress the entire file, turning "this language has no comments" into
+"this language has no findings". A fixture using a *gated* detector pins it; one
+using a literal-secret pattern would not, since those never consult the model
+(measured — the first draft of that fixture passed with the pattern emptied).
+
+Every family is fixture-tested in **both** directions: its own marker suppresses,
+and a foreign marker does not. The foreign half is what stops a family from
+degenerating into "suppress everything", which would re-create the false-clean
+this phase exists to remove.
+
 `injection-risk` is the only category with per-language detectors: SQL built by
-f-string (Python), template literal (JS/TS) or `#{}` interpolation (Ruby). Its
-string-concatenation arm is lexical-dependent and currently ungated — see below.
+f-string (Python), template literal (JS/TS), `#{}` interpolation (Ruby), or
+`format!` / `write!` / `push_str` (Rust). Its string-concatenation arm is
+lexical-dependent and gated.
+
+Rust needs **two** interpolation patterns rather than one alternation, because
+the macros differ in argument position: `format!` takes the format string first,
+while `write!`/`writeln!` take the `Write` destination first and the format
+string second. A single `(format!|write!|writeln!)\s*\(\s*"` alternation makes
+the `write!`/`writeln!` branches dead code — no valid call has its format string
+in argument one. The JS narrowing is real: the template-literal arm dispatches on
+`js`/`jsx`/`ts`/`tsx` only, so `.mjs`/`.cjs` reach the lexical-independent
+detectors but not that arm.
 
 Detector classification per ADR 0002 § 3:
 
@@ -48,11 +154,16 @@ Detector classification per ADR 0002 § 3:
   Stripe / private-key literal patterns, and all four xss-risk markers. These
   match tokens whose meaning does not depend on syntax — a leaked key or a
   `dangerouslySetInnerHTML` is as interesting inside a comment as outside one.
-- **lexical-dependent** (must consult the language's comment model): the
-  hardcoded-secret generic-credential denylist, insecure-crypto, and the
-  injection-risk string-concatenation arm. **These are not yet gated** — the
-  denylist defect is issue #837 and the gating lands in Phase 1 of #622. Until
-  then this scanner applies a hardcoded C-family comment model to every file.
+- **lexical-dependent** (consults the language's comment model, and does not run
+  at all on a language this scanner cannot resolve): the `credential-assignment`
+  detector, `insecure-crypto`, and the `injection-risk` string-concatenation arm.
+  Gated as of #622 Phase 1, which also fixed #837 — the credential denylist was
+  an *unanchored substring* test, so a `#` anywhere on the line (inside the
+  secret value, or in a trailing `# noqa`) silently suppressed a real finding.
+  The placeholder test now matches the extracted **value**; the comment test is
+  line-start anchored and per-language.
+- **language-specific** (runs only under its own `M` arm): every per-language
+  `injection-risk` SQL detector.
 
 ## Finding Format
 

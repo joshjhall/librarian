@@ -288,33 +288,54 @@ test_patterns_empty_handler_multilang_fires() {
     # Go — swallowed error (empty braces) vs a handled one.
     command printf '%s\n' "if err != nil {}" >"$d/empty.go"
     command printf '%s\n' "if err != nil { return err }" >"$d/handled.go"
+    # Rust (#838) — an empty Err arm vs one that handles the error. Note the
+    # `handled` counter-fixture binds `Err(e)`: the arm must key on the wildcard
+    # `_` pattern with an empty body, not on `Err(` alone.
+    command printf '%s\n' "match r { Err(_) => {}, Ok(v) => use_it(v) }" >"$d/empty.rs"
+    command printf '%s\n' "match r { Err(e) => log(e), Ok(v) => use_it(v) }" >"$d/handled.rs"
 
     command printf '%s\n' \
         "$d/empty.js" "$d/handled.js" \
         "$d/empty.java" "$d/handled.java" \
         "$d/empty.rb" "$d/handled.rb" \
-        "$d/empty.go" "$d/handled.go" >"$d/list.txt"
+        "$d/empty.go" "$d/handled.go" \
+        "$d/empty.rs" "$d/handled.rs" >"$d/list.txt"
 
-    rows="$(scan_cat "$PATTERNS" "$d/list.txt" empty-handler)"
-
-    local lang
-    for lang in js java rb go; do
-        if ! has_row "$rows" "$d/empty.$lang"; then
-            _fail "patterns.sh: empty handler in empty.$lang must emit an empty-handler row, but none was found"
+    # BOTH RUNTIMES (#838). This test used to call scan_cat once, with
+    # PATTERNS_FORCE_BASH unset — so on a host with python3>=3.11 the shim
+    # exec'd patterns.py and the bash arms were never executed here at all. A
+    # mutation round proved it: neutering the bash `let _ =` arm left this test
+    # green while forced-bash output dropped from 2 rows to 1. That is exactly
+    # the defect test_patterns_classifies_bash_fallback exists to prevent for the
+    # classification path, reached by a different route. Assert both.
+    local impl count lang
+    for impl in shim bash; do
+        if [ "$impl" = bash ]; then
+            rows="$(PATTERNS_FORCE_BASH=1 scan_cat "$PATTERNS" "$d/list.txt" empty-handler)"
+        else
+            rows="$(scan_cat "$PATTERNS" "$d/list.txt" empty-handler)"
         fi
-        if has_row "$rows" "$d/handled.$lang"; then
-            _fail "patterns.sh: handled.$lang has a non-empty handler body but an empty-handler row was emitted for it"
+
+        for lang in js java rb go rs; do
+            if ! has_row "$rows" "$d/empty.$lang"; then
+                _fail "patterns.sh ($impl): empty handler in empty.$lang must emit an empty-handler row, but none was found"
+            fi
+            if has_row "$rows" "$d/handled.$lang"; then
+                _fail "patterns.sh ($impl): handled.$lang has a non-empty handler body but an empty-handler row was emitted for it"
+            fi
+        done
+
+        # Exactly five rows — one per empty fixture. Guards against a language
+        # branch cross-firing on another language's file (all rows share the
+        # same "empty-handler" category, so the per-language checks above can't
+        # catch it). Bumped 4 -> 5 with the Rust arm (#838); this count is
+        # load-bearing, so a new language arm must extend the loop above AND
+        # this number together.
+        count="$(command printf '%s\n' "$rows" | command grep -c . || true)"
+        if [ "$count" -ne 5 ]; then
+            _fail "patterns.sh ($impl): expected exactly 5 empty-handler rows (one per language), got $count"
         fi
     done
-
-    # Exactly four rows — one per empty fixture. Guards against a language
-    # branch cross-firing on another language's file (all rows share the same
-    # "empty-handler" category, so the per-language checks above can't catch it).
-    local count
-    count="$(command printf '%s\n' "$rows" | command grep -c . || true)"
-    if [ "$count" -ne 4 ]; then
-        _fail "patterns.sh: expected exactly 4 empty-handler rows (one per language), got $count"
-    fi
 }
 
 run_test test_patterns_classifies "patterns.sh flags source, skips test files by path"
@@ -323,6 +344,6 @@ run_test test_gates_classifies "pre-review-gates.sh flags source, skips test fil
 run_test test_scanners_agree "both scanners classify every fixture identically"
 run_test test_patterns_tech_debt_fires "patterns.sh fires tech-debt-marker on all 5 keywords, not on clean file"
 run_test test_patterns_empty_handler_fires "patterns.sh fires empty-handler on except/pass, not on handled block"
-run_test test_patterns_empty_handler_multilang_fires "patterns.sh fires empty-handler on JS/Java/Ruby/Go empty handlers, not on handled blocks"
+run_test test_patterns_empty_handler_multilang_fires "patterns.sh fires empty-handler on JS/Java/Ruby/Go/Rust empty handlers, not on handled blocks"
 
 generate_report
