@@ -1596,3 +1596,159 @@ EOF
         "never claims uncommitted changes for an unevaluable state"
     assert_true "[ -e '$sb/.worktrees/issue-95' ]" "nothing is removed"
 }
+
+# --- #834: partial leftover removal under a bindfs/FUSE overlay -------------
+
+# make_undeletable <dir> — plant an undeletable entry under <dir> and echo the
+# directory that must be chmod-restored afterwards.
+#
+# SIMULATION, and the issue permits it: the real trigger is a bindfs/FUSE
+# overlay returning EBADF for `unlink` on stale dentries whose inodes are gone,
+# which cannot be produced without that overlay. What the fix actually depends
+# on is only that `rm -rf` FAILS on some entry while succeeding on its siblings,
+# so an unwritable parent directory reproduces the shape exactly: `rm` cannot
+# unlink a child of a directory it may not write, and carries on with the rest.
+#
+# Requires a non-root uid — root ignores the permission bits entirely and the
+# removal would succeed, turning every test below into a tautology that passes
+# with and without the fix. Callers skip rather than assert when running as root.
+make_undeletable() {
+    local dir="$1"
+    command mkdir -p "$dir/target/debug/incremental"
+    command touch "$dir/target/debug/incremental/stale.o"
+    command chmod 500 "$dir/target/debug/incremental"
+    command echo "$dir/target/debug/incremental"
+}
+
+# Restore write permission so the harness's `rm -rf "$WORKDIR"` EXIT trap can
+# actually clean the sandbox — without this the undeletable fixture outlives the
+# run and leaks a directory into $TMPDIR on every invocation.
+restore_undeletable() {
+    command chmod 700 "$1" 2>/dev/null || true
+}
+
+# #834: a partial removal is an EXPECTED outcome on a bindfs/FUSE overlay, not a
+# fault — nothing git-tracked is at risk (git has no record of those files,
+# .worktrees/ is gitignored, and the collision guard reads `git worktree list`).
+# Teardown must therefore report success and CONTINUE to the branch/tmux steps,
+# rather than emitting the WARNING an unattended operator would have to
+# adjudicate. Pins exit 0, the absence of a warning, and that the branch is
+# still deleted (the continue-past-it property, which a bare exit-code check
+# would miss).
+test_worktree_rm_partial_leftover_removal_is_tolerated() {
+    local sb blocked
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 90
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-90"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-90")"
+
+    run_in "$sb" "$WT_RM" 90
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "a partial leftover removal is tolerated, not a failure"
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "no scary warning for a condition that is expected on this platform"
+    # The COUNT is asserted exactly, not just its presence. The fixture leaves
+    # precisely four entries the filesystem will not release — `target`,
+    # `target/debug`, `target/debug/incremental`, and `stale.o` — and `.git`
+    # survives by this script's own choice, so counting it would report 5 and
+    # overstate the condition. A bare "contains a number" assertion cannot tell
+    # those apart (mutation-verified: dropping the `.git` exclusion survives it).
+    assert_contains "$RUN_OUT" "4 undeletable entries remain" \
+        "reports the exact count, excluding the .git it deliberately kept"
+    assert_contains "$RUN_OUT" "bindfs" "names the expected cause so it reads as benign"
+    local branches
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb" branch --list "feature/issue-90")"
+    assert_equals "" "$branches" "teardown CONTINUES to the branch after a partial removal"
+}
+
+# #834, the ordering half — the defect a message-only fix would leave behind.
+# `rm -rf` does not stop at the first undeletable entry: it removes everything
+# it can, INCLUDING the deregistered worktree's dangling `.git` file, and only
+# then reports failure. That destroys the fingerprint
+# `leftover_is_worktree_residue` requires, so the directory stops being
+# recognizable as worktree residue at all. Pinning `.git` survival is what makes
+# the removal ORDER (contents first, .git last, and only once the contents are
+# fully gone) a tested contract rather than an implementation detail.
+test_worktree_rm_partial_removal_keeps_the_residue_fingerprint() {
+    local sb blocked
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 91
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-91"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-91")"
+
+    run_in "$sb" "$WT_RM" 91
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "the partial removal still succeeds"
+    assert_true "[ -e '$sb/.worktrees/issue-91/.git' ]" \
+        "the .git fingerprint SURVIVES a partial removal, keeping the dir recognizable"
+    # The removal is still real: everything the filesystem allowed is gone.
+    assert_true "[ ! -e '$sb/.worktrees/issue-91/seed.txt' ]" \
+        "removable contents are still deleted — tolerating is not skipping"
+}
+
+# #834, the consequence the fingerprint exists to prevent. A re-run of teardown
+# after a partial removal must stay a clean no-op. Before the ordering fix the
+# first run deleted `.git`, so this second run took the `no-fingerprint` arm and
+# exited 1 with "may never have been a worktree" — a HARD FAILURE, in unattended
+# teardown, whose text is affirmatively false about a directory that was a
+# worktree. That is the same misreporting class #813 closed, reached by a
+# different route, which is why it is asserted here rather than left implied.
+test_worktree_rm_rerun_after_partial_removal_is_idempotent() {
+    local sb blocked
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 92
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-92"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-92")"
+
+    run_in "$sb" "$WT_RM" 92
+    assert_exit 0 "$RUN_RC" "the first teardown tolerates the partial removal"
+
+    run_in "$sb" "$WT_RM" 92
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "a re-run after a partial removal is a clean no-op, not a refusal"
+    assert_not_contains "$RUN_OUT" "may never have been a worktree" \
+        "never tells the operator a real worktree's residue was never a worktree"
+    assert_not_contains "$RUN_OUT" "Refusing to delete" \
+        "the re-run does not refuse a directory this script itself left behind"
+}
+
+# #834 narrowness: the tolerance must not weaken the ORDINARY path. With nothing
+# undeletable, a leftover directory is still removed COMPLETELY — `.git` and the
+# directory itself included — and reports the plain success message with no
+# partial-removal note. Without this, a fix that simply stopped removing `.git`
+# would pass all three tests above while leaving residue on every normal
+# teardown.
+test_worktree_rm_full_leftover_removal_is_unchanged() {
+    local sb
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 93
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-93"
+
+    run_in "$sb" "$WT_RM" 93
+    assert_exit 0 "$RUN_RC" "an unimpeded leftover removal still succeeds"
+    assert_true "[ ! -e '$sb/.worktrees/issue-93' ]" \
+        "with nothing undeletable the directory is removed entirely, .git included"
+    assert_contains "$RUN_OUT" "removed leftover directory" "reports the plain removal"
+    assert_not_contains "$RUN_OUT" "undeletable entries remain" \
+        "no partial-removal note when the removal was complete"
+}
