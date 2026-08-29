@@ -42,6 +42,18 @@ Corollary: a narrowing change (a gate, a filter, a new dispatch) needs a
 whole-input-space differential *before* review, not after. All three findings
 would have surfaced at once from the probe I eventually wrote.
 
+**And check the probe's own shape.** The 52-extension sweep reported the table
+clean, and it was right about the space it covered — but the space was the wrong
+shape. A fourth review cycle then found `Dockerfile`, `Makefile`, `Jenkinsfile`:
+extensionless files, which an extension-keyed probe cannot reach **by
+construction**. A probe built from the same key as the defective code inherits
+its blind spot, and a clean result from it reads exactly like a clean result from
+a complete one. So after writing the differential, ask what the *dispatch key*
+is and whether any real input lacks that key entirely — an extensionless path, an
+empty config section, a symbol with no type annotation. That question is what
+separates "I measured the class" from "I measured the part of the class I had
+already thought of".
+
 Related: [[harden-one-knob-grep-every-sibling]],
 [[survey-scoped-to-a-glob-misses-a-plugin]],
 [[structural-gate-where-fixtures-dont-scale]],
