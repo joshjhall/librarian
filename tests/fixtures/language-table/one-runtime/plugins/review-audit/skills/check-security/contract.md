@@ -4,8 +4,8 @@
 
 <!-- contract: check-security-language-support -->
 
-| Language | ext(s) | some-category |
-| -------- | ------ | ------------- |
+| Language | ext(s) | injection-risk |
+| -------- | ------ | -------------- |
 | Python   | py     | M             |
 | Rust     | rs     | M             |
 
