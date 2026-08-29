@@ -34,32 +34,43 @@
 #      form is Phase 1 work, because satisfying it today means extending
 #      EXT_LANG, which is a BEHAVIOR change to check-decomposition (files with
 #      those extensions would start being segmented).
-#   4. MATRIX <-> SOURCE: every language marked `M` in a contract matrix has a
-#      dispatch arm in BOTH runtimes; every language marked `—` has one in
+#   4. MATRIX <-> SOURCE: every matrix CELL marked `M` has a dispatch arm in
+#      BOTH runtimes for that cell's COLUMN; every cell marked `—` has one in
 #      neither.
+#   5. ANTI-VACUITY: every column binding resolves to at least one arm per
+#      runtime.
+#   6. Every column carrying an `M` cell has a binding at all.
 #
 # Assertion 4 is the load-bearing one. It converts each future phase's
 # dual-runtime obligation from "remember to do both" into a gate — and it is the
 # shape of check that would have caught #836, where check-lifecycle's bash half
 # silently diverged from its Python twin.
 #
-# THE EXACT GRANULARITY OF ASSERTION 4, because it is easy to over-read. It is
-# PER-LANGUAGE, not per-matrix-CELL:
+# THE GRANULARITY OF ASSERTION 4 IS PER-CELL (#847). It was per-LANGUAGE through
+# Phase 0, which was strictly weaker than the matrices it checked: `have_py`/
+# `have_sh` unioned every extension dispatched anywhere in a file, and
+# `parse_matrix` OR-ed a row across its columns. A wrong cell in one column
+# therefore passed whenever any OTHER column had an arm for that extension —
+# invisible exactly where the matrices are ragged on purpose (check-code-health's
+# three dispatch chains disagree about `rb` and about `.mjs`/`.cjs`).
 #
-#   - `have_py`/`have_sh` are unions of every extension dispatched ANYWHERE in
-#     the file. check-code-health has THREE dispatch chains with genuinely
-#     different coverage (debug-print excludes rb; debugger includes it), and
-#     this check does not tell them apart.
-#   - `parse_matrix` collapses a row to one state by OR-ing its category columns,
-#     so a row that is `M` in one column and `—` in another reads as `M`.
+# What makes per-cell possible is BINDINGS below: an explicit map from each
+# matrix column to the source region backing it, in both runtimes. The three
+# binding kinds and why the map is hand-written rather than inferred are
+# documented there.
 #
-# So it answers "is this LANGUAGE dispatched in both runtimes, as the matrix
-# claims" — which is exactly the #836 shape — and NOT "is this CATEGORY's cell
-# accurate". A wrong cell in one column can still pass while another column's arm
-# for that extension exists. Narrowing to per-category means locating each
-# detector family's source region, which is Phase 1 work, when the arms are being
-# rewritten anyway. Recorded rather than silently accepted: see ADR 0002
-# § Consequences, and the deferred finding it cites.
+# Two consequences worth knowing before editing this gate:
+#
+#   - A cell's parenthetical narrowing ("M (js/jsx only)") is now ENFORCED, not
+#     prose. Under a row-level check there was no per-cell state for it to
+#     qualify; per-cell it reads as `M` for the extensions it names and `—` for
+#     the rest of the row.
+#   - An `M` cell in a column with no binding is reported (assertion 6) rather
+#     than skipped, so a new modeled column cannot go quietly unchecked.
+#
+# STILL NOT CHECKED: `L` cells. They assert both the absence of a detector and
+# the presence of correct lexical gating, and that gating does not exist until
+# Phase 1 (#838). ADR 0002 § Consequences carries this.
 #
 # Assertion 3 additionally covers a pair NOTHING checked before: the byte-identical
 # ext->lang `case` blocks in check-decomposition/patterns.sh and
@@ -98,9 +109,12 @@ fi
 # is walked a single time.
 #
 #   NORMATIVE <count>            — size of the normative EXT_LANG
-#   MATRIX <skill> <count>       — languages parsed out of one contract matrix
+#   MATRIX <skill> <count>       — CELLS parsed out of one contract matrix
+#   NOMATRIX <skill>             — assertion 2 violation
 #   CONTRADICTION <detail>       — assertion 3 violation
 #   MISMATCH <detail>            — assertion 4 violation
+#   VACUOUS <detail>             — assertion 5 violation (a binding matched no arm)
+#   UNBOUND <detail>             — assertion 6 violation (an M cell with no binding)
 LANG_REPORT="$(
     command python3 - "$LANG_TABLE_ROOT" <<'PY'
 import os
@@ -121,6 +135,78 @@ GOVERNED = (
     "check-lifecycle",
     "check-docs-missing-api",
 )
+
+# --- the column -> source-region binding map (#847) --------------------------
+# A matrix COLUMN names one detector family; a scanner file holds several. This
+# map says, per scanner, which source region backs each column — the thing that
+# makes assertion 4 per-CELL rather than per-language.
+#
+# EXPLICIT AND HAND-MAINTAINED, never inferred from the column header. Same
+# reasoning as GOVERNED above and the tests/lib/fragments.sh manifests: a header
+# that happens to match a category tag is a coincidence this gate must not rely
+# on. check-docs-missing-api proves the point — two of its three columns
+# ("public-symbol form", "doc marker") are PROSE describing the syntax, not
+# detector families at all.
+#
+# Three binding kinds:
+#
+#   ("tag", "<category>")   arms whose body emits that category-tag literal.
+#                           The common case: the column header IS the tag.
+#   ("fn", (py_fn, sh_fn))  arms inside the named function in each runtime.
+#                           Needed when two columns share ONE tag — the only
+#                           case is check-code-health's debug-print vs debugger,
+#                           which both emit "debug-statement" (#680 split them
+#                           into two families but one category).
+#   ("file", None)          the whole-file union. Correct only for a scanner
+#                           with ONE modeled column, where per-file already IS
+#                           per-category. check-docs-missing-api's Python half
+#                           emits no literal tag, so tag-binding cannot be the
+#                           universal mechanism.
+#
+# A column absent from this map is NOT checked per-cell. That is deliberate for
+# columns with no `M` cell anywhere — `L`-only columns (tech-debt-marker,
+# hardcoded-secret, xss-risk, insecure-crypto) assert lexical gating that does
+# not exist until Phase 1, and `—`-only columns assert nothing. An `M` cell in
+# an UNBOUND column is reported as a defect (UNBOUND below) rather than passed
+# over, so adding a modeled column without a binding fails loudly.
+BINDINGS = {
+    "check-security": {
+        "injection-risk": ("tag", "injection-risk"),
+    },
+    "check-code-health": {
+        "debug-print": ("fn", ("_scan_debug_print", "scan_debug_prints")),
+        "debugger": ("fn", ("_scan_debugger", "scan_debugger_statements")),
+        "empty-handler": ("tag", "empty-handler"),
+    },
+    "check-lifecycle": {
+        "unreaped-subprocess": ("tag", "unreaped-subprocess"),
+        "terminate-without-kill": ("tag", "terminate-without-kill"),
+        "unclosed-handle": ("tag", "unclosed-handle"),
+        "unpaired-listener": ("tag", "unpaired-listener"),
+    },
+    "check-docs-missing-api": {
+        "undocumented-public-api": ("file", None),
+    },
+}
+
+
+def bound_exts(kind, key, arms, runtime):
+    """Extensions dispatched by the region this binding names.
+
+    `runtime` is 0 for Python and 1 for bash — it selects from an `fn` binding's
+    (py_fn, sh_fn) pair.
+    """
+    if kind == "file":
+        return arm_exts(arms)
+    out = set()
+    for exts, body, fn in arms:
+        if kind == "tag":
+            if '"%s"' % key in body:
+                out |= exts
+        elif kind == "fn":
+            if fn == key[runtime]:
+                out |= exts
+    return out
 
 # --- the normative table -----------------------------------------------------
 # Parsed out of loc_engine.py's EXT_LANG literal rather than imported: this gate
@@ -154,21 +240,105 @@ BRACKET = re.compile(r"\[([A-Za-z])[A-Za-z]\]")
 ARM = re.compile(r"^\s*(\*\.[A-Za-z0-9\[\]]+(?:\s*\|\s*\*\.[A-Za-z0-9\[\]]+)*)\)", re.M)
 
 
-def py_exts(src):
-    out = set(re.findall(r'ext\s*==\s*"([a-z0-9]+)"', src))
-    for grp in re.findall(r"ext\s+in\s*\(([^)]*)\)", src):
-        out.update(re.findall(r'"([a-z0-9]+)"', grp))
+def _pats_to_exts(patterns):
+    """`*.[Jj][Ss] | *.[Tt][Ss]` -> {'js', 'ts'}. Bracket classes collapsed."""
+    out = set()
+    for pat in patterns.split("|"):
+        pat = pat.strip()
+        if not pat.startswith("*."):
+            continue
+        out.add(BRACKET.sub(lambda m: m.group(1).lower(), pat[2:]).lower())
     return out
 
 
-def sh_exts(src):
-    out = set()
-    for arm in ARM.findall(src):
-        for pat in arm.split("|"):
-            pat = pat.strip()
-            if not pat.startswith("*."):
+# --- arm-level extraction (#847) --------------------------------------------
+# Both runtimes are walked as a LIST OF ARMS rather than as one flat set of
+# extensions, because a matrix column names one detector family and a scanner
+# holds several. Each arm carries the extensions it dispatches on, the source
+# text of its body, and the function enclosing it — the three things the binding
+# map below can key on. The whole-file union is still available as the union of
+# every arm, which is what the `file` binding kind uses.
+
+
+def py_arms(src):
+    """[(exts, body, enclosing_fn)] for each `if/elif ext ==/in (...)` arm.
+
+    Python arms are indentation-delimited: the body runs until the first
+    non-blank line indented no further than the `if` itself.
+    """
+    lines = src.splitlines()
+    out = []
+    fn = ""
+    for i, line in enumerate(lines):
+        named = re.match(r"^def\s+(\w+)", line)
+        if named:
+            fn = named.group(1)
+        m = re.match(r"^(\s*)(?:el)?if\s+ext\s*==\s*\"([a-z0-9]+)\"\s*:", line)
+        if m:
+            indent, exts = len(m.group(1)), {m.group(2)}
+        else:
+            m = re.match(r"^(\s*)(?:el)?if\s+ext\s+in\s*\(([^)]*)\)\s*:", line)
+            if not m:
                 continue
-            out.add(BRACKET.sub(lambda m: m.group(1).lower(), pat[2:]).lower())
+            indent = len(m.group(1))
+            exts = set(re.findall(r'"([a-z0-9]+)"', m.group(2)))
+        body = []
+        for nxt in lines[i + 1 :]:
+            if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
+                break
+            body.append(nxt)
+        out.append((exts, "\n".join(body), fn))
+    return out
+
+
+def sh_arms(src):
+    """[(exts, body, enclosing_fn)] for each `*.[Xx][Yy])` case arm.
+
+    The body runs to `;;`. CRITICAL: `;;` may sit on the PATTERN LINE ITSELF
+    (`*.md | *.json) continue ;;` in check-lifecycle/patterns.sh). Scanning
+    forward unconditionally would run past such an arm and absorb the arms after
+    it — the probe for #847 saw exactly that, and it reported md/json/yaml/toml
+    as phantom coverage of every lifecycle category. Same shape as an end-marker
+    that silently over-grows its region: the START matched, so nothing errors;
+    the region just quietly grows. Hence the same-line check FIRST.
+    """
+    lines = src.splitlines()
+    out = []
+    fn = ""
+    for i, line in enumerate(lines):
+        named = re.match(r"^(\w+)\s*\(\)\s*\{", line)
+        if named:
+            fn = named.group(1)
+        # A `}` in COLUMN ZERO closes the function. Tracking only the opener
+        # leaves every later top-level arm attributed to the last function seen —
+        # check-code-health's empty-handler `case` is top-level and sits after
+        # scan_debugger_statements(), so without this reset its `go` arm is read
+        # as debugger coverage and the correct `—` cell is reported as a defect.
+        elif re.match(r"^\}", line):
+            fn = ""
+        m = ARM.match(line)
+        if not m:
+            continue
+        exts = _pats_to_exts(m.group(1))
+        rest = line[m.end() :]
+        if ";;" in rest:
+            out.append((exts, rest.split(";;")[0], fn))
+            continue
+        body = [rest]
+        for nxt in lines[i + 1 :]:
+            if ";;" in nxt:
+                body.append(nxt.split(";;")[0])
+                break
+            body.append(nxt)
+        out.append((exts, "\n".join(body), fn))
+    return out
+
+
+def arm_exts(arms):
+    """Whole-file union — every extension dispatched anywhere."""
+    out = set()
+    for exts, _body, _fn in arms:
+        out |= exts
     return out
 
 
@@ -215,7 +385,17 @@ CELL_NONE = "—"  # em dash
 
 
 def parse_matrix(md, skill):
-    """Return {ext: 'M'|'-'} for one scanner's Language Support matrix."""
+    """Return {(ext, column): 'M'|'-'} for one scanner's Language Support matrix.
+
+    PER CELL, not per row (#847). The previous version OR-ed a row's columns into
+    one state, so a wrong cell in one column passed whenever any OTHER column had
+    an arm for that extension — which is the whole defect, and it is invisible
+    precisely where the matrices are ragged on purpose (check-code-health's
+    empty-handler covers .js/.jsx/.ts/.tsx while both debug families also cover
+    .mjs/.cjs).
+
+    Returns (headers, cells) so a caller can report the column by name.
+    """
     start = md.find("<!-- contract: %s-language-support -->" % skill)
     if start < 0:
         return None
@@ -223,24 +403,58 @@ def parse_matrix(md, skill):
     if end < 0:
         return None
     out = {}
+    headers = []
     for line in md[start:end].splitlines():
         line = line.strip()
         if not line.startswith("|") or line.startswith("| ---"):
             continue
-        cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 3 or cols[0] in ("Language",):
+        # Split on UNESCAPED pipes only. A markdown cell may contain `\|` — and
+        # one does: check-docs-missing-api's "public-symbol form" column spells
+        # an alternation as `export function\|class\|const\|…`. Splitting on a
+        # bare "|" shatters that row into extra columns and shifts every later
+        # cell left, so the parser reads a prose fragment where the M/— state
+        # should be. The row-level check never saw this because it OR-ed the
+        # whole row; per-cell alignment makes it load-bearing.
+        cols = [
+            c.strip().replace("\\|", "|")
+            for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))
+        ]
+        if len(cols) < 3:
+            continue
+        if cols[0] == "Language":
+            headers = cols[2:]
+            continue
+        if not headers:
             continue
         exts = [e.strip() for e in cols[1].split(",") if e.strip()]
         if not exts:
             continue  # the catch-all row
-        cells = cols[2:]
-        state = CELL_M if any(CELL_M in c for c in cells) else "-"
-        # A cell may carry a parenthetical narrowing ("M (js/jsx only)"); the
-        # row-level state stays M and the narrowing is prose for the reader.
-        for e in exts:
-            if re.fullmatch(r"[a-z0-9]+", e):
-                out[e] = state
-    return out
+        for col_idx, cell in enumerate(cols[2:]):
+            if col_idx >= len(headers):
+                break
+            state = CELL_M if CELL_M in cell else "-"
+            # A cell may carry a parenthetical narrowing — "M (js/jsx only)".
+            # Under the old ROW-level check that was necessarily prose: there was
+            # no per-cell state for it to qualify. Per-cell it becomes machine
+            # -readable and is ENFORCED, which is the point of #847 — that cell
+            # is precisely check-code-health's documented raggedness (empty-
+            # handler covers .js/.jsx/.ts/.tsx but not .mjs/.cjs). Read as `M`
+            # for the extensions it names and `-` for the rest of the row, so the
+            # gate demands arms exactly where the contract promises them.
+            narrowed = None
+            paren = re.search(r"\(([^)]*)\bonly\)", cell)
+            if state == CELL_M and paren:
+                narrowed = {
+                    t for t in re.findall(r"[a-z0-9]+", paren.group(1)) if t != "only"
+                }
+            for e in exts:
+                if not re.fullmatch(r"[a-z0-9]+", e):
+                    continue
+                cell_state = state
+                if narrowed is not None:
+                    cell_state = CELL_M if e in narrowed else "-"
+                out[(e, headers[col_idx])] = cell_state
+    return headers, out
 
 
 # --- assertions 2 + 4 --------------------------------------------------------
@@ -258,38 +472,80 @@ for skill in GOVERNED:
         print("MISMATCH %s: missing contract.md/patterns.py/patterns.sh" % skill)
         continue
 
-    matrix = parse_matrix(read(contract), skill)
-    if matrix is None:
+    parsed = parse_matrix(read(contract), skill)
+    if parsed is None:
         print("NOMATRIX %s" % skill)
         continue
+    headers, matrix = parsed
     print("MATRIX %s %d" % (skill, len(matrix)))
 
-    have_py = py_exts(read(py))
-    have_sh = sh_exts(read(sh))
+    arms_py = py_arms(read(py))
+    arms_sh = sh_arms(read(sh))
+    bindings = BINDINGS.get(skill, {})
 
-    for ext, state in sorted(matrix.items()):
-        in_py, in_sh = ext in have_py, ext in have_sh
+    # Resolve each bound column's region ONCE per runtime, and fail loud on a
+    # binding that resolves to nothing. Without this the narrowing rots
+    # silently: rename `_scan_debugger`, or change an emitted tag, and the
+    # region simply stops matching — every cell in that column would then be
+    # compared against an EMPTY set, so `—` cells pass trivially and only `M`
+    # cells fail, in a way that reads as a scanner bug rather than a stale
+    # binding. Measured absence of a region is a defect in THIS gate.
+    resolved = {}
+    for column in sorted(bindings):
+        # Only columns THIS matrix actually declares. The map is written against
+        # the real tree, and a fixture carries a deliberate subset of columns for
+        # the same reason it carries a subset of scanners — so an unused binding
+        # is not a defect, it is a column this matrix does not have. Checking it
+        # anyway makes every fixture trip assertion 5 as collateral, which is
+        # precisely the "fixture arms exactly one assertion" property the
+        # fixtures README states.
+        if column not in headers:
+            continue
+        kind, key = bindings[column]
+        got_py = bound_exts(kind, key, arms_py, 0)
+        got_sh = bound_exts(kind, key, arms_sh, 1)
+        resolved[column] = (got_py, got_sh)
+        if not got_py:
+            print("VACUOUS %s: binding for column %r matches no patterns.py arm"
+                  % (skill, column))
+        if not got_sh:
+            print("VACUOUS %s: binding for column %r matches no patterns.sh arm"
+                  % (skill, column))
+
+    for (ext, column), state in sorted(matrix.items()):
+        if column not in resolved:
+            # An `M` cell in a column nothing binds is unenforceable — report it
+            # rather than pass over it, so adding a modeled column without a
+            # binding fails loudly instead of quietly going unchecked. `L` and
+            # `—` cells in an unbound column are the documented Phase 1 gap.
+            if state == CELL_M:
+                print("UNBOUND %s: .%s marked M in column %r, which has no binding"
+                      % (skill, ext, column))
+            continue
+        got_py, got_sh = resolved[column]
+        in_py, in_sh = ext in got_py, ext in got_sh
         if state == CELL_M:
             if not in_py:
-                print("MISMATCH %s: .%s marked M, no patterns.py arm" % (skill, ext))
+                print("MISMATCH %s: .%s marked M in column %r, no patterns.py arm"
+                      % (skill, ext, column))
             if not in_sh:
-                print("MISMATCH %s: .%s marked M, no patterns.sh arm" % (skill, ext))
+                print("MISMATCH %s: .%s marked M in column %r, no patterns.sh arm"
+                      % (skill, ext, column))
         else:
             if in_py:
-                print(
-                    "MISMATCH %s: .%s marked unsupported, patterns.py has an arm"
-                    % (skill, ext)
-                )
+                print("MISMATCH %s: .%s marked unsupported in column %r, "
+                      "patterns.py has an arm" % (skill, ext, column))
             if in_sh:
-                print(
-                    "MISMATCH %s: .%s marked unsupported, patterns.sh has an arm"
-                    % (skill, ext)
-                )
+                print("MISMATCH %s: .%s marked unsupported in column %r, "
+                      "patterns.sh has an arm" % (skill, ext, column))
 
     # A language the matrix does not mention at all, but both runtimes dispatch
-    # on, is an UNDECLARED arm — the drift the matrix exists to prevent.
-    for ext in sorted(have_py & have_sh):
-        if ext not in matrix and ext in normative:
+    # on, is an UNDECLARED arm — the drift the matrix exists to prevent. Stays
+    # whole-file: it asks whether the matrix names the LANGUAGE, which is a
+    # row-level question and independent of any column.
+    declared = {e for e, _c in matrix}
+    for ext in sorted(arm_exts(arms_py) & arm_exts(arms_sh)):
+        if ext not in declared and ext in normative:
             print("MISMATCH %s: .%s dispatched in both runtimes, not in matrix" % (skill, ext))
 PY
 )"
@@ -370,7 +626,7 @@ test_matrices_non_empty() {
             nonempty="no"
         fi
         assert_equals "yes" "$nonempty" \
-            "$skill's matrix names at least one language (got $count)"
+            "$skill's matrix names at least one cell (got $count)"
     done <<EOF
 $(report_lines MATRIX)
 EOF
@@ -393,7 +649,7 @@ test_no_contradiction() {
         "no dispatch site contradicts the normative EXT_LANG"
 }
 
-# --- Assertion 4: the matrix matches both runtimes ---------------------------
+# --- Assertion 4: the matrix matches both runtimes, PER CELL -----------------
 test_matrix_matches_source() {
     local bad
     bad="$(report_lines MISMATCH)"
@@ -401,12 +657,38 @@ test_matrix_matches_source() {
         "every matrix cell matches both runtimes"
 }
 
+# --- Assertion 5: anti-vacuity, the column bindings themselves (#847) --------
+# The per-cell narrowing is only as good as the binding map that backs it, and a
+# stale binding degrades QUIETLY — see the comment on `resolved` in the analyzer.
+# So a binding matching no arm in either runtime is its own failure, separate
+# from the cell comparisons it feeds. Same anti-vacuity discipline the normative
+# table and the matrices already get.
+test_bindings_resolve() {
+    local bad
+    bad="$(report_lines VACUOUS)"
+    assert_output_empty "$bad" \
+        "every column binding resolves to at least one arm in both runtimes"
+}
+
+# --- Assertion 6: no modeled column escapes the binding map (#847) -----------
+# An `M` cell in an unbound column would be unenforceable. Reporting it keeps the
+# map honest as columns are added — the alternative is a new modeled column that
+# silently goes unchecked, which is the same shape as the defect #847 fixes.
+test_modeled_columns_bound() {
+    local bad
+    bad="$(report_lines UNBOUND)"
+    assert_output_empty "$bad" \
+        "every column with an M cell has a source-region binding"
+}
+
 run_test test_normative_table_populated "normative EXT_LANG is populated (anti-vacuity)"
 run_test test_no_unmatched_scanner "a present scanner resolves its matrix (anti-vacuity)"
 run_test test_matrices_present "all four governed scanners declare a matrix (anti-vacuity)"
-run_test test_matrices_non_empty "each matrix names at least one language"
+run_test test_matrices_non_empty "each matrix names at least one cell"
 run_test test_no_contradiction "no dispatch site contradicts the normative table"
 run_test test_matrix_matches_source "matrix M/unsupported cells match both runtimes"
+run_test test_bindings_resolve "every column binding resolves in both runtimes (anti-vacuity)"
+run_test test_modeled_columns_bound "every modeled column has a binding"
 
 # --- Self-tests: each assertion actually fires -------------------------------
 #
@@ -459,6 +741,44 @@ test_selftest_fixtures() {
         "one-runtime fixture must fail the matrix<->source assertion"
     assert_contains "$out" "no patterns.sh arm" \
         "one-runtime fixture must name the missing bash arm specifically"
+
+    # The per-CATEGORY fixture (#847). The one fixture with a MULTI-column
+    # matrix — every other tree here uses a single synthetic column and so
+    # cannot express this defect at all, which is why the gap survived Phase 0.
+    #
+    # It is a genuine regression test, not a restatement of one-runtime:
+    # verified to PASS against the pre-#847 gate (the row-collapsing version)
+    # and FAIL against this one. `.rs` IS dispatched in both runtimes, so the
+    # whole-file union satisfies the old check; only the per-category narrowing
+    # sees that the `unclosed-handle` region lacks the arm.
+    out="$(selftest_report per-category)"
+    assert_contains "$out" "matrix M/unsupported cells match both runtimes ... FAIL" \
+        "per-category fixture must fail the matrix<->source assertion"
+    assert_contains "$out" "column 'unclosed-handle'" \
+        "per-category fixture must name the offending COLUMN, not just the language"
+    # Narrowness: the sibling column is correct and must NOT be reported. Without
+    # this the assertion above passes just as well on a gate that flags every
+    # column of the row — which is the row-collapsing behavior #847 removes.
+    assert_not_contains "$out" "column 'unreaped-subprocess'" \
+        "per-category fixture must not flag the column that IS correct"
+
+    # The arm-delimiting fixture (#847). The ONLY POSITIVE fixture here — it must
+    # PASS, where every other one arms a failure. That inversion is the point:
+    # the property is that a bash arm whose `;;` sits on the pattern line does
+    # NOT leak its successor's coverage, and a leak shows up as a spurious
+    # finding against a correct tree. So the failure mode is a false POSITIVE,
+    # and only a clean run can pin it.
+    #
+    # Kept because a mutation round found the same-line branch untested, not
+    # unreachable: neutering it silently added md/json/yaml coverage to every
+    # real check-lifecycle category, and nothing failed — those extensions are
+    # absent from both the matrix and EXT_LANG, so every comparison stayed
+    # silent. This fixture puts the phantom extension somewhere observable.
+    out="$(selftest_report sameline-arm)"
+    assert_not_contains "$out" "FAIL" \
+        "sameline-arm fixture must pass — a same-line ';;' arm must not leak coverage"
+    assert_contains "$out" "matrix M/unsupported cells match both runtimes ... PASS" \
+        "sameline-arm fixture must actually REACH the per-cell assertion"
 
     # The roster check skips under every OTHER fixture root, so without this its
     # failing branch is executed by nothing — the self-skipping-hides-the-risky-
