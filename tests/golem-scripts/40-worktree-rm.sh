@@ -1752,3 +1752,49 @@ test_worktree_rm_full_leftover_removal_is_unchanged() {
     assert_not_contains "$RUN_OUT" "undeletable entries remain" \
         "no partial-removal note when the removal was complete"
 }
+
+# #834 review cycle 1: the count must not exclude a `.git` the FILESYSTEM
+# refused, only one this function deliberately kept.
+#
+# The two are reached by different routes and look identical at the end: in both
+# the directory is still on disk with `.git` in it. But when the contents pass
+# fully succeeded, the `.git` removal WAS attempted and failed, which is a
+# genuine undeletable entry — while an unconditional exclusion reported
+# "0 undeletable entries remain" about a directory that visibly survived
+# (reproduced before the fix). A count that contradicts the directory's own
+# existence is precisely the misreporting this script exists to avoid, so the
+# branch is decided by the same observed state the removal was gated on.
+#
+# Fixture: everything outside `.git` is removable, and `.git` is a NON-EMPTY
+# DIRECTORY whose inner dir is unwritable — the one shape `rm -rf` cannot
+# remove. (A worktree's `.git` is normally a file; a directory here only has to
+# be undeletable, not realistic.)
+test_worktree_rm_counts_a_git_the_filesystem_refused() {
+    local sb blocked
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 94
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-94"
+
+    command rm -rf "$sb/.worktrees/issue-94/.git"
+    command mkdir -p "$sb/.worktrees/issue-94/.git/objects"
+    command touch "$sb/.worktrees/issue-94/.git/objects/blob"
+    blocked="$sb/.worktrees/issue-94/.git/objects"
+    command chmod 500 "$blocked"
+
+    run_in "$sb" "$WT_RM" 94
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "an undeletable .git is still tolerated, not a failure"
+    # The defining assertion: never report zero survivors for a directory that
+    # is still on disk.
+    assert_not_contains "$RUN_OUT" "0 undeletable entries remain" \
+        "never reports zero undeletable entries while the directory survives"
+    assert_contains "$RUN_OUT" "3 undeletable entries remain" \
+        "counts the refused .git subtree (.git, objects, blob) rather than excluding it"
+    assert_true "[ -e '$sb/.worktrees/issue-94' ]" "the directory really did survive"
+}

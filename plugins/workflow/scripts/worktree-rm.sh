@@ -494,8 +494,14 @@ leftover_is_worktree_residue() {
 # protects an operator's scratch directory from an unconditional `rm -rf`.
 #
 # Tolerating is not swallowing. The surviving-entry COUNT is reported, so the
-# expected few-stale-dentries case stays visible and is distinguishable from a
-# genuine misconfiguration (a removal that accomplished nothing at all).
+# expected few-stale-dentries case stays visible rather than being absorbed
+# silently. The count is the ONLY signal that varies — the wording does not
+# change with it, so an operator reading a large number against a small worktree
+# is what distinguishes a removal that accomplished nothing from one that hit a
+# few stale dentries. That is a weaker distinction than a dedicated message
+# would give, and it is deliberate: teardown has no way to know what SHOULD have
+# been in a deregistered directory, so any "nothing was removed" claim would be
+# guessing at a denominator it does not have.
 #
 # `find -exec rm -rf {} +` rather than a `"$wt"/*` glob: the glob misses
 # dotfiles, and `.git` is precisely what must be controlled here. `-mindepth 1
@@ -528,13 +534,26 @@ remove_leftover_dir() {
     # CONTINUES (removed=1, exit 0) to the branch and tmux steps — the worktree
     # is deregistered and nothing git-tracked remains, which is the whole
     # definition of done here.
-    # `.git` is EXCLUDED from the count: it survives by this function's own
-    # choice, not because the filesystem refused it, and counting a deliberate
-    # retention as an undeletable entry would overstate the condition by one on
-    # every partial removal.
-    survivors="$(command find "$wtdir" -mindepth 1 -not -path "$wtdir/.git" \
-        -not -path "$wtdir/.git/*" 2>/dev/null | command wc -l | command tr -d '[:space:]')"
-    command echo "  cleared leftover directory $wtdir (${survivors:-?} undeletable entries remain)"
+    #
+    # `.git` is excluded from the count ONLY when it was kept deliberately —
+    # i.e. when non-`.git` entries survived, so the block above never attempted
+    # it. Counting a deliberate retention would overstate the condition by one
+    # on every partial removal. But when the contents pass fully succeeded, the
+    # removal WAS attempted and the filesystem refused it, which is a genuine
+    # undeletable entry. Excluding it unconditionally would print the
+    # self-contradictory "0 undeletable entries remain" about a directory that
+    # is still on disk — an outcome reported as clean while a real removal
+    # failure went uncounted, which is the misreporting class this script exists
+    # to avoid. So decide by the same OBSERVED state the removal was gated on,
+    # never by assuming which branch we came from.
+    if [ -n "$(command find "$wtdir" -mindepth 1 -maxdepth 1 ! -name .git 2>/dev/null)" ]; then
+        survivors="$(command find "$wtdir" -mindepth 1 -not -path "$wtdir/.git" \
+            -not -path "$wtdir/.git/*" 2>/dev/null | command wc -l | command tr -d '[:space:]')"
+    else
+        survivors="$(command find "$wtdir" -mindepth 1 2>/dev/null |
+            command wc -l | command tr -d '[:space:]')"
+    fi
+    command echo "  cleared leftover directory $wtdir ($survivors undeletable entries remain)"
     command echo "  (expected on a bindfs/FUSE overlay — nothing git-tracked is at risk)"
     removed=1
 }
