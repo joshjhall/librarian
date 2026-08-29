@@ -300,6 +300,52 @@ EOF
     fi
 }
 
+# One fixture per is_test_file ARM that the coarse mutations could not prove.
+#
+# The mutation round removed TEST_DIR_SEGMENTS and TEST_BASENAME_GLOBS as whole
+# loops, so both died on the `tests/` + `test_*.py` + `.test.ts` fixtures alone —
+# leaving `spec`, `__tests__`, `__pycache__`, `*_spec.*` and `*.spec.*` asserted
+# by nobody. A coarse mutation cannot tell a covered arm from an uncovered
+# sibling ([[asymmetric-mutation-reads-as-untested]]), and dropping any one of
+# these from either runtime's copy would silently score those files near zero
+# again — the exact #851 defect, reached through a door no test was watching.
+#
+# Asserted through the MEASUREMENT path (production LOC), not by calling the
+# predicate, so the python table and its awk mirror are both exercised.
+test_test_file_remaining_arms() {
+    local d f list arm
+
+    # Directory-segment arms beyond `tests/`.
+    for arm in spec __tests__ __pycache__; do
+        d="$(fresh_dir)"
+        command mkdir -p "$d/$arm"
+        f="$d/$arm/helpers.ts"
+        command cat >"$f" <<'EOF'
+describe("alpha", () => {
+  it("a", () => { expect(1).toBe(1); });
+  it("b", () => { expect(2).toBe(2); });
+});
+EOF
+        list="$(list_of "$f")"
+        assert_fires "$list" file-length "4 production LOC" \
+            "ts: a $arm/ directory segment makes the file a test file (#851)" DECOMP_LOC_WARN=1
+    done
+
+    # Basename glob arms beyond `test_*.*` / `*.test.*` / `*_test.*`.
+    d="$(fresh_dir)"
+    for f in api.spec.ts api_spec.ts; do
+        command cat >"$d/$f" <<'EOF'
+describe("alpha", () => {
+  it("a", () => { expect(1).toBe(1); });
+  it("b", () => { expect(2).toBe(2); });
+});
+EOF
+        list="$(list_of "$d/$f")"
+        assert_fires "$list" file-length "4 production LOC" \
+            "ts: $f matches a spec basename glob (#851)" DECOMP_LOC_WARN=1
+    done
+}
+
 # ============================================================================
 # TypeScript segmenter (#726)
 # ============================================================================

@@ -151,6 +151,7 @@ run_fragment_test test_separate_file_tests_are_production "js/ts/py: separate-fi
 run_fragment_test test_same_file_regions_still_exclude "rs/py: same-file test regions at a non-test path still exclude (#851)"
 run_fragment_test test_test_file_directory_arm_and_seam "ts: tests/ directory arm; a test file yields a SEAM, not just a size (#851)"
 run_fragment_test test_test_file_relative_leading_segment "ts: a LEADING tests/ segment on a relative path; contest.ts counter (#851)"
+run_fragment_test test_test_file_remaining_arms "ts: spec/__tests__/__pycache__ segments and *_spec/*.spec basenames (#851)"
 run_fragment_test test_seam_swift "swift: unit forms, /// comment model, both test conventions, seam-not-decline (#728)"
 run_fragment_test test_seam_rust "rust: fn-family seam + #[cfg(test)] region exclusion"
 run_fragment_test test_seam_go "go: func-family seam + func Test exclusion"
