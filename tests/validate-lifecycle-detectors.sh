@@ -157,6 +157,17 @@ test_unreaped_subprocess() {
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: Rust Command::new fires"
 
+    # KNOWN TRADE-OFF (pinned): the arm also matches `clap::Command::new`, the
+    # CLI-builder idiom, which spawns nothing. A DELIBERATE false positive the
+    # MEDIUM certainty + LLM pass-2 absorbs — the same treatment the broad JS
+    # `.on(` alternative gets below. Pinned so a future narrowing is intentional
+    # rather than an accidental behavior change.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let m = clap::Command::new("app").version("1.0");' >"$d/clap.rs"
+    list="$(make_list "$d/l" "$d/clap.rs")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: clap::Command::new also fires (documented trade-off)"
+
     # The remaining JS spawn-family alternatives (spawnSync/execFileSync/execSync)
     # asserted independently so a regression dropping one can't hide behind
     # another (same isolation principle as the listener category).

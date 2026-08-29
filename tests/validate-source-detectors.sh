@@ -228,6 +228,31 @@ test_security_secrets() {
     list="$(make_list "$d/l" "$d/q.sql")"
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: an unmodeled language is not scanned for credentials"
+
+    # CONFIG FORMATS keep their coverage through the gating. Caught in review:
+    # scoping the lexical model to source languages alone would have silently
+    # stopped scanning docker-compose.yml / application.properties / .env — the
+    # file types where checked-in credentials most often live — and ADR § 5
+    # makes that silence total. Verified against origin/main: both of these DID
+    # fire before this change.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password: "realsecret123"' >"$d/compose.yml"
+    list="$(make_list "$d/l" "$d/compose.yml")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in .yml still fires after gating"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"' >"$d/app.ini"
+    list="$(make_list "$d/l" "$d/app.ini")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a credential in .ini still fires after gating"
+
+    # ...and the config comment model is `#`, applied in both directions.
+    d="$(fresh_dir)"
+    command printf '%s\n' '# password = "realsecret123"' >"$d/commented.ini"
+    list="$(make_list "$d/l" "$d/commented.ini")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a # comment in .ini stays silent"
 }
 
 # ============================================================================

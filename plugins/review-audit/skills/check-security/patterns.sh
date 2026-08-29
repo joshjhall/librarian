@@ -85,6 +85,15 @@ lang_of() {
         *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh]) command printf 'sh' ;;
         *.[Jj][Aa][Vv][Aa] | *.[Kk][Tt]) command printf 'java' ;;
         *.[Ss][Ww][Ii][Ff][Tt]) command printf 'swift' ;;
+        # CONFIG FORMATS — see the long note beside patterns.py's EXT_LANG.
+        # Scanner-local (absent from the normative table, so they cannot
+        # contradict it), and present because omitting them silently stops
+        # scanning the file types where checked-in credentials most often live.
+        # All spell a line comment with `#`.
+        *.[Yy][Mm][Ll] | *.[Yy][Aa][Mm][Ll]) command printf 'conf' ;;
+        *.[Ii][Nn][Ii] | *.[Cc][Ff][Gg] | *.[Cc][Oo][Nn][Ff]) command printf 'conf' ;;
+        *.[Tt][Oo][Mm][Ll] | *.[Pp][Rr][Oo][Pp][Ee][Rr][Tt][Ii][Ee][Ss]) command printf 'conf' ;;
+        *.[Ee][Nn][Vv]) command printf 'conf' ;;
         *) command printf '' ;;
     esac
 }
@@ -95,7 +104,7 @@ lang_of() {
 # — BSD grep reads \s as a literal `s` (#679).
 comment_re() {
     case "$1" in
-        py | sh | rb) command printf '^[0-9]+:[[:space:]]*#' ;;
+        py | sh | rb | conf) command printf '^[0-9]+:[[:space:]]*#' ;;
         js | ts | rs | go | java | swift) command printf '^[0-9]+:[[:space:]]*(//|/\*|\*)' ;;
         *) command printf '' ;;
     esac

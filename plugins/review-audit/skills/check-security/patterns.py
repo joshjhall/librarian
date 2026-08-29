@@ -95,6 +95,27 @@ EXT_LANG = {
     "java": "java",
     "kt": "java",
     "swift": "swift",
+    # CONFIG FORMATS. Not source languages, and absent from the normative
+    # EXT_LANG (which serves the decomposition lenses, where they are not units
+    # of code) — so they are scanner-local additions, permitted because
+    # lint-language-table-sync.sh checks SUBSET-consistency: a key the normative
+    # table does not carry cannot contradict it.
+    #
+    # They are here because leaving them out is a SECURITY REGRESSION, caught in
+    # review. Before the gating, the credential detector ran on every file; a
+    # `password: "…"` in a docker-compose.yml or an application.properties was
+    # flagged. Scoping the lexical model to source languages would silently stop
+    # scanning exactly the file types where checked-in credentials most often
+    # live — and ADR § 5 makes that silence total. All of these spell a line
+    # comment with `#`.
+    "yml": "conf",
+    "yaml": "conf",
+    "ini": "conf",
+    "cfg": "conf",
+    "conf": "conf",
+    "toml": "conf",
+    "properties": "conf",
+    "env": "conf",
 }
 
 # How each language opens a LINE comment. Anchored at line start (modulo
@@ -105,6 +126,7 @@ COMMENT_RE = {
     "py": re.compile(r"^[ \t]*#"),
     "sh": re.compile(r"^[ \t]*#"),
     "rb": re.compile(r"^[ \t]*#"),
+    "conf": re.compile(r"^[ \t]*#"),
     "js": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "ts": re.compile(r"^[ \t]*(?://|/\*|\*)"),
     "rs": re.compile(r"^[ \t]*(?://|/\*|\*)"),

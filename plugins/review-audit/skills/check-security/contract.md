@@ -48,6 +48,7 @@ for the same reason — one cell cannot carry two letters):
 | Java, Kotlin | java, kt          | L              | L                     | —              | L        | L               |
 | Bash        | sh, bash           | L              | L                     | —              | L        | L               |
 | Swift       | swift              | L              | L                     | —              | L        | L               |
+| Config      | yml, yaml, ini, cfg, conf, toml, properties, env | L | L         | —              | L        | L               |
 | every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
@@ -59,6 +60,17 @@ language keeps `secret-literal` and `xss-risk` (both lexical-independent — an
 language's comment model to the file. That is ADR 0002 § 1's `—` state, and it
 is **silent** per § 5: no TSV row is emitted, not even an `unsupported-language`
 one.
+
+The **Config** row is why that silence has to be reasoned about rather than
+accepted. These are not source languages and are absent from the normative
+`EXT_LANG` (which serves the decomposition lenses, where a `.yml` is not a unit
+of code) — they are scanner-local keys, permitted because the sync gate checks
+*subset*-consistency and a key the normative table lacks cannot contradict it.
+They are modeled here because omitting them is a **security regression**: before
+the gating the credential detector ran on every file, so a `password: "…"` in a
+`docker-compose.yml` or an `application.properties` was flagged. Dropping them to
+`—` would silently stop scanning exactly the file types where checked-in
+credentials most often live. All of them spell a line comment with `#`.
 
 `injection-risk` is the only category with per-language detectors: SQL built by
 f-string (Python), template literal (JS/TS), `#{}` interpolation (Ruby), or
