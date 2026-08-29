@@ -258,7 +258,8 @@ fallthrough (so a reader can tell "unsupported" from "nobody got to it yet"), an
   fill the matrix, add arms to both runtimes — instead of an open-ended audit.
 - `tests/lint-language-table-sync.sh` converts each future phase's dual-runtime
   obligation from "remember to do both" into a gate. It would have caught
-  [#836](https://github.com/joshjhall/librarian/issues/836).
+  [#836](https://github.com/joshjhall/librarian/issues/836) — which is the
+  per-language shape it checks; see the granularity limit below.
 - The gate's no-contradiction assertion also covers the unpinned
   `check-decomposition` ↔ `sizing.sh` bash tables, which nothing checked before.
 - No thirteenth language table.
@@ -271,6 +272,18 @@ fallthrough (so a reader can tell "unsupported" from "nobody got to it yet"), an
 - `L` cells cannot be gate-checked until Phase 1: they assert both the absence of
   a detector and the presence of correct lexical gating, and the gating does not
   exist yet.
+- **The gate checks the matrix per LANGUAGE, not per CELL.** It unions the
+  extensions dispatched anywhere in a scanner's file and collapses a matrix row
+  across its category columns, so it answers *"is this language dispatched in
+  both runtimes, as the matrix claims"* — the #836 shape — and not *"is this
+  category's cell accurate"*. A wrong cell in one column can pass while another
+  column's arm for the same extension exists, which matters precisely because
+  the matrices are per-category and genuinely ragged (`check-code-health`'s
+  three dispatch chains disagree about `rb` and about `.mjs`/`.cjs`). Narrowing
+  to per-category means locating each detector family's source region — Phase 1
+  work, when those arms are being rewritten anyway. Until then, a matrix cell is
+  reviewed by a human and only its language dimension is enforced. Tracked as
+  [#847](https://github.com/joshjhall/librarian/issues/847).
 - The matrices are hand-transcribed from source for their first version. The gate
   checks `M` and `—` structurally from Phase 0, but the initial transcription
   needs review by eye.

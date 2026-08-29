@@ -43,6 +43,24 @@
 # shape of check that would have caught #836, where check-lifecycle's bash half
 # silently diverged from its Python twin.
 #
+# THE EXACT GRANULARITY OF ASSERTION 4, because it is easy to over-read. It is
+# PER-LANGUAGE, not per-matrix-CELL:
+#
+#   - `have_py`/`have_sh` are unions of every extension dispatched ANYWHERE in
+#     the file. check-code-health has THREE dispatch chains with genuinely
+#     different coverage (debug-print excludes rb; debugger includes it), and
+#     this check does not tell them apart.
+#   - `parse_matrix` collapses a row to one state by OR-ing its category columns,
+#     so a row that is `M` in one column and `—` in another reads as `M`.
+#
+# So it answers "is this LANGUAGE dispatched in both runtimes, as the matrix
+# claims" — which is exactly the #836 shape — and NOT "is this CATEGORY's cell
+# accurate". A wrong cell in one column can still pass while another column's arm
+# for that extension exists. Narrowing to per-category means locating each
+# detector family's source region, which is Phase 1 work, when the arms are being
+# rewritten anyway. Recorded rather than silently accepted: see ADR 0002
+# § Consequences, and the deferred finding it cites.
+#
 # Assertion 3 additionally covers a pair NOTHING checked before: the byte-identical
 # ext->lang `case` blocks in check-decomposition/patterns.sh and
 # ship-issue/sizing.sh sit OUTSIDE any `>>> shared:` region and are pinned by no
@@ -285,8 +303,16 @@ report_lines() {
 test_normative_table_populated() {
     local count
     count="$(report_lines NORMATIVE | command sed -n 's/^NORMATIVE //p')"
-    assert_true "[ -n '$count' ] && [ '$count' -gt 0 ] 2>/dev/null" \
-        "normative EXT_LANG parsed and non-empty (got: '${count:-<none>}')"
+    # No assert_true anywhere in this gate: it evals its command string, and
+    # every value here is analyzer-derived. Compare in bash, report via a
+    # parameter-taking assertion. See the NOTE above test_no_contradiction.
+    case "$count" in
+        '' | *[!0-9]*) assert_output_empty "normative EXT_LANG unparseable (got: '${count:-<none>}')" \
+            "normative EXT_LANG parsed and non-empty" ;;
+        0) assert_output_empty "normative EXT_LANG parsed but EMPTY" \
+            "normative EXT_LANG parsed and non-empty" ;;
+        *) : ;; # a positive integer — the only passing shape
+    esac
 }
 
 # --- Assertion 2: anti-vacuity, the matrices --------------------------------
@@ -301,8 +327,8 @@ test_normative_table_populated() {
 test_no_unmatched_scanner() {
     local bad
     bad="$(report_lines NOMATRIX)"
-    assert_true "[ -z \"\$(command printf '%s' \"$bad\")\" ]" \
-        "every present scanner resolves a Language Support matrix${bad:+ — $bad}"
+    assert_output_empty "$bad" \
+        "every present scanner resolves a Language Support matrix"
 }
 
 test_matrices_present() {
@@ -313,8 +339,12 @@ test_matrices_present() {
     fi
     found="$(report_lines MATRIX | command awk '{print $2}' | command sort)"
     for skill in check-security check-code-health check-lifecycle check-docs-missing-api; do
-        assert_true "command printf '%s\n' '$found' | command grep -qx '$skill'" \
-            "$skill declares a Language Support matrix"
+        if command printf '%s\n' "$found" | command grep -qx "$skill"; then
+            :
+        else
+            assert_output_empty "no matrix declared" \
+                "$skill declares a Language Support matrix"
+        fi
     done
 }
 
@@ -324,27 +354,40 @@ test_matrices_non_empty() {
         [ -n "$line" ] || continue
         skill="$(command printf '%s' "$line" | command awk '{print $2}')"
         count="$(command printf '%s' "$line" | command awk '{print $3}')"
-        assert_true "[ '$count' -gt 0 ]" \
-            "$skill's matrix names at least one language (got $count)"
+        if [ "$count" -gt 0 ] 2>/dev/null; then
+            :
+        else
+            assert_output_empty "matrix is empty (count=$count)" \
+                "$skill's matrix names at least one language"
+        fi
     done <<EOF
 $(report_lines MATRIX)
 EOF
 }
 
 # --- Assertion 3: no contradiction with the normative table ------------------
+# NOTE — these use assert_output_empty, NOT assert_true, and that is a security
+# property rather than a style choice. assert_true EVALs its command string
+# (tests/lib/harness.sh: `eval "$cmd"`), and a CONTRADICTION row embeds `rel`,
+# the on-disk relative path of any *.sh the walk finds under plugins/. That path
+# is attacker-controlled in the only sense that matters here: a PR can add a file
+# whose NAME contains `$(...)` or backticks without touching this gate at all,
+# and the substitution would then execute when CI or pre-push runs it. The
+# extension/language tokens are `[a-z0-9]+`-constrained; the path is not.
+# assert_output_empty takes the value as a PARAMETER and never evals it.
 test_no_contradiction() {
     local bad
     bad="$(report_lines CONTRADICTION)"
-    assert_true "[ -z \"\$(command printf '%s' \"$bad\")\" ]" \
-        "no dispatch site contradicts the normative EXT_LANG${bad:+ — $bad}"
+    assert_output_empty "$bad" \
+        "no dispatch site contradicts the normative EXT_LANG"
 }
 
 # --- Assertion 4: the matrix matches both runtimes ---------------------------
 test_matrix_matches_source() {
     local bad
     bad="$(report_lines MISMATCH)"
-    assert_true "[ -z \"\$(command printf '%s' \"$bad\")\" ]" \
-        "every matrix cell matches both runtimes${bad:+ — $bad}"
+    assert_output_empty "$bad" \
+        "every matrix cell matches both runtimes"
 }
 
 run_test test_normative_table_populated "normative EXT_LANG is populated (anti-vacuity)"
