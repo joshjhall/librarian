@@ -61,6 +61,46 @@ truncate_chars() {
     fi
 }
 
+# --- the lexical model (ADR 0002 § 2, #622 Phase 1) --------------------------
+# A SUBSET of the normative EXT_LANG / COMMENT_RE in
+# check-decomposition/loc_engine.py, mirroring patterns.py's copy arm-for-arm.
+# tests/lint-language-table-sync.sh asserts subset-consistency: this may cover
+# FEWER extensions than the normative table but may never contradict it.
+#
+# Two `case` functions rather than an associative array: `declare -A` is bash 4
+# and macOS ships bash 3.2 (CLAUDE.md § runtime policy). The same idiom
+# check-decomposition/patterns.sh already uses for its awk is_comment().
+
+# lang_of <file> — language key on stdout, or EMPTY when unmodeled. An empty
+# result is the ADR § 1 `—` state and gates every lexical-dependent detector.
+# Bracket classes keep the match case-insensitive and fork-free (#754).
+lang_of() {
+    case "$1" in
+        *.[Pp][Yy]) command printf 'py' ;;
+        *.[Jj][Ss] | *.[Jj][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss]) command printf 'js' ;;
+        *.[Tt][Ss] | *.[Tt][Ss][Xx]) command printf 'ts' ;;
+        *.[Rr][Ss]) command printf 'rs' ;;
+        *.[Gg][Oo]) command printf 'go' ;;
+        *.[Rr][Bb]) command printf 'rb' ;;
+        *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh]) command printf 'sh' ;;
+        *.[Jj][Aa][Vv][Aa] | *.[Kk][Tt]) command printf 'java' ;;
+        *.[Ss][Ww][Ii][Ff][Tt]) command printf 'swift' ;;
+        *) command printf '' ;;
+    esac
+}
+
+# comment_re <lang> — ERE matching a line that OPENS a comment in LANG, applied
+# AFTER grep -n's "<lineno>:" prefix (hence the leading [0-9]+:). Anchored at
+# line start: #837's defect was an unanchored substring test. POSIX classes only
+# — BSD grep reads \s as a literal `s` (#679).
+comment_re() {
+    case "$1" in
+        py | sh | rb) command printf '^[0-9]+:[[:space:]]*#' ;;
+        js | ts | rs | go | java | swift) command printf '^[0-9]+:[[:space:]]*(//|/\*|\*)' ;;
+        *) command printf '' ;;
+    esac
+}
+
 # XSS detection patterns — stored as variable to avoid hook false positives
 # on the pattern strings themselves (this script DETECTS these, not uses them)
 XSS_REACT_PATTERN='dangerously''SetInnerHTML'
@@ -77,7 +117,16 @@ while IFS= read -r file; do
         *lock.json | *lock.yaml | *.lock | *go.sum) continue ;;
     esac
 
+    # Resolved ONCE PER FILE — the language is a property of the path, not of a
+    # line. Empty means unmodeled, which gates every lexical-dependent detector
+    # below (ADR 0002 § 1, the `—` state; silent per § 5).
+    file_lang="$(lang_of "$file")"
+    file_comment_re="$(comment_re "$file_lang")"
+
     # --- Category: hardcoded-secret ---
+    # The four literal patterns below are LEXICAL-INDEPENDENT (ADR 0002 § 3) and
+    # run on every file: a leaked AKIA key is interesting wherever it appears,
+    # arguably MORE so inside a comment.
 
     # AWS access keys (AKIA followed by 16 uppercase alphanumeric chars)
     command grep -nE 'AKIA[0-9A-Z]{16}' "$file" 2>/dev/null |
@@ -130,16 +179,45 @@ while IFS= read -r file; do
     # escaped ', and reopens. (Earlier this was `["\x27]`, but GNU grep does not
     # expand \x27 inside a bracket expression — it added literal \,x,2,7 to the
     # class, so any value containing x/2/7 was silently missed. Fixed in #168.)
-    command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
-        command grep -viE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_|#|//|/\*)' |
-        while IFS= read -r raw; do
-            line_num=${raw%%:*}
-            content=${raw#*:}
-            evidence=$(truncate_chars 80 "$content")
-            command printf '%s\t%s\t%s\t%s\t%s\n' \
-                "$file" "$line_num" "hardcoded-secret" \
-                "Possible hardcoded credential: ${evidence}" "HIGH"
-        done || true
+    # LEXICAL-DEPENDENT (ADR 0002 § 3) — gated on the resolved language, and
+    # skipped entirely for a file whose lexical model this scanner lacks.
+    #
+    # #837: the old denylist conflated two unrelated tests in ONE unanchored
+    # substring match over the WHOLE line —
+    #   (changeme|placeholder|...|#|//|/\*)
+    # which failed in both directions:
+    #   FALSE NEGATIVE  password = "Str0ng#Pass#Value"   (# inside the value)
+    #   FALSE NEGATIVE  password = "realsecret123"  # noqa  (trailing comment)
+    #   FALSE POSITIVE  -- password = "x"   in .lua/.sql (`--` not modeled)
+    # A false-clean in a security scanner, so the two tests are now separate:
+    #   1. the COMMENT test is line-start anchored and per-language (grep -vE
+    #      "$file_comment_re", which already carries grep -n's "<lineno>:");
+    #   2. the PLACEHOLDER test matches only the extracted VALUE, never the
+    #      whole line, so a `#` outside the value can no longer suppress.
+    if [ -n "$file_lang" ]; then
+        command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
+            command grep -vE "$file_comment_re" |
+            while IFS= read -r raw; do
+                line_num=${raw%%:*}
+                content=${raw#*:}
+                # Extract just the credential value — the assignment fragment,
+                # then peel the surrounding quotes with parameter expansion
+                # (bash-3.2 clean; no sed, whose //I flag is GNU-only).
+                assign=$(command printf '%s' "$content" |
+                    command grep -oEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']' |
+                    command head -n 1)
+                value=${assign#*[\"\']}
+                value=${value%[\"\']}
+                if command printf '%s' "$value" |
+                    command grep -qiE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_)'; then
+                    continue
+                fi
+                evidence=$(truncate_chars 80 "$content")
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "hardcoded-secret" \
+                    "Possible hardcoded credential: ${evidence}" "HIGH"
+            done || true
+    fi
 
     # --- Category: injection-risk ---
 
@@ -188,18 +266,46 @@ while IFS= read -r file; do
                         "SQL with string interpolation: ${evidence}" "HIGH"
                 done || true
             ;;
+        *.[Rr][Ss])
+            # Rust builds SQL with format!/write! interpolation ({} holes) or by
+            # push_str onto a String — the idiomatic spelling of the same
+            # unsanitized-concatenation defect the other arms catch (#838).
+            command grep -nE '(format!|write!|writeln!)[[:space:]]*\([[:space:]]*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "injection-risk" \
+                        "SQL in format! interpolation: ${evidence}" "HIGH"
+                done || true
+            command grep -nE 'push_str[[:space:]]*\([[:space:]]*&?(format![[:space:]]*\([[:space:]]*)?"(SELECT|INSERT|UPDATE|DELETE|DROP)\b' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "injection-risk" \
+                        "SQL appended to String: ${evidence}" "HIGH"
+                done || true
+            ;;
     esac
 
-    # String concatenation with SQL keywords (all languages)
-    command grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"[[:space:]]*\+[[:space:]]*' "$file" 2>/dev/null |
-        while IFS= read -r raw; do
-            line_num=${raw%%:*}
-            content=${raw#*:}
-            evidence=$(truncate_chars 80 "$content")
-            command printf '%s\t%s\t%s\t%s\t%s\n' \
-                "$file" "$line_num" "injection-risk" \
-                "SQL string concatenation: ${evidence}" "HIGH"
-        done || true
+    # String concatenation with SQL keywords. LEXICAL-DEPENDENT (ADR 0002 § 3) —
+    # it reasons about string-literal form, so it is gated on the resolved
+    # language and skipped on a comment line.
+    if [ -n "$file_lang" ]; then
+        command grep -nE '"(SELECT|INSERT|UPDATE|DELETE)\b.*"[[:space:]]*\+[[:space:]]*' "$file" 2>/dev/null |
+            command grep -vE "$file_comment_re" |
+            while IFS= read -r raw; do
+                line_num=${raw%%:*}
+                content=${raw#*:}
+                evidence=$(truncate_chars 80 "$content")
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "injection-risk" \
+                    "SQL string concatenation: ${evidence}" "HIGH"
+            done || true
+    fi
 
     # --- Category: xss-risk ---
 
@@ -249,33 +355,36 @@ while IFS= read -r file; do
 
     # --- Category: insecure-crypto ---
 
-    # MD5/SHA1 used for security (skip comment-only lines). The skip filter must
-    # match AFTER grep -n's "<lineno>:" prefix — anchoring at plain `^\s*#` never
-    # fired (the line always starts with a digit), so comment lines were flagged
-    # too. `^[0-9]+:\s*(#|...)` skips a line whose first non-space code char opens
-    # a comment. (Fixed in #168.)
-    command grep -nEi '\b(md5|sha1)[[:space:]]*\(' "$file" 2>/dev/null |
-        command grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
-        while IFS= read -r raw; do
-            line_num=${raw%%:*}
-            content=${raw#*:}
-            evidence=$(truncate_chars 80 "$content")
-            command printf '%s\t%s\t%s\t%s\t%s\n' \
-                "$file" "$line_num" "insecure-crypto" \
-                "Weak hash algorithm: ${evidence}" "HIGH"
-        done || true
+    # LEXICAL-DEPENDENT (ADR 0002 § 3). This detector always ATTEMPTED to consult
+    # a comment model — the skip filter matches AFTER grep -n's "<lineno>:"
+    # prefix, since anchoring at plain `^\s*#` never fired (#168) — but the model
+    # was hardcoded C-family (`#|//|/\*|\*`) and applied to every file regardless
+    # of language, so a `--` comment in .lua/.sql was scanned as code. It now
+    # consults the language's own model and does not run on an unresolved one.
+    if [ -n "$file_lang" ]; then
+        # MD5/SHA1 used for security (skip comment lines).
+        command grep -nEi '\b(md5|sha1)[[:space:]]*\(' "$file" 2>/dev/null |
+            command grep -vE "$file_comment_re" |
+            while IFS= read -r raw; do
+                line_num=${raw%%:*}
+                content=${raw#*:}
+                evidence=$(truncate_chars 80 "$content")
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "insecure-crypto" \
+                    "Weak hash algorithm: ${evidence}" "HIGH"
+            done || true
 
-    # ECB mode encryption (skip comment-only lines — same grep -n prefix fix as
-    # the weak-hash probe above; see #168).
-    command grep -nEi '\bECB\b|MODE_ECB|mode.*ecb' "$file" 2>/dev/null |
-        command grep -vE '^[0-9]+:[[:space:]]*(#|//|/\*|\*)' |
-        while IFS= read -r raw; do
-            line_num=${raw%%:*}
-            content=${raw#*:}
-            evidence=$(truncate_chars 80 "$content")
-            command printf '%s\t%s\t%s\t%s\t%s\n' \
-                "$file" "$line_num" "insecure-crypto" \
-                "ECB mode encryption: ${evidence}" "HIGH"
-        done || true
+        # ECB mode encryption (skip comment lines).
+        command grep -nEi '\bECB\b|MODE_ECB|mode.*ecb' "$file" 2>/dev/null |
+            command grep -vE "$file_comment_re" |
+            while IFS= read -r raw; do
+                line_num=${raw%%:*}
+                content=${raw#*:}
+                evidence=$(truncate_chars 80 "$content")
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "insecure-crypto" \
+                    "ECB mode encryption: ${evidence}" "HIGH"
+            done || true
+    fi
 
 done <"$FILE_LIST"

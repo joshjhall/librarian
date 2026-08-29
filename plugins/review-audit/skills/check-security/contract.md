@@ -26,21 +26,46 @@ Governed by [ADR 0002](../../docs/adr/0002-scanner-language-support.md).
 detector; the language-agnostic detectors run under its comment model).
 `—` = unsupported (not scanned).
 
+`hardcoded-secret` is **two detector families with different classifications**,
+so it is two columns here (the same treatment #847 gave `debug-statement`, and
+for the same reason — one cell cannot carry two letters):
+
+- `secret-literal` — the AWS / GitHub / Stripe / private-key patterns.
+  Lexical-**independent**, so it runs on every file including unmodeled ones.
+- `credential-assignment` — the generic `password = "…"` detector.
+  Lexical-**dependent**, so it runs only where the comment model is known.
+
 <!-- contract: check-security-language-support -->
 
-| Language   | ext(s)             | hardcoded-secret | injection-risk | xss-risk | insecure-crypto |
-| ---------- | ------------------ | ---------------- | -------------- | -------- | --------------- |
-| Python     | py                 | L                | M              | L        | L               |
-| JavaScript | js, jsx            | L                | M              | L        | L               |
-| TypeScript | ts, tsx            | L                | M              | L        | L               |
-| Ruby       | rb                 | L                | M              | L        | L               |
-| every other  | —                  | L                | —              | L        | L               |
+| Language    | ext(s)             | secret-literal | credential-assignment | injection-risk | xss-risk | insecure-crypto |
+| ----------- | ------------------ | -------------- | --------------------- | -------------- | -------- | --------------- |
+| Python      | py                 | L              | L                     | M              | L        | L               |
+| JavaScript  | js, jsx, mjs, cjs  | L              | L                     | M (js/jsx only) | L        | L               |
+| TypeScript  | ts, tsx            | L              | L                     | M              | L        | L               |
+| Ruby        | rb                 | L              | L                     | M              | L        | L               |
+| Rust        | rs                 | L              | L                     | M              | L        | L               |
+| Go          | go                 | L              | L                     | —              | L        | L               |
+| Java, Kotlin | java, kt          | L              | L                     | —              | L        | L               |
+| Bash        | sh, bash           | L              | L                     | —              | L        | L               |
+| Swift       | swift              | L              | L                     | —              | L        | L               |
+| every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
 
+The `every other` row is where the three states differ visibly. An unmodeled
+language keeps `secret-literal` and `xss-risk` (both lexical-independent — an
+`AKIA…` key is a leaked key in any syntax) but loses `credential-assignment` and
+`insecure-crypto` entirely, because running them would mean applying some other
+language's comment model to the file. That is ADR 0002 § 1's `—` state, and it
+is **silent** per § 5: no TSV row is emitted, not even an `unsupported-language`
+one.
+
 `injection-risk` is the only category with per-language detectors: SQL built by
-f-string (Python), template literal (JS/TS) or `#{}` interpolation (Ruby). Its
-string-concatenation arm is lexical-dependent and currently ungated — see below.
+f-string (Python), template literal (JS/TS), `#{}` interpolation (Ruby), or
+`format!`/`push_str` (Rust). Its string-concatenation arm is lexical-dependent
+and gated. The JS narrowing is real: the template-literal arm dispatches on
+`js`/`jsx`/`ts`/`tsx` only, so `.mjs`/`.cjs` reach the lexical-independent
+detectors but not that arm.
 
 Detector classification per ADR 0002 § 3:
 
@@ -48,11 +73,16 @@ Detector classification per ADR 0002 § 3:
   Stripe / private-key literal patterns, and all four xss-risk markers. These
   match tokens whose meaning does not depend on syntax — a leaked key or a
   `dangerouslySetInnerHTML` is as interesting inside a comment as outside one.
-- **lexical-dependent** (must consult the language's comment model): the
-  hardcoded-secret generic-credential denylist, insecure-crypto, and the
-  injection-risk string-concatenation arm. **These are not yet gated** — the
-  denylist defect is issue #837 and the gating lands in Phase 1 of #622. Until
-  then this scanner applies a hardcoded C-family comment model to every file.
+- **lexical-dependent** (consults the language's comment model, and does not run
+  at all on a language this scanner cannot resolve): the `credential-assignment`
+  detector, `insecure-crypto`, and the `injection-risk` string-concatenation arm.
+  Gated as of #622 Phase 1, which also fixed #837 — the credential denylist was
+  an *unanchored substring* test, so a `#` anywhere on the line (inside the
+  secret value, or in a trailing `# noqa`) silently suppressed a real finding.
+  The placeholder test now matches the extracted **value**; the comment test is
+  line-start anchored and per-language.
+- **language-specific** (runs only under its own `M` arm): every per-language
+  `injection-risk` SQL detector.
 
 ## Finding Format
 

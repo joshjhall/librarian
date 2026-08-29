@@ -39,6 +39,7 @@ separate columns here.
 | Go           | go              | L                | M           | —        | M             |
 | Java, Kotlin | java, kt        | L                | M           | —        | M             |
 | Ruby         | rb              | L                | —           | M        | M             |
+| Rust         | rs              | L                | M           | M        | M             |
 | every other  | —               | L                | —           | —        | —             |
 
 <!-- contract: end-check-code-health-language-support -->
@@ -48,7 +49,23 @@ Two raggednesses are real and deliberate to record rather than smooth over:
 - `empty-handler` covers .js/.jsx/.ts/.tsx but **not** .mjs/.cjs, while both debug
   families do. A .mjs empty `catch {}` is missed today.
 - The debug-print family covers Go and Java/Kotlin but not Ruby; the
-  debugger-statement family is the reverse.
+  debugger-statement family is the reverse. Rust (#838) is in **both**: the
+  `print!`/`println!`/`eprint!`/`eprintln!` macro family is stdout output and so
+  is exemptible via `stdout_is_output`, while `dbg!` is a debugging aid that is
+  never a program's output and therefore lives in the never-exempted debugger
+  family (#680 AC3).
+
+Rust's `empty-handler` arm covers the empty `Err(_) => {}` match arm (and its
+`Err(_) => ()` unit-body spelling). The other Rust swallow idiom named in #838,
+`let _ = fallible()`, is deliberately **not** implemented: this scanner emits at
+`HIGH` with a declared confidence `>= 0.9`, and `let _ =` does not earn that.
+Measured over an available Rust corpus, 723 `let _ =` lines against 2 empty
+`Err(_)` arms, and the `let _ =` lines are overwhelmingly deliberate — `write!`
+into a `String` (infallible by construction), `let _ = guard;` to extend an RAII
+lifetime, `let _ = param;` to silence an unused warning. It is a real signal at a
+lower tier (the `MEDIUM` candidate shape `check-lifecycle` uses), but this
+scanner has no per-detector certainty, so the honest options were "wrong tier" or
+"not yet". Revisit if `check-code-health` gains one.
 
 Detector classification per ADR 0002 § 3:
 

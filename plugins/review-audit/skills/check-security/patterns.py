@@ -66,6 +66,70 @@ def cap(content: str) -> str:
     return content[:EVIDENCE_CAP]
 
 
+# --- the lexical model (ADR 0002 § 2, #622 Phase 1) --------------------------
+# A SUBSET of the normative EXT_LANG / COMMENT_RE in
+# check-decomposition/loc_engine.py. Deliberately NOT imported from there: that
+# file is one half of a byte-identical pair pinned against ship-issue's copy, and
+# adding a third consumer would make the pinning tripartite (ADR 0002 § 2). It is
+# also not a new table in the #663 sense — tests/lint-language-table-sync.sh
+# asserts this copy is a consistent SUBSET, so it may cover fewer extensions than
+# the normative table but may never contradict it.
+#
+# Covers every extension this scanner dispatches on, plus rs. A language absent
+# here does not resolve, and every LEXICAL-DEPENDENT detector below is skipped
+# for its files — the ADR § 1 `—` state. Per ADR § 5 that is SILENT: an
+# unsupported file emits no TSV row at all, never an `unsupported-language` one.
+EXT_LANG = {
+    "py": "py",
+    "js": "js",
+    "jsx": "js",
+    "mjs": "js",
+    "cjs": "js",
+    "ts": "ts",
+    "tsx": "ts",
+    "rs": "rs",
+    "go": "go",
+    "rb": "rb",
+    "sh": "sh",
+    "bash": "sh",
+    "java": "java",
+    "kt": "java",
+    "swift": "swift",
+}
+
+# How each language opens a LINE comment. Anchored at line start (modulo
+# indentation) on purpose: the #837 defect was an UNANCHORED substring test, so a
+# `#` anywhere on the line — inside the secret value, or a trailing `# noqa` —
+# suppressed a real finding. Matching loc_engine.COMMENT_RE's spellings exactly.
+COMMENT_RE = {
+    "py": re.compile(r"^[ \t]*#"),
+    "sh": re.compile(r"^[ \t]*#"),
+    "rb": re.compile(r"^[ \t]*#"),
+    "js": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "ts": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "rs": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "go": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "java": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+    "swift": re.compile(r"^[ \t]*(?://|/\*|\*)"),
+}
+
+
+def lang_of(ext: str) -> str:
+    """Language key for EXT, or "" when this scanner has no lexical model for it.
+
+    An empty return is the ADR § 1 `—` state and is the gate every
+    lexical-dependent detector consults before running.
+    """
+    return EXT_LANG.get(ext, "")
+
+
+def is_comment(lang: str, line: str) -> bool:
+    """True if LINE opens a comment in LANG. False for an unresolved LANG —
+    callers must gate on lang_of() first, so a `—` file never reaches here."""
+    rx = COMMENT_RE.get(lang)
+    return rx is not None and rx.match(line) is not None
+
+
 def scan_file(path: str) -> None:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -78,9 +142,17 @@ def scan_file(path: str) -> None:
         return
 
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    # Resolved ONCE PER FILE — the language is a property of the path, not of a
+    # line. "" means this scanner has no lexical model for the file, which gates
+    # every lexical-dependent detector below (ADR 0002 § 1, the `—` state).
+    lang = lang_of(ext)
 
     for idx, line in enumerate(lines, start=1):
-        # --- Category: hardcoded-secret (all files) ---
+        # --- Category: hardcoded-secret ---
+        # The four literal patterns below are LEXICAL-INDEPENDENT (ADR 0002 § 3)
+        # and run on every file, gated on nothing: `AKIA[0-9A-Z]{16}` is a leaked
+        # key wherever it appears, and a commented-out one is arguably MORE
+        # interesting, not less.
 
         if re.search(r"AKIA[0-9A-Z]{16}", line):
             emit(path, idx, "hardcoded-secret", "AWS access key pattern: " + cap(line))
@@ -94,27 +166,39 @@ def scan_file(path: str) -> None:
         if re.search(r"BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY", line):
             emit(path, idx, "hardcoded-secret", "Private key header: " + cap(line))
 
-        # Generic credential assignment with a string-literal value. Two-stage,
-        # mirroring the `grep -nEi ... | grep -viE <denylist>` pipe: a positive
-        # match that is NOT a placeholder/env-read/comment line. The quote
-        # delimiter class is ["'] — a double- or single-quote (matches the bash
-        # regex fixed in #168).
-        if re.search(
-            r"(password|passwd|secret|api_key|apikey|auth_token|access_token)"
-            r"""\s*[=:]\s*["'][^"']{8,}["']""",
-            line,
-            re.IGNORECASE,
-        ) and not re.search(
-            r"(changeme|placeholder|xxx|todo|example|replace|your_|test_|fake_|dummy_|#|//|/\*)",
-            line,
-            re.IGNORECASE,
-        ):
-            emit(
-                path,
-                idx,
-                "hardcoded-secret",
-                "Possible hardcoded credential: " + cap(line),
+        # Generic credential assignment with a string-literal value.
+        # LEXICAL-DEPENDENT (ADR 0002 § 3) — gated on the resolved language, and
+        # skipped entirely for a file whose lexical model this scanner lacks.
+        #
+        # #837: the old denylist conflated two unrelated tests in ONE unanchored
+        # substring match over the WHOLE line —
+        #   (changeme|placeholder|...|#|//|/\*)
+        # which failed in both directions:
+        #   FALSE NEGATIVE  password = "Str0ng#Pass#Value"   (# inside the value)
+        #   FALSE NEGATIVE  password = "realsecret123"  # noqa  (trailing comment)
+        #   FALSE POSITIVE  -- password = "x"   in .lua/.sql (`--` not modeled)
+        # A false-clean in a security scanner, so the two tests are now separate:
+        #   1. the COMMENT test is line-start anchored and per-language (above);
+        #   2. the PLACEHOLDER test matches only the captured VALUE, never the
+        #      whole line, so a `#` outside the value can no longer suppress.
+        if lang and not is_comment(lang, line):
+            m = re.search(
+                r"(password|passwd|secret|api_key|apikey|auth_token|access_token)"
+                r"""\s*[=:]\s*["']([^"']{8,})["']""",
+                line,
+                re.IGNORECASE,
             )
+            if m and not re.search(
+                r"(changeme|placeholder|xxx|todo|example|replace|your_|test_|fake_|dummy_)",
+                m.group(2),
+                re.IGNORECASE,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "hardcoded-secret",
+                    "Possible hardcoded credential: " + cap(line),
+                )
 
         # --- Category: injection-risk ---
 
@@ -138,9 +222,39 @@ def scan_file(path: str) -> None:
                     "injection-risk",
                     "SQL with string interpolation: " + cap(line),
                 )
+        elif ext == "rs":
+            # Rust builds SQL with format!/write! interpolation ({} holes) or by
+            # push_str onto a String. Both are the idiomatic spelling of the same
+            # unsanitized-concatenation defect the other arms catch (#838).
+            if re.search(
+                r'(format!|write!|writeln!)\s*\(\s*"(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\{',
+                line,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "injection-risk",
+                    "SQL in format! interpolation: " + cap(line),
+                )
+            if re.search(
+                r'push_str\s*\(\s*&?(format!\s*\(\s*)?"(SELECT|INSERT|UPDATE|DELETE|DROP)\b',
+                line,
+            ):
+                emit(
+                    path,
+                    idx,
+                    "injection-risk",
+                    "SQL appended to String: " + cap(line),
+                )
 
-        # String concatenation with SQL keywords (all languages).
-        if re.search(r'"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*', line):
+        # String concatenation with SQL keywords. LEXICAL-DEPENDENT (ADR 0002
+        # § 3) — it reasons about string-literal form, so it is gated on the
+        # resolved language and skipped on a comment line.
+        if (
+            lang
+            and not is_comment(lang, line)
+            and re.search(r'"(SELECT|INSERT|UPDATE|DELETE)\b.*"\s*\+\s*', line)
+        ):
             emit(
                 path,
                 idx,
@@ -167,20 +281,18 @@ def scan_file(path: str) -> None:
         if XSS_BLADE in line:
             emit(path, idx, "xss-risk", "Blade unescaped output: " + cap(line))
 
-        # --- Category: insecure-crypto (skip comment-only lines) ---
-        # A line whose first non-space character opens a comment (#, //, /*, *)
-        # is skipped — matches the fixed bash `grep -v '^[0-9]+:\s*(#|...)'`
-        # filter (see #168; the earlier anchor never fired against grep -n's
-        # line-number prefix, so comment lines were wrongly flagged).
-        is_comment = re.match(r"\s*(#|//|/\*|\*)", line) is not None
+        # --- Category: insecure-crypto (skip comment lines) ---
+        # LEXICAL-DEPENDENT (ADR 0002 § 3). This detector always ATTEMPTED to
+        # consult a comment model, but the model was hardcoded C-family
+        # (`#|//|/\*|\*`) and applied to every file regardless of language — so a
+        # `--` comment in .lua/.sql was scanned as code. It now consults the
+        # language's own model and does not run at all on an unresolved one.
+        if lang and not is_comment(lang, line):
+            if re.search(r"\b(md5|sha1)\s*\(", line, re.IGNORECASE):
+                emit(path, idx, "insecure-crypto", "Weak hash algorithm: " + cap(line))
 
-        if not is_comment and re.search(r"\b(md5|sha1)\s*\(", line, re.IGNORECASE):
-            emit(path, idx, "insecure-crypto", "Weak hash algorithm: " + cap(line))
-
-        if not is_comment and re.search(
-            r"\bECB\b|MODE_ECB|mode.*ecb", line, re.IGNORECASE
-        ):
-            emit(path, idx, "insecure-crypto", "ECB mode encryption: " + cap(line))
+            if re.search(r"\bECB\b|MODE_ECB|mode.*ecb", line, re.IGNORECASE):
+                emit(path, idx, "insecure-crypto", "ECB mode encryption: " + cap(line))
 
 
 def main(argv: list[str]) -> int:

@@ -193,6 +193,41 @@ test_security_secrets() {
     list="$(make_list "$d/l" "$d/secrets.env.example")"
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: a secret inside *.env.example is skipped (SKIP_GLOBS)"
+
+    # #837: the denylist was an UNANCHORED SUBSTRING test over the whole line, so
+    # a `#` ANYWHERE suppressed the finding — a false-clean in a security
+    # scanner. Both spellings below emitted ZERO rows before #838 and fire now;
+    # the negative above pins that the fix did not simply delete the denylist.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "Str0ng#Pass#Value"' >"$d/hash.py"
+    list="$(make_list "$d/l" "$d/hash.py")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a # INSIDE the secret value no longer suppresses (#837)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"  # noqa' >"$d/noqa.py"
+    list="$(make_list "$d/l" "$d/noqa.py")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a trailing # comment no longer suppresses (#837)"
+
+    # The placeholder test now matches the VALUE only, so a placeholder token in
+    # a trailing comment must NOT suppress a real credential. This is the exact
+    # input on which "match the value" and "match the line" diverge — without it
+    # a value-anchored fix and a line-anchored one both pass.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"  # not a placeholder' >"$d/word.py"
+    list="$(make_list "$d/l" "$d/word.py")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a placeholder word OUTSIDE the value does not suppress (#837)"
+
+    # A language with no lexical model is not scanned by this lexical-dependent
+    # detector at all (ADR 0002 § 1). `--` is a SQL comment the old hardcoded
+    # C-family model never knew, so this fired as a false positive before #838.
+    d="$(fresh_dir)"
+    command printf '%s\n' '-- password = "supersecret1"' >"$d/q.sql"
+    list="$(make_list "$d/l" "$d/q.sql")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: an unmodeled language is not scanned for credentials"
 }
 
 # ============================================================================
@@ -235,6 +270,30 @@ test_security_injection() {
     list="$(make_list "$d/l" "$d/safe.py")"
     assert_silent "$SK_SEC" "$list" injection-risk \
         "security: a parameterized query stays silent"
+
+    # Rust SQL idioms (#838). format!/write! interpolation and push_str onto a
+    # String are how Rust spells the same unsanitized concatenation the arms
+    # above catch. Both emitted zero rows before this phase — .rs reached no
+    # injection-risk arm at all.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let q = format!("SELECT * FROM t WHERE id={}", id);' >"$d/q.rs"
+    list="$(make_list "$d/l" "$d/q.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in format! interpolation" \
+        "security: Rust format! SQL interpolation fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'q.push_str("SELECT * FROM t WHERE id=");' >"$d/p.rs"
+    list="$(make_list "$d/l" "$d/p.rs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL appended to String" \
+        "security: Rust push_str SQL append fires"
+
+    # A Rust parameterized query stays silent — the arm must key on the
+    # interpolation hole, not merely on the SQL keyword.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let rows = client.query("SELECT * FROM t WHERE id=$1", &[&id]);' >"$d/safe.rs"
+    list="$(make_list "$d/l" "$d/safe.rs")"
+    assert_silent "$SK_SEC" "$list" injection-risk \
+        "security: a Rust parameterized query stays silent"
 }
 
 # ============================================================================
@@ -291,14 +350,45 @@ test_security_crypto() {
     assert_fires "$SK_SEC" "$list" insecure-crypto "ECB mode encryption" \
         "security: ECB mode fires"
 
-    # BOUNDARY: a comment-only line mentioning md5/ECB is skipped (is_comment).
+    # BOUNDARY: a comment line mentioning md5/ECB is skipped (is_comment).
+    #
+    # Each marker sits in a file of the language where it ACTUALLY opens a
+    # comment (#838). This fixture used to put a `//` line in a `.py` file and
+    # expect silence — which only held because the scanner applied ONE hardcoded
+    # C-family model to every file. Under the per-language model of ADR 0002 § 3
+    # `//` is not a Python comment, so that spelling now (correctly) fires and
+    # the fixture had to be split rather than the detector loosened.
     d="$(fresh_dir)"
-    command printf '%s\n' \
-        '# md5(commented) must be skipped' \
-        '// ECB in a comment must be skipped' >"$d/c.py"
+    command printf '%s\n' '# md5(commented) must be skipped' >"$d/c.py"
     list="$(make_list "$d/l" "$d/c.py")"
     assert_silent "$SK_SEC" "$list" insecure-crypto \
-        "security: commented md5/ECB stay silent (comment-skip boundary)"
+        "security: a # comment in .py stays silent (comment-skip boundary)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' '// ECB in a comment must be skipped' >"$d/c.rs"
+    list="$(make_list "$d/l" "$d/c.rs")"
+    assert_silent "$SK_SEC" "$list" insecure-crypto \
+        "security: a // comment in .rs stays silent (comment-skip boundary)"
+
+    # THE OTHER DIRECTION (#838/#837): `//` is NOT a comment in Python, so a line
+    # that only LOOKED skippable under the old C-family model must now fire.
+    # Without this the split above could be satisfied by a detector that skips
+    # every marker in every language — the old bug, spelled differently.
+    d="$(fresh_dir)"
+    command printf '%s\n' '// ECB is not a Python comment' >"$d/n.py"
+    list="$(make_list "$d/l" "$d/n.py")"
+    assert_fires "$SK_SEC" "$list" insecure-crypto "ECB mode encryption" \
+        "security: a // line in .py is NOT a comment and fires"
+
+    # A language with NO lexical model in this scanner is not scanned by a
+    # lexical-dependent detector at all (ADR 0002 § 1, the `—` state; silent per
+    # § 5). `--` is a SQL comment the old hardcoded model never knew, so this
+    # line was emitted as a false positive before #838.
+    d="$(fresh_dir)"
+    command printf '%s\n' '-- md5(x) in a SQL comment' >"$d/q.sql"
+    list="$(make_list "$d/l" "$d/q.sql")"
+    assert_silent "$SK_SEC" "$list" insecure-crypto \
+        "security: an unmodeled language is not scanned for insecure-crypto"
 }
 
 # ============================================================================
@@ -391,6 +481,32 @@ test_health_debug() {
     assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
         "health: Java System.out.println fires"
 
+    # Rust print macros (#838) — the stdout family, so `stdout_is_output` can
+    # exempt them. Both spellings asserted independently: the arm is one regex
+    # with an optional `e` prefix and an optional `ln` suffix, so a composite
+    # fixture would stay green with either half broken.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'println!("x");' >"$d/p.rs"
+    list="$(make_list "$d/l" "$d/p.rs")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
+        "health: Rust println! fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'eprintln!("x");' >"$d/ep.rs"
+    list="$(make_list "$d/l" "$d/ep.rs")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
+        "health: Rust eprintln! fires"
+
+    # Rust dbg! — the DEBUGGER family, never exempted (#680 AC3). Its distinct
+    # label is what pins that it landed in the right family: a dbg! misfiled
+    # under the print family would still emit a debug-statement row, so only the
+    # label distinguishes the two.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'dbg!(value);' >"$d/dg.rs"
+    list="$(make_list "$d/l" "$d/dg.rs")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Rust debug macro" \
+        "health: Rust dbg! fires in the debugger family"
+
     # BOUNDARY: a debug print inside a TEST file is suppressed (not test_file only
     # applies debug scanning to non-test files).
     d="$(fresh_dir)"
@@ -437,6 +553,39 @@ test_health_empty_handler() {
     list="$(make_list "$d/l" "$d/g.go")"
     assert_fires "$SK_HEALTH" "$list" empty-handler "Swallowed error" \
         "health: Go swallowed error fires"
+
+    # Rust empty Err arm (#838), both body spellings asserted independently —
+    # one regex with an alternation, so a composite fixture would stay green
+    # with either half broken.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'match r { Err(_) => {}, Ok(v) => use_it(v) }' >"$d/m.rs"
+    list="$(make_list "$d/l" "$d/m.rs")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty Err match arm" \
+        "health: Rust empty Err(_) => {} match arm fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'match r { Err(_) => (), Ok(v) => use_it(v) }' >"$d/u.rs"
+    list="$(make_list "$d/l" "$d/u.rs")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty Err match arm" \
+        "health: Rust empty Err(_) => () match arm fires"
+
+    # BOUNDARY: a HANDLED Err arm stays silent.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'match r { Err(e) => log(e), Ok(v) => use_it(v) }' >"$d/h.rs"
+    list="$(make_list "$d/l" "$d/h.rs")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Rust handled Err arm stays silent"
+
+    # BOUNDARY: `let _ = fallible();` is NOT implemented (see the note in
+    # patterns.py) — it is a deliberate idiom far more often than a swallow, and
+    # this scanner has no certainty tier low enough to carry it. Pinned so that
+    # adding it later is a conscious decision with this fixture to update, not an
+    # accident.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'let _ = write!(buf, "{}", x);' >"$d/k.rs"
+    list="$(make_list "$d/l" "$d/k.rs")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Rust let _ = discard is deliberately not flagged at HIGH"
 }
 
 test_health_test_file_and_skip() {

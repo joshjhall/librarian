@@ -376,6 +376,19 @@ scan_debug_prints() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
+        *.[Rr][Ss])
+            # Rust: the print!/println!/eprint!/eprintln! macro family (#838).
+            # The `!` is part of the macro name and anchors the match.
+            command grep -nE -- '^[[:space:]]*e?print(ln)?![[:space:]]*\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
     esac
     # <<< shared:debug-print-scan
 }
@@ -424,6 +437,19 @@ scan_debugger_statements() {
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "debug-statement" \
                         "Ruby debugger: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.[Rr][Ss])
+            # Rust: the dbg! macro is a debugging aid, never program output, so
+            # it belongs in this never-exempted family (#680 AC3, #838).
+            command grep -nE -- '^[[:space:]]*dbg![[:space:]]*\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Rust debug macro: ${evidence}" "HIGH"
                 done || true
             ;;
     esac
@@ -543,6 +569,25 @@ while IFS= read -r file; do
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
                         "Swallowed error: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.[Rr][Ss])
+            # An empty `Err(_) => {}` match arm: caught the error, did nothing.
+            # `Err(_) => ()` is the same swallow with a unit body.
+            #
+            # NOT IMPLEMENTED, deliberately: `let _ = fallible();`. See the long
+            # note in patterns.py's matching arm — this scanner emits at HIGH
+            # with declared confidence >= 0.9, and `let _ =` measured 723
+            # occurrences against 2 empty Err arms, overwhelmingly deliberate
+            # (infallible `write!`, RAII guards, unused-param silencers).
+            command grep -nE -- 'Err[[:space:]]*\([[:space:]]*_[[:space:]]*\)[[:space:]]*=>[[:space:]]*(\{[[:space:]]*\}|\([[:space:]]*\))' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "empty-handler" \
+                        "Empty Err match arm: ${evidence}" "HIGH"
                 done || true
             ;;
     esac

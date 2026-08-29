@@ -176,6 +176,12 @@ GOVERNED = (
 BINDINGS = {
     "check-security": {
         "injection-risk": ("tag", "injection-risk"),
+        # `secret-literal` and `credential-assignment` (the #838 split of
+        # hardcoded-secret) are deliberately UNBOUND: every cell in both columns
+        # is `L`, and an L-only column is not checked per-cell — see the comment
+        # above. They would also be unbindable by tag, since both families emit
+        # the same "hardcoded-secret" literal. If either ever gains an `M` cell,
+        # assertion 6 reports it UNBOUND and a ("fn", …) binding is needed then.
     },
     "check-code-health": {
         "debug-print": ("fn", ("_scan_debug_print", "scan_debug_prints")),
@@ -279,10 +285,30 @@ def parse_ext_lang(src):
     return dict(re.findall(r'"([A-Za-z0-9]+)"\s*:\s*"([A-Za-z0-9]+)"', m.group(1)))
 
 
+def parse_comment_re(src):
+    """lang -> comment-marker regex, from a COMMENT_RE dict literal.
+
+    Same shape and same reason as parse_ext_lang: a flat `"key": re.compile(r"…")`
+    literal closed by a column-zero `}`. The value captured is the raw pattern
+    text, which is what the subset assertion compares.
+    """
+    m = re.search(r"^COMMENT_RE\s*=\s*\{(.*?)^\}", src, re.M | re.S)
+    if not m:
+        return {}
+    return dict(
+        re.findall(
+            r'"([A-Za-z0-9]+)"\s*:\s*re\.compile\(\s*r"([^"]*)"', m.group(1)
+        )
+    )
+
+
 normative = {}
+normative_comments = {}
 if os.path.exists(NORMATIVE_SRC):
     normative = parse_ext_lang(read(NORMATIVE_SRC))
+    normative_comments = parse_comment_re(read(NORMATIVE_SRC))
 print("NORMATIVE %d" % len(normative))
+print("NORMATIVE_COMMENTS %d" % len(normative_comments))
 
 # --- what each scanner dispatches on ----------------------------------------
 # Python side: `ext == "x"` and `ext in ("x", "y")`. Bash side: `*.[Xx][Yy])`
@@ -425,6 +451,36 @@ for dirpath, _dirs, files in os.walk(PLUGINS):
                 print(
                     "CONTRADICTION %s: .%s -> %r, normative says %r"
                     % (rel, ext, lang, want)
+                )
+
+# --- assertion 3b: no COMMENT-MARKER contradiction (#838) --------------------
+# ADR 0002 § 2 governs two lexical facts, not one: "an extension it dispatches on
+# must map to the same language key, AND a comment marker it uses for a language
+# must match the normative one". Assertion 3 above covered only the first half —
+# this gate's own header claimed both from Phase 0, but nothing checked markers
+# because no scanner carried a comment-model subset until #622 Phase 1 shipped
+# the lexical gating. Now that one exists, the claim is enforced rather than
+# asserted.
+#
+# Same subset polarity as everywhere else here: a scanner may model FEWER
+# languages than the normative table, but a language it DOES model must carry the
+# normative marker verbatim. A silently divergent marker is the exact bug the
+# gating was built to remove — it would make a detector read one language's
+# source under another's comment rules.
+for dirpath, _dirs, files in os.walk(PLUGINS):
+    for name in sorted(files):
+        if name != "patterns.py":
+            continue
+        path = os.path.join(dirpath, name)
+        rel = os.path.relpath(path, ROOT)
+        if os.path.samefile(path, NORMATIVE_SRC) if os.path.exists(path) else False:
+            continue
+        for lang, pattern in parse_comment_re(read(path)).items():
+            want = normative_comments.get(lang)
+            if want is not None and want != pattern:
+                print(
+                    "COMMENT_CONTRADICTION %s: %r -> %r, normative says %r"
+                    % (rel, lang, pattern, want)
                 )
 
 # --- the contract matrices ---------------------------------------------------
@@ -728,6 +784,42 @@ test_no_contradiction() {
         "no dispatch site contradicts the normative EXT_LANG"
 }
 
+# --- Assertion 3b: no comment-marker contradiction (#838) --------------------
+# The second half of ADR 0002 § 2, unenforced until Phase 1 gave it something to
+# check. Same assert_output_empty reasoning as above — a COMMENT_CONTRADICTION
+# row embeds a path.
+test_no_comment_contradiction() {
+    local bad
+    bad="$(report_lines COMMENT_CONTRADICTION)"
+    assert_output_empty "$bad" \
+        "no scanner's comment model contradicts the normative COMMENT_RE"
+}
+
+# Anti-vacuity for 3b: the normative COMMENT_RE must actually have parsed, or the
+# assertion above compares every subset entry against None and passes for free.
+# Mirrors test_normative_table_populated, and for the same reason.
+#
+# Scoped to the REAL repo root, like the roster check at test_governed_roster:
+# the self-test fixture trees carry a minimal loc_engine.py with an EXT_LANG and
+# no COMMENT_RE (they were built before this assertion existed and exercise the
+# EXT_LANG half), so under a fixture root a zero count is expected rather than a
+# defect. The floor still binds where it matters — nothing may quietly drop the
+# normative comment models out of the real tree.
+test_normative_comments_populated() {
+    if [ "$LANG_TABLE_ROOT" != "$REPO_ROOT" ]; then
+        skip_test "not the real repo root — fixture loc_engine.py carries no COMMENT_RE"
+        return
+    fi
+    local count
+    count="$(report_lines NORMATIVE_COMMENTS | command sed -n 's/^NORMATIVE_COMMENTS //p')"
+    local verdict="populated"
+    case "$count" in
+        '' | *[!0-9]*) verdict="unparseable (got: '${count:-<none>}')" ;;
+        0 | 1 | 2 | 3 | 4) verdict="parsed only $count entries (expected >= 5)" ;;
+    esac
+    assert_equals "populated" "$verdict" "normative COMMENT_RE parsed and non-empty"
+}
+
 # --- Assertion 4: the matrix matches both runtimes, PER CELL -----------------
 test_matrix_matches_source() {
     local bad
@@ -765,6 +857,8 @@ run_test test_no_unmatched_scanner "a present scanner resolves its matrix (anti-
 run_test test_matrices_present "all four governed scanners declare a matrix (anti-vacuity)"
 run_test test_matrices_non_empty "each matrix names at least one cell"
 run_test test_no_contradiction "no dispatch site contradicts the normative table"
+run_test test_normative_comments_populated "normative COMMENT_RE is populated (anti-vacuity)"
+run_test test_no_comment_contradiction "no scanner comment model contradicts the normative table"
 run_test test_matrix_matches_source "matrix M/unsupported cells match both runtimes"
 run_test test_bindings_resolve "every column binding resolves in both runtimes (anti-vacuity)"
 run_test test_modeled_columns_bound "every modeled column has a binding"

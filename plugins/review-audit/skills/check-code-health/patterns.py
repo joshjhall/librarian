@@ -345,6 +345,12 @@ def _scan_debug_print(path: str, idx: int, line: str, ext: str) -> None:
     elif ext in ("java", "kt"):
         if re.search(r"^\s*System\.(out|err)\.print(ln)?\(", line):
             emit(path, idx, "debug-statement", "Debug print statement", line)
+    elif ext == "rs":
+        # Rust writes to stdout/stderr with the print!/println!/eprintln! macro
+        # family (#838). The `!` is part of the macro name, so it anchors the
+        # match without a word boundary.
+        if re.search(r"^\s*e?print(ln)?!\s*\(", line):
+            emit(path, idx, "debug-statement", "Debug print statement", line)
 
 
 def _scan_debugger(path: str, idx: int, line: str, ext: str) -> None:
@@ -364,6 +370,12 @@ def _scan_debugger(path: str, idx: int, line: str, ext: str) -> None:
     elif ext == "rb":
         if re.search(r"^\s*(binding\.pry|binding\.irb|byebug)\b", line):
             emit(path, idx, "debug-statement", "Ruby debugger", line)
+    elif ext == "rs":
+        # Rust's dbg! macro is a debugging aid, never program output — so it
+        # belongs in this never-exempted family rather than the print one
+        # (#680 AC3, #838).
+        if re.search(r"^\s*dbg!\s*\(", line):
+            emit(path, idx, "debug-statement", "Rust debug macro", line)
 
 
 def scan_file(path: str, lines: list[str]) -> None:
@@ -415,6 +427,28 @@ def scan_file(path: str, lines: list[str]) -> None:
         elif ext == "go":
             if re.search(r"if err != nil\s*\{\s*\}", line):
                 emit(path, idx, "empty-handler", "Swallowed error", line)
+        elif ext == "rs":
+            # An empty `Err(_) => {}` match arm: caught the error, did nothing.
+            # `Err(_) => ()` is the same swallow with a unit body.
+            if re.search(r"Err\s*\(\s*_\s*\)\s*=>\s*(\{\s*\}|\(\s*\))", line):
+                emit(path, idx, "empty-handler", "Empty Err match arm", line)
+            # NOT IMPLEMENTED, deliberately: `let _ = fallible();`.
+            #
+            # The issue (#838) names it as a Rust swallow idiom, and it can be
+            # one — but this scanner emits at CERTAINTY = HIGH with a declared
+            # confidence >= 0.9 (contract.md), and `let _ =` does not come close
+            # to earning that. Measured over the Rust available on this machine:
+            # 723 `let _ =` lines against 2 empty `Err(_)` arms, and the sampled
+            # `let _ =` lines are overwhelmingly DELIBERATE — `write!` into a
+            # String (infallible by construction), `let _ = runner;` to extend an
+            # RAII guard's lifetime, `let _ = path;` to silence an unused
+            # parameter. Shipping it here would add ~721 HIGH-certainty false
+            # positives to make 2 true ones reachable.
+            #
+            # It is a real signal at a LOWER tier — the shape check-lifecycle
+            # emits at MEDIUM for the LLM pass-2 to confirm — but this scanner
+            # has no per-detector certainty, so the honest options were "wrong
+            # tier" or "not yet". Revisit if check-code-health gains one.
 
 
 def main(argv: list[str]) -> int:

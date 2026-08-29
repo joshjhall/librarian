@@ -290,6 +290,16 @@ fallthrough (so a reader can tell "unsupported" from "nobody got to it yet"), an
   a detector and the presence of correct lexical gating, and the gating does not
   exist yet. This is the one remaining granularity gap — `M` and `—` cells are
   checked per-cell as of #847.
+
+  **Partly closed by Phase 1** ([#838](https://github.com/joshjhall/librarian/issues/838)).
+  The gating now exists, and with it the second half of §2 became checkable: a
+  scanner's comment-model subset is asserted against the normative `COMMENT_RE`
+  (`COMMENT_CONTRADICTION` in `tests/lint-language-table-sync.sh`), which the
+  gate's own header had claimed from Phase 0 while nothing implemented it —
+  there was no subset to check until one existed. What remains open is the
+  *other* half of an `L` cell: that no per-language detector exists for that
+  language. That is an absence claim over the arms, not over the lexical tables,
+  and it is still unenforced.
 - The matrices are hand-transcribed from source for their first version. The gate
   checks `M` and `—` structurally from Phase 0 (per-cell since #847), but the
   initial transcription needs review by eye.
