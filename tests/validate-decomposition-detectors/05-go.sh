@@ -182,7 +182,7 @@ EOF
 test_go_method_test_classification() {
     local d f list
     d="$(fresh_dir)"
-    f="$d/suite_test.go"
+    f="$d/suite.go"
     command cat >"$f" <<'EOF'
 package suite
 
@@ -213,6 +213,24 @@ EOF
         "go: a testify Test/Benchmark method stays test-classified under the receiver arm"
     assert_fires "$list" file-length "1 top-level units" \
         "go: only the production func counts toward the unit total"
+
+    # --- #851: the SAME content at an idiomatic `_test.go` path inverts ------
+    # A separate-file test's test code IS its production content, so the units
+    # that were subtracted above are now counted. Classification is unchanged —
+    # `11 test-excluded` still reports, because test_excluded stays a truthful
+    # diagnostic — and only the SUBTRACTION differs. That pairing is the whole
+    # point: the two cases share a byte-identical body and differ only in the
+    # PATH, so a regression that collapses the distinction cannot keep both
+    # green.
+    f="$d/suite_test.go"
+    command cp "$d/suite.go" "$f"
+    list="$(list_of "$f")"
+    assert_fires "$list" file-length "11 test-excluded" \
+        "go: a _test.go file still CLASSIFIES its test units (#851)"
+    assert_fires "$list" file-length "16 production LOC" \
+        "go: a _test.go file counts its test lines as production (#851)"
+    assert_fires "$list" file-length "4 top-level units" \
+        "go: a _test.go file counts its test units toward the unit total (#851)"
 
     # The prefix needs a BOUNDARY. Go's rule is `func TestXxx` where Xxx does
     # not start lowercase, so a bare prefix match classifies `Testify`,

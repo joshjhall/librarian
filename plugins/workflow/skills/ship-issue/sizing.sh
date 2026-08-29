@@ -382,8 +382,8 @@ while IFS= read -r file; do
     # >>> shared:unit-segmenters-awk (kept in sync with ship-issue/split-verify.sh by tests/validate-shared-scanner-sync.sh)
     function is_unit_header(line, lang) {
         if (lang == "py") return line ~ /^(async[ \t]+)?(def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
-        if (lang == "js") return line ~ /^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
-        if (lang == "ts") return line ~ /^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/
+        if (lang == "js") return line ~ /^((export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*|(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`][A-Za-z_$][A-Za-z0-9_$]*)/
+        if (lang == "ts") return line ~ /^((export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*|(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`][A-Za-z_$][A-Za-z0-9_$]*)/
         if (lang == "rs") return line ~ /^((pub(\([a-z:_ ]+\))?|default|async|unsafe|const|extern([ \t]+"[^"]*")?)[ \t]+)*(macro_rules![ \t]+[A-Za-z_][A-Za-z0-9_]*|impl(<([^<>]|<([^<>]|<[^<>]*>)*>)*>)?[ \t]+([^ \t].*[ \t]for[ \t]+)?(&[ \t]*)?([\047][A-Za-z_][A-Za-z0-9_]*[ \t]+)?(mut[ \t]+)?(dyn[ \t]+)?([A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*|extern[ \t]+crate[ \t]+[A-Za-z_][A-Za-z0-9_]*|(fn|struct|enum|trait|mod|type|static|const|union)[ \t]+[A-Za-z_][A-Za-z0-9_]*)/
         if (lang == "go") return line ~ /^func[ \t]*\([ \t]*([A-Za-z_][A-Za-z0-9_]*[ \t]+)?\*?[ \t]*[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?[ \t]*\)[ \t]*[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(func|type|var|const)[ \t]+[A-Za-z_][A-Za-z0-9_]*/ || line ~ /^(var|const|type)[ \t]*\(/
         if (lang == "swift") return line ~ /^((public|private|internal|fileprivate|open|final|static|class|override|indirect|@[A-Za-z_][A-Za-z0-9_]*)[ \t]+)*(func|class|struct|enum|protocol|extension|actor|typealias)[ \t]+[A-Za-z_][A-Za-z0-9_]*/
@@ -396,8 +396,8 @@ while IFS= read -r file; do
     function unit_name(line, lang,   s, r, recv) {
         s = line
         if (lang == "py") { sub(/^(async[ \t]+)?(def|class)[ \t]+/, "", s) }
-        else if (lang == "js") { sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
-        else if (lang == "ts") { sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
+        else if (lang == "js") { if (s ~ /^(describe|it|test|suite|context)[ \t]*\(/) sub(/^(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`]/, "", s); else sub(/^(export[ \t]+)?(default[ \t]+)?(async[ \t]+)?(function|class|const|let|var)[ \t]+/, "", s) }
+        else if (lang == "ts") { if (s ~ /^(describe|it|test|suite|context)[ \t]*\(/) sub(/^(describe|it|test|suite|context)[ \t]*\([ \t]*["\047`]/, "", s); else sub(/^(export[ \t]+)?(default[ \t]+)?(declare[ \t]+)?(async[ \t]+)?(const[ \t]+enum|abstract[ \t]+class|function|class|const|let|var|interface|type|enum|namespace|module)[ \t]+/, "", s) }
         else if (lang == "rs") {
             # Strip modifiers, then the item keyword. `impl` additionally drops
             # its generics, an optional `Trait for`, and a leading `&`, so the
@@ -502,6 +502,38 @@ while IFS= read -r file; do
     function is_comment(line, lang) {
         if (lang == "py" || lang == "sh") return line ~ /^[ \t]*#/
         if (lang == "js" || lang == "ts" || lang == "rs" || lang == "go" || lang == "swift") return line ~ /^[ \t]*(\/\/|\/\*|\*)/
+        return 0
+    }
+    # is_test_file: a file whose TESTS ARE ITS CONTENT, by PATH convention alone
+    # (#851). The awk half of is_test_file() in the .py primaries.
+    #
+    # NOT is_test_header above: that classifies a UNIT by its content, this
+    # classifies a FILE by its path, and only the second decides whether the
+    # classification SUBTRACTS from production LOC. In a separate-file ecosystem
+    # (*.test.ts, test_*.py, *_test.go, tests/**) a test files test code IS its
+    # production content, so subtracting it scored the file near zero and it
+    # never appeared. The same-file conventions (rs cfg-test, py __name__, sh
+    # banner) key off CONTENT and are untouched.
+    #
+    # Segment-anchored, so contest.py / latest.js / attestation.go are NOT
+    # matched while tests/helper.py IS. Directory arms cross a slash on purpose;
+    # the name arms are matched against the BASENAME so they cannot — without
+    # that split a DIRECTORY named test_helpers/ would make real source under it
+    # read as test code (#568).
+    #
+    # NB: no apostrophes in this region — the awk program is a single-quoted
+    # shell string, so one would end it.
+    function is_test_file(p,   base, i, seg, segs, n) {
+        n = split("tests test __tests__ spec __pycache__", segs, " ")
+        for (i = 1; i <= n; i++) {
+            seg = segs[i]
+            if (index(p, seg "/") == 1) return 1
+            if (index(p, "/" seg "/") > 0) return 1
+        }
+        base = p
+        sub(/^.*\//, "", base)
+        if (base ~ /^test_[^\/]*\.[^\/]*$/) return 1
+        if (base ~ /(_test|_spec|\.test|\.spec)\.[^\/]*$/) return 1
         return 0
     }
     # <<< shared:unit-segmenters-awk
@@ -774,10 +806,21 @@ while IFS= read -r file; do
             }
         }
 
+        # tf: this file IS a test file by path convention (#851). It does not
+        # change what gets CLASSIFIED as test code above — it decides whether
+        # that classification SUBTRACTS. In a separate-file ecosystem a test
+        # files test code is its production content, so subtracting it scored
+        # the file near zero and it never appeared. Mirrors the test_file
+        # argument to measure() in the .py primaries.
+        tf = is_test_file(path)
         blank = 0; comment = 0; test_excluded = 0; max_depth = 0
         nunit = nest_unit(lang)
         for (i = 1; i <= total; i++) {
-            if (i in tl) { test_excluded++; continue }
+            # A test line in a TEST FILE still counts toward production, so it
+            # must not skip the blank/comment/depth tally the way an excluded
+            # line does — otherwise its blanks and comments would fall through
+            # into production below and be counted as code.
+            if (i in tl) { test_excluded++; if (!tf) continue }
             line = L[i]
             if (line ~ /^[ \t]*$/) { blank++; continue }
             if (is_comment(line, lang)) { comment++; continue }
@@ -785,9 +828,9 @@ while IFS= read -r file; do
             d = int(RLENGTH / nunit)
             if (d > max_depth) max_depth = d
         }
-        production = total - blank - comment - test_excluded
+        production = total - blank - comment - (tf ? 0 : test_excluded)
         prod_units = 0
-        for (i = 1; i <= nu; i++) if (!ut[i]) prod_units++
+        for (i = 1; i <= nu; i++) if (tf || !ut[i]) prod_units++
         comment_pct = (total > 0) ? int(comment * 100 / total) : 0
 
         metrics = sprintf("%d total, %d comment (%d%%), %d blank, %d test-excluded, max nesting %d, %d top-level units", \

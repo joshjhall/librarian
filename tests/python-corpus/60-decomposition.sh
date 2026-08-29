@@ -268,6 +268,25 @@ printf '%s\n' '# Flat' '' one two three >"$DECOMPDIR/.claude/memory/index-flat.m
 # Non-markdown inside the bundle: still code, still code-sized.
 printf '%s\n' 'def a(x):' '    return x' >"$DECOMPDIR/.claude/memory/helper.py"
 
+# --- #851: is_test_file's DIRECTORY arm, and a same-file region beside it -----
+# The `app.test.ts` above reaches the BASENAME arm only. A `tests/` path segment
+# is the other half of the predicate, and the file below carries several
+# same-family suites so the test_file side of cluster_units is walked too, not
+# merely its `if`.
+mkdir -p "$DECOMPDIR/tests"
+printf '%s\n' \
+    'describe("renderHeader", () => {' '  it("a", () => { expect(1).toBe(1); });' '});' '' \
+    'describe("renderBody", () => {' '  it("b", () => { expect(2).toBe(2); });' '});' '' \
+    'describe("renderFooter", () => {' '  it("c", () => { expect(3).toBe(3); });' '});' \
+    >"$DECOMPDIR/tests/suite.ts"
+
+# A test file by BASENAME in python, whose test defs are now production — the
+# `test_file`-true side of the measure() tally loop.
+printf '%s\n' \
+    'def test_alpha():' '    assert 1 == 1' '' \
+    'def test_beta():' '    assert 2 == 2' \
+    >"$DECOMPDIR/test_suite.py"
+
 # --- Skip globs + unknown extension (metrics-only, no segmenter) -------------
 printf '%s\n' '{"a": 1}' >"$DECOMPDIR/package-lock.json"
 printf '%s\n' 'plain data' >"$DECOMPDIR/notes.txt"
@@ -293,6 +312,7 @@ for f in "$DECOMPDIR"/mod.py "$DECOMPDIR"/app.ts "$DECOMPDIR"/app.test.ts \
     "$DECOMPDIR"/.claude/memory/single.md \
     "$DECOMPDIR"/.claude/memory/index-flat.md \
     "$DECOMPDIR"/.claude/memory/helper.py \
+    "$DECOMPDIR"/tests/suite.ts "$DECOMPDIR"/test_suite.py \
     "$DECOMPDIR"/package-lock.json "$DECOMPDIR"/notes.txt "$DECOMPDIR"/README \
     "$DECOMP_UNREAD"; do
     printf '%s\n' "$f" >>"$DECOMP_LIST"
