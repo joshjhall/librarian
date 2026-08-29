@@ -10,7 +10,7 @@
 #   ensure_git_cliff || echo "git-cliff not available"
 
 # Pin the version for both install paths (cargo and the fallback binary).
-GIT_CLIFF_VERSION="${GIT_CLIFF_VERSION:-2.8.0}"
+GIT_CLIFF_VERSION="${GIT_CLIFF_VERSION:-2.13.1}"
 
 ensure_git_cliff() {
     if command -v git-cliff >/dev/null 2>&1; then
