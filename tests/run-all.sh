@@ -44,6 +44,7 @@
 #  11b7. Hook no-op silence (tests/lint-hook-silence.sh)
 #  11b8. Scanner extension-dispatch case parity (tests/lint-scanner-case-dispatch.sh)
 #  11b9. Definition-shaped assertions (tests/lint-definition-assertions.sh)
+#  11b10. Scanner language-table consistency (tests/lint-language-table-sync.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
 #  11c2. Pre-scan bash<->python differential (tests/validate-prescan-differential.sh)
 #  11c3. Source-level category-slug parity (tests/validate-scanner-category-parity.sh)
@@ -287,6 +288,11 @@ run_stage "Definition-shaped assertions" bash "$SCRIPT_DIR/lint-definition-asser
 # contain, and a mutation round showed arms revert INDEPENDENTLY — so this reads
 # the source instead, and covers every arm at every site.
 run_stage "Scanner extension-dispatch case parity" bash "$SCRIPT_DIR/lint-scanner-case-dispatch.sh"
+
+# The companion to the stage above: that one pins HOW an extension is spelled in
+# bash, this one pins WHICH LANGUAGE it means and that the contract matrix and
+# both runtimes agree about it (#622 Phase 0, ADR 0002).
+run_stage "Scanner language-table consistency" bash "$SCRIPT_DIR/lint-language-table-sync.sh"
 run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
 run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-prescan-differential.sh"
 run_stage "Source-level category-slug parity" bash "$SCRIPT_DIR/validate-scanner-category-parity.sh"
