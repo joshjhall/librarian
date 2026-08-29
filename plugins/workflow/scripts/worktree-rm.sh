@@ -15,7 +15,9 @@
 # never reported as dirtiness, and a refusal is always one the operator can
 # still verify with their own `git status`. A worktree git no longer lists has
 # nothing git-tracked left to lose, so its leftover directory is cleaned rather
-# than skipped.
+# than skipped — tolerating, without a scary warning, the entries a bindfs/FUSE
+# overlay refuses to release, and removing `.git` LAST so a partial removal stays
+# recognizable as residue on a re-run (#834).
 #
 # Belt-and-suspenders: after teardown it repairs a polluted main-repo
 # `core.worktree` (#258). An interrupted `git worktree remove --force` can leave
@@ -457,6 +459,112 @@ leftover_is_worktree_residue() {
     command echo "residue"
 }
 
+# remove_leftover_dir <worktree> — delete a deregistered worktree's leftover
+# directory, tolerating the entries a bindfs/FUSE overlay will not let go (#834).
+#
+# TWO DIFFERENT ISSUES MEET AT THIS LINE, and conflating them loses one:
+# #813 is about never MISREPORTING dirtiness — a probe that cannot run must not
+# be reported as uncommitted work. This is about FILESYSTEM TOLERANCE during the
+# removal itself: the classification was already correct and the removal was
+# already authorized; the filesystem simply refuses part of it.
+#
+# On the documented macOS/VirtioFS `bindfs` overlay, stale dentries whose inodes
+# are gone return EBADF from `unlink`/`stat` while still appearing in `readdir`
+# (~3,700 `target/debug/incremental/*.o` files in the #813 report). No
+# unprivileged call clears them, and nothing is at risk: git has no record of
+# those files, `.worktrees/` is gitignored, and the golem collision guard reads
+# `git worktree list`, not the directory. So a residual directory is an EXPECTED
+# outcome on that platform, not a fault — and teardown runs unattended, where a
+# `WARNING` costs an operator an adjudication for a condition that is both
+# expected and harmless.
+#
+# ORDER IS THE LOAD-BEARING PART, not the message. `rm -rf` does not stop at the
+# first undeletable entry — it removes everything it CAN and reports failure at
+# the end. A flat `rm -rf "$wt"` therefore deletes the worktree's dangling `.git`
+# file (verified) while leaving the undeletable subtree behind, which destroys
+# the exact fingerprint `leftover_is_worktree_residue` requires. A RE-RUN of
+# teardown then takes the `no-fingerprint` arm and exits 1 with "may never have
+# been a worktree" — a hard failure whose text is affirmatively false, and a
+# strictly worse instance of the misreporting class #813 closed.
+#
+# So contents first, `.git` LAST, and only once the contents are fully gone. On
+# a partial failure `.git` deliberately SURVIVES, keeping the directory
+# recognizable as residue so a re-run is idempotent rather than a refusal. The
+# residue guard is NOT relaxed to compensate: its fingerprint rule is what
+# protects an operator's scratch directory from an unconditional `rm -rf`.
+#
+# Tolerating is not swallowing. What remains on disk is REPORTED — the count of
+# surviving entries, or the distinct "could not remove the directory itself"
+# when the directory was emptied but its own node would not go. Both are stated
+# as observations, never as inferences about WHY something survived: the removal
+# calls here are best-effort and report one status for many operations, so this
+# function cannot distinguish "refused by the filesystem" from "never attempted"
+# after the fact. Two review cycles were spent learning that — each attempt to
+# scope the count by intent printed "0 undeletable entries remain" about a
+# directory still plainly on disk.
+#
+# `find -exec rm -rf {} +` rather than a `"$wt"/*` glob: the glob misses
+# dotfiles, and `.git` is precisely what must be controlled here. `-mindepth 1
+# -maxdepth 1` keeps `$wt` itself out of the argument list. No `-name .git`
+# recursion concern — the exclusion is depth-1 only, so a nested `.git` inside a
+# submodule is still removed normally.
+remove_leftover_dir() {
+    local wtdir="$1" survivors
+
+    command find "$wtdir" -mindepth 1 -maxdepth 1 ! -name .git \
+        -exec rm -rf {} + 2>/dev/null || true
+
+    # Gate the `.git` removal on the OBSERVED state, not on the exit status
+    # above: `find -exec … +` reports failure for the whole batch, so a status
+    # check cannot say whether anything actually survived, and `rm -rf`'s own
+    # partial success makes the distinction invisible. Ask the filesystem
+    # instead — if any non-`.git` entry remains, the fingerprint must stay.
+    if [ -z "$(command find "$wtdir" -mindepth 1 -maxdepth 1 ! -name .git 2>/dev/null)" ]; then
+        command rm -rf "$wtdir/.git" 2>/dev/null || true
+        command rmdir "$wtdir" 2>/dev/null || true
+    fi
+
+    if [ ! -e "$wtdir" ]; then
+        command echo "  removed leftover directory $wtdir"
+        removed=1
+        return 0
+    fi
+
+    # Still present. Teardown CONTINUES (removed=1, exit 0) to the branch and
+    # tmux steps — the worktree is deregistered and nothing git-tracked remains,
+    # which is the whole definition of done here.
+    #
+    # REPORT WHAT IS ON DISK, and let the two facts that matter carry the
+    # message: how many entries remain, and whether the directory itself could
+    # be removed. Two earlier attempts scoped this count cleverly — excluding
+    # `.git` because it was "kept by choice" — and each printed the
+    # self-contradictory "0 undeletable entries remain" about a directory the
+    # operator can plainly see, once via a refused `.git` and once via a refused
+    # `rmdir` on an emptied directory. Every such exclusion is a claim about WHY
+    # something survived, and this function cannot know that: `rm -rf`/`rmdir`
+    # are best-effort here and report one status for many operations. So it
+    # states only what it can observe.
+    #
+    # The `.git` this function deliberately keeps IS counted, and the message
+    # says so rather than silently netting it out — an operator who sees "1
+    # entry" on a partial removal should be able to reconcile it with the one
+    # file in the directory.
+    survivors="$(command find "$wtdir" -mindepth 1 2>/dev/null |
+        command wc -l | command tr -d '[:space:]')"
+    if [ "$survivors" -eq 0 ]; then
+        # Emptied, but the directory node itself would not go (an unwritable
+        # parent is the realistic cause). Saying "0 entries remain" here would
+        # describe a clean sweep while the directory is still on disk.
+        command echo "  emptied leftover directory $wtdir, but could not remove the directory itself"
+    elif [ "$survivors" -eq 1 ]; then
+        command echo "  cleared leftover directory $wtdir (1 entry could not be removed)"
+    else
+        command echo "  cleared leftover directory $wtdir ($survivors entries could not be removed)"
+    fi
+    command echo "  (expected on a bindfs/FUSE overlay — nothing git-tracked is at risk)"
+    removed=1
+}
+
 # A worktree git no longer lists cannot hold unmerged commits to lose, so there
 # is nothing git-tracked left to protect — but the directory may still be on
 # disk. Before this fix the whole removal block was gated on being listed, so
@@ -505,18 +613,7 @@ fi
 if [ "$listed" -eq 0 ] && [ -e "$wt" ]; then
     command echo "worktree-rm: $wt is no longer registered as a worktree" >&2
     command echo "  (nothing git-tracked left to lose) — removing the leftover directory" >&2
-    if command rm -rf "$wt"; then
-        command echo "  removed leftover directory $wt"
-        removed=1
-    else
-        # A partial removal is expected on a bindfs/FUSE overlay, where stale
-        # dentries return EBADF on unlink while still showing up in readdir —
-        # harmless (git has no record, .worktrees/ is gitignored, and the
-        # collision guard reads `git worktree list`), but currently reported as
-        # a warning. Whether to tolerate it silently or skip build-output dirs
-        # outright is #834.
-        command echo "worktree-rm: WARNING: could not fully remove $wt" >&2
-    fi
+    remove_leftover_dir "$wt"
     command git worktree prune || true
 fi
 

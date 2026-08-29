@@ -74,7 +74,17 @@ jobs:
     name: Skill/agent quality gates
     runs-on: ubuntu-latest
     needs: validate-manifests
-    timeout-minutes: 15
+    # 25, not 15 (#834). This job runs the whole shell suite, which grows with
+    # every test added, and at 15 it had drifted to a 26-SECOND margin: the last
+    # green run on main took 14m34s. That is not a budget, it is a coin flip —
+    # the next few tests to land, whatever they are, fail here for having made
+    # the suite slightly longer rather than for anything wrong with them, and
+    # the failure arrives as an opaque mid-stage "operation was canceled"
+    # 15 minutes into CI (#834 hit exactly this, in a stage unrelated to its
+    # change). The cap exists to bound a HANG, not to ration normal growth, so
+    # it is set well clear of the real runtime and should be re-checked — not
+    # nudged by a minute — if a run ever approaches it again.
+    timeout-minutes: 25
     # Fork PRs check out untrusted contributor code as tests/* (checkout uses
     # the PR HEAD), so running the full shell suite would expose the runner —
     # network, environment, GITHUB_TOKEN — to it. Guard the WHOLE job (not just

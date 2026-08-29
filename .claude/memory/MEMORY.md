@@ -41,6 +41,7 @@
 - [Fixture must express the divergent case](fixture-must-express-the-divergent-case.md) — solve for the input where old and new differ; 5 green tautologies in one session
 - [Gate + evidence converge → tautology](gate-and-evidence-converge-tautology.md) — one fixture both ARMS and SATISFIES the gate (#600)
 - [A fix reintroduces its own failure](fix-reintroduces-its-own-failure.md) — the snapshot/trap/rename a silent-loss fix adds is where the loss reappears
+- [Tolerating a failure still needs the order right](tolerating-a-failure-still-needs-the-order-right.md) — a partial op already destroyed state before failing; mutate the message-only fix (#834)
 - [Prose contract anchored to prose](prose-contract-anchored-to-prose.md) — heading/sentence anchors block the extraction they should survive; use contract ids
 - [Escaped fixture cannot self-match](escaped-fixture-cannot-self-match.md) — `console\.` on disk never matches a `console\.` pattern; passes either way (#604)
 - [Config prose satisfies its own assertion](config-prose-satisfies-its-own-assertion.md) — delete the setting, the comment explaining it keeps the raw-text check green (#737)
