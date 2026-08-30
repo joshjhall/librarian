@@ -261,6 +261,19 @@ just fmt          # format JSON/YAML/TOML/markdown/Python
 just install-hooks
 ```
 
+**`git push` already runs the full suite — do not run it by hand first.**
+lefthook's **pre-push** `quality-gates` step is `bash tests/run-all.sh`, globbed
+to `plugins/**`, `tests/**`, and `.github/workflows/**`, so nearly every change
+here triggers it. Running `just test` (or `just lint`, whose `typos`/
+`dprint-check`/`taplo-check` the hook also repeats) before pushing pays the same
+~5-9 minutes twice on the same tree, and buys no safety: the hook runs *after*
+the manual pass and is what actually blocks the push. Measured on a one-line
+codeql SHA pin: ~300 s local + 516 s hook, for a line no test in the suite
+exercises. Instead, run the **targeted** gate for what changed when it is cheap
+(`tests/lint-action-pins.sh` is 2 s for a pinned `uses:`), then push with a
+600 s timeout. Reach for the full local suite only while iterating on a failure,
+or when a late failure is expensive - mid-release, or before pushing a tag.
+
 **Linting is language-by-language and gated in CI + pre-push.** Formatting/lint
 for JSON/YAML/TOML/markdown is dprint/taplo/rumdl (via `just lint`). The two
 in-repo languages each have a `tests/run-all.sh` gate: **shell** →
