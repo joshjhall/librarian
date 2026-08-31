@@ -81,6 +81,7 @@
 - [A surviving mutation may be a real no-op](surviving-mutation-may-be-a-real-no-op.md) — prove unreachable-vs-untested before writing a test that cannot fail (#589) (#663)
 - [A GNU host can't mutate a GNU-ism](gnu-host-cannot-mutate-a-gnu-ism.md) — reverting to the GNU spelling is a NO-OP; mutate to the other platform's outcome (#679)
 - [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)
+- [Whole-repo diff is bounded by repo content](whole-repo-diff-bounded-by-repo-content.md) — absent input shapes read as parity; grep the shape, 0 files = silent gate (#836)
 - [The correct copy is the one under test](the-correct-copy-is-the-one-under-test.md) — N unpinned copies, and the fixture calls the RIGHT one; grep the test corpus by PATH (#836)
 - [Pinned behavior may be a bug report](pinned-behavior-may-be-a-bug-report.md) — "recorded, not asserted-as-desirable" is a deferred defect; fix the row, comment, and every runtime together
 - [Test defined but never registered](test-defined-but-never-registered.md) — no `run_test` line = never runs; guard by NAME SETS, not counts (#596)
@@ -96,6 +97,7 @@
 - [Two-runtime model](two-runtime-model.md) — workflow.js is sandboxed (no shell/fs); only Bash-tool subagents reach host tools
 - [Harness format is neither module nor script](harness-format-is-neither-module-nor-script.md) — workflow.js can never import; no bundler emits its format (#712)
 - [Auto-mode blocks self-merge](auto-mode-blocks-self-merge.md) — `gh pr merge` denied as self-authored; a human go-ahead does NOT clear it — retry once, then hand over
+- [Verify before reporting an action blocked](verify-blocked-action-before-reporting-it-blocked.md) — the denial may be on the VERIFY step; the merge had already landed (#865)
 - [Edits landed in main not worktree](edits-landed-in-main-not-worktree.md) — main-checkout abs paths from a worktree land in MAIN
 
 ## Conventions for this directory
