@@ -44,9 +44,20 @@ const CONSUMERS = [
 ];
 
 // The measured break-even. Both figures are cited from the repo's own
-// measurements (#787 n=301 spawns; #785's 24h classification) rather than
-// re-derived, so the test pins the CITATION, not an arithmetic result.
-const SPAWN_PREFIX = "24,568";
+// measurements (#787; #785's 24h classification) rather than re-derived, so the
+// test pins the CITATION, not an arithmetic result.
+//
+// Re-measured in #787 (n=33) and the basis CHANGED, which is why this constant
+// moved: a spawn's first turn splits into a shared block that is normally a
+// cache HIT (~0.1x) and per-spawn bytes written at ~1.25x, so the raw prefix
+// OVERSTATES what delegating actually costs. The figure below is the
+// billing-weighted median; the earlier 24,568 was a raw fleet median, and the
+// two landing close together is a coincidence of the sample, not an identity.
+//
+// This pin earned its keep on that very change: standardizing the guidance
+// briefly left three spellings (24,568 / 24,600 / 24,650) across four files,
+// and this assertion is what caught the partial update.
+const SPAWN_PREFIX = "24,650";
 
 // The skill's SECOND measured citation: opus-5 costs this multiple of sonnet-5
 // per token on the same fleet window. Pinned for the same reason SPAWN_PREFIX
@@ -180,7 +191,7 @@ export function run() {
   if (skill) {
     ok(
       skill.includes(SPAWN_PREFIX),
-      `delegating-investigation: states the measured spawn prefix (${SPAWN_PREFIX}, #787)`,
+      `delegating-investigation: states the measured spawn prefix (${SPAWN_PREFIX}, billing-weighted, #787)`,
     );
     ok(
       /re-read debt/i.test(skill),

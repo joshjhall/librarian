@@ -31,7 +31,7 @@ Both numbers are **measured in this repo**. Cite them; do not re-derive them.
 | Cost **not to** — the investigation's own result volume **plus its re-read debt** | varies | #785 |
 
 ```text
-delegate when:  result_tokens x turns_resident  >  ~24,600
+delegate when:  result_tokens x turns_resident  >  ~24,650
 ```
 
 **Use the billing-weighted figure, not the raw one** (#787;

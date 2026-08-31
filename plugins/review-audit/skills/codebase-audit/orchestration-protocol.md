@@ -16,7 +16,7 @@ lives in `finding-schema.md`; grouping templates and platform commands live in
 `/dev-core:delegating-investigation` and apply its break-even.** Mapping a whole
 repo is the widest read-only investigation any skill in this marketplace
 performs, so it clears the break-even
-(`result_tokens x turns_resident > ~24,600`, the measured median spawn
+(`result_tokens x turns_resident > ~24,650`, the measured median spawn
 prefix, billing-weighted, #787) by a wide margin — and the mapping output then stays resident for
 the whole sweep, which is where the multiplier bites. Delegate the tree walks,
 convention traces, and "which files look like X" questions; keep **inline** the

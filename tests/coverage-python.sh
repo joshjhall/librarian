@@ -204,6 +204,7 @@ NON_PATTERNS_TOOLS="\
 plugins/review-audit/skills/check-ai-config/agnix-normalize.py
 plugins/workflow/scripts/autonomy-resolve.py
 plugins/workflow/scripts/golem-event-listener.py
+plugins/workflow/scripts/measure-spawn-prefix.py
 plugins/workflow/skills/ship-issue/plan-lens.py
 plugins/workflow/skills/ship-issue/sizing.py
 plugins/workflow/skills/ship-issue/split-verify.py"

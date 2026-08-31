@@ -387,3 +387,39 @@ PY
         run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
         "$LISTENER_PY" >/dev/null 2>&1) || true
 fi
+
+# --- scripts/measure-spawn-prefix.py — spawn-prefix accounting (#787) --------
+#
+# Driven against the synthetic transcript root built in 80-workflow-tools.sh
+# rather than the developer's real ~/.claude/projects: --root makes the run
+# hermetic AND deterministic. Without it the measurement would vary with
+# whatever spawns happened to be on the machine, and would be EMPTY in CI —
+# leaving every reporting branch below unexecuted while still exiting 0.
+MEASURE_PY="$PLUGINS_DIR/workflow/scripts/measure-spawn-prefix.py"
+if [ -f "$MEASURE_PY" ]; then
+    # The three reports over the mixed hit/miss corpus. `cache` is the one whose
+    # arithmetic needs both arms present; `split` renders the per-spawn table and
+    # the billing-weighted shares; `summary` covers the percentile + grouping.
+    for _rpt in summary split cache; do
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+            "$MEASURE_PY" "$_rpt" --root "$PREFIX_ROOT" >/dev/null 2>&1 || true
+    done
+    # Default subcommand (argparse nargs="?" -> summary) on the same corpus.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MEASURE_PY" --root "$PREFIX_ROOT" >/dev/null 2>&1 || true
+    # All-hits corpus -> `cache` takes the early return that skips the penalty
+    # arithmetic. Driven separately because the mixed corpus can never reach it.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MEASURE_PY" cache --root "$PREFIX_ALLHIT" >/dev/null 2>&1 || true
+    # Exit-3 arms: a root that exists but holds no BILLED turn, and a root that
+    # does not exist at all. Different branches, same exit code.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MEASURE_PY" summary --root "$PREFIX_EMPTY" >/dev/null 2>&1 || true
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MEASURE_PY" summary --root "$PREFIX_GHOST" >/dev/null 2>&1 || true
+    # Usage error (exit 2) -> argparse's invalid-choice arm.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$MEASURE_PY" bogus-report --root "$PREFIX_ROOT" >/dev/null 2>&1 || true
+    unset _rpt
+    run_count=$((run_count + 1))
+fi
