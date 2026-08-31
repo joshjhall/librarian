@@ -82,6 +82,13 @@ def _agent_type(jsonl: pathlib.Path) -> str:
         data = json.loads(meta.read_text())
     except (OSError, ValueError):
         return "(unknown)"
+    # Guard the SHAPE as well as the parse. `[1,2,3]`, `"x"` and `42` are all
+    # valid JSON, so they sail past the except above and then raise
+    # AttributeError on .get() — uncaught, aborting the whole run over one
+    # malformed sidecar among possibly dozens of good transcripts. Degrading to
+    # the same fallback an unparseable sidecar gets is the advertised contract.
+    if not isinstance(data, dict):
+        return "(unknown)"
     return data.get("agentType") or data.get("subagent_type") or "(unknown)"
 
 

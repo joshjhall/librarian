@@ -148,6 +148,21 @@ test_summary_groups_by_agent_type() {
     assert_contains "$OUT" "general-purpose" "groups the broad agent type"
     assert_contains "$OUT" "dev-core:code-reviewer" "groups the narrow agent type"
     assert_contains "$OUT" "n=3" "the narrow type carries three spawns"
+
+    # The descriptive stats, pinned by value — this is the only direct coverage
+    # of _percentile(), whose index arithmetic (int(len * fraction), clamped)
+    # is exactly the kind of off-by-one that stays invisible when a test only
+    # checks that a label was printed.
+    #
+    # MAIN's per-spawn prefixes are 28,002 / 30,002 / 29,002 / 31,002 (each
+    # input_tokens=2 + cache_read + cache_creation), so sorted: 28,002 / 29,002
+    # / 30,002 / 31,002 -> median 29,502, p90 and max both 31,002.
+    assert_contains "$OUT" "prefix min             28,002" "min prefix"
+    assert_contains "$OUT" "prefix median          29,502" "median prefix"
+    assert_contains "$OUT" "prefix p90             31,002" "p90 via _percentile"
+    assert_contains "$OUT" "prefix max             31,002" "max prefix"
+    assert_contains "$OUT" "one-shot spawn cost    118,008" \
+        "one-shot cost is the sum of every prefix"
 }
 
 test_split_reports_billing_weighted_shares() {
@@ -155,9 +170,26 @@ test_split_reports_billing_weighted_shares() {
     assert_equals "0" "$RC" "split exits 0"
     # The headline claim of the whole issue: the cached half is nearly free, so
     # the written half dominates billing. If this inverts, the guidance built on
-    # it is wrong.
-    assert_contains "$OUT" "cached share" "reports the cached share"
-    assert_contains "$OUT" "written share" "reports the written share"
+    # it is wrong — so pin the VALUES, not merely that the labels were printed.
+    #
+    # Hand-computable from the MAIN fixture:
+    #   cached_cost  = 0.1  x (11000 + 11000 + 0 + 0)         =   2,200
+    #   written_cost = 1.25 x (17000 + 19000 + 29000 + 31000) = 120,000
+    #   total        = 122,200 -> cached 1.8%, written 98.2%
+    #   weighted per spawn = 0.1 x cached + 1.25 x written
+    #                      -> median of (22,350 / 24,850 / 36,250 / 38,750)
+    #                      =  30,550
+    #
+    # cmd_split applies the multipliers independently of cmd_cache, so a flip
+    # confined to this subcommand would otherwise pass on the cache assertions.
+    assert_contains "$OUT" "cached  median             5,500" "cached median"
+    assert_contains "$OUT" "written median             24,000" "written median"
+    assert_contains "$OUT" "median weighted tokens   30,550" \
+        "billing-weighted median = 0.1 x cached + 1.25 x written"
+    assert_contains "$OUT" "cached share             1.8%" \
+        "the cached half is nearly free"
+    assert_contains "$OUT" "written share            98.2%" \
+        "the written half carries the billing"
 }
 
 # --- the share-ratio regressions --------------------------------------------
@@ -244,6 +276,36 @@ test_journal_and_malformed_records_are_tolerated() {
     assert_contains "$OUT" "spawns                 2" \
         "journal.jsonl is excluded from the spawn count"
     assert_contains "$OUT" "(unknown)" "an unparseable sidecar falls back"
+}
+
+test_non_object_sidecar_falls_back_instead_of_crashing() {
+    # REGRESSION (#787, review cycle 2). The parse guard caught OSError/ValueError
+    # but not a sidecar that is VALID JSON yet not an object: `[1,2,3]`, `"x"` and
+    # `42` all parse fine and then raise AttributeError on .get(), aborting the
+    # whole run over one bad sidecar among possibly dozens of good transcripts.
+    #
+    # The unparseable-sidecar case above cannot reach this branch — it never gets
+    # past json.loads — so this needs its own fixture.
+    local shaped="$WORKDIR/shaped"
+    spawn_file "$shaped" good dev-core:code-reviewer 11000 17000
+    spawn_file "$shaped" arr dev-core:code-reviewer 11000 18000
+    command printf '[1, 2, 3]\n' \
+        >"$shaped/proj/sess/subagents/wf/agent-arr.meta.json"
+    spawn_file "$shaped" num dev-core:code-reviewer 11000 18500
+    command printf '42\n' \
+        >"$shaped/proj/sess/subagents/wf/agent-num.meta.json"
+    spawn_file "$shaped" str dev-core:code-reviewer 11000 19000
+    command printf '"just a string"\n' \
+        >"$shaped/proj/sess/subagents/wf/agent-str.meta.json"
+
+    run_measure summary "$shaped"
+    assert_equals "0" "$RC" "a non-object sidecar degrades rather than crashing"
+    case "$OUT" in
+        *Traceback*) fail "aborted with a traceback: $OUT" ;;
+        *) : ;;
+    esac
+    assert_contains "$OUT" "spawns                 4" "every spawn is still counted"
+    assert_contains "$OUT" "(unknown)" "the malformed sidecars fall back"
 }
 
 test_missing_sidecar_falls_back_to_unknown() {
@@ -378,6 +440,7 @@ run_test test_share_never_prints_a_bare_impossible_percentage "A >100% share exp
 run_test test_inverted_sample_refuses_to_size_the_block "An inverted sample refuses to size the block"
 run_test test_all_hits_skips_the_penalty_arithmetic "An all-hits corpus skips the penalty arithmetic"
 run_test test_journal_and_malformed_records_are_tolerated "journal.jsonl and malformed records are tolerated"
+run_test test_non_object_sidecar_falls_back_instead_of_crashing "A non-object meta sidecar falls back, not crashes"
 run_test test_missing_sidecar_falls_back_to_unknown "A missing meta sidecar falls back to (unknown)"
 run_test test_absent_root_exits_three "An absent transcript root exits 3"
 run_test test_root_with_no_billed_turn_exits_three "A root with no billed turn exits 3"
