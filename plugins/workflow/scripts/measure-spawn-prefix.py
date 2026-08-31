@@ -6,7 +6,8 @@ the first-turn input context (system prompt + tool schemas + dispatch prompt)
 that is sent before the agent does any work.
 
 Filed for issue #787, whose premise — that the prefix is driven by broad `tools:`
-declarations — this instrument falsified. See docs/verification/subagent-prefix-787.md.
+declarations — this instrument falsified. See
+docs/verification/subagent-prefix-e2e-787.md.
 
 The headline number everyone quotes ("24.5k median prefix") conflates two things
 that bill an order of magnitude apart:

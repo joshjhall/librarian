@@ -86,7 +86,7 @@ to "rank removals by measured schema size". But schema bytes sit in the *cached*
 component, which is 2.9% of what is actually billed. Shaving the shared block is
 worth roughly a thirtieth of what its raw size suggests.
 
-## Finding 3 — a 36% cache-MISS rate is the largest measured cost
+## Finding 3 — a 33% cache-MISS rate is the largest measured cost
 
 Some spawns show `cache_read == 0` and a correspondingly larger
 `cache_creation`: they **wrote** the shared block instead of reading it, paying

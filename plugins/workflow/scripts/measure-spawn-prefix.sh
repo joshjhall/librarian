@@ -3,7 +3,7 @@
 #
 # Reports what a subagent spawn actually costs, split into the shared prefix
 # (normally a cache HIT, ~10% of list price) and the per-spawn bytes (written at
-# ~125%). Filed for issue #787; see docs/verification/subagent-prefix-787.md.
+# ~125%). Filed for issue #787; see docs/verification/subagent-prefix-e2e-787.md.
 #
 # Usage: measure-spawn-prefix.sh [summary|split|cache] [--root DIR]
 #
