@@ -166,8 +166,12 @@ that the cost model does not support.
 
 ## Follow-up
 
-- **Cache-miss investigation** — filed separately (see the issue linked from
-  #787's closing comment). Owns the *why* behind Finding 3 and any fix.
+- **Cache-miss investigation** —
+  [#870](https://github.com/joshjhall/librarian/issues/870). Owns the *why*
+  behind Finding 3 and any fix. It carries two distinguishable hypotheses (cache
+  TTL expiring across CI waits vs. barrier scheduling racing to populate the
+  cache), which is why the first step there is to timestamp misses against cycle
+  boundaries rather than reason from the harness source.
 
 ## Reproducing
 
