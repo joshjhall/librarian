@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import statistics
 import sys
@@ -160,8 +161,17 @@ def iter_spawns(root: pathlib.Path):
 
 
 def _percentile(values: list[int], fraction: float) -> int:
+    """Nearest-rank percentile: the smallest value at or above `fraction` of the data.
+
+    `int(n * fraction)` is one rank too high and collapses to the MAXIMUM
+    whenever `n * fraction` lands on an integer — at n=10 or n=100 the reported
+    p90 was simply `max`, hiding exactly the gap between the 90th percentile and
+    the outlier that a p90 is quoted to show. The n=4 fixture could not see it:
+    there p90 and max legitimately coincide either way.
+    """
     ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))]
+    index = max(0, math.ceil(len(ordered) * fraction) - 1)
+    return ordered[min(len(ordered) - 1, index)]
 
 
 def cmd_summary(spawns: list[dict]) -> None:

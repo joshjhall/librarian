@@ -278,6 +278,82 @@ test_journal_and_malformed_records_are_tolerated() {
     assert_contains "$OUT" "(unknown)" "an unparseable sidecar falls back"
 }
 
+test_percentile_does_not_collapse_to_max_at_round_sizes() {
+    # REGRESSION (#787, review cycle 3). _percentile used `int(n * fraction)`,
+    # one rank too high, which clamps to the LAST element whenever n * fraction
+    # is an integer — so at n=10 (and n=100) the reported p90 was simply `max`,
+    # hiding the very gap between the 90th percentile and the outlier that a p90
+    # is quoted to show.
+    #
+    # The MAIN fixture is n=4, where p90 and max legitimately coincide under
+    # BOTH the old and new formulas, so it cannot distinguish them — the defect
+    # was invisible to the whole suite. This fixture is n=10 precisely because
+    # that is where the two formulas diverge.
+    #
+    # Ten spawns with prefixes 10,002 .. 100,002 (cache_creation 10k..100k, each
+    # + input_tokens 2). Nearest-rank p90 is the 9th value, 90,002 — NOT the max
+    # of 100,002.
+    local ranked="$WORKDIR/ranked" i=1
+    while [ "$i" -le 10 ]; do
+        spawn_file "$ranked" "s$i" dev-core:code-reviewer 0 "${i}0000"
+        i=$((i + 1))
+    done
+
+    run_measure summary "$ranked"
+    assert_equals "0" "$RC" "the n=10 corpus reports"
+    assert_contains "$OUT" "spawns                 10" "ten spawns"
+    assert_contains "$OUT" "prefix max             100,002" "max is the largest"
+    assert_contains "$OUT" "prefix p90             90,002" \
+        "p90 is the 9th of 10 by nearest rank, NOT the max"
+    case "$OUT" in
+        *"prefix p90             100,002"*)
+            fail "p90 collapsed to max at a round sample size"
+            ;;
+        *) : ;;
+    esac
+}
+
+test_subagent_type_key_is_honoured() {
+    # `_agent_type` falls back from `agentType` to `subagent_type`. Every other
+    # fixture writes only `agentType`, so that second branch was dead as far as
+    # the suite was concerned and a key-name drift would pass unnoticed.
+    local altkey="$WORKDIR/altkey"
+    spawn_file "$altkey" alt - 11000 17000
+    command printf '{"subagent_type":"review-audit:checker","spawnDepth":1}\n' \
+        >"$altkey/proj/sess/subagents/wf/agent-alt.meta.json"
+
+    run_measure summary "$altkey"
+    assert_equals "0" "$RC" "a subagent_type sidecar reports"
+    assert_contains "$OUT" "review-audit:checker" \
+        "the subagent_type key is read when agentType is absent"
+    case "$OUT" in
+        *"(unknown)"*) fail "fell back to (unknown) despite a usable key" ;;
+        *) : ;;
+    esac
+}
+
+test_top_level_usage_is_counted() {
+    # `_usage` falls back to a top-level `usage` when the record has no
+    # `message` wrapper. No fixture produced that shape, so the branch was
+    # never taken — and a record silently dropped from the accounting is the
+    # failure mode this whole tool exists to avoid.
+    local toplevel="$WORKDIR/toplevel"
+    local dir="$toplevel/proj/sess/subagents/wf"
+    command mkdir -p "$dir"
+    {
+        command printf '{"type":"user","message":{"role":"user","content":"dispatch"}}\n'
+        command printf '{"type":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":11000,"cache_creation_input_tokens":17000}}\n'
+    } >"$dir/agent-top.jsonl"
+    command printf '{"agentType":"dev-core:code-reviewer"}\n' \
+        >"$dir/agent-top.meta.json"
+
+    run_measure summary "$toplevel"
+    assert_equals "0" "$RC" "a top-level usage record reports"
+    assert_contains "$OUT" "spawns                 1" "the record counts as a spawn"
+    assert_contains "$OUT" "prefix median          28,002" \
+        "its usage is accounted, not silently dropped"
+}
+
 test_non_object_sidecar_falls_back_instead_of_crashing() {
     # REGRESSION (#787, review cycle 2). The parse guard caught OSError/ValueError
     # but not a sidecar that is VALID JSON yet not an object: `[1,2,3]`, `"x"` and
@@ -440,6 +516,9 @@ run_test test_share_never_prints_a_bare_impossible_percentage "A >100% share exp
 run_test test_inverted_sample_refuses_to_size_the_block "An inverted sample refuses to size the block"
 run_test test_all_hits_skips_the_penalty_arithmetic "An all-hits corpus skips the penalty arithmetic"
 run_test test_journal_and_malformed_records_are_tolerated "journal.jsonl and malformed records are tolerated"
+run_test test_percentile_does_not_collapse_to_max_at_round_sizes "p90 does not collapse to max at n=10"
+run_test test_subagent_type_key_is_honoured "The subagent_type sidecar key is honoured"
+run_test test_top_level_usage_is_counted "A top-level usage record is counted"
 run_test test_non_object_sidecar_falls_back_instead_of_crashing "A non-object meta sidecar falls back, not crashes"
 run_test test_missing_sidecar_falls_back_to_unknown "A missing meta sidecar falls back to (unknown)"
 run_test test_absent_root_exits_three "An absent transcript root exits 3"

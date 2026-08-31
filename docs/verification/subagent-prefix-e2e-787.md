@@ -53,7 +53,11 @@ sample size.
 | Harnesses may spawn broad agents | Every `agentType` in every `workflow.js` targets one of the 19 narrow agents (`dev-core:code-reviewer`, `review-audit:checker`, `review-audit:artifact-writer`, `review-audit:issue-writer`, `workflow:ci-fixer`, `workflow:rebase-agent`) | `grep -rn agentType plugins/` |
 
 **The decisive measurement:** `dev-core:code-reviewer` declares a *narrow*
-9-item tool list and still shows a **29,288-token median prefix** (n=32). A
+9-item tool list and still shows a **29,288-token median prefix** (n=32 — this
+is the *per-agent-type* median from `summary`'s grouping, which is why it
+differs slightly from the 29,298 *overall* median across all n=33 spawns cited
+in AC4 below and in `delegating-investigation/SKILL.md`; two statistics, not a
+transcription slip). A
 narrow list does not buy a small prefix. Conversely the single `general-purpose`
 spawn observed cost **49,919** — ~21k more — so agent *breadth* does matter, but
 **librarian never spawns a broad agent**, so that lever is already pulled.
