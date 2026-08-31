@@ -485,6 +485,56 @@ test_test_file_and_skip() {
 }
 
 # ============================================================================
+# #836 — a test_*-named DIRECTORY must NOT skip the real source inside it
+# ============================================================================
+# The name arms of is_test_file() are matched against the BASENAME; the path
+# arms above them are the ones meant to cross `/`. Before the fix the bash copy
+# used the pre-#568 path-crossing form `test_*.* | */test_*.*`, whose `*` crosses
+# `/` in a bash `case` glob — so a DIRECTORY named `test_helpers/` matched, and
+# check-lifecycle (which skips a test file WHOLESALE) dropped every finding for
+# real source beneath it. The Python twin was already basename-anchored, making
+# this a live TSV-parity violation invisible to every existing gate: the
+# whole-repo differential (validate-prescan-differential.sh) can only diff inputs
+# the repo actually contains, and this repo has no test_*-named directory at all.
+#
+# Both halves of this fixture assert the row FIRES. The control under a plainly
+# non-test directory is what distinguishes "the fix works" from "emit_rows broke
+# and everything is silent" — without it, a scanner that emitted nothing at all
+# would still satisfy a bare-silence assertion elsewhere in this file.
+test_test_dir_does_not_skip_source() {
+    local d list
+
+    # The regression: real source under src/test_helpers/ MUST still be scanned.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src/test_helpers"
+    command printf '%s\n' 'proc = subprocess.Popen(["ls"])' \
+        >"$d/src/test_helpers/production.py"
+    list="$(make_list "$d/l" "$d/src/test_helpers/production.py")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: source under a test_*-named DIRECTORY is still scanned (#836)"
+
+    # Control: byte-identical content under a plain directory also fires, so a
+    # silent scanner cannot masquerade as a passing fix.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src/helpers"
+    command printf '%s\n' 'proc = subprocess.Popen(["ls"])' \
+        >"$d/src/helpers/production.py"
+    list="$(make_list "$d/l" "$d/src/helpers/production.py")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: identical source under a plain directory fires (#836 control)"
+
+    # The BASENAME form still skips — the fix narrows the arm, it does not
+    # remove it. test_production.py is a genuine test file and stays suppressed.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/src/helpers"
+    command printf '%s\n' 'proc = subprocess.Popen(["ls"])' \
+        >"$d/src/helpers/test_production.py"
+    list="$(make_list "$d/l" "$d/src/helpers/test_production.py")"
+    assert_silent "$list" unreaped-subprocess \
+        "lifecycle: a test_-prefixed FILE is still skipped wholesale (#836 narrowness)"
+}
+
+# ============================================================================
 # Evidence truncation parity — >80-char multibyte line, bash == python
 # ============================================================================
 # Drives emit()'s EVIDENCE_CAP=80 CHARACTER truncation and the bash
@@ -518,6 +568,7 @@ run_test test_unclosed_handle "check-lifecycle: py/go/js handle assignment fires
 run_test test_unpaired_listener "check-lifecycle: JS addEventListener/setInterval/.on + Swift addObserver"
 run_test test_ruled_out_false_positives "check-lifecycle: draining pipe-reader + cleared dict negative fixtures (issue FPs)"
 run_test test_test_file_and_skip "check-lifecycle: wholesale test-file skip + segment anchoring + SKIP_GLOBS"
+run_test test_test_dir_does_not_skip_source "check-lifecycle: a test_*-named DIRECTORY does not skip the source inside it (#836)"
 run_test test_evidence_truncation_parity "check-lifecycle: >80-char multibyte evidence truncation parity (bash==python)"
 
 generate_report

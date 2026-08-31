@@ -19,10 +19,13 @@ tests/validate-lifecycle-detectors.sh. See CLAUDE.md § Key conventions.
 The is_test_file() helper mirrors the segment-anchored check-code-health /
 ship-issue copies for classification uniformity (it is NOT wired into the
 validate-shared-scanner-sync.sh drift gate, which covers only the
-check-code-health <-> ship-issue pair — this copy stands alone). check-lifecycle
-skips test files WHOLESALE (lifecycle shortcuts in test scaffolding are
-expected), so the helper gates the whole per-file scan rather than a single
-category.
+check-code-health <-> ship-issue pair — this copy stands alone, a decision
+re-affirmed in #836). check-lifecycle skips test files WHOLESALE (lifecycle
+shortcuts in test scaffolding are expected), so the helper gates the whole
+per-file scan rather than a single category — which is precisely why an
+anchoring drift here is expensive: it silences the file entirely, not one
+category. The name arms match the BASENAME so a directory named `test_*/` can
+never suppress the real source inside it (#836); keep patterns.sh in step.
 
 Input:  argv[1] = file containing paths to scan (one per line)
 Output: TSV to stdout: file<TAB>line<TAB>category<TAB>evidence<TAB>certainty

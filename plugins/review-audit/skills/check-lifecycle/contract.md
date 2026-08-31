@@ -80,13 +80,6 @@ within this scanner's declared tolerance — every row is `MEDIUM`, a candidate 
 LLM pass-2 confirms or dismisses — but it is worth knowing before reading a
 report.
 
-> **Known defect — the two runtimes disagree.** This scanner skips test files
-> wholesale, and its **bash** `is_test_file` uses a path-crossing glob while its
-> Python twin is basename-anchored. Real source under any directory named
-> `test_*/` is scanned by the Python primary and silently skipped by the bash
-> fallback. The matrix above describes the intended (Python) behavior. Tracked as
-> [#836](https://github.com/joshjhall/librarian/issues/836).
-
 ## Finding Format
 
 Each finding extends the standard finding-schema.md:
