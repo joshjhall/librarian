@@ -23,8 +23,11 @@
 # The is_test_file() block mirrors the segment-anchored check-code-health /
 # ship-issue copies for classification uniformity, but is NOT wired into the
 # validate-shared-scanner-sync.sh drift gate (that gate covers only the
-# check-code-health <-> ship-issue pair); this copy stands alone. See
-# CLAUDE.md § Key conventions.
+# check-code-health <-> ship-issue pair); this copy stands alone, and #836
+# recorded the decision to keep it that way — see the rationale above
+# is_test_file() below. Standing alone is why its anchoring drifted unnoticed,
+# so the behavioral gate tests/validate-lifecycle-detectors.sh pins it instead.
+# See CLAUDE.md § Key conventions.
 set -euo pipefail
 
 # --- runtime selection: prefer python3>=3.11, else this bash fallback --------
@@ -71,14 +74,33 @@ truncate_chars() {
 # convention. Segment-anchored so that contest.py / latest.js / attestation.go
 # (which a bare *test* glob wrongly matches) are NOT skipped, while
 # tests/helper.py IS. Mirrors the check-code-health / ship-issue copies for
-# classification uniformity (not gated by validate-shared-scanner-sync.sh — see
-# the header note). check-lifecycle skips a test file WHOLESALE (below).
+# classification uniformity. check-lifecycle skips a test file WHOLESALE (below).
+#
+# The two arm groups anchor DIFFERENTLY, and the split is load-bearing
+# (#568, and #836 for this copy): in a bash `case` glob, `*` crosses `/`, so a
+# path arm like `*/test_*.*` also matches a DIRECTORY named `test_helpers/` —
+# and because this scanner skips WHOLESALE, that silenced every lifecycle
+# finding for real source at `src/test_helpers/production.py`. Directory arms
+# are meant to cross slashes; the name arms are matched against the BASENAME so
+# they cannot. The patterns.py twin is basename-anchored for the same reason —
+# keep the two in step.
+#
+# DELIBERATELY NOT in validate-shared-scanner-sync.sh's SHARED_PAIRS (#836).
+# That gate pins byte-identity between the check-code-health <-> pre-review-gates
+# pair, where the predicate gates ONE category. This copy gates the WHOLE
+# per-file scan, so byte-identity with a differently-purposed copy is the wrong
+# contract to enforce; the behavioral gate
+# (tests/validate-lifecycle-detectors.sh, which drives BOTH runtimes) is what
+# pins this one. Anchoring is still the shared invariant — if you edit the arms
+# here, edit patterns.py's is_test_file() to match.
 is_test_file() {
     case "$1" in
         tests/* | */tests/* | test/* | */test/* | \
             __tests__/* | */__tests__/* | spec/* | */spec/* | \
             __pycache__/* | */__pycache__/*) return 0 ;;
-        test_*.* | */test_*.*) return 0 ;;
+    esac
+    case "${1##*/}" in
+        test_*.*) return 0 ;;
         *_test.* | *_spec.* | *.test.* | *.spec.*) return 0 ;;
     esac
     return 1
