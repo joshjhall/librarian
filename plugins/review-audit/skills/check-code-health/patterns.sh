@@ -615,14 +615,38 @@ while IFS= read -r file; do
             # non-empty handler's opening brace and find a later `{}` on the same
             # line. Mirrors patterns.py's arm; see it for the full note.
             #
-            # `(^|[^[:alnum:]_])` is the WORD BOUNDARY, spelled portably. The
-            # python arm uses `\bcatch\b`, but `\b` is a GNU extension that BSD
-            # grep reads as a literal (CLAUDE.md § runtime policy), so the two
-            # runtimes would silently disagree on macOS. Measured before fixing:
-            # without this, bash matched `mycatch { }` and python did not — a
-            # live py/sh parity break. The trailing boundary is carried by
-            # `[[:space:]]*[^{}]*\{`, which cannot match an identifier character.
-            command grep -nE -- '(^|[^[:alnum:]_])catch[[:space:]]*[^{}]*\{[[:space:]]*\}' "$file" 2>/dev/null |
+            # BOTH word boundaries are spelled out, portably. The python arm
+            # uses `\bcatch\b`, but `\b` is a GNU extension that BSD grep reads
+            # as a literal (CLAUDE.md § runtime policy), so it must be written
+            # long-hand here or the two runtimes silently disagree on macOS.
+            #
+            # Each side is load-bearing, and each was measured:
+            #
+            #   leading  `(^|[^[:alnum:]_])`  without it, `mycatch { }` matched
+            #                                in bash and not in python.
+            #   trailing `([^[:alnum:]_]|$)`  without it, `catches { }`,
+            #                                `catcher { }` and
+            #                                `catchAllErrors { }` matched in
+            #                                bash and not in python.
+            #
+            # The trailing side is the one an earlier draft got wrong by
+            # reasoning instead of measuring: the comment claimed the boundary
+            # was already "carried by `[[:space:]]*[^{}]*\{`", but `[^{}]*`
+            # excludes only the two BRACE characters and matches identifier
+            # characters freely — so every `catchXxx { }` identifier was a false
+            # positive on the bash runtime alone. Both directions are now pinned
+            # by fixtures.
+            #
+            # The trailing boundary is spelled as an ALTERNATION of the two ways
+            # a Swift catch can legally continue, rather than as a single
+            # "one non-identifier character" class. ERE has no lookahead, so a
+            # `[^[:alnum:]_]` here would CONSUME the character it tests — and
+            # for the brace-adjacent form `catch{ }` the only thing following
+            # `catch` IS the brace, so consuming it leaves nothing for `\{` to
+            # match and the line goes silent in bash while python still fires.
+            # That was a second divergence, found by re-measuring after the
+            # first fix rather than assuming the fix was complete.
+            command grep -nE -- '(^|[^[:alnum:]_])catch([[:space:]][^{}]*)?\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}

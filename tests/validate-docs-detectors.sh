@@ -680,13 +680,39 @@ test_missing_api() {
         "Swift: " \
         "missing-api swift: a plain // comment is NOT a doc comment (#839 AC3)"
 
-    # BOUNDARY: `internal` is Swift's default access level and is not public
-    # API, so an unmarked declaration must stay silent.
+    # The BINDING declarators (`let`/`var`) are a deliberate inclusion — a public
+    # stored property is module contract in a way a private field is not — and
+    # they are the one branch of the alternation that no other fixture here
+    # reaches: every case above uses func/class. Without these, dropping
+    # `var|let` from the pattern would pass the whole suite silently.
     d="$(fresh_dir)"
-    command printf '%s\n' "func helper() {}" "internal func hidden() {}" >"$d/int.swift"
+    command printf '%s\n' "public let apiVersion = 1" >"$d/plet.swift"
+    list="$(make_list "$d/l" "$d/plet.swift")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Swift: " \
+        "missing-api swift: an undocumented public let fires (binding declarator)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' "public var counter: Int = 0" >"$d/pvar.swift"
+    list="$(make_list "$d/l" "$d/pvar.swift")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Swift: " \
+        "missing-api swift: an undocumented public var fires (binding declarator)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' "/// The current API version." "public let apiVersion = 1" >"$d/dlet.swift"
+    list="$(make_list "$d/l" "$d/dlet.swift")"
+    assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "missing-api swift: a preceding /// documents the public let"
+
+    # BOUNDARY: `internal` is Swift's default access level and is not public
+    # API, so an unmarked declaration must stay silent. `private let` covers the
+    # binding half of the same rule.
+    d="$(fresh_dir)"
+    command printf '%s\n' "func helper() {}" "internal func hidden() {}" "private let secret = 1" >"$d/int.swift"
     list="$(make_list "$d/l" "$d/int.swift")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
-        "missing-api swift: unmarked/internal declarations are not public API"
+        "missing-api swift: unmarked, internal and private declarations are not public"
 }
 
 # ============================================================================

@@ -883,16 +883,58 @@ test_health_empty_handler() {
     assert_silent "$SK_HEALTH" "$list" empty-handler \
         "health: Swift handled catch + later empty closure stays silent"
 
-    # BOUNDARY: WORD BOUNDARY. An identifier merely ENDING in "catch" is not a
-    # catch. The python arm spells this `\bcatch\b`; `\b` is a GNU extension BSD
-    # grep reads as a literal, so the bash arm must spell it
-    # `(^|[^[:alnum:]_])`. Measured before that fix: bash fired here and python
-    # did not — a live py/sh parity break this fixture now pins.
+    # BOUNDARY: WORD BOUNDARY, BOTH SIDES. The python arm spells this
+    # `\bcatch\b`; `\b` is a GNU extension BSD grep reads as a LITERAL, so the
+    # bash arm must write both boundaries long-hand. Each side is asserted
+    # separately because each was a real, separately-measured py/sh divergence —
+    # and the leading-side fixture alone did NOT catch the trailing-side bug.
+    #
+    # An identifier ENDING in "catch" (leading boundary):
     d="$(fresh_dir)"
     command printf '%s\n' 'mycatch { }' >"$d/n.swift"
     list="$(make_list "$d/l" "$d/n.swift")"
     assert_silent "$SK_HEALTH" "$list" empty-handler \
-        "health: Swift identifier ending in 'catch' is not a catch (word boundary)"
+        "health: Swift identifier ending in 'catch' is not a catch (leading boundary)"
+
+    # An identifier STARTING with "catch" (trailing boundary). This direction
+    # shipped UNTESTED behind the fixture above and was a live parity break:
+    # bash fired on all three of these, python on none. Three spellings, since
+    # the missing guard was on the character class rather than on any one name.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'catches { }' >"$d/s.swift"
+    list="$(make_list "$d/l" "$d/s.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift 'catches { }' is not a catch (trailing boundary)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'catcher { }' >"$d/r.swift"
+    list="$(make_list "$d/l" "$d/r.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift 'catcher { }' is not a catch (trailing boundary)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'catchAllErrors { }' >"$d/a.swift"
+    list="$(make_list "$d/l" "$d/a.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift 'catchAllErrors { }' is not a catch (trailing boundary)"
+
+    # ...but the brace-adjacent form IS a catch and must still fire. This is the
+    # case that fails if the trailing boundary is written as a CONSUMING
+    # character class (ERE has no lookahead): the only thing following `catch`
+    # here is the brace itself, so consuming it leaves nothing for `\{` to match
+    # and the line goes silent in bash while python still fires. Found by
+    # re-measuring after the first boundary fix rather than assuming it complete.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch{ }' >"$d/adj.swift"
+    list="$(make_list "$d/l" "$d/adj.swift")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: Swift brace-adjacent 'catch{ }' still fires (boundary must not consume)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch {}' >"$d/e2.swift"
+    list="$(make_list "$d/l" "$d/e2.swift")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: Swift 'catch {}' (no inner space) fires"
 }
 
 test_health_test_file_and_skip() {

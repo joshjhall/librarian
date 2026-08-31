@@ -291,6 +291,9 @@ EOF
 {
     command printf 'do { try risky() } catch { }\n'
     command printf 'do { try risky() } catch let e { }\n'
+    command printf 'do { try risky() } catch{ }\n'
+    command printf 'catchAllErrors { }\n'
+    command printf 'public let swiftApiVersion = 1\n'
     command printf 'print("swift debug output")\n'
     command printf 'debugPrint(swiftValue)\n'
     command printf 'breakpoint()\n'

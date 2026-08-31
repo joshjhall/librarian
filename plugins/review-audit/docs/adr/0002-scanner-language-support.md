@@ -378,6 +378,28 @@ each other once 1 is in.
    so there is nothing analogous to `dbg!` or `pdb.set_trace` to key on. It is
    pinned by a fixture asserting `breakpoint()` in a `.swift` file stays silent —
    an empty column is otherwise unfalsifiable.
+
+   **A word-boundary lesson for every future phase, found by review rather than
+   by the mutation round.** The Python arms may write `\b`; the bash arms may
+   not, because `\b` is a GNU extension BSD grep reads as a literal. So each
+   boundary must be spelled long-hand — and *both* sides matter. Phase 2's first
+   draft guarded only the leading side and asserted in a comment that the
+   trailing side was "carried by `[[:space:]]*[^{}]*\{`". That was false:
+   `[^{}]*` excludes only the two brace characters and matches identifier
+   characters freely, so `catches { }`, `catcher { }` and `catchAllErrors { }`
+   were false positives on the bash runtime alone. The fixture written for the
+   leading side (`mycatch { }`) passed throughout, which is why the round missed
+   it — an identifier-*ends*-with fixture cannot fail on an
+   identifier-*starts*-with bug.
+
+   The correction has a second edge worth carrying forward: ERE has no
+   lookahead, so a trailing `[^[:alnum:]_]` **consumes** the character it tests.
+   For the brace-adjacent `catch{ }` the only thing following `catch` is the
+   brace itself, so consuming it left nothing for `\{` and that line went silent
+   in bash while Python still fired — a second divergence introduced by the fix
+   for the first. Spell the trailing boundary as an alternation of the ways the
+   construct can legally continue (`catch([[:space:]][^{}]*)?\{`), not as a
+   negated class. Both directions are now fixture-pinned in both runtimes.
 3. **Phase 3 — TypeScript / JavaScript** ([#840](https://github.com/joshjhall/librarian/issues/840)). Audit the existing arms against this
    contract and fill the matrix. Consider whether TS should split from JS, as
    #726 found for the decomposition lenses.
