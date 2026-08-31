@@ -261,10 +261,26 @@ def cmd_cache(spawns: list[dict]) -> None:
     hit_written = statistics.mean(s["written"] for s in hits)
     miss_written = statistics.mean(s["written"] for s in misses)
     shared = miss_written - hit_written
-    penalty = (CACHE_WRITE_MULTIPLIER - CACHE_READ_MULTIPLIER) * shared
 
     print(f"\nmean cache_creation on HIT   {hit_written:,.0f}")
     print(f"mean cache_creation on MISS  {miss_written:,.0f}")
+
+    # The shared block is INFERRED from a difference of two group means, so it is
+    # only meaningful when the miss group wrote more. A skewed sample can invert
+    # that — a few hit-group spawns carrying unusually large per-spawn payloads
+    # (a big diff, a fat pre-scan handoff) is enough — and then `shared` goes
+    # negative and every figure derived from it becomes a physically impossible
+    # negative token count. Say the sample cannot support the estimate instead of
+    # printing one, on the same principle as the no-misses early return above.
+    if shared <= 0:
+        print(
+            "implied shared block         n/a — the hit group wrote MORE than the\n"
+            "                             miss group, so this sample cannot size\n"
+            "                             the shared block. Collect more spawns."
+        )
+        return
+
+    penalty = (CACHE_WRITE_MULTIPLIER - CACHE_READ_MULTIPLIER) * shared
     print(f"implied shared block         {shared:,.0f} tokens")
     hit_cost = CACHE_READ_MULTIPLIER * shared
     miss_cost = CACHE_WRITE_MULTIPLIER * shared

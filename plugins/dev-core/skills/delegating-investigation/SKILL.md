@@ -83,7 +83,7 @@ makes the agent slower *and* costs more:
 - Following up on something a previous subagent already reported
 
 Over-delegation is a real failure mode, not a theoretical one: a one-line lookup
-routed through a subagent pays 24.5k to save a few hundred tokens, and adds a
+routed through a subagent pays ~24.6k to save a few hundred tokens, and adds a
 round-trip of latency. When an investigation is genuinely borderline, read it
 inline — the inline cost is bounded and visible, while a spawn is a fixed
 up-front loss.
@@ -143,7 +143,7 @@ These two rules are not in conflict, because **they govern different agents**:
 Do not weaken `SCOPE_DISCIPLINE` in the name of delegation, and do not paste
 delegation guidance into a reviewer prompt. A reviewer that starts dispatching
 investigation subagents has reintroduced the unbounded exploration that
-`SCOPE_DISCIPLINE` exists to stop, at a 24.5k premium per spawn.
+`SCOPE_DISCIPLINE` exists to stop, at a ~24.6k premium per spawn.
 
 ## When to Use
 

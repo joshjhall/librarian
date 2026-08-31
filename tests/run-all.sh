@@ -68,6 +68,7 @@
 #  14a3c. shared threshold-check library units (tests/validate-threshold-check.sh)
 #  14a4. review convergence stop decision (tests/validate-review-convergence.sh)
 #  14b. autonomy-resolver decision table + parity (tests/validate-autonomy-resolve.sh)
+#  14b1. measure-spawn-prefix accounting (tests/validate-measure-spawn-prefix.sh)
 #  14c. golem-notify Notification hook (tests/validate-golem-notify.sh)
 #  14c1. bash-guard PreToolUse hook (tests/validate-bash-guard.sh)
 #  14c1a. bash-guard main-session worktree rule (tests/validate-bash-guard-worktree.sh)
@@ -316,6 +317,7 @@ run_stage "CI-wait stop decision" bash "$SCRIPT_DIR/validate-ci-wait-timeout.sh"
 run_stage "shared threshold-check library units" bash "$SCRIPT_DIR/validate-threshold-check.sh"
 run_stage "review convergence stop decision" bash "$SCRIPT_DIR/validate-review-convergence.sh"
 run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate-autonomy-resolve.sh"
+run_stage "measure-spawn-prefix accounting" bash "$SCRIPT_DIR/validate-measure-spawn-prefix.sh"
 run_stage "golem-notify Notification hook" bash "$SCRIPT_DIR/validate-golem-notify.sh"
 run_stage "golem-event-listener receiver" bash "$SCRIPT_DIR/validate-golem-event-listener.sh"
 run_stage "bash-guard PreToolUse hook" bash "$SCRIPT_DIR/validate-bash-guard.sh"
