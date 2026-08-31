@@ -26,12 +26,27 @@ Both numbers are **measured in this repo**. Cite them; do not re-derive them.
 
 | | tokens | source |
 | --- | ---: | --- |
-| Cost **to** delegate — median subagent spawn prefix | **24,568** | #787, n=301 spawns (p90 27,389) |
+| Cost **to** delegate — median spawn prefix, **billing-weighted** | **~24,650** | #787, n=33 spawns |
+| Cost **to** delegate — median spawn prefix, **raw** | 29,298 | #787 (p90 30,762); earlier fleet figure 24,568, n=301 |
 | Cost **not to** — the investigation's own result volume **plus its re-read debt** | varies | #785 |
 
 ```text
-delegate when:  result_tokens x turns_resident  >  ~24,568
+delegate when:  result_tokens x turns_resident  >  ~24,600
 ```
+
+**Use the billing-weighted figure, not the raw one** (#787;
+`docs/verification/subagent-prefix-e2e-787.md`). A spawn's first turn splits into
+a shared system-prompt + tool-schema block that is byte-identical across spawns —
+normally a **cache hit** at ~0.1x — and per-spawn bytes written at ~1.25x. The
+cached half is only ~3% of what is actually billed, so the raw prefix
+**overstates** the true cost of delegating. The two numbers landing so close
+together is a coincidence of this sample, not an identity: the raw median rose
+while the weighted one held.
+
+One caveat that cuts the other way: ~1 spawn in 3 **misses** that cache and pays
+~12x for the same bytes, which is a ~14.5k penalty on top. So the break-even is
+genuinely noisy per-spawn. Treat ~24.6k as the expected cost and do not
+delegate anything close to the line.
 
 The multiplier is the part that is easy to forget and is usually decisive. A
 40k-token survey result is not a 40k cost — sitting in context for 30 more
@@ -40,7 +55,7 @@ result size, is what clears the prefix.
 
 So the question is never "would a subagent be tidier" — it is whether this
 particular investigation's result, times how long it stays resident, is bigger
-than 24.5k.
+than ~24.6k.
 
 ## Delegate — fan-out reading
 

@@ -18,8 +18,8 @@ call (see SKILL.md `## Autonomy Levels` and `autonomy.md`).
    and apply its break-even.** Planning is the most investigation-heavy phase in
    the pipeline, and its reading is exactly the shape that pays: wide surveys
    collapsing to a short conclusion. Delegate when
-   `result_tokens x turns_resident > ~24,568` (the measured median spawn prefix,
-   #787) — surveying a tree, tracing a convention across the repo, "where is X
+   `result_tokens x turns_resident > ~24,600` (the measured median spawn prefix,
+   billing-weighted, #787) — surveying a tree, tracing a convention across the repo, "where is X
    handled". Read **inline** when the file and line are already known: below the
    break-even a subagent is slower *and* dearer. A delegated investigation
    returns the answer plus `file:line` anchors, never a transcript of what it

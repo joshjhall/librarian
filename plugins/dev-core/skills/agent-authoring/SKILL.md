@@ -67,6 +67,30 @@ Start restrictive, expand as needed. Every unnecessary tool is a risk.
 - Use `disallowedTools` to block specific tools from inherited set
 - Use `hooks` for conditional restrictions (e.g., read-only SQL queries)
 
+**Scope narrowly for SAFETY, not for token cost — the cost argument is mostly
+false** (#787, measured; `docs/verification/subagent-prefix-e2e-787.md`). It is
+tempting to justify a tight `tools:` list as a token saving. Three measurements
+say otherwise, and it matters because the wrong justification sends people
+trimming the wrong thing:
+
+- **A narrow list does not buy a small prefix.** `dev-core:code-reviewer`
+  declares 9 narrowly-scoped tools and still shows a **~29k median spawn
+  prefix** (n=32).
+- **Tool schemas are in the CACHED half, which is ~3% of billed first-turn
+  cost.** The shared system-prompt + schema block is byte-identical across
+  spawns, so it is a cache hit at ~0.1x; the per-spawn bytes are written at
+  ~1.25x and carry ~97% of the cost. Shaving schema bytes saves a small
+  fraction of what their raw size suggests.
+- **What you send per-spawn is the real lever** — the dispatch prompt and the
+  agent body below it, which are written fresh every time.
+
+So the honest ordering is: scope tools to what the agent may *do* (a blast-radius
+decision), and treat the **body** as the thing to keep tight. One cost claim does
+survive: **omitting `tools:` to inherit everything measured ~21k more prefix than
+a narrow list** — the gap between a broad built-in agent and a scoped one is real.
+Prefer a scoped agent over a general-purpose one; do not shave an already-scoped
+list expecting a token win.
+
 ## Model Selection
 
 Match the model to the task's complexity. **Quality compounds** — bad
