@@ -257,3 +257,74 @@ LISTENER_SB="$WFDIR/listener-sandbox"
 mkdir -p "$LISTENER_SB/.worktrees/.status"
 LISTENER_FEED="$LISTENER_SB/.worktrees/.status/feed.jsonl"
 : >"$LISTENER_FEED"
+
+# =============================================================================
+# measure-spawn-prefix.py — subagent spawn-prefix accounting (#787)
+# =============================================================================
+#
+# A synthetic transcript root shaped like ~/.claude/projects: the tool globs
+# `subagents/**/*.jsonl` and reads a sidecar `<name>.meta.json` per spawn.
+#
+# The fixture arms BOTH cache arms, because the hit/miss split is the tool's
+# whole point (a miss pays ~12x for identical bytes) and a corpus of only hits
+# leaves the penalty arithmetic — the `cache` subcommand's headline branch —
+# unexecuted:
+#
+#   HIT   cache_read > 0   (the shared prefix block was read)
+#   MISS  cache_read == 0  (that same block was re-written at full price)
+#
+# Plus the degenerate arms the readers must survive: a journal.jsonl (skipped by
+# name), a spawn with NO meta sidecar (-> "(unknown)"), an unparseable meta, a
+# blank line and a non-JSON line mid-transcript, and a record carrying no usage
+# at all (context <= 0, so it must not count as a turn).
+PREFIX_ROOT="$WFDIR/prefix-root"
+PREFIX_SPAWNS="$PREFIX_ROOT/proj/sess/subagents/workflows/wf_fixture"
+mkdir -p "$PREFIX_SPAWNS"
+
+# _wf_spawn <name> <agent_type|-> <cache_read> <cache_creation>
+# Writes one transcript + its meta sidecar. A `-` agent_type omits the sidecar.
+_wf_spawn() {
+    _sp_f="$PREFIX_SPAWNS/agent-$1.jsonl"
+    {
+        printf '{"type":"user","message":{"role":"user","content":"dispatch prompt"}}\n'
+        printf '\n'
+        printf 'not json at all\n'
+        printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n'
+        printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s}}}\n' "$3" "$4"
+        printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":%s,"cache_creation_input_tokens":300}}}\n' "$3"
+    } >"$_sp_f"
+    if [ "$2" != "-" ]; then
+        printf '{"agentType":"%s","spawnDepth":1}\n' "$2" >"$PREFIX_SPAWNS/agent-$1.meta.json"
+    fi
+    unset _sp_f
+}
+
+# Two HITs and a MISS of the same agent type -> both arms, and a median over >1.
+_wf_spawn hit1 dev-core:code-reviewer 11359 17937
+_wf_spawn hit2 dev-core:code-reviewer 11359 18274
+_wf_spawn miss1 dev-core:code-reviewer 0 29277
+# A second agent type -> the per-type grouping loop runs more than once.
+_wf_spawn broad general-purpose 0 49917
+# No meta sidecar -> the "(unknown)" fallback.
+_wf_spawn nometa - 11359 16710
+# An unparseable meta -> the ValueError arm of _agent_type.
+_wf_spawn badmeta dev-core:code-reviewer 11359 16802
+printf 'not valid json\n' >"$PREFIX_SPAWNS/agent-badmeta.meta.json"
+# journal.jsonl is skipped by name, not by content.
+printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":9,"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}}\n' \
+    >"$PREFIX_SPAWNS/journal.jsonl"
+
+# A root with a subagents/ tree but NO billed turns -> the "no spawns" exit 3.
+PREFIX_EMPTY="$WFDIR/prefix-empty"
+mkdir -p "$PREFIX_EMPTY/proj/sess/subagents"
+printf '{"type":"user","message":{"role":"user","content":"never billed"}}\n' \
+    >"$PREFIX_EMPTY/proj/sess/subagents/agent-unbilled.jsonl"
+
+# A root where every spawn is a HIT -> `cache` takes its no-misses early return.
+PREFIX_ALLHIT="$WFDIR/prefix-allhit"
+mkdir -p "$PREFIX_ALLHIT/proj/sess/subagents"
+printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":11359,"cache_creation_input_tokens":17000}}}\n' \
+    >"$PREFIX_ALLHIT/proj/sess/subagents/agent-only.jsonl"
+
+# A path that does not exist -> the missing-root exit 3.
+PREFIX_GHOST="$WFDIR/prefix-never-created"
