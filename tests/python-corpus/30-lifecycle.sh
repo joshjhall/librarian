@@ -93,6 +93,14 @@ printf '%s\n' 'let task = Process()' >"$LIFEDIR/contest.swift"
 mkdir -p "$LIFEDIR/test_helpers"
 printf '%s\n' 'proc = subprocess.Popen(["ls"])' >"$LIFEDIR/test_helpers/production.py"
 
+# The other side of that same arm (#836): a test_-prefixed BASENAME, which the
+# narrowed name arm still matches, so the file IS skipped wholesale. Without it
+# the `test_*.*` true branch never executes under measurement — every other
+# corpus fixture either misses the arm entirely or exits early on a DIRECTORY
+# arm (tests/helper.swift), so the arm the fix rewrote would be measured on its
+# false side only. Sits inside test_helpers/ so one path drives both halves.
+printf '%s\n' 'proc = subprocess.Popen(["ls"])' >"$LIFEDIR/test_helpers/test_production.py"
+
 # SKIP_GLOBS: a *.md carrying a spawn-shaped line drives the whole-file skip arm.
 printf '%s\n' 'Example: `let task = Process()`' >"$LIFEDIR/notes.md"
 
@@ -106,6 +114,7 @@ LIFE_LIST="$WORKDIR/lifecycle-list.txt"
 for f in "$LIFEDIR"/capture.swift "$LIFEDIR"/runner.py "$LIFEDIR"/worker.js \
     "$LIFEDIR"/proc.go "$LIFEDIR"/tests/helper.swift "$LIFEDIR"/contest.swift \
     "$LIFEDIR"/test_helpers/production.py \
+    "$LIFEDIR"/test_helpers/test_production.py \
     "$LIFEDIR"/notes.md "$LIFE_UNREAD"; do
     printf '%s\n' "$f" >>"$LIFE_LIST"
 done
