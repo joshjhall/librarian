@@ -625,6 +625,68 @@ test_missing_api() {
     list="$(make_list "$d/l" "$d/doc.java")"
     assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
         "missing-api java: a preceding /** */ documents the public method"
+
+    # --- Swift (#839): public/open API fires; /// and /** */ silence it. ---
+    d="$(fresh_dir)"
+    command printf '%s\n' "public func doThing() {}" >"$d/u.swift"
+    list="$(make_list "$d/l" "$d/u.swift")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Swift: " \
+        "missing-api swift: an undocumented public func fires"
+
+    # `open` is the second public access level (public + subclassable), a
+    # separate alternation branch from `public` — asserted independently so the
+    # branch cannot rot behind the `public` fixture.
+    d="$(fresh_dir)"
+    command printf '%s\n' "open class Widget {}" >"$d/o.swift"
+    list="$(make_list "$d/l" "$d/o.swift")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Swift: " \
+        "missing-api swift: an undocumented open class fires"
+
+    # Modifiers sit BETWEEN the access level and the declarator, in no canonical
+    # order — the repeated modifier group. Without it `public final class` and
+    # `public static func` are both missed.
+    d="$(fresh_dir)"
+    command printf '%s\n' "public final class Store {}" >"$d/f.swift"
+    list="$(make_list "$d/l" "$d/f.swift")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Swift: " \
+        "missing-api swift: an undocumented public final class fires (modifier group)"
+
+    # #839 AC3 — the `///` doc comment PINNED, not assumed. It works only
+    # because `///` begins with `//`, so this asserts the intended behavior
+    # rather than trusting the shape by inspection.
+    d="$(fresh_dir)"
+    command printf '%s\n' "/// Does the thing." "public func doThing() {}" >"$d/doc.swift"
+    list="$(make_list "$d/l" "$d/doc.swift")"
+    assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "missing-api swift: a preceding /// documents the public func (#839 AC3)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' "/** Does the thing. */" "public func doThing() {}" >"$d/blk.swift"
+    list="$(make_list "$d/l" "$d/blk.swift")"
+    assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "missing-api swift: a preceding /** */ documents the public func"
+
+    # THE LOAD-BEARING HALF of AC3: a plain `//` comment is NOT documentation
+    # and must NOT suppress the finding. Every fixture above passes with a lazy
+    # `//`-prefix test; only this one fails it. Without this case the `///`
+    # assertion is satisfied by a rule that silently swallows real findings.
+    d="$(fresh_dir)"
+    command printf '%s\n' "// TODO: rename this" "public func doThing() {}" >"$d/plain.swift"
+    list="$(make_list "$d/l" "$d/plain.swift")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "Swift: " \
+        "missing-api swift: a plain // comment is NOT a doc comment (#839 AC3)"
+
+    # BOUNDARY: `internal` is Swift's default access level and is not public
+    # API, so an unmarked declaration must stay silent.
+    d="$(fresh_dir)"
+    command printf '%s\n' "func helper() {}" "internal func hidden() {}" >"$d/int.swift"
+    list="$(make_list "$d/l" "$d/int.swift")"
+    assert_silent "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "missing-api swift: unmarked/internal declarations are not public API"
 }
 
 # ============================================================================
@@ -728,7 +790,7 @@ run_test test_staleness "check-docs-staleness: expired-date boundary, version/UR
 run_test test_staleness_month_is_base_ten "check-docs-staleness: the month is read base-10, not octal (#624)"
 run_test test_deadlinks "check-docs-deadlinks: relative-link schemes, anchors, suspicious URL"
 run_test test_examples "check-docs-examples: python/shell fences, known/in-project skips, non-md"
-run_test test_missing_api "check-docs-missing-api: py/ts/go/rs/sh/rb/java documented vs not"
+run_test test_missing_api "check-docs-missing-api: py/ts/go/rs/sh/rb/java/swift documented vs not"
 run_test test_organization "check-docs-organization: root docs, min-files boundary, depth/excludes"
 
 generate_report

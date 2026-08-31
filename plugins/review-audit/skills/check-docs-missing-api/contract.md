@@ -39,12 +39,33 @@ category is LLM-side and declares no per-language arms.
 | Bash         | sh, bash   | `name()` / `function name`, `_` private | `#`       | M                       |
 | Ruby         | rb         | def + lowercase name                  | `#`        | M                       |
 | Java, Kotlin | java, kt   | `public …`                            | `/**`      | M                       |
+| Swift        | swift      | `public\|open` + `func\|class\|struct\|enum\|protocol\|actor\|typealias\|var\|let` | `///`, `/**` | M           |
 | every other  | —          | —                                     | —          | —                       |
 
 <!-- contract: end-check-docs-missing-api-language-support -->
 
 This is the broadest coverage of the four scanners, and the only one that models
 Rust and Bash today.
+
+Two things about the Swift row (#839) are worth stating rather than inferring:
+
+- **Both public access levels count.** Swift's default is `internal`, so an
+  unmarked declaration is correctly not flagged; `public` and `open` are the two
+  levels that expose API outside the module. Modifiers may appear *between* the
+  access level and the declarator (`public final class`, `public static func`)
+  and Swift imposes no canonical order, so the arm admits a repeated modifier
+  group — the same reasoning `loc_engine.py`'s Swift `UNIT_RE` records.
+- **`public let` / `public var` are API surface**, which is why the declarator
+  alternation includes the binding keywords rather than only the type and
+  function ones. A public stored property is part of a module's contract in a way
+  a private field is not.
+
+The doc marker is matched **explicitly** as `///` or `/**`, not left to work by
+accident. `///` happens to begin with `//`, so a lazier `//`-prefix test would
+appear to pass every fixture while also treating an ordinary `// TODO: fix this`
+comment as documentation — suppressing a real finding. #839 AC3 asks for this
+case to be pinned by a fixture rather than trusted by inspection, and it is: a
+`public func` preceded by a plain `//` comment still fires.
 
 Every detector here is **language-specific** (ADR 0002 § 3) — the dispatch is a
 single chain with no trailing fallthrough arm and no unconditional detector, so an

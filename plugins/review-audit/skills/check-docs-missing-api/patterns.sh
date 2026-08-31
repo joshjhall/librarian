@@ -161,6 +161,29 @@ while IFS= read -r file; do
                 done || true
             ;;
 
+        # --- Swift ---
+        *.[Ss][Ww][Ii][Ff][Tt])
+            # Swift public API (#839). `public` and `open` are the two public
+            # access levels; `internal` is the default and is not public surface.
+            # Modifiers may sit between the access level and the declarator, so
+            # the modifier group is repeated — Swift fixes no order. Mirrors
+            # patterns.py's arm; see it for the full note.
+            command grep -nE '^[[:space:]]*(public|open)[[:space:]]+(final[[:space:]]+|static[[:space:]]+|class[[:space:]]+|mutating[[:space:]]+|override[[:space:]]+|indirect[[:space:]]+)*(func|class|struct|enum|protocol|actor|typealias|var|let)[[:space:]]' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    # `///` and `/**` are the doc markers. Matched EXPLICITLY —
+                    # a plain `//` comment is not documentation and must not
+                    # suppress the finding (#839 AC3).
+                    if ! check_prev_lines "$file" "$line_num" '^[[:space:]]*(///|/\*\*)'; then
+                        evidence=$(truncate_chars 80 "$content")
+                        command printf '%s\t%s\t%s\t%s\t%s\n' \
+                            "$file" "$line_num" "undocumented-public-api" \
+                            "Swift: ${evidence}" "HIGH"
+                    fi
+                done || true
+            ;;
+
         # --- Shell ---
         *.[Ss][Hh] | *.[Bb][Aa][Ss][Hh])
             # Find function definitions

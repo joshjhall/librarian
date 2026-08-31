@@ -40,6 +40,7 @@ separate columns here.
 | Java, Kotlin | java, kt        | L                | M           | —        | M             |
 | Ruby         | rb              | L                | —           | M        | M             |
 | Rust         | rs              | L                | M           | M        | M             |
+| Swift        | swift           | L                | M           | —        | M             |
 | every other  | —               | L                | —           | —        | —             |
 
 <!-- contract: end-check-code-health-language-support -->
@@ -54,6 +55,25 @@ Two raggednesses are real and deliberate to record rather than smooth over:
   is exemptible via `stdout_is_output`, while `dbg!` is a debugging aid that is
   never a program's output and therefore lives in the never-exempted debugger
   family (#680 AC3).
+- Swift (#839) is in debug-print but **not** debugger, and that `—` is a real
+  absence rather than an unwritten arm. Swift has no source-level breakpoint
+  token to key on: a breakpoint is set in Xcode or lldb, not written in the file,
+  so there is nothing analogous to `dbg!`, `pdb.set_trace` or the `debugger`
+  keyword. The cell would still be `—` after an exhaustive search, which is why
+  it is declared rather than left for a future phase.
+
+Swift's `empty-handler` arm needs its own pattern rather than an extension of the
+js/java one, and the reason is the whole shape of the #622 bug. Swift's `catch`
+takes **no parenthesized parameter** — it binds an implicit `error`, or an
+explicit pattern with no parens (`catch let e`, `catch is FooError`). The
+js/java pattern is `catch\s*\([^)]*\)\s*\{\s*\}`, which requires those parens, so
+it could never match Swift no matter how many extensions were added to its arm
+list. A Swift `catch { }` therefore emitted **nothing at all**: the motivating
+false negative of #622, reproduced before the fix and pinned by a fixture after.
+
+The Swift debug-print arm covers `print(` and `debugPrint(`. Both are stdout
+writes, so both are exemptible via `stdout_is_output` — a Swift CLI's `print()`
+is its actual output, exactly as a Python CLI's is (#680/#686).
 
 Rust's `empty-handler` arm covers the empty `Err(_) => {}` match arm (and its
 `Err(_) => ()` unit-body spelling). The other Rust swallow idiom named in #838,

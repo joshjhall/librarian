@@ -121,6 +121,32 @@ def scan_file(path: str) -> None:
             if not check_prev_lines(lines, line_no, r"^\s*///"):
                 emit(path, line_no, "Rust", content)
 
+    elif ext == "swift":
+        # Swift public API (#839). Two access levels are public surface: `public`
+        # and `open` (open additionally permits subclassing/overriding outside
+        # the module). `internal` is the default and is NOT public, so an
+        # unmarked declaration is correctly not matched.
+        #
+        # The declarator alternation includes `actor` (Swift 5.5) and both
+        # binding keywords: a `public let`/`public var` IS public API surface in
+        # a way a private field is not.
+        #
+        # Modifiers may appear BETWEEN the access level and the declarator
+        # (`public final class`, `public static func`), so the pattern admits a
+        # repeated modifier group. This mirrors loc_engine.py's Swift UNIT_RE,
+        # which records that Swift imposes no canonical modifier order.
+        for line_no, content in defs(
+            r"^\s*(public|open)\s+"
+            r"(final\s+|static\s+|class\s+|mutating\s+|override\s+|indirect\s+)*"
+            r"(func|class|struct|enum|protocol|actor|typealias|var|let)\s"
+        ):
+            # `///` is the Swift doc-comment marker; `/**` is the block form.
+            # NOTE `///` is matched here EXPLICITLY rather than being left to
+            # work by accident of starting with `//` — a plain `//` comment is
+            # NOT documentation and must not suppress the finding (#839 AC3).
+            if not check_prev_lines(lines, line_no, r"^\s*(///|/\*\*)"):
+                emit(path, line_no, "Swift", content)
+
     elif ext in ("sh", "bash"):
         for line_no, content in defs(
             r"^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^function [a-zA-Z_]"

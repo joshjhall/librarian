@@ -351,6 +351,18 @@ def _scan_debug_print(path: str, idx: int, line: str, ext: str) -> None:
         # match without a word boundary.
         if re.search(r"^\s*e?print(ln)?!\s*\(", line):
             emit(path, idx, "debug-statement", "Debug print statement", line)
+    elif ext == "swift":
+        # Swift writes to stdout with print() and debugPrint() (#839). Both are
+        # the stdout family, so both are exemptible via `stdout_is_output` — a
+        # Swift CLI's print() IS its output, exactly as Python's is.
+        #
+        # `debugPrint` is listed FIRST in the alternation and the whole group is
+        # closed with `\(`: `print` is a proper prefix of neither, but writing
+        # `print|debugPrint` would still match the `Print(` tail of a
+        # `debugPrint(` line at a DIFFERENT offset were the anchor ever relaxed.
+        # Ordering longest-first keeps the arm correct under that edit.
+        if re.search(r"^\s*(debugPrint|print)\s*\(", line):
+            emit(path, idx, "debug-statement", "Debug print statement", line)
 
 
 def _scan_debugger(path: str, idx: int, line: str, ext: str) -> None:
@@ -449,6 +461,26 @@ def scan_file(path: str, lines: list[str]) -> None:
             # emits at MEDIUM for the LLM pass-2 to confirm — but this scanner
             # has no per-detector certainty, so the honest options were "wrong
             # tier" or "not yet". Revisit if check-code-health gains one.
+        elif ext == "swift":
+            # Swift's `catch` takes NO parenthesized parameter, so the js/java
+            # arm above (`catch\s*\([^)]*\)\s*\{\s*\}`) CANNOT match it — this
+            # needs its own arm rather than a widened one (#839). That mismatch
+            # is why a Swift `catch { }` emitted nothing at all, the motivating
+            # false negative of #622.
+            #
+            # Three catch forms, all of which swallow when the body is empty:
+            #
+            #   catch { }               the bare form — binds the implicit `error`
+            #   catch let e { }         an explicit binding
+            #   catch is FooError { }   a typed pattern
+            #
+            # The optional `[^{}]*` between `catch` and the brace covers the
+            # binding/pattern forms. It excludes BOTH brace characters so the
+            # match cannot run past the opening brace of a non-empty handler and
+            # find some later `{}` on the same line — without that exclusion
+            # `catch { log() }` followed by an empty closure would false-fire.
+            if re.search(r"\bcatch\b[^{}]*\{\s*\}", line):
+                emit(path, idx, "empty-handler", "Empty catch block", line)
 
 
 def main(argv: list[str]) -> int:

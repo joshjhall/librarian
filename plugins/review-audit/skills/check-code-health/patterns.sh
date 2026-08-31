@@ -389,6 +389,21 @@ scan_debug_prints() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
+        *.[Ss][Ww][Ii][Ff][Tt])
+            # Swift: print() and debugPrint() (#839). Both write to stdout, so
+            # both are exemptible via `stdout_is_output` — a Swift CLI's print()
+            # IS its output. Longest-first alternation, same rule as the python
+            # arm this mirrors.
+            command grep -nE -- '^[[:space:]]*(debugPrint|print)[[:space:]]*\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
     esac
     # <<< shared:debug-print-scan
 }
@@ -588,6 +603,33 @@ while IFS= read -r file; do
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
                         "Empty Err match arm: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.[Ss][Ww][Ii][Ff][Tt])
+            # Swift's `catch` takes NO parenthesized parameter, so the js/java
+            # arm above cannot match it — a Swift `catch { }` emitted nothing at
+            # all, the motivating false negative of #622 (#839). Covers the bare
+            # form, `catch let e { }` and `catch is FooError { }`.
+            #
+            # The `[^{}]*` excludes BOTH braces so the match cannot run past a
+            # non-empty handler's opening brace and find a later `{}` on the same
+            # line. Mirrors patterns.py's arm; see it for the full note.
+            #
+            # `(^|[^[:alnum:]_])` is the WORD BOUNDARY, spelled portably. The
+            # python arm uses `\bcatch\b`, but `\b` is a GNU extension that BSD
+            # grep reads as a literal (CLAUDE.md § runtime policy), so the two
+            # runtimes would silently disagree on macOS. Measured before fixing:
+            # without this, bash matched `mycatch { }` and python did not — a
+            # live py/sh parity break. The trailing boundary is carried by
+            # `[[:space:]]*[^{}]*\{`, which cannot match an identifier character.
+            command grep -nE -- '(^|[^[:alnum:]_])catch[[:space:]]*[^{}]*\{[[:space:]]*\}' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "empty-handler" \
+                        "Empty catch block: ${evidence}" "HIGH"
                 done || true
             ;;
     esac
