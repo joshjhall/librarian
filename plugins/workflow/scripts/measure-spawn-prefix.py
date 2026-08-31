@@ -103,6 +103,7 @@ def iter_spawns(root: pathlib.Path):
             continue
 
         prefix = cached = written = turns = cache_read_total = 0
+        input_total = 0
         prompt_chars = 0
         seen_first = False
 
@@ -132,6 +133,7 @@ def iter_spawns(root: pathlib.Path):
 
             turns += 1
             cache_read_total += read
+            input_total += context
             if not seen_first:
                 seen_first = True
                 prefix, cached, written = context, read, create
@@ -145,6 +147,7 @@ def iter_spawns(root: pathlib.Path):
                 "written": written,
                 "turns": turns,
                 "cache_read": cache_read_total,
+                "input_total": input_total,
                 "prompt_tokens_est": round(prompt_chars / 4),
             }
 
@@ -158,6 +161,7 @@ def cmd_summary(spawns: list[dict]) -> None:
     prefixes = [s["prefix"] for s in spawns]
     turns = sum(s["turns"] for s in spawns)
     cache_read = sum(s["cache_read"] for s in spawns)
+    input_total = sum(s["input_total"] for s in spawns)
     prefix_x_turns = sum(s["prefix"] * s["turns"] for s in spawns)
 
     print(f"spawns                 {len(spawns):,}")
@@ -168,8 +172,31 @@ def cmd_summary(spawns: list[dict]) -> None:
     print(f"total subagent turns   {turns:,}")
     print(f"subagent cache_read    {cache_read:,}")
     print(f"prefix x turns         {prefix_x_turns:,}")
-    if cache_read:
-        print(f"prefix share of input  {100 * prefix_x_turns / cache_read:.1f}%")
+    # Share of ALL input the prefix accounts for.
+    #
+    # Two things were wrong here and both only showed up under a fixture:
+    #
+    # 1. The denominator was `cache_read` alone. A cache MISS puts those same
+    #    tokens in cache_creation, so on a miss-heavy corpus they left the
+    #    denominator while staying in the numerator — 427.8%. It must be total
+    #    input across every turn (input_tokens + cache_read + cache_creation).
+    # 2. `prefix x turns` is an UPPER BOUND, not a measurement. It assumes the
+    #    full prefix is re-sent on every turn, which holds for a real transcript
+    #    but not for a short or truncated one whose later turns carry less than
+    #    the first. So the ratio can legitimately exceed 100%, and printing a
+    #    bare ">100% share" would be nonsense rather than a finding.
+    #
+    # Both bugs read as a plausible ~65% on the real hit-dominated corpus, which
+    # is exactly why neither surfaced until the synthetic fixture ran them.
+    if input_total:
+        share = 100 * prefix_x_turns / input_total
+        if share > 100:
+            print(
+                f"prefix share of input  >100% (bound {share:.1f}%) — "
+                f"prefix x turns exceeds measured input; short transcripts"
+            )
+        else:
+            print(f"prefix share of input  {share:.1f}% (upper bound)")
     print(f"one-shot spawn cost    {sum(prefixes):,}")
 
     by_type: dict[str, list[int]] = {}
