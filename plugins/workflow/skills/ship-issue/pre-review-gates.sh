@@ -697,6 +697,21 @@ scan_debug_prints() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
+        *.[Ss][Ww][Ii][Ff][Tt])
+            # Swift: print() and debugPrint() (#839). Both write to stdout, so
+            # both are exemptible via `stdout_is_output` — a Swift CLI's print()
+            # IS its output. Longest-first alternation, same rule as the python
+            # arm this mirrors.
+            command grep -nE -- '^[[:space:]]*(debugPrint|print)[[:space:]]*\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
     esac
     # <<< shared:debug-print-scan
 }

@@ -51,6 +51,14 @@ per-language dispatch to declare.
 
 <!-- contract: end-check-lifecycle-language-support -->
 
+**Swift was audited against this matrix in Phase 2 (#839) and needed no code
+change.** It is the one scanner that modeled Swift before the epic began — the
+asymmetry that motivated #622 in the first place — and all four categories were
+confirmed to fire: `Process(` (unreaped-subprocess), `.terminate()`
+(terminate-without-kill), `FileHandle(` (unclosed-handle), and
+`.addObserver(`/`scheduledTimer` (unpaired-listener). Recorded here so a later
+phase does not read the absent diff as an absent audit.
+
 Every detector in this scanner is **language-specific** (ADR 0002 § 3): all of
 them sit inside an extension arm and there is no trailing fallthrough arm, so an unmodeled
 file yields zero rows and no error. This scanner therefore carries **no

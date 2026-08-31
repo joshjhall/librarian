@@ -279,6 +279,30 @@ final class SwiftProfileTests: XCTestCase {
 }
 EOF
 
+# Swift check-* scanner coverage (#839). Everything above this point was written
+# for the DECOMPOSITION lenses (#728) and reaches none of the four governed
+# scanners' arms — verified by running them against it: check-code-health emitted
+# zero rows. So Phase 2's Swift arms would have been asserted VACUOUSLY on the
+# scanner side even though a .swift file was present, which is a sharper form of
+# the missing-extension trap the .mjs/.cjs (#568), .sh (#598) and .rs (#838)
+# comments record: the file IS scanned, it just contains nothing any scanner arm
+# matches. One line per new arm, so a divergence in a single arm surfaces as a
+# diff rather than being masked by its siblings.
+{
+    command printf 'do { try risky() } catch { }\n'
+    command printf 'do { try risky() } catch let e { }\n'
+    command printf 'do { try risky() } catch{ }\n'
+    command printf 'catchAllErrors { }\n'
+    command printf 'public let swiftApiVersion = 1\n'
+    command printf 'print("swift debug output")\n'
+    command printf 'debugPrint(swiftValue)\n'
+    command printf 'breakpoint()\n'
+    command printf 'let swiftPassword = "Str0ng#Pass#Value"\n'
+    command printf 'let swiftDigest = md5(swiftPayload)\n'
+    command printf '// md5(commented) is skipped — // IS a Swift comment\n'
+    command printf '/// md5(docComment) is skipped too — the /// case (#839 AC3)\n'
+} >>"$FIXDIR/Model.swift"
+
 # The declarations above reach the swift arms, but a 29-line file is UNDER both
 # decomposition lenses' LOC thresholds — so patterns.{py,sh} and sizing.{py,sh}
 # emit nothing for it, and "both impls agree" would hold trivially between two

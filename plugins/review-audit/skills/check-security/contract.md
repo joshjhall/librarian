@@ -79,6 +79,23 @@ the gating the credential detector ran on every file, so a `password: "…"` in 
 `—` would silently stop scanning exactly the file types where checked-in
 credentials most often live. All of them spell a line comment with `#`.
 
+**The Swift row was audited by measurement in Phase 2 (#839) and needed no
+change**, which is worth recording so the next reader does not re-derive it.
+Swift already resolves in this scanner's lexical model (the `swift` key in
+`COMMENT_MODEL` / the `case` arm in the bash half), so the gating works: a real
+`password = "…"` in a `.swift` file fires, while the same line behind `///`, `//`
+or `/*` is silent. Both directions were probed rather than reasoned about, and
+both are now fixture-pinned.
+
+Its `injection-risk` cell stays `—` deliberately. Swift has no SQL-building
+idiom comparable to a Python f-string, a Ruby `#{}` interpolation or Rust's
+`format!` family — the sibling arms this column implements. Swift string
+interpolation is plain `\(x)`, which appears in essentially every non-trivial
+string in the language, so keying on it would emit at this scanner's `HIGH`
+certainty tier for ordinary formatting. That is the same trade #838 refused for
+Rust's `let _ =`, reached from the other direction: a detector whose measured
+hit rate cannot support its tier does not ship at that tier.
+
 **The rows below Swift are grouped by comment MARKER, not by language family,
 and that is the point.** Three review cycles each found one more group that had
 silently lost coverage to the gating — config formats, then the C-family, then a

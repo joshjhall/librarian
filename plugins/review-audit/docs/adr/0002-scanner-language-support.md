@@ -351,9 +351,55 @@ each other once 1 is in.
 1. **Phase 1 — Rust** ([#838](https://github.com/joshjhall/librarian/issues/838)). Full arms across all four scanners. Carries the gating
    machinery itself (the first implementation of "consult the lexical model"), so
    it is materially larger than its successors.
-2. **Phase 2 — Swift** ([#839](https://github.com/joshjhall/librarian/issues/839)). Full arms; retires the false positives that motivated
-   #622 and the `catch {}` gap. Swift's lexical facts already exist in
-   `loc_engine` from #728 — reuse that spelling rather than deriving a second.
+2. **Phase 2 — Swift** ([#839](https://github.com/joshjhall/librarian/issues/839)) — **landed**. The `catch {}` gap is fixed and the false
+   positives are retired. Swift's lexical facts were consumed from `loc_engine`'s
+   #728 spelling rather than re-derived, as planned.
+
+   Two findings from the phase are worth recording here, because both narrow what
+   a later phase should expect:
+
+   - **Only two of the four scanners needed a code change.** `check-security`
+     already resolved Swift in its lexical model, so its gating was correct on
+     arrival — measured, not assumed: a real credential fires while `///`, `//`
+     and `/*` suppress. `check-lifecycle` already modeled Swift `M` across all
+     four categories. Both were audited and their contracts annotated; neither
+     diff touches a detector. A phase's size is set by what is already modeled,
+     not by the number of governed scanners.
+   - **`check-code-health`'s Swift `empty-handler` could not reuse the js/java
+     arm**, and this is the mechanical reason #622's headline bug survived so
+     long. Swift's `catch` takes no parenthesized parameter, while that arm's
+     pattern requires one — so no amount of extension-list widening would ever
+     have matched a Swift `catch { }`. A language whose syntax differs in SHAPE
+     rather than in keyword needs its own arm, and the matrix cannot show that
+     distinction: `M` looks the same either way.
+
+   Swift's `debugger` cell is `—` and that is a real absence rather than an
+   unwritten arm: a Swift breakpoint is an lldb/Xcode action, not a source token,
+   so there is nothing analogous to `dbg!` or `pdb.set_trace` to key on. It is
+   pinned by a fixture asserting `breakpoint()` in a `.swift` file stays silent —
+   an empty column is otherwise unfalsifiable.
+
+   **A word-boundary lesson for every future phase, found by review rather than
+   by the mutation round.** The Python arms may write `\b`; the bash arms may
+   not, because `\b` is a GNU extension BSD grep reads as a literal. So each
+   boundary must be spelled long-hand — and *both* sides matter. Phase 2's first
+   draft guarded only the leading side and asserted in a comment that the
+   trailing side was "carried by `[[:space:]]*[^{}]*\{`". That was false:
+   `[^{}]*` excludes only the two brace characters and matches identifier
+   characters freely, so `catches { }`, `catcher { }` and `catchAllErrors { }`
+   were false positives on the bash runtime alone. The fixture written for the
+   leading side (`mycatch { }`) passed throughout, which is why the round missed
+   it — an identifier-*ends*-with fixture cannot fail on an
+   identifier-*starts*-with bug.
+
+   The correction has a second edge worth carrying forward: ERE has no
+   lookahead, so a trailing `[^[:alnum:]_]` **consumes** the character it tests.
+   For the brace-adjacent `catch{ }` the only thing following `catch` is the
+   brace itself, so consuming it left nothing for `\{` and that line went silent
+   in bash while Python still fired — a second divergence introduced by the fix
+   for the first. Spell the trailing boundary as an alternation of the ways the
+   construct can legally continue (`catch([[:space:]][^{}]*)?\{`), not as a
+   negated class. Both directions are now fixture-pinned in both runtimes.
 3. **Phase 3 — TypeScript / JavaScript** ([#840](https://github.com/joshjhall/librarian/issues/840)). Audit the existing arms against this
    contract and fill the matrix. Consider whether TS should split from JS, as
    #726 found for the decomposition lenses.

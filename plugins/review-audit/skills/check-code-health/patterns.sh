@@ -389,6 +389,21 @@ scan_debug_prints() {
                         "Debug print statement: ${evidence}" "HIGH"
                 done || true
             ;;
+        *.[Ss][Ww][Ii][Ff][Tt])
+            # Swift: print() and debugPrint() (#839). Both write to stdout, so
+            # both are exemptible via `stdout_is_output` — a Swift CLI's print()
+            # IS its output. Longest-first alternation, same rule as the python
+            # arm this mirrors.
+            command grep -nE -- '^[[:space:]]*(debugPrint|print)[[:space:]]*\(' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "debug-statement" \
+                        "Debug print statement: ${evidence}" "HIGH"
+                done || true
+            ;;
     esac
     # <<< shared:debug-print-scan
 }
@@ -588,6 +603,57 @@ while IFS= read -r file; do
                     command printf '%s\t%s\t%s\t%s\t%s\n' \
                         "$file" "$line_num" "empty-handler" \
                         "Empty Err match arm: ${evidence}" "HIGH"
+                done || true
+            ;;
+        *.[Ss][Ww][Ii][Ff][Tt])
+            # Swift's `catch` takes NO parenthesized parameter, so the js/java
+            # arm above cannot match it — a Swift `catch { }` emitted nothing at
+            # all, the motivating false negative of #622 (#839). Covers the bare
+            # form, `catch let e { }` and `catch is FooError { }`.
+            #
+            # The `[^{}]*` excludes BOTH braces so the match cannot run past a
+            # non-empty handler's opening brace and find a later `{}` on the same
+            # line. Mirrors patterns.py's arm; see it for the full note.
+            #
+            # BOTH word boundaries are spelled out, portably. The python arm
+            # uses `\bcatch\b`, but `\b` is a GNU extension that BSD grep reads
+            # as a literal (CLAUDE.md § runtime policy), so it must be written
+            # long-hand here or the two runtimes silently disagree on macOS.
+            #
+            # Each side is load-bearing, and each was measured:
+            #
+            #   leading  `(^|[^[:alnum:]_])`  without it, `mycatch { }` matched
+            #                                in bash and not in python.
+            #   trailing `([^[:alnum:]_]|$)`  without it, `catches { }`,
+            #                                `catcher { }` and
+            #                                `catchAllErrors { }` matched in
+            #                                bash and not in python.
+            #
+            # The trailing side is the one an earlier draft got wrong by
+            # reasoning instead of measuring: the comment claimed the boundary
+            # was already "carried by `[[:space:]]*[^{}]*\{`", but `[^{}]*`
+            # excludes only the two BRACE characters and matches identifier
+            # characters freely — so every `catchXxx { }` identifier was a false
+            # positive on the bash runtime alone. Both directions are now pinned
+            # by fixtures.
+            #
+            # The trailing boundary is spelled as an ALTERNATION of the two ways
+            # a Swift catch can legally continue, rather than as a single
+            # "one non-identifier character" class. ERE has no lookahead, so a
+            # `[^[:alnum:]_]` here would CONSUME the character it tests — and
+            # for the brace-adjacent form `catch{ }` the only thing following
+            # `catch` IS the brace, so consuming it leaves nothing for `\{` to
+            # match and the line goes silent in bash while python still fires.
+            # That was a second divergence, found by re-measuring after the
+            # first fix rather than assuming the fix was complete.
+            command grep -nE -- '(^|[^[:alnum:]_])catch([[:space:]][^{}]*)?\{[[:space:]]*\}' "$file" 2>/dev/null |
+                while IFS= read -r raw; do
+                    line_num=${raw%%:*}
+                    content=${raw#*:}
+                    evidence=$(truncate_chars 80 "$content")
+                    command printf '%s\t%s\t%s\t%s\t%s\n' \
+                        "$file" "$line_num" "empty-handler" \
+                        "Empty catch block: ${evidence}" "HIGH"
                 done || true
             ;;
     esac

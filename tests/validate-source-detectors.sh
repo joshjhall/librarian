@@ -733,6 +733,33 @@ test_health_debug() {
     assert_fires "$SK_HEALTH" "$list" debug-statement "Rust debug macro" \
         "health: Rust dbg! fires in the debugger family"
 
+    # Swift print family (#839). Both spellings asserted independently — one
+    # regex with an alternation, so a composite fixture stays green with either
+    # half broken.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'print("x")' >"$d/p.swift"
+    list="$(make_list "$d/l" "$d/p.swift")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
+        "health: Swift print() fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'debugPrint(x)' >"$d/dp.swift"
+    list="$(make_list "$d/l" "$d/dp.swift")"
+    assert_fires "$SK_HEALTH" "$list" debug-statement "Debug print statement" \
+        "health: Swift debugPrint() fires"
+
+    # BOUNDARY: Swift has NO debugger arm and that `—` cell is deliberate (a
+    # breakpoint is an lldb/Xcode action, not a source token). Asserting the
+    # ABSENCE needs a line that would fire if someone added a careless arm —
+    # `breakpoint()` is a real Swift stdlib call AND the exact literal the
+    # PYTHON debugger arm matches, so this pins that .swift does not leak into
+    # it. Without a fixture the empty column is unfalsifiable.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'breakpoint()' >"$d/bp.swift"
+    list="$(make_list "$d/l" "$d/bp.swift")"
+    assert_silent "$SK_HEALTH" "$list" debug-statement \
+        "health: Swift breakpoint() does NOT fire (no debugger arm; py arm must not leak)"
+
     # BOUNDARY: a debug print inside a TEST file is suppressed (not test_file only
     # applies debug scanning to non-test files).
     d="$(fresh_dir)"
@@ -812,6 +839,102 @@ test_health_empty_handler() {
     list="$(make_list "$d/l" "$d/k.rs")"
     assert_silent "$SK_HEALTH" "$list" empty-handler \
         "health: Rust let _ = discard is deliberately not flagged at HIGH"
+
+    # Swift empty catch (#839) — the motivating false negative of #622. Swift's
+    # `catch` takes NO parenthesized parameter, so the JS/Java arm above
+    # (`catch\s*\([^)]*\)\s*\{\s*\}`) can NEVER match it; before this arm a
+    # Swift `catch { }` emitted zero rows. Each of the three catch spellings is
+    # asserted independently: they are one regex with an optional middle group,
+    # so a composite fixture would stay green with the group broken.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch { }' >"$d/c.swift"
+    list="$(make_list "$d/l" "$d/c.swift")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: Swift bare empty catch fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch let e { }' >"$d/b.swift"
+    list="$(make_list "$d/l" "$d/b.swift")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: Swift bound empty catch (catch let e) fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch is FooError { }' >"$d/p.swift"
+    list="$(make_list "$d/l" "$d/p.swift")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: Swift typed empty catch (catch is FooError) fires"
+
+    # BOUNDARY: a Swift catch with a real body stays silent. This is what the
+    # `[^{}]*` brace exclusion buys — without it the match runs past the
+    # handler's opening brace and finds a later `{}` on the same line.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch { handle(error) }' >"$d/h.swift"
+    list="$(make_list "$d/l" "$d/h.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift handled catch stays silent"
+
+    # BOUNDARY: the same line plus a trailing empty closure. The handler is
+    # non-empty, so this must STAY SILENT — it is the specific input that fires
+    # if the brace exclusion is ever widened to `.*`, and neither fixture above
+    # would notice that change.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch { handle() }; let noop = { }' >"$d/w.swift"
+    list="$(make_list "$d/l" "$d/w.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift handled catch + later empty closure stays silent"
+
+    # BOUNDARY: WORD BOUNDARY, BOTH SIDES. The python arm spells this
+    # `\bcatch\b`; `\b` is a GNU extension BSD grep reads as a LITERAL, so the
+    # bash arm must write both boundaries long-hand. Each side is asserted
+    # separately because each was a real, separately-measured py/sh divergence —
+    # and the leading-side fixture alone did NOT catch the trailing-side bug.
+    #
+    # An identifier ENDING in "catch" (leading boundary):
+    d="$(fresh_dir)"
+    command printf '%s\n' 'mycatch { }' >"$d/n.swift"
+    list="$(make_list "$d/l" "$d/n.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift identifier ending in 'catch' is not a catch (leading boundary)"
+
+    # An identifier STARTING with "catch" (trailing boundary). This direction
+    # shipped UNTESTED behind the fixture above and was a live parity break:
+    # bash fired on all three of these, python on none. Three spellings, since
+    # the missing guard was on the character class rather than on any one name.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'catches { }' >"$d/s.swift"
+    list="$(make_list "$d/l" "$d/s.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift 'catches { }' is not a catch (trailing boundary)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'catcher { }' >"$d/r.swift"
+    list="$(make_list "$d/l" "$d/r.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift 'catcher { }' is not a catch (trailing boundary)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'catchAllErrors { }' >"$d/a.swift"
+    list="$(make_list "$d/l" "$d/a.swift")"
+    assert_silent "$SK_HEALTH" "$list" empty-handler \
+        "health: Swift 'catchAllErrors { }' is not a catch (trailing boundary)"
+
+    # ...but the brace-adjacent form IS a catch and must still fire. This is the
+    # case that fails if the trailing boundary is written as a CONSUMING
+    # character class (ERE has no lookahead): the only thing following `catch`
+    # here is the brace itself, so consuming it leaves nothing for `\{` to match
+    # and the line goes silent in bash while python still fires. Found by
+    # re-measuring after the first boundary fix rather than assuming it complete.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch{ }' >"$d/adj.swift"
+    list="$(make_list "$d/l" "$d/adj.swift")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: Swift brace-adjacent 'catch{ }' still fires (boundary must not consume)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'do { try risky() } catch {}' >"$d/e2.swift"
+    list="$(make_list "$d/l" "$d/e2.swift")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: Swift 'catch {}' (no inner space) fires"
 }
 
 test_health_test_file_and_skip() {
@@ -1144,8 +1267,8 @@ run_test test_security_xss "check-security: React/Vue/safe-filter/Blade XSS arms
 run_test test_security_crypto "check-security: md5/ECB fire, commented crypto skipped (comment boundary)"
 run_test test_security_unreadable "check-security: an unreadable file is skipped, not crashed"
 run_test test_health_debt "check-code-health: tech-debt marker"
-run_test test_health_debug "check-code-health: py/js/rb/go/java debug arms + logger negative + test-file suppression"
-run_test test_health_empty_handler "check-code-health: py/js/rb/go empty-handler arms + handled negative"
+run_test test_health_debug "check-code-health: py/js/rb/go/java/rs/swift debug arms + logger negative + test-file suppression"
+run_test test_health_empty_handler "check-code-health: py/js/rb/go/rs/swift empty-handler arms + handled negative"
 run_test test_health_test_file_and_skip "check-code-health: is_test_file segment anchoring + SKIP_GLOBS"
 run_test test_health_dispatch_order_and_shape "check-code-health: bash dispatcher gates prints only, in print-then-debugger order (#686)"
 run_test test_health_stdout_git_failure_fails_closed "check-code-health: a hanging git fails CLOSED and leaks nothing (#686)"
