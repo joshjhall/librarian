@@ -461,7 +461,7 @@ test_plant_agnix_refuses_a_workflow_with_no_pin() {
     # grep and report a skip attributed to the workflow rather than to the
     # broken fixture — a wrong answer arriving quietly, which is the shape #767
     # exists to remove.
-    local sb pinless rc=0
+    local sb pinless out rc=0
     stub_dir sb || return 1
 
     # Exists and is readable, but carries no agnix@X.Y.Z line: the pin-less case
@@ -469,10 +469,18 @@ test_plant_agnix_refuses_a_workflow_with_no_pin() {
     pinless="$sb/no-pin-workflow.yml"
     command printf 'jobs:\n  build:\n    runs-on: ubuntu-latest\n' >"$pinless"
 
-    plant_agnix "$sb" "$pinless" >/dev/null 2>&1 || rc=$?
+    # stderr is CAPTURED, not discarded: "fail loud" is two claims, a non-zero
+    # exit AND a diagnostic naming the file. An edit keeping `return 1` while
+    # dropping or genericizing the message would defeat the loud half and leave
+    # whoever hits it staring at a bare non-zero exit.
+    out="$(plant_agnix "$sb" "$pinless" 2>&1)" || rc=$?
 
     assert_true "[ \"$rc\" -ne 0 ]" \
         "plant_agnix must refuse a workflow with no resolvable pin rather than planting a version-less stub (#767)"
+    assert_contains "$out" "no agnix pin found" \
+        "the refusal must say WHY, not just exit non-zero — a silent non-zero is the same debugging dead-end as a silent wrong value"
+    assert_contains "$out" "$pinless" \
+        "the diagnostic must name the offending workflow file, or it cannot point at the typo that caused it"
     assert_true "[ ! -x \"$sb/bin/agnix\" ]" \
         "no stub may be left behind by the refused plant — a half-built fixture would make the NEXT assertion in a case lie"
 }
