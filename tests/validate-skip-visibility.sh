@@ -313,6 +313,18 @@ plant_agnix() {
     local dir="$1" wf="$2" ver="${3:-}"
     if [ -z "$ver" ]; then
         ver="$(agnix_pin_version "$wf")"
+        # agnix_pin_version absorbs its own failure (`2>/dev/null` … `|| true`),
+        # so a typo'd path or a workflow carrying no pin returns EMPTY rather
+        # than erroring. Unguarded, that plants a stub printing a bare "agnix",
+        # every healthy-install case fails its version grep, and the suite
+        # reports a skip that has nothing to do with the code under test — the
+        # same silent-wrong-value shape #767 is about, one layer down. The
+        # fixture cannot fix the helper's swallowing (every other caller depends
+        # on it), but it must not build a stub out of nothing.
+        if [ -z "$ver" ]; then
+            command printf 'plant_agnix: no agnix pin found in %s\n' "$wf" >&2
+            return 1
+        fi
     fi
     {
         command printf '#!/usr/bin/env bash\n'
@@ -437,6 +449,32 @@ test_plant_agnix_without_a_workflow_aborts_loud() {
 
     assert_true "[ \"$rc\" -ne 0 ]" \
         "plant_agnix must abort when its workflow-file argument is omitted, not fall back to a default (#767) — a silent fallback is the footgun the required parameter exists to remove"
+}
+
+test_plant_agnix_refuses_a_workflow_with_no_pin() {
+    # The sibling of the case above, one layer down. Passing a workflow file is
+    # now required, but a caller can still pass a WRONG one — a typo'd path, or
+    # a file carrying no agnix pin. agnix_pin_version absorbs both
+    # (`2>/dev/null` and a trailing `|| true`), returning empty rather than
+    # failing, so without a guard plant_agnix would write a stub printing a bare
+    # "agnix". Every healthy-install case would then fail the step's version
+    # grep and report a skip attributed to the workflow rather than to the
+    # broken fixture — a wrong answer arriving quietly, which is the shape #767
+    # exists to remove.
+    local sb pinless rc=0
+    stub_dir sb || return 1
+
+    # Exists and is readable, but carries no agnix@X.Y.Z line: the pin-less case
+    # and the typo'd-path case converge on the same empty return.
+    pinless="$sb/no-pin-workflow.yml"
+    command printf 'jobs:\n  build:\n    runs-on: ubuntu-latest\n' >"$pinless"
+
+    plant_agnix "$sb" "$pinless" >/dev/null 2>&1 || rc=$?
+
+    assert_true "[ \"$rc\" -ne 0 ]" \
+        "plant_agnix must refuse a workflow with no resolvable pin rather than planting a version-less stub (#767)"
+    assert_true "[ ! -x \"$sb/bin/agnix\" ]" \
+        "no stub may be left behind by the refused plant — a half-built fixture would make the NEXT assertion in a case lie"
 }
 
 # --- ci.yml: the broken-binary branch ---------------------------------------
@@ -1182,6 +1220,8 @@ run_test test_plant_agnix_anchors_its_default_to_the_named_workflow \
     "plant_agnix defaults its version from the workflow it is planted for (#767)"
 run_test test_plant_agnix_without_a_workflow_aborts_loud \
     "plant_agnix aborts when its workflow-file argument is omitted (#767)"
+run_test test_plant_agnix_refuses_a_workflow_with_no_pin \
+    "plant_agnix refuses a workflow carrying no resolvable pin (#767)"
 run_test test_ci_broken_binary_skips_without_failing \
     "ci.yml: a broken agnix binary skips instead of failing the job (#734)"
 run_test test_ci_broken_binary_is_visible_in_the_step_summary \
