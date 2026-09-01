@@ -399,8 +399,14 @@ test_plant_agnix_anchors_its_default_to_the_named_workflow() {
     # substring the way an "0.0.0-not-$pin" spelling would.
     scratch="$sb/scratch-workflow.yml"
     command printf '          pin="agnix@9.9.9"\n' >"$scratch"
+    # Checked in BOTH directions. The final assertion below is an absence
+    # assertion against "$pin", so it goes vacuous if the two literals are
+    # substrings of each other EITHER way — a one-directional guard would leave
+    # the vacuous half unguarded and the case would pass while proving nothing.
     assert_not_contains "$pin" "9.9.9" \
         "the scratch pin must genuinely differ from ci.yml's, or the two sources are indistinguishable and this case proves nothing"
+    assert_not_contains "9.9.9" "$pin" \
+        "ci.yml's pin must not be a substring of the scratch version either, or the assert_not_contains below can never fail"
 
     plant_agnix "$sb" "$scratch"
     out="$(AGNIX_RC=0 "$sb/bin/agnix" --version 2>&1)" || true
@@ -411,6 +417,26 @@ test_plant_agnix_anchors_its_default_to_the_named_workflow() {
         "plant_agnix must default its version from the workflow file it was given (#767)"
     assert_not_contains "$out" "$pin" \
         "planting for one workflow must not resolve the version from ci.yml — the coupling #767 removed"
+}
+
+test_plant_agnix_without_a_workflow_aborts_loud() {
+    # The REQUIRED parameter is the fix (#767); this pins what "required" buys.
+    # The whole argument for a required parameter over an optional one defaulting
+    # to ci.yml is that omitting it now FAILS rather than silently reproducing
+    # the old wrong default — so that property has to be asserted, not merely
+    # claimed in the comment above plant_agnix. Without this case, a future edit
+    # restoring `wf="${2:-$WORKFLOW_DIR/ci.yml}"` reinstates the exact defect
+    # while every other test in this file keeps passing.
+    local sb rc=0
+    stub_dir sb || return 1
+
+    # A SUBSHELL is load-bearing: the suite runs under `set -u`, so the unbound
+    # $2 aborts the shell it evaluates in. Called inline that would kill the
+    # whole run rather than fail one case.
+    (plant_agnix "$sb") >/dev/null 2>&1 || rc=$?
+
+    assert_true "[ \"$rc\" -ne 0 ]" \
+        "plant_agnix must abort when its workflow-file argument is omitted, not fall back to a default (#767) — a silent fallback is the footgun the required parameter exists to remove"
 }
 
 # --- ci.yml: the broken-binary branch ---------------------------------------
@@ -1154,6 +1180,8 @@ test_node_absent_branch_reports_its_skip() {
 
 run_test test_plant_agnix_anchors_its_default_to_the_named_workflow \
     "plant_agnix defaults its version from the workflow it is planted for (#767)"
+run_test test_plant_agnix_without_a_workflow_aborts_loud \
+    "plant_agnix aborts when its workflow-file argument is omitted (#767)"
 run_test test_ci_broken_binary_skips_without_failing \
     "ci.yml: a broken agnix binary skips instead of failing the job (#734)"
 run_test test_ci_broken_binary_is_visible_in_the_step_summary \
