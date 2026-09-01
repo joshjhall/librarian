@@ -285,23 +285,34 @@ plant_npm() {
     command chmod +x "$dir/bin/npm"
 }
 
-# plant_agnix <dir> [version] — an agnix whose `--version` smoke-test exits
-# AGNIX_RC. The broken-binary case is AGNIX_RC=1: the install "succeeded", the
-# binary does not work. That is the branch this whole suite exists for.
+# plant_agnix <dir> <workflow-file> [version] — an agnix whose `--version`
+# smoke-test exits AGNIX_RC. The broken-binary case is AGNIX_RC=1: the install
+# "succeeded", the binary does not work. That is the branch this whole suite
+# exists for.
 #
-# It PRINTS its version to stdout (default: the version ci.yml pins), because
-# the step's smoke test greps that output for the pinned version rather than
-# merely running the binary (#742). A stub that logged the call but printed
+# It PRINTS its version to stdout (default: the version <workflow-file> pins),
+# because the step's smoke test greps that output for the pinned version rather
+# than merely running the binary (#742). A stub that logged the call but printed
 # nothing would fail that grep, so every healthy-install case would report a
 # skip — the regression this default prevents.
 #
-# The optional second argument plants a DIFFERENT version, which is how the
+# THE WORKFLOW FILE IS REQUIRED, and that is the point (#767). This defaulted to
+# ci.yml's pin for every caller, so a code-scanning.yml fixture planted a version
+# resolved from the OTHER workflow. Harmless only because code-scanning.yml's
+# smoke test carries no version grep and tests/lint-agnix-clean.sh asserts the
+# two pins agree — both facts external to this file, and the first one changes
+# the moment code-scanning.yml gains the #742 hardening. An OPTIONAL parameter
+# defaulting to ci.yml would keep that silent wrong default available to the next
+# caller who omits it, which is the defect itself preserved as a footgun; a
+# required one makes every fixture state the workflow it is planted for.
+#
+# The optional THIRD argument plants a DIFFERENT version, which is how the
 # stale-cache case drives the mismatch branch: a binary that runs perfectly and
 # is simply not the pinned one.
 plant_agnix() {
-    local dir="$1" ver="${2:-}"
+    local dir="$1" wf="$2" ver="${3:-}"
     if [ -z "$ver" ]; then
-        ver="$(agnix_pin_version "$WORKFLOW_DIR/ci.yml")"
+        ver="$(agnix_pin_version "$wf")"
     fi
     {
         command printf '#!/usr/bin/env bash\n'
@@ -363,13 +374,52 @@ run_step() {
     STEP_OUTPUT="$(command cat "$dir/output.txt" 2>/dev/null || true)"
 }
 
+# --- Stub plumbing: the fixture's own anchoring (#767) -----------------------
+
+test_plant_agnix_anchors_its_default_to_the_named_workflow() {
+    # plant_agnix used to resolve its default version from ci.yml no matter which
+    # workflow the fixture was being planted for, so every code-scanning.yml case
+    # quietly planted the OTHER workflow's pin.
+    #
+    # THIS CASE CANNOT BE WRITTEN AGAINST THE REAL WORKFLOWS. Both pin the same
+    # agnix version and tests/lint-agnix-clean.sh asserts they agree, so an
+    # assertion that a code-scanning.yml fixture carries code-scanning.yml's pin
+    # passes identically with and without the fix — a test that cannot fail for
+    # the reason it was written. The divergent input has to be manufactured: a
+    # scratch workflow whose pin is NOT ci.yml's, which is the one input where
+    # the old and new behaviour differ.
+    local sb scratch pin out
+    stub_dir sb || return 1
+
+    pin="$(agnix_pin_version "$WORKFLOW_DIR/ci.yml")"
+    assert_not_empty "$pin" \
+        "ci.yml must carry a greppable agnix pin, or this case has no baseline to differ from"
+
+    # Far from any real version, so it cannot collide with the pin as a
+    # substring the way an "0.0.0-not-$pin" spelling would.
+    scratch="$sb/scratch-workflow.yml"
+    command printf '          pin="agnix@9.9.9"\n' >"$scratch"
+    assert_not_contains "$pin" "9.9.9" \
+        "the scratch pin must genuinely differ from ci.yml's, or the two sources are indistinguishable and this case proves nothing"
+
+    plant_agnix "$sb" "$scratch"
+    out="$(AGNIX_RC=0 "$sb/bin/agnix" --version 2>&1)" || true
+
+    # The property is the RESOLUTION SOURCE, not a version literal: the planted
+    # stub must report the pin of the workflow it was planted for.
+    assert_contains "$out" "9.9.9" \
+        "plant_agnix must default its version from the workflow file it was given (#767)"
+    assert_not_contains "$out" "$pin" \
+        "planting for one workflow must not resolve the version from ci.yml — the coupling #767 removed"
+}
+
 # --- ci.yml: the broken-binary branch ---------------------------------------
 
 test_ci_broken_binary_skips_without_failing() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/ci.yml"
     load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
 
     # NON-VACUITY FLOOR. If the step is reshaped so the slice no longer reaches
@@ -407,7 +457,7 @@ test_ci_broken_binary_is_visible_in_the_step_summary() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/ci.yml"
     load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
 
     NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=1 run_step "$sb" "$body"
@@ -446,7 +496,7 @@ test_ci_scratch_install_failure_warns_and_leaves_no_tree() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/ci.yml"
     load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
 
     NPM_SCRATCH_RC=1 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
@@ -500,7 +550,7 @@ test_ci_signature_failure_is_its_own_event() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/ci.yml"
     load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
 
     NPM_SCRATCH_RC=0 NPM_AUDIT_RC=1 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
@@ -554,7 +604,7 @@ test_ci_wrong_version_binary_skips() {
     local stale="1.0.0"
     assert_not_contains "$stale" "$pin" \
         "the stale fixture version must not contain the pin as a substring, or the step's grep -qF matches it and this case silently becomes a duplicate of the happy path"
-    plant_agnix "$sb" "$stale"
+    plant_agnix "$sb" "$WORKFLOW_DIR/ci.yml" "$stale"
     load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
 
     NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
@@ -580,7 +630,7 @@ test_ci_happy_path_is_quiet() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/ci.yml"
     load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
 
     NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
@@ -634,7 +684,7 @@ test_ci_cache_staging_reads_the_global_root() {
     local sb body groot staged sidecar want_digest got_digest
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/ci.yml"
     load_step_body "$WORKFLOW_DIR/ci.yml" "Install agnix (pinned)" body || return 1
 
     # NON-VACUITY FLOOR. If the slice no longer reaches the staging block, every
@@ -768,7 +818,7 @@ assert_global_install_uses_install_links() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/$wf"
     load_step_body "$WORKFLOW_DIR/$wf" "$3" body || return 1
 
     NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
@@ -804,7 +854,7 @@ assert_summary_write_failure_is_survivable() {
     local wf="$1" label="$2" sb body rc=0 out
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$wf"
     load_step_body "$wf" "Install agnix (pinned)" body || return 1
 
     command mkdir -p "$sb/unwritable-summary"
@@ -854,7 +904,7 @@ test_code_scanning_broken_binary_marks_absent() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/code-scanning.yml"
     load_step_body "$WORKFLOW_DIR/code-scanning.yml" "Install agnix (pinned)" body || return 1
 
     assert_contains "$body" 'present=' \
@@ -886,7 +936,7 @@ test_code_scanning_signature_failure_is_visible() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/code-scanning.yml"
     load_step_body "$WORKFLOW_DIR/code-scanning.yml" "Install agnix (pinned)" body || return 1
 
     NPM_SCRATCH_RC=0 NPM_AUDIT_RC=1 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
@@ -904,7 +954,7 @@ test_code_scanning_happy_path_marks_present() {
     local sb body
     stub_dir sb || return 1
     plant_npm "$sb"
-    plant_agnix "$sb"
+    plant_agnix "$sb" "$WORKFLOW_DIR/code-scanning.yml"
     load_step_body "$WORKFLOW_DIR/code-scanning.yml" "Install agnix (pinned)" body || return 1
 
     NPM_SCRATCH_RC=0 NPM_AUDIT_RC=0 NPM_GLOBAL_RC=0 AGNIX_RC=0 run_step "$sb" "$body"
@@ -1102,6 +1152,8 @@ test_node_absent_branch_reports_its_skip() {
 
 # --- Registration ------------------------------------------------------------
 
+run_test test_plant_agnix_anchors_its_default_to_the_named_workflow \
+    "plant_agnix defaults its version from the workflow it is planted for (#767)"
 run_test test_ci_broken_binary_skips_without_failing \
     "ci.yml: a broken agnix binary skips instead of failing the job (#734)"
 run_test test_ci_broken_binary_is_visible_in_the_step_summary \
