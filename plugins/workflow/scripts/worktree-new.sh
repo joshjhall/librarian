@@ -204,12 +204,26 @@ case "$cred_url" in
             # value is enough. `|| true` because --get-all exits 1 on an absent
             # key and this script runs under `set -e`.
             #
+            # --local on the READ, matching the scope of the write below. A bare
+            # `git config --get-all` returns the MERGED view across system,
+            # global, local and worktree scopes, so a host-scoped helper in the
+            # operator's ~/.gitconfig would read as "already configured" and
+            # suppress a local seed that had never been written (measured: a
+            # `--global credential.https://github.com.helper` makes the bare read
+            # return it while `--local` returns empty). That is the wrong call in
+            # both directions: this guard exists to protect what is IN the shared
+            # .git/config that the seed would overwrite, and a global helper is
+            # not overwritten by a --local write, so skipping on account of one
+            # suppresses the seed while destroying nothing — reintroducing #810's
+            # `could not read Username` whenever that global helper does not
+            # actually serve this host. Read and write must name the same scope.
+            #
             # An IDENTICAL existing value falls to the else branch and rewrites
             # the same bytes: that is the overwhelmingly common case (every
             # later worktree of this repo) and must stay a clean no-op with no
             # new output. This narrows the seed's blast radius only; it does not
             # weaken the durability the SCOPE block above describes.
-            cred_existing="$(command git -C "$wt" config --get-all \
+            cred_existing="$(command git -C "$wt" config --local --get-all \
                 "credential.${cred_host}.helper" 2>/dev/null || true)"
             if [ -n "$cred_existing" ] && [ "$cred_existing" != "$cred_helper" ]; then
                 command echo "  keeping the existing git credential helper for $cred_host"

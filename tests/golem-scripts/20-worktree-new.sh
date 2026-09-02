@@ -1041,3 +1041,42 @@ test_worktree_new_credential_helper_multivalued_ending_in_ours_is_preserved() {
     assert_contains "$RUN_OUT" "keeping the existing git credential helper" \
         "the FULL value list is compared, not just the last value"
 }
+
+# The read must name the SAME SCOPE as the write (#877 review, correctness).
+#
+# A bare `git config --get-all` returns the MERGED view across system, global,
+# local and worktree scopes, while the write two lines below is explicitly
+# `--local`. Measured: with `credential.https://github.com.helper` set at GLOBAL
+# scope, the bare read returns it and `--local` returns empty. So a scope-blind
+# read would see the global helper, print "keeping the existing", and skip a
+# local seed that had never been written — suppressing the seed while destroying
+# nothing, and reintroducing #810's `could not read Username` whenever that
+# global helper does not actually serve this host.
+#
+# _cred_run sets HOME="$sb", so a global-scope fixture is expressible: write the
+# sandbox's own ~/.gitconfig before the run. GIT_CONFIG_GLOBAL is set alongside
+# HOME because git honors it in preference, and the harness scrubs neither.
+test_worktree_new_credential_helper_global_scope_does_not_suppress_seed() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    # A host-scoped helper in the operator's GLOBAL config — never touched by a
+    # --local write, so it is not something this guard needs to protect.
+    command cat >"$sb/.gitconfig" <<'GLOBALCFG'
+[credential "https://github.com"]
+	helper = /usr/bin/env global-helper
+GLOBALCFG
+    _cred_run "$sb" 100
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a global-scope helper set"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://github.com")" \
+        "a GLOBAL helper does not suppress the local seed — read scope matches write scope (#877 review)"
+    assert_contains "$RUN_OUT" "seeded git credential helper" \
+        "the seed still reports success rather than skipping on a global value"
+    assert_not_contains "$RUN_OUT" "keeping the existing" \
+        "a global-scope value is not mistaken for an existing LOCAL choice"
+}
