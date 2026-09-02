@@ -68,6 +68,22 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 //
 // Each artifact's fragments live in a `workflow.src/` sibling directory, so an
 // installed plugin carries its own sources and stays regenerable.
+//
+// THIS GENERATOR IS WITHIN-HARNESS ONLY — a shared cross-harness prelude (#586)
+// is a DIFFERENT mechanism and does not ride on it (#811). `srcDirFor` below is
+// `dirname(artifact)/workflow.src`, so a fragment is bound to one harness by
+// construction, and the artifact still cannot `import` (#712) — a fragment is
+// shareable WITHIN a harness and never ACROSS harnesses. The two heaviest
+// duplicators (code-reviewer, orchestrate) are not even enrolled here.
+//
+// If a shared prelude ever lands, an enrolled harness must receive it AS A
+// FRAGMENT (workflow.src/NN-prelude.js, listed in manifest.txt), never as a
+// banner region written into the artifact: this generator would overwrite that
+// region on the next run, and until then lint-workflow-js-generated.sh fails the
+// tree as stale. Fragment form keeps the two gates on disjoint byte ranges
+// (source -> fragment, then fragments -> artifact) so they compose in series
+// instead of fighting. Recorded in dev-core's workflow-authoring skill under the
+// `prelude-generator-coexistence` contract id, and enforced by that same gate.
 const ENROLLED = [
   "plugins/workflow/skills/ship-issue/workflow.js",
   "plugins/review-audit/skills/codebase-audit/workflow.js",
