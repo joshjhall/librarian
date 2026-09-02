@@ -74,6 +74,8 @@
 - [Pre-push already runs the suite](prepush-hook-already-runs-the-suite.md) — don't run `run-all.sh`/`just lint` by hand first; run the targeted gate and budget the push
 - [Scratch file under memory fails the push](scratch-file-under-memory-fails-the-push.md) — rumdl lints `.claude/memory/` ignoring gitignore; keep scratch prose in `/tmp/`
 - [Self-skipping test hides the risky branch](self-skipping-test-hides-the-risky-branch.md) — skip-if-tool-absent covers only the present arm; force absence instead (#543)
+- [Tool-absence fixture needs a symlink farm](tool-absence-fixture-needs-a-symlink-farm.md) — a hand-listed stub PATH dies 127 at a new tool each time, and the no-op assertion stays green
+- [A prefix arm can't detect a suffix strip](prefix-arm-cannot-detect-a-suffix-strip.md) — build the fixture on the arm that DISAGREES when the normalization is removed
 - [Explicit path still honors gitignore](explicit-path-still-honors-gitignore.md) — a DIRECTORY arg re-applies .gitignore; only a FILE is exempt (#578)
 - [Expand before you scope a path](path-guard-must-expand-before-scoping.md) — unexpanded `~` → nonexistent path → fail-open → silent bypass; same target must decide alike in every spelling (#662)
 - [Mutate after every security fixture](mutate-after-every-security-fixture.md) — 2 injection fixtures passed without the fix too (#596)

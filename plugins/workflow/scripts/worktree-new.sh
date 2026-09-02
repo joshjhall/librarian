@@ -100,6 +100,107 @@ for f in $GOLEM_WORKTREE_LOCAL_FILES; do
     fi
 done
 
+# Wire the platform CLI's token into git so HTTPS pushes work from this
+# worktree (#810). `gh`/`glab` is the authenticated identity everywhere in this
+# pipeline, but git has no way to reach it on its own and dies at ship time with
+#
+#     fatal: could not read Username for 'https://github.com'
+#
+# — after the full pre-push suite has already run. An interactive operator fixes
+# that in one line; a DETACHED tmux/container golem has nobody to answer and
+# dead-end parks with the work complete and only delivery failed. Same
+# make-this-worktree-usable intent as the local-file copy above.
+#
+# SCOPE (measured, #810): `git config --local` from inside a linked worktree
+# writes the SHARED .git/config unless `extensions.worktreeConfig` is enabled
+# (it is not, by default). That is deliberate here — the seed is durable across
+# teardown and fixes every later worktree of this repo, which is exactly what
+# the hand-applied workaround did. worktree-rm.sh correspondingly does NOT
+# unset it.
+#
+# Best-effort, and quiet on the paths where doing nothing is correct: no
+# remote, a non-HTTPS remote (ssh uses keys and needs no helper), an
+# unrecognized host, or the platform CLI absent all no-op rather than writing
+# spurious config or hard-failing an otherwise-good worktree.
+#
+# Reuses the remote already derived for the base-ref fetch above so there is
+# only one notion of "which remote"; GOLEM_BASE_REF may carry no remote
+# component (e.g. a bare `HEAD`), hence the `origin` fallback.
+cred_remote="${base_remote:-origin}"
+cred_url="$(command git remote get-url "$cred_remote" 2>/dev/null || true)"
+case "$cred_url" in
+    https://*)
+        # Split the AUTHORITY off first (everything before the first `/`), then
+        # strip `userinfo@` inside it. Order matters both ways:
+        #   * up to the LAST `@`, since a URL-embedded password may contain one
+        #     (`bot:p@ss@host`);
+        #   * but only WITHIN the authority, because a greedy `##*@` over the
+        #     whole post-scheme string also eats the host whenever the PATH
+        #     contains an `@` — `https://ghe.example.com/org/repo@release.git`
+        #     derives the host `release.git` (verified).
+        # Splitting first makes both cases fall out at once.
+        cred_authority="${cred_url#https://}"
+        cred_authority="${cred_authority%%/*}"
+        cred_authority="${cred_authority##*@}"
+        # The config KEY keeps the port: git's credential lookup matches on the
+        # full URL, so a remote at host:8443 must be keyed as host:8443.
+        cred_host="https://$cred_authority"
+        # Same platform table the workflow skills use (next-issue § Platform
+        # Detection): github.com/ghe. -> gh, gitlab.com/gitlab. -> glab.
+        #
+        # Matched on the BARE host and ANCHORED ON A DOT BOUNDARY. A bare
+        # `*github.com` suffix glob is the classic unanchored-hostname
+        # anti-pattern: it also matches `evil-github.com` and
+        # `notarealgithub.com` (verified — both selected `gh`), and `*ghe.*`
+        # matches that 4-char sequence anywhere in the string. Nothing leaks a
+        # credential, because gh/glab each gate on hosts they recognize — but
+        # this would still write a `credential.<lookalike-host>.helper` entry
+        # into the SHARED .git/config, keyed off attacker-influenceable URL
+        # text, from inside a credential-wiring path. Anchoring costs nothing
+        # and keeps every legitimate host: github.com, any *.github.com,
+        # ghe.example.com and its subdomains, gitlab.com, gitlab.acme.io.
+        #
+        # The MATCH strips a `:port`; the config KEY above keeps it, because
+        # that is what git looks up. The strip matters only for the ANCHORED
+        # arms — `github.com:8443` matches nothing until the port is gone,
+        # whereas a prefix arm like `ghe.*` matches a ported host either way
+        # (measured; the port-strip mutation survived a `ghe.` fixture, which is
+        # why the test uses `github.com:8443`).
+        #
+        # The two self-hosted arms (`ghe.*`, `gitlab.*`) are PREFIX matches, not
+        # full anchors, and deliberately so: a self-hosted deployment has no
+        # fixed suffix to anchor against, so supporting `gitlab.acme.io` at all
+        # means accepting any `gitlab.`-prefixed host. That is a weaker
+        # guarantee than the `github.com`/`gitlab.com` arms above give — noted
+        # here so a later reader does not mistake it for full anchoring.
+        cred_bare_host="${cred_authority%%:*}"
+        cred_cli=""
+        case "$cred_bare_host" in
+            github.com | *.github.com) cred_cli="gh" ;;
+            ghe.* | *.ghe.*) cred_cli="gh" ;;
+            gitlab.com | *.gitlab.com) cred_cli="glab" ;;
+            gitlab.* | *.gitlab.*) cred_cli="glab" ;;
+        esac
+        if [ -n "$cred_cli" ] && command -v "$cred_cli" >/dev/null 2>&1; then
+            cred_helper="!$cred_cli auth git-credential"
+            command git -C "$wt" config --local \
+                "credential.${cred_host}.helper" "$cred_helper" || true
+            # Verify rather than assume: a silent failure to set this resurfaces
+            # much later as the original `fatal:`, at ship time, with no clue
+            # pointing back here. Same fail-loud posture as the submodule
+            # warning above.
+            if [ "$(command git -C "$wt" config --get \
+                "credential.${cred_host}.helper" 2>/dev/null)" = "$cred_helper" ]; then
+                command echo "  seeded git credential helper ($cred_cli) for $cred_host"
+            else
+                command echo "worktree-new: WARNING — could not seed the git credential" \
+                    "helper for $cred_host; pushes from $wt may fail with" \
+                    "'could not read Username'" >&2
+            fi
+        fi
+        ;;
+esac
+
 # Seed a workspace-trust entry for the new worktree path so the copied
 # settings.local.json (defaultMode "auto" + push/PR `ask` gates) actually
 # loads — Claude Code does not load project settings for an UNTRUSTED folder,
