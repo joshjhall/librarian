@@ -17,7 +17,18 @@
 // Assertions here collect rather than throw (tests/lib/mjs-assert.mjs), so one
 // bad case cannot mask its siblings.
 
-import { readSections, renderRegion, spliceRegion } from "../../bin/generate-prelude.mjs";
+// BANNER_START/BANNER_END are IMPORTED, never re-literalized. Hardcoding copies
+// of constants the module exports is the same copy-drift this whole PR exists to
+// eliminate: if the banner text changed, stale fixtures would make spliceRegion
+// throw "no generated region" on input that no longer matches the real markers —
+// a false failure that misdiagnoses the actual change.
+import {
+  BANNER_END,
+  BANNER_START,
+  readSections,
+  renderRegion,
+  spliceRegion,
+} from "../../bin/generate-prelude.mjs";
 import { ok, eq } from "../lib/mjs-assert.mjs";
 
 // Assert a call throws AND that the message identifies the expected cause.
@@ -112,8 +123,8 @@ export function run() {
 
   // --- renderRegion ----------------------------------------------------------
   const region = renderRegion(sections, ["alpha"]);
-  ok(region.startsWith("// ==== GENERATED FROM"), "renderRegion: emits the opening banner");
-  ok(region.trimEnd().endsWith("// ==== END GENERATED ===="), "renderRegion: emits the closing banner");
+  ok(region.startsWith(BANNER_START), "renderRegion: emits the opening banner");
+  ok(region.trimEnd().endsWith(BANNER_END), "renderRegion: emits the closing banner");
   ok(region.includes("const A = 1"), "renderRegion: carries the requested section body");
   ok(
     !region.includes("const B = 2"),
@@ -135,8 +146,8 @@ export function run() {
   );
 
   // --- spliceRegion ----------------------------------------------------------
-  const START = "// ==== GENERATED FROM plugins/lib/prelude.js — DO NOT EDIT ====";
-  const END = "// ==== END GENERATED ====";
+  const START = BANNER_START;
+  const END = BANNER_END;
   const host = `const before = 1\n${START}\nOLD BODY\n${END}\nconst after = 2\n`;
 
   const spliced = spliceRegion(host, `${START}\nNEW BODY\n${END}\n`, "fake.js");

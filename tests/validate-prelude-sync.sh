@@ -381,6 +381,40 @@ test_unknown_consumer_is_a_usage_error() {
         "the error names the problem and lists the valid consumers"
 }
 
+# An unknown FLAG is also a usage error, distinct from an unknown consumer: the
+# flag check runs first and must not let a misspelled flag be silently
+# reinterpreted as a consumer name, which would turn a typo into a bogus target.
+test_unknown_flag_is_a_usage_error() {
+    local out rc=0
+    out="$(command node "$GENERATOR" --not-a-real-flag 2>&1)" || rc=$?
+
+    assert_equals "2" "$rc" "an unknown flag exits 2"
+    assert_contains "$out" "unknown flag" \
+        "the error names the offending flag"
+}
+
+# `--check` must FAIL when a generated file is missing entirely, not just when
+# its bytes differ. A deleted fragment is the likeliest real instance (someone
+# prunes a workflow.src/ file), and treating absent-as-fine would let the gate
+# pass on a tree whose harness no longer has a prelude at all.
+test_check_fails_on_missing_generated_file() {
+    local sandbox out rc=0
+    sandbox="$(make_prelude_sandbox)" || {
+        skip_test "missing-file test needs mktemp"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$sandbox'" RETURN
+
+    command rm -f "$sandbox/plugins/workflow/skills/ship-issue/workflow.src/15-prelude.js"
+
+    out="$(cd "$sandbox" && command node bin/generate-prelude.mjs --check 2>&1)" || rc=$?
+
+    assert_true "[ $rc -ne 0 ]" "--check fails when a generated file is missing"
+    assert_contains "$out" "missing generated file" \
+        "the failure says the file is missing, not merely stale"
+}
+
 run_test test_prelude_copies_are_fresh "Every prelude copy matches the source"
 run_test test_check_actually_covered_consumers "--check reported on all consumers (non-vacuity floor)"
 run_test test_drift_detected_in_region "Drift guard fires on a perturbed banner region"
@@ -392,5 +426,7 @@ run_test test_write_mode_regenerates_copies "Write mode regenerates both deliver
 run_test test_write_mode_is_idempotent "Write mode is idempotent (second run rewrites nothing)"
 run_test test_write_mode_targets_one_consumer "Write mode targets only the named consumer"
 run_test test_unknown_consumer_is_a_usage_error "An unknown consumer name exits 2, not 0"
+run_test test_unknown_flag_is_a_usage_error "An unknown flag exits 2, not 0"
+run_test test_check_fails_on_missing_generated_file "--check fails on a MISSING generated file"
 
 generate_report
