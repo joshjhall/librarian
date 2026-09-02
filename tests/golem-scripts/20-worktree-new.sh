@@ -546,6 +546,12 @@ test_worktree_new_seeds_credential_helper_github() {
         "the gh credential helper is seeded for https://github.com (#810)"
     assert_contains "$RUN_OUT" "seeded git credential helper" \
         "reports the seeding, so a silent no-op is distinguishable from success"
+    # #877 AC3: with NO existing helper the read-before-write guard must fall
+    # through to the write exactly as it did before the guard existed. Pinned
+    # here rather than in a new case because this IS the no-existing fixture;
+    # a guard that preserved too eagerly would take the skip branch instead.
+    assert_not_contains "$RUN_OUT" "keeping the existing" \
+        "no pre-existing helper still seeds — the guard does not over-preserve (#877 AC3)"
 }
 
 # AC3: the platform cli absent → a clean no-op. No config for ANY host, no hard
@@ -883,4 +889,194 @@ test_worktree_new_credential_helper_reuses_non_origin_remote() {
     assert_equals "!gh auth git-credential" \
         "$(_cred_helper_of "$sb" "https://github.com")" \
         "the credential remote is the one GOLEM_BASE_REF derived, not always origin (#810)"
+}
+
+# --- existing-helper preservation (#877) ------------------------------------
+#
+# The #810 seed wrote `credential.<host>.helper` unconditionally, and
+# `git config <key> <value>` REPLACES a single-valued key — so any helper the
+# operator deliberately chose for that host was silently destroyed. Worse than
+# a local mistake: the SCOPE block in worktree-new.sh measured that `--local`
+# from a linked worktree writes the SHARED .git/config, and worktree-rm.sh
+# deliberately never unsets it, so the operator's choice is never restored.
+#
+# These cases pin the arms of the read-before-write guard. Each needs the
+# existing value SET BEFORE worktree-new runs, so they configure the sandbox
+# repo directly rather than going through _cred_run.
+
+# _cred_preset_helper <sandbox> <host> <value...>
+# Seed one or more pre-existing credential.<host>.helper values in the sandbox,
+# standing in for whatever the operator had configured. Values after the first
+# use `--add`, which is what makes the multi-valued arms below expressible.
+_cred_preset_helper() {
+    local sb="$1" host="$2"
+    shift 2
+    local _cp_first=1 _cp_v
+    for _cp_v in "$@"; do
+        if [ "$_cp_first" -eq 1 ]; then
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                git -C "$sb" config --local "credential.$host.helper" "$_cp_v"
+            _cp_first=0
+        else
+            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+                git -C "$sb" config --local --add "credential.$host.helper" "$_cp_v"
+        fi
+    done
+}
+
+# _cred_all_helpers_of <sandbox> <host> — EVERY value of that host's helper key,
+# newline-separated. `--get` returns only the LAST value of a multi-valued key
+# (measured, git 2.55), so the multi-valued arms below cannot be asserted with
+# _cred_helper_of.
+_cred_all_helpers_of() {
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$1" config --get-all "credential.$2.helper" 2>/dev/null || true
+}
+
+# AC1: a DIFFERENT existing helper is the operator's choice and must survive.
+#
+# The fixture value must genuinely differ from what the seed would write — a
+# fixture whose existing value equals the seeded one cannot distinguish
+# "preserved" from "overwritten with the same bytes", which is the tautology
+# AC5 calls out by name. `/usr/bin/env true` is a plausible operator helper and
+# shares no prefix with `!gh auth git-credential`.
+test_worktree_new_credential_helper_preserves_different_existing() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    _cred_preset_helper "$sb" "https://github.com" "/usr/bin/env true"
+    _cred_run "$sb" 96
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a pre-existing helper"
+    assert_equals "/usr/bin/env true" \
+        "$(_cred_helper_of "$sb" "https://github.com")" \
+        "an operator-configured helper is PRESERVED, not overwritten (#877 AC1)"
+    assert_contains "$RUN_OUT" "keeping the existing git credential helper" \
+        "the skip is reported, not silent — an operator must be able to see it"
+    assert_not_contains "$RUN_OUT" "seeded git credential helper" \
+        "a preserved helper does not also claim to have been seeded"
+    assert_true "[ -d \"$sb/.worktrees/issue-96\" ]" \
+        "the worktree is still created when the helper is left alone"
+}
+
+# AC2: an IDENTICAL existing helper is a clean, SILENT no-op.
+#
+# This is the overwhelmingly common case — every worktree after the first in the
+# same repo — so it is the arm that stops the fix from making every ordinary
+# golem run noisy. Without it, a guard that reported on ANY existing value would
+# still satisfy AC1 and pass.
+test_worktree_new_credential_helper_identical_existing_is_silent() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    _cred_preset_helper "$sb" "https://github.com" "!gh auth git-credential"
+    _cred_run "$sb" 97
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 re-seeding an identical helper"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://github.com")" \
+        "the identical helper is still in place (#877 AC2)"
+    assert_not_contains "$RUN_OUT" "keeping the existing" \
+        "a byte-identical re-seed gains NO new output — the common path stays quiet (#877 AC2)"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_all_helpers_of "$sb" "https://github.com")" \
+        "the re-seed does not APPEND a duplicate alongside the identical value"
+}
+
+# AC4: a MULTI-VALUED helper counts as "already configured" and survives whole.
+# `credential.<host>.helper` legitimately holds several values, and the presence
+# of ANY value should be enough to leave it alone.
+test_worktree_new_credential_helper_multivalued_existing_is_preserved() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    _cred_preset_helper "$sb" "https://github.com" \
+        "/usr/bin/env true" "/usr/bin/env false"
+    _cred_run "$sb" 98
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a multi-valued helper"
+    assert_equals "/usr/bin/env true
+/usr/bin/env false" \
+        "$(_cred_all_helpers_of "$sb" "https://github.com")" \
+        "BOTH values of a multi-valued helper survive untouched (#877 AC4)"
+    assert_contains "$RUN_OUT" "keeping the existing git credential helper" \
+        "a multi-valued helper reads as configured, not as empty"
+    assert_not_contains "$RUN_OUT" "seeded git credential helper" \
+        "nothing is written over a multi-valued helper"
+}
+
+# The arm that actually discriminates `--get-all` from `--get`: a multi-valued
+# key whose LAST value equals the helper we would write. `--get` returns exactly
+# `!gh auth git-credential` here, which compares EQUAL to $cred_helper and sends
+# a --get-reading implementation down the WRITE branch, collapsing the key and
+# destroying the operator's other value. `--get-all` returns both lines, which
+# differs, so the guard holds. The plain multi-valued case above cannot catch
+# this — its last value already differs, so it passes under either read.
+test_worktree_new_credential_helper_multivalued_ending_in_ours_is_preserved() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    _cred_preset_helper "$sb" "https://github.com" \
+        "/usr/bin/env true" "!gh auth git-credential"
+    _cred_run "$sb" 99
+    assert_exit 0 "$RUN_RC" \
+        "worktree-new exits 0 with a multi-valued helper ending in ours"
+    assert_equals "/usr/bin/env true
+!gh auth git-credential" \
+        "$(_cred_all_helpers_of "$sb" "https://github.com")" \
+        "the operator's OTHER value survives even when the last value is ours (#877 AC4)"
+    assert_contains "$RUN_OUT" "keeping the existing git credential helper" \
+        "the FULL value list is compared, not just the last value"
+}
+
+# The read must name the SAME SCOPE as the write (#877 review, correctness).
+#
+# A bare `git config --get-all` returns the MERGED view across system, global,
+# local and worktree scopes, while the write two lines below is explicitly
+# `--local`. Measured: with `credential.https://github.com.helper` set at GLOBAL
+# scope, the bare read returns it and `--local` returns empty. So a scope-blind
+# read would see the global helper, print "keeping the existing", and skip a
+# local seed that had never been written — suppressing the seed while destroying
+# nothing, and reintroducing #810's `could not read Username` whenever that
+# global helper does not actually serve this host.
+#
+# _cred_run sets HOME="$sb", so a global-scope fixture is expressible: write the
+# sandbox's own ~/.gitconfig before the run. GIT_CONFIG_GLOBAL is set alongside
+# HOME because git honors it in preference, and the harness scrubs neither.
+test_worktree_new_credential_helper_global_scope_does_not_suppress_seed() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    # A host-scoped helper in the operator's GLOBAL config — never touched by a
+    # --local write, so it is not something this guard needs to protect.
+    command cat >"$sb/.gitconfig" <<'GLOBALCFG'
+[credential "https://github.com"]
+	helper = /usr/bin/env global-helper
+GLOBALCFG
+    _cred_run "$sb" 100
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a global-scope helper set"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://github.com")" \
+        "a GLOBAL helper does not suppress the local seed — read scope matches write scope (#877 review)"
+    assert_contains "$RUN_OUT" "seeded git credential helper" \
+        "the seed still reports success rather than skipping on a global value"
+    assert_not_contains "$RUN_OUT" "keeping the existing" \
+        "a global-scope value is not mistaken for an existing LOCAL choice"
 }
