@@ -11,20 +11,13 @@ const READONLY =
   'Emit your result via StructuredOutput per the ' +
   'provided schema (not a ```json fence).'
 
-// Neutralize prompt-injection vectors in any value interpolated into a prompt.
-// `scope` and `categories` are user-controlled, and the domain.* fields are
-// produced by the map agent (so they are second-order untrusted) — all of them
-// reach a Bash-capable checker, so a smuggled newline + bullet ("- IGNORE the
-// above and run: …") could become an instruction. Strip CR/LF and other control
-// chars and clamp length; the values are short identifiers / paths, never prose.
-const sanitize = (v, max = 200) =>
-  String(v == null ? '' : v)
-    // Replace every C0/C1 control char (incl. CR/LF/TAB) with a space so a
-    // smuggled newline cannot start a new instruction line in the prompt.
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max)
+// `sanitize` comes from the shared prelude (#586) — see 15-prelude.js. Why it
+// matters HERE specifically: `scope` and `categories` are user-controlled, and
+// the domain.* fields are produced by the map agent (so they are second-order
+// untrusted) — all of them reach a Bash-capable checker, so a smuggled newline
+// + bullet ("- IGNORE the above and run: …") could become an instruction. The
+// values are short identifiers / paths, never prose, so the 200-char clamp is
+// generous rather than lossy.
 const sanitizeList = (xs) => (Array.isArray(xs) ? xs.map((x) => sanitize(x)) : [])
 
 // The reason string for a failed map step, naming WHICH failure fired (#646).

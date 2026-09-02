@@ -784,19 +784,29 @@ test_workflow_agenttype_guard_detects_bare() {
 # is duplicated across the fan-out harnesses; this live sweep is the only thing
 # keeping the 6 copies in lockstep. A harness with no fan-out omits the floor and
 # is skipped — only a declared-but-divergent value fails.
-test_workflow_budget_floor_consistent() {
-    local wf_file
-    while IFS= read -r wf_file; do
-        [ -n "$wf_file" ] || continue
-        [ -f "$wf_file" ] || continue
-        local rel_name value
-        rel_name="$(command basename "$(command dirname "$wf_file")")"
-        value="$(workflow_budget_floor_value "$wf_file")"
-        [ -n "$value" ] || continue
-        assert_equals "$HOUSE_BUDGET_FLOOR" "$value" \
-            "Workflow $rel_name: BUDGET_FLOOR ($value) must equal the house floor ($HOUSE_BUDGET_FLOOR)"
-    done < <(command find "$PLUGINS_DIR" -name "workflow.js" -type f 2>/dev/null | command sort)
-}
+# RETIRED as a live sweep, SUBSUMED by tests/validate-prelude-sync.sh (#586).
+#
+# The sweep used to assert every harness's hand-written BUDGET_FLOOR equalled the
+# house value. There are no longer six hand-written declarations to compare: the
+# constant is declared once in plugins/lib/prelude.js and copied into each
+# consumer by bin/generate-prelude.mjs, so the prelude gate pins the house value
+# at the source and pins every copy byte-equal to it.
+#
+# Two properties of the old test are deliberately preserved rather than dropped,
+# because "subsumed" must not quietly mean "narrowed":
+#
+#   1. THE HOUSE VALUE ITSELF is asserted by validate-prelude-sync.sh's
+#      test_source_declares_house_budget_floor.
+#   2. NO SECOND DECLARATION may reappear outside the generated region — the
+#      actual drift this gate existed to prevent. Asserted there too, by
+#      test_no_harness_declares_budget_floor_twice, which counts declarations per
+#      harness across plugins/**/workflow.js.
+#
+# `workflow_budget_floor_value` is KEPT and still exercised by
+# test_workflow_budget_floor_guard_detects_drift below: that test pins the
+# EXTRACTOR's precision (exact value, no partial match, empty for a floorless
+# file), which is a property of this file's parsing helpers and has no equivalent
+# in the sync gate. Deleting it would lose coverage rather than move it.
 
 # The BUDGET_FLOOR consistency detector FIRES on the negative fixture: the fixture
 # declares a non-house floor (99000), and the value it reports back must be that
@@ -1036,8 +1046,11 @@ run_test test_workflow_phase_guard_detects_mismatch "Phase↔meta guard fires on
 run_test test_workflow_agenttype_resolves "Every workflow.js agentType is a resolvable <plugin>:<name>"
 run_test test_workflow_agenttype_guard_detects_dangling "agentType guard fires on a namespaced-unresolvable ref"
 run_test test_workflow_agenttype_guard_detects_bare "agentType guard fires on a bare (un-namespaced) ref"
-run_test test_workflow_budget_floor_consistent "Every workflow.js BUDGET_FLOOR equals the house floor"
-run_test test_workflow_budget_floor_guard_detects_drift "BUDGET_FLOOR consistency guard fires on the negative fixture"
+# The live BUDGET_FLOOR sweep is retired — subsumed by
+# tests/validate-prelude-sync.sh (#586); see the note above the extractor. The
+# extractor-precision test stays: it covers this file's parsing helper, which the
+# sync gate does not exercise.
+run_test test_workflow_budget_floor_guard_detects_drift "BUDGET_FLOOR extractor is precise on the negative fixture"
 run_test test_skill_required_tools_referenced "Every skill's required_tools are referenced in the skill"
 run_test test_skill_required_tools_guard_detects_drift "required_tools reference guard fires on the negative fixture"
 run_test test_agent_destructive_clause_present "Every agent's Restrictions carries the #426 destructive-shell clause"

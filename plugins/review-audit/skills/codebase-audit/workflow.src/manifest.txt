@@ -16,6 +16,22 @@
 #   own section banners, which already encode this: the "Audit output paths"
 #   banner reads "(need sanitizeDir above)".
 #
+#   15-prelude.js MUST precede 40-injection-utils.js, which now depends on it:
+#   `sanitize` moved into the shared prelude (#586) and `sanitizeList` calls it.
+#   Chained with the rule above, the load order 15 -> 40 -> 50 is what keeps
+#   `sanitizeDir` (which uses `sanitize`) initialized before `auditDir` runs it.
+#
+#   14-prelude-seams.js MUST precede 15-prelude.js. `FALLBACK_NOUN` is a `const`
+#   that the prelude's `attempt` reads, so a prelude above it is a TDZ throw when
+#   `attempt` runs. (`budgetLow` is a function declaration and hoists, so it
+#   alone would not constrain the order.)
+#
+#   15-prelude.js is GENERATED from plugins/lib/prelude.js by
+#   bin/generate-prelude.mjs (`just gen-prelude`) — do not hand-edit it. It is a
+#   FRAGMENT rather than a banner region inside ../workflow.js on purpose (#811):
+#   a region in the artifact would be overwritten by the next
+#   `just gen-workflow-js`. Two generators, two disjoint byte ranges.
+#
 # The generator checks this list against the directory in BOTH directions: a
 # listed fragment missing on disk fails, and an unlisted `.js` sitting in this
 # directory fails too — the second is the dangerous one, since it is a file
@@ -24,10 +40,12 @@
 
 00-meta.js               # export const meta — must be the FIRST statement
 10-config.js             # scope/depth/output/timestamp input parsing
-20-budget-guards.js      # BUDGET_FLOOR, TAIL_FLOOR, tailAgent, attempt, template
+14-prelude-seams.js      # budgetLow, FALLBACK_NOUN — before 15
+15-prelude.js            # GENERATED shared prelude — before 40 (sanitize)
+20-budget-guards.js      # MAX_FINDINGS_PER_ISSUE, ISSUE_TEMPLATE
 30-schemas.js            # CERTAINTY / FINDING / MAP / SCAN / VERIFY / AGGREGATE …
-40-injection-utils.js    # READONLY, sanitize, slugify, sanitizeDir — before 50
+40-injection-utils.js    # READONLY, sanitizeList, slugify, sanitizeDir — before 50
 50-output-paths.js       # auditDir, outDir, reportPath (call sanitizeDir)
-60-prompts.js            # stableStringify, dataBlock, prompt builders
+60-prompts.js            # prompt builders
 70-result-plumbing.js    # stampRefs, applyVerifyScores, finalResult
 80-orchestration.js      # the side-effecting body (past ORCH_BOUNDARY)

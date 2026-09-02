@@ -11,12 +11,28 @@
 #   00-meta.js MUST stay first. The engine rejects a script whose
 #   `export const meta` is not the very first statement.
 #
-#   20-sanitize.js MUST precede 30-dimensions.js. The `scope-drift` entry of
-#   NEW_DIMENSIONS calls `sanitize(issue.title)` at MODULE LOAD. Reversed, that
-#   is a temporal-dead-zone throw — but only on the branch where `issue` is
-#   truthy, so a test that extracts without an issue stays green while the real
-#   run dies. That is #260, exactly. tests/workflow-helpers/ship-issue/
-#   04-tdz-and-diff.mjs pins the live branch.
+#   15-prelude.js MUST precede 30-dimensions.js — the same #260 constraint that
+#   used to name 20-sanitize.js. `sanitize` now arrives in the generated prelude
+#   fragment, so it is 15-prelude.js that must stay above 30: the `scope-drift`
+#   entry of NEW_DIMENSIONS calls `sanitize(issue.title)` at MODULE LOAD.
+#   Reversed, that is a temporal-dead-zone throw — but only on the branch where
+#   `issue` is truthy, so a test that extracts without an issue stays green while
+#   the real run dies. tests/workflow-helpers/ship-issue/04-tdz-and-diff.mjs pins
+#   the live branch.
+#
+#   14-prelude-seams.js MUST sit BETWEEN 10-args-contract.js and 15-prelude.js,
+#   and both bounds are load-bearing (#586):
+#     - after 10, because `budgetLow` reads `reviewBudget`, defined there;
+#     - before 15, because `FALLBACK_NOUN` is a `const` that the prelude's
+#       `attempt` reads. A prelude above it is a TDZ throw when `attempt` runs.
+#   Function declarations hoist and `const`s do not, which is exactly why only
+#   one of these two seams constrains the order.
+#
+#   15-prelude.js is GENERATED from plugins/lib/prelude.js by
+#   bin/generate-prelude.mjs (`just gen-prelude`) — do not hand-edit it. It is a
+#   FRAGMENT rather than a banner region inside ../workflow.js on purpose (#811):
+#   a region in the artifact would be overwritten by the next
+#   `just gen-workflow-js`. Two generators, two disjoint byte ranges.
 #
 # The generator checks this list against the directory in BOTH directions: a
 # listed fragment missing on disk fails, and an unlisted `.js` sitting in this
@@ -27,9 +43,11 @@
 00-meta.js                # export const meta — must be the FIRST statement
 05-provenance.js          # size/provenance header + the `args` contract prose
 10-args-contract.js       # KNOWN_ARG_KEYS, arg validation, config consts
-20-sanitize.js            # sanitize, stableStringify, dataBlock — before 30
+14-prelude-seams.js       # budgetLow, FALLBACK_NOUN — after 10, before 15
+15-prelude.js             # GENERATED shared prelude — before 30 (#260 TDZ)
+20-sanitize.js            # harness-specific notes on the prelude's injection controls
 30-dimensions.js          # REUSED_DIMENSIONS, NEW_DIMENSIONS (calls sanitize)
-40-budget-guards.js       # BUDGET_FLOOR, TAIL_FLOOR, tailAgent, attempt
+40-budget-guards.js       # manifestFailureNote + harness-specific budget notes
 50-schemas-finding.js     # CERTAINTY / FINDING / MANIFEST / FINDINGS_SCHEMA
 55-disposition-policy.js  # NATURE_VALUES, DISPOSITION_RULES, tallies
 60-schemas-judge.js       # JUDGE_SCHEMA, COMMENTS_SCHEMA
