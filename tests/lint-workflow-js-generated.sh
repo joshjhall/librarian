@@ -361,64 +361,74 @@ test_coexistence_contract_recorded() {
 #
 # Arm B is what makes Arm A meaningful: without it, a failure in A could be any
 # mutation at all rather than specifically the region's placement.
+# Runs against BOTH enrolled harnesses, for the reason
+# test_stale_artifact_is_detected states above: proving it on one and assuming
+# the other leaves the second harness's protection asserted rather than
+# demonstrated. That is not hypothetical here — codebase-audit's manifest
+# carries its own load-bearing ordering constraint (40-injection-utils.js before
+# 50-output-paths.js, a module-load TDZ), so appending a prelude fragment there
+# exercises a genuinely different manifest shape than ship-issue's.
 test_prelude_region_must_be_a_fragment() {
     local sandbox harness name frag_dir artifact rc out banner
-    harness="plugins/workflow/skills/ship-issue"
-    name="ship-issue"
     banner='// ==== GENERATED FROM plugins/lib/prelude.js - DO NOT EDIT ===='
 
-    sandbox="$(make_harness_sandbox "$harness")" || {
-        skip_test "mktemp unavailable — cannot mutate in a sandbox"
-        return 0
-    }
-    # shellcheck disable=SC2064  # expand $sandbox now, not at trap time
-    trap "command rm -rf '$sandbox'" RETURN
-    frag_dir="$sandbox/$harness/workflow.src"
-    artifact="$sandbox/$harness/workflow.js"
+    for harness in $ENROLLED_DIRS; do
+        name="${harness##*/}"
+        sandbox="$(make_harness_sandbox "$harness")" || {
+            skip_test "mktemp unavailable — cannot mutate in a sandbox"
+            return 0
+        }
+        frag_dir="$sandbox/$harness/workflow.src"
+        artifact="$sandbox/$harness/workflow.js"
 
-    # The synthetic prelude source #586 would introduce. Present in BOTH arms, so
-    # it cannot be what distinguishes them — placement is.
-    command mkdir -p "$sandbox/plugins/lib"
-    command printf '%s\n' "$banner" >"$sandbox/plugins/lib/prelude.js"
+        # The synthetic prelude source #586 would introduce. Present in BOTH arms,
+        # so it cannot be what distinguishes them — placement is.
+        command mkdir -p "$sandbox/plugins/lib"
+        command printf '%s\n' "$banner" >"$sandbox/plugins/lib/prelude.js"
 
-    # Arm A — banner appended to the ARTIFACT only.
-    command printf '\n%s\n' "$banner" >>"$artifact"
-    rc=0
-    out="$(command node "$sandbox/bin/generate-workflow-js.mjs" --check "$name" 2>&1)" || rc=$?
-    assert_true "[ $rc -ne 0 ]" \
-        "a prelude region written into the ARTIFACT is clobbered (--check fails)"
-    assert_contains "$out" "STALE" \
-        "the artifact-only prelude region is reported as stale"
+        # Arm A — banner appended to the ARTIFACT only.
+        command printf '\n%s\n' "$banner" >>"$artifact"
+        rc=0
+        out="$(command node "$sandbox/bin/generate-workflow-js.mjs" --check "$name" 2>&1)" || rc=$?
+        assert_true "[ $rc -ne 0 ]" \
+            "$name: a prelude region written into the ARTIFACT is clobbered (--check fails)"
+        assert_contains "$out" "STALE" \
+            "$name: the artifact-only prelude region is reported as stale"
 
-    # Restore the artifact, so Arm B starts from a clean tree rather than
-    # inheriting Arm A's mutation (which would make a pass unattributable).
-    command node "$sandbox/bin/generate-workflow-js.mjs" "$name" >/dev/null 2>&1
-    rc=0
-    command node "$sandbox/bin/generate-workflow-js.mjs" --check "$name" >/dev/null 2>&1 || rc=$?
-    assert_equals "0" "$rc" "arm B baseline: the sandbox is clean before the fragment arm"
+        # Restore the artifact, so Arm B starts from a clean tree rather than
+        # inheriting Arm A's mutation (which would make a pass unattributable).
+        command node "$sandbox/bin/generate-workflow-js.mjs" "$name" >/dev/null 2>&1
+        rc=0
+        command node "$sandbox/bin/generate-workflow-js.mjs" --check "$name" >/dev/null 2>&1 || rc=$?
+        assert_equals "0" "$rc" \
+            "$name: arm B baseline — the sandbox is clean before the fragment arm"
 
-    # Arm B — the SAME banner, this time as a listed fragment. Appended to the
-    # manifest's last entry position so ordering constraints are untouched.
-    command printf '%s\n' "$banner" >"$frag_dir/90-prelude.js"
-    command printf '90-prelude.js\n' >>"$frag_dir/manifest.txt"
-    command node "$sandbox/bin/generate-workflow-js.mjs" "$name" >/dev/null 2>&1
-    rc=0
-    out="$(command node "$sandbox/bin/generate-workflow-js.mjs" --check "$name" 2>&1)" || rc=$?
-    assert_equals "0" "$rc" \
-        "the same prelude region AS A FRAGMENT survives generation (--check clean)"
+        # Arm B — the SAME banner, this time as a listed fragment. Appended at the
+        # manifest's last entry position so existing ordering constraints (including
+        # codebase-audit's TDZ pair) are untouched.
+        command printf '%s\n' "$banner" >"$frag_dir/90-prelude.js"
+        command printf '90-prelude.js\n' >>"$frag_dir/manifest.txt"
+        command node "$sandbox/bin/generate-workflow-js.mjs" "$name" >/dev/null 2>&1
+        rc=0
+        out="$(command node "$sandbox/bin/generate-workflow-js.mjs" --check "$name" 2>&1)" || rc=$?
+        assert_equals "0" "$rc" \
+            "$name: the same prelude region AS A FRAGMENT survives generation (--check clean)"
 
-    # And it genuinely reached the artifact — otherwise "clean" would only mean
-    # the fragment was ignored, which is the unlisted-fragment failure wearing a
-    # passing exit code.
-    #
-    # The marker must be one the artifact does NOT already carry. `DO NOT EDIT`
-    # is the tempting choice and is a TAUTOLOGY: every enrolled artifact opens
-    # with an `@generated — DO NOT EDIT THIS FILE` banner, so that assertion
-    # passes whether or not a single fragment byte landed (measured — a
-    # listed-but-EMPTY fragment kept it green). `plugins/lib/prelude.js` appears
-    # nowhere in the real artifact, so it can only come from this fixture.
-    assert_file_contains "$artifact" "plugins/lib/prelude.js" \
-        "the fragment's prelude bytes are present in the generated artifact"
+        # And it genuinely reached the artifact — otherwise "clean" would only mean
+        # the fragment was ignored, which is the unlisted-fragment failure wearing a
+        # passing exit code.
+        #
+        # The marker must be one the artifact does NOT already carry. `DO NOT EDIT`
+        # is the tempting choice and is a TAUTOLOGY: every enrolled artifact opens
+        # with an `@generated — DO NOT EDIT THIS FILE` banner, so that assertion
+        # passes whether or not a single fragment byte landed (measured — a
+        # listed-but-EMPTY fragment kept it green). `plugins/lib/prelude.js` appears
+        # nowhere in either real artifact, so it can only come from this fixture.
+        assert_file_contains "$artifact" "plugins/lib/prelude.js" \
+            "$name: the fragment's prelude bytes are present in the generated artifact"
+
+        command rm -rf "$sandbox"
+    done
 }
 
 run_test test_generated_harnesses_are_fresh "Every enrolled workflow.js is fresh w.r.t. its fragments"
