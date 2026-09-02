@@ -413,3 +413,222 @@ test_worktree_new_readonly_tainted_git_env_fails_loud() {
     assert_true "[ ! -e \"$sb/.worktrees/issue-78\" ]" \
         "no worktree dir created (aborted before git worktree add)"
 }
+
+# --- credential-helper seeding (#810) ---------------------------------------
+#
+# Every golem worktree used to start unable to push over HTTPS ("fatal: could
+# not read Username"), because git had no credential helper wired to the token
+# `gh`/`glab` already holds. worktree-new.sh now seeds one. These cases pin the
+# decisions that block makes — IS a helper written, for WHICH host, naming WHICH
+# cli — plus the no-op arms that must stay silent.
+#
+# new_sandbox creates a repo with NO remote, and run_in pins GOLEM_BASE_REF=HEAD
+# (no remote component), so every case here sets its own remote and invokes
+# directly with GOLEM_BASE_REF=origin/main, mirroring the direct-env pattern of
+# test_worktree_new_copies_local_files above.
+
+# _cred_run <sandbox> <issue-n> [stub-dir]
+# Run worktree-new in the sandbox with a real remote in play. When <stub-dir> is
+# given it becomes the ENTIRE PATH (holding only symlinks to the real
+# bash/git/env), which is how the cli-absent arm is FORCED rather than skipped —
+# a skip-if-absent test would only ever exercise the cli-PRESENT arm on a host
+# that has gh. Sets RUN_RC/RUN_OUT like run_in.
+#
+# BASH_ENV is unset for the same reason gate_age_unit's nojq arm unsets it
+# (tests/lib/golem-sandbox.sh): this image points BASH_ENV at /etc/bash_env,
+# which every non-interactive bash sources and which REBUILDS PATH — silently
+# restoring `gh` and turning the cli-absent case into a second cli-present case
+# that passes for the wrong reason. Measured here: without the unset,
+# `command -v gh` still resolved /usr/bin/gh under a PATH of just the stub dir.
+_cred_run() {
+    local sb="$1" n="$2" stub="${3:-}" path_env base_ref="origin/main" _cr_t
+    if [ -n "$stub" ]; then
+        # A symlink FARM: every executable on the real PATH except gh/glab, so
+        # the ONLY difference from a normal run is the absent platform cli.
+        # Enumerating the handful of tools the script "needs" instead is the
+        # wrong shape — it is an ever-growing list that fails 127 at a new tool
+        # each time (measured: dirname, then basename/uname via git-submodule,
+        # then mktemp via seed-worktree-trust.sh), and each such failure looks
+        # like the no-op arm being exercised when it is really a broken fixture.
+        command mkdir -p "$stub"
+        local _cr_d _cr_f
+        for _cr_d in $(command printf '%s\n' "$PATH" | command tr ':' ' '); do
+            [ -d "$_cr_d" ] || continue
+            for _cr_f in "$_cr_d"/*; do
+                [ -x "$_cr_f" ] || continue
+                _cr_t="${_cr_f##*/}"
+                case "$_cr_t" in
+                    gh | glab) continue ;;
+                esac
+                # First PATH dir wins, mirroring real PATH resolution order.
+                [ -e "$stub/$_cr_t" ] || command ln -sf "$_cr_f" "$stub/$_cr_t"
+            done
+        done
+        command ln -sf "$REAL_BASH" "$stub/bash"
+        path_env="$stub"
+    else
+        path_env="$PATH"
+    fi
+    # No remote configured ⇒ no origin/main ref either, and `worktree add` would
+    # die 128 on the invalid reference LONG before the credential block runs —
+    # the fixture would then "fail" for a reason that has nothing to do with what
+    # it is pinning. Fall back to HEAD, which is also the realistic shape: a repo
+    # with no remote has no remote-tracking base ref to fork from.
+    if [ -z "$(_cred_helper_remote_url "$sb")" ]; then
+        base_ref="HEAD"
+    fi
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" PATH="$path_env" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF="$base_ref" \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_NEW" "$n" 2>&1)" || RUN_RC=$?
+}
+
+# _cred_helper_remote_url <sandbox> — the sandbox's origin URL, or empty when it
+# has no origin. Used by _cred_run to pick a base ref that actually resolves.
+_cred_helper_remote_url() {
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$1" remote get-url origin 2>/dev/null || true
+}
+
+# _cred_set_remote <sandbox> <url> — give the sandbox an `origin` plus a local
+# origin/main ref, so GOLEM_BASE_REF=origin/main resolves with no network.
+_cred_set_remote() {
+    local sb="$1" url="$2"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb" remote add origin "$url"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb" update-ref refs/remotes/origin/main HEAD
+}
+
+# _cred_helper_of <sandbox> <host> — the configured helper for <host>, or empty.
+_cred_helper_of() {
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$1" config --get "credential.$2.helper" 2>/dev/null || true
+}
+
+# _cred_any_helper <sandbox> — EVERY credential.*.helper key set anywhere in the
+# repo config, so a no-op arm is asserted against all hosts rather than only the
+# one host the test happened to think of.
+_cred_any_helper() {
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$1" config --get-regexp '^credential\..*\.helper$' 2>/dev/null || true
+}
+
+# AC1/AC2: an https GitHub remote with `gh` present gets the gh helper, keyed on
+# the derived host. This is the arm that fixes the reported bug.
+test_worktree_new_seeds_credential_helper_github() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    _cred_run "$sb" 81
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with an https GitHub remote"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://github.com")" \
+        "the gh credential helper is seeded for https://github.com (#810)"
+    assert_contains "$RUN_OUT" "seeded git credential helper" \
+        "reports the seeding, so a silent no-op is distinguishable from success"
+}
+
+# AC3: the platform cli absent → a clean no-op. No config for ANY host, no hard
+# failure, and the worktree is still created.
+test_worktree_new_credential_helper_no_cli_is_noop() {
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+    _cred_run "$sb" 82 "$sb/stub-bin"
+    assert_exit 0 "$RUN_RC" "worktree-new still exits 0 when the platform cli is absent"
+    assert_output_empty "$(_cred_any_helper "$sb")" \
+        "no credential helper is written for any host when gh is absent (#810 AC3)"
+    assert_true "[ -d \"$sb/.worktrees/issue-82\" ]" \
+        "the worktree is still created — credential seeding is best-effort"
+    assert_not_contains "$RUN_OUT" "WARNING — could not seed" \
+        "an absent cli is a silent no-op, not a warning"
+}
+
+# AC3: an ssh remote authenticates with keys and needs no helper — configuring
+# one would be spurious config for no benefit. scp-short form.
+test_worktree_new_credential_helper_ssh_remote_is_noop() {
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "git@github.com:acme/widget.git"
+    _cred_run "$sb" 83
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with an ssh remote"
+    assert_output_empty "$(_cred_any_helper "$sb")" \
+        "no credential helper is written for an ssh remote (#810 AC3)"
+}
+
+# AC3, and the case that actually pins the https-only guard. The scp-short form
+# above is NOT sufficient: dropping the `https://*` guard leaves it deriving the
+# nonsense host `https://github.com:acme` (the `:` is a path separator in that
+# form, not a port), which matches no entry in the platform table, so it no-ops
+# for the WRONG reason and the mutation survives — measured. The `ssh://` URL
+# form has a real `/`-delimited host, so with the guard dropped it derives
+# `https://github.com`, selects gh, and writes a helper for a remote that never
+# needed one. This fixture is the one where guarded and unguarded diverge.
+test_worktree_new_credential_helper_ssh_url_form_is_noop() {
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "ssh://git@github.com/acme/widget.git"
+    _cred_run "$sb" 87
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with an ssh:// URL remote"
+    assert_output_empty "$(_cred_any_helper "$sb")" \
+        "an ssh:// remote gets no credential helper — the https-only guard holds (#810 AC3)"
+}
+
+# The cli choice is DERIVED, not hardcoded to gh: a GitLab host selects glab.
+# This is the case that fails if the platform table collapses to a single cli.
+test_worktree_new_seeds_credential_helper_gitlab() {
+    if ! command -v glab >/dev/null 2>&1; then
+        skip_test "glab not available — cannot exercise the GitLab cli arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://gitlab.com/acme/widget.git"
+    _cred_run "$sb" 84
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with an https GitLab remote"
+    assert_equals "!glab auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://gitlab.com")" \
+        "a GitLab remote selects the glab helper, not gh (#810 host generality)"
+}
+
+# Host generality: a self-hosted GHE remote keys the config on ITS OWN host, and
+# carries userinfo the derivation must strip. A github.com fixture cannot show
+# this — the host must DIFFER from the hardcoded value for the assertion to have
+# teeth, which is why the negative assertion below names github.com explicitly.
+test_worktree_new_credential_helper_self_hosted_host() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://bot@ghe.example.com/acme/widget.git"
+    _cred_run "$sb" 85
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a self-hosted GHE remote"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://ghe.example.com")" \
+        "the helper is keyed on the derived host, with userinfo stripped (#810)"
+    assert_output_empty "$(_cred_helper_of "$sb" "https://github.com")" \
+        "nothing is written for github.com — the host is derived, not hardcoded"
+}
+
+# No remote at all → nothing to derive a host from; a clean no-op.
+test_worktree_new_credential_helper_no_remote_is_noop() {
+    local sb
+    new_sandbox sb
+    _cred_run "$sb" 86
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with no remote configured"
+    assert_output_empty "$(_cred_any_helper "$sb")" \
+        "no credential helper is written when there is no remote (#810 AC3)"
+}

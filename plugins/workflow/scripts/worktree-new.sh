@@ -100,6 +100,67 @@ for f in $GOLEM_WORKTREE_LOCAL_FILES; do
     fi
 done
 
+# Wire the platform CLI's token into git so HTTPS pushes work from this
+# worktree (#810). `gh`/`glab` is the authenticated identity everywhere in this
+# pipeline, but git has no way to reach it on its own and dies at ship time with
+#
+#     fatal: could not read Username for 'https://github.com'
+#
+# — after the full pre-push suite has already run. An interactive operator fixes
+# that in one line; a DETACHED tmux/container golem has nobody to answer and
+# dead-end parks with the work complete and only delivery failed. Same
+# make-this-worktree-usable intent as the local-file copy above.
+#
+# SCOPE (measured, #810): `git config --local` from inside a linked worktree
+# writes the SHARED .git/config unless `extensions.worktreeConfig` is enabled
+# (it is not, by default). That is deliberate here — the seed is durable across
+# teardown and fixes every later worktree of this repo, which is exactly what
+# the hand-applied workaround did. worktree-rm.sh correspondingly does NOT
+# unset it.
+#
+# Best-effort, and quiet on the paths where doing nothing is correct: no
+# remote, a non-HTTPS remote (ssh uses keys and needs no helper), an
+# unrecognized host, or the platform CLI absent all no-op rather than writing
+# spurious config or hard-failing an otherwise-good worktree.
+#
+# Reuses the remote already derived for the base-ref fetch above so there is
+# only one notion of "which remote"; GOLEM_BASE_REF may carry no remote
+# component (e.g. a bare `HEAD`), hence the `origin` fallback.
+cred_remote="${base_remote:-origin}"
+cred_url="$(command git remote get-url "$cred_remote" 2>/dev/null || true)"
+case "$cred_url" in
+    https://*)
+        # scheme://host — drop any `userinfo@`, then the path at the first `/`.
+        cred_hostpath="${cred_url#https://}"
+        cred_hostpath="${cred_hostpath#*@}"
+        cred_host="https://${cred_hostpath%%/*}"
+        # Same platform table the workflow skills use (next-issue § Platform
+        # Detection): github.com/ghe. -> gh, gitlab.com/gitlab. -> glab.
+        cred_cli=""
+        case "$cred_host" in
+            *github.com | *ghe.*) cred_cli="gh" ;;
+            *gitlab.com | *gitlab.*) cred_cli="glab" ;;
+        esac
+        if [ -n "$cred_cli" ] && command -v "$cred_cli" >/dev/null 2>&1; then
+            cred_helper="!$cred_cli auth git-credential"
+            command git -C "$wt" config --local \
+                "credential.${cred_host}.helper" "$cred_helper" || true
+            # Verify rather than assume: a silent failure to set this resurfaces
+            # much later as the original `fatal:`, at ship time, with no clue
+            # pointing back here. Same fail-loud posture as the submodule
+            # warning above.
+            if [ "$(command git -C "$wt" config --get \
+                "credential.${cred_host}.helper" 2>/dev/null)" = "$cred_helper" ]; then
+                command echo "  seeded git credential helper ($cred_cli) for $cred_host"
+            else
+                command echo "worktree-new: WARNING — could not seed the git credential" \
+                    "helper for $cred_host; pushes from $wt may fail with" \
+                    "'could not read Username'" >&2
+            fi
+        fi
+        ;;
+esac
+
 # Seed a workspace-trust entry for the new worktree path so the copied
 # settings.local.json (defaultMode "auto" + push/PR `ask` gates) actually
 # loads — Claude Code does not load project settings for an UNTRUSTED folder,
