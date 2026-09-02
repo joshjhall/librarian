@@ -621,6 +621,18 @@ test_worktree_new_credential_helper_self_hosted_host() {
         "the helper is keyed on the derived host, with userinfo stripped (#810)"
     assert_output_empty "$(_cred_helper_of "$sb" "https://github.com")" \
         "nothing is written for github.com — the host is derived, not hardcoded"
+
+    # userinfo is stripped up to the LAST `@`, not the first: a URL-embedded
+    # password may itself contain one. With a first-`@` strip this URL derives
+    # the host `ss@ghe.example.com`, which matches no anchored pattern and
+    # silently no-ops — so a single-`@` fixture cannot tell the two apart.
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://bot:p@ss@ghe.example.com/acme/widget.git"
+    _cred_run "$sb" 185
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 on a multi-@ userinfo URL"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://ghe.example.com")" \
+        "userinfo is stripped to the LAST @, so the host is still derived (#810)"
 }
 
 # No remote at all → nothing to derive a host from; a clean no-op.
@@ -631,4 +643,160 @@ test_worktree_new_credential_helper_no_remote_is_noop() {
     assert_exit 0 "$RUN_RC" "worktree-new exits 0 with no remote configured"
     assert_output_empty "$(_cred_any_helper "$sb")" \
         "no credential helper is written when there is no remote (#810 AC3)"
+}
+
+# The verify/WARNING arm (#810 review, blocking). The other cases only ever
+# reach the git-config write on a happy path, so the fail-loud branch the source
+# comment promises ("Verify rather than assume") had ZERO coverage — untested
+# error handling, which this repo's failure-class list flags explicitly.
+#
+# Forcing it needs the write to SILENTLY NOT TAKE, which is the exact scenario
+# the verify exists to catch. `chmod 444 .git/config` does NOT do that (measured:
+# git writes via a lockfile + rename, so the set still succeeds); instead shadow
+# `git` with a wrapper that swallows only the credential-helper SET and passes
+# every other invocation — including the `--get` read-back — through to the real
+# binary. The worktree must still be created and the exit still 0: seeding is
+# best-effort, and a credential failure must never abort an otherwise-good
+# worktree.
+test_worktree_new_credential_helper_verify_failure_warns() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb realgit
+    new_sandbox sb
+    realgit="$(command -v git)"
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git"
+
+    command mkdir -p "$sb/swallow-bin"
+    command cat >"$sb/swallow-bin/git" <<EOF
+#!/usr/bin/env bash
+# Swallow ONLY the credential-helper set (a set carries a value after the key;
+# a --get does not). Everything else, the read-back included, passes through.
+for a in "\$@"; do
+    case "\$a" in
+        credential.*.helper)
+            case " \$* " in
+                *" --get "*) : ;;
+                *) exit 0 ;;
+            esac
+            ;;
+    esac
+done
+exec "$realgit" "\$@"
+EOF
+    command chmod +x "$sb/swallow-bin/git"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" PATH="$sb/swallow-bin:$PATH" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=origin/main \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            "$REAL_BASH" "$WT_NEW" 88 2>&1)" || RUN_RC=$?
+
+    assert_exit 0 "$RUN_RC" \
+        "a failed credential seed does NOT abort the worktree (best-effort)"
+    assert_contains "$RUN_OUT" "WARNING" \
+        "the verify failure warns rather than passing silently (#810 fail-loud)"
+    assert_contains "$RUN_OUT" "https://github.com" \
+        "the warning names the host it could not seed"
+    assert_not_contains "$RUN_OUT" "seeded git credential helper" \
+        "a failed seed does not also claim success"
+    assert_true "[ -d \"$sb/.worktrees/issue-88\" ]" \
+        "the worktree is still created despite the credential failure"
+    assert_output_empty "$(_cred_helper_of "$sb" "https://github.com")" \
+        "the helper genuinely did not land — the warning is not a false alarm"
+}
+
+# Hostname anchoring (#810 review, blocking-security). An UNANCHORED `*github.com`
+# glob also matches `evil-github.com` and `notarealgithub.com` (measured: both
+# selected gh), and `*ghe.*` matches that sequence anywhere. Nothing leaks a
+# credential — gh/glab each gate on hosts they recognize — but the block would
+# still write a `credential.<lookalike>.helper` entry into the SHARED .git/config
+# keyed off attacker-influenceable URL text, from inside a credential-wiring
+# path. A `github.com` fixture cannot show this: the host must be a LOOKALIKE for
+# anchored and unanchored to diverge.
+#
+# EVERY arm of the case table gets its own lookalike, because the mutation round
+# proved a single github.com lookalike is not enough: un-anchoring ONLY the
+# `ghe.` arm left this test green (asymmetric mutation survives a partially
+# neutered predicate). One lookalike per arm — github.com, ghe., gitlab.com,
+# gitlab. — is what makes each arm independently pinned.
+test_worktree_new_credential_helper_lookalike_host_is_noop() {
+    if ! command -v gh >/dev/null 2>&1 || ! command -v glab >/dev/null 2>&1; then
+        skip_test "gh and glab both required — this pins BOTH cli arms"
+        return 0
+    fi
+    local sb n=89 host
+    # One lookalike per case-table arm. Each would be matched by the
+    # corresponding UNANCHORED glob and must be rejected by the anchored one.
+    for host in evil-github.com evil-ghe.example.com evil-gitlab.com notagitlab.com; do
+        new_sandbox sb
+        _cred_set_remote "$sb" "https://$host/acme/widget.git"
+        _cred_run "$sb" "$n"
+        assert_exit 0 "$RUN_RC" "worktree-new exits 0 on lookalike host $host"
+        assert_output_empty "$(_cred_any_helper "$sb")" \
+            "lookalike host $host matches no anchored pattern — NO helper (#810)"
+        n=$((n + 100))
+    done
+}
+
+# The other half of anchoring: a legitimate SUBDOMAIN must still match. Pinning
+# only the lookalike rejection would be satisfied by a pattern that rejects
+# everything, so this is what stops the anchoring from being over-tightened.
+test_worktree_new_credential_helper_subdomain_host_seeds() {
+    if ! command -v gh >/dev/null 2>&1 || ! command -v glab >/dev/null 2>&1; then
+        skip_test "gh and glab both required — this pins BOTH cli arms"
+        return 0
+    fi
+    local sb
+    # ghe. arm — a genuine GitHub Enterprise subdomain.
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://ghe.corp.example.com/acme/widget.git"
+    _cred_run "$sb" 91
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 on a ghe. subdomain host"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://ghe.corp.example.com")" \
+        "a genuine ghe.* host still matches after anchoring (#810)"
+
+    # github.com arm — a real subdomain of github.com.
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://api.github.com/acme/widget.git"
+    _cred_run "$sb" 191
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://api.github.com")" \
+        "a genuine *.github.com subdomain still matches after anchoring (#810)"
+
+    # gitlab arm — both a self-hosted gitlab.* host and gitlab.com itself are
+    # covered elsewhere; this pins the anchored *.gitlab.com subdomain.
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://registry.gitlab.com/acme/widget.git"
+    _cred_run "$sb" 291
+    assert_equals "!glab auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://registry.gitlab.com")" \
+        "a genuine *.gitlab.com subdomain still matches after anchoring (#810)"
+}
+
+# An https remote whose host matches NEITHER platform pattern, with the cli
+# present — a third, distinct no-op reason the source comment enumerates
+# ("unrecognized host"), separate from 'ssh remote' and 'cli absent'. This is
+# the arm that catches the case table silently widening.
+test_worktree_new_credential_helper_unrecognized_host_is_noop() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://bitbucket.org/acme/widget.git"
+    _cred_run "$sb" 92
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 on an unrecognized host"
+    assert_output_empty "$(_cred_any_helper "$sb")" \
+        "an unrecognized https host gets no helper, cli present (#810 AC3)"
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "an unrecognized host is a silent no-op, not a warning"
 }

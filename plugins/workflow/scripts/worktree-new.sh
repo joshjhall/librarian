@@ -130,16 +130,40 @@ cred_remote="${base_remote:-origin}"
 cred_url="$(command git remote get-url "$cred_remote" 2>/dev/null || true)"
 case "$cred_url" in
     https://*)
-        # scheme://host — drop any `userinfo@`, then the path at the first `/`.
+        # scheme://host — drop any `userinfo@` (up to the LAST `@`, since a
+        # URL-embedded password may itself contain one), then the path at the
+        # first `/`.
         cred_hostpath="${cred_url#https://}"
-        cred_hostpath="${cred_hostpath#*@}"
+        cred_hostpath="${cred_hostpath##*@}"
+        # The config KEY keeps the port: git's credential lookup matches on the
+        # full URL, so a remote at host:8443 must be keyed as host:8443.
         cred_host="https://${cred_hostpath%%/*}"
         # Same platform table the workflow skills use (next-issue § Platform
         # Detection): github.com/ghe. -> gh, gitlab.com/gitlab. -> glab.
+        #
+        # Matched on the BARE host and ANCHORED ON A DOT BOUNDARY. A bare
+        # `*github.com` suffix glob is the classic unanchored-hostname
+        # anti-pattern: it also matches `evil-github.com` and
+        # `notarealgithub.com` (verified — both selected `gh`), and `*ghe.*`
+        # matches that 4-char sequence anywhere in the string. Nothing leaks a
+        # credential, because gh/glab each gate on hosts they recognize — but
+        # this would still write a `credential.<lookalike-host>.helper` entry
+        # into the SHARED .git/config, keyed off attacker-influenceable URL
+        # text, from inside a credential-wiring path. Anchoring costs nothing
+        # and keeps every legitimate host: github.com, any *.github.com,
+        # ghe.example.com and its subdomains, gitlab.com, gitlab.acme.io.
+        #
+        # The MATCH strips a `:port` (a ported GHE at ghe.example.com:8443
+        # would otherwise match nothing and silently no-op); the config KEY
+        # above keeps it, because that is what git looks up.
+        cred_bare_host="${cred_hostpath%%/*}"
+        cred_bare_host="${cred_bare_host%%:*}"
         cred_cli=""
-        case "$cred_host" in
-            *github.com | *ghe.*) cred_cli="gh" ;;
-            *gitlab.com | *gitlab.*) cred_cli="glab" ;;
+        case "$cred_bare_host" in
+            github.com | *.github.com) cred_cli="gh" ;;
+            ghe.* | *.ghe.*) cred_cli="gh" ;;
+            gitlab.com | *.gitlab.com) cred_cli="glab" ;;
+            gitlab.* | *.gitlab.*) cred_cli="glab" ;;
         esac
         if [ -n "$cred_cli" ] && command -v "$cred_cli" >/dev/null 2>&1; then
             cred_helper="!$cred_cli auth git-credential"
