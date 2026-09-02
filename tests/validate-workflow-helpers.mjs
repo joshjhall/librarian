@@ -45,6 +45,7 @@ import { run as codeReviewer } from "./workflow-helpers/code-reviewer.mjs";
 import { run as shipIssue } from "./workflow-helpers/ship-issue.mjs";
 import { run as modelTier } from "./workflow-helpers/model-tier.mjs";
 import { run as delegation } from "./workflow-helpers/delegation.mjs";
+import { run as preludeGenerator } from "./workflow-helpers/prelude-generator.mjs";
 
 // The extractor's own negative self-check runs first: if the slice boundary has
 // drifted, every area below is extracting garbage, and this says so directly
@@ -59,6 +60,7 @@ const AREAS = [
   ["ship-issue", shipIssue],
   ["model-tier", modelTier],
   ["delegation", delegation],
+  ["prelude-generator", preludeGenerator],
 ];
 
 for (const [name, run] of AREAS) {

@@ -237,6 +237,138 @@ $(command find "$REPO_ROOT/plugins" -name 'workflow.js' -type f | command sort)
 EOF
 }
 
+# Copy the prelude source, the generator, and every consumer into a fresh temp
+# tree and echo its path, so the WRITE-mode tests below can let the generator
+# actually rewrite files without touching the working tree. A gate that dirties
+# the repo to prove itself would trip its own freshness check two tests later,
+# and a crash mid-test would leave a mangled consumer behind.
+#
+# Echoes nothing and returns 1 when mktemp is unavailable, so each caller skips
+# rather than fails. The caller owns the RETURN trap that removes the sandbox: a
+# trap set here would fire when THIS function returns, deleting the tree before
+# the test could use it.
+make_prelude_sandbox() {
+    local sandbox _f
+    sandbox="$(command mktemp -d 2>/dev/null)" || return 1
+
+    command mkdir -p "$sandbox/bin" "$sandbox/plugins/lib"
+    command cp "$GENERATOR" "$sandbox/bin/"
+    command cp "$SOURCE" "$sandbox/plugins/lib/"
+    for _f in $CONSUMER_FILES; do
+        command mkdir -p "$sandbox/$(command dirname "$_f")"
+        command cp "$REPO_ROOT/$_f" "$sandbox/$_f"
+    done
+
+    command printf '%s' "$sandbox"
+}
+
+# WRITE MODE — the half of main() that `just gen-prelude` actually runs, and
+# which every other test here leaves untouched because they all pass --check.
+# A regression that wrote the wrong bytes, wrote to the wrong target, or silently
+# skipped a write would pass the whole rest of this gate.
+#
+# Asserts the full round trip: edit the source, regenerate, and the copy tracks
+# the edit AND --check goes green again on the sandbox.
+test_write_mode_regenerates_copies() {
+    local sandbox rc=0 out target
+    sandbox="$(make_prelude_sandbox)" || {
+        skip_test "write-mode test needs mktemp"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $sandbox now, not at trap time
+    trap "command rm -rf '$sandbox'" RETURN
+
+    # Edit the SOURCE, then regenerate — the real workflow.
+    command sed 's/^const BUDGET_FLOOR = 40_000$/const BUDGET_FLOOR = 41_000/' \
+        "$SOURCE" >"$sandbox/plugins/lib/prelude.js"
+
+    out="$(cd "$sandbox" && command node bin/generate-prelude.mjs 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "write mode exits 0 on a well-formed tree"
+
+    # A banner-region consumer and a fragment consumer both carry the new value —
+    # the two delivery forms take different code paths.
+    target="$sandbox/plugins/workflow/agents/ci-fixer/workflow.js"
+    assert_file_contains "$target" "const BUDGET_FLOOR = 41_000" \
+        "write mode updated the banner-region consumer"
+
+    target="$sandbox/plugins/workflow/skills/ship-issue/workflow.src/15-prelude.js"
+    assert_file_contains "$target" "const BUDGET_FLOOR = 41_000" \
+        "write mode updated the generated fragment"
+
+    # And the tree it just wrote is self-consistent.
+    rc=0
+    out="$(cd "$sandbox" && command node bin/generate-prelude.mjs --check 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "--check passes on the tree write mode just produced"
+}
+
+# IDEMPOTENCY, asserted rather than assumed: a second run must report `unchanged`
+# for every consumer and write nothing. Without this, a generator that rewrote
+# byte-identical content every time would look correct here but churn mtimes and
+# defeat any build caching downstream.
+test_write_mode_is_idempotent() {
+    local sandbox rc=0 out count expected _f
+    sandbox="$(make_prelude_sandbox)" || {
+        skip_test "idempotency test needs mktemp"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$sandbox'" RETURN
+
+    out="$(cd "$sandbox" && command node bin/generate-prelude.mjs 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "first write-mode run succeeds"
+
+    rc=0
+    out="$(cd "$sandbox" && command node bin/generate-prelude.mjs 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "second write-mode run succeeds"
+
+    count="$(command printf '%s\n' "$out" | command grep -c '^unchanged  ' || true)"
+    expected=0
+    for _f in $CONSUMER_FILES; do expected=$((expected + 1)); done
+    assert_equals "$expected" "$count" \
+        "a second run reports 'unchanged' for all $expected consumers (no rewrite churn)"
+}
+
+# CLI TARGET SELECTION. Naming one consumer must rewrite only that consumer —
+# a resolution bug that silently widened the target set would be invisible to
+# every whole-tree test above.
+test_write_mode_targets_one_consumer() {
+    local sandbox rc=0 out other_before other_after
+    sandbox="$(make_prelude_sandbox)" || {
+        skip_test "target-selection test needs mktemp"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$sandbox'" RETURN
+
+    command sed 's/^const BUDGET_FLOOR = 40_000$/const BUDGET_FLOOR = 42_000/' \
+        "$SOURCE" >"$sandbox/plugins/lib/prelude.js"
+
+    other_before="$(command cat "$sandbox/plugins/workflow/agents/rebase-agent/workflow.js")"
+
+    out="$(cd "$sandbox" && command node bin/generate-prelude.mjs ci-fixer 2>&1)" || rc=$?
+    assert_equals "0" "$rc" "write mode accepts a single consumer by directory name"
+
+    assert_file_contains "$sandbox/plugins/workflow/agents/ci-fixer/workflow.js" \
+        "const BUDGET_FLOOR = 42_000" \
+        "the named consumer was rewritten"
+
+    other_after="$(command cat "$sandbox/plugins/workflow/agents/rebase-agent/workflow.js")"
+    assert_equals "$other_before" "$other_after" \
+        "an UNNAMED consumer was left untouched"
+}
+
+# An unrecognized consumer name is a usage error (exit 2), not a silent no-op.
+# A generator that exited 0 having written nothing would let `just gen-prelude
+# <typo>` look like it worked.
+test_unknown_consumer_is_a_usage_error() {
+    local out rc=0
+    out="$(command node "$GENERATOR" definitely-not-a-consumer 2>&1)" || rc=$?
+
+    assert_equals "2" "$rc" "an unknown consumer name exits 2"
+    assert_contains "$out" "not a prelude consumer" \
+        "the error names the problem and lists the valid consumers"
+}
+
 run_test test_prelude_copies_are_fresh "Every prelude copy matches the source"
 run_test test_check_actually_covered_consumers "--check reported on all consumers (non-vacuity floor)"
 run_test test_drift_detected_in_region "Drift guard fires on a perturbed banner region"
@@ -244,5 +376,9 @@ run_test test_drift_detected_in_fragment "Drift guard fires on a perturbed gener
 run_test test_unregenerated_source_edit_fails "Drift guard fires on an unregenerated source edit"
 run_test test_source_declares_house_budget_floor "The source declares the house BUDGET_FLOOR"
 run_test test_no_harness_declares_budget_floor_twice "No harness declares BUDGET_FLOOR twice"
+run_test test_write_mode_regenerates_copies "Write mode regenerates both delivery forms"
+run_test test_write_mode_is_idempotent "Write mode is idempotent (second run rewrites nothing)"
+run_test test_write_mode_targets_one_consumer "Write mode targets only the named consumer"
+run_test test_unknown_consumer_is_a_usage_error "An unknown consumer name exits 2, not 0"
 
 generate_report
