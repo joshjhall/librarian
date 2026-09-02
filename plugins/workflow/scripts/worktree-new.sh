@@ -130,14 +130,21 @@ cred_remote="${base_remote:-origin}"
 cred_url="$(command git remote get-url "$cred_remote" 2>/dev/null || true)"
 case "$cred_url" in
     https://*)
-        # scheme://host — drop any `userinfo@` (up to the LAST `@`, since a
-        # URL-embedded password may itself contain one), then the path at the
-        # first `/`.
-        cred_hostpath="${cred_url#https://}"
-        cred_hostpath="${cred_hostpath##*@}"
+        # Split the AUTHORITY off first (everything before the first `/`), then
+        # strip `userinfo@` inside it. Order matters both ways:
+        #   * up to the LAST `@`, since a URL-embedded password may contain one
+        #     (`bot:p@ss@host`);
+        #   * but only WITHIN the authority, because a greedy `##*@` over the
+        #     whole post-scheme string also eats the host whenever the PATH
+        #     contains an `@` — `https://ghe.example.com/org/repo@release.git`
+        #     derives the host `release.git` (verified).
+        # Splitting first makes both cases fall out at once.
+        cred_authority="${cred_url#https://}"
+        cred_authority="${cred_authority%%/*}"
+        cred_authority="${cred_authority##*@}"
         # The config KEY keeps the port: git's credential lookup matches on the
         # full URL, so a remote at host:8443 must be keyed as host:8443.
-        cred_host="https://${cred_hostpath%%/*}"
+        cred_host="https://$cred_authority"
         # Same platform table the workflow skills use (next-issue § Platform
         # Detection): github.com/ghe. -> gh, gitlab.com/gitlab. -> glab.
         #
@@ -153,11 +160,20 @@ case "$cred_url" in
         # and keeps every legitimate host: github.com, any *.github.com,
         # ghe.example.com and its subdomains, gitlab.com, gitlab.acme.io.
         #
-        # The MATCH strips a `:port` (a ported GHE at ghe.example.com:8443
-        # would otherwise match nothing and silently no-op); the config KEY
-        # above keeps it, because that is what git looks up.
-        cred_bare_host="${cred_hostpath%%/*}"
-        cred_bare_host="${cred_bare_host%%:*}"
+        # The MATCH strips a `:port`; the config KEY above keeps it, because
+        # that is what git looks up. The strip matters only for the ANCHORED
+        # arms — `github.com:8443` matches nothing until the port is gone,
+        # whereas a prefix arm like `ghe.*` matches a ported host either way
+        # (measured; the port-strip mutation survived a `ghe.` fixture, which is
+        # why the test uses `github.com:8443`).
+        #
+        # The two self-hosted arms (`ghe.*`, `gitlab.*`) are PREFIX matches, not
+        # full anchors, and deliberately so: a self-hosted deployment has no
+        # fixed suffix to anchor against, so supporting `gitlab.acme.io` at all
+        # means accepting any `gitlab.`-prefixed host. That is a weaker
+        # guarantee than the `github.com`/`gitlab.com` arms above give — noted
+        # here so a later reader does not mistake it for full anchoring.
+        cred_bare_host="${cred_authority%%:*}"
         cred_cli=""
         case "$cred_bare_host" in
             github.com | *.github.com) cred_cli="gh" ;;

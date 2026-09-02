@@ -440,8 +440,10 @@ test_worktree_new_readonly_tainted_git_env_fails_loud() {
 # restoring `gh` and turning the cli-absent case into a second cli-present case
 # that passes for the wrong reason. Measured here: without the unset,
 # `command -v gh` still resolved /usr/bin/gh under a PATH of just the stub dir.
+# A 4th optional arg overrides GOLEM_BASE_REF (e.g. `upstream/main`), so the
+# `cred_remote` reuse of a NON-default remote name can be exercised.
 _cred_run() {
-    local sb="$1" n="$2" stub="${3:-}" path_env base_ref="origin/main" _cr_t
+    local sb="$1" n="$2" stub="${3:-}" path_env base_ref="${4:-origin/main}" _cr_t
     if [ -n "$stub" ]; then
         # A symlink FARM: every executable on the real PATH except gh/glab, so
         # the ONLY difference from a normal run is the absent platform cli.
@@ -474,7 +476,10 @@ _cred_run() {
     # the fixture would then "fail" for a reason that has nothing to do with what
     # it is pinning. Fall back to HEAD, which is also the realistic shape: a repo
     # with no remote has no remote-tracking base ref to fork from.
-    if [ -z "$(_cred_helper_remote_url "$sb")" ]; then
+    # Probe the remote the CALLER's base_ref actually names, not a hardcoded
+    # `origin` — an upstream/main fixture has no `origin` and would otherwise be
+    # forced to HEAD, silently skipping the very remote-reuse it exists to test.
+    if [ -z "$(_cred_helper_remote_url "$sb" "${base_ref%%/*}")" ]; then
         base_ref="HEAD"
     fi
     RUN_RC=0
@@ -491,19 +496,23 @@ _cred_run() {
 
 # _cred_helper_remote_url <sandbox> — the sandbox's origin URL, or empty when it
 # has no origin. Used by _cred_run to pick a base ref that actually resolves.
+# _cred_helper_remote_url <sandbox> [remote-name] — that remote's URL, or empty.
 _cred_helper_remote_url() {
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$1" remote get-url origin 2>/dev/null || true
+        git -C "$1" remote get-url "${2:-origin}" 2>/dev/null || true
 }
 
-# _cred_set_remote <sandbox> <url> — give the sandbox an `origin` plus a local
-# origin/main ref, so GOLEM_BASE_REF=origin/main resolves with no network.
+# _cred_set_remote <sandbox> <url> [remote-name]
+# Give the sandbox a remote (default `origin`) plus a local <remote>/main ref,
+# so GOLEM_BASE_REF=<remote>/main resolves with no network. The name is a
+# parameter so a fixture can prove worktree-new REUSES the remote derived from
+# GOLEM_BASE_REF rather than always landing on the `:-origin` fallback.
 _cred_set_remote() {
-    local sb="$1" url="$2"
+    local sb="$1" url="$2" name="${3:-origin}"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$sb" remote add origin "$url"
+        git -C "$sb" remote add "$name" "$url"
     /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$sb" update-ref refs/remotes/origin/main HEAD
+        git -C "$sb" update-ref "refs/remotes/$name/main" HEAD
 }
 
 # _cred_helper_of <sandbox> <host> — the configured helper for <host>, or empty.
@@ -799,4 +808,79 @@ test_worktree_new_credential_helper_unrecognized_host_is_noop() {
         "an unrecognized https host gets no helper, cli present (#810 AC3)"
     assert_not_contains "$RUN_OUT" "WARNING" \
         "an unrecognized host is a silent no-op, not a warning"
+}
+
+# A ported host (#810 cycle-2 review). The source comment claims the `:port` is
+# stripped for the MATCH but KEPT in the config key — an assertion no fixture
+# checked, which is this repo's "comment asserts an intent the code may not
+# implement" class. Both halves are pinned here: the helper is written (so the
+# match saw a port-free host) AND it is keyed WITH the port (because git's
+# credential lookup matches the full URL, so a port-less key would never be
+# consulted for this remote).
+#
+# The host MUST be one matched by a fully ANCHORED arm. A `ghe.example.com:8443`
+# fixture cannot detect the strip at all: `ghe.*` is a prefix match, so it
+# matches with the port still attached and the test passes either way (measured
+# — the mutation survived it). `github.com:8443` matches only once the port is
+# gone, which is what makes this fixture divergent.
+test_worktree_new_credential_helper_ported_host_seeds() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com:8443/acme/widget.git"
+    _cred_run "$sb" 93
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 on a ported host"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://github.com:8443")" \
+        "a ported host still matches, and is keyed WITH its port (#810)"
+    assert_output_empty "$(_cred_helper_of "$sb" "https://github.com")" \
+        "the port is NOT stripped from the config key — git looks up the full URL"
+}
+
+# An `@` in the PATH with no userinfo at all (#810 cycle-2 review). A greedy
+# `##*@` over the whole post-scheme string eats the host too:
+# `https://ghe.example.com/org/repo@release.git` derived the host `release.git`
+# (verified). Splitting the authority off BEFORE stripping userinfo fixes it.
+# Neither the plain fixture nor the multi-@ userinfo one can catch this — the
+# divergent input needs an `@` after the first `/`.
+test_worktree_new_credential_helper_at_in_path_still_derives_host() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://ghe.example.com/org/repo@release.git"
+    _cred_run "$sb" 94
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with an @ in the remote path"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://ghe.example.com")" \
+        "an @ in the PATH does not corrupt the derived host (#810)"
+    assert_output_empty "$(_cred_helper_of "$sb" "https://release.git")" \
+        "nothing is keyed on the path tail — the authority is split off first"
+}
+
+# `cred_remote="${base_remote:-origin}"` is meant to REUSE whatever remote name
+# GOLEM_BASE_REF derived, so there is one notion of "which remote". Every other
+# fixture uses `origin`, which is indistinguishable from the `:-origin` fallback
+# firing — the reuse branch was untested. This drives an `upstream`-only sandbox
+# with GOLEM_BASE_REF=upstream/main: with reuse working the helper is seeded from
+# upstream's URL; if the code ignored base_remote and hardcoded `origin`, the
+# lookup would find no remote and silently no-op.
+test_worktree_new_credential_helper_reuses_non_origin_remote() {
+    if ! command -v gh >/dev/null 2>&1; then
+        skip_test "gh not available — cannot exercise the cli-present arm"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    _cred_set_remote "$sb" "https://github.com/acme/widget.git" upstream
+    _cred_run "$sb" 95 "" "upstream/main"
+    assert_exit 0 "$RUN_RC" "worktree-new exits 0 with a non-origin base remote"
+    assert_equals "!gh auth git-credential" \
+        "$(_cred_helper_of "$sb" "https://github.com")" \
+        "the credential remote is the one GOLEM_BASE_REF derived, not always origin (#810)"
 }
