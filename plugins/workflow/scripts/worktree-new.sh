@@ -183,19 +183,51 @@ case "$cred_url" in
         esac
         if [ -n "$cred_cli" ] && command -v "$cred_cli" >/dev/null 2>&1; then
             cred_helper="!$cred_cli auth git-credential"
-            command git -C "$wt" config --local \
-                "credential.${cred_host}.helper" "$cred_helper" || true
-            # Verify rather than assume: a silent failure to set this resurfaces
-            # much later as the original `fatal:`, at ship time, with no clue
-            # pointing back here. Same fail-loud posture as the submodule
-            # warning above.
-            if [ "$(command git -C "$wt" config --get \
-                "credential.${cred_host}.helper" 2>/dev/null)" = "$cred_helper" ]; then
-                command echo "  seeded git credential helper ($cred_cli) for $cred_host"
+            # Read before writing (#877). `git config <key> <value>` REPLACES a
+            # single-valued key outright, so an unconditional write silently
+            # destroys whatever the operator deliberately chose for this host —
+            # a keychain helper, credential-cache, a smartcard-backed helper.
+            # Two properties of the SCOPE block above make that worse than a
+            # local mistake: the write lands in the SHARED .git/config, so it
+            # changes credential behavior for the main checkout and every other
+            # worktree; and worktree-rm.sh deliberately never unsets it, so
+            # teardown does not restore the original choice. A DIFFERENT
+            # existing value is therefore treated as the operator's decision,
+            # not as something to correct.
+            #
+            # --get-all, not --get: on a multi-valued key `--get` returns only
+            # the LAST value (measured, git 2.55), which would read a
+            # multi-valued helper as if it were a single one. Comparing the FULL
+            # output against the one helper we would write also means a
+            # multi-valued key that merely CONTAINS our helper alongside another
+            # still reads as configured and is left alone — presence of any
+            # value is enough. `|| true` because --get-all exits 1 on an absent
+            # key and this script runs under `set -e`.
+            #
+            # An IDENTICAL existing value falls to the else branch and rewrites
+            # the same bytes: that is the overwhelmingly common case (every
+            # later worktree of this repo) and must stay a clean no-op with no
+            # new output. This narrows the seed's blast radius only; it does not
+            # weaken the durability the SCOPE block above describes.
+            cred_existing="$(command git -C "$wt" config --get-all \
+                "credential.${cred_host}.helper" 2>/dev/null || true)"
+            if [ -n "$cred_existing" ] && [ "$cred_existing" != "$cred_helper" ]; then
+                command echo "  keeping the existing git credential helper for $cred_host"
             else
-                command echo "worktree-new: WARNING — could not seed the git credential" \
-                    "helper for $cred_host; pushes from $wt may fail with" \
-                    "'could not read Username'" >&2
+                command git -C "$wt" config --local \
+                    "credential.${cred_host}.helper" "$cred_helper" || true
+                # Verify rather than assume: a silent failure to set this
+                # resurfaces much later as the original `fatal:`, at ship time,
+                # with no clue pointing back here. Same fail-loud posture as the
+                # submodule warning above.
+                if [ "$(command git -C "$wt" config --get \
+                    "credential.${cred_host}.helper" 2>/dev/null)" = "$cred_helper" ]; then
+                    command echo "  seeded git credential helper ($cred_cli) for $cred_host"
+                else
+                    command echo "worktree-new: WARNING — could not seed the git credential" \
+                        "helper for $cred_host; pushes from $wt may fail with" \
+                        "'could not read Username'" >&2
+                fi
             fi
         fi
         ;;
