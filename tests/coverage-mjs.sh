@@ -90,6 +90,7 @@ if ! npx --yes c8 report \
     --include='tests/workflow-helpers/*.mjs' \
     --include='tests/workflow-helpers/ship-issue/*.mjs' \
     --include='tests/lib/*.mjs' \
+    --include='bin/*.mjs' \
     --exclude='node_modules/**' \
     --all=false >/dev/null 2>&1; then
     printf '[FAIL] mjs-coverage — c8 report failed\n' >&2
