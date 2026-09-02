@@ -103,6 +103,42 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
   closed prose-trimming on a time series (string share was flat at 24%/44% across
   a 3x growth in `ship-issue`), not on an estimate. Settled per harness in #718.
 
+<!-- contract: prelude-generator-coexistence -->
+
+### A shared prelude does NOT ride on the fragment generator (#811)
+
+Two mechanisms sound alike and are not interchangeable. **They stay separate**,
+and the reason is structural rather than stylistic:
+
+- `bin/generate-workflow-js.mjs` (#806) is a **within-harness** concatenation.
+  Its `srcDirFor` resolves to `dirname(<artifact>)/workflow.src`, so a fragment
+  is bound to one harness by construction.
+- #586's prelude is a **cross-harness** copy-out — one source into N files.
+
+The generated artifact still cannot `import` (#712), so a fragment is shareable
+*within* a harness and **never** *across* harnesses; sharing `stableStringify`
+between `ship-issue` and `code-reviewer` is exactly as impossible after #806 as
+before it. Note also where the duplication sits: the two heaviest duplicators
+(`code-reviewer` 14%, `orchestrate` 1%) are **not enrolled**, so even a generous
+"just extend the generator" reading leaves the largest share untouched. Teaching
+the generator about cross-harness sources is a different and larger design, not a
+parameter.
+
+**The coexistence rule, for the two enrolled harnesses only.** An enrolled
+harness receives its prelude **as a fragment** —
+`workflow.src/NN-prelude.js`, listed in `manifest.txt` — and **never** as a
+banner region written into the generated artifact. A region written into the
+artifact is overwritten by the next `just gen-workflow-js`, and until then
+`tests/lint-workflow-js-generated.sh` fails the tree as stale: two tools fighting
+over the same bytes.
+
+Fragment form is what makes the two freshness gates unable to **disagree**: they
+own **disjoint byte ranges** and compose in series — a prelude gate owns *source
+→ fragment file*, the generator gate owns *fragments → artifact*. Neither is
+weakened, and neither needs to know about the other.
+
+<!-- contract: end-prelude-generator-coexistence -->
+
 ## Budget Discipline
 
 - Define a `BUDGET_FLOOR` (40_000 is the house value) and stop spawning new
