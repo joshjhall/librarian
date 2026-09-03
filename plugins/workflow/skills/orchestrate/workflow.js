@@ -164,11 +164,6 @@ const MODE =
     : 'poll'
 const MAX_REBASES = args && Number.isInteger(args.maxRebases) ? args.maxRebases : prs.length
 
-// Stop spawning fan-out work once the shared budget gets this close to empty, so
-// a partially-complete sweep still returns its results instead of throwing
-// mid-barrier. Matches the floor used by the ci-fixer / review harnesses.
-const BUDGET_FLOOR = 40_000
-
 // Conflict-class taxonomy — lifted verbatim from merge-protocol.md's
 // "Conflict Classification for Cross-PR Rebase" decision tree. The first six
 // are auto-resolvable by rebase-agent; the last three escalate to the human.
@@ -353,6 +348,18 @@ const PR_FILES = {
 // single bad branch name drops that one PR from the sweep rather than aborting
 // the whole parallel barrier.
 
+// ==== GENERATED FROM plugins/lib/prelude.js — DO NOT EDIT ====
+// The house token floor. Stop spawning new fan-out work once
+// `budget.total && budget.remaining() < BUDGET_FLOOR`, so a partial run returns
+// its results instead of throwing mid-barrier. Pinned across every harness: a
+// tuning change is one edit here, not six.
+const BUDGET_FLOOR = 40_000
+
+// Ref/path injection guard. Every character class here is deliberate: a ref is
+// interpolated into shell-adjacent commands, so a leading `-` (option
+// injection), a leading `/` (absolute path), or a `..`/`.` segment (traversal)
+// is refused outright rather than escaped. Refuses loudly — a silently-sanitized
+// ref would act on a DIFFERENT target than the caller named.
 const REF_ALLOWED = /^[A-Za-z0-9._/-]+$/
 
 const safeRef = (value, what) => {
@@ -369,6 +376,7 @@ const safeRef = (value, what) => {
   }
   return value
 }
+// ==== END GENERATED ====
 
 // Wrap a validated value in a labelled delimiter so the agent treats it as a
 // data field rather than as instructions. The value has already passed

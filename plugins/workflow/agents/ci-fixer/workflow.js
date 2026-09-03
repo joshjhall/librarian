@@ -30,9 +30,13 @@ export const meta = {
 const checks = (args && Array.isArray(args.checks) ? args.checks : []).filter(Boolean)
 const MAX = (args && Number.isInteger(args.maxIterations) ? args.maxIterations : 3)
 
-// Stop spawning fix attempts once the shared budget gets this close to empty,
-// so a partially-fixed run still returns its results instead of throwing.
+// ==== GENERATED FROM plugins/lib/prelude.js — DO NOT EDIT ====
+// The house token floor. Stop spawning new fan-out work once
+// `budget.total && budget.remaining() < BUDGET_FLOOR`, so a partial run returns
+// its results instead of throwing mid-barrier. Pinned across every harness: a
+// tuning change is one edit here, not six.
 const BUDGET_FLOOR = 40_000
+// ==== END GENERATED ====
 
 const FAILURE_TYPES = ['lint', 'type', 'test', 'build', 'format', 'other']
 

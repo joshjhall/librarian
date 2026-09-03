@@ -45,9 +45,16 @@ const SCOPE_DISCIPLINE =
   'as settled and spend your budget on what a linter CANNOT decide: logic, ' +
   'security, missing tests, and violations of documented project conventions.'
 
-// `sanitize` and `dataBlock` — the prompt-injection controls — are defined near
-// the top of the file (above NEW_DIMENSIONS, which calls `sanitize` at module
-// load); the prompt builders below consume them.
+// END SCOPE_DISCIPLINE — do not move this marker; tests/workflow-helpers/
+// ship-issue/06-prescan-conventions.mjs slices the clause above by anchoring on
+// it (#586: it previously anchored on a prose comment that a later edit
+// duplicated earlier in the file, silently emptying the slice and failing six
+// assertions).
+//
+// `sanitize` and `dataBlock` — the prompt-injection controls — arrive in the
+// generated prelude fragment (15-prelude.js), which loads above NEW_DIMENSIONS
+// so `sanitize` is initialized before that module-load call; the prompt builders
+// below consume them.
 
 // Manifest header. On a narrowed re-review cycle (#492) the caller-supplied
 // `files`/`diff` args are replaced with the fix-commit delta (`deltaFiles`/

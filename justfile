@@ -18,6 +18,17 @@ validate:
 gen-workflow-js:
     node bin/generate-workflow-js.mjs
 
+# Copy the shared prelude (plugins/lib/prelude.js) into every consuming harness
+# (#586). Run this after editing that source — NEVER edit a generated copy, which
+# the next run overwrites. `just test` fails the tree until you do
+# (tests/validate-prelude-sync.sh).
+#
+# ORDER MATTERS when you touch both: run gen-prelude FIRST, then gen-workflow-js.
+# The prelude writes a FRAGMENT for the two enrolled harnesses (#811), and the
+# artifact must then be rebuilt from the updated fragment.
+gen-prelude:
+    node bin/generate-prelude.mjs
+
 # Lint everything the pre-commit hooks would (formatting + manifests + python).
 # shellcheck runs as part of `just test` (tests/lint-shellcheck.sh).
 #

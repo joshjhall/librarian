@@ -37,11 +37,6 @@ const files = (args && Array.isArray(args.files) ? args.files : []).filter(Boole
 const INTO = args && typeof args.into === 'string' && args.into ? args.into : null
 const MAX_FLAKES = args && Number.isInteger(args.maxFlakes) ? args.maxFlakes : 3
 
-// Stop spawning work once the shared budget gets this close to empty, so a
-// partially-resolved run still returns its results instead of throwing
-// mid-barrier. Matches the floor used by the ci-fixer / review harnesses.
-const BUDGET_FLOOR = 40_000
-
 // Mechanical strategies the agent may auto-apply. Anything else → escalate.
 // `union` covers composable same-region edits — each side adds a distinct,
 // non-contradictory change, so the agent keeps the superset of both rather than
@@ -75,6 +70,18 @@ const STRATEGY_MENU = STRATEGIES.join(' / ')
 // `safeRef` throws on a tainted value (fail closed); the per-file pipeline
 // catches it and escalates that one file rather than dispatch a poisoned agent.
 
+// ==== GENERATED FROM plugins/lib/prelude.js — DO NOT EDIT ====
+// The house token floor. Stop spawning new fan-out work once
+// `budget.total && budget.remaining() < BUDGET_FLOOR`, so a partial run returns
+// its results instead of throwing mid-barrier. Pinned across every harness: a
+// tuning change is one edit here, not six.
+const BUDGET_FLOOR = 40_000
+
+// Ref/path injection guard. Every character class here is deliberate: a ref is
+// interpolated into shell-adjacent commands, so a leading `-` (option
+// injection), a leading `/` (absolute path), or a `..`/`.` segment (traversal)
+// is refused outright rather than escaped. Refuses loudly — a silently-sanitized
+// ref would act on a DIFFERENT target than the caller named.
 const REF_ALLOWED = /^[A-Za-z0-9._/-]+$/
 
 const safeRef = (value, what) => {
@@ -91,6 +98,7 @@ const safeRef = (value, what) => {
   }
   return value
 }
+// ==== END GENERATED ====
 
 // Wrap a validated value in a labelled delimiter so the agent treats it as a
 // data field rather than as instructions. The value has already passed

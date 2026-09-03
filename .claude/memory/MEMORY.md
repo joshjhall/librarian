@@ -28,6 +28,7 @@
 ## How I get things wrong (applies to every task)
 
 - [Comments assert intent, not code](comment-asserts-intent-not-code.md) — the comment claims what the code lacks, and HIDES the defect (#542/#498)
+- [An issue's symbol inventory needs re-measuring](issue-symbol-inventory-needs-remeasuring.md) — the table counts NAMES and has drifted; grep declarations, diff bodies
 - [Gate header claims an unimplemented check](gate-header-claims-an-unimplemented-check.md) — grep for the enforcing code; a rule written before it was testable stays prose
 - [Detector needs a certainty tier](detector-needs-a-certainty-tier.md) — measure the idiom's hit rate before implementing; 723 FPs vs 2 TPs is "not at this tier"
 - [An issue's stated cause can be false](issue-cause-may-be-falsified-by-measurement.md) — A/B the SUGGESTED fix; a no-op fix means the diagnosis is wrong (#766)
@@ -74,6 +75,7 @@
 - [Pre-push already runs the suite](prepush-hook-already-runs-the-suite.md) — don't run `run-all.sh`/`just lint` by hand first; run the targeted gate and budget the push
 - [Scratch file under memory fails the push](scratch-file-under-memory-fails-the-push.md) — rumdl lints `.claude/memory/` ignoring gitignore; keep scratch prose in `/tmp/`
 - [Self-skipping test hides the risky branch](self-skipping-test-hides-the-risky-branch.md) — skip-if-tool-absent covers only the present arm; force absence instead (#543)
+- [Shimmed PATH didn't hide the tool](false-negative-from-env-restoring-path.md) — BASH_ENV restores it; assert the absence BEFORE testing what depends on it
 - [Tool-absence fixture needs a symlink farm](tool-absence-fixture-needs-a-symlink-farm.md) — a hand-listed stub PATH dies 127 at a new tool each time, and the no-op assertion stays green
 - [A prefix arm can't detect a suffix strip](prefix-arm-cannot-detect-a-suffix-strip.md) — build the fixture on the arm that DISAGREES when the normalization is removed
 - [Explicit path still honors gitignore](explicit-path-still-honors-gitignore.md) — a DIRECTORY arg re-applies .gitignore; only a FILE is exempt (#578)

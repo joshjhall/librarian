@@ -274,7 +274,17 @@ export async function run() {
 
   // The lint-authority clause is what stops the 164 hand-measurement calls.
   const src = harnessSource(SHIP);
-  const sd = src.slice(src.indexOf("const SCOPE_DISCIPLINE ="), src.indexOf("\n// `sanitize`"));
+  // Anchor on a DEDICATED end marker, not on incidental prose. The previous
+  // anchor was the comment "\n// `sanitize`", which #586 duplicated earlier in
+  // the file when the shared prelude landed — the end index then preceded the
+  // start index, `slice` returned "", and all six assertions below failed even
+  // though SCOPE_DISCIPLINE was intact. An empty slice must never read as a
+  // content failure, so the bounds are asserted before they are used.
+  const sdStart = src.indexOf("const SCOPE_DISCIPLINE =");
+  const sdEnd = src.indexOf("// END SCOPE_DISCIPLINE", sdStart);
+  ok(sdStart !== -1, "SCOPE_DISCIPLINE: declaration found");
+  ok(sdEnd > sdStart, "SCOPE_DISCIPLINE: end marker follows the declaration (slice is non-empty)");
+  const sd = src.slice(sdStart, sdEnd);
   ok(/do not re-run those/i.test(sd.replace(/\s+/g, " ")), "SCOPE_DISCIPLINE: reviewers told not to re-run lint tools");
   ok(/hand-measure/i.test(sd), "SCOPE_DISCIPLINE: reviewers told not to hand-measure lint-decidable facts");
   for (const tool of ["rumdl", "shellcheck", "typos", "ruff"]) {
