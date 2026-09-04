@@ -491,20 +491,33 @@ is_test_file() {
     return 1
 }
 FIXTURE
-    local report
-    report="$(scan_root "$sandbox" 2>/dev/null || true)"
-    # Require the LINE too, not just the verdict. join_continuations promises the
-    # reported line is the arm's FIRST physical line (L6 here, where `*/test_*.*`
-    # sits — not L7 where the `)` closes). Matching only *DEFECT* would let a
+    local report want
+    # Require the LINE too, not just the verdict: join_continuations promises the
+    # reported line is the arm's FIRST physical line (where `*/test_*.*` sits,
+    # not where the `)` closes). Matching only *DEFECT* would let a
     # line-attribution regression pass silently, and a defect pointing at the
-    # wrong line is most of the value of reporting it at all.
+    # wrong line is most of the value of reporting one at all.
+    #
+    # The expected line is DERIVED from the fixture, never hardcoded. A literal
+    # would turn any future edit of the fixture above into a failure claiming the
+    # parser regressed — a wrong diagnosis, and the kind that gets a test deleted
+    # rather than read.
+    want="$(command grep -n '\*/test_\*' "$sandbox/plugins/probe/patterns.sh" |
+        command head -1 | command cut -d: -f1)"
+    if [ -z "$want" ]; then
+        _fail "the fixture no longer contains the path-crossing arm it is built around" \
+            "This test derives its expected line from the fixture; an edit that removed the arm makes it vacuous." \
+            "fixture: $sandbox/plugins/probe/patterns.sh"
+        return 0
+    fi
+    report="$(scan_root "$sandbox" 2>/dev/null || true)"
     case "$report" in
-        *DEFECT*"L6:"*)
+        *DEFECT*"L${want}:"*)
             :
             ;;
         *DEFECT*)
             _fail "the defect was flagged, but attributed to the wrong line" \
-                "join_continuations reports the arm's FIRST physical line (L6 here). A different line means the attribution regressed." \
+                "join_continuations reports the arm's FIRST physical line (L${want} in this fixture). A different line means the attribution regressed." \
                 "report: $report"
             ;;
         *)
