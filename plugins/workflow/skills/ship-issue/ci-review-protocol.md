@@ -324,31 +324,31 @@ args: {
 ```
 
 `diff`/`files` stay the **FULL PR scope** (byte-faithful `git diff
-origin/main...HEAD` from step a) — the manifest step no longer transcribes it, so
-pass the full diff here (#267). They remain load-bearing on narrowed cycles too:
-`scope-drift` reads the full `diff` (its acceptance-criteria-completeness check is
-a whole-change lens), and `files` sizes the result summary. Omitting `diff` is
-supported but makes each reviewer derive it in-agent (`git diff
-origin/main...HEAD`), which costs extra tool calls; prefer supplying it.
+origin/main...HEAD` from step a, per #267). Both stay load-bearing on narrowed
+cycles (see the delta paragraph below); `files` also sizes the result summary.
+Omitting `diff` is supported but costs extra tool calls
+(`pre-ship-validation.md` Step 3.5 b). **No key has a path/file variant — pass
+everything INLINE regardless of size (#722):** `diffPath` and `argsPath` are the
+observed inventions; there is no such spelling, and the sandbox cannot read one.
+Narrow a large diff with the delta args below.
 
 `deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
 delta** from step a. They are present **iff the previous cycle advised
-`next_scope=narrow`** (step a) — not merely because `cycle > 1`, which was the
-pre-#656 trigger and is no longer the rule: a cycle 3 whose predecessor returned
+`next_scope=narrow`** — not merely because `cycle > 1`, which was the pre-#656
+trigger and is no longer the rule: a cycle 3 whose predecessor returned
 `next_scope=full` omits them despite `cycle > 1` being true. When present the
-harness narrows the
-delta-local dimensions (security, correctness, tests, conventions) and runs each
-only if it blocked last cycle or the delta touches a file type it reviews. The
-conditional specialists (database, devops) follow the same include rule with their
-own "touches" signal — `manifest.needs.*` (whether the delta still classifies a
-file of that type) — **plus** the prior-blocking carry-over, so
-`priorBlockingDimensions` closes the AC#3 gap for specialists too. **Which diff a
-re-run reads depends on why it was included:** a dimension pulled in because the
-delta *touches* its types reads only the fix delta (the saving); a dimension
-pulled in via the *prior-blocking* carry-over reads the **full** diff, because the
-finding it must re-confirm may live outside the fix delta — handing it only the
-delta would blind it and let a still-unresolved finding silently vanish. A
-dimension that is both touched and prior-blocking reads the full diff
+harness narrows the delta-local dimensions (security, correctness, tests,
+conventions), running each only if it blocked last cycle or the delta touches a
+file type it reviews. The conditional specialists (database, devops) follow the
+same include rule with their own "touches" signal — `manifest.needs.*` (whether
+the delta still classifies a file of that type) — **plus** the prior-blocking
+carry-over, so `priorBlockingDimensions` closes the AC#3 gap for specialists too.
+**Which diff a re-run reads depends on why it was included:** a dimension pulled
+in because the delta *touches* its types reads only the fix delta (the saving); a
+dimension pulled in via the *prior-blocking* carry-over reads the **full** diff,
+because the finding it must re-confirm may live outside the fix delta — handing
+it only the delta would blind it and let a still-unresolved finding silently
+vanish. A dimension that is both touched and prior-blocking reads the full diff
 (re-confirmation wins). `scope-drift` always reads the full `diff`. Omitting the
 delta args (or on the first cycle) yields the pre-#492 full review — they are
 additive and default-off. A dimension the harness drops because the delta doesn't

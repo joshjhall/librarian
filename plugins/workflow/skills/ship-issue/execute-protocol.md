@@ -94,12 +94,18 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      auto-retry an infra flake once via `gh run rerun --failed`; collapse cascade
      failures to their root cause), then hand real failures to the `ci-fixer`
      `workflow.js` harness — applying its commits (hard-filtered against the
-     CI-config denylist), pushing, and re-polling.
+     CI-config denylist), pushing, and re-polling. Its `args` are the ci-fixer
+     `checks` shape (`ci-review-protocol.md`), **not** the review keys below.
    - **Multi-cycle PR review loop** (after green CI) — re-run the `workflow.js`
      harness (`phase: "pr-cycle"`) folding in open PR comments, resolve `blocking`
      / file `deferrable`, commit + push + re-check CI each cycle, terminate when
      clean + green + every comment resolved-or-deferred **and** the convergence
-     predicate says stop (ceiling `REVIEW_MAX_CYCLES`; #596).
+     predicate says stop (ceiling `REVIEW_MAX_CYCLES`; #596). Its `args` keys:
+     `phase`, `cycle`, `maxCycles`, `files`, `diff`, `prComments`, `issue`,
+     `preScan`, `conventionsDigest`, plus the conditional delta trio
+     (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`). Unknown keys are
+     rejected and **none has a path/file variant** — pass `diff` inline at any
+     size. Full block: `ci-review-protocol.md` step c.
    - **File deferred review findings** — file each via `/workflow:file-issue` (autonomous
      fallback: `gh issue create --body-file`, never interpolating LLM text into a
      shell arg), link them on the PR, and append a "Review findings" section to
@@ -362,7 +368,8 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
 ## Option 2 — Commit to main + push
 
 **Review gate — check BEFORE the push (#637).** The adversarial review — the
-**Workflow tool** with `ship-issue/workflow.js` — runs on
+**Workflow tool** with `ship-issue/workflow.js`, `args` keys and full block in
+`pre-ship-validation.md` Step 3.5 b — runs on
 Options 1, 2 and 3 alike (`pre-ship-validation.md` Step 3.5 item 6), so the
 "a skipped review is not a clean review" invariant binds here too — and binds
 *harder*, because this option has no PR to park: an ungated push puts unreviewed

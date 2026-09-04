@@ -302,6 +302,17 @@ behavior is noted inline per check; environment variables referenced here
    auto-merge at L4. A typo'd key is always a caller bug, so it fails loud at
    dispatch: read the key name out of the error, fix it, re-dispatch.
 
+   **No key has a path/file variant — everything is passed INLINE, whatever its
+   size (#722).** `diffPath` and `argsPath` are the inventions actually observed
+   in the wild, and they are what you reach for on a large diff when you assume
+   passing the bytes inline is impractical. There is no such spelling, and the
+   harness could not use one: a `workflow.js` runs in a **sandbox with no
+   filesystem, no shell, and no git of its own** — the two-runtime model, whose
+   sibling constraints (banned clocks/timers) are recorded under
+   `LIBRARIAN_WORKFLOW_WALL_TIMEOUT` in `ship-protocol.md` § Environment
+   Variables. A path would arrive as an unreadable string. A big diff is a reason
+   to narrow the scope with the delta args below, never to invent a key.
+
    **`tokenCeiling` is OPT-IN and OFF by default (#553) — measure before you
    arm it.** It bounds **output tokens for one cycle**, measured as a delta from
    harness start, so each cycle of a `REVIEW_MAX_CYCLES` loop gets its own full
