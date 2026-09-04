@@ -28,8 +28,8 @@
 #           plan-gate and generic-gate) and is emitted as a distinct
 #           "escalation — …" line so the operator knows it carries options. A
 #           MULTI-QUESTION form (#467) is a strictly more specific fork and is
-#           matched just BEFORE it, emitting a line that names the only broker
-#           that works on it (cancel-then-relay, never send-keys). Live
+#           matched just BEFORE it, emitting a line that names the keystroke
+#           rule that widget needs (forward-order, never a digit). Live
 #           worktree golems only.
 #
 # Output (one line per fresh gate): "<golem-id>\t<message>"
