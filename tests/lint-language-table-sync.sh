@@ -76,10 +76,18 @@
 # the presence of correct lexical gating, and that gating does not exist until
 # Phase 1 (#838). ADR 0002 § Consequences carries this.
 #
-# Assertion 3 additionally covers a pair NOTHING checked before: the byte-identical
-# ext->lang `case` blocks in check-decomposition/patterns.sh and
-# ship-issue/sizing.sh sit OUTSIDE any `>>> shared:` region and are pinned by no
-# sync pair. They are walked here like any other dispatch site.
+# Assertion 3 also walks the byte-identical ext->lang `case` blocks in
+# check-decomposition/patterns.sh and ship-issue/sizing.sh, like any other
+# dispatch site. Those two blocks were pinned by nothing when this gate was
+# written; since #844 they sit in a `>>> shared:lang-table` region compared
+# byte-for-byte by tests/validate-shared-scanner-sync.sh.
+#
+# The two gates remain COMPLEMENTARY, not redundant, and neither subsumes the
+# other. Byte-identity pins the two copies to EACH OTHER: it catches an
+# extension added to one copy only, which subset-consistency here permits and
+# so cannot see. But a defect present in BOTH copies passes an equality check by
+# construction — so assertion 3 is what pins each copy against the NORMATIVE
+# EXT_LANG, which byte-identity cannot do.
 #
 # Pure bash + coreutils + python3. No network.
 

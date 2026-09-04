@@ -109,7 +109,7 @@ source "$SCRIPT_DIR/lib/harness.sh"
 SHARED_PAIRS=(
     "plugins/review-audit/skills/check-code-health/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|debug-print-scan debugger-scan is-test-file yaml-list-parser"
     "plugins/dev-core/skills/loop-make-it-tested/patterns.sh|plugins/workflow/skills/ship-issue/pre-review-gates.sh|py-public-symbols"
-    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk unit-segmenters-awk bundle-seam-awk"
+    "plugins/review-audit/skills/check-decomposition/patterns.sh|plugins/workflow/skills/ship-issue/sizing.sh|loc-helpers-awk loc-measure-awk bloat-config bloat-spec split-shape-awk unit-segmenters-awk bundle-seam-awk lang-table"
     "plugins/workflow/skills/ship-issue/sizing.sh|plugins/workflow/skills/ship-issue/split-verify.sh|unit-segmenters-awk"
     "plugins/review-audit/skills/check-decomposition/loc_engine.py+plugins/review-audit/skills/check-decomposition/prose_spec.py|plugins/workflow/skills/ship-issue/loc_engine.py+plugins/workflow/skills/ship-issue/prose_spec.py|loc-tables-py loc-helpers-py loc-unit-py loc-measure-py bloat-spec-py split-shape-py bundle-seam-py"
 )
@@ -677,10 +677,12 @@ test_detector_fires_on_loc_region_drift() {
     assert_equals "detected" "$drift" "a one-line edit to sizing's loc-measure copy is detected as drift"
 }
 
-# The detector FIRES on drift in the PROSE-CLASSIFICATION pair (#724) — the bash
-# half of what bloat-spec-py pins on the Python side.
+# The detector FIRES on drift in this pair's BASH-SOURCE regions (#724, #844) —
+# the halves whose Python counterparts are pinned by bloat-spec-py and
+# loc-tables-py. Grouped in one loop because all three share a shape: same pair,
+# same cross-file direction, tamper differing only in the sed expression.
 #
-# Two regions, tampered on the two things that can independently fork:
+# Three regions, tampered on the three things that can independently fork:
 #
 #   bloat-config — the NUMBERS. A drifted budget means the two lenses disagree
 #                  about how big an agent definition may be.
@@ -689,20 +691,31 @@ test_detector_fires_on_loc_region_drift() {
 #                  companion budget, because `case` takes the FIRST match. That
 #                  is a silent misciassification, not an error, which is exactly
 #                  why it needs a fixture.
+#   lang-table   — the extension->LANGUAGE mapping (#844): the bash counterpart
+#                  of loc_engine.EXT_LANG, whose Python copies loc-tables-py has
+#                  pinned since #730 while these bash halves stayed unpinned.
+#                  lint-language-table-sync.sh catches a copy that CONTRADICTS
+#                  the normative table, but subset-consistency lets an extension
+#                  be added to one copy only — silent there, drift here.
 #
 # Tampers are FIXED STRINGS: a BRE `\|` is a GNU extension BSD sed reads as a
 # literal, so an alternation-bearing pattern would match nothing on macOS and the
-# tamper would be a no-op there (#679).
-test_detector_fires_on_bloat_region_drift() {
+# tamper would be a no-op there (#679). This bites hardest on lang-table, whose
+# every arm is a bracket class — hence the tamper targets the `lang="md"` VALUE,
+# the one dialect-neutral fixed string on the line.
+test_detector_fires_on_bash_region_drift() {
     local canonical duplicate tampered baseline tamper_took drift region sed_expr
 
-    for region in bloat-config bloat-spec; do
+    for region in bloat-config bloat-spec lang-table; do
         case "$region" in
             bloat-config)
                 sed_expr='s/AGENT_HIGH="${AGENT_HIGH:-400}"/AGENT_HIGH="${AGENT_HIGH:-900}"/'
                 ;;
             bloat-spec)
                 sed_expr='s|        \*/skills/\*/SKILL.md)|        */skills/*/OTHER.md)|'
+                ;;
+            lang-table)
+                sed_expr='s/lang="md" ;;/lang="zzz" ;;/'
                 ;;
         esac
 
@@ -1402,7 +1415,7 @@ run_test test_detector_fires_on_loc_region_drift "Drift detector fires across th
 run_test test_detector_fires_on_segmenter_region_drift "Drift detector fires across the unit-segmenter pair (#695)"
 run_test test_detector_fires_on_split_shape_region_drift "Drift detector fires across the split-shape awk pair (#725)"
 run_test test_split_shape_covers_every_segmenter_language "Split-shape keys and segmenter languages are the same set (#725)"
-run_test test_detector_fires_on_bloat_region_drift "Drift detector fires across the prose-classification regions (#724)"
+run_test test_detector_fires_on_bash_region_drift "Drift detector fires across the bash-source regions: prose classification + lang table (#724, #844)"
 run_test test_detector_fires_on_python_primary_drift "Drift detector fires across every region of the Python-primary pair (#730)"
 run_test test_py_regions_and_tampers_agree "Every registered Python region has a tamper case, and vice versa (#730)"
 run_test test_split_member_handles_both_shapes "split_member handles single- and multi-file members (#772)"
