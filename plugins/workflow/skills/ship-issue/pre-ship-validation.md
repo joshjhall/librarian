@@ -267,6 +267,22 @@ behavior is noted inline per check; environment variables referenced here
      If a blocking finding requires a fix, amend/add the commit and re-review, all
      before the push.
 
+   a2. **Route the cycle (#550).** Ask the router whether this diff needs the
+   full fan-out, and pass its verdict to the harness below as `reviewRoute`:
+
+   ```bash
+   <skill-base-dir>/../../scripts/review-route.sh check --files {file-list}
+   # -> route=full|cheap  rule=…  dimensions=…
+   ```
+
+   A `cheap` verdict means the diff is doc/config-only, so the source-reading
+   dimensions have nothing to review and only `scope-drift` runs. Such a cycle
+   is **complete-by-design, not partial** — it can still return `clean`, because
+   safety rests on the classifier (any ambiguity routes `full`), never on the
+   reviewers. Omit the arg (and run the full fan-out) if the script is
+   unavailable. Full contract, rule list and the `clean`-semantics argument:
+   **`review-routing.md`** in this skill directory.
+
    b. **Invoke the `Workflow` tool** with the script bundled alongside this
    skill at `~/.claude/skills/ship-issue/workflow.js`, passing:
 
@@ -284,7 +300,8 @@ behavior is noted inline per check; environment variables referenced here
      issue: { number: {N}, title: "{title}" },
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
      preScan: [<pre-review-gates.sh TSV rows (incl. growth-graded sizing rows) + lint-gate rows from item 5>],
-     conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>"
+     conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
+     reviewRoute: "<route from step a2; OMIT if the router was unavailable>"
    }
    ```
 
@@ -301,7 +318,8 @@ behavior is noted inline per check; environment variables referenced here
    offending key(s) (#597).** The accepted set is exactly the keys shown in the
    blocks here and in `ci-review-protocol.md`: `phase`, `cycle`, `maxCycles`,
    `files`, `diff`, `prComments`, `issue`, `tokenCeiling`, `preScan`,
-   `conventionsDigest`, `deltaDiff`, `deltaFiles`, `priorBlockingDimensions`.
+   `conventionsDigest`, `reviewRoute`, `deltaDiff`, `deltaFiles`,
+   `priorBlockingDimensions`.
    Every one is read by name with an empty-default fallback, so a mistyped key
    was previously **dropped in silence** and its input simply went missing —
    which on `diff` meant six reviewers scanning an empty diff and returning

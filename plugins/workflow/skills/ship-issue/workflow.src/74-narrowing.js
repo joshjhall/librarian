@@ -137,8 +137,25 @@ const selectReviewDimensions = ({
   budgetFloor,
   reusedDimensions,
   newDimensions,
+  route,
 }) => {
   const narrowed = narrowingActive(cycle, deltaDiff, deltaFiles)
+  // Doc/config-only routing (#550). `cheap` drops every source-reading
+  // dimension and keeps scope-drift alone.
+  //
+  // ROUTING IS NOT NARROWING AND NOT TRUNCATION, and the difference is exactly
+  // what keeps `clean` honest. A budget-skipped dimension is a dimension that
+  // SHOULD have run and did not — a partial cycle, which can never read clean.
+  // A routed-around dimension had nothing to read: the caller's classifier
+  // proved the diff contains no source file, so `security` on a two-file
+  // markdown change is not a missed review, it is a vacuous one. So this path
+  // deliberately adds NOTHING to `dimensionsSkipped` and never sets
+  // `budgetExhausted` — the same treatment narrowing already gets, for the same
+  // reason.
+  //
+  // Defaults to 'full' when the caller passes no route, so every existing call
+  // site (and every test predating #550) is byte-identical to before.
+  const cheap = route === 'cheap'
   const entries = []
   const dimensionsSkipped = []
   let budgetExhausted = false
@@ -153,7 +170,13 @@ const selectReviewDimensions = ({
   // live outside the delta).
   const touchesFor = (dimName) => narrowed && dimensionTouchesDelta(dimName, deltaTypes)
   const priorFor = (dimName) => narrowed && priorSet.has(dimName)
-  const includeDeltaLocal = (dimName) => !narrowed || priorFor(dimName) || touchesFor(dimName)
+  // On a `cheap` route no delta-local dimension runs at all, whatever narrowing
+  // would have said — the route is evaluated FIRST because it is a statement
+  // about the diff's content, which outranks any statement about which part of
+  // it changed. (scope-drift is not a delta-local dimension and does not pass
+  // through here; it is handled in the newDimensions loop below.)
+  const includeDeltaLocal = (dimName) =>
+    !cheap && (!narrowed || priorFor(dimName) || touchesFor(dimName))
 
   // Reused dimensions (security, correctness) — cheap, no budget gate, but on a
   // narrowed cycle still subject to the include test.
@@ -168,7 +191,12 @@ const selectReviewDimensions = ({
 
   // NEW dimensions (tests, conventions, decomposition, scope-drift). scope-drift is a
   // whole-change lens: always included, always reading the FULL diff, never
-  // narrowing-skipped. The others are delta-local (include test + per-inclusion
+  // narrowing-skipped — and never ROUTE-skipped either (#550). It is the one
+  // dimension that reads the issue's acceptance criteria for completeness, and a
+  // doc-only diff can absolutely fail an AC: documentation that does not
+  // describe what the issue asked for is incomplete work, not inert prose. So
+  // the cheap path costs one agent rather than zero, and AC-completeness holds
+  // on every route. The others are delta-local (include test + per-inclusion
   // diff). Budget-floor gating is preserved for every new dimension that WOULD run.
   for (const d of newDimensions) {
     const isScopeDrift = d.name === 'scope-drift'
@@ -184,7 +212,7 @@ const selectReviewDimensions = ({
     entries.push({ kind: 'new', dim: d, diff })
   }
 
-  return { entries, budgetExhausted, dimensionsSkipped, narrowed }
+  return { entries, budgetExhausted, dimensionsSkipped, narrowed, cheap }
 }
 
 // `dimensionsRun` is passed in rather than read from the module-scope

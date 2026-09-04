@@ -123,6 +123,18 @@ const narrowed = narrowingActive(CYCLE, deltaDiff, deltaFiles)
 if (narrowed) {
   log(`re-review cycle ${CYCLE} narrowed to fix delta (${deltaFiles.length} file(s)); scope-drift keeps full diff`)
 }
+// Doc/config-only routing (#550). Surface it before the selector runs so a
+// routed cycle is never silently indistinguishable from a full one in a
+// transcript — the same reason the narrowing note and the `token bound:` line
+// exist. A cheap cycle that read only scope-drift and a full cycle that ran
+// seven agents must not produce the same log.
+if (reviewRoute === 'cheap') {
+  log(
+    `review route: cheap (doc/config-only diff) — running scope-drift alone; ` +
+      `the source-reading dimensions have nothing to review. This cycle is ` +
+      `complete-by-design, NOT partial: it can still return clean.`
+  )
+}
 const selected = selectReviewDimensions({
   cycle: CYCLE,
   fullDiff: scopeDiff,
@@ -134,6 +146,7 @@ const selected = selectReviewDimensions({
   budgetFloor: BUDGET_FLOOR,
   reusedDimensions: REUSED_DIMENSIONS,
   newDimensions: NEW_DIMENSIONS,
+  route: reviewRoute,
 })
 let budgetExhausted = selected.budgetExhausted
 // Names of dimensions that never ran this cycle — skipped at build time (budget
@@ -156,9 +169,16 @@ const dimensions = selected.entries
 // re-confirm a finding that may live outside the delta. On a full cycle it reduces
 // to the plain manifest.needs gate reading the full diff, unchanged. Budget-floor
 // gating is unchanged.
+// On a `cheap` route no specialist runs either: `database` and `devops` are
+// gated on manifest.needs, which is set from `database`/`ci`/`docker` file
+// types — none of which a doc/config-only diff can classify. Skipping the loop
+// outright rather than trusting that arithmetic is deliberate: it keeps the
+// route's guarantee ("only scope-drift runs") a property of ONE branch instead
+// of an emergent consequence of the classifier and the manifest agent agreeing.
+// Like the dimension path, this adds nothing to dimensionsSkipped.
 const priorBlockingSet = new Set(priorBlockingDimensions)
 const conditional = []
-for (const name of ['database', 'devops']) {
+for (const name of reviewRoute === 'cheap' ? [] : ['database', 'devops']) {
   const needs = !!manifest.needs[name]
   if (!includeSpecialist(name, needs, priorBlockingSet, narrowed)) continue
   const prior = narrowed && priorBlockingSet.has(name)

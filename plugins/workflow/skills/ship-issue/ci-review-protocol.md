@@ -231,9 +231,8 @@ git diff origin/main...HEAD               # -> diff  (FULL PR scope)
 Narrowing re-reviews only what changed instead of re-scanning the whole PR every
 cycle (worst case 5× the full review at `REVIEW_MAX_CYCLES=5`). It is **not**
 applied on every cycle after the first: **narrow iff the previous cycle's
-`next_scope` was `narrow`.** On cycle 1, and on any cycle whose predecessor
-returned `next_scope=full`, **omit all three delta args** and review the full
-diff.
+`next_scope` was `narrow`.** On cycle 1, and whenever the predecessor returned
+`next_scope=full`, **omit all three delta args** and review the full diff.
 
 > **Why this is conditional.** Narrowing and `C3-narrow-zero` (#568) compose
 > badly: a narrowed cycle is narrow *by construction*, so a zero-finding result
@@ -285,10 +284,10 @@ gh pr view {pr_number} --json reviews,comments
 
 **Comment `id` contract.** `gh pr view` emits `id` fields as **numbers**; the
 harness compares comment ids as **strings** on both sides (`String(a) ===
-String(b)`), so you may pass ids through verbatim — no caller-side stringify or
-coercion is required. The harness will not silently drop a comment whose id type
-differs from its triaged disposition: an unresolved comment always keeps `clean`
-false regardless of numeric-vs-string origin (#261).
+String(b)`), so pass ids through verbatim — no caller-side stringify is needed.
+The harness will not silently drop a comment whose id type differs from its
+triaged disposition: an unresolved comment always keeps `clean` false regardless
+of numeric-vs-string origin (#261).
 
 c. **Invoke the `Workflow` tool** with
 `~/.claude/skills/ship-issue/workflow.js` — **already opted in**
@@ -315,6 +314,7 @@ args: {
   // Conventions digest (#557) — distilled ONCE by the caller so six reviewers
   // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
   conventionsDigest: "<distilled project-convention rules>",
+  reviewRoute: "<route from review-route.sh; OMIT if unavailable>",
   // Re-review narrowing (#492) — omit ALL THREE unless the PREVIOUS cycle
   // advised next_scope=narrow (#656; see step a). Cycle 1 always omits them:
   deltaFiles: [<changed files since lastReviewedSha>],
@@ -324,12 +324,11 @@ args: {
 ```
 
 `diff`/`files` stay the **FULL PR scope** (byte-faithful `git diff
-origin/main...HEAD` from step a, per #267). Both stay load-bearing on narrowed
-cycles (see the delta paragraph below); `files` also sizes the result summary.
-Omitting `diff` is supported but costs extra tool calls
-(`pre-ship-validation.md` Step 3.5 b). **No key has a path/file variant — pass
-everything INLINE regardless of size (#722):** `diffPath`/`argsPath` are the
-observed inventions; the sandbox cannot read a path.
+origin/main...HEAD` from step a, per #267), load-bearing on narrowed cycles too
+(see below); `files` also sizes the result summary. Omitting `diff` is supported
+but costs extra tool calls (`pre-ship-validation.md` Step 3.5 b). **No key has a
+path/file variant — pass everything INLINE regardless of size (#722):**
+`diffPath`/`argsPath` are the observed inventions; the sandbox cannot read a path.
 
 `deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
 delta** from step a. They are present **iff the previous cycle advised
@@ -351,9 +350,9 @@ finding silently vanish. A dimension that is both touched and prior-blocking
 reads the full diff (re-confirmation wins). `scope-drift` always reads the full
 `diff` — its acceptance-criteria-completeness check is a whole-change lens.
 Omitting the delta args (or on cycle 1) yields the pre-#492 full review —
-additive, default-off. A dimension dropped for lack of a touch is **not** a
-partial cycle: narrowing never sets `budget_exhausted` / `dimensions_skipped`,
-so a narrowed cycle can still return `clean`.
+additive, default-off. A dimension dropped for lack of a touch — or by a `cheap`
+`reviewRoute` (#550) — is **not** a partial cycle: neither narrowing nor routing
+sets `budget_exhausted` / `dimensions_skipped`, so both can still return `clean`.
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
 budget_exhausted, dimensions_skipped[], no_review_signal, clean }`.
@@ -434,8 +433,7 @@ bundled helper once per cycle, exactly as the wall-time bound is called in
 
 **`--delta-lines` is the surface THIS cycle reviewed — capture it in step (a),
 before any fix commit.** It is the line count of the diff you fed the harness
-(`deltaDiff` on a narrowed cycle, the full `diff` on cycle 1), not something to
-recompute here:
+(`deltaDiff` narrowed, the full `diff` on cycle 1), not recomputed here:
 
 ```bash
 # In step (a), on the SAME line count as deltaDiff just above — and note that at
@@ -452,6 +450,9 @@ form is used on cycle 1 **and** on any cycle the previous `next_scope` set to
 cycle that reviewed the whole diff, making a genuinely full cycle look narrow to
 `C3` — the same misfire as the one below, from the other direction.
 
+**Routing (#550).** Run `scripts/review-route.sh check --files {file-list}` and
+pass its `route` as `reviewRoute` below. Contract: `review-routing.md`.
+
 **The timing is the whole point** — the same expression means different things at
 different steps. Do **not** recompute it at step (f) time: by then step (c) has
 re-captured `lastReviewedSha` to this cycle's HEAD and step (e) has committed the
@@ -459,8 +460,7 @@ fix on top, so it measures the **fix you just applied** rather than the surface
 you reviewed. It breaks worst on exactly the case the predicate exists to judge: a
 **clean** cycle applies no fix, so the SHA still equals `HEAD`, the diff is empty,
 and `--delta-lines` is `0` — which reads as maximally narrow and fires `C3`
-(continue) on a review that had genuinely converged, looping to the cap and
-defeating the early-stop half of #596.
+(continue) on a review that had genuinely converged, defeating #596's early stop.
 
 Carry the value forward as the next cycle's `--prev-delta-lines`.
 

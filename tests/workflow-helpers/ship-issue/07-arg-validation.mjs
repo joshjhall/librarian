@@ -60,7 +60,13 @@ export async function run() {
   // And the contract is the expected size — a key silently DELETED from
   // KNOWN_ARG_KEYS would start rejecting a legitimate input, which the
   // build-from-contract assertion above cannot catch on its own.
-  eq(KNOWN_ARG_KEYS.length, 13, "KNOWN_ARG_KEYS: holds all 13 contract keys");
+  // 13 -> 14 in #550, which added `reviewRoute` (the doc/config-only routing
+  // verdict from scripts/review-route.sh).
+  eq(KNOWN_ARG_KEYS.length, 14, "KNOWN_ARG_KEYS: holds all 14 contract keys");
+  ok(
+    KNOWN_ARG_KEYS.includes("reviewRoute"),
+    "KNOWN_ARG_KEYS: carries reviewRoute (#550) — without it the harness THROWS on a routed dispatch, since an unknown key is a hard error (#597)",
+  );
 
   // --- All offenders reported, not just the first -------------------------
   // A caller that got two keys wrong should learn both in one dispatch.
