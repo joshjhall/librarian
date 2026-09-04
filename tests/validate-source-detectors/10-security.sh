@@ -744,7 +744,7 @@ test_security_weak_randomness() {
 
     # DELIBERATE, PARITY-CORRECT NOISE (review cycle 3). A trailing-only
     # boundary also matches an ordinary word ENDING in `iv` when a non-word
-    # character follows — `motiv=`, `archiv.`. python's `iv\b` matches these
+    # character follows — `motiv=`, `leitmotiv.`. python's `iv\b` matches these
     # too, so the two impls AGREE and this is not a divergence. It is pinned
     # here on purpose: without a fixture, someone who notices the noise and
     # "tightens" only the bash side re-symmetrizes the boundary and silently
