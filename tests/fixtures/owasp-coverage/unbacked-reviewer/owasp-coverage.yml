@@ -1,0 +1,63 @@
+# Fixture: a well-formed map over the stub scanner/checklists in ../_shared.
+# The POSITIVE control — it exists so the negative fixtures below prove the gate
+# is narrow (fires on the one defect) rather than "fails everything".
+A01:
+  name: Broken Access Control
+  categories:
+    - id: auth-bypass
+      owner: llm-pass2
+    - id: path-traversal
+      owner: reviewer
+      evidence: "Not a bullet in the reviewer stub"
+A02:
+  name: Cryptographic Failures
+  categories:
+    - id: hardcoded-secret
+      owner: prescan
+A03:
+  name: Injection
+  categories:
+    - id: injection-risk
+      owner: prescan
+A04:
+  name: Insecure Design
+  categories:
+    - id: insecure-design
+      owner: gap
+      reason: "fixture gap"
+A05:
+  name: Security Misconfiguration
+  categories:
+    - id: misconfig
+      owner: gap
+      reason: "fixture gap"
+A06:
+  name: Vulnerable and Outdated Components
+  categories:
+    - id: dependency-cve
+      owner: gap
+      reason: "fixture gap"
+A07:
+  name: Identification and Authentication Failures
+  categories:
+    - id: authn
+      owner: gap
+      reason: "fixture gap"
+A08:
+  name: Software and Data Integrity Failures
+  categories:
+    - id: integrity
+      owner: gap
+      reason: "fixture gap"
+A09:
+  name: Security Logging and Monitoring Failures
+  categories:
+    - id: logging
+      owner: gap
+      reason: "fixture gap"
+A10:
+  name: Server-Side Request Forgery
+  categories:
+    - id: ssrf
+      owner: gap
+      reason: "fixture gap"

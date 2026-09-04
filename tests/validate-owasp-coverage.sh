@@ -263,7 +263,16 @@ run_test test_prescan_ids_are_emitted "rule 2a: every prescan id is a category t
 test_emitted_categories_are_mapped() {
     local emitted claimed cat
     emitted="$(emitted_categories)"
-    claimed="$(entries_of "$COVERAGE_YML" | command awk -F'|' '{ print $2 }' | command sort -u)"
+    # Owner-scoped ON PURPOSE (#706 review): a `gap` entry is deliberately named
+    # after the slug its future detector will use, so counting gap ids as
+    # "mapped" would let a shipping detector be absorbed by the very entry
+    # claiming it does not exist — the map would keep asserting a gap, with a
+    # stale "see #707" reason, and no rule would object. Excluding gap ids means
+    # the moment slice B emits `ssrf`, this rule fires until the owner is flipped
+    # to `prescan`. Measured: with an unscoped set the simulated detector passed
+    # the whole gate silently.
+    claimed="$(entries_of "$COVERAGE_YML" |
+        command awk -F'|' '$1 != "gap" { print $2 }' | command sort -u)"
     while IFS= read -r cat; do
         [ -n "$cat" ] || continue
         if command printf '%s\n' "$claimed" | command grep -qx "$cat"; then
@@ -364,11 +373,18 @@ SHARED="$FIXROOT/_shared"
 #
 # OWASP_SELFTEST guards against infinite recursion: the child sets it, and the
 # self-tests are skipped when it is set.
+# A fixture may ship its OWN scanner stubs (gap-absorbs does, to simulate a
+# future detector landing); otherwise it uses the shared pair. Per-fixture
+# override rather than a second shared stub set: the defect under test is a
+# relationship between one map and one scanner, so they belong together.
 run_over_fixture() {
+    local py="$SHARED/patterns.py" sh="$SHARED/patterns.sh"
+    [ -f "$FIXROOT/$1/patterns.py" ] && py="$FIXROOT/$1/patterns.py"
+    [ -f "$FIXROOT/$1/patterns.sh" ] && sh="$FIXROOT/$1/patterns.sh"
     OWASP_SELFTEST=1 \
         OWASP_COVERAGE_YML="$FIXROOT/$1/owasp-coverage.yml" \
-        OWASP_PATTERNS_PY="$SHARED/patterns.py" \
-        OWASP_PATTERNS_SH="$SHARED/patterns.sh" \
+        OWASP_PATTERNS_PY="$py" \
+        OWASP_PATTERNS_SH="$sh" \
         OWASP_PASS2_DOC="$SHARED/pass2.md" \
         OWASP_REVIEWER_JS="$SHARED/reviewer.js" \
         bash "$SCRIPT_DIR/validate-owasp-coverage.sh" 2>&1
@@ -432,10 +448,34 @@ test_selftest_empty_reason_fires() {
 }
 run_test test_selftest_empty_reason_fires "self-test: an empty gap reason fails rule 4"
 
+test_selftest_duplicate_id_fires() {
+    assert_fixture_fires duplicate-a0x "A03 present exactly once" \
+        "rule 1 must fire on a DUPLICATED A0x id, not only a missing one"
+}
+run_test test_selftest_duplicate_id_fires "self-test: a duplicated A0x block fails rule 1"
+
+# Rule 3 has two branches keyed by owner, reading two different files. The
+# unbacked-claim fixture exercises only the llm-pass2 one; a regression that
+# miswired the reviewer branch's file or evidence lookup would be invisible.
+test_selftest_unbacked_reviewer_fires() {
+    assert_fixture_fires unbacked-reviewer "no backing text" \
+        "rule 3 must fire on an unbacked REVIEWER claim, not only an llm-pass2 one"
+}
+run_test test_selftest_unbacked_reviewer_fires "self-test: an unbacked reviewer claim fails rule 3"
+
 test_selftest_bad_owner_fires() {
     assert_fixture_fires bad-owner "unknown owner 'prescn'" \
         "the owner-vocabulary rule must fire on a typo'd owner"
 }
 run_test test_selftest_bad_owner_fires "self-test: a typo'd owner value is rejected"
+
+# The F1 regression directly: a fixture whose scanner stub emits a slug the map
+# still tags `owner: gap`. Without the owner-scoping above this passes, which is
+# precisely the silent drift the map exists to prevent.
+test_selftest_gap_cannot_absorb_detector() {
+    assert_fixture_fires gap-absorbs "scanner emits category 'command-injection'" \
+        "a gap-owned id must NOT count as mapped once a detector emits it"
+}
+run_test test_selftest_gap_cannot_absorb_detector "self-test: a gap cannot absorb a shipping detector"
 
 generate_report
