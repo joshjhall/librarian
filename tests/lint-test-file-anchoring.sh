@@ -136,6 +136,57 @@ def join_continuations(body):
     return out
 
 
+def join_open_parens(body):
+    """Flatten a Python body so a call wrapped across lines matches as one.
+
+    Same purpose as join_continuations, different trigger: Python continues a
+    line implicitly while brackets are open, so the depth of unclosed brackets
+    decides where a logical line ends.
+
+    DOCSTRINGS ARE SKIPPED FIRST, and that is not a nicety. Every real copy's
+    docstring carries prose brackets — an unbalanced `(#851).`, a literal
+    `#[cfg(test)]` — which are not code and drove the depth counter astray, so
+    the real `_fnmatch(base, pat)` lines were folded away and both loc_engine
+    copies reported UNKNOWN. The UNKNOWN guard is what caught it; the fix is to
+    feed this only code."""
+    out = []
+    buf = None
+    first = None
+    depth = 0
+    in_doc = False
+    for lineno, line in body:
+        stripped = line.strip()
+        # Triple-quoted regions are prose, not code, and must be dropped BEFORE
+        # any bracket counting. Note an even tick count is not "no docstring":
+        # a one-line \"\"\"doc\"\"\" has TWO delimiters and still must be skipped,
+        # while an unterminated opener has one and must set the state. Counting
+        # parity alone got this wrong and fused the whole body into one line.
+        ticks = stripped.count(TRIPLE_D) + stripped.count(TRIPLE_S)
+        if in_doc:
+            if ticks >= 1:
+                in_doc = False
+            continue
+        if ticks >= 2:
+            continue  # a complete one-line docstring
+        if ticks == 1:
+            in_doc = True
+            continue
+        code = line.split("#", 1)[0]
+        piece = stripped if buf is not None else line
+        buf = piece if buf is None else buf + " " + piece
+        if first is None:
+            first = lineno
+        depth += code.count("(") + code.count("[") - code.count(")") - code.count("]")
+        if depth <= 0:
+            out.append((first, buf))
+            buf = None
+            first = None
+            depth = 0
+    if buf is not None:
+        out.append((first, buf))
+    return out
+
+
 def bash_body(lines, start):
     indent = len(lines[start]) - len(lines[start].lstrip())
     return body_from(lines, start, lambda ln: ln.rstrip() == " " * indent + "}")
@@ -149,6 +200,9 @@ def awk_body(lines, start):
 def py_body(lines, start):
     return body_from(lines, start, lambda ln: bool(ln.strip()) and not ln[:1].isspace())
 
+
+TRIPLE_D = chr(34) * 3
+TRIPLE_S = chr(39) * 3
 
 CASE_OPEN = re.compile(r'^\s*case\s+(\S+)\s+in\b')
 CASE_ARM = re.compile(r"^\s*([^\s;(][^;)]*?)\)\s")
@@ -249,8 +303,16 @@ PY_FNMATCH = re.compile(r"(?<![A-Za-z0-9])_?fnmatch[A-Za-z_0-9]*\(\s*([A-Za-z_][
 
 def check_py(path, lines, start):
     """fnmatch name patterns must be applied to the `rsplit("/", 1)[-1]`
-    basename, not to the full path."""
-    body = py_body(lines, start)
+    basename, not to the full path.
+
+    Python wraps on an OPEN PAREN, not on a backslash, so join_continuations
+    (which the bash/awk readers use) does not help here: a formatter is free to
+    emit a call whose first argument sits on the NEXT line, where a
+    line-at-a-time scan sees only a bare `fnmatch(`. Measured: that
+    spelling reported COVERED while passing the full path, the same class of
+    false negative the backslash-continuation bug was. The body is flattened to one
+    logical line before matching, exactly as the brace languages are."""
+    body = join_open_parens(py_body(lines, start))
     param = re.search(r"def\s+is_test_file\s*\(\s*([A-Za-z_][A-Za-z_0-9]*)",
                       lines[start]).group(1)
     basevar = None
@@ -419,10 +481,79 @@ FIXTURE
     esac
 }
 
+# The Python twin of the guard above (#866 review cycle 2, found while probing
+# the cycle-1 fix). Python wraps on an OPEN PAREN rather than a backslash, so
+# join_continuations does nothing for it: measured, `fnmatch(` with its first
+# argument on the next line reported COVERED while passing the full path — the
+# same silent false negative in a different language. Both arms are pinned: the
+# wrapped-DEFECTIVE form must be flagged (teeth) and the wrapped-CORRECT form
+# must not (narrowness), since a parser that flagged everything would pass a
+# teeth-only test while being useless.
+test_parser_reads_a_wrapped_python_call() {
+    local sandbox report
+    sandbox="$(command mktemp -d 2>/dev/null)" || {
+        skip_test "mktemp unavailable (python wrapped-call self-test not run)"
+        return 0
+    }
+    command mkdir -p "$sandbox/plugins/probe"
+
+    # Teeth. The docstring deliberately carries the prose brackets every real
+    # copy has — an unbalanced `(#851)`, a literal `#[cfg(test)]` — because
+    # counting those as code is what broke the first attempt at this parser.
+    command cat >"$sandbox/plugins/probe/wrapped.py" <<'FIXTURE_BAD'
+from fnmatch import fnmatch
+
+
+def is_test_file(path: str) -> bool:
+    """Prose brackets: (#851) and #[cfg(test)]."""
+    base = path.rsplit("/", 1)[-1]
+    if fnmatch(
+        path, "test_*.*"
+    ):
+        return True
+    return False
+FIXTURE_BAD
+    report="$(scan_root "$sandbox" 2>/dev/null || true)"
+    case "$report" in
+        *DEFECT*) : ;;
+        *)
+            _fail "the parser did not flag a wrapped fnmatch() applied to the full path" \
+                "Python continues a line on an open bracket, so a formatter may put the first argument on the next line. Reading one physical line at a time misses it and the copy reads COVERED." \
+                "report: ${report:-(empty)}"
+            ;;
+    esac
+
+    # Narrowness. Same wrapping, correct argument — must NOT be flagged.
+    command cat >"$sandbox/plugins/probe/wrapped.py" <<'FIXTURE_OK'
+from fnmatch import fnmatch
+
+
+def is_test_file(path: str) -> bool:
+    """Prose brackets: (#851) and #[cfg(test)]."""
+    base = path.rsplit("/", 1)[-1]
+    if fnmatch(
+        base, "test_*.*"
+    ):
+        return True
+    return False
+FIXTURE_OK
+    report="$(scan_root "$sandbox" 2>/dev/null || true)"
+    command rm -rf "$sandbox"
+    case "$report" in
+        *DEFECT* | *UNKNOWN*)
+            _fail "the parser flagged a correctly basename-anchored wrapped call" \
+                "A gate that reports every wrapped call would pass a teeth-only test while being useless. The basename-anchored form must read COVERED." \
+                "report: ${report:-(empty)}"
+            ;;
+        *) : ;;
+    esac
+}
+
 run_test test_definitions_are_discovered "Every is_test_file definition is discovered from the filesystem"
 run_test test_all_three_languages_are_covered "All three languages (bash, awk, python) are represented"
 run_test test_no_definition_is_unclassifiable "No definition's name arms are unclassifiable (investigate, never assume)"
 run_test test_parser_catches_a_continuation_line_defect "The parser has teeth on a multi-line (continuation) case arm"
+run_test test_parser_reads_a_wrapped_python_call "The parser has teeth (and narrowness) on a wrapped Python call"
 run_test test_every_name_arm_is_basename_anchored "Every is_test_file name arm is basename-anchored"
 
 generate_report
