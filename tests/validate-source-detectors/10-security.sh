@@ -742,6 +742,21 @@ test_security_weak_randomness() {
     assert_silent "$SK_SEC" "$list" weak-randomness \
         "security: key INSIDE a word (monkeyKey) stays silent — key is doubly bounded"
 
+    # DELIBERATE, PARITY-CORRECT NOISE (review cycle 3). A trailing-only
+    # boundary also matches an ordinary word ENDING in `iv` when a non-word
+    # character follows — `motiv=`, `archiv.`. python's `iv\b` matches these
+    # too, so the two impls AGREE and this is not a divergence. It is pinned
+    # here on purpose: without a fixture, someone who notices the noise and
+    # "tightens" only the bash side re-symmetrizes the boundary and silently
+    # reintroduces the cipher_iv false negative that cycle 2 caught — the same
+    # regression returning through the opposite door. If this noise ever needs
+    # fixing, fix it in patterns.py FIRST and let bash follow.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const motiv = Math.random();' >"$d/noise.js"
+    list="$(make_list "$d/l" "$d/noise.js")"
+    assert_fires "$SK_SEC" "$list" weak-randomness "Non-CSPRNG" \
+        "security: a word ending in iv matches in BOTH impls (accepted parity-correct noise)"
+
     # The third alternation arm, C-style rand(), previously unexercised.
     d="$(fresh_dir)"
     command printf '%s\n' 'const sessionToken = rand();' >"$d/c.js"
