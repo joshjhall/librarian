@@ -364,6 +364,165 @@ test_security_secrets() {
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: .env.example is still skipped (SKIP_GLOBS precedes the resolver)"
 
+    # SHEBANG DISPATCH (#858). The fifth shape, and the only one not closable by
+    # a longer table: the set of extensionless script names (`run`, `deploy`,
+    # `entrypoint`, `bootstrap`) is unbounded, so the file's own `#!` line is the
+    # evidence. Before this, every such script silently lost the two
+    # lexical-dependent detectors — measured: both fired on main pre-gating.
+    #
+    # One fixture PER INTERPRETER FAMILY rather than one for the block. They
+    # share a dispatch structure, so a fixture per family is what stops a future
+    # edit from dropping or misspelling one arm while the tested siblings keep
+    # this block green — the same argument the config-extension loop above makes.
+    while read -r _name _bang; do
+        [ -n "$_name" ] || continue
+        d="$(fresh_dir)"
+        command printf '#!%s\npassword = "realsecret123"\n' "$_bang" >"$d/$_name"
+        list="$(make_list "$d/l" "$d/$_name")"
+        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+            "security: a credential in an extensionless '#!$_bang' script fires"
+    done <<'SHEBANGS'
+deploy /usr/bin/env bash
+run-sh /usr/bin/env sh
+bootstrap /usr/bin/env dash
+entrypoint /usr/bin/env zsh
+pyscript /usr/bin/env python3
+rbscript /usr/bin/env ruby
+plscript /usr/bin/env perl
+nodescript /usr/bin/env node
+SHEBANGS
+    unset _name _bang
+
+    # The DIRECT-PATH spelling (`#!/bin/sh`) is a different resolver branch from
+    # the `env` spelling above — there the interpreter is argv[0] itself rather
+    # than the second token. The path literal is assembled at runtime so this
+    # fixture does not read as a hardcoded tool invocation to the #443 scanner
+    # (it is data written into a scratch file, never executed by this suite).
+    _direct="/bin""/sh"
+    d="$(fresh_dir)"
+    command printf '#!%s\npassword = "realsecret123"\n' "$_direct" >"$d/directsh"
+    list="$(make_list "$d/l" "$d/directsh")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a direct-path shebang (interpreter as argv0) resolves"
+    unset _direct
+
+    # A VERSION SUFFIX is stripped, and `env -S` is unwrapped. Both are ordinary
+    # spellings in the wild, and each is a distinct branch of the resolver.
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env python3.11\npassword = "realsecret123"\n' >"$d/versioned"
+    list="$(make_list "$d/l" "$d/versioned")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a versioned interpreter (python3.11) resolves"
+
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env -S perl5 -w\npassword = "realsecret123"\n' >"$d/envdash"
+    list="$(make_list "$d/l" "$d/envdash")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: env -S with an option resolves the real interpreter"
+
+    # ...and the RESOLVED language's comment model is applied — which is the half
+    # that proves the shebang resolved to a real model rather than to some
+    # default. Both directions: the `#` family and the `//` family, since a
+    # shebang can select either.
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env bash\n# password = "realsecret123"\n' >"$d/commented"
+    list="$(make_list "$d/l" "$d/commented")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a # comment in a bash-shebang script stays silent"
+
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env node\n// password = "realsecret123"\n' >"$d/nodecomment"
+    list="$(make_list "$d/l" "$d/nodecomment")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a // comment in a node-shebang script stays silent"
+
+    # ...and a FOREIGN marker under the same shebang must NOT suppress, or the
+    # arm has degenerated into "suppress everything" — the same trap the
+    # comment-family loop below guards against.
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env bash\n// password = "realsecret123"\n' >"$d/foreignmark"
+    list="$(make_list "$d/l" "$d/foreignmark")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: // is NOT a comment in a bash-shebang script"
+
+    # A GLOB-SHAPED interpreter must not pathname-expand. The bash half splits
+    # the shebang line with an unquoted `$first`, which word-splits (wanted) AND
+    # pathname-expands (not wanted) — so `#!/usr/bin/env *sh` evaluated from a
+    # directory containing `zsh` resolved to zsh in bash while python resolved
+    # nothing. A CWD-dependent parity divergence, and the shared fixture tree
+    # would only expose it if it happened to hold a matching name. The fixture
+    # runs FROM the directory holding the decoy, which is what arms the bug.
+    # NOTE the cd is NOT wrapped in a subshell: assert_silent tallies into shell
+    # variables, and a subshell discards them — the assertion then "passes" no
+    # matter what. Measured: the first draft of this fixture survived removing
+    # `set -f` from patterns.sh for exactly that reason. cd back explicitly.
+    d="$(fresh_dir)"
+    command touch "$d/zsh"
+    command printf '#!/usr/bin/env *sh\npassword = "realsecret123"\n' >"$d/globbang"
+    list="$(make_list "$d/l" "$d/globbang")"
+    _prevpwd="$PWD"
+    cd "$d" || return 1
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a glob-shaped interpreter does not pathname-expand"
+    cd "$_prevpwd" || return 1
+    unset _prevpwd
+
+    # THE NO-SHEBANG DECISION (#858 AC3), pinned rather than left as prose. An
+    # extensionless file with no `#!` stays `—` deliberately: no tabled name and
+    # no shebang is no evidence of a language, and defaulting to `sh` would apply
+    # a `#` model to arbitrary data files — the language-blind false positive ADR
+    # 0002 exists to remove. An UNRECOGNIZED interpreter resolves the same way.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'password = "realsecret123"' >"$d/run"
+    list="$(make_list "$d/l" "$d/run")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: an extensionless file with NO shebang stays unresolved"
+
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env cobol\npassword = "realsecret123"\n' >"$d/unknownbang"
+    list="$(make_list "$d/l" "$d/unknownbang")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: an unrecognized interpreter stays unresolved"
+
+    # A bare `#!` with no interpreter at all must not crash or resolve.
+    d="$(fresh_dir)"
+    command printf '#!\npassword = "realsecret123"\n' >"$d/barebang"
+    list="$(make_list "$d/l" "$d/barebang")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a bare #! with no interpreter stays unresolved"
+
+    # The lexical-INDEPENDENT detectors still run on an unresolved file, so a
+    # real leaked key fires there regardless. Without this the two assertions
+    # above are consistent with the scanner having skipped the file ENTIRELY,
+    # which is a different and much worse behavior than leaving it `—`.
+    d="$(fresh_dir)"
+    command printf 'aws = "%s"\n' "$AKIA_TOK" >"$d/nobang-key"
+    list="$(make_list "$d/l" "$d/nobang-key")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "AWS access key pattern" \
+        "security: a literal secret still fires in an unresolved extensionless file"
+
+    # A DOTTED DIRECTORY must not defeat the read. `ext` is derived from the
+    # whole path, so `.github/deploy` yields ext `github/deploy` — a non-empty
+    # WRONG key. Gating the read on `not ext` would skip exactly the scripts this
+    # shape exists to reach, and because BOTH runtimes would agree, the parity
+    # gate could not have caught it (#684). Found by probe, not by review.
+    d="$(fresh_dir)"
+    command mkdir -p "$d/.github"
+    command printf '#!/usr/bin/env bash\npassword = "realsecret123"\n' >"$d/.github/deploy"
+    list="$(make_list "$d/l" "$d/.github/deploy")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a shebang script under a DOTTED directory still resolves"
+
+    # A tabled BASENAME still wins over the shebang — the read is the last
+    # resort, not the first. A Dockerfile whose first line is a bash shebang must
+    # still resolve as a Dockerfile (both are `#`, so the observable is ORDER:
+    # this passes only if shape 2 returned before the read).
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env node\n# PASSWORD = "realsecret123"\n' >"$d/Dockerfile"
+    list="$(make_list "$d/l" "$d/Dockerfile")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a tabled basename beats the shebang (order: name before content)"
+
     # THE COMMENT-FAMILY TABLE, both directions per family. Three review cycles
     # each found one more language group that had lost coverage to the gating
     # (config, then C-family, then this set) — instances of one structural

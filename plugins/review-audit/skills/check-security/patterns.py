@@ -284,6 +284,98 @@ PREFIX_LANG = {
     "makefile": "hash",
 }
 
+# SHEBANG interpreters -> language key. The fifth path shape (#858), and the only
+# one that is not closable by enumeration: the set of extensionless script names
+# (`run`, `deploy`, `entrypoint`, `bootstrap`) is UNBOUNDED, so no longer
+# BASENAME_LANG table reaches it. The file's own first line is the evidence
+# instead.
+#
+# Every value is an EXISTING key from the tables above — this shape adds no new
+# language, so lint-language-table-sync's normative-subset rule is untouched and
+# each resolved file inherits a comment model that is already fixture-pinned.
+#
+# `zsh`/`fish`/`perl` map to `hash` rather than `sh` because that is where their
+# EXTENSIONS already map (`*.zsh`, `*.fish`, `*.pl`); routing the shebang
+# elsewhere would make the same file resolve differently by name and by content.
+#
+# THE `sh` vs `hash` DISTINCTION IS CURRENTLY UNOBSERVABLE, and that is recorded
+# rather than tested. COMMENT_RE spells `sh`, `hash`, `py` and `rb` identically
+# (`^[ \t]*#`), and this scanner's only per-language detector (injection-risk)
+# dispatches on the file EXTENSION, not on this key — so swapping zsh to `sh`
+# changes no TSV row. Verified by mutation: the swap survives the full fixture
+# suite. It is kept correct anyway because the keys are a claim about the
+# language, the mapping is what a future per-language detector would read, and a
+# deliberately-wrong-but-currently-invisible entry is how a real divergence
+# arrives later. A fixture pinning it would be a test that cannot fail.
+SHEBANG_LANG = {
+    "sh": "sh",
+    "bash": "sh",
+    "dash": "sh",
+    "ksh": "sh",
+    "zsh": "hash",
+    "fish": "hash",
+    "python": "py",
+    "ruby": "rb",
+    "perl": "hash",
+    "node": "js",
+}
+
+# Trailing version suffix on an interpreter name: `python3`, `python3.11`,
+# `perl5`, `ruby2.7`. Stripped before the SHEBANG_LANG lookup so one entry per
+# interpreter covers every installed spelling.
+_SHEBANG_VERSION_RE = re.compile(r"[0-9.]+$")
+
+# Cap on the shebang read. Linux itself truncates `#!` lines at 128 bytes
+# (BINPRM_BUF_SIZE); this is generous next to that and still bounds the read on
+# a newline-free binary.
+_SHEBANG_MAX = 512
+
+
+def _shebang_lang(path: str) -> str:
+    """Language key from PATH's `#!` line, or "" when there is none to read.
+
+    Called ONLY after all four name-based shapes miss, and only for a file with
+    no extension — so an ordinary `app.py` never opens the file. The read is one
+    line, and lang_of itself runs once per file, so the cost is bounded at one
+    extra line-read per extensionless unmatched file.
+
+    Both spellings resolve: `#!/bin/bash` (interpreter is the path) and
+    `#!/usr/bin/env bash` (the interpreter is the SECOND token — an `env` path
+    names the launcher, not the language).
+    """
+    # BOUNDED read. `readline()` on a file with no newline reads the WHOLE file,
+    # and an extensionless path is exactly where a binary blob turns up (a
+    # committed artifact, a compiled hook). A shebang line is short by
+    # definition, so cap the read rather than trusting the input's shape; the
+    # bash half's `read` builtin stops at the first newline for the same reason.
+    # (In practice scan_file reads the file anyway, so this is not the dominant
+    # cost -- measured 0.2s on a 20MB newline-free blob in both runtimes -- but
+    # a resolver should not be the thing that pulls a large file into memory.)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            first = fh.readline(_SHEBANG_MAX)
+    except OSError:
+        return ""
+    if not first.startswith("#!"):
+        return ""
+    tokens = first[2:].split()
+    if not tokens:
+        return ""
+    interp = tokens[0].rsplit("/", 1)[-1]
+    # `env` (and `env -S`) delegates: the real interpreter is the next token that
+    # is not an option.
+    if interp == "env":
+        interp = ""
+        for tok in tokens[1:]:
+            if tok.startswith("-"):
+                continue
+            interp = tok.rsplit("/", 1)[-1]
+            break
+        if not interp:
+            return ""
+    interp = _SHEBANG_VERSION_RE.sub("", interp)
+    return SHEBANG_LANG.get(interp, "")
+
 
 def lang_of(path: str, ext: str) -> str:
     """Language key for PATH, or "" when this scanner has no lexical model.
@@ -300,10 +392,22 @@ def lang_of(path: str, ext: str) -> str:
       3. PREFIX         `Dockerfile.prod` -> ext is `prod`, a WRONG key
                         `.npmrc`          -> ext is `npmrc`, also wrong
                         `.env.local`      -> ext is `local`, also wrong
+      4. SHEBANG        `deploy`          -> no extension AND untabled name
 
     Shape 3 is the subtle one: a leading dot or a variant suffix yields a key
     that looks valid and resolves to nothing, which is indistinguishable from
     "unmodeled" unless you look for it.
+
+    Shape 4 (#858) is the one that differs in KIND. The first three are closable
+    by enumeration — a finite table of extensions, basenames, prefixes. The set
+    of extensionless script names (`run`, `deploy`, `entrypoint`, `bootstrap`) is
+    unbounded, so no longer table reaches it; the file's own `#!` line is the
+    evidence instead, which is why this function reads content at all.
+
+    A file with no extension, no tabled name, and NO recognizable shebang stays
+    "" deliberately — see contract.md. There is no evidence of a language, and
+    defaulting to `sh` would apply a `#` comment model to arbitrary data files,
+    re-creating the language-blind false positives ADR 0002 exists to remove.
     """
     lang = EXT_LANG.get(ext, "")
     if lang:
@@ -315,6 +419,19 @@ def lang_of(path: str, ext: str) -> str:
     for prefix, plang in PREFIX_LANG.items():
         if base.startswith(prefix + "."):
             return plang
+    # Shape 4, last: gated on a BASENAME that carried no extension, so an
+    # ordinary source file has already returned above and never pays for the
+    # read.
+    #
+    # The gate is `"." not in base`, NOT `not ext`. The caller computes `ext`
+    # from the whole PATH, so a file under a dotted directory (`.github/deploy`,
+    # `node_modules/.bin/tool`) yields a non-empty `ext` of `github/deploy` — and
+    # `not ext` would skip the read for exactly the extensionless scripts this
+    # shape exists to reach. The bash half gates on the basename for the same
+    # reason; a whole-path test there agrees with a whole-path test here, so
+    # parity would have hidden the miss rather than caught it (#684).
+    if "." not in base:
+        return _shebang_lang(path)
     return ""
 
 

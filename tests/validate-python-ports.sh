@@ -560,12 +560,59 @@ password = "Str0ng#Pass#Value"
 // md5(commented) is skipped — // IS a Rust comment
 EOF
 
+# Extensionless shebang scripts (#858). check-security's language resolver gained
+# a FIFTH path shape — an extensionless, untabled name resolved by reading the
+# file's `#!` line. This corpus carried no extensionless file at all, so that arm
+# would be asserted VACUOUSLY: the parity diff passes trivially when neither impl
+# ever reaches it. Same trap the .mjs/.cjs (#568), .sh (#598), Model.swift (#728)
+# and app.rs (#838) comments above record, reached by a new route.
+#
+# Both runtimes must agree on which interpreters resolve AND on which do not, so
+# the set covers a resolving script, the `env -S` + version-suffix spellings, and
+# the two NON-resolving shapes (no shebang, unknown interpreter) whose correct
+# answer is silence. A divergence in the strip-or-unwrap logic — where the two
+# impls use genuinely different mechanisms (python rsplit/regex vs bash parameter
+# expansion) — shows up here as a TSV diff.
+command cat >"$FIXDIR/deploy" <<'EOF'
+#!/usr/bin/env bash
+password = "realsecret123"
+digest = md5(payload)
+# password = "commented_out_value"
+EOF
+
+command cat >"$FIXDIR/provision" <<'EOF'
+#!/usr/bin/env -S perl5 -w
+password = "realsecret123"
+EOF
+
+command cat >"$FIXDIR/migrate" <<'EOF'
+#!/usr/bin/env python3.11
+password = "realsecret123"
+query = f"SELECT * FROM users WHERE id={user_id}"
+EOF
+
+# NON-resolving, deliberately: no shebang at all, and an unrecognized
+# interpreter. Both stay the `—` state in both impls (the lexical-INDEPENDENT
+# literal patterns still run, which the AKIA line pins).
+command cat >"$FIXDIR/legacyrun" <<'EOF'
+password = "realsecret123"
+digest = md5(payload)
+EOF
+command printf 'aws = "%s"\n' "$AWS_TOK" >>"$FIXDIR/legacyrun"
+
+command cat >"$FIXDIR/oddball" <<'EOF'
+#!/usr/bin/env cobol
+password = "realsecret123"
+EOF
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
     "$FIXDIR/app.rs" \
+    "$FIXDIR/deploy" "$FIXDIR/provision" "$FIXDIR/migrate" \
+    "$FIXDIR/legacyrun" "$FIXDIR/oddball" \
     "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
     "$FIXDIR/Upper.PY" "$FIXDIR/Widget.TS" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \
