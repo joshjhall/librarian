@@ -353,6 +353,29 @@ test_pane_multi_question_form_prose_scrollback() {
 
     assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$pane")" \
         "A single-question fork with glyph-bearing PROSE in scrollback is not a form"
+
+    # The WARNING arm needs its own negative fixture — the checkbox arm's
+    # immunity above says nothing about it. monitor-protocol.md quotes the
+    # warning mid-sentence, so a golem reading that file at an ordinary fork is
+    # the realistic self-trip. Both lines below are copied from it verbatim.
+    local wprose wpane
+    wprose='- **The review screen offers `Submit` while questions are unanswered** ("⚠ You'
+    wpane="$wprose"$'\n''  have not answered all questions"). One stray Enter submits a form.'$'\n'"What scope?"$'\n'"Enter to select"
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$wpane")" \
+        "Prose quoting the unanswered-questions warning mid-sentence is not a form"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_multi_question_form 'the `⚠ You have not answered all questions` warning'$'\n'"Enter to select")" \
+        "A backticked mention of the warning is not a form"
+
+    # The `[^\`]` guard in the warning arm, pinned on the ONLY shape that can
+    # exercise it: a LINE-INITIAL `⚠` whose text reaches "not answered all"
+    # through a backtick. Every other backticked form is already rejected by the
+    # `^` anchor, so without this fixture the guard is untestable-by-accident —
+    # relaxing it to `.*` leaves the suite green (measured). This is prose the
+    # widget never emits: the real warning carries no code span.
+    assert_equals "1" \
+        "$(_pane_rc pane_is_multi_question_form '⚠ the `Submit` button: you have not answered all questions'$'\n'"Enter to select")" \
+        "A line-initial warning whose text crosses a backtick is prose, not the widget"
     # The pane must still be recognized as the ordinary fork it actually is —
     # otherwise the fix would have traded a mislabel for a dropped gate.
     assert_equals "0" "$(_pane_rc pane_is_fork "$pane")" \
