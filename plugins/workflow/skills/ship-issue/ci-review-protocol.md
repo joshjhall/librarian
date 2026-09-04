@@ -328,9 +328,8 @@ origin/main...HEAD` from step a, per #267). Both stay load-bearing on narrowed
 cycles (see the delta paragraph below); `files` also sizes the result summary.
 Omitting `diff` is supported but costs extra tool calls
 (`pre-ship-validation.md` Step 3.5 b). **No key has a path/file variant — pass
-everything INLINE regardless of size (#722):** `diffPath` and `argsPath` are the
-observed inventions; there is no such spelling, and the sandbox cannot read one.
-Narrow a large diff with the delta args below.
+everything INLINE regardless of size (#722):** `diffPath`/`argsPath` are the
+observed inventions; the sandbox cannot read a path.
 
 `deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
 delta** from step a. They are present **iff the previous cycle advised
@@ -342,40 +341,41 @@ conventions), running each only if it blocked last cycle or the delta touches a
 file type it reviews. The conditional specialists (database, devops) follow the
 same include rule with their own "touches" signal — `manifest.needs.*` (whether
 the delta still classifies a file of that type) — **plus** the prior-blocking
-carry-over, so `priorBlockingDimensions` closes the AC#3 gap for specialists too.
-**Which diff a re-run reads depends on why it was included:** a dimension pulled
-in because the delta *touches* its types reads only the fix delta (the saving); a
-dimension pulled in via the *prior-blocking* carry-over reads the **full** diff,
-because the finding it must re-confirm may live outside the fix delta — handing
-it only the delta would blind it and let a still-unresolved finding silently
-vanish. A dimension that is both touched and prior-blocking reads the full diff
-(re-confirmation wins). `scope-drift` always reads the full `diff`. Omitting the
-delta args (or on the first cycle) yields the pre-#492 full review — they are
-additive and default-off. A dimension the harness drops because the delta doesn't
-touch it is **not** a partial cycle: narrowing never sets `budget_exhausted` /
-`dimensions_skipped`, so a narrowed cycle can still return `clean`.
+carry-over, so `priorBlockingDimensions` closes the AC#3 gap for specialists
+too. **Which diff a re-run reads depends on why it was included:** a dimension
+pulled in because the delta *touches* its types reads only the fix delta (the
+saving); a dimension pulled in via the *prior-blocking* carry-over reads the
+**full** diff, because the finding it must re-confirm may live outside the fix
+delta — handing it only the delta would blind it and let a still-unresolved
+finding silently vanish. A dimension that is both touched and prior-blocking
+reads the full diff (re-confirmation wins). `scope-drift` always reads the full
+`diff` — its acceptance-criteria-completeness check is a whole-change lens.
+Omitting the delta args (or on cycle 1) yields the pre-#492 full review —
+additive, default-off. A dimension dropped for lack of a touch is **not** a
+partial cycle: narrowing never sets `budget_exhausted` / `dimensions_skipped`,
+so a narrowed cycle can still return `clean`.
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
 budget_exhausted, dimensions_skipped[], no_review_signal, clean }`.
-`no_review_signal` is true when **no dimension reported although the cycle owed a
-review** — the manifest step failed before the fan-out; every dispatched
+`no_review_signal` is true when **no dimension reported although the cycle owed
+a review** — the manifest step failed before the fan-out; every dispatched
 dimension failed; or the budget floor skipped every candidate *before* dispatch,
 leaving nothing to run. Either way the cycle produced no review signal and must
 not be charged against `cap`, see step (f) (#616). The "owed a review" half
 matters: a narrowed cycle whose delta touches no dimension's types legitimately
-selects nothing and is **complete**, not no-signal — it is indistinguishable from
-the budget-wipeout case by dimension count alone, and only the presence of a
-budget-floor skip separates them. It can also be true on a cycle that **returned
-findings**: comment triage survives a budget level that already starved the
-dimension fan-out, so a PR-comment finding can arrive from a cycle in which
-nothing read the diff. Do not treat a non-empty `blocking`/`deferrable` as proof
-a review happened. Note this is strictly narrower
-than `budget_exhausted`: an ordinary partial cycle had *some* dimension report,
-so its findings are real evidence and it still charges the cap via `C2-partial`;
-only a total wipeout is uncharged. `dimensions_skipped` names any
-review dimensions that did not run this cycle (skipped at the budget floor or
-failed mid-barrier); a non-empty list means `budget_exhausted` is true and the
-cycle is **partial**.
+selects nothing and is **complete**, not no-signal — it is indistinguishable
+from the budget-wipeout case by dimension count alone, and only the presence of
+a budget-floor skip separates them. It can also be true on a cycle that
+**returned findings**: comment triage survives a budget level that already
+starved the dimension fan-out, so a PR-comment finding can arrive from a cycle
+in which nothing read the diff. Do not treat a non-empty `blocking`/`deferrable`
+as proof a review happened. Note this is strictly narrower than
+`budget_exhausted`: an ordinary partial cycle had *some* dimension report, so
+its findings are real evidence and it still charges the cap via `C2-partial`;
+only a total wipeout is uncharged. `dimensions_skipped` names any review
+dimensions that did not run this cycle (skipped at the budget floor or failed
+mid-barrier); a non-empty list means `budget_exhausted` is true and the cycle is
+**partial**.
 
 **Bound this invocation in wall-time** exactly as the pre-PR review does
 (`pre-ship-validation.md` Step 3.5 b, `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`): invoke

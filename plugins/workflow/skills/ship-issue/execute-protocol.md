@@ -102,7 +102,8 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      clean + green + every comment resolved-or-deferred **and** the convergence
      predicate says stop (ceiling `REVIEW_MAX_CYCLES`; #596). Its `args` keys:
      `phase`, `cycle`, `maxCycles`, `files`, `diff`, `prComments`, `issue`,
-     `preScan`, `conventionsDigest`, plus the conditional delta trio
+     `preScan`, `conventionsDigest`, plus opt-in `tokenCeiling` and the
+     conditional delta trio
      (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`). Unknown keys are
      rejected and **none has a path/file variant** — pass `diff` inline at any
      size. Full block: `ci-review-protocol.md` step c.
