@@ -437,14 +437,15 @@ like the rest of the status view; a routine permission `gate` or plan-gate
 carries no gate-id and is left un-annotated (it is not inbox-brokered — the
 data-only invariant below).
 
-**A multi-question form is brokered differently — cancel, then relay as text
-(#467).** When the gate-watch line reads *"escalation (multi-question form) —
-forward-order only, never a digit"*, the golem raised **2+ questions in one
-`AskUserQuestion`**, rendered as a tabbed widget (`☐`/`☒` per question, a
-`✔ Submit` tab). **Neither** broker above works on it: `send-keys` assumes one
-question, and an inbox `answer` carries one option per gate-id while a form has
-no single answer. Both fail by **resolving the gate wrong** rather than visibly
-failing.
+**A multi-question form is brokered differently — different keystrokes, or
+cancel and relay as text (#467).** When the gate-watch line reads *"escalation
+(multi-question form) — forward-order only, never a digit"*, the golem raised
+**2+ questions in one `AskUserQuestion`**, rendered as a tabbed widget (`☐`/`☒`
+per question, a `✔ Submit` tab). **Neither broker above applies as written**: the
+`send-keys 1 Enter` recipe assumes a single-question prompt (a digit does nothing
+here, or hits the wrong question), and an inbox `answer` carries one option per
+gate-id while a form has no single answer. Both fail by **resolving the gate
+wrong** rather than visibly failing — so use one of the two paths below instead.
 
 **Step 1 is the same either way — present all N questions** via **one**
 `AskUserQuestion` in this session (the same central-resolution shape as the
