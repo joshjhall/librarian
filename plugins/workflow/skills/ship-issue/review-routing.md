@@ -26,9 +26,12 @@ Before invoking the harness, ask the router. It is a bundled script, not a
 judgement call:
 
 ```bash
+WORK=$(mktemp -d)   # not a fixed /tmp name — a predictable path is a symlink race
+git diff --name-only origin/main...HEAD > "$WORK/files.txt"
 <skill-base-dir>/../../scripts/review-route.sh check \
-  --files /tmp/review-files.txt --diff-lines {N}
-# -> route=full|cheap  rule=R0-empty|…|R5-doc-config  reason=<slug>
+  --files "$WORK/files.txt" --diff-lines {N} \
+  --prescan-categories "<comma list of HIGH pre-scan categories>"
+# -> route=full|cheap  rule=R0-empty|…|R6-doc-config  reason=<slug>
 #    source_files=N doc_files=N config_files=N unknown_files=N
 #    dimensions=<comma list>
 ```
@@ -64,12 +67,41 @@ Ordered, first match wins; the last has no condition, so the policy is total.
 | `R1-forced`     | `LIBRARIAN_REVIEW_ROUTE` ≠ `auto`  | `full` (operator) |
 | `R2-source`     | **any** source-classified file     | `full`            |
 | `R3-unknown`    | **any** unrecognized extension     | `full` (fail safe) |
-| `R4-max-lines`  | `--diff-lines` over the ceiling    | `full`            |
-| `R5-doc-config` | every file is doc or config        | `cheap`           |
+| `R4-prescan`    | a HIGH pre-scan row the cheap path cannot surface | `full` |
+| `R5-max-lines`  | `--diff-lines` over the ceiling    | `full`            |
+| `R6-doc-config` | every file is doc or config        | `cheap`           |
 
-`R5` is the **only** rule yielding `cheap`, and it is **last** — every fail-safe
+`R6` is the **only** rule yielding `cheap`, and it is **last** — every fail-safe
 fires first. There is deliberately no trailing catch-all producing `cheap`: the
 default direction of this script is `full`.
+
+**Pass every input the rules need.** `R5` is inert without `--diff-lines` and
+`R4` without `--prescan-categories`, so a call site omitting them silently
+disables those fail-safes. Both shipped recipes
+(`ci-review-protocol.md` step (a), `pre-ship-validation.md` step a2) pass all
+three arguments.
+
+### R4 — decomposition and memory-conformance rows (#695, #699)
+
+Raised on issue #550 itself, and the sharpest case against naive content
+routing. A markdown **decomposition** finding (progressive disclosure; "a moved
+heading is still reachable by a link") and an OKF **memory-conformance** finding
+(missing `type`, orphaned from every index) fire on precisely the doc-only diffs
+the cheap path targets — and `.claude/memory/**` files are `.md`, so a pure
+memory edit *is* doc-only by classification. Route those cheap and the repo's
+largest, fastest-churning surface (#589) gets the one dimension aimed at it and
+then a rule that skips it.
+
+**Why a routing rule rather than trusting the pre-scan.** The issue comments
+assumed `pre-review-gates.sh` already carried these scanners, so preserving
+item-5's advisory surfacing would suffice. It does not: that script scans only
+ai-slop, debug statements and missing tests. The sizing rows come from
+`sizing.sh`, and the `decomposition` **dimension** is what turns such a row into
+a judged blocking-or-deferrable finding. On a cheap cycle that dimension is
+dropped, so the row would decay to an advisory table entry — blocking only under
+`PRE_REVIEW_STRICT` — i.e. it would "vanish into a `clean: true`", which those
+comments explicitly rule out. `R4` refuses the cheap path outright instead,
+keeping the guarantee in the classifier rather than in an operator's env var.
 
 Extension spellings are **not invented here.** ADR 0002 names one normative
 table — `check-decomposition/loc_engine.py`'s `EXT_LANG` — and every other copy

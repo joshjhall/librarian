@@ -223,10 +223,14 @@ cycles that produced a review; `attempt` counts every trip including crashed one
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-git diff --name-only origin/main...HEAD > /tmp/review-files.txt   # -> files
-git diff origin/main...HEAD               # -> diff  (FULL PR scope)
-# Route this cycle (#550); pass `route` as `reviewRoute` in step (c):
-<skill-base-dir>/../../scripts/review-route.sh check --files /tmp/review-files.txt
+WORK=$(mktemp -d)                                     # not a fixed /tmp name
+git diff --name-only origin/main...HEAD > "$WORK/files.txt"
+git diff origin/main...HEAD > "$WORK/diff.txt"        # -> diff (FULL PR scope)
+# Route this cycle (#550); pass `route` as `reviewRoute` in step (c). Feed it
+# the diff size too, or the R5-max-lines ceiling can never fire:
+<skill-base-dir>/../../scripts/review-route.sh check --files "$WORK/files.txt" \
+  --diff-lines "$(command wc -l < "$WORK/diff.txt")" \
+  --prescan-categories "<comma list of HIGH pre-scan categories, if any>"
 ```
 
 **Re-review narrowing (#492) — but only when the previous cycle said to (#656).**
@@ -313,7 +317,7 @@ args: {
   // the `git diff --numstat` sidecar as its 2nd arg so the sizing rows stay
   // growth-graded (#695) rather than degrading to informational-only:
   preScan: [<pre-review-gates.sh TSV rows + lint-gate rows>],
-  // Conventions digest (#557) — distilled ONCE by the caller so six reviewers
+  // Conventions digest (#557) — distilled ONCE by the caller so reviewers
   // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
   conventionsDigest: "<distilled project-convention rules>",
   reviewRoute: "<route from review-route.sh; OMIT if unavailable>",
@@ -333,10 +337,9 @@ path/file variant — pass everything INLINE regardless of size (#722):**
 `diffPath`/`argsPath` are the observed inventions; the sandbox cannot read a path.
 
 `deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
-delta** from step a. They are present **iff the previous cycle advised
-`next_scope=narrow`** — not merely because `cycle > 1`, which was the pre-#656
-trigger and is no longer the rule: a cycle 3 whose predecessor returned
-`next_scope=full` omits them despite `cycle > 1` being true. When present the
+delta** from step a, present **iff the previous cycle advised
+`next_scope=narrow`** — not merely because `cycle > 1`, the pre-#656 trigger: a
+cycle 3 whose predecessor returned `next_scope=full` omits them. When present the
 harness narrows the delta-local dimensions (security, correctness, tests,
 conventions), running each only if it blocked last cycle or the delta touches a
 file type it reviews. The conditional specialists (database, devops) follow the
@@ -350,9 +353,9 @@ saving); a dimension pulled in via the *prior-blocking* carry-over reads the
 delta — handing it only the delta would blind it and let a still-unresolved
 finding silently vanish. A dimension that is both touched and prior-blocking
 reads the full diff (re-confirmation wins). `scope-drift` always reads the full
-`diff` — its acceptance-criteria-completeness check is a whole-change lens.
-Omitting the delta args (or on cycle 1) yields the pre-#492 full review —
-additive, default-off. A dimension dropped for lack of a touch — or by a `cheap`
+`diff` — its AC-completeness check is a whole-change lens. Omitting the delta
+args (or on cycle 1) yields the pre-#492 full review — additive, default-off.
+A dimension dropped for lack of a touch — or by a `cheap`
 `reviewRoute` (#550) — is **not** a partial cycle: neither narrowing nor routing
 sets `budget_exhausted` / `dimensions_skipped`, so both can still return `clean`.
 
@@ -438,10 +441,8 @@ before any fix commit.** It is the line count of the diff you fed the harness
 (`deltaDiff` narrowed, the full `diff` on cycle 1), not recomputed here:
 
 ```bash
-# In step (a), on the SAME line count as deltaDiff just above — and note that at
-# step (a) time `$lastReviewedSha` still holds the PREVIOUS cycle's SHA (step (c)
-# has not yet re-captured it to this cycle's HEAD), which is precisely the
-# "since the last cycle" boundary this wants:
+# In step (a). There `$lastReviewedSha` still holds the PREVIOUS cycle's SHA
+# (step (c) has not re-captured it) — exactly the "since last cycle" boundary:
 delta_lines=$(git diff "$lastReviewedSha"...HEAD | command wc -l)   # narrowed cycle
 delta_lines=$(git diff origin/main...HEAD | command wc -l)          # full cycle
 ```

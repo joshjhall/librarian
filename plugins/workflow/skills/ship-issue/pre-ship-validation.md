@@ -271,7 +271,11 @@ behavior is noted inline per check; environment variables referenced here
    full fan-out, and pass its verdict to the harness below as `reviewRoute`:
 
    ```bash
-   <skill-base-dir>/../../scripts/review-route.sh check --files {file-list}
+   # Pass the diff size and the HIGH pre-scan categories too — without them the
+   # R5-max-lines ceiling and the R4-prescan carve-out can never fire:
+   <skill-base-dir>/../../scripts/review-route.sh check --files {file-list} \
+     --diff-lines "$(command wc -l < {diff-file})" \
+     --prescan-categories "<comma list of HIGH categories from item 5, if any>"
    # -> route=full|cheap  rule=…  dimensions=…
    ```
 

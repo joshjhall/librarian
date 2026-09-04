@@ -69,7 +69,7 @@ test_doc_and_config_only_routes_cheap() {
     out="$(route_of "$list")"
 
     assert_equals "cheap" "$(val route "$out")" "doc/config-only diff routes cheap"
-    assert_equals "R5-doc-config" "$(val rule "$out")" "R5 is the deciding rule"
+    assert_equals "R6-doc-config" "$(val rule "$out")" "R6 is the deciding rule"
     assert_equals "scope-drift" "$(val dimensions "$out")" \
         "cheap path runs scope-drift ALONE"
     assert_equals "2" "$(val doc_files "$out")" "counts both doc files"
@@ -203,6 +203,68 @@ test_ordinary_config_still_routes_cheap() {
     assert_equals "4" "$(val config_files "$out")" "the four config files are counted as config, not unknown"
 }
 
+# MUTATION TARGET: the database carve-out (cycle 3 of this PR's own review).
+# `*.sql` and `models.py` already force full via the source/unknown arms, so
+# those would be tautological fixtures. These use GENERIC extensions — the only
+# inputs where the carve-out changes the answer.
+test_database_shaped_paths_force_full() {
+    local list out path
+    for path in \
+        'db/schema.json' \
+        'schema.yaml' \
+        'migrations/0007.yaml' \
+        'app/db/migrations/001.json'; do
+        list="$(mklist 'README.md' "$path")"
+        out="$(route_of "$list")"
+        assert_equals "full" "$(val route "$out")" \
+            "$path is database-shaped — security/correctness and the database specialist must still run"
+    done
+}
+
+# MUTATION TARGET: R4-prescan (#695, #699). Raised on issue #550 itself: a
+# markdown decomposition row and an OKF memory-conformance row fire on exactly
+# the doc-only diffs the cheap path targets, and the cheap path drops the
+# `decomposition` dimension that would turn such a row into a judged finding —
+# so it would decay to an advisory entry and vanish into `clean: true`.
+#
+# Fixtures are doc-ONLY, i.e. inputs that route cheap without the rule. That is
+# the divergent case: delete R4 and each of these flips to cheap.
+test_unsurfaceable_prescan_row_forces_full() {
+    local list out cat
+    list="$(mklist 'README.md' 'docs/guide.md')"
+    for cat in file-length ai-file-bloat doc-file-bloat decomposition-seam \
+        okf-missing-type okf-orphaned okf-dangling-index memory-conformance; do
+        out="$(route_of "$list" --prescan-categories "$cat")"
+        assert_equals "full" "$(val route "$out")" \
+            "a HIGH '$cat' pre-scan row forces full — the cheap path cannot surface it as a judged finding (#695/#699)"
+        assert_equals "R4-prescan" "$(val rule "$out")" "R4-prescan decides for '$cat'"
+    done
+}
+
+# The other half: a category the cheap path CAN still surface must not force
+# full. Without this, matching every category would satisfy the test above while
+# making the cheap path unreachable whenever any pre-scan row exists.
+test_surfaceable_prescan_row_still_routes_cheap() {
+    local list out
+    list="$(mklist 'README.md' 'docs/guide.md')"
+    out="$(route_of "$list" --prescan-categories 'ai-slop,debug-statement,missing-test-file')"
+
+    assert_equals "cheap" "$(val route "$out")" \
+        "slop/debug/test-gap rows do NOT force full — they are surfaced by item 5 regardless of route"
+    assert_equals "R6-doc-config" "$(val rule "$out")" "R6 still decides"
+}
+
+# Exact-token matching, not substring: a category that merely CONTAINS a
+# blocked name must not trip the rule.
+test_prescan_category_match_is_exact() {
+    local list out
+    list="$(mklist 'README.md')"
+    out="$(route_of "$list" --prescan-categories 'no-file-length-issue,decomposition-seam-resolved')"
+
+    assert_equals "cheap" "$(val route "$out")" \
+        "categories are matched as exact tokens — a superstring must not force full"
+}
+
 # A path whose DIRECTORY looks documentary but whose file is source. Pins the
 # basename anchoring: a classifier matching on the whole path could route cheap.
 test_source_file_under_docs_directory_forces_full() {
@@ -290,7 +352,7 @@ test_diff_over_line_ceiling_forces_full() {
 
     assert_equals "full" "$(val route "$out")" \
         "a doc-only diff OVER the line ceiling still forces full"
-    assert_equals "R4-max-lines" "$(val rule "$out")" "R4-max-lines is the deciding rule"
+    assert_equals "R5-max-lines" "$(val rule "$out")" "R5-max-lines is the deciding rule"
 }
 
 test_diff_under_line_ceiling_routes_cheap() {
@@ -400,6 +462,10 @@ run_test test_source_file_last_in_list_forces_full
 run_test test_unknown_extension_forces_full
 run_test test_extensionless_infra_files_force_full
 run_test test_ci_and_container_files_force_full
+run_test test_database_shaped_paths_force_full
+run_test test_unsurfaceable_prescan_row_forces_full
+run_test test_surfaceable_prescan_row_still_routes_cheap
+run_test test_prescan_category_match_is_exact
 run_test test_ordinary_config_still_routes_cheap
 run_test test_source_file_under_docs_directory_forces_full
 run_test test_doc_under_source_looking_directory_still_routes_cheap

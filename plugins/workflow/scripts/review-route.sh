@@ -69,8 +69,35 @@
 # preserves AC-completeness on every path.
 #
 # ---------------------------------------------------------------------------
+# R4 — THE DECOMPOSITION / MEMORY-CONFORMANCE CARVE-OUT (#695, #699).
+#
+# Raised on issue #550 itself, and the reasoning is the sharpest case against
+# naive content routing. A markdown decomposition finding (progressive
+# disclosure, "a moved heading is still reachable by a link") and an OKF
+# memory-conformance finding (missing `type`, orphaned from every index) fire
+# on precisely the doc-only diffs this router would send down the cheap path.
+# `.claude/memory/**` files are `.md`, so a pure memory edit is doc-only by
+# classification. Route those cheap and the largest, fastest-churning surface
+# in the repo (#589: ~20k lines of plugin prose) gets the one dimension aimed
+# at it and then a rule that skips it.
+#
+# WHY A ROUTING RULE RATHER THAN TRUSTING THE PRE-SCAN. The issue comments
+# assumed `pre-review-gates.sh` already carried these scanners, so preserving
+# item-5's advisory surfacing would be enough. It does NOT: that script scans
+# only ai-slop / debug statements / missing tests. The sizing rows come from
+# `sizing.sh`, invoked separately, and the `decomposition` DIMENSION is what
+# turns such a row into a judged blocking-or-deferrable finding. On a cheap
+# cycle that dimension is dropped, so the row would degrade to an advisory
+# table entry that is blocking only under PRE_REVIEW_STRICT — i.e. it would
+# "vanish into a clean: true", which those comments explicitly rule out.
+#
+# So the caller passes the pre-scan's HIGH-certainty categories via
+# --prescan-categories and the cheap path is refused outright. This keeps the
+# guarantee where the rest of this script keeps it — in the CLASSIFIER, not in
+# a reviewer's judgement or an operator's env var.
+#
 # Subcommand (emits `key=value` lines to stdout):
-#   check --files FILE [--diff-lines N]
+#   check --files FILE [--diff-lines N] [--prescan-categories LIST]
 #         -> route          full | cheap
 #            rule           the deciding rule (R0-empty … R5-max-lines)
 #            reason         a short slug naming why
@@ -87,8 +114,10 @@
 #   R1-forced      LIBRARIAN_REVIEW_ROUTE=full           -> full   (operator)
 #   R2-source      ANY source-classified file            -> full
 #   R3-unknown     ANY unrecognized extension            -> full   (fail safe)
-#   R4-max-lines   --diff-lines over the ceiling         -> full
-#   R5-doc-config  every file is doc or config           -> cheap
+#   R4-prescan     a HIGH pre-scan row the cheap path
+#                  could not surface as a judged finding -> full
+#   R5-max-lines   --diff-lines over the ceiling         -> full
+#   R6-doc-config  every file is doc or config           -> cheap
 #
 # Note R5 is the ONLY rule that yields `cheap`, and it is last: every fail-safe
 # gets to fire first. There is deliberately no trailing catch-all yielding
@@ -176,6 +205,19 @@ classify() {
             command printf 'unknown\n'
             return 0
             ;;
+        # Database-shaped paths, same argument one step further (found by cycle
+        # 3 of this PR's own review). This repo's manifest table classifies
+        # `migrations/`, `*.sql`, `**/models.py`, `**/schema.*` as type
+        # `database`, and DIMENSION_RELEVANT_TYPES lists `database` under BOTH
+        # security and correctness. `*.sql` and `models.py` already force full
+        # via the source/unknown arms, but a schema or migration carrying a
+        # GENERIC extension — `db/schema.json`, `migrations/0007.yaml` — would
+        # otherwise match the plain `config` arm and route cheap, skipping those
+        # two dimensions and the `database` specialist.
+        */migrations/* | migrations/* | */schema.* | schema.*)
+            command printf 'unknown\n'
+            return 0
+            ;;
     esac
 
     case "$_cr_base" in
@@ -212,11 +254,35 @@ classify() {
     esac
 }
 
+# _has_unsurfaceable_category <comma-or-space-separated-list> — true when the
+# list carries a pre-scan category the CHEAP path cannot surface as a judged
+# finding, because the dimension that would confirm it does not run there.
+#
+# The list is exact-matched token by token, never substring-matched: a
+# substring test would make `decomposition-seam` match a hypothetical
+# `no-decomposition-needed` and silently force `full` forever, which is the
+# safe direction but would kill the optimization by accident. Callers pass the
+# `category` column of the HIGH-certainty pre-scan rows only.
+_has_unsurfaceable_category() {
+    # Comma OR space separated, so a caller can pass either spelling.
+    _hc_list="$(command printf '%s' "$1" | command tr ',' ' ')"
+    for _hc_tok in $_hc_list; do
+        case "$_hc_tok" in
+            file-length | ai-file-bloat | doc-file-bloat | decomposition-seam | \
+                okf-missing-type | okf-orphaned | okf-dangling-index | memory-conformance)
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
 # --- check subcommand --------------------------------------------------------
 
 cmd_check() {
     _files=""
     _diff_lines=""
+    _prescan_categories=""
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -228,6 +294,11 @@ cmd_check() {
             --diff-lines)
                 [ "$#" -ge 2 ] || die "--diff-lines requires a value"
                 _diff_lines="$2"
+                shift 2
+                ;;
+            --prescan-categories)
+                [ "$#" -ge 2 ] || die "--prescan-categories requires a value"
+                _prescan_categories="$2"
                 shift 2
                 ;;
             *)
@@ -297,15 +368,23 @@ cmd_check() {
         _route="full"
         _rule="R3-unknown"
         _reason="unrecognized-extension"
+    elif [ -n "$_prescan_categories" ] && _has_unsurfaceable_category "$_prescan_categories"; then
+        # A HIGH-certainty decomposition / prose-sizing / memory-conformance row
+        # exists. The cheap path drops the `decomposition` dimension that would
+        # turn it into a judged finding, so routing cheap here would let it decay
+        # into an advisory table entry and then into `clean: true` (#695, #699).
+        _route="full"
+        _rule="R4-prescan"
+        _reason="unsurfaceable-prescan-row"
     elif [ -n "$_diff_lines" ] && [ "$_diff_lines" -gt "$_max_lines" ]; then
         _route="full"
-        _rule="R4-max-lines"
+        _rule="R5-max-lines"
         _reason="diff-over-line-ceiling"
     else
         # Reached only when every file classified doc or config and no fail-safe
         # fired. This is the ONLY path to `cheap`.
         _route="cheap"
-        _rule="R5-doc-config"
+        _rule="R6-doc-config"
         _reason="doc-config-only"
     fi
 
