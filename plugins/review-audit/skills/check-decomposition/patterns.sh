@@ -150,6 +150,7 @@ while IFS= read -r file; do
     # Spelled as bracket classes rather than a lowercased copy of $file because
     # this runs PER FILE inside the read loop: `tr` would fork per iteration and
     # `${file,,}` is bash 4 (this tree targets macOS's stock bash 3.2).
+    # >>> shared:lang-table (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
     lang=""
     case "$file" in
         *.[Pp][Yy]) lang="py" ;;
@@ -161,6 +162,7 @@ while IFS= read -r file; do
         *.[Mm][Dd] | *.[Mm][Aa][Rr][Kk][Dd][Oo][Ww][Nn]) lang="md" ;;
         *.[Ss][Ww][Ii][Ff][Tt]) lang="swift" ;;
     esac
+    # <<< shared:lang-table
 
     # >>> shared:bloat-spec (kept in sync with ship-issue/sizing.sh by tests/validate-shared-scanner-sync.sh)
     # PROSE FILE-TYPE CLASSIFICATION — shared by BOTH lenses (#724). What a

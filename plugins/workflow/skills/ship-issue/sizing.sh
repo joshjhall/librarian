@@ -235,6 +235,7 @@ while IFS= read -r file; do
     # Bracket classes, not a lowercased copy of $file: this runs PER FILE inside
     # the read loop, so `tr` would fork per iteration, and `${file,,}` is bash 4
     # (this tree targets macOS's stock bash 3.2).
+    # >>> shared:lang-table (kept in sync with check-decomposition/patterns.sh by tests/validate-shared-scanner-sync.sh)
     lang=""
     case "$file" in
         *.[Pp][Yy]) lang="py" ;;
@@ -246,6 +247,7 @@ while IFS= read -r file; do
         *.[Mm][Dd] | *.[Mm][Aa][Rr][Kk][Dd][Oo][Ww][Nn]) lang="md" ;;
         *.[Ss][Ww][Ii][Ff][Tt]) lang="swift" ;;
     esac
+    # <<< shared:lang-table
 
     # Per-language threshold selection, mirroring PER_LANG_THRESHOLDS.
     loc_warn=$REVIEW_LOC_WARN
