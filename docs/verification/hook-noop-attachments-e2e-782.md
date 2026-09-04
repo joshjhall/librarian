@@ -428,11 +428,13 @@ rather than smoothed over:
   was still emitting. A contaminated after-window biases the delta *toward zero*;
   it cannot explain a delta that is **positive**, so it weakens the null reading
   without rescuing the hypothesis.
-- **The workload is not shape-matched.** The post window ran ~5x the baseline
-  window's request volume, spread over 9 days against a single day.
-  `avg_prompt_per_request` was
-  chosen precisely because it is workload-robust, and the pre-fix pair did hold
-  to 1.6% across a 5.4x throughput difference — but this is a wider gap still.
+- **The workload is not shape-matched.** The post window carried ~5x the
+  baseline window's request volume, but spread over 9 days rather than one — so
+  its *hourly* rate is well below the baseline's, where the two pre-fix windows
+  differed in the opposite direction. `avg_prompt_per_request` was chosen
+  precisely because it is workload-robust, and the pre-fix pair did hold to 1.6%
+  across a 5.4x difference in request count — but this is a different axis of
+  mismatch, not a smaller one.
 
 A clean re-measurement is worth doing once containers#897 lands, precisely
 because the predicted effect (~40% of an average prompt) is far **above** this
