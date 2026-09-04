@@ -82,6 +82,26 @@ has everything needed without re-deriving context:
    context, and the schema is `additionalProperties:false` so the addition is
    explicit").
 
+## Raise ONE question per gate (#467)
+
+When this gate surfaces as an `AskUserQuestion`, prefer **one question**. A form
+carrying 2+ questions renders as a tabbed widget (`☐`/`☒` per question, a
+`✔ Submit` tab) whose keystroke rules **differ** from the single-question prompt:
+a digit selects in the latter but does nothing (or hits the wrong question) in
+the former, and the review screen will offer `Submit` while a question is still
+`☐`. An orchestrator *can* broker it — forward-order `↑/↓`+`Enter`, submitting
+only at all-`☒` (`orchestrate/monitor-protocol.md`) — but the margin for a
+**half-answered submit** is real, and the inbox broker cannot carry it at all
+(one option per gate-id, while a form has no single answer).
+
+So this is a cost, not a style preference. When a gate genuinely has several
+forks, prefer to **raise the blocking one first** and let the answer inform the
+rest, or fold them into one question whose options are the coherent
+*combinations*. Reserve a multi-question form for decisions that are truly
+independent — and when you do raise one, expect it to be answered in the order
+you present it, since revising an earlier answer forces the orchestrator to
+cancel the whole form and re-relay every decision as prose.
+
 ## Disposition by level
 
 Read the run's level from `autonomy_level` in the state file (see

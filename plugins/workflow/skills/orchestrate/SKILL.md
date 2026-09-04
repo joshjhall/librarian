@@ -210,6 +210,18 @@ dispatch is sequential and cheap — **not** workflow-driven.
    and the attach-and-press fallback — lives in `mode-protocol.md` § *Plan gate by
    level*.
 
+   **A multi-question `AskUserQuestion` form takes DIFFERENT keystrokes (#467).**
+   That `1 Enter` send assumes a single-question prompt: in the multi-question
+   tabbed widget a digit does nothing or lands on the wrong question, and the
+   review screen will `Submit` a **partially-answered** form — resolving the gate
+   wrongly rather than failing visibly. So a broker must **branch on
+   single-vs-multi**, which is why the gate-watch labels that class distinctly
+   (*"escalation (multi-question form) — forward-order only, never a digit"*).
+   Answer it forward-order with `↑/↓`+`Enter`, letting the widget auto-advance,
+   and submit only once every question shows `☒`; fall back to cancel-then-text-
+   directive if an earlier answer needs revising — `monitor-protocol.md` § *A
+   multi-question form is brokered differently*.
+
    The pipeline runs unattended to a green, review-clean PR (after plan approval
    for a plan-gated golem below L4); its own `/workflow:ship-issue` then merges as the
    level-aware routine gate — **auto at L3–L4**, **human at L1–L2** — always

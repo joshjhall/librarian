@@ -322,7 +322,14 @@ clears and later re-occurs re-fires), so this is signal, not noise.
   renders over the alt-screen and is reliably scrapeable. It also catches an
   **`AskUserQuestion` escalation fork** by its `Enter to select` footer (as a
   last-resort match, after plan-gate and generic-gate), labelled
-  *"escalation — …"* like the feed's escalation lines (#257). Finally — the true
+  *"escalation — …"* like the feed's escalation lines (#257). Immediately
+  **before** that fork match it separates a **multi-question form** (#467) — a
+  strictly more specific fork, since it paints the same footer *plus* a tabbed
+  `☐`/`☒` widget — and labels it *"escalation (multi-question form) —
+  forward-order only, never a digit"*, because that gate class needs a
+  different broker (§ *A multi-question form is brokered differently*) and the
+  ordinary fork label would send the operator to one that mis-resolves it.
+  Finally — the true
   last-resort branch, after all three modal matchers — it surfaces a
   **turn-ended / idle-at-prompt** golem (#447): a session whose turn ended and
   now sits at an empty prompt awaiting human input (e.g. commit signing halted on
@@ -429,6 +436,76 @@ is a read-only snapshot (`golem-inbox.sh state <golem> <gate-id>`), point-in-tim
 like the rest of the status view; a routine permission `gate` or plan-gate
 carries no gate-id and is left un-annotated (it is not inbox-brokered — the
 data-only invariant below).
+
+**A multi-question form is brokered differently — different keystrokes, or
+cancel and relay as text (#467).** When the gate-watch line reads *"escalation
+(multi-question form) — forward-order only, never a digit"*, the golem raised
+**2+ questions in one `AskUserQuestion`**, rendered as a tabbed widget (`☐`/`☒`
+per question, a `✔ Submit` tab). **Neither broker above applies as written**: the
+`send-keys 1 Enter` recipe assumes a single-question prompt (a digit does nothing
+here, or hits the wrong question), and an inbox `answer` carries one option per
+gate-id while a form has no single answer. Both fail by **resolving the gate
+wrong** rather than visibly failing — so use one of the two paths below instead.
+
+**Step 1 is the same either way — present all N questions** via **one**
+`AskUserQuestion` in this session (the same central-resolution shape as the
+numbered steps above). How you commit the answers has two paths, and the
+**forward-order keystroke path is preferred** because it submits the whole
+answer vector atomically and keeps the golem's own form intact:
+
+**Path A — forward-order answer + submit (preferred).** Verified live on a
+two-question plan-time form (golem-16), both answers recorded correctly:
+
+1. Land on question 1 (the widget opens on it).
+2. `↑/↓` to the desired option, `Enter` to select. The widget **auto-advances to
+   the next unanswered question** (`☒` appears on the one just answered).
+3. Repeat `↑/↓` + `Enter` for each subsequent question **in the order presented**.
+4. After the last one the widget lands on the `Submit answers / Cancel` review
+   screen with **every** question `☒`. `Enter` on "Submit answers" commits the
+   vector atomically.
+
+> **Never navigate backward.** Answer in the widget's own order, let it
+> auto-advance, and submit only once every question shows `☒`.
+
+**Path B — cancel-then-text-directive (fallback).** Use it whenever Path A does
+not apply: you need to **revise an earlier answer**, answers were taken out of
+order, or the widget is in any state you did not drive from question 1. Select
+`Cancel` on the review screen — the golem logs "User declined to answer
+questions" and drops back to its prompt with nothing submitted — then **relay
+every decision as one plain-text directive** naming each choice ("Both
+decisions: (1) Commit-back = Auto-MR … (2) Frontmatter = Surgical …"). Proven
+across three live incidents (2026-07-21 golem-13, and two more brokering #816
+and #793).
+
+**What actually breaks — the constraints both paths are built on.** Backward
+navigation is the move that fails, not keystrokes in general:
+
+- **Digit-select does not work** in this widget. A sent digit did nothing in one
+  incident and **landed on the wrong question** in another; it needs `↑/↓` +
+  `Enter`, unlike the single-question prompt where `1`+`Enter` selects. **So a
+  broker must branch on single-vs-multi question** — which is what the distinct
+  gate-watch label above is for.
+- **`Tab` does not reliably reach an unanswered question.** After answering Q2
+  first, `Tab` cycled between the *answered* question and the Submit/review
+  screen — never onto the still-`☐` Q1, despite the tab bar implying it would.
+  This is why Path A insists on forward order.
+- **The review screen offers `Submit` while questions are unanswered** ("⚠ You
+  have not answered all questions"). One stray Enter submits a **half-answered
+  form**, and the golem acts on it as a decision the operator never made. Path A
+  avoids this by construction (submit only at all-`☒`); Path B avoids it by not
+  submitting at all.
+
+**Read the pane, not just the footer.** On #816 the first `capture-pane` showed
+only **one** of the form's **two** questions — the tab bar had scrolled above the
+footer — so the form looked like an ordinary single-question fork. That is why
+the gate-watch matcher scans a wider window than the footer, and why the
+distinct label above is what you should trust over your own read of the pane.
+
+**The data-only invariant is untouched by either path.** Path A's selections and
+Path B's cancel are **directed keystrokes** carrying no auto-mode transition, and
+Path B's relay is plain text — none of it is an inbox `answer`, and a plan-time
+form is not inbox-routed. A form raised at the **plan gate** is still resolved
+the way every plan-gate is: the human decides, the orchestrator sends. See below.
 
 **Data-only invariant — do NOT broker a plan-gate this way.** A plan-gate
 `ExitPlanMode` (feed: a generic `gate`; pane: the plan-approval overlay) resolves
