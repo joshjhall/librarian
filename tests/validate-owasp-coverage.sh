@@ -198,10 +198,22 @@ _yaml_value() {
 # declare. Union, not intersection: parity between the two impls is
 # validate-scanner-category-parity.sh's job, and duplicating it here would mean
 # two gates that must agree about the same fact.
+# `|| true` on each arm is load-bearing under `set -euo pipefail` (#706 review
+# cycle 3). A `{ ...; }` group returns the status of its LAST command, so when
+# patterns.sh has zero slug matches (grep exits 1) the group exits 1, and with
+# `pipefail` the whole pipeline does too — even though patterns.py matched fine.
+# Today every call site sits inside a `run_test` body, which the harness invokes
+# as `if "$test_func"`, and that suspends `set -e`: the abort becomes a reported
+# FAIL rather than a silent exit, which is why this was never observable (probed
+# both ways — the construct DOES abort in a bare `set -e` script, and does not
+# here). That makes this hardening, not a live bug fix: it stops the function's
+# correctness from depending on where it happens to be called from, so a future
+# call outside a test body cannot turn "one scanner has no matches yet" into a
+# gate that exits with no report. An empty set is rule 0's job to report.
 emitted_categories() {
     {
-        [ -f "$PATTERNS_PY" ] && command grep -oE "$_SLUG_RX" "$PATTERNS_PY" 2>/dev/null
-        [ -f "$PATTERNS_SH" ] && command grep -oE "$_SLUG_RX" "$PATTERNS_SH" 2>/dev/null
+        [ -f "$PATTERNS_PY" ] && { command grep -oE "$_SLUG_RX" "$PATTERNS_PY" 2>/dev/null || true; }
+        [ -f "$PATTERNS_SH" ] && { command grep -oE "$_SLUG_RX" "$PATTERNS_SH" 2>/dev/null || true; }
     } | command tr -d '"' | command sort -u
 }
 
