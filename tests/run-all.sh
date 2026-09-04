@@ -28,6 +28,7 @@
 #   9c5. ship-issue autonomy-level contract (tests/lint-ship-autonomy-contract.sh)
 #   9d. check-docs-* detector fixtures (tests/validate-docs-detectors.sh)
 #   9e. check-security + check-code-health detector fixtures (tests/validate-source-detectors.sh)
+#   9e1a. OWASP Top 10 coverage map (tests/validate-owasp-coverage.sh)
 #   9e2. check-lifecycle detector fixtures (tests/validate-lifecycle-detectors.sh)
 #   9e3. check-decomposition detector fixtures (tests/validate-decomposition-detectors.sh)
 #   9e4. check-okf-conformance detector fixtures (tests/validate-okf-detectors.sh)
@@ -258,6 +259,7 @@ run_stage "agnix gate helper units" bash "$SCRIPT_DIR/validate-agnix-helpers.sh"
 run_stage "ship-issue autonomy-level contract" bash "$SCRIPT_DIR/lint-ship-autonomy-contract.sh"
 run_stage "check-docs-* detector fixtures" bash "$SCRIPT_DIR/validate-docs-detectors.sh"
 run_stage "check-security + check-code-health detector fixtures" bash "$SCRIPT_DIR/validate-source-detectors.sh"
+run_stage "OWASP Top 10 coverage map" bash "$SCRIPT_DIR/validate-owasp-coverage.sh"
 run_stage "check-lifecycle detector fixtures" bash "$SCRIPT_DIR/validate-lifecycle-detectors.sh"
 run_stage "check-decomposition detector fixtures" bash "$SCRIPT_DIR/validate-decomposition-detectors.sh"
 run_stage "check-okf-conformance detector fixtures" bash "$SCRIPT_DIR/validate-okf-detectors.sh"

@@ -1,0 +1,159 @@
+# check-security — OWASP Top 10 (2021) coverage map
+#
+# THE POINT OF THIS FILE: before it existed, this repo CLAIMED OWASP coverage in
+# two places and could not show it. `agents/audit-security.md`'s frontmatter says
+# "OWASP patterns"; `dev-core/agents/code-reviewer/workflow.js`'s
+# `SUBREVIEWERS.security` has one bullet reading `- OWASP Top 10 vulnerabilities`.
+# Neither mapped a single scanner category to an `A0x` id, so the claim could not
+# be checked, could not be tested, and could not regress visibly (#705, #706).
+#
+# This map makes the claim FALSIFIABLE. Every A01-A10 entry lists the categories
+# that address it and names which pass owns each one. What is NOT covered is
+# written down as an explicit `gap` with a reason, rather than being absent and
+# therefore indistinguishable from covered.
+#
+# ENFORCED by tests/validate-owasp-coverage.sh (registered in tests/run-all.sh),
+# which asserts: all ten ids present exactly once; every `prescan` id is a
+# category the scanners ACTUALLY emit (derived from patterns.{py,sh} source, both
+# directions, so a renamed detector fails loudly); every `llm-pass2` / `reviewer`
+# id is backed by real text in its checklist; every `gap` carries a reason.
+#
+# THE FOUR OWNERS map to the passes that exist today:
+#
+#   prescan    — a deterministic category slug emitted by BOTH
+#                check-security/patterns.py and patterns.sh
+#   llm-pass2  — a `### <id>` checklist section in
+#                plugins/review-audit/agents/audit-security.md
+#   reviewer   — a bullet in SUBREVIEWERS.security in
+#                plugins/dev-core/agents/code-reviewer/workflow.js
+#   gap        — nothing covers it yet; MUST carry a non-empty `reason`
+#
+# `evidence:` names the exact backing text when it differs from the id. The
+# reviewer bullets are prose and carry no slugs at all, so every `reviewer` entry
+# needs one. Giving those checklists real category ids is slice D (#709) — this
+# slice deliberately does not reword them, and `evidence` is what lets the map be
+# honest about the prose as it stands today.
+#
+# An entry can be covered at one layer and a gap at another, and several are:
+# `reviewer` sees SSRF and deserialization as prose bullets while no
+# deterministic detector exists for either. Both rows are listed, because
+# "an LLM might notice it" and "a scanner will catch it" are different claims.
+#
+# The gap reasons point at the sibling slices of epic #705: #707 adds the missing
+# detectors, #709 adds the missing LLM checklist categories.
+
+A01:
+  name: Broken Access Control
+  categories:
+    - id: auth-bypass
+      owner: llm-pass2
+    - id: auth-bypass-reviewer
+      owner: reviewer
+      evidence: "Authentication and authorization bypass"
+    - id: path-traversal
+      owner: reviewer
+      evidence: "Path traversal"
+    - id: path-traversal-prescan
+      owner: gap
+      reason: "no deterministic detector for user input reaching a filesystem path — see #707"
+
+A02:
+  name: Cryptographic Failures
+  categories:
+    - id: insecure-crypto
+      owner: prescan
+      detects: [md5_sha1, ecb_mode]
+    - id: hardcoded-secret
+      owner: prescan
+      detects: [aws_key, github_token, stripe_key, private_key, generic_credential]
+    - id: insecure-crypto-pass2
+      owner: llm-pass2
+      evidence: "insecure-crypto"
+    - id: hardcoded-secret-pass2
+      owner: llm-pass2
+      evidence: "hardcoded-secret"
+    - id: weak-random
+      owner: gap
+      reason: "non-CSPRNG used for tokens/nonces/salts has no deterministic detector — see #707"
+
+A03:
+  name: Injection
+  categories:
+    - id: injection-risk
+      owner: prescan
+      detects: [sql_fstring, sql_concat, template_literal_sql]
+    - id: xss-risk
+      owner: prescan
+      detects: [react_innerhtml, vue_vhtml, template_safe, blade_unescaped]
+    - id: injection
+      owner: llm-pass2
+    - id: xss
+      owner: llm-pass2
+    - id: injection-reviewer
+      owner: reviewer
+      evidence: "Injection vulnerabilities (SQL, command, LDAP, XPath)"
+    - id: command-injection
+      owner: gap
+      reason: "shell=True / os.system / child_process.exec with interpolation has no detector — see #707"
+
+A04:
+  name: Insecure Design
+  categories:
+    - id: insecure-design
+      owner: gap
+      reason: "design-level threat modelling is not regex-reachable and has no Pass-2 checklist section — see #709"
+
+A05:
+  name: Security Misconfiguration
+  categories:
+    - id: data-exposure
+      owner: llm-pass2
+    - id: tls-verification-disabled
+      owner: gap
+      reason: "verify=False / rejectUnauthorized:false / InsecureSkipVerify has no detector — see #707"
+    - id: cors-wildcard
+      owner: gap
+      reason: "wildcard/reflected CORS is prose inside data-exposure, with no deterministic detector — see #707"
+
+A06:
+  name: Vulnerable and Outdated Components
+  categories:
+    - id: dependency-cve
+      owner: llm-pass2
+
+A07:
+  name: Identification and Authentication Failures
+  categories:
+    - id: auth-bypass-authn
+      owner: llm-pass2
+      evidence: "auth-bypass"
+    - id: jwt-alg-none
+      owner: gap
+      reason: "JWT alg=none / decode-without-verify has no detector — see #707"
+
+A08:
+  name: Software and Data Integrity Failures
+  categories:
+    - id: insecure-deserialization-reviewer
+      owner: reviewer
+      evidence: "Insecure deserialization"
+    - id: insecure-deserialization
+      owner: gap
+      reason: "pickle.loads / yaml.load without SafeLoader / Marshal.load has no detector — see #707"
+
+A09:
+  name: Security Logging and Monitoring Failures
+  categories:
+    - id: logging-monitoring-failures
+      owner: gap
+      reason: "absence of logging is not detectable by pattern match and has no Pass-2 checklist section — see #709"
+
+A10:
+  name: Server-Side Request Forgery
+  categories:
+    - id: ssrf-reviewer
+      owner: reviewer
+      evidence: "SSRF (server-side request forgery)"
+    - id: ssrf
+      owner: gap
+      reason: "request functions taking a non-literal URL have no deterministic detector — see #707"
