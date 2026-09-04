@@ -19,7 +19,7 @@ Measured on `feature/issue-782` at `6c0920f`, 2026-08-24.
 | 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated. (The *operator-side* `hookify` fix is host-only and is re-enabled in every container — see § AC#1 revisited) |
 | 2 | `dev-core` guidance documents silence-by-default with measured rationale | **PASS** — `shell-scripting/SKILL.md` § Hook Output Contract |
 | 3 | A hook that must emit `{}` carries a comment saying why | **PASS (vacuous)** — no shipped hook emits on a no-op path, so none needs the comment; the rule is documented for the case that arises |
-| 4 | Before/after measured with `token-report.sh`, delta recorded | **DONE (#793, 2026-09-03)** — measured over a 9-day post-fix window; `avg_prompt_per_request` rose **+13.5%**, i.e. **no saving is detectable**. Reported as found; see § AC#4 |
+| 4 | Before/after measured with `token-report.sh`, delta recorded | **MEASURED, NOT CONCLUSIVE (#793, 2026-09-03)** — 9-day post-fix window; `avg_prompt_per_request` rose **+13.5%**, i.e. **no saving is detectable**. Reported as found. A contamination confound (containers#897) remains until that lands; see § AC#4 |
 | 5 | `docs/verification/` records the out-of-tree finding for operator action | **PASS** — this file |
 
 ## AC#1 — the in-tree audit contradicts the premise
@@ -342,7 +342,14 @@ clear, not a threshold to test against.
 
 The after-window now exists. Same tool, same endpoint shape, baselines **reused
 rather than re-derived** (the 2026-08-23 window was re-run as a control and
-reproduced exactly: 17,906 requests, reconciliation delta 2).
+reproduced the recorded figures exactly, at the same reconciliation delta).
+
+**Figures below are NORMALIZED**, per the precedent in
+`token-baseline-tally-781.md` § *Why no absolute figures*: averages, ratios and
+reconciliation deltas are committed; raw fleet request counts and dollar totals
+are not, because this repo is public and a ratio is exactly as good a
+before/after anchor. `token-report.sh` reprints the absolutes on demand for
+anyone with `BIFROST_URL` and access.
 
 ```bash
 # NOTE the recipe on #793 said --json for both files. That is WRONG:
@@ -356,10 +363,10 @@ plugins/workflow/scripts/token-report.sh compare \
   --baseline /tmp/before.tsv --compare /tmp/after.tsv --percent-only
 ```
 
-| window | span | requests | reconciliation |
+| window | span | volume (relative) | reconciliation |
 | --- | --- | --- | --- |
-| pre-fix baseline | 2026-08-23 (24h) | 17,906 | delta 2, tolerance 90 ✅ |
-| post-fix | 2026-08-26 → 09-04 (9d) | 89,766 | delta 0, tolerance 449 ✅ |
+| pre-fix baseline | 2026-08-23 (24h) | 1.00x (reference) | delta 2, tolerance 90 ✅ |
+| post-fix | 2026-08-26 → 09-04 (9d) | ~5.0x the baseline window | delta 0, tolerance 449 ✅ |
 
 `2026-08-24`/`08-25` are excluded as a transition boundary: the fix landed at
 the end of 08-24, so neither day is cleanly pre- or post-fix.
@@ -389,7 +396,7 @@ wrong way is exactly when a measurement deserves suspicion:
    plausible noise band; opus's does not clear its own 38% spread.
 3. **Did the filter silently drop?** No — both windows reconciled (delta 2 and
    0), and the plural `?models=` spelling was verified to reproduce the recorded
-   8/23 opus figures exactly (7,484 req, avg 235,786).
+   8/23 opus figures exactly (matching request count and average).
 
 #### What this means
 
@@ -398,9 +405,12 @@ that the effect is too small to matter — and an earlier draft of this section
 made exactly that error, sizing the effect from the hook's **3-byte emission**.
 That is the wrong quantity. #782 measured the resulting transcript **record** at
 ~281 chars (~70 tokens); at 1,645 fires that accumulates to **~115k tokens by
-end of session**, averaging ~40% of a 144k-token prompt across the session. This
-is a **large** predicted effect, which makes its complete absence from the
-measurement the genuinely interesting result — not a null too small to see.
+end of session** — about **80%** of an average prompt at that point. Since the
+attachments accrue roughly linearly through a session, the *time-averaged*
+contribution is about half the end-of-session total, i.e. **~40%** of an average
+prompt across the session. Either way this is a **large** predicted effect,
+which makes its complete absence from the measurement the genuinely interesting
+result — not a null too small to see.
 
 This **favors the first reading** of the tension recorded above — that
 `hook_success`'s 574,677-token figure attributes to that category something the
@@ -418,8 +428,9 @@ rather than smoothed over:
   was still emitting. A contaminated after-window biases the delta *toward zero*;
   it cannot explain a delta that is **positive**, so it weakens the null reading
   without rescuing the hypothesis.
-- **The workload is not shape-matched.** The post window ran 89,766 requests
-  over 9 days against a 17,906-request single day. `avg_prompt_per_request` was
+- **The workload is not shape-matched.** The post window ran ~5x the baseline
+  window's request volume, spread over 9 days against a single day.
+  `avg_prompt_per_request` was
   chosen precisely because it is workload-robust, and the pre-fix pair did hold
   to 1.6% across a 5.4x throughput difference — but this is a wider gap still.
 
@@ -481,6 +492,23 @@ already-enabled plugin (`:451`), so existing containers need a one-time
 
 The pinned submodule was **not** edited from the #793 run — CLAUDE.md pins it
 (`update = none`) for devcontainer builds only.
+
+## #793 disposition — two ACs stay open
+
+This file closes #793's **measurement** ACs; two remain genuinely open, so
+issue #793 must **not** be auto-closed on the strength of this work:
+
+| #793 AC | State |
+| --- | --- |
+| hookify disabled/patched on the operator machine | **PARTIAL** — host yes, containers no (§ AC#1 revisited); [containers#897](https://github.com/joshjhall/containers/issues/897) |
+| Filed upstream against `claude-plugins-official` | **OPEN — blocked** on a token with issue-write there (§ below) |
+| Before/after captured with `token-report.sh` | **DONE** (§ AC#4) |
+| Delta recorded in this file | **DONE** (§ AC#4) |
+
+The delivering commit therefore says **`Contributes to #793`**, not
+`Closes #793` — a squash-merge would otherwise auto-close an issue with two
+unmet criteria. #793 stays open pending the upstream filing and a clean
+re-measure once containers#897 lands.
 
 ## Upstream report — ready to file
 
