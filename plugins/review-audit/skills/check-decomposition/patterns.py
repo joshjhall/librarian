@@ -464,6 +464,74 @@ def scan_file(path: str, lines: list[str]) -> None:
         )
 
 
+# --- input-shape guard (#816) -----------------------------------------------
+# Mirrors assert_file_list_shape() in the bash fallback. Same two checks, same
+# severities, same messages -- the two runtimes must agree on WHEN they fail or
+# their exit codes diverge under tests/validate-python-ports.sh parity. Both
+# write to stderr ONLY, so the stdout TSV that parity compares is untouched.
+#
+# Why the two differ in severity: a diff is an unambiguous wrong shape and its
+# silent-zero scan is exactly the #816 defect, so it is fatal. A list whose
+# paths do not resolve may be legitimate (a diff that only deletes files), and
+# an EMPTY list must stay silent -- tests/validate-prescans.sh pins that for
+# every pre-scan -- so that one warns and lets the scan proceed.
+def _strip_control(text: str) -> str:
+    """TEXT with control characters removed (tab kept).
+
+    The offending line is caller-supplied and may come from an untrusted diff.
+    Raw ESC/BEL echoed to the operator's terminal can move the cursor, hide
+    following output, or drive an OSC title-bar sequence, so it is stripped
+    before it is reflected. Mirrors the `tr -d` in the bash fallback.
+    """
+    return "".join(c for c in text if c == "\t" or (c.isprintable() and c != "\x7f"))
+
+
+_DIFF_PREFIXES = ("diff --git ", "--- ", "+++ ", "@@ ")
+
+
+def assert_file_list_shape(paths: list[str], list_path: str, tool: str) -> int:
+    """Return 1 when PATHS is a diff (caller must exit), else 0. Warns on stderr
+    when nothing in a non-empty list resolves."""
+    total = 0
+    resolved = 0
+    for line in paths:
+        if not line:
+            continue
+        total += 1
+        if line.startswith(_DIFF_PREFIXES):
+            sys.stderr.write(
+                "Error: "
+                + tool
+                + ": input looks like a DIFF, not a file list: "
+                + list_path
+                + "\n  Offending line: "
+                + _strip_control(line)
+                + "\n  Expected one path per line -- did you mean"
+                + " 'git diff --name-only'?"
+                + "\n  Refusing to scan: a diff matches no path, so this"
+                + " would emit nothing and exit 0, which reads as a clean"
+                + " scan.\n"
+            )
+            return 1
+        if os.path.exists(line):
+            resolved += 1
+
+    if total > 0 and resolved == 0:
+        sys.stderr.write(
+            "Warning: "
+            + tool
+            + ": no path listed in "
+            + list_path
+            + " exists ("
+            + str(total)
+            + " non-empty lines); scanning nothing."
+            + "\n  A stale list or a wrong working directory yields an empty"
+            + " scan that reads as clean. Findings below (if any) are from a"
+            + " partial view.\n"
+        )
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2 or not argv[1]:
         sys.stderr.write("Usage: patterns.py <file-list>\n")
@@ -475,6 +543,9 @@ def main(argv: list[str]) -> int:
             paths = [ln.rstrip("\n") for ln in fh]
     except OSError:
         sys.stderr.write("Error: file list not found: " + file_list + "\n")
+        return 1
+
+    if assert_file_list_shape(paths, file_list, os.path.basename(__file__)):
         return 1
 
     for path in paths:

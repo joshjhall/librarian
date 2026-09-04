@@ -666,6 +666,42 @@ test_null_fields_parity() {
 run_test test_byte_correct_tsv "byte-correct TSV rows (acceptance 1) + parity"
 run_test test_space_path_is_one_arg "space-containing manifest path is one argv element"
 run_test test_whitespace_only_line_dropped "blank + whitespace-only manifest lines dropped + parity"
+# agnix-normalize carries the #816 input-shape guard like every other pre-scan,
+# but until now only STRUCTURALLY: tests/lint-prescan-input-guard.sh greps that
+# the guard exists and is called, and validate-python-ports.sh's exit-parity
+# corpus is keyed to PORT_BASENAMES="patterns sizing plan-lens", which excludes
+# this tool. So nothing actually RAN it against a diff. A typo in the case
+# pattern, or an ordering slip relative to the python exec shim, would keep the
+# text a grep is happy with while the runtime silently went back to scanning
+# nothing -- the exact failure #816 exists to close, and the same
+# written-but-unverified shape review already caught once on this branch.
+#
+# Fixture is a REAL `diff --git` header, and the absent-binary stub is used so
+# the guard is reached without needing agnix installed (the guard runs before
+# the binary probe).
+test_diff_input_fails_loud() {
+    local list="$WORKDIR/shaped-like-a.diff"
+    {
+        command printf 'diff --git a/src/app.js b/src/app.js\n'
+        command printf -- '--- a/src/app.js\n'
+        command printf -- '+++ b/src/app.js\n'
+        command printf -- '@@ -1 +1 @@\n'
+    } >"$list"
+
+    run_bash "$STUB" "$list"
+    assert_exit 1 "$RUN_RC" "bash: a diff passed as a file list exits 1"
+    assert_contains "$RUN_ERR" "looks like a DIFF" "bash: the refusal names the wrong input shape"
+    assert_contains "$RUN_ERR" "--name-only" "bash: the refusal names the fix"
+    assert_output_empty "$RUN_OUT" "bash: a refused diff emits no TSV rows"
+
+    if [ "${HAVE_PY:-1}" = "1" ] && command -v python3 >/dev/null 2>&1; then
+        run_py "$STUB" "$list"
+        assert_exit 1 "$PY_RC" "python: a diff passed as a file list exits 1"
+        assert_output_empty "$PY_OUT" "python: a refused diff emits no TSV rows"
+        assert_equals "$RUN_RC" "$PY_RC" "both runtimes agree on the refusal exit code"
+    fi
+}
+
 run_test test_agnix_config_placement "AGNIX_CONFIG forwarded as --config before -- + parity"
 run_test test_null_fields_parity "JSON null fields dropped/coalesced + parity"
 run_test test_unmapped_and_project_rows_dropped "unmapped + project rows dropped"
@@ -676,6 +712,7 @@ run_test test_tsv_injection_scrubbed "tab/newline/CR in agnix text cannot forge 
 run_test test_evidence_tag_anchored_at_index_0 "the real [RULE|SEVERITY] tag stays anchored at index 0 (#470) + parity"
 run_test test_absent_binary_noop "absent-binary no-op (acceptance 2) + parity"
 run_test test_missing_arg_usage "missing arg -> exit 1 + Usage + parity"
+run_test test_diff_input_fails_loud "a diff passed as a file list fails loud in both runtimes (#816)"
 run_test test_missing_filelist "absent file list -> exit 1"
 run_test test_malformed_json_fails_loud "malformed agnix output -> exit 2 + parity"
 run_test test_empty_output_fails_loud "empty agnix output -> exit 2 + parity"

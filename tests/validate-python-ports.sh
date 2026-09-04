@@ -622,6 +622,53 @@ test_python_edgecases() {
 
 # --- bash<->python parity ----------------------------------------------------
 
+# --- Input-shape guard: EXIT-CODE parity (#816) ------------------------------
+#
+# test_python_bash_parity above compares STDOUT, which is the right contract for
+# findings but is structurally blind to this one: handed a diff, both impls
+# correctly emit NOTHING, so a mutation making one of them exit 0 while the
+# other exits 1 compares equal and passes. The divergence lives entirely in the
+# exit code. A mutation round found exactly that -- the python diff arm could be
+# changed to `return 0` with this whole suite green -- so the two runtimes are
+# compared here on rc, not on output.
+test_python_bash_guard_exit_parity() {
+    local py="$CUR_PY" sh
+    sh="$(sibling_sh "$py")"
+
+    if [ ! -f "$sh" ]; then
+        skip_test "no sibling .sh for $(command basename "$py") — exit parity needs both impls"
+        return 0
+    fi
+
+    local diff_list="$WORKDIR/guard-parity.diff"
+    {
+        command printf -- 'diff --git a/src/app.js b/src/app.js\n'
+        command printf -- 'index 111..222 100644\n'
+        command printf -- '--- a/src/app.js\n'
+        command printf -- '+++ b/src/app.js\n'
+        command printf -- '@@ -1 +1 @@\n'
+        command printf -- '-const a = 1;\n'
+        command printf -- '+const a = 2;\n'
+    } >"$diff_list"
+
+    local py_rc=0 sh_rc=0
+    if port_is_two_arg "$py"; then
+        python3 "$py" "$diff_list" "$DRIFT_PLANNED" >/dev/null 2>&1 || py_rc=$?
+        PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 PLAN_LENS_FORCE_BASH=1 \
+            bash "$sh" "$diff_list" "$DRIFT_PLANNED" >/dev/null 2>&1 || sh_rc=$?
+    else
+        python3 "$py" "$diff_list" >/dev/null 2>&1 || py_rc=$?
+        PATTERNS_FORCE_BASH=1 SIZING_FORCE_BASH=1 PLAN_LENS_FORCE_BASH=1 \
+            bash "$sh" "$diff_list" >/dev/null 2>&1 || sh_rc=$?
+    fi
+
+    local rel
+    rel="$(command basename "$(command dirname "$py")")"
+    assert_exit 1 "$py_rc" "$rel: python refuses a diff with exit 1"
+    assert_exit 1 "$sh_rc" "$rel: bash refuses a diff with exit 1"
+    assert_equals "$sh_rc" "$py_rc" "$rel: both runtimes agree on the refusal exit code"
+}
+
 test_python_bash_parity() {
     local py="$CUR_PY" sh
     sh="$(sibling_sh "$py")"
@@ -1346,6 +1393,7 @@ while IFS= read -r py; do
     rel="${py#"$PLUGINS_DIR"/}"
     run_test test_python_edgecases "$rel: edge-case contract (no-arg exit 1, empty-list exit 0)"
     run_test test_python_bash_parity "$rel: bash<->python TSV parity"
+    run_test test_python_bash_guard_exit_parity "$rel: input-guard exit-code parity (#816)"
 done <<<"$ports_list"
 
 generate_report

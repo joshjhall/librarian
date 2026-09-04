@@ -2497,6 +2497,274 @@ run_test test_sh_probe_ignores_directories "a directory named like a shell test 
 run_test test_sh_probe_excludes_fixtures "a same-named file under tests/fixtures/ is not a test (#598)"
 run_test test_sh_probe_is_name_anchored "the shell probe stays name-anchored (#598)"
 run_test test_sh_skip_and_category_boundaries "*.zsh still skipped; .sh emits no untested-public-api but does emit missing-test-file (#598)"
+
+# The sibling test-discovery.sh (#816) is a HARD dependency: pre-review-gates.sh
+# sources it for the whole missing-test-file category. Absent, the gate must
+# refuse rather than run a scan that silently omits one of its four categories --
+# a partial scan reported as a pass is the very failure #816 exists to close, and
+# this repo's #538/#571 sentinel discipline requires a fail-loud path to be
+# VERIFIED, not merely written.
+#
+# Shaped after test_plan_lens_fails_loud_without_engine in
+# tests/validate-plan-lens.sh, the established precedent for a missing-sibling
+# guard. Note the deliberate contrast with
+# test_missing_sizing_does_not_abort_the_scan, which COPIES test-discovery.sh in
+# so it can isolate a missing sizing.sh: sizing degrades gracefully (its rows are
+# supplementary), while test-discovery does not (its absence removes a category).
+# The two tests together pin that asymmetry -- neither alone shows it is
+# deliberate.
+test_missing_test_discovery_fails_loud() {
+    local iso="$WORKDIR/no-test-discovery" rc=0 err
+    command mkdir -p "$iso"
+
+    # Copy ONLY the entry point. The sourced sibling is what is under test by
+    # its absence, so it must not come along.
+    command cp "$GATE" "$iso/pre-review-gates.sh"
+    command cp "${GATE%/*}/sizing.sh" "$iso/sizing.sh" 2>/dev/null || true
+
+    local dir="$WORKDIR/no-td-src"
+    command mkdir -p "$dir"
+    command printf 'let x = 1;\n' >"$dir/thing.js"
+    local list
+    list="$(make_list "$dir" thing.js)"
+
+    local outfile errfile
+    outfile="$(command mktemp)"
+    errfile="$(command mktemp)"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$iso/pre-review-gates.sh" "$list" >"$outfile" 2>"$errfile" || rc=$?
+    err="$(command cat "$errfile")"
+    local out
+    out="$(command cat "$outfile")"
+    command rm -f "$outfile" "$errfile"
+
+    assert_exit 1 "$rc" \
+        "with no sibling test-discovery.sh the gate exits 1, NOT 0-with-a-partial-scan"
+    assert_contains "$err" "requires the sibling test-discovery.sh" \
+        "the refusal names the missing dependency"
+    assert_contains "$err" "refuses to report a clean scan" \
+        "the refusal says why silence would be wrong"
+    assert_output_empty "$out" \
+        "a refused scan emits no findings — a partial TSV must not look like a result"
+}
+
+# The offending line is reflected to the operator's terminal, and the input is
+# caller-supplied -- in this repo's stated hostile-repo posture it can come from
+# an audited PR's diff. Raw ESC/BEL would render as live control sequences
+# (cursor moves, hidden output, an OSC title-bar write), so they are stripped.
+# The fixture carries REAL control bytes, not backslash-escapes: a `\033`
+# written literally would prove nothing, since it is already inert text.
+test_diff_refusal_strips_control_bytes() {
+    local dir="$WORKDIR/esc-inject"
+    command mkdir -p "$dir"
+    local list="$dir/esc.txt"
+    command printf 'diff --git \033[31mRED\033[0m\033]0;PWNED\007tail\n' >"$list"
+
+    # Guard the fixture itself: if printf did not emit a real ESC, the test below
+    # would pass vacuously.
+    assert_true "command grep -q \"$(command printf '\033')\" '$list'" \
+        "the fixture actually contains a raw ESC byte"
+
+    local errfile rc=0
+    errfile="$(command mktemp)"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$GATE" "$list" >/dev/null 2>"$errfile" || rc=$?
+    local err
+    err="$(command cat "$errfile")"
+    command rm -f "$errfile"
+
+    assert_exit 1 "$rc" "a control-byte-bearing diff is still refused"
+    assert_contains "$err" "Offending line:" "the line is still reported"
+    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command printf '\033')\"" \
+        "no raw ESC byte survives into the reflected message"
+    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command printf '\007')\"" \
+        "no raw BEL byte survives into the reflected message"
+    assert_contains "$err" "tail" "the printable remainder of the line is preserved"
+}
+
+# The MULTI-BYTE half of the same defence, and the reason it needs its own case:
+# `tr` is byte-wise, so it cannot express a Unicode format character. A bidi
+# override (U+202E) makes the reflected path RENDER reversed -- a hostile
+# `a/<RTLO>evil.js` can display as something else entirely -- and the zero-width
+# family hides characters outright. The python primary gets these for free via
+# isprintable() (category Cf), so WITHOUT the sed pass the two runtimes diverge
+# on exactly the path the bash fallback exists to serve. Measured before the fix:
+# RTLO survived in bash, was stripped in python.
+#
+# Fixture is built by python from code points, not typed inline: the raw bytes
+# are invisible in a terminal and in a diff, and a `\u202e`-style escape written
+# into the file would be inert text that cannot self-match (this repo's known
+# tautology shape).
+test_diff_refusal_strips_unicode_format_chars() {
+    local dir="$WORKDIR/uni-inject"
+    command mkdir -p "$dir"
+    local list="$dir/uni.txt"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip_test "python3 unavailable — cannot build the multi-byte fixture"
+        return 0
+    fi
+    command python3 -c 'import sys
+names = {"RTLO": 0x202E, "ZWSP": 0x200B, "LRI": 0x2066, "BOM": 0xFEFF, "RLM": 0x200F}
+line = "diff --git a/" + "".join(chr(c) + n for n, c in names.items()) + "tail"
+open(sys.argv[1], "w").write(line + "\n")' "$list"
+
+    # Arm the test: if the fixture lost its multi-byte bytes, everything below
+    # passes vacuously.
+    assert_true "command grep -q \"$(command python3 -c 'print(chr(0x202E))')\" '$list'" \
+        "the fixture actually contains a raw U+202E byte sequence"
+
+    local errfile rc=0
+    errfile="$(command mktemp)"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$GATE" "$list" >/dev/null 2>"$errfile" || rc=$?
+    local err
+    err="$(command cat "$errfile")"
+    command rm -f "$errfile"
+
+    assert_exit 1 "$rc" "a bidi-bearing diff is still refused"
+    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command python3 -c 'print(chr(0x202E))')\"" \
+        "no bidi override survives into the reflected message"
+    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command python3 -c 'print(chr(0x200B))')\"" \
+        "no zero-width space survives into the reflected message"
+    assert_contains "$err" "RTLO" "the printable text around the stripped bytes is preserved"
+    assert_contains "$err" "tail" "the line is not truncated at the first stripped byte"
+}
+
+# --- Input-shape guard (#816) ------------------------------------------------
+#
+# The gate takes a FILE LIST. Handed a DIFF it used to scan each diff line as a
+# path, match nothing, and exit 0 -- output indistinguishable from a clean scan,
+# on a pre-SHIP gate. These cases pin the three arms of the fix BEHAVIORALLY;
+# tests/lint-prescan-input-guard.sh pins the guard's presence across all 40
+# entry points structurally.
+#
+# run_gate captures stdout only, so these cases invoke the gate directly: two of
+# the three arms are STDERR-and-exit-code contracts, and the empty-list case in
+# particular is invisible to a stdout-only assertion (that is exactly how the
+# mutation that drops the non-empty guard survived validate-prescans.sh).
+
+# gate_streams <file-list> — run the gate, capturing stdout, stderr and rc
+# separately into GS_OUT / GS_ERR / GS_RC.
+GS_OUT=""
+GS_ERR=""
+GS_RC=0
+gate_streams() {
+    local errfile
+    errfile="$(command mktemp)"
+    GS_RC=0
+    GS_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$GATE" "$1" 2>"$errfile")" || GS_RC=$?
+    GS_ERR="$(command cat "$errfile")"
+    command rm -f "$errfile"
+}
+
+# A diff is refused loudly: non-zero exit, actionable stderr, no findings.
+# The fixture is a REAL diff (built by git), not a hand-written lookalike -- a
+# fixture spelled to dodge the scanner's own pattern literals can pass with and
+# without the fix.
+test_diff_input_fails_loud() {
+    local dir="$WORKDIR/diff-input"
+    command mkdir -p "$dir/repo"
+    (
+        cd "$dir/repo" || exit 1
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git init -q .
+        command printf 'const a = 1;\n' >file.js
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git add -A
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git -c user.email=t@t -c user.name=t commit -qm init
+        command printf 'const a = 2;\n' >file.js
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git diff >"$dir/real.diff"
+    )
+
+    assert_file_contains "$dir/real.diff" "diff --git" "the fixture is a genuine git diff"
+
+    gate_streams "$dir/real.diff"
+    assert_exit 1 "$GS_RC" "a diff passed as a file list exits non-zero"
+    assert_contains "$GS_ERR" "looks like a DIFF" "the error names the wrong input shape"
+    assert_contains "$GS_ERR" "--name-only" "the error names the fix"
+    assert_output_empty "$GS_OUT" "a refused diff emits no findings on stdout"
+}
+
+# The unified-diff body markers are caught too, not just the `diff --git`
+# header: `git diff` output piped through a filter can lose the header while
+# staying just as wrong an input.
+test_headerless_diff_body_is_caught() {
+    local dir="$WORKDIR/diff-body"
+    command mkdir -p "$dir"
+    local list="$dir/body.diff"
+    {
+        command printf -- '--- a/src/app.js\n'
+        command printf -- '+++ b/src/app.js\n'
+        command printf -- '@@ -1,3 +1,4 @@\n'
+    } >"$list"
+
+    gate_streams "$list"
+    assert_exit 1 "$GS_RC" "a headerless diff body is refused too"
+    assert_contains "$GS_ERR" "looks like a DIFF" "the body-marker arm reports the same diagnosis"
+}
+
+# A list whose paths do not resolve WARNS but still exits 0 -- it may name only
+# deleted files, which is legitimate. This is the deliberate severity split.
+test_unresolvable_list_warns_without_failing() {
+    local dir="$WORKDIR/stale-list"
+    command mkdir -p "$dir"
+    local list="$dir/stale.txt"
+    command printf 'no/such/file.js\nalso/missing.py\n' >"$list"
+
+    gate_streams "$list"
+    assert_exit 0 "$GS_RC" "an unresolvable list warns rather than failing"
+    assert_contains "$GS_ERR" "no path listed in" "the warning names the symptom"
+    assert_output_empty "$GS_OUT" "the warning does not contaminate the TSV stdout"
+}
+
+# The warning is guarded on a NON-EMPTY list. An empty list is the ordinary
+# no-relevant-files-changed case and must stay COMPLETELY silent -- including on
+# stderr. validate-prescans.sh asserts only stdout here, so without this case a
+# dropped non-empty guard warns on every empty invocation and no test notices.
+test_empty_list_stays_silent_on_stderr() {
+    local dir="$WORKDIR/empty-silent"
+    command mkdir -p "$dir"
+    local list="$dir/empty.txt"
+    : >"$list"
+
+    gate_streams "$list"
+    assert_exit 0 "$GS_RC" "an empty list still exits 0"
+    assert_output_empty "$GS_OUT" "an empty list emits no findings"
+    assert_output_empty "$GS_ERR" "an empty list emits NO WARNING — the guard is non-empty-gated"
+}
+
+# A list with one resolvable path does not warn, even though others are missing:
+# the warning fires only when NOTHING resolves, so a diff deleting one file
+# among many stays quiet.
+test_partially_resolvable_list_does_not_warn() {
+    local dir="$WORKDIR/partial"
+    command mkdir -p "$dir"
+    command printf 'let x = 1;\n' >"$dir/real.js"
+    local list="$dir/files.txt"
+    command printf '%s\ndeleted/gone.js\n' "$dir/real.js" >"$list"
+
+    gate_streams "$list"
+    assert_exit 0 "$GS_RC" "a partially-resolvable list exits 0"
+    assert_true "! command printf '%s' \"$GS_ERR\" | command grep -q 'no path listed in'" \
+        "one resolvable path suppresses the warning"
+}
+
+# The control: the guard must not change what a CORRECT invocation reports. A
+# guard that also suppressed findings would trade one silent-zero for another.
+test_guard_does_not_alter_normal_scan() {
+    local dir="$WORKDIR/guard-control"
+    command mkdir -p "$dir"
+    command printf 'function orphan() { return 1; }\nconsole.log("x");\n' >"$dir/orphan.js"
+    local list
+    list="$(make_list "$dir" orphan.js)"
+
+    gate_streams "$list"
+    assert_exit 0 "$GS_RC" "a valid file list still exits 0"
+    assert_not_empty "$GS_OUT" "a valid file list still produces findings"
+    assert_not_empty "$(category_rows "$GS_OUT" debug-statement)" \
+        "the debug-statement detector still fires through the guard"
+}
+
 # --- Evidence fidelity: trailing colons (#573) -------------------------------
 #
 # `while IFS=: read -r line_num content` over `grep -n` output splits on EVERY
@@ -3111,6 +3379,12 @@ test_missing_sizing_does_not_abort_the_scan() {
     d="$(fresh_dir)"
     command mkdir -p "$d/gatedir"
     command cp "$GATE" "$d/gatedir/pre-review-gates.sh"
+    # The sourced sibling MUST come along: this fixture isolates a missing
+    # sizing.sh, and test-discovery.sh (#816) is a hard dependency whose absence
+    # is a different, deliberately fatal condition. Copying only the entry point
+    # would make this case fail for the wrong reason and quietly stop testing
+    # graceful degradation at all.
+    command cp "${GATE%/*}/test-discovery.sh" "$d/gatedir/test-discovery.sh"
     make_big_sh "$d/big.sh"
     command printf '%s\n' "def f():" "    print('debug')" >"$d/app.py"
 
@@ -3141,5 +3415,15 @@ run_test test_unquoted_test_discovery_with_trailing_whitespace_resolves "an unqu
 run_test test_config_parse_emits_no_stdout_noise "config parsing never contaminates the TSV stdout (#679 AC#3)"
 run_test test_indented_debug_statements_are_found "INDENTED debug statements are found — POSIX class, not GNU \\s (#679 AC#2)"
 run_test test_exported_symbol_name_is_extracted "exported symbol name extracts correctly via ERE alternation (#679 AC#2)"
+
+run_test test_diff_refusal_strips_unicode_format_chars "the diff refusal strips multi-byte bidi/zero-width chars too (#816)"
+run_test test_diff_refusal_strips_control_bytes "the diff refusal strips control bytes before reflecting the line (#816)"
+run_test test_missing_test_discovery_fails_loud "a missing sibling test-discovery.sh fails loud, never a partial scan (#816)"
+run_test test_diff_input_fails_loud "a diff passed as a file list fails loud, emits no findings (#816 AC#1)"
+run_test test_headerless_diff_body_is_caught "a headerless unified-diff body is refused too (#816 AC#1)"
+run_test test_unresolvable_list_warns_without_failing "an unresolvable file list warns on stderr but exits 0 (#816 AC#2)"
+run_test test_empty_list_stays_silent_on_stderr "an empty list stays silent on STDERR too — the warning is non-empty-gated (#816)"
+run_test test_partially_resolvable_list_does_not_warn "one resolvable path suppresses the warning (#816 AC#2)"
+run_test test_guard_does_not_alter_normal_scan "the guard does not change what a correct invocation reports (#816)"
 
 generate_report
