@@ -35,12 +35,20 @@
 # honest about the prose as it stands today.
 #
 # An entry can be covered at one layer and a gap at another, and several are:
-# `reviewer` sees SSRF and deserialization as prose bullets while no
-# deterministic detector exists for either. Both rows are listed, because
-# "an LLM might notice it" and "a scanner will catch it" are different claims.
+# `reviewer` sees SSRF as a prose bullet while no deterministic detector exists
+# for it. Both rows are listed, because "an LLM might notice it" and "a scanner
+# will catch it" are different claims.
 #
-# The gap reasons point at the sibling slices of epic #705: #707 adds the missing
-# detectors, #709 adds the missing LLM checklist categories.
+# The gap reasons point at the sibling slices of epic #705: #707 added the
+# command-injection, weak-randomness, tls-verification-disabled, permissive-cors,
+# jwt-unverified, insecure-deserialization and xxe detectors; #709 adds the
+# missing LLM checklist categories; #898 carries the three detectors #707
+# MEASURED and declined to ship (see the A01 and A10 gap reasons).
+#
+# A `gap` reason is at its most useful when it records a MEASUREMENT rather than
+# an intention. "No detector yet" ages into "nobody got to it"; "0 true positives
+# in 8 hits, request-derived = 0" tells the next person what to do differently
+# and what bar to clear. The A01/A10 rows are written that way deliberately.
 
 A01:
   name: Broken Access Control
@@ -55,7 +63,16 @@ A01:
       evidence: "Path traversal"
     - id: path-traversal-prescan
       owner: gap
-      reason: "no deterministic detector for user input reaching a filesystem path — see #707"
+      reason: >-
+        MEASURED, not merely deferred (#707). A same-line proxy for
+        "argument derives from a request symbol" scored 0 true positives in 7
+        hits over a 753-file corpus: every hit was open(sys.argv[N]) in a test
+        heredoc, and splitting the taint class showed request-derived = 0 while
+        argv = 7 — the arm's entire yield came from its weakest token. Dropping
+        argv leaves zero hits, which is an absent calibration corpus rather than
+        precision. Per contract.md, a detector whose measured hit rate cannot
+        support its tier does not ship at that tier; this supports neither HIGH
+        nor MEDIUM. Needs a multi-line taint model. Follow-up: #898
 
 A02:
   name: Cryptographic Failures
@@ -72,9 +89,9 @@ A02:
     - id: hardcoded-secret-pass2
       owner: llm-pass2
       evidence: "hardcoded-secret"
-    - id: weak-random
-      owner: gap
-      reason: "non-CSPRNG used for tokens/nonces/salts has no deterministic detector — see #707"
+    - id: weak-randomness
+      owner: prescan
+      detects: [math_random_security_context, random_random_security_context]
 
 A03:
   name: Injection
@@ -93,8 +110,8 @@ A03:
       owner: reviewer
       evidence: "Injection vulnerabilities (SQL, command, LDAP, XPath)"
     - id: command-injection
-      owner: gap
-      reason: "shell=True / os.system / child_process.exec with interpolation has no detector — see #707"
+      owner: prescan
+      detects: [shell_true, os_system, child_process_exec, eval_nonliteral]
 
 A04:
   name: Insecure Design
@@ -109,11 +126,18 @@ A05:
     - id: data-exposure
       owner: llm-pass2
     - id: tls-verification-disabled
-      owner: gap
-      reason: "verify=False / rejectUnauthorized:false / InsecureSkipVerify has no detector — see #707"
-    - id: cors-wildcard
-      owner: gap
-      reason: "wildcard/reflected CORS is prose inside data-exposure, with no deterministic detector — see #707"
+      owner: prescan
+      detects: [requests_verify_off, node_reject_unauthorized_off, go_insecure_skip_verify, node_tls_env_off]
+    - id: permissive-cors
+      owner: prescan
+      detects: [wildcard_origin, reflected_origin]
+    # XXE was its own category (A04) in the 2017 list; the 2021 revision folded
+    # it into A05, since an XML parser left resolving external entities is a
+    # parser CONFIGURATION defect. Mapped here rather than given a fabricated id
+    # so the map matches the edition it names in its title.
+    - id: xxe-risk
+      owner: prescan
+      detects: [resolve_entities_on, php_entity_loader_on, java_xmlconstants]
 
 A06:
   name: Vulnerable and Outdated Components
@@ -127,9 +151,9 @@ A07:
     - id: auth-bypass-authn
       owner: llm-pass2
       evidence: "auth-bypass"
-    - id: jwt-alg-none
-      owner: gap
-      reason: "JWT alg=none / decode-without-verify has no detector — see #707"
+    - id: jwt-unverified
+      owner: prescan
+      detects: [alg_none, decode_without_verify]
 
 A08:
   name: Software and Data Integrity Failures
@@ -138,8 +162,8 @@ A08:
       owner: reviewer
       evidence: "Insecure deserialization"
     - id: insecure-deserialization
-      owner: gap
-      reason: "pickle.loads / yaml.load without SafeLoader / Marshal.load has no detector — see #707"
+      owner: prescan
+      detects: [pickle_loads, yaml_load_unsafe, marshal_load, java_readobject, php_unserialize]
 
 A09:
   name: Security Logging and Monitoring Failures
@@ -156,4 +180,10 @@ A10:
       evidence: "SSRF (server-side request forgery)"
     - id: ssrf
       owner: gap
-      reason: "request functions taking a non-literal URL have no deterministic detector — see #707"
+      reason: >-
+        MEASURED, not merely deferred (#707). The same-line request-symbol proxy
+        scored 0 true positives in 1 hit over a 753-file corpus — a test
+        health-check whose host is a hardcoded literal and only the port
+        interpolates. Same verdict and same rule as A01's path-traversal-prescan
+        row: not regex-reachable at any tier without a taint model.
+        Follow-up: #898

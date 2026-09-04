@@ -778,3 +778,277 @@ test_security_unreadable() {
 # ============================================================================
 # check-code-health — tech-debt-marker + debug-statement + empty-handler
 # ============================================================================
+
+# assert_row_count SKILLDIR LIST CAT N MSG — the category emits EXACTLY N rows in
+# both impls. Distinct from assert_fires, which only proves at least one row
+# contains a needle and so cannot catch a DOUBLE-fire. Lives in this fragment
+# because no check-code-health case needs it (CLAUDE.md: the shared library must
+# not accrete single-use code).
+assert_row_count() {
+    local skill="$1" list="$2" cat="$3" want="$4" msg="$5"
+    local got
+    got="$(emit_rows sh "$skill" "$list" "$cat" | command grep -c . || true)"
+    assert_equals "$want" "$got" "$msg (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        got="$(emit_rows py "$skill" "$list" "$cat" | command grep -c . || true)"
+        assert_equals "$want" "$got" "$msg (python)"
+    fi
+}
+
+# ============================================================================
+# check-security — OWASP detectors (#707)
+# ============================================================================
+# Every case is a PAIR: the unsafe spelling fires, and the safe spelling of the
+# SAME operation stays silent. The negative half is what stops a detector from
+# degenerating into "match the function name", which is the failure mode that
+# makes a security scanner untrustworthy rather than merely noisy.
+#
+# Fixtures carry the REAL contiguous token (`verify=False`, `pickle.loads`),
+# never an escaped form. A fixture written so it cannot self-match also cannot
+# be matched by the detector, and would pass with AND without the fix.
+test_security_command_injection() {
+    local d list
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'subprocess.call(cmd, shell=True)' >"$d/a.py"
+    list="$(make_list "$d/l" "$d/a.py")"
+    assert_fires "$SK_SEC" "$list" command-injection "Subprocess with shell=True" \
+        "security: subprocess shell=True fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'os.system("rm -rf " + target)' >"$d/b.py"
+    list="$(make_list "$d/l" "$d/b.py")"
+    assert_fires "$SK_SEC" "$list" command-injection "Shell command execution" \
+        "security: os.system fires"
+
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'child_process.exec(userCmd);' >"$d/c.js"
+    list="$(make_list "$d/l" "$d/c.js")"
+    assert_fires "$SK_SEC" "$list" command-injection "Unsanitized child process exec" \
+        "security: child_process.exec fires"
+
+    # eval/exec of a NON-LITERAL is the defect...
+    d="$(fresh_dir)"
+    command printf '%s\n' 'v = eval(user_input)' >"$d/d.py"
+    list="$(make_list "$d/l" "$d/d.py")"
+    assert_fires "$SK_SEC" "$list" command-injection "Dynamic evaluation of a non-literal" \
+        "security: eval of a non-literal fires"
+
+    # ...while eval of a quoted literal is benign and must stay silent.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'v = eval("1+1")' >"$d/e.py"
+    list="$(make_list "$d/l" "$d/e.py")"
+    assert_silent "$SK_SEC" "$list" command-injection \
+        "security: eval of a string literal stays silent"
+
+    # BOUNDARY: the eval/exec arm must not match the `exec` INSIDE
+    # `child_process.exec(`, or that one line emits two findings. `\b` alone
+    # does not exclude a preceding dot; the arm needs a boundary that refuses
+    # one. Caught in development — this is the input that distinguishes them.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'child_process.exec(userCmd);' >"$d/f.js"
+    list="$(make_list "$d/l" "$d/f.js")"
+    assert_row_count "$SK_SEC" "$list" command-injection 1 \
+        "security: child_process.exec emits exactly one row, not two"
+
+    # A commented-out dangerous call is not a finding (lexical-dependent).
+    d="$(fresh_dir)"
+    command printf '%s\n' '# subprocess.call(cmd, shell=True)' >"$d/g.py"
+    list="$(make_list "$d/l" "$d/g.py")"
+    assert_silent "$SK_SEC" "$list" command-injection \
+        "security: a commented dangerous call stays silent"
+}
+
+test_security_deserialization() {
+    local d list
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'data = pickle.loads(blob)' >"$d/a.py"
+    list="$(make_list "$d/l" "$d/a.py")"
+    assert_fires "$SK_SEC" "$list" insecure-deserialization "Unsafe deserialization" \
+        "security: pickle.loads fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'cfg = yaml.load(stream)' >"$d/b.py"
+    list="$(make_list "$d/l" "$d/b.py")"
+    assert_fires "$SK_SEC" "$list" insecure-deserialization "Unsafe deserialization" \
+        "security: bare yaml.load fires"
+
+    # The two safe spellings of the SAME call. Both must stay silent, and they
+    # exercise different halves of the exclusion (safe_load vs Loader=).
+    d="$(fresh_dir)"
+    command printf '%s\n' 'cfg = yaml.safe_load(stream)' >"$d/c.py"
+    list="$(make_list "$d/l" "$d/c.py")"
+    assert_silent "$SK_SEC" "$list" insecure-deserialization \
+        "security: yaml.safe_load stays silent"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'cfg = yaml.load(stream, Loader=yaml.SafeLoader)' >"$d/d.py"
+    list="$(make_list "$d/l" "$d/d.py")"
+    assert_silent "$SK_SEC" "$list" insecure-deserialization \
+        "security: yaml.load with an explicit safe Loader stays silent"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' '$obj = unserialize($input);' >"$d/e.php"
+    list="$(make_list "$d/l" "$d/e.php")"
+    assert_fires "$SK_SEC" "$list" insecure-deserialization "Unsafe deserialization" \
+        "security: PHP unserialize fires"
+
+    # The REMAINING alternation arms. thresholds.yml names each one as its own
+    # severity-bearing arm (marshal_load, java_readobject, ...), so an untested
+    # arm is an unpinned severity claim — and, as review cycle 1 showed for
+    # key/iv and alg:none, an untested arm is exactly where a py/sh divergence
+    # hides. One fixture per arm.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'obj = Marshal.load(data)' >"$d/m.rb"
+    list="$(make_list "$d/l" "$d/m.rb")"
+    assert_fires "$SK_SEC" "$list" insecure-deserialization "Unsafe deserialization" \
+        "security: Ruby Marshal.load fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'Object o = in.readObject();' >"$d/r.java"
+    list="$(make_list "$d/l" "$d/r.java")"
+    assert_fires "$SK_SEC" "$list" insecure-deserialization "Unsafe deserialization" \
+        "security: Java readObject fires"
+}
+
+test_security_weak_randomness() {
+    local d list
+
+    # The security-context word is what makes it a finding...
+    d="$(fresh_dir)"
+    command printf '%s\n' 'tok = random.random() + salt' >"$d/a.py"
+    list="$(make_list "$d/l" "$d/a.py")"
+    assert_fires "$SK_SEC" "$list" weak-randomness "Non-CSPRNG" \
+        "security: random.random() for a salt fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const sessionKey = Math.random().toString(36);' >"$d/b.js"
+    list="$(make_list "$d/l" "$d/b.js")"
+    assert_fires "$SK_SEC" "$list" weak-randomness "Non-CSPRNG" \
+        "security: Math.random() for a session key fires"
+
+    # ...and without it, the same function is ordinary code. This negative is
+    # the whole justification for the HIGH tier: an unguarded arm would fire on
+    # every Math.random() in the tree.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const jitter = Math.random() * 100;' >"$d/c.js"
+    list="$(make_list "$d/l" "$d/c.js")"
+    assert_silent "$SK_SEC" "$list" weak-randomness \
+        "security: Math.random() with no security context stays silent"
+
+    # A CSPRNG is the fix, and must not be flagged for mentioning a token.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'tok = secrets.token_hex(32)' >"$d/d.py"
+    list="$(make_list "$d/l" "$d/d.py")"
+    assert_silent "$SK_SEC" "$list" weak-randomness \
+        "security: secrets.token_hex stays silent"
+
+
+
+
+    # The third alternation arm, C-style rand(), previously unexercised.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const sessionToken = rand();' >"$d/c.js"
+    list="$(make_list "$d/l" "$d/c.js")"
+    assert_fires "$SK_SEC" "$list" weak-randomness "Non-CSPRNG" \
+        "security: bare rand() with a security context fires"
+}
+
+test_security_tls_cors_jwt_xxe() {
+    local d list
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'r = requests.get(url, verify=False)' >"$d/a.py"
+    list="$(make_list "$d/l" "$d/a.py")"
+    assert_fires "$SK_SEC" "$list" tls-verification-disabled "TLS certificate verification disabled" \
+        "security: requests verify=False fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const opts = {rejectUnauthorized: false};' >"$d/b.js"
+    list="$(make_list "$d/l" "$d/b.js")"
+    assert_fires "$SK_SEC" "$list" tls-verification-disabled "TLS certificate verification disabled" \
+        "security: Node rejectUnauthorized:false fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'r = requests.get(url, verify=True)' >"$d/c.py"
+    list="$(make_list "$d/l" "$d/c.py")"
+    assert_silent "$SK_SEC" "$list" tls-verification-disabled \
+        "security: verify=True stays silent"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'res.header("Access-Control-Allow-Origin: *");' >"$d/d.js"
+    list="$(make_list "$d/l" "$d/d.js")"
+    assert_fires "$SK_SEC" "$list" permissive-cors "Permissive CORS policy" \
+        "security: wildcard CORS origin fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'payload = jwt.decode(t, verify=False)' >"$d/e.py"
+    list="$(make_list "$d/l" "$d/e.py")"
+    assert_fires "$SK_SEC" "$list" jwt-unverified "JWT signature not verified" \
+        "security: jwt.decode without verification fires"
+
+    # DISAMBIGUATION: `verify=False` on a jwt.decode line is a SIGNATURE defect,
+    # not a TLS one. Without the exclusion the line emitted two findings and the
+    # TLS one named the wrong defect. Assert the TLS arm is silent here — the
+    # jwt-unverified assertion above already pins that the line is still caught.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'payload = jwt.decode(t, verify=False)' >"$d/f.py"
+    list="$(make_list "$d/l" "$d/f.py")"
+    assert_silent "$SK_SEC" "$list" tls-verification-disabled \
+        "security: a JWT verify=False is not reported as a TLS finding"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'payload = jwt.decode(t, key, algorithms=["RS256"])' >"$d/g.py"
+    list="$(make_list "$d/l" "$d/g.py")"
+    assert_silent "$SK_SEC" "$list" jwt-unverified \
+        "security: a verified jwt.decode stays silent"
+
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'p = etree.XMLParser(resolve_entities=True)' >"$d/h.py"
+    list="$(make_list "$d/l" "$d/h.py")"
+    assert_fires "$SK_SEC" "$list" xxe-risk "XML parser with external entities enabled" \
+        "security: XXE resolve_entities=True fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'p = etree.XMLParser(resolve_entities=False)' >"$d/i.py"
+    list="$(make_list "$d/l" "$d/i.py")"
+    assert_silent "$SK_SEC" "$list" xxe-risk \
+        "security: resolve_entities=False stays silent"
+
+    # The remaining TLS / CORS / XXE alternation arms — one fixture each, for
+    # the reason given on the deserialization arms above.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'cfg := &tls.Config{InsecureSkipVerify: true}' >"$d/g.go"
+    list="$(make_list "$d/l" "$d/g.go")"
+    assert_fires "$SK_SEC" "$list" tls-verification-disabled "TLS certificate verification disabled" \
+        "security: Go InsecureSkipVerify fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'export NODE_TLS_REJECT_UNAUTHORIZED=0' >"$d/env.sh"
+    list="$(make_list "$d/l" "$d/env.sh")"
+    assert_fires "$SK_SEC" "$list" tls-verification-disabled "TLS certificate verification disabled" \
+        "security: NODE_TLS_REJECT_UNAUTHORIZED=0 fires"
+
+    # The reflected-origin CORS arm, which thresholds.yml rates HIGHER than the
+    # wildcard arm (it trusts every caller WITH credentials).
+    d="$(fresh_dir)"
+    command printf '%s\n' 'app.use(cors({origin: true, credentials: true}));' >"$d/refl.js"
+    list="$(make_list "$d/l" "$d/refl.js")"
+    assert_fires "$SK_SEC" "$list" permissive-cors "Permissive CORS policy" \
+        "security: reflected CORS origin:true fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'libxml_disable_entity_loader(false);' >"$d/x.php"
+    list="$(make_list "$d/l" "$d/x.php")"
+    assert_fires "$SK_SEC" "$list" xxe-risk "XML parser with external entities enabled" \
+        "security: PHP libxml_disable_entity_loader(false) fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'f.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, false);' >"$d/x.java"
+    list="$(make_list "$d/l" "$d/x.java")"
+    assert_fires "$SK_SEC" "$list" xxe-risk "XML parser with external entities enabled" \
+        "security: Java XMLConstants fires"
+}

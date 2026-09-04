@@ -22,6 +22,39 @@ severity:
   insecure-crypto:
     md5_sha1: high
     ecb_mode: high
+  # --- OWASP detectors (#707) ---
+  # Arm-level severities, following the existing convention that a directly
+  # exploitable RCE-class defect is critical while a weakening of defence in
+  # depth is high.
+  command-injection:
+    shell_true: critical
+    os_system: critical
+    child_process_exec: critical
+    eval_nonliteral: critical
+  insecure-deserialization:
+    pickle_loads: critical
+    yaml_load_unsafe: critical
+    marshal_load: critical
+    java_readobject: critical
+    php_unserialize: critical
+  weak-randomness:
+    math_random_security_context: high
+    random_random_security_context: high
+  tls-verification-disabled:
+    requests_verify_off: high
+    node_reject_unauthorized_off: high
+    go_insecure_skip_verify: high
+    node_tls_env_off: high
+  permissive-cors:
+    wildcard_origin: medium
+    reflected_origin: high
+  jwt-unverified:
+    alg_none: critical
+    decode_without_verify: critical
+  xxe-risk:
+    resolve_entities_on: high
+    php_entity_loader_on: high
+    java_xmlconstants: medium
 
 min_confidence:
   deterministic: 0.9

@@ -18,6 +18,13 @@ compatible_with: "finding-schema.md >= 1.0"
 | `injection-risk`   | CRITICAL  | deterministic | >= 0.9     |
 | `xss-risk`         | HIGH      | deterministic | >= 0.9     |
 | `insecure-crypto`  | HIGH      | deterministic | >= 0.9     |
+| `command-injection` | CRITICAL | deterministic | >= 0.9     |
+| `insecure-deserialization` | CRITICAL | deterministic | >= 0.9 |
+| `weak-randomness`  | HIGH      | deterministic | >= 0.9     |
+| `tls-verification-disabled` | HIGH | deterministic | >= 0.9   |
+| `permissive-cors`  | HIGH      | deterministic | >= 0.9     |
+| `jwt-unverified`   | CRITICAL  | deterministic | >= 0.9     |
+| `xxe-risk`         | HIGH      | deterministic | >= 0.9     |
 
 ## Language Support
 
@@ -190,6 +197,28 @@ Every family is fixture-tested in **both** directions: its own marker suppresses
 and a foreign marker does not. The foreign half is what stops a family from
 degenerating into "suppress everything", which would re-create the false-clean
 this phase exists to remove.
+
+The seven categories added by #707 (`command-injection` through `xxe-risk`) are
+all **lexical-dependent** and **language-agnostic**: each matches a call shape or
+configuration flag rather than a language-specific string form, so they run
+wherever the comment model resolves and are skipped on an unmodeled file. Two
+carry an extra filter rather than a single pattern — `insecure-deserialization`
+suppresses a match carrying an explicit safe loader (`Loader=` / `safe_load`),
+and `weak-randomness` requires a security-context word on the same line, which
+is what keeps a UI-jitter `Math.random()` from firing.
+
+`tls-verification-disabled` explicitly **excludes** a line that also matches
+`jwt-unverified`: `verify=False` is the same token in both taxonomies, but on a
+`jwt.decode(...)` line it disables a signature check rather than a TLS
+certificate check, and reporting it as TLS sends the reader to the wrong fix.
+
+Three detectors proposed alongside them — `path-traversal`, `ssrf`,
+`open-redirect` — were **measured and declined** (#707, follow-up #898). Each
+requires knowing that an argument *derives from* an untrusted source; the
+same-line proxy for that scored 0 true positives in 8 hits over a 753-file
+corpus, with request-derived hits = 0 and every hit `argv`-derived. That
+supports neither HIGH nor MEDIUM, so they ship at no tier and are recorded as
+`gap:` entries in `owasp-coverage.yml` carrying the numbers.
 
 `injection-risk` is the only category with per-language detectors: SQL built by
 f-string (Python), template literal (JS/TS), `#{}` interpolation (Ruby), or
