@@ -26,7 +26,10 @@
 #           the alt-screen and is reliably scrapeable — and is the better
 #           catcher of plan-gate prompts. A fork is the last-resort match (after
 #           plan-gate and generic-gate) and is emitted as a distinct
-#           "escalation — …" line so the operator knows it carries options. Live
+#           "escalation — …" line so the operator knows it carries options. A
+#           MULTI-QUESTION form (#467) is a strictly more specific fork and is
+#           matched just BEFORE it, emitting a line that names the only broker
+#           that works on it (cancel-then-relay, never send-keys). Live
 #           worktree golems only.
 #
 # Output (one line per fresh gate): "<golem-id>\t<message>"
@@ -179,6 +182,14 @@ pane_error_lines="${GOLEM_PANE_ERROR_LINES:-40}"
 # recognizes it to apply the two-consecutive-poll debounce (below). A top-level
 # assignment so a SOURCED unit test sees it before calling either function.
 TURN_END_MSG="⚠ idle at prompt — turn ended, awaiting input (check pane)"
+
+# The multi-question-form push message (#467). It names the broker rather than
+# just the gate class: the operator's observed error was reaching for the
+# single-question brokers (send-keys / inbox), both of which can resolve this
+# widget WRONG by submitting a partially-answered form. The label is the one
+# place that correction reliably reaches them, so it says what to do, not merely
+# what happened. Defined here beside TURN_END_MSG so a SOURCED unit test sees it.
+MULTI_Q_MSG="escalation (multi-question form) — cancel-then-relay, do NOT send-keys"
 
 # The API-error death push message (#446). A golem whose `claude` process died on
 # a transient API error (429/5xx) or a terminal one (auth/quota) goes idle at the
@@ -487,6 +498,68 @@ pane_is_fork() {
     return 1
 }
 
+# Multi-question AskUserQuestion form (issue #467). A golem raising 2+ questions
+# in ONE prompt paints a TABBED widget — a per-question tab bar with `☐`/`☒`
+# checkboxes and a trailing `✔ Submit` tab — over the same `Enter to select`
+# footer a single-question fork paints. It is therefore a strictly MORE SPECIFIC
+# fork, and panes_snapshot() runs it BEFORE pane_is_fork so the general branch
+# cannot shadow it (the same precedence discipline plan-gate/generic-gate already
+# use, and the same reason pane_is_api_error runs before pane_is_turn_end).
+#
+# WHY IT EARNS ITS OWN CLASS. Neither documented broker works on this widget, and
+# both fail in ways that RESOLVE THE GATE WRONG rather than merely failing:
+#   - The plan-gate broker (`tmux send-keys -t golem-{N} 1 Enter`) assumes one
+#     question. Observed live: the digit landed on the WRONG question, and `Tab`
+#     cycled between the answered question and the Submit screen without ever
+#     reaching the still-`☐` one. The review screen then offered `Submit` with a
+#     question unanswered — one stray Enter submits a HALF-ANSWERED form, which
+#     the golem then acts on as though the operator had chosen it.
+#   - The inbox broker (`golem-inbox.sh answer <golem> <gate-id> <option>`)
+#     carries ONE option per gate-id; a form has no single answer. (And a
+#     plan-time fork is not inbox-routed at all — the data-only invariant, #227.)
+# The only reliable resolution is cancel-then-text-directive (three live
+# incidents, orchestrate/monitor-protocol.md), so this matcher exists to tell the
+# operator WHICH broker to reach for before they start — see below.
+#
+# DETECTION FAILED BEFORE KEYSTROKES DID — the reason this is not footer-anchored
+# like its siblings. The `☐/☒` tab bar renders ABOVE the footer, and in a live
+# incident the first capture-pane showed only ONE of a form's TWO questions (the
+# second had scrolled out of view), so an orchestrator reading the footer alone
+# would broker a two-question form believing it single. So this matcher follows
+# the pane_is_api_error shape instead: a footer-anchored VETO plus a wider
+# content scan. It deliberately reuses $pane_error_lines rather than adding a
+# knob — a new env var would need a README env-table row and would otherwise
+# trip tests/lint-env-var-drift.sh.
+#
+# TWO SIGNALS ARE REQUIRED, and neither alone is sufficient:
+#   footer `Enter to select` — without it this is not a selection modal at all;
+#   a widget glyph in the wider window — without it this is the ORDINARY
+#   single-question fork that pane_is_fork already handles.
+# That conjunction is also the self-trip guard (#246/#452): every phrase and
+# glyph here appears in this script's own comments AND in tests/gate-watch/, so a
+# golem cat-ing or editing those files would false-fire a gate on a one-signal
+# match. The `esc to interrupt` veto runs first for the same reason — a golem
+# actively WORKING is never at a gate, whatever its scrollback holds.
+MULTI_Q_RE='☐|☒|✔[[:space:]]*Submit|not answered all'
+pane_is_multi_question_form() {
+    local pane="$1" footer window
+    # Guard 1 (footer-anchored): an active run-spinner means the golem is working.
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$pane")"
+    case "$footer" in
+        *"esc to interrupt"*) return 1 ;;
+    esac
+    # Guard 2 (footer-anchored): it must be a selection modal.
+    case "$footer" in
+        *"Enter to select"*) ;;
+        *) return 1 ;;
+    esac
+    # Guard 3 (wider window): the tab bar that makes it MULTI-question. Scanned
+    # over $pane_error_lines because it renders above the footer — the scrolled-
+    # out-of-view case that motivated this matcher.
+    window="$("$TAIL" -n "$pane_error_lines" <<<"$pane")"
+    command printf '%s\n' "$window" | "$GREP" -qE "$MULTI_Q_RE"
+}
+
 # Own-work-pending guard for pane_is_turn_end / pane_liveness_class (issue #517). A
 # golem parked BETWEEN turns waiting on its OWN background `Monitor` tasks — e.g.
 # ship-issue's review-harness dynamic workflow plus a CI/force-push Monitor — has
@@ -647,11 +720,20 @@ pane_api_error_class() {
 # Print the current set of live golem-* sessions sitting at a prompt overlay,
 # one "<golem>\t<message>" line each. No-op (success) when tmux is absent.
 #
-# Dispatch order is load-bearing: plan-gate → permission-gate → escalation fork →
-# turn-end. Each modal matcher is checked before pane_is_turn_end so a real
-# overlay is classified as itself, never downgraded to the last-resort idle read
-# (a modal prompt still renders the `auto mode on` footer underneath it). This is
-# the same precedence discipline the fork branch already relies on.
+# Dispatch order is load-bearing: plan-gate → permission-gate → multi-question
+# form → escalation fork → turn-end. Each modal matcher is checked before
+# pane_is_turn_end so a real overlay is classified as itself, never downgraded to
+# the last-resort idle read (a modal prompt still renders the `auto mode on`
+# footer underneath it). This is the same precedence discipline the fork branch
+# already relies on.
+#
+# The multi-question form (#467) sits immediately BEFORE the fork for that same
+# reason, and the order is the whole point of the branch: a form paints the fork's
+# `Enter to select` footer too, so with the two swapped pane_is_fork would match
+# first and every form would be labelled a plain "escalation" — sending the
+# operator to the single-question brokers that resolve it WRONG (a partial
+# submit). A unit rc check cannot catch that regression; the end-to-end dispatch
+# test in tests/gate-watch/30-helpers-and-modes.sh is what pins it.
 panes_snapshot() {
     command -v tmux >/dev/null 2>&1 || return 0
     local sessions sess pane
@@ -664,6 +746,8 @@ panes_snapshot() {
             command printf '%s\t%s\n' "$sess" "plan gate — ExitPlanMode awaiting approval"
         elif pane_is_gate "$pane"; then
             command printf '%s\t%s\n' "$sess" "permission gate — awaiting decision"
+        elif pane_is_multi_question_form "$pane"; then
+            command printf '%s\t%s\n' "$sess" "$MULTI_Q_MSG"
         elif pane_is_fork "$pane"; then
             command printf '%s\t%s\n' "$sess" "escalation — awaiting decision (carries options)"
         elif pane_is_api_error "$pane"; then

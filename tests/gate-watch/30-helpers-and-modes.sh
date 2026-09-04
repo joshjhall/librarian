@@ -248,6 +248,67 @@ test_pane_fork_plan_precedence() {
         "pane_is_fork also matches it, but panes_snapshot checks plan-gate first"
 }
 
+# pane_is_multi_question_form (#467): a 2+-question AskUserQuestion form paints a
+# tabbed widget (`☐`/`☒` checkboxes + a `✔ Submit` tab) over the SAME
+# `Enter to select` footer a single-question fork paints. Both signals are
+# required, and each half of the conjunction is pinned by a case that carries
+# only the other — a matcher satisfied by either alone would false-fire on a
+# plain fork (mislabelling every ordinary escalation) or on scrollback chrome.
+test_pane_is_multi_question_form() {
+    local form="☐ Commit-back  ☒ Edit strategy  ✔ Submit"$'\n'"Enter to select · ↑/↓ to navigate"
+    assert_equals "0" "$(_pane_rc pane_is_multi_question_form "$form")" \
+        "A tabbed multi-question form (checkbox glyphs + fork footer) matches"
+    assert_equals "0" \
+        "$(_pane_rc pane_is_multi_question_form "⚠ You have not answered all questions"$'\n'"Enter to select")" \
+        "The unanswered-questions warning is also a widget signal"
+
+    # Footer without a widget glyph = the ORDINARY single-question fork, which
+    # pane_is_fork already handles. This is the case that keeps the new matcher
+    # from swallowing every escalation.
+    assert_equals "1" \
+        "$(_pane_rc pane_is_multi_question_form "What scope? "$'\n'"Enter to select · ↑/↓ to navigate")" \
+        "A single-question fork (footer, no widget glyph) is NOT a multi-question form"
+    # Glyph without the selection footer = not a modal at all.
+    assert_equals "1" \
+        "$(_pane_rc pane_is_multi_question_form "☒ done"$'\n'"just some scrolling build output")" \
+        "A checkbox glyph alone (no fork footer) is NOT a multi-question form"
+    assert_equals "1" \
+        "$(_pane_rc pane_is_multi_question_form "just some scrolling build output")" \
+        "Unrelated work output is NOT a multi-question form"
+}
+
+# The motivating live failure (#467): DETECTION failed before keystrokes did. On
+# a real two-question form the first capture-pane showed only ONE question — the
+# `☐/☒` tab bar had scrolled ABOVE the 8-line footer window — so an orchestrator
+# reading the footer alone would broker a two-question form believing it single.
+# This is why the matcher follows the pane_is_api_error shape (footer-anchored
+# veto + wider $pane_error_lines content scan) instead of being footer-anchored
+# like its siblings. The second assertion is the counterfactual: a purely
+# footer-anchored read of the SAME pane sees an ordinary fork, so a fix that
+# narrowed this matcher to the footer would silently restore the bug.
+test_pane_multi_question_form_above_footer() {
+    local filler i scrolled
+    filler=""
+    for i in 1 2 3 4 5 6 7; do filler="${filler}  question body line $i"$'\n'; done
+    scrolled="☐ Commit-back  ☒ Edit strategy  ✔ Submit"$'\n'"${filler}Enter to select · ↑/↓ to navigate"
+    assert_equals "0" "$(_pane_rc pane_is_multi_question_form "$scrolled")" \
+        "A tab bar scrolled ABOVE the footer window is still detected (the #816 capture)"
+    assert_equals "0" "$(_pane_rc pane_is_fork "$scrolled")" \
+        "pane_is_fork sees only the footer and reads it as a single-question fork"
+}
+
+# Self-trip guard (#246/#452 class, applied to #467). Every trigger phrase and
+# glyph in this matcher appears in golem-gate-watch.sh's own comments AND in this
+# very test file, so a golem cat-ing or editing either would false-fire a gate
+# push without the run-spinner veto. The veto is footer-anchored and checked
+# FIRST: a golem actively working is never at a gate, whatever its scrollback
+# holds.
+test_pane_multi_question_form_no_self_trip() {
+    local working="☒ Edit strategy  ✔ Submit"$'\n'"Enter to select · ↑/↓ to navigate"$'\n'"  ⏵⏵ esc to interrupt"
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$working")" \
+        "A WORKING golem (run-spinner up) reading form text is not a gate"
+}
+
 # panes_snapshot dispatch (#257): a fork-only pane emits the escalation label; a
 # plan+fork pane still emits the plan label (plan-gate wins); a gate+fork pane
 # emits the permission-gate label (generic gate wins over fork). Pins the whole
@@ -278,6 +339,45 @@ test_panes_snapshot_dispatch() {
     _run_panes_snapshot_tmux "just some scrolling build output"$'\n'"auto mode on but no glyph"
     assert_not_contains "$PANES_OUT" "golem-9" \
         "A pane matching no overlay emits no line (silent fall-through)"
+}
+
+# panes_snapshot dispatch for the multi-question form (#467). THIS is the test
+# the branch order depends on: a form paints the fork's `Enter to select` footer
+# too, so pane_is_fork matches it as well (pinned in
+# test_pane_multi_question_form_above_footer). Only the DISPATCH ORDER decides
+# which label the operator sees, and a unit rc check cannot observe order — move
+# the form branch after the fork branch and every assertion below still passes at
+# the matcher level while the emitted label silently regresses to a plain
+# "escalation", sending the operator to the single-question brokers that resolve
+# this widget WRONG (a partial submit).
+#
+# The label is asserted in full, not by substring: the whole point is that it
+# names cancel-then-relay and warns off send-keys.
+test_panes_snapshot_multi_question_dispatch() {
+    _run_panes_snapshot_tmux "☐ Commit-back  ☒ Edit strategy  ✔ Submit"$'\n'"Enter to select · ↑/↓ to navigate"
+    assert_equals "0" "$PANES_RC" "panes_snapshot exits 0 for a multi-question form pane"
+    assert_contains "$PANES_OUT" \
+        "golem-9"$'\t'"escalation (multi-question form) — cancel-then-relay, do NOT send-keys" \
+        "A multi-question form emits the form label naming the correct broker"
+    assert_not_contains "$PANES_OUT" "escalation — awaiting decision (carries options)" \
+        "A form is NOT downgraded to the single-question fork label (order: form before fork)"
+
+    # The converse, so the new branch is narrow: an ordinary single-question fork
+    # must STILL get the plain fork label. Without this a matcher that matched
+    # every fork would pass the assertions above and relabel all escalations.
+    _run_panes_snapshot_tmux "What scope? "$'\n'"Enter to select · ↑/↓ to navigate · Esc to cancel"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation — awaiting decision (carries options)" \
+        "A single-question fork still emits the plain fork label (new branch is narrow)"
+    assert_not_contains "$PANES_OUT" "multi-question form" \
+        "A single-question fork is NOT labelled a multi-question form"
+
+    # Precedence above the new branch is unchanged: a plan overlay that also
+    # carries widget chrome is still a plan gate.
+    _run_panes_snapshot_tmux "1. Yes, and use auto mode"$'\n'"☒ Q1  ✔ Submit"$'\n'"Enter to select"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"plan gate — ExitPlanMode awaiting approval" \
+        "A plan overlay carrying widget chrome is still a plan gate (plan wins)"
+    assert_not_contains "$PANES_OUT" "multi-question form" \
+        "A plan gate is NOT downgraded to a multi-question form"
 }
 
 # pane_is_turn_end (#447): a turn-ended/idle-at-prompt golem paints the bare
