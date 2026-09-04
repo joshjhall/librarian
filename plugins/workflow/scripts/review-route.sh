@@ -155,14 +155,42 @@ classify() {
     # for its parent directory's suffix.
     _cr_base="${1##*/}"
 
+    # CI / container automation, matched on the FULL PATH before any
+    # extension rule can see it. These are executable automation, not inert
+    # data, and the extension alone cannot tell them apart from a fixture: a
+    # GitHub Actions workflow and a `data.yaml` test fixture share `.yml`.
+    #
+    # WHY THIS ARM EXISTS (found by this feature's own pre-PR review). Without
+    # it, `.github/workflows/*.yml` fell through to the generic `config` arm
+    # below, so a diff touching only docs plus a workflow file routed `cheap`
+    # and skipped `security` and `correctness` entirely — while still eligible
+    # to return `clean: true` and merge. Widening `permissions:`, editing a
+    # secret-bearing step, or unpinning an action SHA is precisely the
+    # supply-chain shape that most needs those two dimensions, and it is the
+    # same argument the extensionless arm below already makes for Dockerfile.
+    # The harness's own DIMENSION_RELEVANT_TYPES lists `ci`/`docker` under both
+    # security and correctness for exactly this reason; the classifier must not
+    # contradict it.
+    case "$1" in
+        */.github/workflows/* | .github/workflows/* | */.circleci/* | .circleci/*)
+            command printf 'unknown\n'
+            return 0
+            ;;
+    esac
+
     case "$_cr_base" in
-        # Extensionless build/infra files. Explicitly `unknown` rather than
-        # `config`: a Dockerfile or Makefile is executable build logic that the
-        # security and correctness dimensions genuinely review (the harness's
-        # own DIMENSION_RELEVANT_TYPES lists `docker`/`ci` under both), so
-        # routing around them would be exactly the silent narrowing this script
-        # must not perform.
-        Dockerfile | Dockerfile.* | Makefile | Justfile | justfile)
+        # Extensionless build/infra files, plus the named CI / compose files
+        # whose extension would otherwise read as inert config. Explicitly
+        # `unknown` rather than `config`: a Dockerfile, a compose file or a CI
+        # pipeline is executable build logic that the security and correctness
+        # dimensions genuinely review (the harness's own
+        # DIMENSION_RELEVANT_TYPES lists `docker`/`ci` under both), so routing
+        # around them would be exactly the silent narrowing this script must
+        # not perform.
+        Dockerfile | Dockerfile.* | Makefile | Justfile | justfile | \
+            .gitlab-ci.yml | .gitlab-ci.yaml | Jenkinsfile | Jenkinsfile.* | \
+            docker-compose*.yml | docker-compose*.yaml | compose.yml | compose.yaml | \
+            .dockerignore)
             command printf 'unknown\n'
             return 0
             ;;

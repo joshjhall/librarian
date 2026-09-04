@@ -160,6 +160,49 @@ test_extensionless_infra_files_force_full() {
     done
 }
 
+# MUTATION TARGET: the CI/container carve-out. Found by this feature's OWN
+# pre-PR review, flagged independently by the security and correctness
+# dimensions: `.github/workflows/*.yml` fell through to the generic `config`
+# arm, so a docs-plus-workflow diff routed `cheap` and skipped security and
+# correctness entirely while staying eligible to merge as `clean`.
+#
+# Every fixture pairs the infra file with a DOC, so the list is doc+config
+# by extension alone — i.e. a classifier lacking the carve-out routes it
+# `cheap`, which is exactly the divergent case. Asserting on the infra file
+# alone would be weaker (a bare `.yml` is still doc/config-classified).
+test_ci_and_container_files_force_full() {
+    local list out path
+    for path in \
+        '.github/workflows/ci.yml' \
+        '.github/workflows/release.yaml' \
+        'nested/.github/workflows/deploy.yml' \
+        '.gitlab-ci.yml' \
+        '.circleci/config.yml' \
+        'Jenkinsfile' \
+        'docker-compose.yml' \
+        'docker-compose.prod.yaml' \
+        'compose.yaml' \
+        '.dockerignore'; do
+        list="$(mklist 'README.md' "$path")"
+        out="$(route_of "$list")"
+        assert_equals "full" "$(val route "$out")" \
+            "$path is executable automation, not inert config — it forces the full fan-out"
+    done
+}
+
+# The other half of the same property: the carve-out must not swallow ordinary
+# config. Without this, classifying EVERY yaml/json as infra would satisfy the
+# test above while making the cheap path unreachable in practice.
+test_ordinary_config_still_routes_cheap() {
+    local list out
+    list="$(mklist 'README.md' 'config.yaml' 'data.json' 'settings.toml' 'setup.cfg')"
+    out="$(route_of "$list")"
+
+    assert_equals "cheap" "$(val route "$out")" \
+        "ordinary config (config.yaml, data.json, settings.toml) still routes cheap — the CI carve-out must not swallow all config"
+    assert_equals "4" "$(val config_files "$out")" "the four config files are counted as config, not unknown"
+}
+
 # A path whose DIRECTORY looks documentary but whose file is source. Pins the
 # basename anchoring: a classifier matching on the whole path could route cheap.
 test_source_file_under_docs_directory_forces_full() {
@@ -356,6 +399,8 @@ run_test test_one_source_file_among_many_docs_forces_full
 run_test test_source_file_last_in_list_forces_full
 run_test test_unknown_extension_forces_full
 run_test test_extensionless_infra_files_force_full
+run_test test_ci_and_container_files_force_full
+run_test test_ordinary_config_still_routes_cheap
 run_test test_source_file_under_docs_directory_forces_full
 run_test test_doc_under_source_looking_directory_still_routes_cheap
 run_test test_empty_list_forces_full

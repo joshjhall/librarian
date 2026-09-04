@@ -223,8 +223,10 @@ cycles that produced a review; `attempt` counts every trip including crashed one
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-git diff --name-only origin/main...HEAD   # -> files (FULL PR scope)
+git diff --name-only origin/main...HEAD > /tmp/review-files.txt   # -> files
 git diff origin/main...HEAD               # -> diff  (FULL PR scope)
+# Route this cycle (#550); pass `route` as `reviewRoute` in step (c):
+<skill-base-dir>/../../scripts/review-route.sh check --files /tmp/review-files.txt
 ```
 
 **Re-review narrowing (#492) — but only when the previous cycle said to (#656).**
@@ -449,9 +451,6 @@ form is used on cycle 1 **and** on any cycle the previous `next_scope` set to
 `full`. Keying it off `cycle > 1` instead would hand a fix-delta line count to a
 cycle that reviewed the whole diff, making a genuinely full cycle look narrow to
 `C3` — the same misfire as the one below, from the other direction.
-
-**Routing (#550).** Run `scripts/review-route.sh check --files {file-list}` and
-pass its `route` as `reviewRoute` below. Contract: `review-routing.md`.
 
 **The timing is the whole point** — the same expression means different things at
 different steps. Do **not** recompute it at step (f) time: by then step (c) has
