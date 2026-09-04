@@ -271,6 +271,133 @@ lang_of() {
         .bashrc | */.bashrc | .zshrc | */.zshrc) command printf 'hash' ;;
         .profile | */.profile | .bash_profile | */.bash_profile) command printf 'hash' ;;
         .htaccess | */.htaccess | .mailmap | */.mailmap) command printf 'hash' ;;
+        # SHEBANG — the fifth shape (#858), and the LAST resort. Mirrors
+        # patterns.py's SHEBANG_LANG/_shebang_lang arm for arm.
+        #
+        # Every arm above keys on the NAME. An extensionless script whose
+        # basename is not tabled (`run`, `deploy`, `entrypoint`, `bootstrap`)
+        # reaches none of them, and the set of such names is UNBOUNDED — so no
+        # longer table closes it and the file's own first line is the evidence.
+        #
+        # Guarded so an ordinary `app.py` never opens the file: this arm is
+        # reached only when the BASENAME carried no extension. Cost is one
+        # line-read, and lang_of runs once per file.
+        #
+        # The guard strips the directory first (`${1##*/}`) rather than testing
+        # the whole path against `*.*`. A whole-path test would exclude every
+        # file under a dotted directory -- `.github/deploy`,
+        # `node_modules/.bin/tool` -- which is precisely the extensionless-script
+        # case this shape exists to reach. patterns.py gates on its basename for
+        # the same reason; two whole-path tests would AGREE, so parity would have
+        # hidden the miss rather than caught it (#684).
+        *)
+            case "${1##*/}" in
+                *.*) command printf '' ;;
+                *) shebang_lang "$1" ;;
+            esac
+            ;;
+    esac
+}
+
+# shebang_lang <file> — language key from the file's `#!` line, or empty.
+#
+# Reads with the `read` BUILTIN rather than `head -n 1`: the rest of lang_of is
+# fork-free (#754) and this is the hot path's last resort. `read` returns
+# non-zero on an unterminated final line, which a one-line file legitimately has,
+# so its status is deliberately ignored -- the VALUE is what matters.
+#
+# BSD-clean: POSIX classes only, no \s/\w, no grep -P (#679). bash-3.2 clean:
+# `case` rather than an associative array.
+shebang_lang() {
+    local first='' interp='' tok=''
+    # BOUNDED read, matching patterns.py's `readline(_SHEBANG_MAX)` cap.
+    #
+    # `read` alone is NOT a bound: the builtin stops at a newline or EOF, so a
+    # file with NO newline is slurped whole into the variable. Measured: a 20MB
+    # newline-free file read 20,000,020 bytes into `first`. An extensionless
+    # path is exactly where a committed binary blob turns up, and this is the
+    # PRIMARY implementation on base macOS (bash 3.2, no usable python3), so the
+    # bound has to be real rather than incidental. `head -c` caps the bytes and
+    # `read` then takes the first line of that slice.
+    #
+    # 512 must match patterns.py's _SHEBANG_MAX; see the note there before
+    # changing either (this cap counts BYTES, that one CHARACTERS).
+    first=$(command head -c 512 "$1" 2>/dev/null | {
+        IFS= read -r l || true
+        command printf '%s' "$l"
+    })
+    case "$first" in
+        '#!'*) ;;
+        *)
+            command printf ''
+            return
+            ;;
+    esac
+    # Strip the leading `#!` and tokenize on whitespace.
+    first=${first#'#!'}
+    # GLOBBING OFF around the split. `set -- $first` needs word-splitting, but
+    # unquoted expansion also PATHNAME-expands, so a shebang containing `*` or
+    # `?` would match files in the CURRENT DIRECTORY: `#!/usr/bin/env *sh` run
+    # from a directory containing `zsh` resolves to `zsh` here while patterns.py
+    # resolves nothing. Measured -- that spelling made the two runtimes disagree
+    # by CWD, a divergence the parity gate would only catch if its fixture tree
+    # happened to hold a matching name. `set -f` is restored immediately after
+    # the split, since the rest of lang_of relies on `case` globbing.
+    set -f
+    # shellcheck disable=SC2086 # deliberate word-splitting: tokenize the line
+    set -- $first
+    set +f
+    [ "$#" -gt 0 ] || {
+        command printf ''
+        return
+    }
+    interp=${1##*/}
+    # `env` (and `env -S`) delegates -- the real interpreter is the next
+    # non-option token.
+    if [ "$interp" = "env" ]; then
+        shift
+        interp=''
+        for tok in "$@"; do
+            case "$tok" in
+                -*) continue ;;
+            esac
+            interp=${tok##*/}
+            break
+        done
+        [ -n "$interp" ] || {
+            command printf ''
+            return
+        }
+    fi
+    # Strip a trailing CR so a CRLF-terminated shebang resolves. `read` splits on
+    # IFS (space/tab/newline) and a lone `\r` is none of those, so a
+    # `#!/usr/bin/env bash\r\n` line yields the token `bash\r`, matching no arm
+    # below -- while patterns.py's text-mode readline() strips it and resolves
+    # `sh`. Measured: python fired and bash stayed SILENT on the same file, a
+    # security false negative on the bash runtime. Applied after both the
+    # direct-path and env-delegated branches, since either can end the line.
+    interp=${interp%"$(command printf '\r')"}
+    # Strip a trailing version suffix: python3, python3.11, perl5, ruby2.7.
+    while :; do
+        case "$interp" in
+            *[0-9] | *.) interp=${interp%?} ;;
+            *) break ;;
+        esac
+    done
+    # Values are EXISTING keys from the tables above -- this shape adds no new
+    # language. zsh/fish/perl map to `hash` because that is where their
+    # EXTENSIONS map, so a file resolves alike by name and by content.
+    #
+    # The sh-vs-hash distinction is currently UNOBSERVABLE through the TSV --
+    # comment_re spells sh/hash/py/rb identically and injection-risk dispatches
+    # on the extension -- so a mis-map here changes no row today. See the longer
+    # note beside patterns.py's SHEBANG_LANG for why it is kept correct anyway.
+    case "$interp" in
+        sh | bash | dash | ksh) command printf 'sh' ;;
+        zsh | fish | perl) command printf 'hash' ;;
+        python) command printf 'py' ;;
+        ruby) command printf 'rb' ;;
+        node) command printf 'js' ;;
         *) command printf '' ;;
     esac
 }

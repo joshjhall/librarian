@@ -560,12 +560,108 @@ password = "Str0ng#Pass#Value"
 // md5(commented) is skipped — // IS a Rust comment
 EOF
 
+# Extensionless shebang scripts (#858). check-security's language resolver gained
+# a FIFTH path shape — an extensionless, untabled name resolved by reading the
+# file's `#!` line. This corpus carried no extensionless file at all, so that arm
+# would be asserted VACUOUSLY: the parity diff passes trivially when neither impl
+# ever reaches it. Same trap the .mjs/.cjs (#568), .sh (#598), Model.swift (#728)
+# and app.rs (#838) comments above record, reached by a new route.
+#
+# Both runtimes must agree on which interpreters resolve AND on which do not, so
+# the set covers a resolving script, the `env -S` + version-suffix spellings, and
+# the two NON-resolving shapes (no shebang, unknown interpreter) whose correct
+# answer is silence. A divergence in the strip-or-unwrap logic — where the two
+# impls use genuinely different mechanisms (python rsplit/regex vs bash parameter
+# expansion) — shows up here as a TSV diff.
+command cat >"$FIXDIR/deploy" <<'EOF'
+#!/usr/bin/env bash
+password = "realsecret123"
+digest = md5(payload)
+# password = "commented_out_value"
+EOF
+
+command cat >"$FIXDIR/provision" <<'EOF'
+#!/usr/bin/env -S perl5 -w
+password = "realsecret123"
+EOF
+
+command cat >"$FIXDIR/migrate" <<'EOF'
+#!/usr/bin/env python3.11
+password = "realsecret123"
+query = f"SELECT * FROM users WHERE id={user_id}"
+EOF
+
+# NON-resolving, deliberately: no shebang at all, and an unrecognized
+# interpreter. Both stay the `—` state in both impls (the lexical-INDEPENDENT
+# literal patterns still run, which the AKIA line pins).
+command cat >"$FIXDIR/legacyrun" <<'EOF'
+password = "realsecret123"
+digest = md5(payload)
+EOF
+command printf 'aws = "%s"\n' "$AWS_TOK" >>"$FIXDIR/legacyrun"
+
+command cat >"$FIXDIR/oddball" <<'EOF'
+#!/usr/bin/env cobol
+password = "realsecret123"
+EOF
+
+# CRLF-terminated shebang. The two runtimes reach the interpreter token by
+# genuinely different mechanisms (python text-mode readline + str.split, bash
+# `read` + IFS word-splitting), and a lone CR is whitespace to neither's
+# splitter — so bash saw `bash<CR>`, matched no arm, and stayed SILENT while
+# python resolved and fired. Found by the pre-PR review; fixed by the CR strip
+# in shebang_lang, and pinned for INTENT in validate-source-detectors.sh.
+#
+# THE SHEBANG LINE IS CRLF, THE CONTENT LINE IS NOT, and that asymmetry is
+# deliberate. A CRLF *content* line exposes a SEPARATE, PRE-EXISTING divergence
+# that has nothing to do with this issue: the evidence field is captured from
+# the matched line, and python's text-mode read strips the trailing CR while
+# bash's `grep` keeps it, so the TSV differs by one byte. Verified against
+# origin/main with a plain `.py` file containing a CRLF credential line — it
+# reproduces there identically, with no shebang involved. It is latent only
+# because no fixture in this corpus had ever carried a CR — the #836 shape,
+# where a whole-corpus diff is bounded by the input shapes the corpus holds.
+# Filed as #902 rather than fixed here (it spans every detector's evidence field
+# in every scanner); this fixture keeps the shebang half testable meanwhile, and
+# #902's first AC is the CRLF CONTENT fixture this line had to give up.
+command printf '#!/usr/bin/env bash\r\npassword = "realsecret123"\n' >"$FIXDIR/crlfbang"
+
+# ...and the same line ending on the DIRECT-PATH branch, which reaches the token
+# by a different route (argv[0] rather than the second token).
+command printf '#!/bin/sh\r\npassword = "realsecret123"\n' >"$FIXDIR/crlfdirect" # lint-allow-path: shebang fixture data written to a scratch file, never executed
+
+# An interpreter past the 512-byte read cap. Both runtimes cap the shebang read;
+# uncapped, bash would resolve `bash` here and fire while python stayed silent.
+# Pins the cap as a PARITY property rather than only as a local bash detail.
+#
+# ASCII on purpose. The two caps count differently -- python's
+# `readline(_SHEBANG_MAX)` is a CHARACTER limit under text-mode decoding, bash's
+# `head -c 512` a BYTE limit -- so a multi-byte character straddling the
+# boundary is the theoretical divergence. Probed with a UTF-8 `é` placed across
+# byte 512: both runtimes stay silent, because either way the interpreter lands
+# past the cap and the truncated token matches no arm. The distinction is
+# unobservable through the TSV, so it is recorded here rather than pinned with a
+# fixture that cannot fail. Shebang lines are ASCII by convention anyway.
+{
+    command printf '#!/usr/bin/env -S'
+    _capi=0
+    while [ "$_capi" -lt 180 ]; do
+        command printf ' -i'
+        _capi=$((_capi + 1))
+    done
+    command printf ' bash\npassword = "realsecret123"\n'
+} >"$FIXDIR/pastcap"
+unset _capi
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
     "$FIXDIR/model.rb" "$FIXDIR/secrets.env.example" \
     "$FIXDIR/tool.mjs" "$FIXDIR/tool.cjs" "$FIXDIR/tool.sh" \
     "$FIXDIR/app.rs" \
+    "$FIXDIR/deploy" "$FIXDIR/provision" "$FIXDIR/migrate" \
+    "$FIXDIR/legacyrun" "$FIXDIR/oddball" \
+    "$FIXDIR/crlfbang" "$FIXDIR/crlfdirect" "$FIXDIR/pastcap" \
     "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
     "$FIXDIR/Upper.PY" "$FIXDIR/Widget.TS" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \

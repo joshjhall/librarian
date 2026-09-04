@@ -56,6 +56,7 @@ for the same reason — one cell cannot carry two letters):
 | JSON (none) | json               | L              | L                     | —              | L        | L               |
 | Extensionless (`#`) | Dockerfile, Containerfile, Makefile, Jenkinsfile, Vagrantfile, Procfile, Rakefile, Gemfile, Brewfile, Justfile, Caddyfile, CMakeLists.txt | L | L | —      | L        | L               |
 | Dotfiles (`#`) | .env, .npmrc, .netrc, .yarnrc, .pypirc, .dockerignore, .gitconfig, .gitignore, .editorconfig, .bashrc, .zshrc, .profile, .bash_profile, .htaccess, .mailmap | L | L | —  | L        | L               |
+| Shebang (`#!`) | — (extensionless: `run`, `deploy`, `entrypoint`) | L | L | —          | L        | L               |
 | every other | —                  | L              | —                     | —              | L        | —               |
 
 <!-- contract: end-check-security-language-support -->
@@ -114,10 +115,11 @@ handles each in order — this is the part worth understanding before extending 
 | exact basename | `Dockerfile` | `""` — no extension at all |
 | dotfile | `.npmrc` | `npmrc` — a **wrong** key |
 | suffixed variant | `Dockerfile.prod`, `.env.local` | `prod` / `local` — also wrong |
+| shebang | `deploy`, `run`, `entrypoint` | `""` — and **no name to table** |
 
-The last two are the dangerous ones, because they produce a key that *looks*
-valid and resolves to nothing, which is indistinguishable from "unmodeled" unless
-you go looking. Each was found by a separate review cycle after the previous
+Of the first four, the dotfile and suffixed-variant shapes are the dangerous
+ones, because they produce a key that *looks* valid and resolves to nothing,
+which is indistinguishable from "unmodeled" unless you go looking. Each was found by a separate review cycle after the previous
 sweep had reported the table clean — an extension-keyed probe cannot reach any of
 them by construction.
 
@@ -128,7 +130,45 @@ excluding `Dockerfile.*` — that was inconsistent and measurably wrong (`ENV
 PASSWORD="…"` in a `Dockerfile.prod` fired on `main` and went silent). A name that
 genuinely re-keys on its suffix belongs in the exact-basename table instead.
 
-The measured baseline, over all four shapes — 111 probe inputs: this
+**The fifth shape differs in KIND from the first four** (#858), which is why it
+is a different mechanism rather than a longer table. Each of the first four is
+closable by *enumeration*: a finite list of extensions, basenames, dotfiles,
+prefixes. The set of extensionless script names is **unbounded** — a repo's bare
+`run`, `deploy`, `entrypoint`, `bootstrap` — so no table reaches it. The file's
+own `#!` line is the evidence instead, which is the one place `lang_of` reads
+content rather than being a pure function of the path.
+
+The read is the **last** resort and is gated on a **basename** carrying no
+extension, so an ordinary `app.py` returns at the extension table and never opens
+the file. `lang_of` runs once per file, so the cost is bounded at **one extra
+one-line read per extensionless, untabled file**, and the read itself is capped
+(512 bytes) so a newline-free binary at an extensionless path cannot pull its
+whole content into the resolver. The gate is keyed to the
+basename rather than the whole path deliberately: `ext` is derived from the full
+path, so `.github/deploy` yields a non-empty `ext` of `github/deploy`, and a
+whole-path test would skip the read for exactly the files this shape exists to
+reach. Both runtimes gate on the basename; because two whole-path tests would
+*agree*, the parity gate could not have caught that miss (#684).
+
+Recognized interpreters map only to **existing** language keys, so this shape
+adds no language and cannot contradict the normative table: `sh`/`bash`/`dash`/
+`ksh` → `sh`; `zsh`/`fish`/`perl` → `hash`; `python` → `py`; `ruby` → `rb`;
+`node` → `js`. Both spellings resolve (`#!/bin/bash` and `#!/usr/bin/env bash`,
+including `env -S`), and a version suffix is stripped (`python3.11`, `perl5`).
+`zsh`/`fish`/`perl` map to `hash` rather than `sh` because that is where their
+*extensions* already map — a file must resolve alike by name and by content.
+
+**An extensionless file with no recognizable shebang stays `—`, deliberately.**
+That is the `/tmp/run` case from #858's reproduction, and it is a decision rather
+than a remaining gap: with neither a tabled name nor a shebang there is no
+evidence of a language, and defaulting to `sh` would apply a `#` comment model to
+arbitrary binaries and data files — re-creating precisely the language-blind
+false positives ADR 0002 exists to remove. An unrecognized interpreter
+(`#!/usr/bin/env cobol`) resolves the same way, for the same reason. The
+lexical-*independent* detectors still run on these files, so a real leaked key
+fires regardless.
+
+The measured baseline, over the first four shapes — 111 probe inputs: this
 scanner covers **exactly what `main` covered**, with one intended class of
 exception — plain-prose files (`.md`, `.txt`, `LICENSE`, `README`, `CHANGELOG`)
 no longer get the *lexical-dependent* detectors, because prose is not code and
