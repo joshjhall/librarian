@@ -66,11 +66,16 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 77
 fi
 
-ANCHOR_REPORT="$(
+# scan_root ROOT — emit the anchoring report for the plugins/ tree under ROOT.
+# Parameterized on ROOT (rather than hardcoding REPO_ROOT) so the self-test below
+# can run THIS EXACT parser against synthetic fixtures. One copy of the program,
+# two callers: a second transcription would be free to drift from the one that
+# actually gates the repo.
+scan_root() {
     # Delimiter is PYEOF, not PY: inside `$( )` bash ends a heredoc at any line
     # STARTING WITH the delimiter, so a `PY_DEF = ...` line below would close a
     # `PY` heredoc mid-program (verified — it is a parse error, not silent).
-    command python3 - "$REPO_ROOT" <<'PYEOF'
+    command python3 - "$1" <<'PYEOF'
 import os
 import re
 import sys
@@ -97,6 +102,37 @@ def body_from(lines, start, closer):
         if closer(lines[i]):
             break
         out.append((i + 1, lines[i]))
+    return out
+
+
+def join_continuations(body):
+    """Fold `\\`-continued physical lines into one logical line.
+
+    A `case` arm may spread its pattern list over several lines, and EVERY real
+    is_test_file copy already writes its directory arms that way. A line-at-a-
+    time scanner sees only the fragment carrying the closing `)`, so a
+    path-crossing pattern parked on an earlier fragment is silently dropped and
+    the copy reads COVERED — a false negative in precisely the gate's own
+    subject matter. Join first, then match (the repo's "line scanner is blind to
+    wrapped calls" lesson).
+
+    The reported line number stays that of the FIRST physical line, so a defect
+    points at where the arm begins."""
+    out = []
+    buf = None
+    first = None
+    for lineno, line in body:
+        stripped = line.rstrip()
+        if first is None:
+            first = lineno
+        piece = stripped[:-1] if stripped.endswith("\\") else stripped
+        buf = piece if buf is None else buf + " " + piece.lstrip()
+        if not stripped.endswith("\\"):
+            out.append((first, buf))
+            buf = None
+            first = None
+    if buf is not None:
+        out.append((first, buf))
     return out
 
 
@@ -131,7 +167,7 @@ def check_bash(path, lines, start):
     """Name arms must sit under a BASENAME case subject; the raw-path case may
     carry directory arms only. The #568/#836 defect is precisely a name arm
     (`*/test_*.*`) living in the raw-path case, where its `*` crosses `/`."""
-    body = bash_body(lines, start)
+    body = join_continuations(bash_body(lines, start))
     subject = None
     saw_name_arm = False
     bad = []
@@ -175,7 +211,7 @@ def check_awk(path, lines, start):
     """Name regexes must test the variable produced by `sub(/^.*\\//, "", base)`,
     never the raw parameter. A `~ /.../` against the parameter is the awk
     spelling of the same path-crossing defect."""
-    body = awk_body(lines, start)
+    body = join_continuations(awk_body(lines, start))
     param = re.search(r"function\s+is_test_file\s*\(\s*([A-Za-z_][A-Za-z_0-9]*)",
                       lines[start]).group(1)
     basevar = None
@@ -263,7 +299,9 @@ for rel, lang, lineno, verdict, detail in sorted(sites):
 print("COUNT\t%d" % len(sites))
 print("LANGS\t%s" % " ".join(sorted(set(s[1] for s in sites))))
 PYEOF
-)"
+}
+
+ANCHOR_REPORT="$(scan_root "$REPO_ROOT")"
 
 rows() { command printf '%s\n' "$ANCHOR_REPORT" | command grep "^$1	" || true; }
 field() { command printf '%s\n' "$ANCHOR_REPORT" | command grep "^$1	" | command cut -f2- || true; }
@@ -329,9 +367,62 @@ test_every_name_arm_is_basename_anchored() {
     fi
 }
 
+# --- Parser self-test (#866 review, HIGH) -----------------------------------
+# The three guards above prove the parser SEES the real copies. They cannot prove
+# it still has TEETH on a shape the repo does not currently contain — and it did
+# not: the first version of this gate matched a `case` arm only on the physical
+# line carrying the closing `)`, so a path-crossing pattern parked on a
+# `\`-continued line above it was dropped from the arm and the copy read COVERED.
+# Every real is_test_file writes its directory arms exactly that way, so a future
+# name-arm edit in the house style would have walked straight through this gate.
+#
+# That is the failure this file exists to prevent, reproduced inside the file
+# itself. So the shape is pinned here as a fixture rather than left to the next
+# reviewer: the scanner is run over a synthetic plugins/ tree whose only copy is
+# defective, and is required to SAY SO. It runs the same scan_root as the real
+# scan — a transcribed second copy could drift from the one that gates the repo.
+test_parser_catches_a_continuation_line_defect() {
+    local sandbox
+    sandbox="$(command mktemp -d 2>/dev/null)" || {
+        skip_test "mktemp unavailable (parser self-test not run)"
+        return 0
+    }
+    command mkdir -p "$sandbox/plugins/probe"
+    # The DIVERGENT input: `*/test_*.*` is a name arm under a basename subject,
+    # and it sits on a continuation line. A line-at-a-time parser sees only
+    # `test_*.*` on the closing line and reports COVERED; a joining parser sees
+    # both and reports DEFECT. Old and new disagree here — that is the point.
+    command cat >"$sandbox/plugins/probe/patterns.sh" <<'FIXTURE'
+is_test_file() {
+    case "$1" in
+        tests/* | */tests/*) return 0 ;;
+    esac
+    case "${1##*/}" in
+        */test_*.* | \
+            test_*.*) return 0 ;;
+    esac
+    return 1
+}
+FIXTURE
+    local report
+    report="$(scan_root "$sandbox" 2>/dev/null || true)"
+    command rm -rf "$sandbox"
+    case "$report" in
+        *DEFECT*)
+            :
+            ;;
+        *)
+            _fail "the parser did not flag a path-crossing arm on a continuation line" \
+                "A \`case\` arm may spread over several lines, and every real copy already writes its directory arms that way. Matching only the line that carries the closing \`)\` drops the earlier patterns, so the defect this gate exists to catch reads as COVERED. Join continuations before matching." \
+                "report: ${report:-(empty)}"
+            ;;
+    esac
+}
+
 run_test test_definitions_are_discovered "Every is_test_file definition is discovered from the filesystem"
 run_test test_all_three_languages_are_covered "All three languages (bash, awk, python) are represented"
 run_test test_no_definition_is_unclassifiable "No definition's name arms are unclassifiable (investigate, never assume)"
+run_test test_parser_catches_a_continuation_line_defect "The parser has teeth on a multi-line (continuation) case arm"
 run_test test_every_name_arm_is_basename_anchored "Every is_test_file name arm is basename-anchored"
 
 generate_report
