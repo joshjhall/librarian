@@ -328,6 +328,18 @@ _SHEBANG_VERSION_RE = re.compile(r"[0-9.]+$")
 # Cap on the shebang read. Linux itself truncates `#!` lines at 128 bytes
 # (BINPRM_BUF_SIZE); this is generous next to that and still bounds the read on
 # a newline-free binary.
+#
+# CHANGING THIS VALUE NEEDS A RE-PROBE, and the bash half must move with it
+# (`head -c 512` in patterns.sh's shebang_lang). The two caps count differently
+# -- this one is a CHARACTER limit under text-mode decoding, bash's is a BYTE
+# limit -- so a multi-byte character straddling the boundary is where they could
+# diverge. Measured at 512 with a UTF-8 `é` across byte 512: both runtimes stay
+# silent, because the interpreter lands past the cap either way, so the
+# difference is unobservable through the TSV and is deliberately not fixture-
+# pinned (a test for it could not fail). That conclusion is tied to THIS value;
+# re-probe rather than assume it survives a change. The boundary fixture that IS
+# pinned lives in tests/validate-python-ports.sh and
+# tests/validate-source-detectors.sh (`pastcap`).
 _SHEBANG_MAX = 512
 
 
@@ -346,11 +358,16 @@ def _shebang_lang(path: str) -> str:
     # BOUNDED read. `readline()` on a file with no newline reads the WHOLE file,
     # and an extensionless path is exactly where a binary blob turns up (a
     # committed artifact, a compiled hook). A shebang line is short by
-    # definition, so cap the read rather than trusting the input's shape; the
-    # bash half's `read` builtin stops at the first newline for the same reason.
-    # (In practice scan_file reads the file anyway, so this is not the dominant
-    # cost -- measured 0.2s on a 20MB newline-free blob in both runtimes -- but
-    # a resolver should not be the thing that pulls a large file into memory.)
+    # definition, so cap the read rather than trusting the input's shape.
+    #
+    # The bash half caps the SAME way, with `head -c 512` ahead of its `read`.
+    # An earlier draft of this comment claimed bash needed no cap because its
+    # `read` builtin "stops at the first newline" -- that is true only when a
+    # newline exists: measured, `IFS= read -r` on a 20MB newline-free file read
+    # all 20,000,020 bytes into the variable. The comment asserted a safety
+    # property the code did not have, which is the more dangerous half of the
+    # bug (it tells the next reader not to look). Both runtimes are now capped
+    # for real, and the caps must move together.
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             first = fh.readline(_SHEBANG_MAX)
@@ -384,8 +401,9 @@ def lang_of(path: str, ext: str) -> str:
     return is the ADR § 1 `—` state and is the gate every lexical-dependent
     detector consults before running.
 
-    Three shapes, in order, because a real path can defeat extension keying in
-    three different ways:
+    FOUR dispatch steps, in order, covering the five path shapes contract.md
+    tabulates -- step 3 handles two of them (dotfile and suffixed variant),
+    since both are a leading-component prefix match:
 
       1. EXTENSION      `app.py`          -> the ordinary case
       2. EXACT BASENAME `Dockerfile`      -> no extension at all, so ext is ""

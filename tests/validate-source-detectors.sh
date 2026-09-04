@@ -395,16 +395,14 @@ SHEBANGS
 
     # The DIRECT-PATH spelling (`#!/bin/sh`) is a different resolver branch from
     # the `env` spelling above — there the interpreter is argv[0] itself rather
-    # than the second token. The path literal is assembled at runtime so this
-    # fixture does not read as a hardcoded tool invocation to the #443 scanner
-    # (it is data written into a scratch file, never executed by this suite).
-    _direct="/bin""/sh"
+    # than the second token. The `lint-allow-path` marker is the #443 gate's own
+    # documented exemption: this path is fixture DATA written into a scratch
+    # file, never a tool this suite invokes.
     d="$(fresh_dir)"
-    command printf '#!%s\npassword = "realsecret123"\n' "$_direct" >"$d/directsh"
+    command printf '#!/bin/sh\npassword = "realsecret123"\n' >"$d/directsh" # lint-allow-path: shebang fixture data written to a scratch file, never executed
     list="$(make_list "$d/l" "$d/directsh")"
     assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
         "security: a direct-path shebang (interpreter as argv0) resolves"
-    unset _direct
 
     # A VERSION SUFFIX is stripped, and `env -S` is unwrapped. Both are ordinary
     # spellings in the wild, and each is a distinct branch of the resolver.
@@ -466,6 +464,107 @@ SHEBANGS
         "security: a glob-shaped interpreter does not pathname-expand"
     cd "$_prevpwd" || return 1
     unset _prevpwd
+
+    # A CRLF-TERMINATED shebang resolves. `read` splits on IFS (space/tab/
+    # newline) and a lone CR is none of those, so the token was `bash<CR>` and
+    # matched no arm — while patterns.py's text-mode readline() strips it and
+    # resolved fine. Measured: python FIRED and bash stayed SILENT on this exact
+    # file, a security false negative on the runtime that is PRIMARY on base
+    # macOS. Found by the pre-PR review, not by the original fixture set.
+    # Both branches are covered: env-delegated and direct-path.
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env bash\r\npassword = "realsecret123"\r\n' >"$d/crlfscript"
+    list="$(make_list "$d/l" "$d/crlfscript")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a CRLF-terminated env shebang resolves"
+
+    d="$(fresh_dir)"
+    command printf '#!/bin/sh\r\npassword = "realsecret123"\r\n' >"$d/crlfdirect" # lint-allow-path: shebang fixture data written to a scratch file, never executed
+    list="$(make_list "$d/l" "$d/crlfdirect")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a CRLF-terminated direct-path shebang resolves"
+
+    # CRLF *combined with* a version suffix, which pins the ORDER of the two
+    # strips. The CR strip runs BEFORE the version-suffix loop, so `python3<CR>`
+    # must lose the CR first and the `3` second; reverse them and the CR blocks
+    # the digit strip, leaving `python3<CR>` unmatched. Neither the un-versioned
+    # CRLF fixtures above nor the LF-versioned one below can catch that reorder —
+    # only the combination can.
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env python3\r\npassword = "realsecret123"\n' >"$d/verscrlf"
+    list="$(make_list "$d/l" "$d/verscrlf")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a CRLF shebang with a version suffix resolves (strip order)"
+
+    # ...and a bare `#!` with ONLY a CR must still resolve to nothing rather than
+    # to a CR-named interpreter.
+    d="$(fresh_dir)"
+    command printf '#!\r\npassword = "realsecret123"\n' >"$d/barecrlf"
+    list="$(make_list "$d/l" "$d/barecrlf")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a bare #! with only a CR stays unresolved"
+
+    # THE OTHER lexical-dependent detector. The issue names TWO detectors the
+    # unresolved state silently loses — credential-assignment AND insecure-crypto
+    # — and every fixture above asserts only the first, so the second was
+    # restored but never pinned. Both directions, since the comment model is what
+    # makes this detector gated at all.
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env bash\ndigest = md5(payload)\n' >"$d/cryptoscript"
+    list="$(make_list "$d/l" "$d/cryptoscript")"
+    assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
+        "security: insecure-crypto is restored in a shebang-resolved script"
+
+    d="$(fresh_dir)"
+    command printf '#!/usr/bin/env bash\n# digest = md5(payload)\n' >"$d/cryptocomment"
+    list="$(make_list "$d/l" "$d/cryptocomment")"
+    assert_silent "$SK_SEC" "$list" insecure-crypto \
+        "security: commented crypto in a shebang-resolved script stays silent"
+
+    # THE 512-BYTE READ CAP, pinned at the boundary where it is OBSERVABLE.
+    #
+    # Both runtimes cap the shebang read (python `readline(_SHEBANG_MAX)`, bash
+    # `head -c 512`) so a newline-free binary at an extensionless path is not
+    # slurped whole — measured, an uncapped `read` pulled 20,000,020 bytes into
+    # a shell variable.
+    #
+    # A large-blob fixture CANNOT pin that: an uncapped read yields the same
+    # findings, just slower, so the assertion passes either way. Verified — the
+    # first draft of this case was exactly that tautology and survived reverting
+    # the cap. The observable input is instead a shebang whose RECOGNIZED
+    # interpreter sits just PAST the cap: capped, both runtimes truncate it away
+    # and stay silent; uncapped, bash resolves `bash` and fires while python
+    # (still capped) does not — a parity break. That is what this pins.
+    d="$(fresh_dir)"
+    {
+        command printf '#!/usr/bin/env -S'
+        _i=0
+        while [ "$_i" -lt 180 ]; do
+            command printf ' -i'
+            _i=$((_i + 1))
+        done
+        command printf ' bash\npassword = "realsecret123"\n'
+    } >"$d/pastcap"
+    unset _i
+    list="$(make_list "$d/l" "$d/pastcap")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: an interpreter past the 512-byte read cap does not resolve"
+
+    # AN UNREADABLE extensionless file must not crash the resolver. Both halves
+    # swallow the read failure (python `except OSError`, bash `2>/dev/null ||
+    # true`) and fall through to the unresolved state; the existing
+    # test_security_unreadable case covers an unreadable file with an EXTENSION,
+    # which never reaches this arm. Skipped when running as root, where chmod 000
+    # does not actually deny a read.
+    if [ "$(id -u)" -ne 0 ]; then
+        d="$(fresh_dir)"
+        command printf '#!/usr/bin/env bash\npassword = "realsecret123"\n' >"$d/noread"
+        command chmod 000 "$d/noread"
+        list="$(make_list "$d/l" "$d/noread")"
+        assert_silent "$SK_SEC" "$list" hardcoded-secret \
+            "security: an unreadable extensionless file is skipped, not crashed"
+        command chmod 644 "$d/noread"
+    fi
 
     # THE NO-SHEBANG DECISION (#858 AC3), pinned rather than left as prose. An
     # extensionless file with no `#!` stays `—` deliberately: no tabled name and

@@ -310,9 +310,22 @@ lang_of() {
 # `case` rather than an associative array.
 shebang_lang() {
     local first='' interp='' tok=''
-    # A binary file can hold NUL bytes; read stops at the newline either way and
-    # the `#!` test below rejects anything that is not a shebang.
-    IFS= read -r first <"$1" 2>/dev/null || true
+    # BOUNDED read, matching patterns.py's `readline(_SHEBANG_MAX)` cap.
+    #
+    # `read` alone is NOT a bound: the builtin stops at a newline or EOF, so a
+    # file with NO newline is slurped whole into the variable. Measured: a 20MB
+    # newline-free file read 20,000,020 bytes into `first`. An extensionless
+    # path is exactly where a committed binary blob turns up, and this is the
+    # PRIMARY implementation on base macOS (bash 3.2, no usable python3), so the
+    # bound has to be real rather than incidental. `head -c` caps the bytes and
+    # `read` then takes the first line of that slice.
+    #
+    # 512 must match patterns.py's _SHEBANG_MAX; see the note there before
+    # changing either (this cap counts BYTES, that one CHARACTERS).
+    first=$(command head -c 512 "$1" 2>/dev/null | {
+        IFS= read -r l || true
+        command printf '%s' "$l"
+    })
     case "$first" in
         '#!'*) ;;
         *)
@@ -356,6 +369,14 @@ shebang_lang() {
             return
         }
     fi
+    # Strip a trailing CR so a CRLF-terminated shebang resolves. `read` splits on
+    # IFS (space/tab/newline) and a lone `\r` is none of those, so a
+    # `#!/usr/bin/env bash\r\n` line yields the token `bash\r`, matching no arm
+    # below -- while patterns.py's text-mode readline() strips it and resolves
+    # `sh`. Measured: python fired and bash stayed SILENT on the same file, a
+    # security false negative on the bash runtime. Applied after both the
+    # direct-path and env-delegated branches, since either can end the line.
+    interp=${interp%"$(command printf '\r')"}
     # Strip a trailing version suffix: python3, python3.11, perl5, ruby2.7.
     while :; do
         case "$interp" in
