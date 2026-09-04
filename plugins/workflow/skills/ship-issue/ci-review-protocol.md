@@ -223,15 +223,15 @@ cycles that produced a review; `attempt` counts every trip including crashed one
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-# Under $HOME, not world-writable /tmp (predictable path = symlink race). NOT
-# `WORK=$(mktemp -d)`: a command substitution is REFUSED worktree-isolated
-# (#815, worktree-safe-recipes.md). Route (#550) -> `reviewRoute` in step (c);
-# pass {N} and the categories as literals or R5/R4 can never fire.
-mkdir -p "$HOME/.cache/librarian-review"
-git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/files.txt"
-git diff origin/main...HEAD > "$HOME/.cache/librarian-review/diff.txt"
+# Under $HOME (not world-writable /tmp) and qualified by GOLEM_ID: concurrent
+# golems SHARE $HOME, so one fixed path lets A's diff clobber B's file list.
+# NOT `WORK=$(mktemp -d)` — command substitution is REFUSED worktree-isolated
+# (#815). Route (#550) -> `reviewRoute` in step (c); pass {N} + categories.
+gid={GOLEM_ID or "solo"}; mkdir -p "$HOME/.cache/librarian-review/$gid"
+git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/files.txt"
+git diff origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/diff.txt"
 <skill-base-dir>/../../scripts/review-route.sh check \
-  --files "$HOME/.cache/librarian-review/files.txt" \
+  --files "$HOME/.cache/librarian-review/$gid/files.txt" \
   --diff-lines {N} --prescan-categories "<HIGH pre-scan categories, if any>"
 ```
 

@@ -28,12 +28,12 @@ judgement call:
 ```bash
 # Under $HOME, not a world-writable /tmp (predictable path = symlink race), and
 # NOT `WORK=$(mktemp -d)`: a command substitution is REFUSED in a worktree-
-# isolated run (#815, next-issue/worktree-safe-recipes.md). `$HOME` unbraced is
-# one of the spellings that harness CAN statically evaluate.
-mkdir -p "$HOME/.cache/librarian-review"
-git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/files.txt"
+# isolated run (#815, next-issue/worktree-safe-recipes.md). `$HOME` unbraced and
+# an inline-assigned variable are both spellings that harness CAN evaluate.
+gid={GOLEM_ID or "solo"}; mkdir -p "$HOME/.cache/librarian-review/$gid"
+git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/files.txt"
 <skill-base-dir>/../../scripts/review-route.sh check \
-  --files "$HOME/.cache/librarian-review/files.txt" --diff-lines {N} \
+  --files "$HOME/.cache/librarian-review/$gid/files.txt" --diff-lines {N} \
   --prescan-categories "<comma list of HIGH pre-scan categories>"
 # -> route=full|cheap  rule=R0-empty|…|R6-doc-config  reason=<slug>
 #    source_files=N doc_files=N config_files=N unknown_files=N
