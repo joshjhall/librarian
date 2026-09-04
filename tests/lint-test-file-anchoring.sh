@@ -642,9 +642,55 @@ FIXTURE_AWK
     esac
 }
 
+# The UNKNOWN branch itself, exercised (#866 review cycle 3).
+#
+# test_no_definition_is_unclassifiable asserts the real scan produces no UNKNOWN
+# rows — and every real copy has a recognizable name arm, so that guard only ever
+# runs its trivially-true branch. Nothing proved the classifier can still REACH
+# UNKNOWN. That matters more here than it usually would: this guard caught three
+# separate parser bugs while this gate was being written (an aliased `_fnmatch`
+# the name regex missed, and two wrong attempts at the Python line-joiner), so a
+# regression that silently pinned `saw_name_arm` true would disarm the thing
+# doing most of the work while every existing assertion stayed green.
+#
+# Verified reachable before this test was written, not assumed: a body with
+# directory arms and no name arm classifies UNKNOWN.
+test_unknown_is_reachable() {
+    local sandbox report
+    sandbox="$(command mktemp -d 2>/dev/null)" || {
+        skip_test "mktemp unavailable (UNKNOWN-reachability self-test not run)"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $sandbox now, at trap-registration time
+    trap "command rm -rf '$sandbox'" RETURN
+    command mkdir -p "$sandbox/plugins/probe"
+    # Directory arms only. Legitimately unclassifiable: there is no name arm to
+    # anchor, so the right verdict is "investigate", not COVERED.
+    command cat >"$sandbox/plugins/probe/dironly.sh" <<'FIXTURE_UNKNOWN'
+is_test_file() {
+    case "$1" in
+        tests/* | */tests/*) return 0 ;;
+    esac
+    return 1
+}
+FIXTURE_UNKNOWN
+    report="$(scan_root "$sandbox" 2>/dev/null || true)"
+    case "$report" in
+        *UNKNOWN*)
+            :
+            ;;
+        *)
+            _fail "a body with no name arm did not classify as UNKNOWN" \
+                "If the classifier can no longer reach UNKNOWN, the guard that reports it is disarmed and an unparseable copy would read COVERED — enforcing nothing, silently." \
+                "report: ${report:-(empty)}"
+            ;;
+    esac
+}
+
 run_test test_definitions_are_discovered "Every is_test_file definition is discovered from the filesystem"
 run_test test_all_three_languages_are_covered "All three languages (bash, awk, python) are represented"
 run_test test_no_definition_is_unclassifiable "No definition's name arms are unclassifiable (investigate, never assume)"
+run_test test_unknown_is_reachable "The UNKNOWN verdict is reachable (the guard above is not vacuous)"
 run_test test_parser_catches_a_continuation_line_defect "The parser has teeth on a multi-line (continuation) case arm"
 run_test test_parser_catches_an_awk_continuation_defect "The parser has teeth on a multi-line (continuation) awk name regex"
 run_test test_parser_reads_a_wrapped_python_call "The parser has teeth (and narrowness) on a wrapped Python call"
