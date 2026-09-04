@@ -141,13 +141,13 @@ check #6), so a solo run cannot skip it by choosing commit-only.
 **"Adversarial pre-PR review" is a named artifact, not a description of a kind of
 review.** It means: invoke the **Workflow tool** with
 `ship-issue/workflow.js` — `ship-issue` **Step 3.5 item 6**. That harness fans
-**six** dimensions (security, correctness, tests, conventions, decomposition,
+**five** dimensions (security, correctness, tests, decomposition,
 scope-drift) out as
 one parallel barrier under a shared budget, then runs a **fresh judge** whose ordered
 rule list computes blocking-vs-deferrable.
 
 A single **`dev-core:code-reviewer` dispatch is NOT a substitute** — it is *one
-dimension of six*, with no judge, no shared budget, and no pre-scan handoff. It is a
+dimension of five*, with no judge, no shared budget, and no pre-scan handoff. It is a
 tempting wrong answer precisely because the harness fans out that very agent
 (`ship-issue/workflow.js` sets `agentType: 'dev-core:code-reviewer'`), and because
 that agent's own description advertises itself for use "before creating pull

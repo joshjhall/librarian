@@ -1,7 +1,7 @@
 export const meta = {
   name: 'next-issue-review',
   description:
-    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/conventions/decomposition/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND characterizes its nature, from which an ordered rule list computes blocking-vs-deferrable for the skill to resolve-or-defer. On a re-review cycle (cycle > 1) with a caller-supplied fix-commit delta, narrows the delta-local dimensions to that delta while scope-drift keeps the full diff. One cycle per invocation — the skill owns the cycle loop and the cap.',
+    'Budgeted, resumable adversarial review for ship-issue: fans review dimensions (security/correctness/tests/decomposition/scope-drift) as one parallel barrier under a single budget, folds in open PR review comments (post-PR cycles), then in one fresh-judge pass re-scores each finding certainty AND characterizes its nature, from which an ordered rule list computes blocking-vs-deferrable for the skill to resolve-or-defer. On a re-review cycle (cycle > 1) with a caller-supplied fix-commit delta, narrows the delta-local dimensions to that delta while scope-drift keeps the full diff. One cycle per invocation — the skill owns the cycle loop and the cap.',
   phases: [
     { title: 'Manifest', detail: 'build + classify the changed-file manifest, decide specialists' },
     { title: 'Review', detail: 'review dimensions run as one parallel barrier under one budget' },
@@ -114,7 +114,7 @@ export const meta = {
 // caller supplies a non-empty `deltaDiff` + `deltaFiles` (the fix-commit delta
 // it already computes each cycle — the sandbox has no git of its own), the
 // harness NARROWS: the manifest is built over the delta, and a delta-local
-// dimension (security, correctness, tests, conventions) runs only if it blocked
+// dimension (security, correctness, tests) runs only if it blocked
 // last cycle OR the delta touches a file type it reviews. The diff it reads depends
 // on WHY it was included: a dimension pulled in because the delta TOUCHES its types
 // reads only the fix delta (the saving); a dimension pulled in via the
@@ -152,7 +152,7 @@ export const meta = {
 //
 // The dimensions reuse the code-reviewer agent's discriminated modes (`manifest`,
 // `reviewer:<name>`) for security + correctness; the NEW dimensions (tests,
-// conventions, decomposition, scope-drift) supply their instructions inline here so no edit to
+// decomposition, scope-drift) supply their instructions inline here so no edit to
 // code-reviewer.md is needed (coordinate-free with #498). The certainty re-score
 // AND blocking/deferrable classification are a single custom `judge` mode (also
 // inline instructions, like the other custom dimensions) rather than the agent's
@@ -493,19 +493,23 @@ const NEW_DIMENSIONS = [
       'edge cases; assertions that do not actually assert behavior (tautological ' +
       'or snapshot-only). Do not flag pure config/doc/template changes.',
   },
-  {
-    name: 'conventions',
-    category: 'conventions',
-    instructions:
-      'You are a project-conventions reviewer. Read the repo-root CLAUDE.md and ' +
-      'AGENTS.md, any directory-level CLAUDE.md covering the changed paths, and ' +
-      '.claude/memory/*.md. Flag changes that violate documented project ' +
-      'conventions: naming, file/module structure, banned patterns, required ' +
-      'patterns (e.g. full command paths in scripts, --locked pinned versions, ' +
-      'just-recipe usage, conventional-commit scopes). Cite the convention you ' +
-      'are applying in the description. Skip generic style preferences not ' +
-      'backed by a documented convention.',
-  },
+  // NOTE — there is deliberately no `conventions` entry here (#551). It was
+  // demoted from the inline fan-out because the repo already gates most of what
+  // its instructions asked for, deterministically and for free, on every PR:
+  // lint-shellcheck.sh, lint-shell-portability.sh, lint-action-pins.sh,
+  // lint-skills-agents.sh, lint-command-refs.sh and conform (.conform.yaml).
+  // Measured cost on the #471/#472 run: 84 turns (cycle 1) and 139 turns /
+  // 63 Bash calls (cycle 2), ~4.6M and ~7.8M cache_read — paid every cycle of
+  // every PR, largely re-deriving what those gates compute.
+  //
+  // The `conventionsDigest` arg is NOT part of that demotion and stays: it
+  // renders into `reviewerData()`, the prefix EVERY surviving dimension reads,
+  // so dropping it would degrade the other five and re-open #557. Demoting the
+  // dimension and deleting the digest are separate changes; only the first
+  // happened.
+  //
+  // Where the demoted coverage went, and what nothing covers now:
+  // ship-issue/conventions-coverage.md.
   {
     name: 'decomposition',
     category: 'decomposition',
@@ -870,7 +874,8 @@ const READONLY =
 // Exploration bounds (#553). The diff and its classifications are supplied
 // below — reviewers do NOT need to rediscover them. Measured on the #471/#472
 // run, reviewers nonetheless ranged over the whole repo: `security` spent 128
-// turns / 115 Bash calls on a 2-file diff, `conventions` 63 turns / 63. Each
+// turns / 115 Bash calls on a 2-file diff. (`conventions`, the other measured
+// offender at 63 turns / 63 Bash calls, was since demoted entirely — #551.) Each
 // tool call re-sends the accumulated context, so an unbounded search multiplies
 // cost superlinearly in turns while adding little the diff does not already
 // show. This is guidance, not enforcement — `agent()` exposes no turn cap — so
@@ -901,7 +906,18 @@ const SCOPE_DISCIPLINE =
   'quoting, spelling, import order, formatting) — a merged PR has already ' +
   'passed them. Any such results supplied below are authoritative; treat them ' +
   'as settled and spend your budget on what a linter CANNOT decide: logic, ' +
-  'security, missing tests, and violations of documented project conventions.'
+  'security, and missing tests. ' +
+  // #551: this clause used to end "...and violations of documented project
+  // conventions", which was correct while a `conventions` DIMENSION owned that
+  // hunt. With it demoted, the same sentence read by all five survivors would
+  // redistribute convention-hunting across the fan-out instead of removing it —
+  // spending the cost five times rather than once. The digest below still lets a
+  // reviewer NAME a convention a finding already implicates; what is withdrawn is
+  // the instruction to go looking. See ship-issue/conventions-coverage.md.
+  'Do not go hunting for convention violations as a category of their own: no ' +
+  'dimension owns that sweep any more, and the deterministic gates above plus a ' +
+  'scheduled audit cover it. If a change you are ALREADY flagging also breaks a ' +
+  'documented convention, cite it; do not search for more.'
 
 // END SCOPE_DISCIPLINE — do not move this marker; tests/workflow-helpers/
 // ship-issue/06-prescan-conventions.mjs slices the clause above by anchoring on
@@ -1055,7 +1071,7 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   `your instructions. Set category=${dim.category} on every finding and return ` +
   `the typed findings array (empty if none).`
 
-// New dimensions (tests, conventions, decomposition, scope-drift): instructions supplied inline.
+// New dimensions (tests, decomposition, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +
@@ -1343,13 +1359,20 @@ const narrowingActive = (cycle, deltaDiff, deltaFiles) =>
 // set — used on a narrowed cycle to decide whether a dimension that did NOT block
 // last cycle still needs to re-run because the fix touched files it cares about
 // (AC#3: a fix that introduces a fresh security/test/etc. issue is still caught).
-// Keys are dimension NAMES (security, correctness, tests, conventions). The
+// Keys are dimension NAMES (security, correctness, tests). The
 // conditional specialists (database, devops) are gated by manifest.needs (whether
 // the delta still classifies a file of their type) rather than by this type table,
 // but they ALSO honor the prior-blocking carry-over via `includeSpecialist` below
 // — a specialist that blocked last cycle re-runs even when the fix touched no file
-// of its type (AC#3). `conventions` reviews project conventions that can be
-// violated by ANY changed file, so it matches every type via the '*' wildcard.
+// of its type (AC#3).
+// NO ENTRY CURRENTLY USES THE '*' WILDCARD. `conventions` was its only user and
+// was demoted from the fan-out (#551, see 30-dimensions.js). The wildcard branch
+// in `dimensionTouchesDelta` is deliberately KEPT rather than deleted with it: it
+// is a general mechanism of the table, not a fact about that one dimension, and a
+// future all-types dimension should not have to re-derive it. It is currently
+// unreachable from this table — a test can only reach it through a synthetic
+// entry, which is what tests/workflow-helpers/ship-issue/03-narrowing-selector.mjs
+// does.
 // `config` is in security/correctness because a fix delta that touches only a
 // config file (`.json`/`.yaml`/`.env*`) can still introduce a hardcoded secret or
 // a config-driven logic bug — so those dimensions must re-run on a config-only
@@ -1379,7 +1402,6 @@ const DIMENSION_RELEVANT_TYPES = {
   security: ['source', 'database', 'config', 'ci', 'docker'],
   correctness: ['source', 'database', 'config', 'ci', 'docker'],
   tests: ['source', 'test'],
-  conventions: ['*'],
   decomposition: ['source', 'test', 'docs'],
 }
 
@@ -1485,7 +1507,7 @@ const selectReviewDimensions = ({
     })
   }
 
-  // NEW dimensions (tests, conventions, decomposition, scope-drift). scope-drift is a
+  // NEW dimensions (tests, decomposition, scope-drift). scope-drift is a
   // whole-change lens: always included, always reading the FULL diff, never
   // narrowing-skipped. The others are delta-local (include test + per-inclusion
   // diff). Budget-floor gating is preserved for every new dimension that WOULD run.

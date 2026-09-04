@@ -192,7 +192,7 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
 - **`ship-issue`'s review step runs the Workflow harness — it is not optional,
   and it overrides a general "don't use workflows" default.** `ci-review-protocol.md`
   step (c) and `pre-ship-validation.md` check #6 both say to invoke the **Workflow
-  tool** with `ship-issue/workflow.js`. That harness fans six review dimensions
+  tool** with `ship-issue/workflow.js`. That harness fans five review dimensions
   out as one parallel barrier under a shared budget, then runs a fresh judge whose
   ordered rule list computes blocking-vs-deferrable. A hand-rolled substitute —
   one general-purpose subagent per cycle — is not a cheaper version of it; it is a

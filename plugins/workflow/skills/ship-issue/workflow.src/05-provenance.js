@@ -102,7 +102,7 @@
 // caller supplies a non-empty `deltaDiff` + `deltaFiles` (the fix-commit delta
 // it already computes each cycle — the sandbox has no git of its own), the
 // harness NARROWS: the manifest is built over the delta, and a delta-local
-// dimension (security, correctness, tests, conventions) runs only if it blocked
+// dimension (security, correctness, tests) runs only if it blocked
 // last cycle OR the delta touches a file type it reviews. The diff it reads depends
 // on WHY it was included: a dimension pulled in because the delta TOUCHES its types
 // reads only the fix delta (the saving); a dimension pulled in via the
@@ -140,7 +140,7 @@
 //
 // The dimensions reuse the code-reviewer agent's discriminated modes (`manifest`,
 // `reviewer:<name>`) for security + correctness; the NEW dimensions (tests,
-// conventions, decomposition, scope-drift) supply their instructions inline here so no edit to
+// decomposition, scope-drift) supply their instructions inline here so no edit to
 // code-reviewer.md is needed (coordinate-free with #498). The certainty re-score
 // AND blocking/deferrable classification are a single custom `judge` mode (also
 // inline instructions, like the other custom dimensions) rather than the agent's
