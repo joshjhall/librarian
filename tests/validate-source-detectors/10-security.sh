@@ -717,6 +717,31 @@ test_security_weak_randomness() {
     assert_fires "$SK_SEC" "$list" weak-randomness "Non-CSPRNG" \
         "security: a standalone iv still fires (boundary did not kill the arm)"
 
+    # THE BOUNDARY IS ASYMMETRIC, AND DELIBERATELY SO (review cycle 2). Python
+    # spells it `iv\b` — TRAILING boundary only — so an initialization vector
+    # named `cipher_iv` / `aes_iv` / `cipherIv` IS a security context, while
+    # `ivory` (iv followed by `o`) is not. A symmetric class rejects both, which
+    # is what the first pass at this fix shipped: it swapped a false POSITIVE
+    # for a false NEGATIVE on the idiomatic `_iv` suffix, in the fallback only.
+    # These fixtures pin the asymmetry so a later tidy-up cannot re-symmetrize
+    # it. (`key` IS doubly bounded in python — `\bkey\b` — hence monkeyKey
+    # below stays silent. The two words differ on purpose.)
+    d="$(fresh_dir)"
+    {
+        command printf '%s\n' 'const cipher_iv = Math.random();'
+        command printf '%s\n' 'const aes_iv = Math.random();'
+        command printf '%s\n' 'const cipherIv = Math.random();'
+    } >"$d/ivsuf.js"
+    list="$(make_list "$d/l" "$d/ivsuf.js")"
+    assert_row_count "$SK_SEC" "$list" weak-randomness 3 \
+        "security: _iv/Iv-suffixed identifiers all fire (asymmetric trailing boundary)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const monkeyKey = Math.random() * 100;' >"$d/mk.js"
+    list="$(make_list "$d/l" "$d/mk.js")"
+    assert_silent "$SK_SEC" "$list" weak-randomness \
+        "security: key INSIDE a word (monkeyKey) stays silent — key is doubly bounded"
+
     # The third alternation arm, C-style rand(), previously unexercised.
     d="$(fresh_dir)"
     command printf '%s\n' 'const sessionToken = rand();' >"$d/c.js"

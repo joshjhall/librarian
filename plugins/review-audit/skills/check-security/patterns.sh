@@ -459,7 +459,7 @@ DESERIALIZE_PATTERN='(''pickl''e\.loads?[[:space:]]*\(|''yaml\.loa''d[[:space:]]
 DESERIALIZE_SAFE_PATTERN='(Loader[[:space:]]*=|safe_load)'
 
 WEAK_RANDOM_FN_PATTERN='(Math\.random[[:space:]]*\(\)|random\.random[[:space:]]*\(\)|(^|[^[:alnum:]_.])rand[[:space:]]*\(\))'
-WEAK_RANDOM_CTX_PATTERN='(token|nonce|salt|session|secret|password|(^|[^[:alnum:]_])key([^[:alnum:]_]|$)|(^|[^[:alnum:]_])iv([^[:alnum:]_]|$))'
+WEAK_RANDOM_CTX_PATTERN='(token|nonce|salt|session|secret|password|(^|[^[:alnum:]_])key([^[:alnum:]_]|$)|iv([^[:alnum:]_]|$))'
 
 TLS_DISABLED_PATTERN='(''verif''y[[:space:]]*=[[:space:]]*''Fals''e|''rejectUnauthorize''d[[:space:]]*:[[:space:]]*''fals''e|''InsecureSkipVerif''y[[:space:]]*:[[:space:]]*''tru''e|''NODE_TLS_REJECT_UNAUTHORIZE''D[[:space:]]*=[[:space:]]*.?0)'
 
