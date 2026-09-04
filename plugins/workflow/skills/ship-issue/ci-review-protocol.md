@@ -223,14 +223,16 @@ cycles that produced a review; `attempt` counts every trip including crashed one
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-WORK=$(mktemp -d)                                     # not a fixed /tmp name
-git diff --name-only origin/main...HEAD > "$WORK/files.txt"
-git diff origin/main...HEAD > "$WORK/diff.txt"        # -> diff (FULL PR scope)
-# Route this cycle (#550); pass `route` as `reviewRoute` in step (c). Feed it
-# the diff size too, or the R5-max-lines ceiling can never fire:
-<skill-base-dir>/../../scripts/review-route.sh check --files "$WORK/files.txt" \
-  --diff-lines "$(command wc -l < "$WORK/diff.txt")" \
-  --prescan-categories "<comma list of HIGH pre-scan categories, if any>"
+# Under $HOME, not world-writable /tmp (predictable path = symlink race). NOT
+# `WORK=$(mktemp -d)`: a command substitution is REFUSED worktree-isolated
+# (#815, worktree-safe-recipes.md). Route (#550) -> `reviewRoute` in step (c);
+# pass {N} and the categories as literals or R5/R4 can never fire.
+mkdir -p "$HOME/.cache/librarian-review"
+git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/files.txt"
+git diff origin/main...HEAD > "$HOME/.cache/librarian-review/diff.txt"
+<skill-base-dir>/../../scripts/review-route.sh check \
+  --files "$HOME/.cache/librarian-review/files.txt" \
+  --diff-lines {N} --prescan-categories "<HIGH pre-scan categories, if any>"
 ```
 
 **Re-review narrowing (#492) — but only when the previous cycle said to (#656).**
@@ -321,20 +323,18 @@ args: {
   // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
   conventionsDigest: "<distilled project-convention rules>",
   reviewRoute: "<route from review-route.sh; OMIT if unavailable>",
-  // Re-review narrowing (#492) — omit ALL THREE unless the PREVIOUS cycle
-  // advised next_scope=narrow (#656; see step a). Cycle 1 always omits them:
+  // Narrowing (#492) — omit ALL THREE unless the previous cycle advised next_scope=narrow (#656):
   deltaFiles: [<changed files since lastReviewedSha>],
   deltaDiff: "<diff since lastReviewedSha>",
   priorBlockingDimensions: [<dimension names that blocked last cycle>]
 }
 ```
 
-`diff`/`files` stay the **FULL PR scope** (byte-faithful `git diff
-origin/main...HEAD` from step a, per #267), load-bearing on narrowed cycles too
-(see below); `files` also sizes the result summary. Omitting `diff` is supported
-but costs extra tool calls (`pre-ship-validation.md` Step 3.5 b). **No key has a
-path/file variant — pass everything INLINE regardless of size (#722):**
-`diffPath`/`argsPath` are the observed inventions; the sandbox cannot read a path.
+`diff`/`files` stay the **FULL PR scope** (byte-faithful, from step a, per #267),
+load-bearing on narrowed cycles too; `files` sizes the result summary.
+Omitting `diff` costs extra tool calls. **No key has a path/file variant — pass
+everything INLINE (#722):** `diffPath`/`argsPath` are the observed inventions;
+the sandbox cannot read a path.
 
 `deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
 delta** from step a, present **iff the previous cycle advised
@@ -343,10 +343,10 @@ cycle 3 whose predecessor returned `next_scope=full` omits them. When present th
 harness narrows the delta-local dimensions (security, correctness, tests,
 conventions), running each only if it blocked last cycle or the delta touches a
 file type it reviews. The conditional specialists (database, devops) follow the
-same include rule with their own "touches" signal — `manifest.needs.*` (whether
-the delta still classifies a file of that type) — **plus** the prior-blocking
-carry-over, so `priorBlockingDimensions` closes the AC#3 gap for specialists
-too. **Which diff a re-run reads depends on why it was included:** a dimension
+same include rule with their own "touches" signal — `manifest.needs.*` — **plus**
+the prior-blocking carry-over, so `priorBlockingDimensions` closes the AC#3 gap
+for specialists too. **Which diff a re-run reads depends on why it was included:**
+a dimension
 pulled in because the delta *touches* its types reads only the fix delta (the
 saving); a dimension pulled in via the *prior-blocking* carry-over reads the
 **full** diff, because the finding it must re-confirm may live outside the fix
@@ -355,9 +355,9 @@ finding silently vanish. A dimension that is both touched and prior-blocking
 reads the full diff (re-confirmation wins). `scope-drift` always reads the full
 `diff` — its AC-completeness check is a whole-change lens. Omitting the delta
 args (or on cycle 1) yields the pre-#492 full review — additive, default-off.
-A dimension dropped for lack of a touch — or by a `cheap`
-`reviewRoute` (#550) — is **not** a partial cycle: neither narrowing nor routing
-sets `budget_exhausted` / `dimensions_skipped`, so both can still return `clean`.
+A dimension dropped for lack of a touch — or by a `cheap` `reviewRoute` (#550) —
+is **not** a partial cycle: neither narrowing nor routing sets
+`budget_exhausted` / `dimensions_skipped`, so both can still return `clean`.
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
 budget_exhausted, dimensions_skipped[], no_review_signal, clean }`.

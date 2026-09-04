@@ -26,10 +26,14 @@ Before invoking the harness, ask the router. It is a bundled script, not a
 judgement call:
 
 ```bash
-WORK=$(mktemp -d)   # not a fixed /tmp name — a predictable path is a symlink race
-git diff --name-only origin/main...HEAD > "$WORK/files.txt"
+# Under $HOME, not a world-writable /tmp (predictable path = symlink race), and
+# NOT `WORK=$(mktemp -d)`: a command substitution is REFUSED in a worktree-
+# isolated run (#815, next-issue/worktree-safe-recipes.md). `$HOME` unbraced is
+# one of the spellings that harness CAN statically evaluate.
+mkdir -p "$HOME/.cache/librarian-review"
+git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/files.txt"
 <skill-base-dir>/../../scripts/review-route.sh check \
-  --files "$WORK/files.txt" --diff-lines {N} \
+  --files "$HOME/.cache/librarian-review/files.txt" --diff-lines {N} \
   --prescan-categories "<comma list of HIGH pre-scan categories>"
 # -> route=full|cheap  rule=R0-empty|…|R6-doc-config  reason=<slug>
 #    source_files=N doc_files=N config_files=N unknown_files=N
@@ -86,7 +90,7 @@ three arguments.
 Raised on issue #550 itself, and the sharpest case against naive content
 routing. A markdown **decomposition** finding (progressive disclosure; "a moved
 heading is still reachable by a link") and an OKF **memory-conformance** finding
-(missing `type`, orphaned from every index) fire on precisely the doc-only diffs
+(missing `type`, unparseable frontmatter) fire on precisely the doc-only diffs
 the cheap path targets — and `.claude/memory/**` files are `.md`, so a pure
 memory edit *is* doc-only by classification. Route those cheap and the repo's
 largest, fastest-churning surface (#589) gets the one dimension aimed at it and
@@ -158,7 +162,7 @@ Recorded so they are not re-proposed:
 - **Routing on a line count alone.** A small *source* diff would then merge
   having never been read by the security or correctness dimensions — precisely
   what the merge invariant exists to prevent. Twenty lines of auth code is where
-  security matters most. `--diff-lines` therefore only ever forces `full` (R4);
+  security matters most. `--diff-lines` therefore only ever forces `full` (R5);
   it can never produce `cheap`.
 - **A cheap path running one combined reviewer.** That reintroduces a
   judge-less self-grading path, the exact structure the fresh judge exists to
@@ -169,7 +173,7 @@ Recorded so they are not re-proposed:
 | Variable | Default | Meaning |
 | -------- | ------- | ------- |
 | `LIBRARIAN_REVIEW_ROUTE` | `auto` | `full` disables routing entirely (R1) — the operator's off switch. Any value other than `auto` is treated as `full`, so a typo disables the optimization rather than silently enabling it |
-| `LIBRARIAN_REVIEW_ROUTE_MAX_LINES` | `2000` | Diff-line ceiling above which the cheap path is refused even for doc-only diffs (R4) — a 5,000-line docs rewrite is a real review surface. Only ever forces `full`, never `cheap` |
+| `LIBRARIAN_REVIEW_ROUTE_MAX_LINES` | `2000` | Diff-line ceiling above which the cheap path is refused even for doc-only diffs (R5) — a 5,000-line docs rewrite is a real review surface. Only ever forces `full`, never `cheap` |
 
 Both are read by `review-route.sh` itself, which is what keeps them honest:
 `tests/lint-env-var-drift.sh` fails a documented variable that no code reads.

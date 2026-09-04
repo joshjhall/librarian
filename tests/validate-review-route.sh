@@ -233,7 +233,7 @@ test_unsurfaceable_prescan_row_forces_full() {
     local list out cat
     list="$(mklist 'README.md' 'docs/guide.md')"
     for cat in file-length ai-file-bloat doc-file-bloat decomposition-seam \
-        okf-missing-type okf-orphaned okf-dangling-index memory-conformance; do
+        okf-missing-type okf-unparseable-frontmatter okf-reserved-file-structure okf-version-drift; do
         out="$(route_of "$list" --prescan-categories "$cat")"
         assert_equals "full" "$(val route "$out")" \
             "a HIGH '$cat' pre-scan row forces full — the cheap path cannot surface it as a judged finding (#695/#699)"

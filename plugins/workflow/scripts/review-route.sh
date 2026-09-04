@@ -73,8 +73,8 @@
 #
 # Raised on issue #550 itself, and the reasoning is the sharpest case against
 # naive content routing. A markdown decomposition finding (progressive
-# disclosure, "a moved heading is still reachable by a link") and an OKF
-# memory-conformance finding (missing `type`, orphaned from every index) fire
+# disclosure, "a moved heading is still reachable by a link") and an
+# OKF conformance finding (missing `type`, unparseable frontmatter) fire
 # on precisely the doc-only diffs this router would send down the cheap path.
 # `.claude/memory/**` files are `.md`, so a pure memory edit is doc-only by
 # classification. Route those cheap and the largest, fastest-churning surface
@@ -99,7 +99,7 @@
 # Subcommand (emits `key=value` lines to stdout):
 #   check --files FILE [--diff-lines N] [--prescan-categories LIST]
 #         -> route          full | cheap
-#            rule           the deciding rule (R0-empty … R5-max-lines)
+#            rule           the deciding rule (R0-empty … R6-doc-config)
 #            reason         a short slug naming why
 #            source_files / doc_files / config_files / unknown_files   counts
 #            dimensions     comma list of dimensions the caller should run
@@ -119,7 +119,7 @@
 #   R5-max-lines   --diff-lines over the ceiling         -> full
 #   R6-doc-config  every file is doc or config           -> cheap
 #
-# Note R5 is the ONLY rule that yields `cheap`, and it is last: every fail-safe
+# Note R6 is the ONLY rule that yields `cheap`, and it is last: every fail-safe
 # gets to fire first. There is deliberately no trailing catch-all yielding
 # `cheap` — the default direction of this script is `full`.
 #
@@ -132,7 +132,7 @@
 #                                     silently enabling it.
 #   LIBRARIAN_REVIEW_ROUTE_MAX_LINES  Diff-line ceiling above which the cheap
 #                                     path is refused even for doc-only diffs
-#                                     (R4). Default: 2000. A 5,000-line docs
+#                                     (R5). Default: 2000. A 5,000-line docs
 #                                     rewrite is a real review surface.
 #                                     Only ever forces `full`, never `cheap`.
 #
@@ -268,8 +268,15 @@ _has_unsurfaceable_category() {
     _hc_list="$(command printf '%s' "$1" | command tr ',' ' ')"
     for _hc_tok in $_hc_list; do
         case "$_hc_tok" in
+            # Sizing rows from sizing.sh (#695) and OKF memory-conformance rows
+            # from check-okf-conformance/patterns.{sh,py} (#699). The okf-*
+            # names are the ones those scanners ACTUALLY emit — verified by
+            # grepping the scanner, after cycle 4 caught three invented names
+            # (`okf-orphaned`, `okf-dangling-index`, `memory-conformance`) that
+            # could never have matched, silently making R4 inert for OKF rows.
             file-length | ai-file-bloat | doc-file-bloat | decomposition-seam | \
-                okf-missing-type | okf-orphaned | okf-dangling-index | memory-conformance)
+                okf-missing-type | okf-unparseable-frontmatter | \
+                okf-reserved-file-structure | okf-version-drift)
                 return 0
                 ;;
         esac
