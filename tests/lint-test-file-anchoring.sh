@@ -155,6 +155,13 @@ def join_continuations(body):
     return out
 
 
+# The triple-quote delimiters, built with chr() so this program can name them
+# without embedding a sequence that would terminate its own heredoc-borne
+# source. Read at call time, but defined here so the reader meets them first.
+TRIPLE_D = chr(34) * 3
+TRIPLE_S = chr(39) * 3
+
+
 def join_open_parens(body):
     """Flatten a Python body so a call wrapped across lines matches as one.
 
@@ -219,9 +226,6 @@ def awk_body(lines, start):
 def py_body(lines, start):
     return body_from(lines, start, lambda ln: bool(ln.strip()) and not ln[:1].isspace())
 
-
-TRIPLE_D = chr(34) * 3
-TRIPLE_S = chr(39) * 3
 
 CASE_OPEN = re.compile(r'^\s*case\s+(\S+)\s+in\b')
 CASE_ARM = re.compile(r"^\s*([^\s;(][^;)]*?)\)\s")
