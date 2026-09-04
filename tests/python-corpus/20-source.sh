@@ -95,6 +95,12 @@ SEC_BLADE="{""!!"
     printf '%s\n' 'const jitter = Math.random() * 100;'
     printf '%s\n' 'res.header("Access-Control-Allow-Origin: *");'
     printf '%s\n' 'const opts = {rejectUnauthorized: false};'
+    # Remaining alternation arms (review cycle 1): each is its own
+    # severity-bearing arm in thresholds.yml, so each needs to execute here.
+    printf '%s\n' "const header = {'alg': 'none'};"
+    printf '%s\n' 'app.use(cors({origin: true, credentials: true}));'
+    printf '%s\n' 'const sessionToken = rand();'
+    printf '%s\n' 'const jitter2 = Math.random() * 100; // monkey testing'
 } >"$SRCDIR/app.ts"
 
 # Ruby source: interpolation SQL, ECB, binding.pry, empty rescue.

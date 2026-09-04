@@ -244,264 +244,6 @@ test_security_secrets() {
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: .env.example is still skipped (SKIP_GLOBS precedes the resolver)"
 
-    # SHEBANG DISPATCH (#858). The fifth shape, and the only one not closable by
-    # a longer table: the set of extensionless script names (`run`, `deploy`,
-    # `entrypoint`, `bootstrap`) is unbounded, so the file's own `#!` line is the
-    # evidence. Before this, every such script silently lost the two
-    # lexical-dependent detectors — measured: both fired on main pre-gating.
-    #
-    # One fixture PER INTERPRETER FAMILY rather than one for the block. They
-    # share a dispatch structure, so a fixture per family is what stops a future
-    # edit from dropping or misspelling one arm while the tested siblings keep
-    # this block green — the same argument the config-extension loop above makes.
-    while read -r _name _bang; do
-        [ -n "$_name" ] || continue
-        d="$(fresh_dir)"
-        command printf '#!%s\npassword = "realsecret123"\n' "$_bang" >"$d/$_name"
-        list="$(make_list "$d/l" "$d/$_name")"
-        assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-            "security: a credential in an extensionless '#!$_bang' script fires"
-    done <<'SHEBANGS'
-deploy /usr/bin/env bash
-run-sh /usr/bin/env sh
-bootstrap /usr/bin/env dash
-entrypoint /usr/bin/env zsh
-pyscript /usr/bin/env python3
-rbscript /usr/bin/env ruby
-plscript /usr/bin/env perl
-nodescript /usr/bin/env node
-SHEBANGS
-    unset _name _bang
-
-    # The DIRECT-PATH spelling (`#!/bin/sh`) is a different resolver branch from
-    # the `env` spelling above — there the interpreter is argv[0] itself rather
-    # than the second token. The `lint-allow-path` marker is the #443 gate's own
-    # documented exemption: this path is fixture DATA written into a scratch
-    # file, never a tool this suite invokes.
-    d="$(fresh_dir)"
-    command printf '#!/bin/sh\npassword = "realsecret123"\n' >"$d/directsh" # lint-allow-path: shebang fixture data written to a scratch file, never executed
-    list="$(make_list "$d/l" "$d/directsh")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: a direct-path shebang (interpreter as argv0) resolves"
-
-    # A VERSION SUFFIX is stripped, and `env -S` is unwrapped. Both are ordinary
-    # spellings in the wild, and each is a distinct branch of the resolver.
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env python3.11\npassword = "realsecret123"\n' >"$d/versioned"
-    list="$(make_list "$d/l" "$d/versioned")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: a versioned interpreter (python3.11) resolves"
-
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env -S perl5 -w\npassword = "realsecret123"\n' >"$d/envdash"
-    list="$(make_list "$d/l" "$d/envdash")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: env -S with an option resolves the real interpreter"
-
-    # ...and the RESOLVED language's comment model is applied — which is the half
-    # that proves the shebang resolved to a real model rather than to some
-    # default. Both directions: the `#` family and the `//` family, since a
-    # shebang can select either.
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env bash\n# password = "realsecret123"\n' >"$d/commented"
-    list="$(make_list "$d/l" "$d/commented")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: a # comment in a bash-shebang script stays silent"
-
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env node\n// password = "realsecret123"\n' >"$d/nodecomment"
-    list="$(make_list "$d/l" "$d/nodecomment")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: a // comment in a node-shebang script stays silent"
-
-    # ...and a FOREIGN marker under the same shebang must NOT suppress, or the
-    # arm has degenerated into "suppress everything" — the same trap the
-    # comment-family loop below guards against.
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env bash\n// password = "realsecret123"\n' >"$d/foreignmark"
-    list="$(make_list "$d/l" "$d/foreignmark")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: // is NOT a comment in a bash-shebang script"
-
-    # A GLOB-SHAPED interpreter must not pathname-expand. The bash half splits
-    # the shebang line with an unquoted `$first`, which word-splits (wanted) AND
-    # pathname-expands (not wanted) — so `#!/usr/bin/env *sh` evaluated from a
-    # directory containing `zsh` resolved to zsh in bash while python resolved
-    # nothing. A CWD-dependent parity divergence, and the shared fixture tree
-    # would only expose it if it happened to hold a matching name. The fixture
-    # runs FROM the directory holding the decoy, which is what arms the bug.
-    # NOTE the cd is NOT wrapped in a subshell: assert_silent tallies into shell
-    # variables, and a subshell discards them — the assertion then "passes" no
-    # matter what. Measured: the first draft of this fixture survived removing
-    # `set -f` from patterns.sh for exactly that reason. cd back explicitly.
-    d="$(fresh_dir)"
-    command touch "$d/zsh"
-    command printf '#!/usr/bin/env *sh\npassword = "realsecret123"\n' >"$d/globbang"
-    list="$(make_list "$d/l" "$d/globbang")"
-    _prevpwd="$PWD"
-    cd "$d" || return 1
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: a glob-shaped interpreter does not pathname-expand"
-    cd "$_prevpwd" || return 1
-    unset _prevpwd
-
-    # A CRLF-TERMINATED shebang resolves. `read` splits on IFS (space/tab/
-    # newline) and a lone CR is none of those, so the token was `bash<CR>` and
-    # matched no arm — while patterns.py's text-mode readline() strips it and
-    # resolved fine. Measured: python FIRED and bash stayed SILENT on this exact
-    # file, a security false negative on the runtime that is PRIMARY on base
-    # macOS. Found by the pre-PR review, not by the original fixture set.
-    # Both branches are covered: env-delegated and direct-path.
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env bash\r\npassword = "realsecret123"\r\n' >"$d/crlfscript"
-    list="$(make_list "$d/l" "$d/crlfscript")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: a CRLF-terminated env shebang resolves"
-
-    d="$(fresh_dir)"
-    command printf '#!/bin/sh\r\npassword = "realsecret123"\r\n' >"$d/crlfdirect" # lint-allow-path: shebang fixture data written to a scratch file, never executed
-    list="$(make_list "$d/l" "$d/crlfdirect")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: a CRLF-terminated direct-path shebang resolves"
-
-    # CRLF *combined with* a version suffix, which pins the ORDER of the two
-    # strips. The CR strip runs BEFORE the version-suffix loop, so `python3<CR>`
-    # must lose the CR first and the `3` second; reverse them and the CR blocks
-    # the digit strip, leaving `python3<CR>` unmatched. Neither the un-versioned
-    # CRLF fixtures above nor the LF-versioned one below can catch that reorder —
-    # only the combination can.
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env python3\r\npassword = "realsecret123"\n' >"$d/verscrlf"
-    list="$(make_list "$d/l" "$d/verscrlf")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: a CRLF shebang with a version suffix resolves (strip order)"
-
-    # ...and a bare `#!` with ONLY a CR must still resolve to nothing rather than
-    # to a CR-named interpreter.
-    d="$(fresh_dir)"
-    command printf '#!\r\npassword = "realsecret123"\n' >"$d/barecrlf"
-    list="$(make_list "$d/l" "$d/barecrlf")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: a bare #! with only a CR stays unresolved"
-
-    # THE OTHER lexical-dependent detector. The issue names TWO detectors the
-    # unresolved state silently loses — credential-assignment AND insecure-crypto
-    # — and every fixture above asserts only the first, so the second was
-    # restored but never pinned. Both directions, since the comment model is what
-    # makes this detector gated at all.
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env bash\ndigest = md5(payload)\n' >"$d/cryptoscript"
-    list="$(make_list "$d/l" "$d/cryptoscript")"
-    assert_fires "$SK_SEC" "$list" insecure-crypto "Weak hash algorithm" \
-        "security: insecure-crypto is restored in a shebang-resolved script"
-
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env bash\n# digest = md5(payload)\n' >"$d/cryptocomment"
-    list="$(make_list "$d/l" "$d/cryptocomment")"
-    assert_silent "$SK_SEC" "$list" insecure-crypto \
-        "security: commented crypto in a shebang-resolved script stays silent"
-
-    # THE 512-BYTE READ CAP, pinned at the boundary where it is OBSERVABLE.
-    #
-    # Both runtimes cap the shebang read (python `readline(_SHEBANG_MAX)`, bash
-    # `head -c 512`) so a newline-free binary at an extensionless path is not
-    # slurped whole — measured, an uncapped `read` pulled 20,000,020 bytes into
-    # a shell variable.
-    #
-    # A large-blob fixture CANNOT pin that: an uncapped read yields the same
-    # findings, just slower, so the assertion passes either way. Verified — the
-    # first draft of this case was exactly that tautology and survived reverting
-    # the cap. The observable input is instead a shebang whose RECOGNIZED
-    # interpreter sits just PAST the cap: capped, both runtimes truncate it away
-    # and stay silent; uncapped, bash resolves `bash` and fires while python
-    # (still capped) does not — a parity break. That is what this pins.
-    d="$(fresh_dir)"
-    {
-        command printf '#!/usr/bin/env -S'
-        _i=0
-        while [ "$_i" -lt 180 ]; do
-            command printf ' -i'
-            _i=$((_i + 1))
-        done
-        command printf ' bash\npassword = "realsecret123"\n'
-    } >"$d/pastcap"
-    unset _i
-    list="$(make_list "$d/l" "$d/pastcap")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: an interpreter past the 512-byte read cap does not resolve"
-
-    # AN UNREADABLE extensionless file must not crash the resolver. Both halves
-    # swallow the read failure (python `except OSError`, bash `2>/dev/null ||
-    # true`) and fall through to the unresolved state; the existing
-    # test_security_unreadable case covers an unreadable file with an EXTENSION,
-    # which never reaches this arm. Skipped when running as root, where chmod 000
-    # does not actually deny a read.
-    if [ "$(id -u)" -ne 0 ]; then
-        d="$(fresh_dir)"
-        command printf '#!/usr/bin/env bash\npassword = "realsecret123"\n' >"$d/noread"
-        command chmod 000 "$d/noread"
-        list="$(make_list "$d/l" "$d/noread")"
-        assert_silent "$SK_SEC" "$list" hardcoded-secret \
-            "security: an unreadable extensionless file is skipped, not crashed"
-        command chmod 644 "$d/noread"
-    fi
-
-    # THE NO-SHEBANG DECISION (#858 AC3), pinned rather than left as prose. An
-    # extensionless file with no `#!` stays `—` deliberately: no tabled name and
-    # no shebang is no evidence of a language, and defaulting to `sh` would apply
-    # a `#` model to arbitrary data files — the language-blind false positive ADR
-    # 0002 exists to remove. An UNRECOGNIZED interpreter resolves the same way.
-    d="$(fresh_dir)"
-    command printf '%s\n' 'password = "realsecret123"' >"$d/run"
-    list="$(make_list "$d/l" "$d/run")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: an extensionless file with NO shebang stays unresolved"
-
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env cobol\npassword = "realsecret123"\n' >"$d/unknownbang"
-    list="$(make_list "$d/l" "$d/unknownbang")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: an unrecognized interpreter stays unresolved"
-
-    # A bare `#!` with no interpreter at all must not crash or resolve.
-    d="$(fresh_dir)"
-    command printf '#!\npassword = "realsecret123"\n' >"$d/barebang"
-    list="$(make_list "$d/l" "$d/barebang")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: a bare #! with no interpreter stays unresolved"
-
-    # The lexical-INDEPENDENT detectors still run on an unresolved file, so a
-    # real leaked key fires there regardless. Without this the two assertions
-    # above are consistent with the scanner having skipped the file ENTIRELY,
-    # which is a different and much worse behavior than leaving it `—`.
-    d="$(fresh_dir)"
-    command printf 'aws = "%s"\n' "$AKIA_TOK" >"$d/nobang-key"
-    list="$(make_list "$d/l" "$d/nobang-key")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "AWS access key pattern" \
-        "security: a literal secret still fires in an unresolved extensionless file"
-
-    # A DOTTED DIRECTORY must not defeat the read. `ext` is derived from the
-    # whole path, so `.github/deploy` yields ext `github/deploy` — a non-empty
-    # WRONG key. Gating the read on `not ext` would skip exactly the scripts this
-    # shape exists to reach, and because BOTH runtimes would agree, the parity
-    # gate could not have caught it (#684). Found by probe, not by review.
-    d="$(fresh_dir)"
-    command mkdir -p "$d/.github"
-    command printf '#!/usr/bin/env bash\npassword = "realsecret123"\n' >"$d/.github/deploy"
-    list="$(make_list "$d/l" "$d/.github/deploy")"
-    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
-        "security: a shebang script under a DOTTED directory still resolves"
-
-    # A tabled BASENAME still wins over the shebang — the read is the last
-    # resort, not the first. A Dockerfile whose first line is a bash shebang must
-    # still resolve as a Dockerfile (both are `#`, so the observable is ORDER:
-    # this passes only if shape 2 returned before the read).
-    d="$(fresh_dir)"
-    command printf '#!/usr/bin/env node\n# PASSWORD = "realsecret123"\n' >"$d/Dockerfile"
-    list="$(make_list "$d/l" "$d/Dockerfile")"
-    assert_silent "$SK_SEC" "$list" hardcoded-secret \
-        "security: a tabled basename beats the shebang (order: name before content)"
-
     # THE COMMENT-FAMILY TABLE, both directions per family. Three review cycles
     # each found one more language group that had lost coverage to the gating
     # (config, then C-family, then this set) — instances of one structural
@@ -775,10 +517,6 @@ test_security_unreadable() {
     command chmod 644 "$d/nope.py" 2>/dev/null || true
 }
 
-# ============================================================================
-# check-code-health — tech-debt-marker + debug-statement + empty-handler
-# ============================================================================
-
 # assert_row_count SKILLDIR LIST CAT N MSG — the category emits EXACTLY N rows in
 # both impls. Distinct from assert_fires, which only proves at least one row
 # contains a needle and so cannot catch a DOUBLE-fire. Lives in this fragment
@@ -821,6 +559,15 @@ test_security_command_injection() {
     assert_fires "$SK_SEC" "$list" command-injection "Shell command execution" \
         "security: os.system fires"
 
+    # A DOTTED receiver still fires: python's `\bos\.` is satisfied by a
+    # preceding dot, so `obj.os.system(...)` is a finding there. The bash port
+    # first excluded a preceding dot and silently missed it. Found in review
+    # cycle 1; this is the input on which the two boundary spellings diverge.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'obj.os.system("x")' >"$d/dotted.py"
+    list="$(make_list "$d/l" "$d/dotted.py")"
+    assert_fires "$SK_SEC" "$list" command-injection "Shell command execution" \
+        "security: a dotted receiver (obj.os.system) fires in both impls"
 
     d="$(fresh_dir)"
     command printf '%s\n' 'child_process.exec(userCmd);' >"$d/c.js"
@@ -945,8 +692,30 @@ test_security_weak_randomness() {
     assert_silent "$SK_SEC" "$list" weak-randomness \
         "security: secrets.token_hex stays silent"
 
+    # BOUNDARY (review cycle 1): the context words `key` and `iv` are bounded in
+    # the python impl (\bkey\b, iv\b). The bash port first shipped them as bare
+    # substrings, so `monkey`, `arrival` and `ivory` each fired a false
+    # weak-randomness row in the FALLBACK ONLY — a py/sh divergence invisible to
+    # a same-output parity check that never feeds it such a line. POSIX ERE has
+    # no \b, so the portable spelling is the consuming class already used by
+    # CMD_OS_SYSTEM_PATTERN in the same file.
+    d="$(fresh_dir)"
+    {
+        command printf '%s\n' 'const jitter = Math.random() * 100; // monkey testing'
+        command printf '%s\n' 'const arrival = Math.random();'
+        command printf '%s\n' 'let ivoryColor = Math.random();'
+    } >"$d/sub.js"
+    list="$(make_list "$d/l" "$d/sub.js")"
+    assert_silent "$SK_SEC" "$list" weak-randomness \
+        "security: key/iv INSIDE another word (monkey/arrival/ivory) stays silent"
 
-
+    # ...and the bounded words themselves still fire, so the boundary did not
+    # simply disable the arm.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const iv = Math.random();' >"$d/iv.js"
+    list="$(make_list "$d/l" "$d/iv.js")"
+    assert_fires "$SK_SEC" "$list" weak-randomness "Non-CSPRNG" \
+        "security: a standalone iv still fires (boundary did not kill the arm)"
 
     # The third alternation arm, C-style rand(), previously unexercised.
     d="$(fresh_dir)"
@@ -1005,6 +774,22 @@ test_security_tls_cors_jwt_xxe() {
     assert_silent "$SK_SEC" "$list" jwt-unverified \
         "security: a verified jwt.decode stays silent"
 
+    # alg=none, the OTHER arm of jwt-unverified — and specifically the
+    # SINGLE-QUOTED JS spelling. The bash port first accepted only a double
+    # quote, so `{'alg': 'none'}` (idiomatic JS) was caught by python and MISSED
+    # by the fallback: a false clean on the platform the fallback exists for,
+    # on the highest-severity new detector. Found in review cycle 1.
+    d="$(fresh_dir)"
+    command printf '%s\n' "const header = {'alg': 'none'};" >"$d/algq.js"
+    list="$(make_list "$d/l" "$d/algq.js")"
+    assert_fires "$SK_SEC" "$list" jwt-unverified "JWT signature not verified" \
+        "security: single-quoted alg:'none' fires (bash quote-class parity)"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const header = {"alg": "none"};' >"$d/algdq.js"
+    list="$(make_list "$d/l" "$d/algdq.js")"
+    assert_fires "$SK_SEC" "$list" jwt-unverified "JWT signature not verified" \
+        "security: double-quoted alg:\"none\" fires"
 
     d="$(fresh_dir)"
     command printf '%s\n' 'p = etree.XMLParser(resolve_entities=True)' >"$d/h.py"
