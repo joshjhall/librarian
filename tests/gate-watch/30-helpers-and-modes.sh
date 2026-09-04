@@ -309,6 +309,53 @@ test_pane_multi_question_form_no_self_trip() {
         "A WORKING golem (run-spinner up) reading form text is not a gate"
 }
 
+# $pane_error_lines window: exact boundary + env override (#467, mirroring #459's
+# test_pane_footer_lines_env_overridable for the footer window).
+#
+# This matcher's glyph scan is the SECOND consumer of `pane_error_lines`
+# ("${GOLEM_PANE_ERROR_LINES:-40}", read once at source time) — pane_is_api_error
+# was the first, and NOTHING pinned that knob before this test. So a per-matcher
+# hardcoded 40, or a typo'd variable name, would leave the ${VAR:-default} wiring
+# silently unexercised in both consumers. The window size is not cosmetic here:
+# it is exactly how far above the footer a scrolled-away tab bar can sit and
+# still be seen, which is the #467 failure this matcher exists to prevent.
+#
+# The boundary is pinned EXACTLY (no fencepost slop, the discipline #459
+# established for the footer window): with the default 40-line window, glyph +
+# 39 filler = 40 lines MATCHES, and one line more does not. Asserting both sides
+# is what makes it a boundary rather than a smoke test — an off-by-one in the
+# `tail -n` would keep the first assertion green.
+test_pane_multi_question_form_error_window() {
+    local i filler38 filler39 in_window out_window
+    # Panes are: glyph line + N filler + footer line = N+2 total. The glyph sits
+    # on the FIRST line, so it is inside a 40-line window iff N+2 <= 40, i.e.
+    # N <= 38. Hence 38 filler (40 lines, glyph exactly at the window edge) is
+    # the last matching case and 39 filler (41 lines) is the first that is not.
+    filler38=""
+    for i in $(seq 1 38); do filler38="${filler38}  filler line $i"$'\n'; done
+    filler39="${filler38}  filler line 39"$'\n'
+
+    in_window="☒ Q1  ✔ Submit"$'\n'"${filler38}Enter to select"
+    out_window="☒ Q1  ✔ Submit"$'\n'"${filler39}Enter to select"
+
+    assert_equals "0" "$(_pane_rc pane_is_multi_question_form "$in_window")" \
+        "A glyph on the 40th-from-last line is INSIDE the default error window"
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$out_window")" \
+        "One line further up is OUTSIDE it (the boundary is exact, no slop)"
+
+    # Enlarge direction: the SAME out-of-window pane matches once the window is
+    # widened, which is what proves the env var reached the source-time read
+    # rather than the matcher simply failing for some unrelated reason.
+    assert_equals "0" \
+        "$(GOLEM_PANE_ERROR_LINES=60 _pane_rc pane_is_multi_question_form "$out_window")" \
+        "GOLEM_PANE_ERROR_LINES=60 enlarges the window so the same glyph falls inside it"
+    # Shrink direction, so the wiring is pinned both ways: the in-window pane
+    # stops matching under a window too small to reach the glyph.
+    assert_equals "1" \
+        "$(GOLEM_PANE_ERROR_LINES=10 _pane_rc pane_is_multi_question_form "$in_window")" \
+        "GOLEM_PANE_ERROR_LINES=10 shrinks the window so the same glyph falls outside it"
+}
+
 # panes_snapshot dispatch (#257): a fork-only pane emits the escalation label; a
 # plan+fork pane still emits the plan label (plan-gate wins); a gate+fork pane
 # emits the permission-gate label (generic gate wins over fork). Pins the whole
