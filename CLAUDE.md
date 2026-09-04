@@ -261,6 +261,20 @@ just fmt          # format JSON/YAML/TOML/markdown/Python
 just install-hooks
 ```
 
+**Capture the suite's output — never pipe it** (#854). `bash tests/run-all.sh |
+tail -45` exits **0 on a red suite**: a pipeline reports its *last* command's
+status, so the caller reads `tail`'s success. Capture instead, and read the code:
+
+```bash
+bash tests/run-all.sh > /tmp/run.log 2>&1; echo $?
+```
+
+The runner mirrors its failure verdict — banner plus the names of the failed
+stages — to **stderr**, which a stdout-only pipe cannot swallow, so a piped run
+is loud even though its exit code is still lost. That is a backstop, not a
+license: only the captured form gives a caller an exit code it can trust.
+`tests/validate-run-all-reporting.sh` pins both halves.
+
 **`git push` already runs the full suite — do not run it by hand first.**
 lefthook's **pre-push** `quality-gates` step is `bash tests/run-all.sh`, globbed
 to `plugins/**`, `tests/**`, and `.github/workflows/**`, so nearly every change
