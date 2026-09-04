@@ -22,6 +22,38 @@ deprecat = "deprecat"
 integrat = "integrat"
 # `styl` is the Stylus stylesheet extension (.styl) in test-skip-patterns.
 styl = "styl"
+# Fragment stems in check-security/patterns.{sh,py} (#707). The OWASP detector
+# literals are deliberately SPLIT mid-word — `''Tru''e`, `''Fals''e`,
+# `''syste''m` — so the scanner does not flag its own source on the very tokens
+# it hunts for (the same technique the XSS_* patterns have always used, and not
+# hypothetical: `.yml` is a modeled language and the coverage map documents
+# these detectors in prose). typos sees each half as a misspelling. Reassembled
+# at match time, these are `True`, `False`, `os.system`, etc.
+Tru = "Tru"
+tru = "tru"
+Fals = "Fals"
+fals = "fals"
+syste = "syste"
+exe = "exe"
+eva = "eva"
+pickl = "pickl"
+loa = "loa"
+readObjec = "readObjec"
+Objec = "Objec"
+unserializ = "unserializ"
+verif = "verif"
+Verif = "Verif"
+rejectUnauthorize = "rejectUnauthorize"
+UNAUTHORIZE = "UNAUTHORIZE"
+Origi = "Origi"
+origi = "origi"
+al = "al"
+non = "non"
+decod = "decod"
+resolve_entitie = "resolve_entitie"
+loade = "loade"
+XMLConstant = "XMLConstant"
+entitie = "entitie"
 # `mis` is the stem of hyphenated compounds (mis-delivered, mis-parsed) in the
 # golem-inbox / next-issue prose; typos splits on the hyphen and would misread
 # it as `miss`/`mist`. Not a typo.

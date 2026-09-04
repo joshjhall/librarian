@@ -54,6 +54,170 @@ XSS_VUE = "v-" + "html"  # literal substring
 XSS_SAFE_RE = r"\|" + "safe" + r"\b|" + "mark_saf" + r"e\("
 XSS_BLADE = "{" + "!!"  # literal substring
 
+# --- OWASP detector literals (#707) ------------------------------------------
+# FRAGMENTED FOR THE SAME REASON AS THE XSS LITERALS ABOVE, and here it is not
+# hypothetical: check-security's own owasp-coverage.yml documents these detectors
+# in prose, `.yml` IS a modeled language, and the crypto arm was measured firing
+# inside a .yml. A contiguous "verify=False" in this file (or in that map) would
+# make the scanner report itself. Every literal below is therefore assembled from
+# pieces that never appear contiguously in the source.
+#
+# The inverse trap is equally real: a FIXTURE written escaped so it cannot
+# self-match also cannot be matched by the detector, and passes with AND without
+# the fix. Fixtures must carry the real contiguous token.
+#
+# TIER. All seven are single-line-evident — the line IS the finding, with no data
+# flow to reconstruct — so they ship at the module-level CERTAINTY (HIGH). The
+# three taint-requiring detectors (#707 also listed path-traversal, ssrf,
+# open-redirect) are deliberately ABSENT: measured over a 753-file corpus they
+# produced 0 true positives in 8 hits (all `argv`-derived, request-derived = 0),
+# which supports no tier at all. They are recorded as `gap:` entries in
+# owasp-coverage.yml with that measurement, per contract.md's rule that a
+# detector whose measured hit rate cannot support its tier does not ship.
+
+# command-injection. Shapes reused from dev-core's loop-make-it-secure
+# DANGER_FN_RE so the two scanners cannot drift into different definitions of
+# the same defect.
+CMD_SHELL_TRUE = r"subprocess\.[a-z_]+\s*\([^)]*shell\s*=\s*" + "Tru" + "e"
+CMD_OS_SYSTEM = r"\bos\." + "syste" + r"m\s*\("
+CMD_CHILD_EXEC = r"child_process\." + "exe" + r"c\s*\("
+# eval/exec fire only on a NON-LITERAL argument: `eval("1+1")` is benign, while
+# `eval(user_input)` / `eval("x" + s)` is the defect. A bare eval( match would
+# fire on every dynamic-evaluation call and on any file merely naming it.
+#
+# The LEFT BOUNDARY is load-bearing and cost a real bug during development:
+# `\b` alone still matches the `exec` inside `child_process.exec(`, so the JS
+# command-injection fixture double-fired. `(?<![\w.])` additionally refuses a
+# preceding dot, which is what distinguishes a bare `exec(...)` from any
+# `<obj>.exec(...)` member call. Same class of defect as a bare `open(` matching
+# inside `urlopen(` — measured on this repo while sizing the taint detectors.
+CMD_EVAL_NONLITERAL = (
+    r"(?<![\w.])(" + "eva" + "l|" + "exe" + r"c)\s*\(\s*[^\"')\s][^)]*\)"
+)
+
+# insecure-deserialization. yaml.load is unsafe only WITHOUT an explicit
+# Loader= — the two-stage shape dev-core's UNSAFE_DESERIALIZE_RE/
+# LOADER_EXCLUDE_RE pair established in #183, so yaml.safe_load and an explicit
+# SafeLoader both stay silent.
+DESERIALIZE_RE = (
+    r"\b("
+    + "pickl"
+    + r"e\.loads?\s*\("
+    + r"|"
+    + "yaml\\.loa"
+    + r"d\s*\("
+    + r"|"
+    + "marshal\\.loa"
+    + r"ds?\s*\("
+    + r"|"
+    + "Marshal\\.loa"
+    + r"d\s*\("
+    + r"|"
+    + "readObjec"
+    + r"t\s*\("
+    + r"|"
+    + "unserializ"
+    + r"e\s*\("
+    + r")"
+)
+DESERIALIZE_SAFE_RE = r"(Loader\s*=|safe_load)"
+
+# weak-randomness. A non-CSPRNG is only a FINDING when it feeds a security
+# value; `Math.random()` picking a UI jitter is fine. The co-occurrence guard on
+# the same line is what earns the HIGH tier here.
+WEAK_RANDOM_FN = r"(Math\.random\s*\(\)|random\.random\s*\(\)|\brand\s*\(\))"
+WEAK_RANDOM_CTX = r"(token|nonce|salt|session|secret|password|\bkey\b|iv\b)"
+
+# tls-verification-disabled.
+TLS_DISABLED_RE = (
+    r"("
+    + "verif"
+    + r"y\s*=\s*"
+    + "Fals"
+    + "e"
+    + r"|"
+    + "rejectUnauthorize"
+    + r"d\s*:\s*"
+    + "fals"
+    + "e"
+    + r"|"
+    + "InsecureSkipVerif"
+    + r"y\s*:\s*"
+    + "tru"
+    + "e"
+    + r"|"
+    + "NODE_TLS_REJECT_UNAUTHORIZE"
+    + r"D\s*=\s*.?0"
+    + r")"
+)
+
+# permissive-cors. A wildcard origin, or an origin reflector that trusts every
+# caller.
+CORS_RE = (
+    r"("
+    + "Access-Control-Allow-Origi"
+    + r"n\s*:?\s*[\"']?\s*\*"
+    + r"|"
+    + "origi"
+    + r"n\s*:\s*"
+    + "tru"
+    + "e"
+    + r")"
+)
+
+# jwt-unverified. alg=none disables the signature outright; a decode call with
+# verification explicitly switched off does the same thing by argument.
+JWT_RE = (
+    r"("
+    + "al"
+    + r"g[\"']?\s*:\s*[\"']?"
+    + "non"
+    + "e"
+    + r"|"
+    + "jwt\\.decod"
+    + r"e\s*\([^)]*"
+    + "verif"
+    + r"y\s*=\s*"
+    + "Fals"
+    + "e"
+    + r"|"
+    + "jwt\\.decod"
+    + r"e\s*\([^)]*"
+    + "verif"
+    + r"y\s*:\s*"
+    + "fals"
+    + "e"
+    + r")"
+)
+
+# xxe-risk — an XML parser with external entities or DTD loading left enabled.
+#
+# The `-risk` suffix is REQUIRED, not stylistic (it mirrors xss-risk /
+# injection-risk). Both category gates extract slugs with a regex that mandates
+# an interior hyphen — `"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"` in
+# validate-owasp-coverage.sh and validate-scanner-category-parity.sh — because a
+# single-word pattern would also match every bare language code and quoted word
+# in these files, turning them into phantom categories. A bare "xxe" is
+# therefore INVISIBLE to both gates: the coverage map would claim a prescan id
+# no scanner appears to emit, and the parity gate would not police it at all.
+# Caught by validate-owasp-coverage.sh rule 2a while wiring this detector up.
+XXE_RE = (
+    r"("
+    + "resolve_entitie"
+    + r"s\s*=\s*"
+    + "Tru"
+    + "e"
+    + r"|"
+    + "libxml_disable_entity_loade"
+    + r"r\s*\(\s*"
+    + "fals"
+    + "e"
+    + r"|"
+    + "XMLConstant"
+    + "s"
+    + r")"
+)
+
 
 def emit(path: str, line_no: int, category: str, evidence: str) -> None:
     """Write one TSV finding row (avoids the print() builtin by design)."""
@@ -647,6 +811,107 @@ def scan_file(path: str) -> None:
 
             if re.search(r"\bECB\b|MODE_ECB|mode.*ecb", line, re.IGNORECASE):
                 emit(path, idx, "insecure-crypto", "ECB mode encryption: " + cap(line))
+
+        # --- OWASP detectors (#707) ---
+        # All LEXICAL-DEPENDENT (ADR 0002 § 3): each reasons about code, so a
+        # commented-out `verify=False` or a prose line describing `pickle.loads`
+        # is not a finding. This gating is also what keeps the scanner from
+        # flagging its own documentation — check-security/owasp-coverage.yml
+        # describes these very detectors, and `.yml` is a modeled language.
+        if lang and not is_comment(lang, line):
+            # command-injection
+            if re.search(CMD_SHELL_TRUE, line):
+                emit(
+                    path,
+                    idx,
+                    "command-injection",
+                    "Subprocess with shell=True: " + cap(line),
+                )
+
+            if re.search(CMD_OS_SYSTEM, line):
+                emit(
+                    path,
+                    idx,
+                    "command-injection",
+                    "Shell command execution: " + cap(line),
+                )
+
+            if re.search(CMD_CHILD_EXEC, line):
+                emit(
+                    path,
+                    idx,
+                    "command-injection",
+                    "Unsanitized child process exec: " + cap(line),
+                )
+
+            if re.search(CMD_EVAL_NONLITERAL, line):
+                emit(
+                    path,
+                    idx,
+                    "command-injection",
+                    "Dynamic evaluation of a non-literal: " + cap(line),
+                )
+
+            # insecure-deserialization — two-stage: a positive match that an
+            # explicit safe loader does NOT excuse.
+            if re.search(DESERIALIZE_RE, line) and not re.search(
+                DESERIALIZE_SAFE_RE, line
+            ):
+                emit(
+                    path,
+                    idx,
+                    "insecure-deserialization",
+                    "Unsafe deserialization of untrusted data: " + cap(line),
+                )
+
+            # weak-randomness — the security-context co-occurrence is required.
+            if re.search(WEAK_RANDOM_FN, line) and re.search(
+                WEAK_RANDOM_CTX, line, re.IGNORECASE
+            ):
+                emit(
+                    path,
+                    idx,
+                    "weak-randomness",
+                    "Non-CSPRNG used for a security value: " + cap(line),
+                )
+
+            # tls-verification-disabled. The JWT exclusion is deliberate: a bare
+            # `verify=False` is the same token in both taxonomies, but on a
+            # `jwt.decode(...)` line it disables a SIGNATURE check, not a TLS
+            # certificate check. Without this, one line emitted two findings and
+            # the TLS one named the wrong defect, sending a reader to the wrong
+            # fix. The jwt-unverified arm below still reports it.
+            if re.search(TLS_DISABLED_RE, line) and not re.search(JWT_RE, line):
+                emit(
+                    path,
+                    idx,
+                    "tls-verification-disabled",
+                    "TLS certificate verification disabled: " + cap(line),
+                )
+
+            if re.search(CORS_RE, line):
+                emit(
+                    path,
+                    idx,
+                    "permissive-cors",
+                    "Permissive CORS policy: " + cap(line),
+                )
+
+            if re.search(JWT_RE, line):
+                emit(
+                    path,
+                    idx,
+                    "jwt-unverified",
+                    "JWT signature not verified: " + cap(line),
+                )
+
+            if re.search(XXE_RE, line):
+                emit(
+                    path,
+                    idx,
+                    "xxe-risk",
+                    "XML parser with external entities enabled: " + cap(line),
+                )
 
 
 # --- input-shape guard (#816) -----------------------------------------------

@@ -65,6 +65,23 @@ SEC_BLADE="{""!!"
     printf '%s\n' '    risky()'
     printf '%s\n' 'except Exception:'
     printf '%s\n' '    pass'
+    # OWASP arms (#707): each new detector's POSITIVE branch, plus the two
+    # negative branches that are real code paths rather than mere non-matches —
+    # the safe-loader exclusion and the eval-of-a-literal guard both execute
+    # additional lines. Correctness is pinned by validate-source-detectors.sh;
+    # these exist so the branches run under measurement (#204 two-surface).
+    printf '%s\n' 'subprocess.call(cmd, shell=True)'
+    printf '%s\n' 'os.system("rm -rf " + target)'
+    printf '%s\n' 'data = pickle.loads(blob)'
+    printf '%s\n' 'cfg = yaml.load(stream)'
+    printf '%s\n' 'safe = yaml.safe_load(stream)'
+    printf '%s\n' 'tok = random.random() + salt'
+    printf '%s\n' 'good = secrets.token_hex(32)'
+    printf '%s\n' 'r = requests.get(url, verify=False)'
+    printf '%s\n' 'payload = jwt.decode(t, verify=False)'
+    printf '%s\n' 'p = etree.XMLParser(resolve_entities=True)'
+    printf '%s\n' 'v = eval(user_input)'
+    printf '%s\n' 'lit = eval("1+1")'
 } >"$SRCDIR/app.py"
 
 # TS source: template-literal SQL, console/debugger, empty catch.
@@ -73,6 +90,17 @@ SEC_BLADE="{""!!"
     printf '%s\n' 'console.log("debug");'
     printf '%s\n' 'debugger;'
     printf '%s\n' 'try { risky(); } catch (e) {}'
+    printf '%s\n' 'child_process.exec(userCmd);'
+    printf '%s\n' 'const sessionKey = Math.random().toString(36);'
+    printf '%s\n' 'const jitter = Math.random() * 100;'
+    printf '%s\n' 'res.header("Access-Control-Allow-Origin: *");'
+    printf '%s\n' 'const opts = {rejectUnauthorized: false};'
+    # Remaining alternation arms (review cycle 1): each is its own
+    # severity-bearing arm in thresholds.yml, so each needs to execute here.
+    printf '%s\n' "const header = {'alg': 'none'};"
+    printf '%s\n' 'app.use(cors({origin: true, credentials: true}));'
+    printf '%s\n' 'const sessionToken = rand();'
+    printf '%s\n' 'const jitter2 = Math.random() * 100; // monkey testing'
 } >"$SRCDIR/app.ts"
 
 # Ruby source: interpolation SQL, ECB, binding.pry, empty rescue.

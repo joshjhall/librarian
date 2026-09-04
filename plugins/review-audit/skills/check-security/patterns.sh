@@ -435,6 +435,58 @@ XSS_VUE_PATTERN='v-html'
 XSS_SAFE_PATTERN='\|safe\b|mark_safe\('
 XSS_BLADE_PATTERN='{!!'
 
+# --- OWASP detector patterns (#707) -----------------------------------------
+# Fragment-concatenated for the same reason as the XSS_* patterns above: this
+# scanner must not flag its own source. Not hypothetical — `.yml` is a modeled
+# language here, and check-security/owasp-coverage.yml documents these very
+# detectors in prose.
+#
+# NO GNU-ONLY REGEX (CLAUDE.md § runtime policy): BSD grep reads `\s`/`\w` as
+# literals and has no `-P`, and that failure is SILENT — the pattern simply
+# stops matching and the scan still exits 0. Hence [[:space:]] / [[:alnum:]_]
+# throughout, and `-E` everywhere.
+#
+# The eval/exec arm cannot use the python impl's `(?<![\w.])` lookbehind, which
+# POSIX ERE does not have. The portable equivalent CONSUMES a leading character
+# — `(^|[^[:alnum:]_.])` — which is equivalent here because both impls report
+# only the LINE, never the match offset, so the TSV stays identical.
+CMD_SHELL_TRUE_PATTERN='subprocess\.[a-z_]+[[:space:]]*\([^)]*shell[[:space:]]*=[[:space:]]*''Tru''e'
+CMD_OS_SYSTEM_PATTERN='(^|[^[:alnum:]_])os\.''syste''m[[:space:]]*\('
+CMD_CHILD_EXEC_PATTERN='child_process\.''exe''c[[:space:]]*\('
+CMD_EVAL_PATTERN='(^|[^[:alnum:]_.])(''eva''l|''exe''c)[[:space:]]*\([[:space:]]*[^"'\'')[:space:]][^)]*\)'
+
+DESERIALIZE_PATTERN='(''pickl''e\.loads?[[:space:]]*\(|''yaml\.loa''d[[:space:]]*\(|''marshal\.loa''ds?[[:space:]]*\(|''Marshal\.loa''d[[:space:]]*\(|''readObjec''t[[:space:]]*\(|''unserializ''e[[:space:]]*\()'
+DESERIALIZE_SAFE_PATTERN='(Loader[[:space:]]*=|safe_load)'
+
+WEAK_RANDOM_FN_PATTERN='(Math\.random[[:space:]]*\(\)|random\.random[[:space:]]*\(\)|(^|[^[:alnum:]_.])rand[[:space:]]*\(\))'
+WEAK_RANDOM_CTX_PATTERN='(token|nonce|salt|session|secret|password|(^|[^[:alnum:]_])key([^[:alnum:]_]|$)|iv([^[:alnum:]_]|$))'
+
+TLS_DISABLED_PATTERN='(''verif''y[[:space:]]*=[[:space:]]*''Fals''e|''rejectUnauthorize''d[[:space:]]*:[[:space:]]*''fals''e|''InsecureSkipVerif''y[[:space:]]*:[[:space:]]*''tru''e|''NODE_TLS_REJECT_UNAUTHORIZE''D[[:space:]]*=[[:space:]]*.?0)'
+
+CORS_PATTERN='(''Access-Control-Allow-Origi''n[[:space:]]*:?[[:space:]]*"?[[:space:]]*\*|''origi''n[[:space:]]*:[[:space:]]*''tru''e)'
+
+JWT_PATTERN='(''al''g["'\'']?[[:space:]]*:[[:space:]]*["'\'']?''non''e|''jwt\.decod''e[[:space:]]*\([^)]*''verif''y[[:space:]]*=[[:space:]]*''Fals''e|''jwt\.decod''e[[:space:]]*\([^)]*''verif''y[[:space:]]*:[[:space:]]*''fals''e)'
+
+XXE_PATTERN='(''resolve_entitie''s[[:space:]]*=[[:space:]]*''Tru''e|''libxml_disable_entity_loade''r[[:space:]]*\([[:space:]]*''fals''e|''XMLConstant''s)'
+
+# emit_simple PATTERN CATEGORY LABEL — the single-pattern, comment-gated,
+# one-message-per-match shape shared by six of the #707 arms. Defined once at
+# top level (NOT inside the per-file loop, which would redefine it per file) and
+# reads $file / $file_comment_re from the loop's scope, as the surrounding
+# inline arms do. The two-stage arms (insecure-deserialization, weak-randomness,
+# tls-verification-disabled) each need an extra filter and stay written out.
+emit_simple() {
+    command grep -nE "$1" "$file" 2>/dev/null |
+        command grep -vE "$file_comment_re" |
+        while IFS= read -r raw; do
+            line_num=${raw%%:*}
+            content=${raw#*:}
+            evidence=$(truncate_chars 80 "$content")
+            command printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$file" "$line_num" "$2" "$3: ${evidence}" "HIGH"
+        done || true
+}
+
 while IFS= read -r file; do
     [ -f "$file" ] || continue
 
@@ -735,6 +787,72 @@ while IFS= read -r file; do
                     "$file" "$line_num" "insecure-crypto" \
                     "ECB mode encryption: ${evidence}" "HIGH"
             done || true
+
+        # --- OWASP detectors (#707) ---
+        # All LEXICAL-DEPENDENT, inside this same `[ -n "$file_lang" ]` gate: a
+        # commented-out `verify=False`, or a prose line describing pickle.loads,
+        # is not a finding. That gating is also what stops the scanner flagging
+        # its own documentation.
+
+        # command-injection — four arms, each its own message.
+        emit_simple "$CMD_SHELL_TRUE_PATTERN" "command-injection" \
+            "Subprocess with shell=True"
+        emit_simple "$CMD_OS_SYSTEM_PATTERN" "command-injection" \
+            "Shell command execution"
+        emit_simple "$CMD_CHILD_EXEC_PATTERN" "command-injection" \
+            "Unsanitized child process exec"
+        emit_simple "$CMD_EVAL_PATTERN" "command-injection" \
+            "Dynamic evaluation of a non-literal"
+
+        # insecure-deserialization — two-stage, mirroring the python impl: a
+        # positive match that an explicit safe loader does NOT excuse, so
+        # yaml.safe_load and `Loader=SafeLoader` both stay silent.
+        command grep -nE "$DESERIALIZE_PATTERN" "$file" 2>/dev/null |
+            command grep -vE "$file_comment_re" |
+            command grep -vE "$DESERIALIZE_SAFE_PATTERN" |
+            while IFS= read -r raw; do
+                line_num=${raw%%:*}
+                content=${raw#*:}
+                evidence=$(truncate_chars 80 "$content")
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "insecure-deserialization" \
+                    "Unsafe deserialization of untrusted data: ${evidence}" "HIGH"
+            done || true
+
+        # weak-randomness — requires the security-context co-occurrence on the
+        # same line; a non-CSPRNG picking UI jitter is not a finding.
+        command grep -nE "$WEAK_RANDOM_FN_PATTERN" "$file" 2>/dev/null |
+            command grep -vE "$file_comment_re" |
+            command grep -iE "$WEAK_RANDOM_CTX_PATTERN" |
+            while IFS= read -r raw; do
+                line_num=${raw%%:*}
+                content=${raw#*:}
+                evidence=$(truncate_chars 80 "$content")
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "weak-randomness" \
+                    "Non-CSPRNG used for a security value: ${evidence}" "HIGH"
+            done || true
+
+        # tls-verification-disabled. The JWT exclusion matches the python impl:
+        # `verify=False` on a jwt.decode line disables a SIGNATURE check, not a
+        # TLS certificate check, and naming it TLS sends a reader to the wrong
+        # fix. The jwt-unverified arm below still reports that line.
+        command grep -nE "$TLS_DISABLED_PATTERN" "$file" 2>/dev/null |
+            command grep -vE "$file_comment_re" |
+            command grep -vE "$JWT_PATTERN" |
+            while IFS= read -r raw; do
+                line_num=${raw%%:*}
+                content=${raw#*:}
+                evidence=$(truncate_chars 80 "$content")
+                command printf '%s\t%s\t%s\t%s\t%s\n' \
+                    "$file" "$line_num" "tls-verification-disabled" \
+                    "TLS certificate verification disabled: ${evidence}" "HIGH"
+            done || true
+
+        emit_simple "$CORS_PATTERN" "permissive-cors" "Permissive CORS policy"
+        emit_simple "$JWT_PATTERN" "jwt-unverified" "JWT signature not verified"
+        emit_simple "$XXE_PATTERN" "xxe-risk" \
+            "XML parser with external entities enabled"
     fi
 
 done <"$FILE_LIST"
