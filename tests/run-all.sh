@@ -44,6 +44,7 @@
 #  11b7. Hook no-op silence (tests/lint-hook-silence.sh)
 #  11b8. Scanner extension-dispatch case parity (tests/lint-scanner-case-dispatch.sh)
 #  11b8a. Pre-scan input-shape guard (tests/lint-prescan-input-guard.sh)
+#  11b8b. is_test_file basename anchoring (tests/lint-test-file-anchoring.sh)
 #  11b9. Definition-shaped assertions (tests/lint-definition-assertions.sh)
 #  11b10. Scanner language-table consistency (tests/lint-language-table-sync.sh)
 #  11c. Python-port contract + bash parity (tests/validate-python-ports.sh)
@@ -292,6 +293,13 @@ run_stage "Definition-shaped assertions" bash "$SCRIPT_DIR/lint-definition-asser
 # the source instead, and covers every arm at every site.
 run_stage "Scanner extension-dispatch case parity" bash "$SCRIPT_DIR/lint-scanner-case-dispatch.sh"
 run_stage "Pre-scan input-shape guard" bash "$SCRIPT_DIR/lint-prescan-input-guard.sh"
+
+# The same shape, one predicate over: is_test_file's name arms must match the
+# BASENAME, so a DIRECTORY named test_helpers/ can never make real source
+# beneath it read as test code. Fixed by hand twice (#568, #836) before anything
+# swept the class; byte-identity was the wrong contract for these copies (#836),
+# which is what left anchoring unenforced (#866).
+run_stage "is_test_file basename anchoring" bash "$SCRIPT_DIR/lint-test-file-anchoring.sh"
 
 # The companion to the stage above: that one pins HOW an extension is spelled in
 # bash, this one pins WHICH LANGUAGE it means and that the contract matrix and
