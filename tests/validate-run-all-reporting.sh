@@ -122,13 +122,18 @@ test_failure_still_on_stdout() {
 
     assert_contains "$out" "One or more test stages FAILED" \
         "the FAILED verdict is still on stdout too (mirrored, not moved)"
+    # The banner alone is not the verdict. Asserting the stage LIST on both
+    # streams is what catches a regression that dropped it from the stdout copy
+    # while leaving stderr intact — an asymmetry a banner-only check cannot see.
+    assert_contains "$out" "  [FAIL] Stage 2 (1)" \
+        "the failed-stage LIST is on stdout too, not only on stderr"
 }
 
 test_stderr_names_the_failed_stage() {
     local err
     err="$(run_mini_suite stderr 0 1 0)"
 
-    assert_contains "$err" "Stage 2 (1)" \
+    assert_contains "$err" "  [FAIL] Stage 2 (1)" \
         "the stderr verdict names the stage that FAILED"
     assert_not_contains "$err" "Stage 1 (0)" \
         "a PASSING stage is not listed as failed"
@@ -140,10 +145,30 @@ test_failed_stage_list_comes_last() {
     local err banner_line list_line
     err="$(run_mini_suite stderr 1)"
     banner_line="$(printf '%s\n' "$err" | command grep -n 'test stages FAILED' | head -1 | cut -d: -f1)"
-    list_line="$(printf '%s\n' "$err" | command grep -n '\[FAIL\] Stage 1' | head -1 | cut -d: -f1)"
+    list_line="$(printf '%s\n' "$err" | command grep -n '^  \[FAIL\] Stage 1' | head -1 | cut -d: -f1)"
 
     assert_true "[ -n '$banner_line' ] && [ -n '$list_line' ] && [ '$list_line' -gt '$banner_line' ]" \
         "the failed-stage list prints AFTER the banner, so | tail keeps it"
+}
+
+# The accumulator is new logic, and every case above drives exactly ONE failing
+# stage — which is precisely the input a concatenation bug survives. Two failures
+# is the smallest fixture where a stray newline could join two labels into one
+# line, or the order could come out reversed.
+test_multiple_failed_stages_all_listed() {
+    local err first_line second_line
+    err="$(run_mini_suite stderr 0 1 1 0)"
+
+    assert_contains "$err" "  [FAIL] Stage 2 (1)" "the first failed stage is listed"
+    assert_contains "$err" "  [FAIL] Stage 3 (1)" "the second failed stage is listed"
+    assert_not_contains "$err" "[FAIL] Stage 1 (0)" "a passing stage is still not listed"
+
+    # Order, and that they are separate LINES — a lost newline would render
+    # "Stage 2 (1)Stage 3 (1)" on one line, which both assertions above survive.
+    first_line="$(printf '%s\n' "$err" | command grep -n '^  \[FAIL\] Stage 2' | head -1 | cut -d: -f1)"
+    second_line="$(printf '%s\n' "$err" | command grep -n '^  \[FAIL\] Stage 3' | head -1 | cut -d: -f1)"
+    assert_true "[ -n '$first_line' ] && [ -n '$second_line' ] && [ '$second_line' -gt '$first_line' ]" \
+        "the two failed stages are on separate lines, in run order"
 }
 
 # --- The negative arm: a green run must not cry wolf on stderr ---------------
@@ -199,7 +224,7 @@ test_skip_stage_is_not_reported_as_failed() {
     assert_contains "$both" "SUITE_RC=0" "a skipped stage leaves the suite rc at 0"
     assert_contains "$both" "All test stages passed" \
         "a skipped stage does not trigger the FAILED verdict"
-    assert_not_contains "$both" "[FAIL] Stage 2" \
+    assert_not_contains "$both" "  [FAIL] Stage 2" \
         "a skipped stage is not listed among the failed stages"
 }
 
@@ -220,6 +245,7 @@ run_test test_failure_reaches_stderr "a failing verdict reaches stderr (survives
 run_test test_failure_still_on_stdout "the failing verdict is mirrored, not moved off stdout"
 run_test test_stderr_names_the_failed_stage "the stderr verdict names the failed stage"
 run_test test_failed_stage_list_comes_last "the failed-stage list prints after the banner"
+run_test test_multiple_failed_stages_all_listed "every failed stage is listed, in order, on its own line"
 run_test test_passing_run_is_silent_on_stderr "a passing suite is silent on stderr"
 run_test test_passing_run_still_reports_success_on_stdout "a passing suite still reports success on stdout"
 run_test test_failing_suite_rc_is_nonzero "a failed stage still fails the suite"
