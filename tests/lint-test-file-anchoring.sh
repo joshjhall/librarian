@@ -43,6 +43,25 @@
 # defines nothing, so it can never be a defect site and can never be forgotten
 # either. Measured 2026-09-03: 10 definitions — 3 bash `case`, 3 awk, 4 Python.
 #
+# KNOWN LIMITS, recorded rather than left for the next reader to rediscover
+# (raised as deferrable in review; no current copy triggers either):
+#
+#   - The line-joining helpers count brackets and trailing backslashes as plain
+#     text, with no knowledge of string literals. A future body whose glob
+#     literal carried an unbalanced bracket, or a `#` inside a string, could
+#     desync the fold. Keeping is_test_file bodies free of such literals is the
+#     cheaper half of this bargain than teaching the gate to lex three languages.
+#   - The basename check trusts the NAME of the variable a basename was assigned
+#     to, not its provenance: `base = something_else.rsplit("/", 1)[-1]` would
+#     register as anchored. Tightening it to require the slice come from the
+#     function's own parameter is possible in all three languages and is left
+#     undone deliberately — it is a pre-existing shape shared by every checker
+#     here, not something one language regressed.
+#
+# Both would surface as a FALSE NEGATIVE (a defective copy reading COVERED),
+# which is the failure mode this file exists to prevent — so they are limits to
+# revisit if a copy ever comes near them, not settled design.
+#
 # Pure bash + coreutils + python3. No network.
 
 set -euo pipefail
@@ -449,6 +468,8 @@ test_parser_catches_a_continuation_line_defect() {
         skip_test "mktemp unavailable (parser self-test not run)"
         return 0
     }
+    # shellcheck disable=SC2064  # expand $sandbox now, at trap-registration time
+    trap "command rm -rf '$sandbox'" RETURN
     command mkdir -p "$sandbox/plugins/probe"
     # The DIVERGENT input: `*/test_*.*` is a name arm under a basename subject,
     # and it sits on a continuation line. A line-at-a-time parser sees only
@@ -468,10 +489,19 @@ is_test_file() {
 FIXTURE
     local report
     report="$(scan_root "$sandbox" 2>/dev/null || true)"
-    command rm -rf "$sandbox"
+    # Require the LINE too, not just the verdict. join_continuations promises the
+    # reported line is the arm's FIRST physical line (L6 here, where `*/test_*.*`
+    # sits — not L7 where the `)` closes). Matching only *DEFECT* would let a
+    # line-attribution regression pass silently, and a defect pointing at the
+    # wrong line is most of the value of reporting it at all.
     case "$report" in
-        *DEFECT*)
+        *DEFECT*"L6:"*)
             :
+            ;;
+        *DEFECT*)
+            _fail "the defect was flagged, but attributed to the wrong line" \
+                "join_continuations reports the arm's FIRST physical line (L6 here). A different line means the attribution regressed." \
+                "report: $report"
             ;;
         *)
             _fail "the parser did not flag a path-crossing arm on a continuation line" \
@@ -495,6 +525,8 @@ test_parser_reads_a_wrapped_python_call() {
         skip_test "mktemp unavailable (python wrapped-call self-test not run)"
         return 0
     }
+    # shellcheck disable=SC2064  # expand $sandbox now, at trap-registration time
+    trap "command rm -rf '$sandbox'" RETURN
     command mkdir -p "$sandbox/plugins/probe"
 
     # Teeth. The docstring deliberately carries the prose brackets every real
@@ -538,7 +570,6 @@ def is_test_file(path: str) -> bool:
     return False
 FIXTURE_OK
     report="$(scan_root "$sandbox" 2>/dev/null || true)"
-    command rm -rf "$sandbox"
     case "$report" in
         *DEFECT* | *UNKNOWN*)
             _fail "the parser flagged a correctly basename-anchored wrapped call" \
@@ -549,10 +580,56 @@ FIXTURE_OK
     esac
 }
 
+# The awk twin of the guard above (#866 review cycle 2). check_awk calls the
+# SAME join_continuations, so it carries the same exposure — but a shared helper
+# is not shared coverage: an awk-specific regression (in how a fragment is
+# stripped or rejoined) would be caught here only by luck, since whether a real
+# plugins/ awk copy happens to contain a continuation-line arm is not something
+# this gate controls. So the shape is synthesized rather than hoped for.
+test_parser_catches_an_awk_continuation_defect() {
+    local sandbox report
+    sandbox="$(command mktemp -d 2>/dev/null)" || {
+        skip_test "mktemp unavailable (awk continuation self-test not run)"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $sandbox now, at trap-registration time
+    trap "command rm -rf '$sandbox'" RETURN
+    command mkdir -p "$sandbox/plugins/probe"
+    # `p` is the raw parameter, and the name regex testing it is parked on a
+    # continuation line. Unjoined, the scanner sees neither fragment as a match.
+    command cat >"$sandbox/plugins/probe/awkprobe.sh" <<'FIXTURE_AWK'
+read_awklib() {
+    command cat <<'AWKLIB'
+    function is_test_file(p,   base, i, seg, segs, n) {
+        n = split("tests test", segs, " ")
+        for (i = 1; i <= n; i++) {
+            if (index(p, segs[i] "/") == 1) return 1
+        }
+        if (p ~ \
+            /^test_[^\/]*\.[^\/]*$/) return 1
+        return 0
+    }
+AWKLIB
+}
+FIXTURE_AWK
+    report="$(scan_root "$sandbox" 2>/dev/null || true)"
+    case "$report" in
+        *DEFECT*)
+            :
+            ;;
+        *)
+            _fail "the parser did not flag an awk name regex split across a continuation line" \
+                "check_awk shares join_continuations with check_bash, but sharing a helper is not sharing coverage — an awk-side regression must fail an awk fixture." \
+                "report: ${report:-(empty)}"
+            ;;
+    esac
+}
+
 run_test test_definitions_are_discovered "Every is_test_file definition is discovered from the filesystem"
 run_test test_all_three_languages_are_covered "All three languages (bash, awk, python) are represented"
 run_test test_no_definition_is_unclassifiable "No definition's name arms are unclassifiable (investigate, never assume)"
 run_test test_parser_catches_a_continuation_line_defect "The parser has teeth on a multi-line (continuation) case arm"
+run_test test_parser_catches_an_awk_continuation_defect "The parser has teeth on a multi-line (continuation) awk name regex"
 run_test test_parser_reads_a_wrapped_python_call "The parser has teeth (and narrowness) on a wrapped Python call"
 run_test test_every_name_arm_is_basename_anchored "Every is_test_file name arm is basename-anchored"
 
