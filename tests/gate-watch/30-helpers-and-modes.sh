@@ -258,6 +258,24 @@ test_pane_is_multi_question_form() {
     local form="☐ Commit-back  ☒ Edit strategy  ✔ Submit"$'\n'"Enter to select · ↑/↓ to navigate"
     assert_equals "0" "$(_pane_rc pane_is_multi_question_form "$form")" \
         "A tabbed multi-question form (checkbox glyphs + fork footer) matches"
+    # MULTI_Q_RE has THREE alternatives and each is pinned by a fixture that
+    # carries ONLY that one — otherwise an alternative could be deleted with the
+    # suite still green (the untested-rule class). The checkbox arm is covered by
+    # $form above; the other two follow.
+    #
+    # Arm 2 — the `←` scroll-arrow rendering. Claude Code paints the tab bar with
+    # scroll arrows when the questions overflow the pane width, so the line no
+    # longer STARTS with a checkbox. Without the optional `←` prefix in the regex
+    # the anchor misses, and a wide two-question form silently reads as an
+    # ordinary fork — the exact bug the anchoring was added to prevent, arriving
+    # by a different route.
+    assert_equals "0" \
+        "$(_pane_rc pane_is_multi_question_form "← ☐ Commit-back  ☒ Edit strategy  ✔ Submit →"$'\n'"Enter to select")" \
+        "The scroll-arrow (←) tab-bar rendering is still a multi-question form"
+    # Arm 3 — the unanswered-questions warning, carrying NO checkbox glyph, so it
+    # is this alternative alone that matches. This is the review screen: the most
+    # dangerous state to misclassify, since it is where a stray Enter submits a
+    # half-answered form.
     assert_equals "0" \
         "$(_pane_rc pane_is_multi_question_form "⚠ You have not answered all questions"$'\n'"Enter to select")" \
         "The unanswered-questions warning is also a widget signal"
