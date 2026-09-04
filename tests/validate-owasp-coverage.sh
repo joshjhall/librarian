@@ -75,6 +75,11 @@ OWASP_IDS="A01 A02 A03 A04 A05 A06 A07 A08 A09 A10"
 # uses, so the two gates cannot disagree about what a category literal looks like.
 _SLUG_RX='"[a-z][a-z0-9]+-[a-z][a-z0-9-]*"'
 
+# Sentinel id emitted for a category entry whose `- id:` carries no value.
+# Deliberately un-spellable as a real slug, so it can never collide with a
+# genuine id and be mistaken for one.
+MALFORMED_ID="<MALFORMED-EMPTY-ID>"
+
 # --- YAML reading (pure bash, no sed) ---------------------------------------
 
 # top_level_ids FILE — every top-level key, in file order, one per line.
@@ -103,10 +108,25 @@ entries_of() {
     id=""
     owner=""
     reason_present=0
+    saw_id=0
 
+    # A blank `- id:` must FAIL LOUDLY, not vanish (#706 review cycle 2). The
+    # earlier `[ -n "$id" ] || return 0` dropped such an entry from the stream
+    # entirely, so every rule below iterated past it and the gate went green on
+    # a malformed map — the exact silent-drop failure this file exists to
+    # prevent for scanner categories, reproduced in the map's own parser.
+    # Measured: blanking one id passed the whole gate.
+    #
+    # `saw_id` distinguishes "no entry started yet" (the legitimate initial
+    # flush, and any pre-entry prose) from "an entry started with no id", which
+    # is the malformed case. Emitting a sentinel rather than calling _fail keeps
+    # this a pure parser — the assertion lives with the other rules.
     _flush() {
-        [ -n "$id" ] || return 0
-        command printf '%s|%s|%s\n' "$owner" "$id" "$reason_present"
+        if [ -n "$id" ]; then
+            command printf '%s|%s|%s\n' "$owner" "$id" "$reason_present"
+        elif [ "$saw_id" = "1" ]; then
+            command printf '%s|%s|%s\n' "$owner" "$MALFORMED_ID" "$reason_present"
+        fi
     }
 
     while IFS= read -r line || [ -n "$line" ]; do
@@ -117,6 +137,7 @@ entries_of() {
             '- id:'*)
                 _flush
                 id="$(_yaml_value "${stripped#- id:}")"
+                saw_id=1
                 owner=""
                 reason_present=0
                 ;;
@@ -263,6 +284,12 @@ run_test test_prescan_ids_are_emitted "rule 2a: every prescan id is a category t
 test_emitted_categories_are_mapped() {
     local emitted claimed cat
     emitted="$(emitted_categories)"
+    # A POSITIVE ALLOWLIST, not the negation of `gap` (#706 review cycle 2): a
+    # blank or unknown owner is `!= "gap"` and would therefore have counted as
+    # "mapped" here, quietly disagreeing with the owner-vocabulary rule that
+    # rejects it. Listing the three real owners keeps the two rules from drifting
+    # apart if either is ever reordered or skipped.
+    #
     # Owner-scoped ON PURPOSE (#706 review): a `gap` entry is deliberately named
     # after the slug its future detector will use, so counting gap ids as
     # "mapped" would let a shipping detector be absorbed by the very entry
@@ -272,7 +299,7 @@ test_emitted_categories_are_mapped() {
     # to `prescan`. Measured: with an unscoped set the simulated detector passed
     # the whole gate silently.
     claimed="$(entries_of "$COVERAGE_YML" |
-        command awk -F'|' '$1 != "gap" { print $2 }' | command sort -u)"
+        command awk -F'|' '$1 == "prescan" || $1 == "llm-pass2" || $1 == "reviewer" { print $2 }' | command sort -u)"
     while IFS= read -r cat; do
         [ -n "$cat" ] || continue
         if command printf '%s\n' "$claimed" | command grep -qx "$cat"; then
@@ -350,6 +377,21 @@ EOF
     [ "$TEST_STATUS" = "failed" ] || assert_true "true" "every entry has a known owner"
 }
 run_test test_owners_are_known "every entry's owner is one of the four known values"
+
+# The parser-level counterpart to the rules above: an entry whose id blanked out
+# must be reported, not silently skipped.
+test_no_malformed_entries() {
+    local owner id
+    while IFS='|' read -r owner id _; do
+        [ "$id" = "$MALFORMED_ID" ] || continue
+        _fail "a category entry has an empty '- id:' value" \
+            "it would otherwise vanish from every rule in this gate"
+    done <<EOF
+$(entries_of "$COVERAGE_YML")
+EOF
+    [ "$TEST_STATUS" = "failed" ] || assert_true "true" "no category entry has a blank id"
+}
+run_test test_no_malformed_entries "every category entry has a non-empty id"
 
 # --- Self-tests: the negative fixtures MUST fire -----------------------------
 #
@@ -477,5 +519,19 @@ test_selftest_gap_cannot_absorb_detector() {
         "a gap-owned id must NOT count as mapped once a detector emits it"
 }
 run_test test_selftest_gap_cannot_absorb_detector "self-test: a gap cannot absorb a shipping detector"
+
+test_selftest_blank_id_fires() {
+    assert_fixture_fires blank-id "empty '- id:' value" \
+        "a blanked id must fail loudly rather than vanish from every rule"
+}
+run_test test_selftest_blank_id_fires "self-test: a blank category id fails loudly"
+
+# The owner-vocabulary rule has two shapes: a typo'd value (bad-owner) and an
+# omitted key. They reach the failure through different code paths.
+test_selftest_missing_owner_fires() {
+    assert_fixture_fires missing-owner "unknown owner ''" \
+        "an entry with no owner: key at all must be rejected"
+}
+run_test test_selftest_missing_owner_fires "self-test: an omitted owner key is rejected"
 
 generate_report
