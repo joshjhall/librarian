@@ -9,6 +9,12 @@
 | Skill contract validation | `bash tests/validate-contracts.sh` |
 | golem-gate-watch feed snapshot | `bash tests/golem-gate-watch.sh` |
 
+**Capture, do not pipe** (#854): `bash tests/run-all.sh | tail` exits 0 on a
+red suite, because a pipeline reports its last command's status. Run
+`bash tests/run-all.sh > /tmp/run.log 2>&1; echo $?` instead. The failure
+verdict is also mirrored to stderr so a piped run is still loud, but only the
+captured form preserves the exit code.
+
 `run-all.sh` is the single entry point: it runs manifest validation followed by
 the structural gates and one behavioral gate, runs every stage to completion
 (no early exit), and exits non-zero if any stage fails. It is invoked by both

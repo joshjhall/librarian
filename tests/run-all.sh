@@ -59,6 +59,7 @@
 #  11e2. Spell check — typos (tests/lint-typos.sh)
 #  11f. Lint-gate integrity — runner resolution + skip reporting (tests/validate-lint-gates.sh)
 #  11f2. Skip visibility — step summary + agnix install branches (tests/validate-skip-visibility.sh)
+#  11f3. run-all verdict reporting — pipe-safe failure (tests/validate-run-all-reporting.sh)
 #  11g. bounded-run.sh copy sync (tests/lint-bounded-run-sync.sh)
 #  11g2. Generated workflow.js freshness (tests/lint-workflow-js-generated.sh)
 #  11g3. Shared workflow.js prelude sync (tests/validate-prelude-sync.sh)
@@ -112,6 +113,11 @@ done
 unset _gv
 
 rc=0
+
+# Names of the stages that FAILED, one per line, accumulated by run_stage (#854).
+# A plain newline-delimited string rather than an array: bash-3.2 clean per the
+# repo's portability floor, and the summary wants it as text anyway.
+failed_stages=""
 
 # Reserved exit code a stage returns to mean "did NOT run" (see run_stage below).
 # Kept in sync with the same constant in tests/lint-python.sh.
@@ -217,6 +223,13 @@ run_stage() {
     else
         printf '[FAIL] %s (%ss)\n' "$label" "$_elapsed"
         rc=1
+        # `:-` so run_stage stays self-contained. The suite always initialises
+        # failed_stages above, but tests/validate-lint-gates.sh SLICES this
+        # function out of the source and eval's it alone under `set -u`, where a
+        # bare $failed_stages is a fatal unbound-variable error — which would
+        # break that gate's pass/fail rendering cases from a distance.
+        failed_stages="${failed_stages:-}${label}
+"
     fi
 }
 
@@ -318,6 +331,7 @@ run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
 run_stage "Spell check (typos)" bash "$SCRIPT_DIR/lint-typos.sh"
 run_stage "Lint-gate integrity (resolution + skip reporting)" bash "$SCRIPT_DIR/validate-lint-gates.sh"
 run_stage "Skip visibility (step summary + agnix install branches)" bash "$SCRIPT_DIR/validate-skip-visibility.sh"
+run_stage "run-all verdict reporting (pipe-safe failure)" bash "$SCRIPT_DIR/validate-run-all-reporting.sh"
 run_stage "bounded-run.sh copy sync" bash "$SCRIPT_DIR/lint-bounded-run-sync.sh"
 run_stage "Generated workflow.js freshness" bash "$SCRIPT_DIR/lint-workflow-js-generated.sh"
 run_stage "Shared workflow.js prelude sync" bash "$SCRIPT_DIR/validate-prelude-sync.sh"
@@ -345,12 +359,65 @@ run_stage "context-budget session-length signal" bash "$SCRIPT_DIR/validate-cont
 run_stage "ephemeral-port allocation + retry" bash "$SCRIPT_DIR/validate-free-port.sh"
 run_stage "coverage-driver listener start attempt" bash "$SCRIPT_DIR/validate-cov-listener.sh"
 
-printf '\n========================================\n'
-if [ "$rc" -eq 0 ]; then
-    printf '  All test stages passed\n'
-else
+# Render the end-of-run verdict (#854).
+#
+# WHY THE FAILURE HALF ALSO GOES TO STDERR. The natural way to read a suite that
+# emits thousands of lines is `bash tests/run-all.sh | tail -45` — and a pipeline
+# exits with the status of its LAST command, so the caller sees `tail`'s 0 no
+# matter how red the suite was. A script cannot fix that from the inside: the
+# `set -o pipefail` that would is a property of the INVOKING shell. What it can
+# do is make the failure impossible to lose. stderr is not part of a stdout-only
+# pipe, so mirroring the verdict there puts it on the terminal even when stdout
+# has been piped, redirected, or truncated by `head`. Observed failure this
+# closes: a run whose "Markdown lint (.claude/memory/)" stage failed reported
+# exit 0 through `| tail`, and only a ~9-minute re-run with output captured to a
+# file revealed it.
+#
+# This is the 77/[SKIP] hazard reached by another route — "a silent skip is
+# indistinguishable from a pass" — except in the more dangerous direction, green
+# when red, which is what an agent or script keys off before committing.
+#
+# THE PASSING PATH STAYS SILENT ON STDERR, deliberately. A mirror that also
+# announced success would put text on stderr on every green run, which trains
+# every caller to ignore the stream and costs exactly the signal this exists to
+# add. Failure is the only thing worth interrupting for.
+#
+# THE FAILED-STAGE NAMES PRINT LAST, after the banner, for the same reason the
+# mirror exists: `| tail -N` keeps the END of the output, so putting the list
+# there means a truncating reader sees WHICH stage died rather than only that
+# something did. stdout keeps the full verdict too — unchanged for anyone
+# already reading it.
+print_summary() {
+    local _line
+    printf '\n========================================\n'
+    if [ "$rc" -eq 0 ]; then
+        printf '  All test stages passed\n'
+        printf '========================================\n'
+        return 0
+    fi
     printf '  One or more test stages FAILED\n'
-fi
-printf '========================================\n'
+    printf '========================================\n'
+    printf '%s' "${failed_stages:-}" | while IFS= read -r _line; do
+        [ -n "$_line" ] || continue
+        printf '  [FAIL] %s\n' "$_line"
+    done
+    printf '\nExit code is %s. NOTE: piping this suite (`| tail`, `| grep`)\n' "$rc"
+    printf 'discards it — the pipeline reports the LAST command status. Capture\n'
+    printf 'instead:  bash tests/run-all.sh > /tmp/run.log 2>&1; echo $?\n'
+}
+
+# Emit the verdict on every stream that must carry it. The stream DECISION lives
+# here rather than at the call site so it is testable: tests/validate-run-all-
+# reporting.sh slices this function out of the source and runs it over synthetic
+# stages. A call site that inlined `|| print_summary >&2` would leave the test
+# supplying the mirror itself — the fixture would then pass with the mirror
+# removed, which is the tautology this split exists to prevent.
+emit_summary() {
+    print_summary
+    # The failure half again on stderr, which a stdout-only pipe cannot swallow.
+    [ "$rc" -eq 0 ] || print_summary >&2
+}
+
+emit_summary
 
 exit "$rc"
