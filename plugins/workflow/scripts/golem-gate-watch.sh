@@ -535,12 +535,26 @@ pane_is_fork() {
 #   footer `Enter to select` — without it this is not a selection modal at all;
 #   a widget glyph in the wider window — without it this is the ORDINARY
 #   single-question fork that pane_is_fork already handles.
-# That conjunction is also the self-trip guard (#246/#452): every phrase and
-# glyph here appears in this script's own comments AND in tests/gate-watch/, so a
-# golem cat-ing or editing those files would false-fire a gate on a one-signal
-# match. The `esc to interrupt` veto runs first for the same reason — a golem
-# actively WORKING is never at a gate, whatever its scrollback holds.
-MULTI_Q_RE='☐|☒|✔[[:space:]]*Submit|not answered all'
+#
+# THE GLYPH SIGNAL IS LINE-ANCHORED, and that is load-bearing rather than
+# cosmetic. The two signals are independent substring tests over different
+# windows, so nothing ties the glyph to the widget that painted the footer: with
+# a bare `☐|☒|✔ Submit` scan, an ORDINARY single-question fork preceded within 40
+# lines by unrelated text containing a checkbox misclassifies as a form. That is
+# not hypothetical — the prose describing this very feature
+# (escalation-protocol.md, monitor-protocol.md, this comment block, and the test
+# fixtures) all contain those glyphs literally, so a golem reading any of them
+# while at a normal fork would self-trip. A conjunction of two independently
+# satisfiable signals is not a self-trip guard, however it is described.
+#
+# What separates them is SHAPE, not vocabulary: a real tab bar is its own short
+# line STARTING with a checkbox (optionally behind the `←` scroll arrow), while
+# prose carries the same glyphs mid-sentence. Anchoring to the line start rejects
+# every prose form above while still matching the live widget — and the
+# unanswered-questions warning gets the same treatment for the same reason.
+# The `esc to interrupt` veto runs first as a further guard: a golem actively
+# WORKING is never at a gate, whatever its scrollback holds.
+MULTI_Q_RE='^[[:space:]]*(←[[:space:]]*)?(☐|☒)|^[[:space:]]*⚠[^`]*not answered all'
 pane_is_multi_question_form() {
     local pane="$1" footer window
     # Guard 1 (footer-anchored): an active run-spinner means the golem is working.

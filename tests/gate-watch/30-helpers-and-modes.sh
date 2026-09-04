@@ -309,6 +309,45 @@ test_pane_multi_question_form_no_self_trip() {
         "A WORKING golem (run-spinner up) reading form text is not a gate"
 }
 
+# The two-signal conjunction is NOT self-guarding, and this is the case that
+# proves it. The footer test and the glyph test run over different windows, so
+# nothing ties the glyph to the widget that painted the footer: an ORDINARY
+# single-question fork, preceded in scrollback by unrelated text containing a
+# checkbox, satisfies both independently. With a bare `☐|☒|✔ Submit` scan that
+# pane misclassifies as a multi-question form — sending the operator to
+# cancel-then-relay for a gate that `send-keys` would have resolved fine.
+#
+# It is not a contrived fixture: the prose describing this feature
+# (escalation-protocol.md, monitor-protocol.md, golem-gate-watch.sh's own comment
+# block, and the fixtures in THIS file) all carry those glyphs literally, so a
+# golem reading any of them at a normal fork self-trips. The scrollback line
+# below is copied from escalation-protocol.md for exactly that reason.
+#
+# The fix is SHAPE: a real tab bar is its own line starting with a checkbox,
+# while prose carries the glyphs mid-sentence. Removing the `^` anchors from
+# MULTI_Q_RE turns this test red while every other #467 test stays green.
+test_pane_multi_question_form_prose_scrollback() {
+    local prose mid i pane
+    prose="  a form carrying 2+ questions renders as a tabbed widget (☐/☒ per question, a ✔ Submit tab)"
+    mid=""
+    for i in 1 2 3 4 5; do mid="${mid}  ... more file content line $i"$'\n'; done
+    pane="$prose"$'\n'"${mid}What scope should this take?"$'\n'"Enter to select · ↑/↓ to navigate"
+
+    assert_equals "1" "$(_pane_rc pane_is_multi_question_form "$pane")" \
+        "A single-question fork with glyph-bearing PROSE in scrollback is not a form"
+    # The pane must still be recognized as the ordinary fork it actually is —
+    # otherwise the fix would have traded a mislabel for a dropped gate.
+    assert_equals "0" "$(_pane_rc pane_is_fork "$pane")" \
+        "...and it is still detected as an ordinary single-question fork"
+
+    # End-to-end: the dispatch chain must emit the plain fork label for it.
+    _run_panes_snapshot_tmux "$pane"
+    assert_contains "$PANES_OUT" "golem-9"$'\t'"escalation — awaiting decision (carries options)" \
+        "panes_snapshot labels it a plain fork, not a multi-question form"
+    assert_not_contains "$PANES_OUT" "multi-question form" \
+        "panes_snapshot does not mislabel it a multi-question form"
+}
+
 # $pane_error_lines window: exact boundary + env override (#467, mirroring #459's
 # test_pane_footer_lines_env_overridable for the footer window).
 #
