@@ -16,10 +16,10 @@ Measured on `feature/issue-782` at `6c0920f`, 2026-08-24.
 
 | # | Acceptance criterion | Status |
 | --- | --- | --- |
-| 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated |
+| 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated. (The *operator-side* `hookify` fix is host-only and is re-enabled in every container — see § AC#1 revisited) |
 | 2 | `dev-core` guidance documents silence-by-default with measured rationale | **PASS** — `shell-scripting/SKILL.md` § Hook Output Contract |
 | 3 | A hook that must emit `{}` carries a comment saying why | **PASS (vacuous)** — no shipped hook emits on a no-op path, so none needs the comment; the rule is documented for the case that arises |
-| 4 | Before/after measured with `token-report.sh`, delta recorded | **PARTIAL** — two pre-fix baselines captured and reconciled; the after-window cannot exist until the fix has been live, so the delta closes on [#793](https://github.com/joshjhall/librarian/issues/793) |
+| 4 | Before/after measured with `token-report.sh`, delta recorded | **DONE (#793, 2026-09-03)** — measured over a 9-day post-fix window; `avg_prompt_per_request` rose **+13.5%**, i.e. **no saving is detectable**. Reported as found; see § AC#4 |
 | 5 | `docs/verification/` records the out-of-tree finding for operator action | **PASS** — this file |
 
 ## AC#1 — the in-tree audit contradicts the premise
@@ -240,10 +240,10 @@ event, with no rule files present:
 
 | hook | event | rc | stdout |
 | --- | --- | --- | --- |
-| `pretooluse.py` | `PreToolUse:Bash` | 0 | `{}` (2 bytes) |
-| `posttooluse.py` | `PostToolUse:Bash` | 0 | `{}` (2 bytes) |
-| `stop.py` | `Stop` | 0 | `{}` (2 bytes) |
-| `userpromptsubmit.py` | `UserPromptSubmit` | 0 | `{}` (2 bytes) |
+| `pretooluse.py` | `PreToolUse:Bash` | 0 | `{}` + newline (3 bytes) |
+| `posttooluse.py` | `PostToolUse:Bash` | 0 | `{}` + newline (3 bytes) |
+| `stop.py` | `Stop` | 0 | `{}` + newline (3 bytes) |
+| `userpromptsubmit.py` | `UserPromptSubmit` | 0 | `{}` + newline (3 bytes) |
 
 `RuleEngine.evaluate_rules()` documents its own empty case — *"Empty dict `{}` if
 no rules match"* — and all four hooks print it anyway.
@@ -296,7 +296,7 @@ to this account's own repos, so `gh issue create` against `anthropics/*` returns
 `Resource not accessible by personal access token`. Filing it by hand is tracked
 as an AC on #793.
 
-## AC#4 — baseline captured, delta deferred to #793
+## AC#4 — baseline captured; delta MEASURED on #793 (no saving found)
 
 `token-report.sh` is available (#781, `6c0920f`) and a gateway **is** reachable
 from this environment, so the original blocker is gone. Two **pre-fix** windows
@@ -338,43 +338,149 @@ days sharing a start-of-day boundary are not independent samples, so 1.6% is the
 observed spread of one pair rather than a confidence interval. It is a floor to
 clear, not a threshold to test against.
 
-### Why the delta is still deferred
+### VERIFIED — live (post-fix window, measured 2026-09-03 on #793)
 
-The after-window cannot exist yet: the operator fix was applied at the end of
-this session, so no post-fix period of comparable shape has elapsed. Capturing
-it now would compare a full day against minutes.
-
-**#793 owns the close-out**, using the baselines above rather than re-deriving
-them. Re-run the same command over a post-fix window of similar shape and:
+The after-window now exists. Same tool, same endpoint shape, baselines **reused
+rather than re-derived** (the 2026-08-23 window was re-run as a control and
+reproduced exactly: 17,906 requests, reconciliation delta 2).
 
 ```bash
+# NOTE the recipe on #793 said --json for both files. That is WRONG:
+# `compare` parses the TSV contract (it skips any line with NF < 7), so two
+# --json files match zero rows and it prints a full table of `n/a` at exit 0.
+# Capture WITHOUT --json for compare. See "A trap worth recording" below.
+plugins/workflow/scripts/token-report.sh window \
+  --start 2026-08-26T00:00:00Z --end 2026-09-04T00:00:00Z > /tmp/after.tsv
+
 plugins/workflow/scripts/token-report.sh compare \
-  --baseline /tmp/hookify-before.json \
-  --compare  /tmp/hookify-after.json
+  --baseline /tmp/before.tsv --compare /tmp/after.tsv --percent-only
 ```
 
-Judge on **`avg_prompt_per_request`**, not cost — per that tool's header, cost
-moves with how hard the fleet is pushed, while the average isolates an
-efficiency change from a workload change.
+| window | span | requests | reconciliation |
+| --- | --- | --- | --- |
+| pre-fix baseline | 2026-08-23 (24h) | 17,906 | delta 2, tolerance 90 ✅ |
+| post-fix | 2026-08-26 → 09-04 (9d) | 89,766 | delta 0, tolerance 449 ✅ |
 
-### Predicted effect — and a caveat worth recording
+`2026-08-24`/`08-25` are excluded as a transition boundary: the fix landed at
+the end of 08-24, so neither day is cleanly pre- or post-fix.
 
-Expect **real but modest** movement, and treat a single pair as indicative.
+#### Result — `avg_prompt_per_request` moved the WRONG WAY
 
-One tension belongs on the record rather than smoothed over. The hooks reference
-says a hook that exits 0 **with no output** has nothing recorded on
-`PreToolUse`/`PostToolUse` — implying silence costs *zero* context, not merely a
-smaller record. That does not obviously square with #782's measurement, where
-`hook_success` was the single largest attachment category at 574,677 context
-tokens. Either the accounting attributes to `hook_success` something the docs
-describe differently, or the emitting hooks (which printed `{}`, not nothing)
-are the entire category.
+```text
+model                              requests  prompt_tokens         cost    avg/req
+claude-opus-5                       +425.5%        +447.9%      +447.9%      +4.3%
+claude-sonnet-5                     +383.1%        +513.0%      +483.2%     +26.9%
+TOTAL                               +401.3%        +468.9%      +455.1%     +13.5%
+```
 
-The second reading is consistent with both facts and is the working hypothesis:
-**it is the `{}` that creates the record; silence would have created none.** The
-measurement on #793 is what discriminates — a near-zero delta would favor the first
-reading and is a real possible outcome, so it should be reported as found rather
-than fitted to this expectation.
+**The average prompt per request rose 13.5%.** No saving is visible. Three
+checks were run before accepting that, because a headline number moving the
+wrong way is exactly when a measurement deserves suspicion:
+
+1. **Is it model-mix shift?** Decomposed: holding the *pre* mix and applying
+   post per-model averages still gives **+11.5%**; the pure mix effect is only
+   **+2.2%** (opus share 41.8% → 43.9%). So the rise is **within-model**, not an
+   artifact of routing more traffic to the expensive model.
+2. **Is it inside day-to-day noise?** No — and the issue's **1.6% floor is far
+   too tight**. That figure came from two windows sharing a start-of-day
+   boundary. Measured per-day across 14 days, the daily `avg/req` spread is
+   **38% (opus)** and **13% (sonnet)** pre-fix, widening after. Request-weighted
+   pre→post: opus **+11.7%**, sonnet **+30.9%**. Sonnet's rise clears any
+   plausible noise band; opus's does not clear its own 38% spread.
+3. **Did the filter silently drop?** No — both windows reconciled (delta 2 and
+   0), and the plural `?models=` spelling was verified to reproduce the recorded
+   8/23 opus figures exactly (7,484 req, avg 235,786).
+
+#### What this means
+
+**The measurement does not support the predicted saving.** It does *not* follow
+that the effect is too small to matter — and an earlier draft of this section
+made exactly that error, sizing the effect from the hook's **3-byte emission**.
+That is the wrong quantity. #782 measured the resulting transcript **record** at
+~281 chars (~70 tokens); at 1,645 fires that accumulates to **~115k tokens by
+end of session**, averaging ~40% of a 144k-token prompt across the session. This
+is a **large** predicted effect, which makes its complete absence from the
+measurement the genuinely interesting result — not a null too small to see.
+
+This **favors the first reading** of the tension recorded above — that
+`hook_success`'s 574,677-token figure attributes to that category something the
+hooks reference describes differently — rather than the working hypothesis that
+the `{}` *is* the whole category. It is reported as found, per the issue's own
+instruction that a near-zero delta is a real possible outcome. Note the observed
+delta is not merely near-zero but **positive**, which is stronger evidence
+against the hypothesis than a null result would be.
+
+**Two confounds keep this from being conclusive**, and both are on the record
+rather than smoothed over:
+
+- **The after-window is contaminated.** See the container finding below — every
+  devcontainer re-enabled `hookify`, so a substantial share of post-fix traffic
+  was still emitting. A contaminated after-window biases the delta *toward zero*;
+  it cannot explain a delta that is **positive**, so it weakens the null reading
+  without rescuing the hypothesis.
+- **The workload is not shape-matched.** The post window ran 89,766 requests
+  over 9 days against a 17,906-request single day. `avg_prompt_per_request` was
+  chosen precisely because it is workload-robust, and the pre-fix pair did hold
+  to 1.6% across a 5.4x throughput difference — but this is a wider gap still.
+
+A clean re-measurement is worth doing once containers#897 lands, precisely
+because the predicted effect (~40% of an average prompt) is far **above** this
+fleet's day-to-day variance and should therefore have been visible. Its absence
+in a window where a large share of traffic still emitted is consistent with the
+contamination — but it is equally consistent with the first reading above, that
+the `hook_success` accounting does not mean what #782 took it to mean. The
+re-measurement is what separates those two, and it is the only remaining way to
+settle the question.
+
+#### A trap worth recording
+
+`compare` consumes the **TSV** contract, not `--json`. Its awk parser skips any
+line with `NF < 7`, and a JSON file has none — so feeding it two `--json`
+captures prints a complete, well-formed table of `n/a` and **exits 0**. It looks
+like a tool that ran fine and found nothing to say. The recipe on #793 (and the
+one in this file's original AC#4 block) specified `--json` for both files, so
+this was hit on the first attempt. Same failure family as the `?model=` vs
+`?models=` trap the tool was built to guard: a wrong answer that reads as a
+right one.
+
+## AC#1 revisited — the fix is NOT durable in containers
+
+AC#1 is marked applied, and it is — **on the host**. The edit to
+`~/.claude/settings.json` does not survive into containers built from the
+pinned `containers` image:
+
+`containers/lib/features/lib/claude/claude-setup:1045` lists `hookify` in
+`DEFAULT_PLUGINS`, and #784 made every plugin on that list **unconditionally
+re-enabled** on each boot. Measured inside this repo's own devcontainer
+(`v4.19.27`, `e5d4f70d`), with no rule file present anywhere:
+
+### VERIFIED — live (container, post-"fix")
+
+| hook | event | rc | stdout |
+| --- | --- | --- | --- |
+| `pretooluse.py` | `PreToolUse:Bash` | 0 | `{}` + newline (**3 bytes**) |
+| `posttooluse.py` | `PostToolUse:Bash` | 0 | `{}` + newline (**3 bytes**) |
+| `stop.py` | `Stop` | 0 | `{}` + newline (**3 bytes**) |
+| `userpromptsubmit.py` | `UserPromptSubmit` | 0 | `{}` + newline (**3 bytes**) |
+
+`"hookify@claude-plugins-official": true` in the container's settings. Note the
+byte count is **3, not the 2 recorded earlier** — `print()` appends a newline.
+Small, but it is the number this file asserts, so it is corrected here and in
+the upstream report below.
+
+Filed as
+[joshjhall/containers#897](https://github.com/joshjhall/containers/issues/897):
+**drop `hookify` from `DEFAULT_PLUGINS`** so it is opt-in via `CLAUDE_PLUGINS`.
+Deliberately *not* a `CLAUDE_DISABLED_PLUGINS` entry — `claude-setup:438`
+documents that as an emergency kill-switch rather than a configuration knob,
+`claude-setup:508` names removal from the list as the supported opt-out, and a
+deny-list entry would fix only one repo while every other repo on the image kept
+re-enabling it. The issue also records that `claude-setup` never disables an
+already-enabled plugin (`:451`), so existing containers need a one-time
+`claude plugin disable hookify`.
+
+The pinned submodule was **not** edited from the #793 run — CLAUDE.md pins it
+(`update = none`) for devcontainer builds only.
 
 ## Upstream report — ready to file
 
@@ -382,12 +488,16 @@ The one-line fix benefits every user of the plugin, so it belongs upstream at
 [`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official)
 rather than only in one operator's settings.
 
-**Not yet filed.** The token available in this session is fine-grained and scoped
-to this account's own repositories, so `gh issue create` against `anthropics/*`
-returns `Resource not accessible by personal access token`. Filing is tracked as
-an acceptance criterion on
-[#793](https://github.com/joshjhall/librarian/issues/793). Copy the body below
-verbatim; suggested title:
+**Still not filed — retried 2026-09-03 on #793 and refused again.** The token now
+*reads* `anthropics/claude-plugins-official` fine (`gh api repos/...` → 200,
+`permissions: {pull: true, push: false}`), so the repo is reachable; but
+`gh issue create` still returns
+`GraphQL: Resource not accessible by personal access token (createIssue)`.
+Read access is not write access — filing needs a token with issue-write scope
+there, or filing by hand through the web UI. A duplicate search was run first
+(15 open `hookify` issues plus four targeted phrase searches): **no existing
+issue covers the empty-payload defect**, so this is still worth filing. Copy the
+body below verbatim; suggested title:
 
 > hookify: all four hooks print `{}` when no rule matches, adding a
 > zero-information record to every fire
@@ -398,7 +508,8 @@ verbatim; suggested title:
 
 All four `hookify` hooks unconditionally print their result to stdout, even when
 that result is the empty dict `{}`. With no rules configured — or with rules that
-simply don't match — every hook fire emits a ~2-byte JSON payload that carries no
+simply don't match — every hook fire emits a 3-byte JSON payload (`{}` plus the
+newline `print` adds) that carries no
 decision and no message.
 
 Because each fire becomes a hook record in the session transcript that is re-read
@@ -436,10 +547,10 @@ Observed, on `0fc2bb13a805`:
 
 | hook | event | rc | stdout |
 | --- | --- | --- | --- |
-| `pretooluse.py` | `PreToolUse:Bash` | 0 | `{}` (2 bytes) |
-| `posttooluse.py` | `PostToolUse:Bash` | 0 | `{}` (2 bytes) |
-| `stop.py` | `Stop` | 0 | `{}` (2 bytes) |
-| `userpromptsubmit.py` | `UserPromptSubmit` | 0 | `{}` (2 bytes) |
+| `pretooluse.py` | `PreToolUse:Bash` | 0 | `{}` + newline (3 bytes) |
+| `posttooluse.py` | `PostToolUse:Bash` | 0 | `{}` + newline (3 bytes) |
+| `stop.py` | `Stop` | 0 | `{}` + newline (3 bytes) |
+| `userpromptsubmit.py` | `UserPromptSubmit` | 0 | `{}` + newline (3 bytes) |
 
 Expected: **zero bytes** on all four, since none has a decision to report.
 
