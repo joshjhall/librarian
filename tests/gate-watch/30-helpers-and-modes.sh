@@ -443,7 +443,7 @@ test_panes_snapshot_multi_question_dispatch() {
     _run_panes_snapshot_tmux "☐ Commit-back  ☒ Edit strategy  ✔ Submit"$'\n'"Enter to select · ↑/↓ to navigate"
     assert_equals "0" "$PANES_RC" "panes_snapshot exits 0 for a multi-question form pane"
     assert_contains "$PANES_OUT" \
-        "golem-9"$'\t'"escalation (multi-question form) — cancel-then-relay, do NOT send-keys" \
+        "golem-9"$'\t'"escalation (multi-question form) — forward-order only, never a digit" \
         "A multi-question form emits the form label naming the correct broker"
     assert_not_contains "$PANES_OUT" "escalation — awaiting decision (carries options)" \
         "A form is NOT downgraded to the single-question fork label (order: form before fork)"

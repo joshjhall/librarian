@@ -183,13 +183,18 @@ pane_error_lines="${GOLEM_PANE_ERROR_LINES:-40}"
 # assignment so a SOURCED unit test sees it before calling either function.
 TURN_END_MSG="⚠ idle at prompt — turn ended, awaiting input (check pane)"
 
-# The multi-question-form push message (#467). It names the broker rather than
-# just the gate class: the operator's observed error was reaching for the
-# single-question brokers (send-keys / inbox), both of which can resolve this
-# widget WRONG by submitting a partially-answered form. The label is the one
-# place that correction reliably reaches them, so it says what to do, not merely
-# what happened. Defined here beside TURN_END_MSG so a SOURCED unit test sees it.
-MULTI_Q_MSG="escalation (multi-question form) — cancel-then-relay, do NOT send-keys"
+# The multi-question-form push message (#467). It states the KEYSTROKE RULE
+# rather than just the gate class, because the observed operator error was
+# applying the single-question reflex (`1 Enter`) to a widget where a digit does
+# nothing or hits the wrong question — and where the review screen will submit a
+# partially-answered form. Forward-order + never-a-digit are the two constraints
+# that keep a broker out of that failure, so the label carries them: it is the
+# one place the correction reliably reaches the operator, and it says what to do
+# rather than merely what happened. (The full protocol, including the
+# cancel-then-relay fallback for revising an earlier answer, is
+# orchestrate/monitor-protocol.md § "A multi-question form is brokered
+# differently".) Defined beside TURN_END_MSG so a SOURCED unit test sees it.
+MULTI_Q_MSG="escalation (multi-question form) — forward-order only, never a digit"
 
 # The API-error death push message (#446). A golem whose `claude` process died on
 # a transient API error (429/5xx) or a terminal one (auth/quota) goes idle at the
@@ -506,20 +511,24 @@ pane_is_fork() {
 # cannot shadow it (the same precedence discipline plan-gate/generic-gate already
 # use, and the same reason pane_is_api_error runs before pane_is_turn_end).
 #
-# WHY IT EARNS ITS OWN CLASS. Neither documented broker works on this widget, and
-# both fail in ways that RESOLVE THE GATE WRONG rather than merely failing:
+# WHY IT EARNS ITS OWN CLASS. This widget takes DIFFERENT keystrokes from the
+# single-question prompt, and the documented brokers fail on it in ways that
+# RESOLVE THE GATE WRONG rather than merely failing:
 #   - The plan-gate broker (`tmux send-keys -t golem-{N} 1 Enter`) assumes one
-#     question. Observed live: the digit landed on the WRONG question, and `Tab`
-#     cycled between the answered question and the Submit screen without ever
-#     reaching the still-`☐` one. The review screen then offered `Submit` with a
-#     question unanswered — one stray Enter submits a HALF-ANSWERED form, which
-#     the golem then acts on as though the operator had chosen it.
+#     question. Observed live: a digit did nothing in one incident and landed on
+#     the WRONG question in another (the widget needs `↑/↓`+`Enter`), and after
+#     an out-of-order answer `Tab` cycled between the answered question and the
+#     Submit screen without ever reaching the still-`☐` one. The review screen
+#     then offered `Submit` with a question unanswered — one stray Enter submits
+#     a HALF-ANSWERED form the golem acts on as the operator's decision.
 #   - The inbox broker (`golem-inbox.sh answer <golem> <gate-id> <option>`)
 #     carries ONE option per gate-id; a form has no single answer. (And a
 #     plan-time fork is not inbox-routed at all — the data-only invariant, #227.)
-# The only reliable resolution is cancel-then-text-directive (three live
-# incidents, orchestrate/monitor-protocol.md), so this matcher exists to tell the
-# operator WHICH broker to reach for before they start — see below.
+# A form IS brokerable — answer forward-order with `↑/↓`+`Enter` and submit only
+# at all-`☒`, falling back to cancel-then-text-directive when an earlier answer
+# needs revising (orchestrate/monitor-protocol.md). But since the keystrokes
+# differ by widget, a broker must BRANCH on single-vs-multi, and that branch is
+# what this matcher exists to enable — see the message const above.
 #
 # DETECTION FAILED BEFORE KEYSTROKES DID — the reason this is not footer-anchored
 # like its siblings. The `☐/☒` tab bar renders ABOVE the footer, and in a live

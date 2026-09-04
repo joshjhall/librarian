@@ -84,23 +84,23 @@ has everything needed without re-deriving context:
 
 ## Raise ONE question per gate (#467)
 
-When this gate surfaces as an `AskUserQuestion`, ask **one question**. A form
+When this gate surfaces as an `AskUserQuestion`, prefer **one question**. A form
 carrying 2+ questions renders as a tabbed widget (`☐`/`☒` per question, a
-`✔ Submit` tab), and **no orchestrator broker can resolve it correctly**: the
-directed `tmux send-keys` broker assumes a single-question prompt (a digit lands
-on the wrong question), and an inbox `answer` carries one option per gate-id
-while a form has no single answer. Worse, the widget's review screen offers
-`Submit` while questions are still unanswered — so the realistic failure is a
-**half-answered form the golem then acts on**, not a visible error.
+`✔ Submit` tab) whose keystroke rules **differ** from the single-question prompt:
+a digit selects in the latter but does nothing (or hits the wrong question) in
+the former, and the review screen will offer `Submit` while a question is still
+`☐`. An orchestrator *can* broker it — forward-order `↑/↓`+`Enter`, submitting
+only at all-`☒` (`orchestrate/monitor-protocol.md`) — but the margin for a
+**half-answered submit** is real, and the inbox broker cannot carry it at all
+(one option per gate-id, while a form has no single answer).
 
-This is a real cost, not a style preference: a multi-question form forces the
-orchestrator onto the cancel-then-text-directive fallback
-(`orchestrate/monitor-protocol.md`), which discards the form and re-relays every
-decision as prose. So when a gate genuinely has several forks, prefer to **raise
-the blocking one first** and let the answer inform the rest, or fold them into
-one question whose options are the coherent *combinations*. Reserve a
-multi-question form for the case where the decisions are truly independent and
-the operator is known to be attached.
+So this is a cost, not a style preference. When a gate genuinely has several
+forks, prefer to **raise the blocking one first** and let the answer inform the
+rest, or fold them into one question whose options are the coherent
+*combinations*. Reserve a multi-question form for decisions that are truly
+independent — and when you do raise one, expect it to be answered in the order
+you present it, since revising an earlier answer forces the orchestrator to
+cancel the whole form and re-relay every decision as prose.
 
 ## Disposition by level
 
