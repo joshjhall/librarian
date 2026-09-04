@@ -78,6 +78,15 @@ behavior is noted inline per check; environment variables referenced here
    no growth signal every over-threshold file is reported LOW/informational, so
    the size lens silently stops finding anything actionable. Generate it.
 
+   **`$1` is the `--name-only` list, never the diff itself.** The two commands
+   above differ by one flag and both write to `/tmp`, so handing the diff to
+   `$1` is an easy slip — and it used to be a silent one: every diff line was
+   read as a path, matched nothing, and the scan exited 0 with no output,
+   indistinguishable from a clean result on a pre-ship gate (#809 recorded
+   exactly that false "clean"). The scanner now refuses a diff loudly (#816),
+   and warns when nothing in a non-empty list resolves. If you see either
+   message, fix the input and re-run — do not read the refusal as a pass.
+
    b. Run the pre-review scanner (locate `pre-review-gates.sh` in the same
    directory as the skill file):
 
