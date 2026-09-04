@@ -438,7 +438,8 @@ test_panes_snapshot_dispatch() {
 # this widget WRONG (a partial submit).
 #
 # The label is asserted in full, not by substring: the whole point is that it
-# names cancel-then-relay and warns off send-keys.
+# carries the keystroke rule (forward-order, never a digit), so a truncated or
+# reworded label that dropped it would still pass a substring check.
 test_panes_snapshot_multi_question_dispatch() {
     _run_panes_snapshot_tmux "☐ Commit-back  ☒ Edit strategy  ✔ Submit"$'\n'"Enter to select · ↑/↓ to navigate"
     assert_equals "0" "$PANES_RC" "panes_snapshot exits 0 for a multi-question form pane"
