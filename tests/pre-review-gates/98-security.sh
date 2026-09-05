@@ -264,3 +264,126 @@ test_security_scanner_resolves_from_installed_layout() {
     assert_contains "$rows" "vuln.py" \
         "a MISMATCHED plugin version (9.9.9 vs 8.8.8) still resolves — the version segment is globbed, not assumed (#708)"
 }
+
+# make_versioned_cache <root> <workflow-version> <review-audit-version>...
+# Build an installed-plugin layout where each review-audit version ships a STUB
+# scanner that announces which version ran. Single-consumer, so it stays here.
+make_versioned_cache() {
+    local root="$1" wf_ver="$2"
+    shift 2
+    local v
+    command mkdir -p "$root/workflow/$wf_ver/skills/ship-issue"
+    command cp "$GATE" "${GATE%/*}/test-discovery.sh" "$root/workflow/$wf_ver/skills/ship-issue/"
+    for v in "$@"; do
+        command mkdir -p "$root/review-audit/$v/skills/check-security"
+        command printf '%s\n' '#!/usr/bin/env bash' \
+            "command echo \"RESOLVED-VERSION-$v\" >&2" 'exit 0' \
+            >"$root/review-audit/$v/skills/check-security/patterns.sh"
+    done
+}
+
+# Which version actually ran, from the stub's stderr marker.
+resolved_version_of() {
+    command printf '%s' "$1" | command sed -n 's/.*RESOLVED-VERSION-\([0-9.]*\).*/\1/p' | command head -n 1
+}
+
+# THE VERSION-SELECTION CONTRACT (#708 review cycle 1).
+#
+# An earlier revision selected with `sort | tail -n 1` and CALLED it
+# "newest-last". Plain sort is lexicographic, so "10.0.0" < "9.9.9" and the first
+# major rollover would have silently picked the STALE copy — a comment asserting
+# what the code did not do ([[comment-asserts-intent-not-code]]). `sort -V` is
+# the obvious fix and is banned repo-wide (GNU-only; see lint-agnix-clean.sh).
+#
+# The resolver therefore prefers the LOCKSTEP version (equal to this plugin's
+# own — bin/release.sh stamps all plugins together), and falls back to a
+# field-by-field numeric compare. Both arms are pinned, and the fallback fixture
+# straddles the digit boundary because that is the only input where numeric and
+# lexicographic ordering DISAGREE ([[fixture-must-express-the-divergent-case]]).
+test_security_scanner_prefers_the_lockstep_version() {
+    local root d
+    root="$(fresh_dir)"
+    make_versioned_cache "$root" "9.9.9" "8.8.8" "9.9.9" "10.0.0"
+    d="$(fresh_dir)"
+    write_vulnerable_source "$d"
+
+    SEC_RC=0
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$root/workflow/9.9.9/skills/ship-issue/pre-review-gates.sh" \
+        "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
+
+    assert_equals "9.9.9" "$(resolved_version_of "$SEC_ERR")" \
+        "the sibling matching THIS plugin's version wins, even with a numerically higher one present (#708)"
+}
+
+test_security_scanner_fallback_is_numeric_not_lexicographic() {
+    local root d
+    root="$(fresh_dir)"
+    # workflow 7.7.7 has NO review-audit twin, so the lockstep arm cannot fire and
+    # the numeric fallback is what is under test.
+    make_versioned_cache "$root" "7.7.7" "8.8.8" "9.9.9" "10.0.0"
+    d="$(fresh_dir)"
+    write_vulnerable_source "$d"
+
+    SEC_RC=0
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$root/workflow/7.7.7/skills/ship-issue/pre-review-gates.sh" \
+        "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
+
+    # 10.0.0 is the correct answer and the one a lexicographic sort gets WRONG
+    # (it ranks "10.0.0" below "9.9.9"), so this assertion fails against the old
+    # `sort | tail -n 1` spelling and passes against the numeric compare.
+    assert_equals "10.0.0" "$(resolved_version_of "$SEC_ERR")" \
+        "the fallback picks the numerically greatest version across the digit boundary — NOT the lexicographic max (#708)"
+}
+
+# The "nothing resolved at all" refusal branch, distinct from the
+# SECURITY_SCANNER-points-at-a-missing-file branch every other absence case here
+# drives. Its message differs ("Searched the dev checkout…" vs "Resolved to: …"),
+# so without this the branch never runs and its wording could rot unnoticed
+# ([[test-defined-but-never-registered]] in spirit: reachable code, no test).
+test_security_scanner_unresolvable_branch_names_the_search() {
+    local iso d
+    iso="$(fresh_dir)"
+    # A gate with NO resolvable sibling in any probe: copied to a bare directory
+    # whose parents contain no review-audit tree at all, and SECURITY_SCANNER unset.
+    command mkdir -p "$iso/lonely"
+    command cp "$GATE" "${GATE%/*}/test-discovery.sh" "$iso/lonely/"
+    d="$(fresh_dir)"
+    write_vulnerable_source "$d"
+
+    SEC_RC=0
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$iso/lonely/pre-review-gates.sh" \
+        "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
+
+    assert_exit 1 "$SEC_RC" \
+        "an entirely unresolvable scanner still fails loud (#708 AC#2)"
+    assert_contains "$SEC_ERR" "Searched the dev checkout and the installed plugin cache" \
+        "the not-found branch names WHERE it looked — distinct from the resolved-but-missing branch"
+    assert_contains "$SEC_ERR" "claude plugin install review-audit@librarian" \
+        "the not-found branch is actionable too"
+}
+
+# A malformed version directory must never outrank a real one (#919 AC#3). The
+# fixture puts it LAST in glob order (lexically after "8.8.8"), so it is the
+# entry a `tail -n 1` — or any compare that treats a non-integer field as
+# greater — would wrongly select. _prescan_ver_gt reads a non-integer field as
+# 0, so it loses every comparison it takes part in.
+test_security_scanner_malformed_version_cannot_outrank_a_real_one() {
+    local root d
+    root="$(fresh_dir)"
+    # workflow 7.7.7 has no twin, so the lockstep arm cannot answer and the
+    # numeric fallback is what decides.
+    make_versioned_cache "$root" "7.7.7" "8.8.8" "not-a-version"
+    d="$(fresh_dir)"
+    write_vulnerable_source "$d"
+
+    SEC_RC=0
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "$REAL_BASH" "$root/workflow/7.7.7/skills/ship-issue/pre-review-gates.sh" \
+        "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
+
+    assert_equals "8.8.8" "$(resolved_version_of "$SEC_ERR")" \
+        "a malformed version directory sorting LAST still loses to a real version (#919 AC#3)"
+}
