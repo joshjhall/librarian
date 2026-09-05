@@ -193,7 +193,7 @@ behavior is noted inline per check; environment variables referenced here
    `[{file, line, category, evidence, certainty}]` and pass them to the review
    harness as `args.preScan` — including any auto-fixed ones, which the reviewer
    can then confirm as resolved. Without this the scan runs, its output is
-   discarded, and five reviewers re-derive the same mechanical findings by
+   discarded, and six reviewers re-derive the same mechanical findings by
    shelling out (the single largest source of duplicated work in the fan-out).
    The harness logs `pre-scan: none supplied` when the handoff is missing.
 
@@ -233,10 +233,8 @@ behavior is noted inline per check; environment variables referenced here
    adversarial review of the changes **before** they are pushed/merged, so the
    delivered code is review-clean regardless of how it ships. This complements the
    deterministic pre-review gates above with LLM reviewers (security, correctness,
-   tests, decomposition, scope-drift) plus a fresh judge
-   and gatekeeper. A sixth `conventions` dimension was demoted to a scheduled
-   audit (#551) — see `conventions-coverage.md` for what still covers it per-PR
-   and what nothing covers.
+   tests, CLAUDE.md conventions, decomposition, scope-drift) plus a fresh judge
+   and gatekeeper.
 
    **Runs on Options 1, 2, and 3 alike** — the review is a property of the
    *change*, not the delivery mechanism, so a commit-only (Option 3) or
@@ -269,6 +267,34 @@ behavior is noted inline per check; environment variables referenced here
      If a blocking finding requires a fix, amend/add the commit and re-review, all
      before the push.
 
+   a2. **Route the cycle (#550).** Ask the router whether this diff needs the
+   full fan-out, and pass its verdict to the harness below as `reviewRoute`:
+
+   ```bash
+   # Write the list this step reads — under $HOME (not world-writable /tmp) and
+   # qualified by $GOLEM_ID, since concurrent golems share $HOME and one fixed
+   # path lets them clobber each other's file list. NOT `WORK=$(mktemp -d)`:
+   # a command substitution is REFUSED worktree-isolated (#815).
+   gid={GOLEM_ID or "solo"}; mkdir -p "$HOME/.cache/librarian-review/$gid"
+   git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/files.txt"
+   # Pass the diff size and the HIGH pre-scan categories too — without them the
+   # R6-max-lines ceiling and the R4-prescan carve-out can never fire:
+   <skill-base-dir>/../../scripts/review-route.sh check \
+     --files "$HOME/.cache/librarian-review/$gid/files.txt" \
+     --diff-lines {line count of the diff from step a} \
+     --prescan-categories "<comma list of HIGH categories from item 5, if any>"
+   # -> route=full|cheap  rule=…  dimensions=…
+   ```
+
+   A `cheap` verdict means the diff is doc/config-only, so the source-reading
+   source-reading dimensions have nothing to review, so only the docs-claiming
+   ones run (`decomposition` + `scope-drift`). Such a cycle
+   is **complete-by-design, not partial** — it can still return `clean`, because
+   safety rests on the classifier (any ambiguity routes `full`), never on the
+   reviewers. Omit the arg (and run the full fan-out) if the script is
+   unavailable. Full contract, rule list and the `clean`-semantics argument:
+   **`review-routing.md`** in this skill directory.
+
    b. **Invoke the `Workflow` tool** with the script bundled alongside this
    skill at `~/.claude/skills/ship-issue/workflow.js`, passing:
 
@@ -286,7 +312,8 @@ behavior is noted inline per check; environment variables referenced here
      issue: { number: {N}, title: "{title}" },
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
      preScan: [<pre-review-gates.sh TSV rows (incl. growth-graded sizing rows) + lint-gate rows from item 5>],
-     conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>"
+     conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
+     reviewRoute: "<route from step a2; OMIT if the router was unavailable>"
    }
    ```
 
@@ -303,10 +330,11 @@ behavior is noted inline per check; environment variables referenced here
    offending key(s) (#597).** The accepted set is exactly the keys shown in the
    blocks here and in `ci-review-protocol.md`: `phase`, `cycle`, `maxCycles`,
    `files`, `diff`, `prComments`, `issue`, `tokenCeiling`, `preScan`,
-   `conventionsDigest`, `deltaDiff`, `deltaFiles`, `priorBlockingDimensions`.
+   `conventionsDigest`, `reviewRoute`, `deltaDiff`, `deltaFiles`,
+   `priorBlockingDimensions`.
    Every one is read by name with an empty-default fallback, so a mistyped key
    was previously **dropped in silence** and its input simply went missing —
-   which on `diff` meant five reviewers scanning an empty diff and returning
+   which on `diff` meant six reviewers scanning an empty diff and returning
    `clean: true`, a vacuous pass byte-identical to a real one (measured on #567,
    where an `argsFile` key dropped `diff`, `preScan` **and**
    `conventionsDigest`). Since `clean` is half the merge invariant, that would

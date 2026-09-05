@@ -143,8 +143,25 @@ const selectReviewDimensions = ({
   budgetFloor,
   reusedDimensions,
   newDimensions,
+  route,
 }) => {
   const narrowed = narrowingActive(cycle, deltaDiff, deltaFiles)
+  // Doc-only routing (#550). `cheap` drops the dimensions that have nothing to
+  // read in a diff containing no source, config, or unknown file.
+  //
+  // ROUTING IS NOT NARROWING AND NOT TRUNCATION, and the difference is what
+  // keeps `clean` honest. A budget-skipped dimension SHOULD have run and did
+  // not — a partial cycle, which can never read clean. A routed-around
+  // dimension had nothing to read. So this path adds NOTHING to
+  // `dimensionsSkipped` and never sets `budgetExhausted`, exactly as narrowing
+  // already behaves.
+  //
+  // WHICH DIMENSIONS SURVIVE is derived from DIMENSION_RELEVANT_TYPES above,
+  // not hardcoded: a dimension runs on a cheap cycle iff its entry claims the
+  // `docs` type. That is the whole lesson of this feature's review history —
+  // five separate blocking findings, every one a place where a hand-maintained
+  // list disagreed with that table. Deriving removes the class.
+  const cheap = route === 'cheap'
   const entries = []
   const dimensionsSkipped = []
   let budgetExhausted = false
@@ -159,7 +176,18 @@ const selectReviewDimensions = ({
   // live outside the delta).
   const touchesFor = (dimName) => narrowed && dimensionTouchesDelta(dimName, deltaTypes)
   const priorFor = (dimName) => narrowed && priorSet.has(dimName)
-  const includeDeltaLocal = (dimName) => !narrowed || priorFor(dimName) || touchesFor(dimName)
+  // On a cheap (doc-only) cycle a dimension runs iff its normative entry claims
+  // the `docs` type — DERIVED from DIMENSION_RELEVANT_TYPES, never a second
+  // hardcoded list. `dimensionTouchesDelta` already implements exactly this
+  // lookup (including the '*' wildcard, should one return), so reusing it means
+  // the two can never disagree. Post-#551 the default set is five dimensions
+  // and `decomposition` is the only one whose entry lists `docs`, so a cheap
+  // cycle runs decomposition + scope-drift.
+  const survivesCheapRoute = (dimName) => dimensionTouchesDelta(dimName, new Set(['docs']))
+  const includeDeltaLocal = (dimName) =>
+    cheap
+      ? survivesCheapRoute(dimName)
+      : !narrowed || priorFor(dimName) || touchesFor(dimName)
 
   // Reused dimensions (security, correctness) — cheap, no budget gate, but on a
   // narrowed cycle still subject to the include test.
@@ -190,7 +218,7 @@ const selectReviewDimensions = ({
     entries.push({ kind: 'new', dim: d, diff })
   }
 
-  return { entries, budgetExhausted, dimensionsSkipped, narrowed }
+  return { entries, budgetExhausted, dimensionsSkipped, narrowed, cheap }
 }
 
 // `dimensionsRun` is passed in rather than read from the module-scope

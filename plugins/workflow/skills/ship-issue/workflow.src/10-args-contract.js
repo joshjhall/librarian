@@ -18,6 +18,7 @@ const KNOWN_ARG_KEYS = [
   'tokenCeiling',
   'preScan',
   'conventionsDigest',
+  'reviewRoute',
   'deltaDiff',
   'deltaFiles',
   'priorBlockingDimensions',
@@ -120,6 +121,24 @@ const conventionsDigestRaw =
   args && typeof args.conventionsDigest === 'string' ? args.conventionsDigest.trim() : ''
 const conventionsDigest = conventionsDigestRaw.slice(0, DIGEST_MAX_CHARS)
 const conventionsDigestTruncated = conventionsDigestRaw.length > conventionsDigest.length
+
+// Routing verdict from scripts/review-route.sh (#550), optional. `cheap` means
+// the caller's classifier proved this diff is DOC-ONLY, so the dimensions whose
+// DIMENSION_RELEVANT_TYPES entry does not claim `docs` have nothing to review.
+//
+// PARSED AS AN ALLOWLIST OF ONE, and that direction is the safety property.
+// Anything that is not the exact string 'cheap' — a typo, null, a number, an
+// object, an absent key — yields 'full'. A malformed value must widen the
+// review, never narrow it: guessing wrong the other way means a diff merging
+// unread by security or correctness.
+//
+// WHY THIS DOES NOT FORGE `clean`. A routed cycle is COMPLETE-BY-DESIGN, not
+// truncated — the same status narrowing already has (#492) — so it does NOT set
+// budgetExhausted or dimensions_skipped, and `computeClean` is untouched. That
+// is sound only because safety rests on the CLASSIFIER: review-route.sh routes
+// cheap solely when every file classifies as doc, and resolves every ambiguity
+// (unknown extension, config file, empty list, bad input) to 'full'.
+const reviewRoute = args && args.reviewRoute === 'cheap' ? 'cheap' : 'full'
 // Caller-supplied output-token ceiling for THIS cycle (#553), optional.
 // Without it the harness is unbounded in practice: every budget gate below is
 // guarded on `budget.total`, which the Workflow runtime populates ONLY from a

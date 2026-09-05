@@ -223,17 +223,24 @@ cycles that produced a review; `attempt` counts every trip including crashed one
 a. **Gather the changed scope** (now includes any CI fixes):
 
 ```bash
-git diff --name-only origin/main...HEAD   # -> files (FULL PR scope)
-git diff origin/main...HEAD               # -> diff  (FULL PR scope)
+# Under $HOME (not world-writable /tmp) and qualified by GOLEM_ID: concurrent
+# golems SHARE $HOME, so one fixed path lets A's diff clobber B's file list.
+# NOT `WORK=$(mktemp -d)` — command substitution is REFUSED worktree-isolated
+# (#815). Route (#550) -> `reviewRoute` in step (c); pass {N} + categories.
+gid={GOLEM_ID or "solo"}; mkdir -p "$HOME/.cache/librarian-review/$gid"
+git diff --name-only origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/files.txt"
+git diff origin/main...HEAD > "$HOME/.cache/librarian-review/$gid/diff.txt"
+<skill-base-dir>/../../scripts/review-route.sh check \
+  --files "$HOME/.cache/librarian-review/$gid/files.txt" \
+  --diff-lines {diff.txt line count} --prescan-categories "<HIGH categories>"
 ```
 
 **Re-review narrowing (#492) — but only when the previous cycle said to (#656).**
 Narrowing re-reviews only what changed instead of re-scanning the whole PR every
 cycle (worst case 5× the full review at `REVIEW_MAX_CYCLES=5`). It is **not**
 applied on every cycle after the first: **narrow iff the previous cycle's
-`next_scope` was `narrow`.** On cycle 1, and on any cycle whose predecessor
-returned `next_scope=full`, **omit all three delta args** and review the full
-diff.
+`next_scope` was `narrow`.** On cycle 1, and whenever the predecessor returned
+`next_scope=full`, **omit all three delta args** and review the full diff.
 
 > **Why this is conditional.** Narrowing and `C3-narrow-zero` (#568) compose
 > badly: a narrowed cycle is narrow *by construction*, so a zero-finding result
@@ -285,10 +292,10 @@ gh pr view {pr_number} --json reviews,comments
 
 **Comment `id` contract.** `gh pr view` emits `id` fields as **numbers**; the
 harness compares comment ids as **strings** on both sides (`String(a) ===
-String(b)`), so you may pass ids through verbatim — no caller-side stringify or
-coercion is required. The harness will not silently drop a comment whose id type
-differs from its triaged disposition: an unresolved comment always keeps `clean`
-false regardless of numeric-vs-string origin (#261).
+String(b)`), so pass ids through verbatim — no caller-side stringify is needed.
+The harness will not silently drop a comment whose id type differs from its
+triaged disposition: an unresolved comment always keeps `clean` false regardless
+of numeric-vs-string origin (#261).
 
 c. **Invoke the `Workflow` tool** with
 `~/.claude/skills/ship-issue/workflow.js` — **already opted in**
@@ -312,48 +319,45 @@ args: {
   // the `git diff --numstat` sidecar as its 2nd arg so the sizing rows stay
   // growth-graded (#695) rather than degrading to informational-only:
   preScan: [<pre-review-gates.sh TSV rows + lint-gate rows>],
-  // Conventions digest (#557) — distilled ONCE by the caller so five reviewers
+  // Conventions digest (#557) — distilled ONCE by the caller so reviewers
   // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
   conventionsDigest: "<distilled project-convention rules>",
-  // Re-review narrowing (#492) — omit ALL THREE unless the PREVIOUS cycle
-  // advised next_scope=narrow (#656; see step a). Cycle 1 always omits them:
+  reviewRoute: "<route from review-route.sh; OMIT if unavailable>",
+  // Narrowing (#492) — omit ALL THREE unless the previous cycle advised next_scope=narrow (#656):
   deltaFiles: [<changed files since lastReviewedSha>],
   deltaDiff: "<diff since lastReviewedSha>",
   priorBlockingDimensions: [<dimension names that blocked last cycle>]
 }
 ```
 
-`diff`/`files` stay the **FULL PR scope** (byte-faithful `git diff
-origin/main...HEAD` from step a, per #267). Both stay load-bearing on narrowed
-cycles (see the delta paragraph below); `files` also sizes the result summary.
-Omitting `diff` is supported but costs extra tool calls
-(`pre-ship-validation.md` Step 3.5 b). **No key has a path/file variant — pass
-everything INLINE regardless of size (#722):** `diffPath`/`argsPath` are the
-observed inventions; the sandbox cannot read a path.
+`diff`/`files` stay the **FULL PR scope** (byte-faithful, from step a, per #267),
+load-bearing on narrowed cycles too; `files` sizes the result summary.
+Omitting `diff` costs extra tool calls. **No key has a path/file variant — pass
+everything INLINE (#722):** `diffPath`/`argsPath` are the observed inventions;
+the sandbox cannot read a path.
 
 `deltaFiles`/`deltaDiff`/`priorBlockingDimensions` (#492) carry the **fix-commit
-delta** from step a. They are present **iff the previous cycle advised
-`next_scope=narrow`** — not merely because `cycle > 1`, which was the pre-#656
-trigger and is no longer the rule: a cycle 3 whose predecessor returned
-`next_scope=full` omits them despite `cycle > 1` being true. When present the
-harness narrows the delta-local dimensions (security, correctness, tests;
-`conventions` until #551), running each only if it blocked last cycle or the
-delta touches a file type it reviews. The conditional specialists (database,
-devops) follow the same include rule with their own "touches" signal —
-`manifest.needs.*` (whether the delta still classifies a file of that type) —
-**plus** the prior-blocking carry-over, so `priorBlockingDimensions` closes the
-AC#3 gap for specialists too. **Which diff a re-run reads depends on why it was
-included:** a dimension pulled in because the delta *touches* its types reads
-only the fix delta (the saving); a dimension pulled in via the *prior-blocking*
-carry-over reads the **full** diff, because the finding it must re-confirm may
-live outside the fix delta — handing it only the delta would blind it and let a
-still-unresolved finding silently vanish. A dimension that is both touched and
-prior-blocking reads the full diff (re-confirmation wins). `scope-drift` always
-reads the full `diff` — its acceptance-criteria-completeness check is a
-whole-change lens. Omitting the delta args (or on cycle 1) yields the pre-#492
-full review — additive, default-off. A dimension dropped for lack of a touch is
-**not** a partial cycle: narrowing never sets `budget_exhausted` /
-`dimensions_skipped`, so a narrowed cycle can still return `clean`.
+delta** from step a, present **iff the previous cycle advised
+`next_scope=narrow`** — not merely because `cycle > 1`, the pre-#656 trigger: a
+cycle 3 whose predecessor returned `next_scope=full` omits them. When present the
+harness narrows the delta-local dimensions (security, correctness, tests,
+conventions), running each only if it blocked last cycle or the delta touches a
+file type it reviews. The conditional specialists (database, devops) follow the
+same include rule with their own "touches" signal — `manifest.needs.*` — **plus**
+the prior-blocking carry-over, so `priorBlockingDimensions` closes the AC#3 gap
+for specialists too. **Which diff a re-run reads depends on why it was included:**
+a dimension
+pulled in because the delta *touches* its types reads only the fix delta (the
+saving); a dimension pulled in via the *prior-blocking* carry-over reads the
+**full** diff, because the finding it must re-confirm may live outside the fix
+delta — handing it only the delta would blind it and let a still-unresolved
+finding silently vanish. A dimension that is both touched and prior-blocking
+reads the full diff (re-confirmation wins). `scope-drift` always reads the full
+`diff` — its AC-completeness check is a whole-change lens. Omitting the delta
+args (or on cycle 1) yields the pre-#492 full review — additive, default-off.
+A dimension dropped for lack of a touch — or by a `cheap` `reviewRoute` (#550) —
+is **not** a partial cycle: neither narrowing nor routing sets
+`budget_exhausted` / `dimensions_skipped`, so both can still return `clean`.
 
 It returns `{ blocking[], deferrable[], comments_addressed[], summary,
 budget_exhausted, dimensions_skipped[], no_review_signal, clean }`.
@@ -434,14 +438,11 @@ bundled helper once per cycle, exactly as the wall-time bound is called in
 
 **`--delta-lines` is the surface THIS cycle reviewed — capture it in step (a),
 before any fix commit.** It is the line count of the diff you fed the harness
-(`deltaDiff` on a narrowed cycle, the full `diff` on cycle 1), not something to
-recompute here:
+(`deltaDiff` narrowed, the full `diff` on cycle 1), not recomputed here:
 
 ```bash
-# In step (a), on the SAME line count as deltaDiff just above — and note that at
-# step (a) time `$lastReviewedSha` still holds the PREVIOUS cycle's SHA (step (c)
-# has not yet re-captured it to this cycle's HEAD), which is precisely the
-# "since the last cycle" boundary this wants:
+# In step (a). There `$lastReviewedSha` still holds the PREVIOUS cycle's SHA
+# (step (c) has not re-captured it) — exactly the "since last cycle" boundary:
 delta_lines=$(git diff "$lastReviewedSha"...HEAD | command wc -l)   # narrowed cycle
 delta_lines=$(git diff origin/main...HEAD | command wc -l)          # full cycle
 ```
@@ -459,8 +460,7 @@ fix on top, so it measures the **fix you just applied** rather than the surface
 you reviewed. It breaks worst on exactly the case the predicate exists to judge: a
 **clean** cycle applies no fix, so the SHA still equals `HEAD`, the diff is empty,
 and `--delta-lines` is `0` — which reads as maximally narrow and fires `C3`
-(continue) on a review that had genuinely converged, looping to the cap and
-defeating the early-stop half of #596.
+(continue) on a review that had genuinely converged, defeating #596's early stop.
 
 Carry the value forward as the next cycle's `--prev-delta-lines`.
 
