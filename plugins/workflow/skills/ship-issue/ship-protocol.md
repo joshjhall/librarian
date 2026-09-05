@@ -203,26 +203,19 @@ These env vars toggle non-default behavior; all are opt-in:
   crashing harness stops after `REVIEW_MAX_ATTEMPTS` tries rather than looping
   forever. Raise it only if genuine infra flakiness is exhausting it; a value
   below `REVIEW_MAX_CYCLES` makes the cycle cap unreachable.
-- `LIBRARIAN_REVIEW_ROUTE` — `auto` | `full`, default `auto`. Set `full` to
-  disable doc/config-only review routing (#550) and always run the complete
-  fan-out. Any value other than `auto` is treated as `full`, so a typo disables
-  the optimization rather than silently enabling it — the same fail-safe
-  direction the router applies to every other ambiguity.
+- **Review routing (#550)** — the router's own toggles are documented with the
+  script that reads them (`plugins/workflow/README.md` § environment variables,
+  and `scripts/review-route.sh`'s header); they are deliberately not restated
+  here, so there is one place to change when they change.
 
-  Routing skips the source-reading dimensions when
-  `scripts/review-route.sh` proves a diff contains no source file, leaving
-  `scope-drift` (the acceptance-criteria lens) and `decomposition` (the only
-  other dimension whose normative entry claims `docs`) to run. Such a cycle is
-  **complete-by-design, not partial**: it sets neither `budget_exhausted` nor
-  `dimensions_skipped`, so it can still return `clean` — which is sound only
-  because safety rests on the classifier, never on the reviewers. The full
-  contract, the ordered rule list, and the two rejected trigger designs are in
-  `review-routing.md`.
-- `LIBRARIAN_REVIEW_ROUTE_MAX_LINES` — integer, default `2000`. Diff-line
-  ceiling above which the cheap path is refused even for a doc-only diff: a
-  5,000-line docs rewrite is a real review surface. It can only ever force
-  `full`, never produce `cheap`, so lowering it is always the conservative
-  direction.
+  What matters for shipping is the *behavior*: when the router proves a diff is
+  doc-only, the cycle runs `scope-drift` (the acceptance-criteria lens) plus
+  `decomposition` (the only other dimension whose normative entry claims
+  `docs`), and skips the source-reading ones. Such a cycle is
+  **complete-by-design, not partial** — it sets neither `budget_exhausted` nor
+  `dimensions_skipped`, so it can still return `clean`. That is sound only
+  because safety rests on the classifier, never on the reviewers. Full contract,
+  ordered rule list, and the rejected trigger designs: `review-routing.md`.
 - `LIBRARIAN_CI_WAIT_TIMEOUT` — integer **minutes**, default `15`. Threshold for
   the "Wait for CI" poll loop (Step 4 Option 1): once cumulative wait crosses
   this, the loop hits a **checkpoint** instead of polling forever. At **L1–L2**

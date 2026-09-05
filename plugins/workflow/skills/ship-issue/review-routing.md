@@ -68,7 +68,7 @@ Ordered, first match wins; the last has no condition, so the policy is total.
 | Rule            | Condition                          | Route             |
 | --------------- | ---------------------------------- | ----------------- |
 | `R0-empty`      | empty or missing file list         | `full` (fail safe) |
-| `R1-forced`     | `LIBRARIAN_REVIEW_ROUTE` ≠ `auto`  | `full` (operator) |
+| `R1-forced`     | the operator off-switch is set      | `full` (operator) |
 | `R2-source`     | **any** source-classified file     | `full`            |
 | `R3-unknown`    | **any** unrecognized extension     | `full` (fail safe) |
 | `R4-prescan`    | a HIGH pre-scan row the cheap path cannot surface | `full` |
@@ -220,13 +220,16 @@ Recorded so they are not re-proposed:
 
 ## Environment variables
 
-| Variable | Default | Meaning |
-| -------- | ------- | ------- |
-| `LIBRARIAN_REVIEW_ROUTE` | `auto` | `full` disables routing entirely (R1) — the operator's off switch. Any value other than `auto` is treated as `full`, so a typo disables the optimization rather than silently enabling it |
-| `LIBRARIAN_REVIEW_ROUTE_MAX_LINES` | `2000` | Diff-line ceiling above which the cheap path is refused even for doc-only diffs (R6) — a 5,000-line docs rewrite is a real review surface. Only ever forces `full`, never `cheap` |
+The router's two toggles — the operator off-switch that forces `full` (rule
+`R1`), and the diff-line ceiling behind `R6` — are documented **with the script
+that reads them**: `plugins/workflow/README.md` § environment variables, and
+`review-route.sh`'s own header.
 
-Both are read by `review-route.sh` itself, which is what keeps them honest:
-`tests/lint-env-var-drift.sh` fails a documented variable that no code reads.
+They are deliberately not restated here. `tests/lint-env-var-drift.sh` (#588)
+fails a variable that prose documents but no code reads, so keeping the
+documentation next to its reader is what makes that gate meaningful rather than
+something to route around — and it leaves one place to edit when a default
+changes.
 
 ## Graceful degradation
 
