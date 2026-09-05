@@ -257,9 +257,15 @@ mode, run these safety checks in order:
    for filing after delivery. Option 2 runs it **before the push to main** (the
    three-dot diff empties post-push).
 
+   <!-- contract: args-keys-skill-summary -->
+
    **The `args` keys, so you never reconstruct them:** `phase`, `cycle`,
-   `maxCycles`, `files`, `diff`, `issue`, `preScan`, `conventionsDigest`, plus
-   opt-in `tokenCeiling` (omit unless `REVIEW_TOKEN_CEILING` is set).
+   `maxCycles`, `files`, `diff`, `issue`, `preScan`, `conventionsDigest`,
+   `reviewRoute`, plus opt-in `tokenCeiling` (omit unless
+   `REVIEW_TOKEN_CEILING` is set).
+
+   <!-- contract: end-args-keys-skill-summary -->
+
    Unknown top-level keys are rejected outright (#597), and **no key has a
    path/file variant** — `diff` and `preScan` go inline whatever their size.
    Full block with per-key semantics: `pre-ship-validation.md` Step 3.5 b.

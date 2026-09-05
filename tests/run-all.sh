@@ -39,6 +39,7 @@
 #  11b2. READONLY harness wording (tests/lint-readonly-harness.sh)
 #  11b3. Prose-vs-code env var drift (tests/lint-env-var-drift.sh)
 #  11b4. Adversarial-review harness refs (tests/lint-harness-refs.sh)
+#  11b4a. Review-harness accepted-args-key refs (tests/lint-args-contract-refs.sh)
 #  11b5. Plugin prose budget ratchet (tests/lint-prose-budget.sh)
 #  11b5b. Worktree-safe recipes (tests/lint-worktree-recipes.sh)
 #  11b6. Prose-budget gate behavior (tests/validate-prose-budget.sh)
@@ -297,6 +298,11 @@ run_stage "Regex-probe reporting integrity" bash "$SCRIPT_DIR/validate-regex-pro
 run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
 run_stage "Prose-vs-code env var drift" bash "$SCRIPT_DIR/lint-env-var-drift.sh"
 run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.sh"
+# The same prose-drift class, one contract over (#886): KNOWN_ARG_KEYS is the
+# authority for the review harness's accepted `args` keys, and six prose copies
+# restate it. The #597 runtime guard catches an INVENTED key but is structurally
+# blind to a MISSING one, so the subset direction has no other backstop.
+run_stage "Review-harness accepted-args-key refs" bash "$SCRIPT_DIR/lint-args-contract-refs.sh"
 run_stage "Plugin prose budget (ratchet)" bash "$SCRIPT_DIR/lint-prose-budget.sh"
 run_stage "Worktree-safe recipes" bash "$SCRIPT_DIR/lint-worktree-recipes.sh"
 run_stage "Prose-budget gate behavior" bash "$SCRIPT_DIR/validate-prose-budget.sh"

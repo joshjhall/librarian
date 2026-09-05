@@ -317,6 +317,8 @@ behavior is noted inline per check; environment variables referenced here
    > command whose instructions direct it. See `ship-protocol.md`
    > § *Workflow authority* (#637); do not re-derive the permission question.
 
+   <!-- contract: args-keys-pre-pr-cycle1 -->
+
    ```text
    args: {
      phase: "pre-pr",
@@ -332,6 +334,8 @@ behavior is noted inline per check; environment variables referenced here
    }
    ```
 
+   <!-- contract: end-args-keys-pre-pr-cycle1 -->
+
    `diff` is the **authoritative bytes the reviewers read** (byte-faithful
    `git diff` from step a) — the manifest step no longer transcribes it, so pass
    the full diff here (#267). Omitting `diff` is supported but makes each reviewer
@@ -343,10 +347,16 @@ behavior is noted inline per check; environment variables referenced here
 
    **Unknown top-level `args` keys are rejected — the harness throws, naming the
    offending key(s) (#597).** The accepted set is exactly the keys shown in the
-   blocks here and in `ci-review-protocol.md`: `phase`, `cycle`, `maxCycles`,
-   `files`, `diff`, `prComments`, `issue`, `tokenCeiling`, `preScan`,
-   `conventionsDigest`, `reviewRoute`, `deltaDiff`, `deltaFiles`,
-   `priorBlockingDimensions`.
+   blocks here and in `ci-review-protocol.md`:
+
+   <!-- contract: args-keys-accepted-set -->
+
+   `phase`, `cycle`, `maxCycles`, `files`, `diff`, `prComments`, `issue`,
+   `tokenCeiling`, `preScan`, `conventionsDigest`, `reviewRoute`, `deltaDiff`,
+   `deltaFiles`, `priorBlockingDimensions`.
+
+   <!-- contract: end-args-keys-accepted-set -->
+
    Every one is read by name with an empty-default fallback, so a mistyped key
    was previously **dropped in silence** and its input simply went missing —
    which on `diff` meant six reviewers scanning an empty diff and returning
@@ -418,6 +428,8 @@ behavior is noted inline per check; environment variables referenced here
    **fix-commit delta since the last reviewed HEAD** so the harness re-reviews
    only what changed instead of re-scanning the whole diff every cycle:
 
+   <!-- contract: args-keys-pre-pr-narrowed -->
+
    ```text
    args: {
      phase: "pre-pr",
@@ -429,6 +441,7 @@ behavior is noted inline per check; environment variables referenced here
      tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
      preScan: [<pre-review-gates.sh TSV rows (incl. growth-graded sizing rows) + lint-gate rows from item 5>],
      conventionsDigest: "<distilled CLAUDE.md/AGENTS.md/memory rules>",
+     reviewRoute: "<route from step a2; OMIT if the router was unavailable>",
      // Omit ALL THREE unless the PREVIOUS cycle advised next_scope=narrow
      // (#656); cycle 1 always omits them:
      deltaFiles: [<git diff --name-only lastReviewedSha...HEAD>],
@@ -436,6 +449,8 @@ behavior is noted inline per check; environment variables referenced here
      priorBlockingDimensions: [<dimensions that blocked last cycle>]
    }
    ```
+
+   <!-- contract: end-args-keys-pre-pr-narrowed -->
 
    Capture `lastReviewedSha = git rev-parse HEAD` for the diff you just reviewed
    **before** amending/adding the cycle's fix commit; the next cycle's delta is
