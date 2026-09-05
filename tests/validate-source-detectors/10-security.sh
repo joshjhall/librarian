@@ -119,6 +119,21 @@ test_security_secrets() {
     assert_fires "$SK_SEC" "$list" hardcoded-secret "api_key, auth_token" \
         "security: the evidence names EVERY real secret, not just the first (#860 AC3)"
 
+    # The SAME keyword twice on one line with two distinct real values. Not
+    # deduped, deliberately: `(api_key, api_key)` reports two real secrets, and
+    # collapsing them to one name would hide the second — the very suppression
+    # this issue fixes, arriving by a different route. Pinned because "one row
+    # per line" plus a key list makes the duplicate-key case a real decision
+    # rather than an accident.
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        'api_key = "realsecretA12"; api_key = "realsecretB34"' >"$d/dup.py"
+    list="$(make_list "$d/l" "$d/dup.py")"
+    assert_row_count "$SK_SEC" "$list" hardcoded-secret 1 \
+        "security: the same keyword twice on one line emits ONE row (#860)"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "api_key, api_key" \
+        "security: a repeated keyword is NOT deduped — both occurrences are named (#860)"
+
     # The placeholder stays value-scoped (#837) even while every match is walked:
     # a line whose ONLY credentials are placeholders must remain silent, so the
     # multi-match fix cannot be mistaken for deleting the denylist.
