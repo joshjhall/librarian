@@ -419,6 +419,93 @@ STUB
     assert_contains "$OUT" "not a clean tree" "The failure must say zero rows != clean"
 }
 
+# The corpus is markdown-only, which means three of check-ai-config's categories
+# (mcp-misconfiguration, hook-safety, harness-logic) can never fire from this
+# job -- their detectors gate on *.json / *.sh / *workflow.js. That narrowing is
+# deliberate and measured (see the script header: broadening adds 31 rows, all
+# false positives), but a DELIBERATE scope limit and an ACCIDENTAL one look
+# identical from the outside, and this is the exact shape -- a scan that reads
+# clean for reasons unrelated to the tree -- the rest of this suite guards
+# against. So pin it: a .json and a .sh dropped into the corpus with content
+# those detectors WOULD flag must still produce no new findings. If someone
+# widens the git ls-files filter, this case fails and makes them re-measure.
+test_corpus_is_markdown_only() {
+    local box
+    box="$(make_sandbox)" || {
+        skip_test "mktemp/git unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$box'" RETURN
+
+    # Content each excluded detector would fire on if the file were scanned:
+    # an insecure URL (mcp-misconfiguration) and a destructive command
+    # (hook-safety). Both are inert while the corpus stays markdown-only.
+    command cat >"$box/plugins/testplug/bait.json" <<'BAIT'
+{ "url": "http://example.com/insecure" }
+BAIT
+    command cat >"$box/plugins/testplug/bait.sh" <<'BAIT'
+#!/usr/bin/env bash
+rm -rf /some/path
+BAIT
+    (cd "$box" && command git add -A) >/dev/null 2>&1
+
+    baseline_with "$box/baseline" "$DIRTY_KEY"
+    run_prescan "$box" "$box/baseline"
+
+    assert_exit 0 "$RC" "Non-markdown files must not enter the corpus"
+    assert_contains "$OUT" "findings in tree: **1**" \
+        "Corpus must stay markdown-only (a .json/.sh entering it changes this count)"
+    assert_not_contains "$OUT" "bait." "No non-markdown file may be reported"
+}
+
+# The GITHUB_STEP_SUMMARY branch is CI-only, so nothing else here executes it --
+# a mutation dropping the second write, or writing to the wrong file, would
+# survive the whole suite. A scheduled job's stdout is effectively invisible, so
+# the summary IS the report for its actual audience.
+test_step_summary_receives_the_report() {
+    local box
+    box="$(make_sandbox)" || {
+        skip_test "mktemp/git unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$box'" RETURN
+
+    baseline_with "$box/baseline" "$DIRTY_KEY"
+    RC=0
+    OUT="$(AI_CONFIG_PRESCAN_ROOT="$box" AI_CONFIG_PRESCAN_BASELINE="$box/baseline" \
+        GITHUB_STEP_SUMMARY="$box/summary" bash "$PRESCAN_SH" 2>&1)" || RC=$?
+
+    assert_exit 0 "$RC" "The summary path must not change the verdict"
+    assert_file_exists "$box/summary" "GITHUB_STEP_SUMMARY must be written"
+    local summary
+    summary="$(command cat "$box/summary" 2>/dev/null || true)"
+    assert_contains "$summary" "findings in tree" "The summary must carry the report body"
+    assert_contains "$summary" "deterministic half" "The summary must carry the scope disclaimer"
+}
+
+# --regen must BOOTSTRAP: with no baseline file at all it writes one rather than
+# hitting the missing-baseline fatal. The round-trip case starts from an
+# existing (empty-bodied) ledger, so it never covers first-run creation -- the
+# path a new checkout or a renamed baseline actually takes.
+test_regen_bootstraps_without_a_baseline() {
+    local box
+    box="$(make_sandbox)" || {
+        skip_test "mktemp/git unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$box'" RETURN
+
+    run_prescan "$box" "$box/fresh-baseline" "--regen"
+    assert_exit 0 "$RC" "--regen must create a baseline that does not yet exist"
+    assert_file_exists "$box/fresh-baseline" "--regen must write the new ledger"
+
+    run_prescan "$box" "$box/fresh-baseline"
+    assert_exit 0 "$RC" "The bootstrapped baseline must make the same tree pass"
+}
+
 run_test test_baselined_finding_passes "A baselined finding passes"
 run_test test_new_finding_fails "A NEW finding fails the run (central property)"
 run_test test_wrong_baseline_entry_still_fails "A baseline entry for another file does not excuse it"
@@ -431,5 +518,8 @@ run_test test_failing_scanner_fails_loud "A FAILING pre-scan exits 2, never 'cle
 run_test test_empty_corpus_fails_loud "An empty corpus exits 2, not a false pass"
 run_test test_unknown_argument_rejected "An unknown argument is a usage error"
 run_test test_output_disclaims_the_judgment_half "Output disclaims the LLM-judgment half"
+run_test test_corpus_is_markdown_only "Corpus stays markdown-only (scope is pinned)"
+run_test test_step_summary_receives_the_report "GITHUB_STEP_SUMMARY receives the report"
+run_test test_regen_bootstraps_without_a_baseline "--regen bootstraps with no baseline"
 
 generate_report

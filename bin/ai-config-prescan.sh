@@ -127,9 +127,12 @@ if [ ! -s "$FILE_LIST" ]; then
 fi
 
 # --- run the deterministic pre-scan -----------------------------------------
-# The scanner's own exit code is load-bearing: 1 is a usage error and 2 is an
-# absent runtime, and BOTH emit zero rows. Treating either as "clean" is the
-# inert-gate failure this script exists to avoid, so they propagate as 2.
+# The scanner's own exit code is load-bearing. Both its runtimes (patterns.py and
+# the patterns.sh fallback) exit only 0 or 1 -- 1 covering a usage error and the
+# diff-shape rejection -- and every one of those failures emits ZERO rows.
+# Treating that as "clean" is the inert-gate failure this script exists to avoid,
+# so ANY non-zero from the scanner becomes our exit 2 ("could not scan"), kept
+# distinct from our exit 1 ("scanned fine, found something new").
 # Run from REPO_ROOT: the file list holds repo-relative paths, so a scan
 # launched from any other cwd resolves none of them, emits zero rows, and exits
 # 0 -- a clean-looking report from a scan that read nothing. The corpus guard

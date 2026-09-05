@@ -60,22 +60,41 @@ that needs the deeper lens.
 
 ## What this covers
 
-From `check-ai-config`'s own categories. Each is reached by **both** halves, but
-differently: the scheduled pre-scan finds whatever its deterministic detectors
-match, and the manual sweep adds the LLM reading on top. So a category appearing
-here does not mean the scheduled job fully covers it — today the pre-scan's
-findings across this tree are all `skill-frontmatter`.
+From `check-ai-config`'s own categories — but **the two halves do not reach the
+same ones**, so read the marker before assuming the schedule has you covered:
 
-- `claude-md-drift` — `CLAUDE.md` / `AGENTS.md` claims that no longer match the
-  tree, including backtick-quoted relative paths that do not resolve
-- `config-inconsistency` — skill/agent markdown citing a `<plugin>:<name>`
-  cross-reference that does not resolve
-- `agent-frontmatter` / `skill-frontmatter` — missing fields, wrong model tier
-  for the task, write tools on a read-only agent, descriptions that do not match
-  behavior
-- `mcp-misconfiguration`, `hook-safety`
-- `harness-logic` — the `adversarial-review` bug-class checklist over
-  `workflow.js` harnesses
+- **sched** — reachable by the scheduled pre-scan (and deepened by the manual sweep)
+- **manual only** — the scheduled job can *never* report this; only the sweep sees it
+
+The scheduled job scans tracked `plugins/**/*.md` only, and three of
+`check-ai-config`'s detectors gate on other filenames: `mcp-misconfiguration`
+needs `*.json`, `hook-safety` needs `*.json`/`*.sh`, `harness-logic` needs
+`*workflow.js`, and `claude-md-drift` needs a `CLAUDE.md`/`AGENTS.md` (this repo
+keeps both at the root, outside `plugins/`). Those categories come back clean
+from the schedule **by construction**, not because the tree is clean.
+
+That narrowing is deliberate and measured, not an oversight: broadening the
+corpus to 192 files raises the row count from 11 to 42, and **all 31 additional
+rows are false positives** — `hook-safety` matching `rm -rf` inside comments and
+inside `bash-guard.sh`'s own deny-list literals, and `mcp-misconfiguration`
+flagging the `$schema` identifier of six JSON Schema files. Baselining 31 false
+rows would train the reader to ignore the ledger, which costs more than the
+coverage gains. `bin/ai-config-prescan.sh`'s header carries the full measurement
+and the conditions for revisiting it.
+
+- **manual only** — `claude-md-drift` — `CLAUDE.md` / `AGENTS.md` claims that no
+  longer match the tree, including backtick-quoted relative paths that do not
+  resolve. (Both files live at the repo root, outside the scanned `plugins/`.)
+- **sched** — `config-inconsistency` — skill/agent markdown citing a
+  `<plugin>:<name>` cross-reference that does not resolve
+- **sched** — `agent-frontmatter` / `skill-frontmatter` — missing fields, wrong
+  model tier for the task, write tools on a read-only agent, descriptions that do
+  not match behavior. *This is the only category the schedule finds anything in
+  today (the 11 baselined rows).*
+- **manual only** — `mcp-misconfiguration` (needs `*.json`), `hook-safety`
+  (needs `*.json` / `*.sh`)
+- **manual only** — `harness-logic` — the `adversarial-review` bug-class
+  checklist over `workflow.js` harnesses
 
 ## What the per-PR gates already cover
 

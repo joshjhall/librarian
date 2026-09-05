@@ -168,6 +168,69 @@ corpus guard could not catch it: the file list was non-empty, the paths simply
 did not resolve. Fixed by running the scan in a `(cd "$REPO_ROOT" && …)`
 subshell; mutation **M8** confirms the suite now catches its return.
 
+## Review cycle 1 — corpus scope (the finding that mattered)
+
+The adversarial review's top blocking finding was correct and material, and it
+is worth recording because a green run had already been observed before it:
+
+> The corpus is markdown-only, so 3 of `check-ai-config`'s 6 categories can
+> never fire in the scheduled job.
+
+**Confirmed by reading the detectors** (`patterns.py`): `check_mcp_config` gates
+on `*.json`, `check_hook_safety` on `*.json`/`*.sh`, `check_harness_logic` on
+`*workflow.js`, and `check_claude_md_drift` on `*/CLAUDE.md`/`*/AGENTS.md` —
+which this repo keeps at the **root**, outside the scanned `plugins/`. So those
+categories returned clean *by construction*, which is the same inert-gate shape
+the script's own guards exist to prevent, reached through the corpus instead of
+the runtime.
+
+**Then measured before choosing a remedy**, rather than reflexively broadening.
+Corpus widened to `plugins/**/*.{json,sh}` + `plugins/**/workflow.js` + the root
+`CLAUDE.md`/`AGENTS.md` (192 files vs 119):
+
+| corpus        | rows | composition                                        |
+| ------------- | ---- | -------------------------------------------------- |
+| markdown-only | 11   | 11 `skill-frontmatter`, all genuine                 |
+| broadened     | 42   | the same 11, +25 `hook-safety`, +6 `mcp-misconfiguration` |
+
+**All 31 additional rows are false positives**, and none is a near miss:
+
+- `hook-safety` matches `rm -rf` on **comment lines** (16 of 25), on
+  `bash-guard.sh`'s own **deny-list string literals** — the guard whose purpose
+  is to block those very commands — and on teardown of the scanners' own
+  `mktemp -d` sandboxes.
+- `mcp-misconfiguration` flags the `$schema` key of six JSON Schema files, whose
+  `http://json-schema.org/draft-07/schema#` is an opaque **identifier**, never
+  fetched.
+- `harness-logic` found nothing across all six `workflow.js`.
+
+31 FPs to 0 TPs is "not at this tier". Broadening would mean baselining 31 false
+rows, which trains the reader to ignore the ledger — and a ratchet is worth only
+as much as the baseline someone is willing to read.
+
+**Resolution: keep the narrow corpus, but state the narrowing** (the finding's
+own second suggested branch) — in `bin/ai-config-prescan.sh`'s header with the
+full measurement, and in `convention-cadence.md`, whose category list is now
+marked **sched** vs **manual only** per category. The claim that each category
+"is reached by both halves" was removed; it was true only for
+`skill-frontmatter`/`agent-frontmatter`.
+
+`test_corpus_is_markdown_only` pins it: a `.json` and a `.sh` carrying content
+those detectors *would* flag are dropped into the fixture corpus and must
+produce no findings. Widening the filter fails that case and forces a
+re-measurement. Mutation **M10** (filter widened to `md|json|sh`) → 4 failing
+assertions.
+
+Two other blocking findings, both fixed: a comment claiming the scanner emits
+exit 2 (both its runtimes only ever exit 0 or 1 — corrected), and the deferred
+AC#2 end-to-end run (already recorded above as DEFERRED with its recipe).
+
+Two deferrable test-coverage findings were also taken rather than filed, since
+both were cheap and both closed real blind spots: the `GITHUB_STEP_SUMMARY`
+write path (CI-only, previously never executed — mutation **M11** → 2) and
+`--regen` bootstrap with no pre-existing baseline (mutation **M12** → 2). Suite
+is now 15 cases.
+
 ## Deliberately out of scope
 
 - **Fixing the 11 baselined findings.** Per-skill prose work, unrelated to
