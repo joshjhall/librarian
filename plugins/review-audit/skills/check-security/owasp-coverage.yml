@@ -21,7 +21,18 @@
 # THE FOUR OWNERS map to the passes that exist today:
 #
 #   prescan    — a deterministic category slug emitted by BOTH
-#                check-security/patterns.py and patterns.sh
+#                check-security/patterns.py and patterns.sh. Since #708 that
+#                SCANNER runs on BOTH paths: the audit sweep
+#                (/review-audit:codebase-audit) and the per-PR review path,
+#                which reaches the same script through ship-issue's
+#                pre-review-gates.sh. (Only the deterministic half travels —
+#                the `llm-pass2` checklist remains audit-only, which is why it
+#                is a separate owner.) Before it, every `prescan` row was
+#                audit-only and the review path's `security` dimension had no
+#                deterministic input at all — an `owner: prescan` row therefore
+#                over-claimed on the path where a defect is cheapest to stop.
+#                No row's OWNER changed (each already named the right pass);
+#                what changed is that the claim is now true on both.
 #   llm-pass2  — a `### <id>` checklist section in
 #                plugins/review-audit/agents/audit-security.md
 #   reviewer   — a bullet in SUBREVIEWERS.security in
@@ -38,6 +49,13 @@
 # `reviewer` sees SSRF as a prose bullet while no deterministic detector exists
 # for it. Both rows are listed, because "an LLM might notice it" and "a scanner
 # will catch it" are different claims.
+#
+# The review path also FAILS LOUD when it cannot reach this scanner (#708):
+# `review-audit` installs independently of `workflow`, so pre-review-gates.sh
+# resolves patterns.sh at runtime and exits non-zero rather than reporting a
+# clean scan it never ran. That matters to this map's honesty — a `prescan` row
+# would otherwise silently mean "covered" on a machine where the scanner is
+# absent, which is the one failure mode this file exists to make visible.
 #
 # The gap reasons point at the sibling slices of epic #705: #707 added the
 # command-injection, weak-randomness, tls-verification-disabled, permissive-cors,

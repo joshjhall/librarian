@@ -245,7 +245,11 @@ mode, run these safety checks in order:
 1. **Pre-review gates** — run `pre-review-gates.sh` over the diff, passing the
    `git diff --numstat` sidecar as its second argument so the **review-lens
    sizing** rows stay growth-graded (#695); advisory by default, HIGH-certainty
-   findings block Option 1 under `PRE_REVIEW_STRICT=true`.
+   findings block Option 1 under `PRE_REVIEW_STRICT=true`. **One arm is not
+   advisory:** the security pre-scan (#708) lives in the sibling `review-audit`
+   plugin, so the gate resolves it at runtime and **exits non-zero** if it cannot
+   run — a refusal means "not scanned", never "nothing found". Capture the exit
+   code rather than piping (#854), which discards it.
 1. **Adversarial pre-PR review** (all modes) — run the `workflow.js` harness
    (`phase: "pre-pr"`) on the committed diff regardless of shipping mode; fix
    `blocking` findings in a loop that stops on the convergence predicate and is

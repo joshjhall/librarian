@@ -700,9 +700,26 @@ scan_ai_slop() {
 # Category: debug-statement
 # The per-language detection `case`s below are a DELIBERATE cross-plugin
 # duplicate of check-code-health/patterns.sh: review-audit and workflow install
-# independently, so this script cannot source that one at runtime. The shared
+# independently, so this script cannot SOURCE that one at runtime. The shared
 # regions (between the sentinel comments) are kept byte-for-byte in sync by
 # tests/validate-shared-scanner-sync.sh — edit both copies together.
+#
+# READ "SOURCE" LITERALLY (#708). The claim is about pulling another plugin's
+# shell FUNCTIONS into this script's scope, which is genuinely impossible here:
+# CLAUDE_PLUGIN_ROOT is plugin-scoped and the plugins declare no dependency on
+# each other. It is NOT a claim that this script can never REACH another
+# plugin — the security arm at the foot of this file resolves
+# check-security/patterns.sh at runtime and EXECUTES it as a separate process
+# with a TSV contract at the boundary, which needs nothing in scope.
+#
+# The two arms diverge on what ABSENCE COSTS, not on mechanism. A missing
+# check-code-health means these debug-statement rows go missing while the
+# category still reports — so the logic is duplicated and pinned. A missing
+# check-security means a SECURITY scan that finds nothing, which is
+# indistinguishable from a clean diff — so that arm refuses loudly instead of
+# degrading. Duplicating it here was the alternative and was rejected: measured,
+# that is 469 lines of detector patterns and a lexical model kept in sync by
+# hand, against the 57 the fail-loud process boundary costs.
 #
 # The detection is split into TWO regions along the line the `stdout_is_output`
 # exemption follows (#680):
@@ -1281,4 +1298,148 @@ if [ -f "$_SIZING" ]; then
     else
         command bash "$_SIZING" "$FILE_LIST" || true
     fi
+fi
+
+# --- security pre-scan, resolved at RUNTIME (#708) ---------------------------
+# ship-issue's adversarial review fans out five dimensions. Four had a
+# deterministic pre-scan handoff; `security` had none -- it resolved through
+# REUSED_DIMENSIONS to code-reviewer's `reviewer:security` mode, whose whole
+# instruction set is a prose checklist. So a hardcoded AWS key or an f-string SQL
+# build was caught only if an LLM happened to notice it on that pass, while this
+# repo already owned a deterministic scanner for exactly those patterns.
+#
+# WHY RUNTIME RESOLUTION AND NOT DUPLICATION. The sibling `sizing.sh` arm above
+# shares check-decomposition's LOC engine by pinned duplication, and the
+# debug-statement region further up says outright that "this script cannot source
+# that one at runtime". Both remain true and neither is contradicted here,
+# because they are about a DIFFERENT operation: SOURCING shell functions into
+# this script's scope across a plugin boundary, which genuinely cannot be done --
+# CLAUDE_PLUGIN_ROOT is plugin-scoped and the plugins declare no dependency on
+# each other. check-security is not sourced. It is EXECUTED as a separate
+# process with a TSV contract at the boundary, so nothing needs to be in scope
+# and nothing can drift silently: it either runs and emits rows, or it is absent
+# and this arm refuses.
+#
+# What differs is therefore not the mechanism but what ABSENCE COSTS, and that is
+# what sets the two dispositions apart:
+#
+#   sizing.sh absent      -> a missing size opinion. Degrade gracefully; the
+#                            other categories' rows are already on stdout.
+#   check-security absent -> a SECURITY SCAN THAT FINDS NOTHING, which is
+#                            byte-identical to a clean scan. That is the #538 /
+#                            #571 inert-gate shape reached through the plugin
+#                            boundary, and it is the exact outcome #708 exists to
+#                            prevent. So this arm FAILS LOUD.
+#
+# The contract: zero rows from an ABSENT scanner and zero rows from a CLEAN diff
+# must be distinguishable in BOTH the exit code and the output. A caller reading
+# only stdout sees the marker row; a caller checking `$?` sees non-zero; a caller
+# watching stderr sees what to install. No single channel is relied on, because a
+# pipeline drops the exit code (#854) and a `2>/dev/null` drops the message.
+_SECURITY_MARKER_CATEGORY='security-scan-unavailable'
+
+# security_scan_refuse REASON DETAIL — emit the marker row + the actionable
+# stderr message, then return 1. The caller turns that into a non-zero exit
+# AFTER the rest of the scan's rows have already been written, so an operator
+# still gets every finding the gate did compute.
+security_scan_refuse() {
+    local tool="${BASH_SOURCE[0]##*/}"
+    command printf '%s\t%s\t%s\t%s\t%s\n' \
+        '-' '0' "$_SECURITY_MARKER_CATEGORY" \
+        "SECURITY PRE-SCAN DID NOT RUN ($1) — this scan's silence is NOT a clean result" \
+        'HIGH'
+    {
+        echo "Error: ${tool}: the security pre-scan did not run: $1"
+        [ -n "${2:-}" ] && echo "  $2"
+        echo "  check-security/patterns.sh ships with the 'review-audit' plugin, which"
+        echo "  installs independently of 'workflow'. Install it with:"
+        echo "      claude plugin install review-audit@librarian"
+        echo "  or point SECURITY_SCANNER at the scanner explicitly."
+        echo "  Refusing to exit 0: a security scan that finds nothing because it did not"
+        echo "  run is indistinguishable from a clean diff, which is the outcome this gate"
+        echo "  exists to prevent."
+    } >&2
+    return 1
+}
+
+# resolve_security_scanner — print the scanner path on stdout, or nothing.
+#
+# Three probes, in order. The first two shapes genuinely differ and neither
+# subsumes the other, which is why both are tried rather than one generalized:
+#
+#   1. SECURITY_SCANNER   explicit override. Also the seam the absent-scanner
+#                         tests drive, so the refusal path is exercised by
+#                         FORCING absence rather than by skipping when the tool
+#                         is missing.
+#   2. dev checkout       plugins/{workflow,review-audit}/ are siblings in this
+#                         repo, so the path is a fixed relative walk: three
+#                         levels up from ship-issue/ reaches plugins/.
+#   3. installed cache    ~/.claude/plugins/cache/<marketplace>/review-audit/
+#                         <version>/skills/... — ONE further level up than the
+#                         dev walk, because an installed plugin root carries a
+#                         <version> segment the source tree does not. The version
+#                         is per PLUGIN and is not guaranteed to match workflow's
+#                         own, so it is globbed rather than assumed; newest-last
+#                         sort so a stale side-by-side install does not win.
+#                         Both walks were verified against a real installed
+#                         layout, not derived on paper — an earlier draft of each
+#                         was off by one level and resolved nothing.
+resolve_security_scanner() {
+    local rel='skills/check-security/patterns.sh'
+    local candidate
+
+    if [ -n "${SECURITY_SCANNER:-}" ]; then
+        # Printed even when it does not exist: the caller reports the configured
+        # path in its refusal, which is far more useful than "not found".
+        command printf '%s' "$SECURITY_SCANNER"
+        return 0
+    fi
+
+    candidate="${SCRIPT_DIR}/../../../review-audit/${rel}"
+    if [ -f "$candidate" ]; then
+        command printf '%s' "$candidate"
+        return 0
+    fi
+
+    # `ls -d` + tail over a glob rather than an array: bash 3.2 (stock macOS) is
+    # the floor, and a nullglob-free literal glob would otherwise be returned
+    # verbatim when it matches nothing.
+    candidate="$(command ls -d "${SCRIPT_DIR}"/../../../../review-audit/*/"${rel}" 2>/dev/null |
+        command sort | command tail -n 1)"
+    if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+        command printf '%s' "$candidate"
+        return 0
+    fi
+
+    return 0
+}
+
+# Deliberately LAST in the file: every other scanner's rows are already on
+# stdout, so a refusal here costs the operator nothing they had earned. The
+# `|| _SECURITY_RC=$?` shape keeps `set -e` from aborting before the exit.
+_SECURITY_RC=0
+_SECURITY_SCANNER="$(resolve_security_scanner)"
+if [ -z "$_SECURITY_SCANNER" ]; then
+    security_scan_refuse "scanner not found" \
+        "Searched the dev checkout and the installed plugin cache." || _SECURITY_RC=$?
+elif [ ! -f "$_SECURITY_SCANNER" ]; then
+    security_scan_refuse "scanner not found" \
+        "Resolved to: ${_SECURITY_SCANNER}" || _SECURITY_RC=$?
+else
+    # Same $FILE_LIST every other scanner in this gate reads. That is what keeps
+    # the pre-scan's file scope equal to the security dimension's diff scope on a
+    # NARROWED re-review cycle (#492) as well as a full one: the harness builds
+    # its manifest over deltaFiles, and ci-review-protocol.md re-runs this gate
+    # on the current scope, so scoping follows from the shared input rather than
+    # from a second scope computation that could drift out of step.
+    if ! command bash "$_SECURITY_SCANNER" "$FILE_LIST"; then
+        security_scan_refuse "scanner exited non-zero" \
+            "Ran: ${_SECURITY_SCANNER}" || _SECURITY_RC=$?
+    fi
+fi
+
+# A refusal is the ONLY non-zero exit from a successful scan; findings alone
+# still exit 0, unchanged.
+if [ "$_SECURITY_RC" != "0" ]; then
+    exit 1
 fi

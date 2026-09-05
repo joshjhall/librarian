@@ -59,6 +59,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
     # hermetic even under a pre-push hook (see validate-golem-scripts.sh).
     GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
+
+    # The real check-security scanner (#708). Fixtures that run the gate from a
+    # SHADOW directory defeat its relative resolution, so any such case that is
+    # not itself testing the security arm must pin this — otherwise it goes red
+    # for the security arm's reason instead of its own.
+    SECURITY_SCANNER_REAL="$REPO_ROOT/plugins/review-audit/skills/check-security/patterns.sh"
 }
 
 # shellcheck source=tests/lib/harness.sh
@@ -89,7 +95,8 @@ FRAGMENTS="10-ai-slop.sh
 90-evidence-fidelity.sh
 95-test-discovery-literals.sh
 96-portability.sh
-97-sizing.sh"
+97-sizing.sh
+98-security.sh"
 
 # shellcheck disable=SC2086  # deliberate word-splitting: FRAGMENTS is a list
 source_fragments "$SCRIPT_DIR/pre-review-gates" $FRAGMENTS
@@ -184,6 +191,15 @@ run_fragment_test test_multiple_literals_all_reported "TWO literals are both dro
 run_fragment_test test_sizing_rows_reach_the_gate_output "sizing rows reach the gate output with a forwarded numstat sidecar (#695)"
 run_fragment_test test_sizing_without_numstat_degrades_to_informational "sizing without a sidecar degrades to informational (#695)"
 run_fragment_test test_missing_sizing_does_not_abort_the_scan "a missing sizing.sh degrades gracefully (#695)"
+run_fragment_test test_security_prescan_rows_reach_the_gate_output "security pre-scan rows reach the gate output (#708 AC#1)"
+run_fragment_test test_security_rows_are_high_certainty "security rows are HIGH — the certainty R3-security-high needs (#708)"
+run_fragment_test test_security_scanner_absent_fails_loud "an absent security scanner fails LOUD, never a silent clean (#708 AC#2)"
+run_fragment_test test_security_scanner_failure_is_not_silence "a FAILING security scanner also fails loud (#708 AC#2)"
+run_fragment_test test_security_absent_differs_from_clean "ABSENT and CLEAN differ in BOTH exit code and output (#708 AC#2)"
+run_fragment_test test_security_scope_matches_the_gate_file_list "the security pre-scan scope equals the gate's file list, full and narrowed (#708 AC#3)"
+run_fragment_test test_security_arm_does_not_perturb_other_scanners "the security arm does not perturb the other scanners (#708)"
+run_fragment_test test_security_scanner_resolves_from_installed_layout "the installed-cache probe resolves across MISMATCHED plugin versions (#708)"
+run_fragment_test test_security_refusal_preserves_earlier_rows "a security refusal preserves the rows already computed (#708)"
 run_fragment_test test_declared_config_suppresses_baseline "control: declared config suppresses the finding (#679)"
 run_fragment_test test_read_yaml_list_strips_trailing_whitespace "read_yaml_list strips trailing whitespace after the closing quote (#679 AC#1)"
 run_fragment_test test_read_yaml_list_handles_quotes_and_sections "read_yaml_list parses all quote forms and both key sections (#679)"

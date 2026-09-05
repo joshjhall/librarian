@@ -315,9 +315,11 @@ args: {
   // since a too-low ceiling truncates every cycle and dead-ends the PR:
   tokenCeiling: <REVIEW_TOKEN_CEILING if set; OMIT otherwise (default)>,
   // Pre-scan candidates (#556) — reviewers confirm-or-dismiss instead of
-  // re-deriving them. Re-run pre-review-gates.sh on the current scope, passing
-  // the `git diff --numstat` sidecar as its 2nd arg so the sizing rows stay
-  // growth-graded (#695) rather than degrading to informational-only:
+  // re-deriving them. Re-run pre-review-gates.sh on the current scope (which also
+  // scopes its security rows (#708) to what this cycle reads), passing the
+  // `git diff --numstat` sidecar as its 2nd arg so sizing rows stay growth-graded
+  // (#695). It exits NON-ZERO if the security scan could not run — "not scanned",
+  // never "nothing found"; do not read it as clean:
   preScan: [<pre-review-gates.sh TSV rows + lint-gate rows>],
   // Conventions digest (#557) — distilled ONCE by the caller so reviewers
   // don't each re-read CLAUDE.md / AGENTS.md / .claude/memory:
@@ -450,17 +452,15 @@ delta_lines=$(git diff origin/main...HEAD | command wc -l)          # full cycle
 Which line applies is decided by **scope, not cycle number** (#656): the full-diff
 form is used on cycle 1 **and** on any cycle the previous `next_scope` set to
 `full`. Keying it off `cycle > 1` instead would hand a fix-delta line count to a
-cycle that reviewed the whole diff, making a genuinely full cycle look narrow to
-`C3` — the same misfire as the one below, from the other direction.
+cycle that reviewed the whole diff — the same misfire as the one below.
 
-**The timing is the whole point** — the same expression means different things at
-different steps. Do **not** recompute it at step (f) time: by then step (c) has
-re-captured `lastReviewedSha` to this cycle's HEAD and step (e) has committed the
-fix on top, so it measures the **fix you just applied** rather than the surface
-you reviewed. It breaks worst on exactly the case the predicate exists to judge: a
-**clean** cycle applies no fix, so the SHA still equals `HEAD`, the diff is empty,
-and `--delta-lines` is `0` — which reads as maximally narrow and fires `C3`
-(continue) on a review that had genuinely converged, defeating #596's early stop.
+**The timing is the whole point.** Do **not** recompute it at step (f) time: by
+then step (c) has re-captured `lastReviewedSha` to this cycle's HEAD and step (e)
+has committed the fix on top, so it measures the **fix you just applied** rather
+than the surface you reviewed. It breaks worst on the case the predicate exists to
+judge: a **clean** cycle applies no fix, so the SHA still equals `HEAD`, the diff
+is empty, and `--delta-lines` is `0` — maximally narrow, firing `C3` (continue)
+on a review that had genuinely converged, defeating #596's early stop.
 
 Carry the value forward as the next cycle's `--prev-delta-lines`.
 
@@ -541,9 +541,9 @@ cycles, not just the previous one). On cycle 1 omit `--prev-result` and
 
 The helper owns the decision; the loop acts on `verdict` (#596). It replaced the
 bare `cycle >= cap` counter, which #567's 26-cycle batch showed is **both** too
-low — #533's only `blocking` finding of the entire batch (security, 0.92) arrived
-in **cycle 4**, past the old default of 3, and would have shipped — **and** too
-high, since #564 was verifiably clean at cycle 1 and cycles 2–3 were pure cost.
+low — #533's only `blocking` finding of the batch (security, 0.92) arrived in
+**cycle 4**, past the old default of 3, and would have shipped — **and** too high,
+since #564 was clean at cycle 1 and cycles 2–3 were pure cost.
 The rule list, why each rule exists, and which observed cycle motivated it are
 documented in the script header; the deciding rule comes back as `rule` so a
 terminated review is attributable, and `tests/validate-review-convergence.sh`

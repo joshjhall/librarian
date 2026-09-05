@@ -108,6 +108,8 @@ behavior is noted inline per check; environment variables referenced here
    | `ai-file-bloat`       | An agent/skill/companion/CLAUDE.md/memory file over its per-type budget | HIGH/MED/LOW |
    | `doc-file-bloat`      | A `docs/*.md` page over its per-type budget       | HIGH/MED/LOW |
    | `decomposition-seam`  | A language-shaped split shape, or a reasoned decline | MED/LOW   |
+   | `hardcoded-secret` / `injection-risk` / `xss-risk` / `insecure-crypto` / `command-injection` / `insecure-deserialization` / `weak-randomness` / `tls-verification-disabled` / `permissive-cors` / `jwt-unverified` / `xxe-risk` | The `check-security` detectors (#708), delegated at runtime | HIGH |
+   | `security-scan-unavailable` | The security scan DID NOT RUN — never a clean result | HIGH |
 
    The two `*-bloat` rows are the **prose** half of the size lens (#724). A
    markdown file the scanner can classify by path — an `agents/*.md`, a
@@ -188,6 +190,19 @@ behavior is noted inline per check; environment variables referenced here
    **Graceful degradation**: if `pre-review-gates.sh` is not found or fails
    to execute, skip this check with a note: "Pre-review gates skipped
    (scanner not available)." Never block shipping due to scanner errors.
+
+   **The security arm is the ONE exception, and it is deliberate (#708).** The
+   sentence above covers this gate being absent; it does NOT cover the security
+   pre-scan inside it. `check-security/patterns.sh` ships with `review-audit`,
+   which installs independently of `workflow`, so the gate resolves it at
+   runtime — and when it cannot, it **exits non-zero**, prints an actionable
+   message naming the missing scanner and `claude plugin install
+   review-audit@librarian`, and emits a `security-scan-unavailable` row. It never
+   degrades to zero rows, because a security scan finding nothing *because it did
+   not run* is byte-identical to a clean scan (the #538/#571 inert-gate shape).
+   So: **zero security rows plus exit 0 means clean; a refusal means unknown.**
+   Read the refusal as "not scanned", never as "nothing found" — and do not pipe
+   this gate, which discards the exit code that carries the distinction (#854).
 
    **Keep the parsed TSV for item 6 (#556).** Retain the rows as
    `[{file, line, category, evidence, certainty}]` and pass them to the review

@@ -78,8 +78,16 @@ test_missing_sizing_does_not_abort_the_scan() {
     make_big_sh "$d/big.sh"
     command printf '%s\n' "def f():" "    print('debug')" >"$d/app.py"
 
+    # SECURITY_SCANNER is pinned to the REAL scanner (#708). The shadow gatedir
+    # defeats the security arm's relative resolution the same way it defeats
+    # sizing's -- but the two failures are deliberately NOT alike: sizing degrades
+    # gracefully, while an unresolvable security scanner refuses and exits 1. Left
+    # unpinned this case would go red for the security arm's reason and stop
+    # testing sizing's graceful degradation at all. Fix the FIXTURE, never the
+    # assertion ([[synthetic-script-dir-needs-the-new-sibling]]).
     GATE_RC=0
     GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        "SECURITY_SCANNER=$SECURITY_SCANNER_REAL" \
         "$REAL_BASH" "$d/gatedir/pre-review-gates.sh" "$(make_list "$d" big.sh app.py)" 2>/dev/null)" || GATE_RC=$?
 
     assert_equals "0" "$GATE_RC" "a missing sizing.sh does not fail the gate"
