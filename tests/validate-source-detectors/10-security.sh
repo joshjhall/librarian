@@ -134,6 +134,21 @@ test_security_secrets() {
     assert_fires "$SK_SEC" "$list" hardcoded-secret "api_key, api_key" \
         "security: a repeated keyword is NOT deduped — both occurrences are named (#860)"
 
+    # The same two properties at N=3 and with IDENTICAL values — the pairwise
+    # fixture above cannot distinguish a general loop from one that special-cases
+    # exactly two matches, and an implementation might plausibly collapse an
+    # exact (key,value) repeat. Neither is collapsed: a copy-pasted secret is
+    # still two real occurrences of a leaked credential.
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        'api_key = "realsecretA12"; api_key = "realsecretB34"; api_key = "realsecretC56"' \
+        'api_key = "samesecret123"; api_key = "samesecret123"' >"$d/dup3.py"
+    list="$(make_list "$d/l" "$d/dup3.py")"
+    assert_row_count "$SK_SEC" "$list" hardcoded-secret 2 \
+        "security: repeats stay one row per LINE at N=3 and for identical values (#860)"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "api_key, api_key, api_key" \
+        "security: the walk generalizes past the pairwise case (#860)"
+
     # The placeholder stays value-scoped (#837) even while every match is walked:
     # a line whose ONLY credentials are placeholders must remain silent, so the
     # multi-match fix cannot be mistaken for deleting the denylist.
