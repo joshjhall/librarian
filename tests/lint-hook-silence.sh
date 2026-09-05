@@ -82,6 +82,17 @@ write_noop_payload() {
             printf '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"%s","session_id":"lint-hook-silence"}\n' \
                 "$REPO_ROOT" >"$out"
             ;;
+        PreToolUse:*Read*)
+            # Read/Grep/Glob — the read-scope guard (#630). Target inside the
+            # repo root itself, which for that guard is the allow path: this
+            # session's cwd is the repo root (a PRIMARY checkout, not a linked
+            # worktree), so the caller gate clears it before any scoping. Listed
+            # BEFORE the Edit/Write arm because `*Write*` would not match here
+            # but a future combined matcher could; keeping the read arm first
+            # makes the intended payload win rather than depending on arm order.
+            printf '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"%s/README.md"},"cwd":"%s","session_id":"lint-hook-silence"}\n' \
+                "$REPO_ROOT" "$REPO_ROOT" >"$out"
+            ;;
         PreToolUse:*Edit* | PreToolUse:*Write*)
             # Target inside the repo root itself: for the worktree guard this is the
             # in-scope (allow) path.
@@ -279,6 +290,15 @@ make_worktree_fixture() {
     git -C "$root/main" add README.md >/dev/null 2>&1 || return 1
     git -C "$root/main" commit -qm "fixture" >/dev/null 2>&1 || return 1
     git -C "$root/main" worktree add -q "$root/wt" -b fixture-wt >/dev/null 2>&1 || return 1
+    # A SECOND worktree, as a sibling of the first under a shared parent named
+    # `issue-*`. The read-scope guard (#630) denies only PEER worktrees, so its
+    # deny direction cannot be exercised by the single-worktree shape above —
+    # there is nothing to be a peer OF. Best-effort: a git too old for two
+    # worktrees still builds the write-guard fixture, and the read-guard case
+    # detects the absence and fails loudly rather than passing quietly.
+    mkdir -p "$root/wts" || return 0
+    git -C "$root/main" worktree add -q "$root/wts/issue-1" -b fixture-wt-1 >/dev/null 2>&1 || return 0
+    git -C "$root/main" worktree add -q "$root/wts/issue-2" -b fixture-wt-2 >/dev/null 2>&1 || return 0
     return 0
 }
 
@@ -315,6 +335,55 @@ test_deny_path_still_emits() {
     out="$(bash "$guard" <"$payload" 2>/dev/null || true)"
     assert_contains "$out" '"permissionDecision":"deny"' \
         "worktree-guard.sh must STILL emit a deny envelope for a worktree-escaping edit. Silence-on-no-op must not be achieved by going silent everywhere — that trades a token cost for a correctness hole (#475/#782)."
+}
+
+# read-scope-guard.sh is the THIRD hook that can deny (#630), and it is the one
+# most at risk of the failure this whole gate exists to catch. Its no-op payload
+# above is an ALLOW, and its rule is deliberately narrow — it allows the main
+# checkout, out-of-repo paths, relative targets, and an absent path field — so a
+# regression that made it allow EVERYTHING would keep the silence assertion green
+# while having lost its entire purpose. Silence-on-no-op is only half a contract;
+# without this arm the new hook would be enrolled in the half that a broken guard
+# passes trivially.
+test_read_guard_deny_path_still_emits() {
+    local guard payload out fixture main_root wt_root peer_root
+    guard="$REPO_ROOT/plugins/workflow/hooks/read-scope-guard.sh"
+    assert_file_exists "$guard" "read-scope-guard.sh must exist to verify the deny direction"
+    [ -f "$guard" ] || return 0
+
+    if ! command -v git >/dev/null 2>&1; then
+        skip_test "git unavailable — cannot build the worktree fixture"
+        return 0
+    fi
+
+    fixture="$SANDBOX/read-deny-fixture"
+    if ! make_worktree_fixture "$fixture"; then
+        assert_true false \
+            "Could not build the git worktree fixture for the read-guard deny-direction check. This assertion must not be skipped — it is the only automated guard that read-scope-guard.sh still emits when it must DENY."
+        return 0
+    fi
+    if [ ! -d "$fixture/wts/issue-2" ]; then
+        # The peer pair is what makes this case a DENY rather than an allow. If
+        # it is missing the payload below would exercise the allow path and the
+        # assertion would fail confusingly; say why instead.
+        assert_true false \
+            "The peer-worktree pair (wts/issue-1 + wts/issue-2) was not created, so the read-guard deny direction cannot be exercised. Fix make_worktree_fixture rather than weakening this assertion."
+        return 0
+    fi
+
+    main_root="$(cd "$fixture/main" && pwd)"
+    wt_root="$(cd "$fixture/wts/issue-1" && pwd)"
+    peer_root="$(cd "$fixture/wts/issue-2" && pwd)"
+    : "$main_root"
+
+    # cwd inside one golem worktree, target inside its PEER.
+    payload="$SANDBOX/read-deny.json"
+    printf '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"%s/README.md"},"cwd":"%s","session_id":"lint-hook-silence"}\n' \
+        "$peer_root" "$wt_root" >"$payload"
+
+    out="$(bash "$guard" <"$payload" 2>/dev/null || true)"
+    assert_contains "$out" '"permissionDecision":"deny"' \
+        "read-scope-guard.sh must STILL emit a deny envelope for a peer-worktree read. Silence-on-no-op must not be achieved by going silent everywhere — that trades a token cost for a correctness hole (#630/#782)."
 }
 
 # A registered hook whose command shape `hook_script_path` cannot resolve must
@@ -445,5 +514,6 @@ EOF
 
 run_test test_deny_path_still_emits "worktree-guard.sh still emits on the DENY path"
 run_test test_bash_guard_deny_path_still_emits "bash-guard.sh still emits on the DENY path"
+run_test test_read_guard_deny_path_still_emits "read-scope-guard.sh still emits on the DENY path"
 
 generate_report

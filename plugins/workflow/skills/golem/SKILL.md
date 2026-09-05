@@ -117,6 +117,48 @@ For 2+ issues in parallel, or detached/headless work, use **`/workflow:orchestra
    `origin/main`, so copying stale bytes can revert a since-merged PR
    (the stale-base-squash-reverts-merged-pr class).
 
+1. **Wear the blinders — never read a PEER golem's worktree (#630).** The rule
+   above governs where you *write*; this one governs what you *read*. In a
+   parallel `/workflow:orchestrate` batch the sibling worktrees
+   (`<worktree-dir>/issue-*` other than your own) belong to other golems. Do not
+   `Read`/`Grep`/`Glob` into them, and do not reason about their work. Their
+   files are on a **different branch at a different base**, so a conclusion drawn
+   from them is stale in a way nothing in your own tree will contradict — the
+   same stale-base class as above, arriving through the read path instead of the
+   write path. It also burns budget on another issue's context.
+
+   The bundled `hooks/read-scope-guard.sh` PreToolUse guard **denies** a
+   `Read`/`Grep`/`Glob` whose absolute target resolves inside a peer worktree.
+   **On a denial, do not go looking for a spelling that gets through** — re-issue
+   the read against the **same path in your own worktree**, which is what you
+   almost certainly wanted. Three things stay deliberately readable: your own
+   worktree, the shared `<worktree-dir>/.status/` feed (the escalation path
+   depends on it), and the main checkout — the read guard is narrower than the
+   write guard on purpose, because a wrongly-denied read has no recovery path
+   mid-turn. If you genuinely need to know something about a peer's work, that is
+   the **orchestrator's** to answer: escalate rather than reading it.
+
+   **What the guard does NOT cover: `Bash`.** Enforcement is a PreToolUse hook on
+   `Read`/`Grep`/`Glob`/`NotebookRead` only, so a `cat`/`head`/`rg` of an absolute
+   peer path from `Bash` is not blocked — `.gitignore` keeps repo-rooted searches
+   out of peer trees, but it does not touch a direct absolute-path read. Treat the
+   rule above as binding on you regardless of which tool would enforce it; the
+   hook is a backstop for the common cases, not a complete boundary.
+
+   The guard also denies a search rooted at the **worktree directory itself**
+   (`<worktree-dir>`, the parent holding every `issue-*`), because a `Grep`/`Glob`
+   there descends into all of them at once — the peer read that a per-peer rule
+   would miss. Root your searches at **your own worktree**; a repo-rooted search
+   is fine and does not reach peers (the worktree dir is gitignored).
+
+   Likewise, do not run `git worktree list` to orient yourself — it is
+   repo-global, so it hands you the whole roster of peers as a side effect. Your
+   own root is simply your **cwd** (`$PWD`), which is what the guard itself
+   trusts. `git rev-parse --show-toplevel` also answers, but treat it as
+   advisory: a worktree-scoped `core.worktree` can redirect it, which is exactly
+   why `read-scope-guard.sh` derives its own root from the gitdir-pointer file
+   and cross-checks the result against `cwd` (#501).
+
 ### Phase C — Run the pipeline
 
 Invoke `/workflow:next-issue` via the **Skill tool**, passing `N` and any `--level`:
