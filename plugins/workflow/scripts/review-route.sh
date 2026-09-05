@@ -84,7 +84,9 @@
 # WHY A ROUTING RULE RATHER THAN TRUSTING THE PRE-SCAN. The issue comments
 # assumed `pre-review-gates.sh` already carried these scanners, so preserving
 # item-5's advisory surfacing would be enough. It does NOT: that script scans
-# only ai-slop / debug statements / missing tests. The sizing rows come from
+# ai-slop / debug statements / missing tests, plus — since #708 — a runtime
+# delegation to check-security whose UNAVAILABLE row is listed below for the
+# same reason. The sizing rows come from
 # `sizing.sh`, invoked separately, and the `decomposition` DIMENSION is what
 # turns such a row into a judged blocking-or-deferrable finding. On a cheap
 # cycle that dimension is dropped, so the row would degrade to an advisory
@@ -335,9 +337,20 @@ _has_unsurfaceable_category() {
             # grepping the scanner, after cycle 4 caught three invented names
             # (`okf-orphaned`, `okf-dangling-index`, `memory-conformance`) that
             # could never have matched, silently making R4 inert for OKF rows.
+            #
+            # `security-scan-unavailable` (#708) is the same shape arriving by a
+            # different route: pre-review-gates.sh now delegates to
+            # check-security at runtime and emits this row when it CANNOT, and a
+            # doc-only diff routes cheap — which drops `security` and would let
+            # "the security scan did not run" decay into `clean: true`. That is
+            # the exact decay R4 exists to stop, and it is worse here than for a
+            # sizing row: the row means the scan is UNKNOWN, not that a finding
+            # was found. Measured before fixing: a doc-only list carrying this
+            # category routed `cheap` with `dimensions=scope-drift`.
             file-length | ai-file-bloat | doc-file-bloat | decomposition-seam | \
                 okf-missing-type | okf-unparseable-frontmatter | \
-                okf-reserved-file-structure | okf-version-drift)
+                okf-reserved-file-structure | okf-version-drift | \
+                security-scan-unavailable)
                 # Restore globbing on BOTH exits, not just the fall-through one:
                 # leaving `set -f` armed would silently disable pathname
                 # expansion for the rest of the script.
