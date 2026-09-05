@@ -24,13 +24,20 @@ const narrowingActive = (cycle, deltaDiff, deltaFiles) =>
 // set — used on a narrowed cycle to decide whether a dimension that did NOT block
 // last cycle still needs to re-run because the fix touched files it cares about
 // (AC#3: a fix that introduces a fresh security/test/etc. issue is still caught).
-// Keys are dimension NAMES (security, correctness, tests, conventions). The
+// Keys are dimension NAMES (security, correctness, tests). The
 // conditional specialists (database, devops) are gated by manifest.needs (whether
 // the delta still classifies a file of their type) rather than by this type table,
 // but they ALSO honor the prior-blocking carry-over via `includeSpecialist` below
 // — a specialist that blocked last cycle re-runs even when the fix touched no file
-// of its type (AC#3). `conventions` reviews project conventions that can be
-// violated by ANY changed file, so it matches every type via the '*' wildcard.
+// of its type (AC#3).
+// NO ENTRY CURRENTLY USES THE '*' WILDCARD. `conventions` was its only user and
+// was demoted from the fan-out (#551, see 30-dimensions.js). The wildcard branch
+// in `dimensionTouchesDelta` is deliberately KEPT rather than deleted with it: it
+// is a general mechanism of the table, not a fact about that one dimension, and a
+// future all-types dimension should not have to re-derive it. It is currently
+// unreachable from this table — a test can only reach it through a synthetic
+// entry, which is what tests/workflow-helpers/ship-issue/03-narrowing-selector.mjs
+// does.
 // `config` is in security/correctness because a fix delta that touches only a
 // config file (`.json`/`.yaml`/`.env*`) can still introduce a hardcoded secret or
 // a config-driven logic bug — so those dimensions must re-run on a config-only
@@ -60,7 +67,6 @@ const DIMENSION_RELEVANT_TYPES = {
   security: ['source', 'database', 'config', 'ci', 'docker'],
   correctness: ['source', 'database', 'config', 'ci', 'docker'],
   tests: ['source', 'test'],
-  conventions: ['*'],
   decomposition: ['source', 'test', 'docs'],
 }
 
@@ -166,7 +172,7 @@ const selectReviewDimensions = ({
     })
   }
 
-  // NEW dimensions (tests, conventions, decomposition, scope-drift). scope-drift is a
+  // NEW dimensions (tests, decomposition, scope-drift). scope-drift is a
   // whole-change lens: always included, always reading the FULL diff, never
   // narrowing-skipped. The others are delta-local (include test + per-inclusion
   // diff). Budget-floor gating is preserved for every new dimension that WOULD run.

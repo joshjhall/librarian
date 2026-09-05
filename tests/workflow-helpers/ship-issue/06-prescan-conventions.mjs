@@ -291,6 +291,48 @@ export async function run() {
     ok(sd.includes(tool), `SCOPE_DISCIPLINE: names ${tool} as an enforcing gate`);
   }
 
+  // #551 — the ANTI-HUNTING clause, and the one assertion here that guards a
+  // COST property rather than a correctness one.
+  //
+  // Demoting the `conventions` dimension only saves anything if the surviving
+  // five stop hunting for convention violations. Before #551 this same clause
+  // ended "...and violations of documented project conventions" — a sentence
+  // every reviewer reads, which after the demotion would have REDISTRIBUTED that
+  // sweep across all five instead of removing it, paying the measured cost five
+  // times rather than once. So the removal of the dimension and this sentence are
+  // one change; reverting the sentence alone silently undoes the saving while
+  // every dimension-count test above stays green.
+  //
+  // Pinned in BOTH directions, because each fails differently:
+  //   - the instruction to stop hunting is PRESENT (a dropped sentence), and
+  //   - the old "spend your budget on ... conventions" phrasing is ABSENT (a
+  //     revert that re-adds it alongside the new text, leaving both).
+  // A presence-only check passes on that second shape, which is exactly how a
+  // half-reverted prompt would read.
+  // Join the source's string-concatenation boundaries before matching. The
+  // clause is authored as `'…no ' + 'dimension owns…'`, so a phrase that
+  // straddles a `' + '` seam does NOT appear literally in the source text — a
+  // matcher run on the raw slice silently fails on wording that IS present, and
+  // (worse) would pass again the moment someone reflows the literal. Collapsing
+  // the seams matches the rendered prompt, which is the thing being asserted.
+  const sdFlat = sd.replace(/'\s*\+\s*'/g, "").replace(/\s+/g, " ");
+  ok(
+    /do not go hunting for convention violations/i.test(sdFlat),
+    "SCOPE_DISCIPLINE: reviewers are told NOT to hunt convention violations as a category (#551 — the cost fix)",
+  );
+  ok(
+    /no dimension owns that sweep/i.test(sdFlat),
+    "SCOPE_DISCIPLINE: the anti-hunting clause says WHY (no dimension owns it), not just what",
+  );
+  ok(
+    /already flagging/i.test(sdFlat),
+    "SCOPE_DISCIPLINE: citing a convention on an ALREADY-flagged change stays allowed (the clause narrows the sweep, not the citation)",
+  );
+  ok(
+    !/budget on what a linter CANNOT decide:[^.]*conventions/i.test(sdFlat),
+    "SCOPE_DISCIPLINE: the pre-#551 'spend your budget on ... project conventions' directive is GONE, not merely supplemented",
+  );
+
   // Both blocks must live in the SHARED reviewerData so every dimension sees
   // them and the fan-out prefix stays byte-identical across siblings (#256).
   const rd = src.slice(src.indexOf("const reviewerData ="), src.indexOf("\nconst ", src.indexOf("const reviewerData =") + 1));

@@ -8,7 +8,9 @@ description: Periodic codebase sweep that identifies tech debt, security issues,
 domain-knowledge reference (file routing, prescan, scan/verify, aggregate,
 file). See `finding-schema.md` for the JSON contract all scanners follow. See
 `issue-templates.md` for issue grouping rules and platform commands. Load them
-when running an audit.
+when running an audit. See `convention-cadence.md` for the biweekly convention
+sweep this skill inherited from `ship-issue`'s demoted review dimension (#551) —
+and for why that cadence is documented but unenforced.
 
 ## Parameters
 

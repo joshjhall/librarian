@@ -21,19 +21,23 @@ const NEW_DIMENSIONS = [
       'edge cases; assertions that do not actually assert behavior (tautological ' +
       'or snapshot-only). Do not flag pure config/doc/template changes.',
   },
-  {
-    name: 'conventions',
-    category: 'conventions',
-    instructions:
-      'You are a project-conventions reviewer. Read the repo-root CLAUDE.md and ' +
-      'AGENTS.md, any directory-level CLAUDE.md covering the changed paths, and ' +
-      '.claude/memory/*.md. Flag changes that violate documented project ' +
-      'conventions: naming, file/module structure, banned patterns, required ' +
-      'patterns (e.g. full command paths in scripts, --locked pinned versions, ' +
-      'just-recipe usage, conventional-commit scopes). Cite the convention you ' +
-      'are applying in the description. Skip generic style preferences not ' +
-      'backed by a documented convention.',
-  },
+  // NOTE — there is deliberately no `conventions` entry here (#551). It was
+  // demoted from the inline fan-out because the repo already gates most of what
+  // its instructions asked for, deterministically and for free, on every PR:
+  // lint-shellcheck.sh, lint-shell-portability.sh, lint-action-pins.sh,
+  // lint-skills-agents.sh, lint-command-refs.sh and conform (.conform.yaml).
+  // Measured cost on the #471/#472 run: 84 turns (cycle 1) and 139 turns /
+  // 63 Bash calls (cycle 2), ~4.6M and ~7.8M cache_read — paid every cycle of
+  // every PR, largely re-deriving what those gates compute.
+  //
+  // The `conventionsDigest` arg is NOT part of that demotion and stays: it
+  // renders into `reviewerData()`, the prefix EVERY surviving dimension reads,
+  // so dropping it would degrade the other five and re-open #557. Demoting the
+  // dimension and deleting the digest are separate changes; only the first
+  // happened.
+  //
+  // Where the demoted coverage went, and what nothing covers now:
+  // ship-issue/conventions-coverage.md.
   {
     name: 'decomposition',
     category: 'decomposition',

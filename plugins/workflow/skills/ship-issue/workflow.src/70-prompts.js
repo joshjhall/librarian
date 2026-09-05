@@ -12,7 +12,8 @@ const READONLY =
 // Exploration bounds (#553). The diff and its classifications are supplied
 // below — reviewers do NOT need to rediscover them. Measured on the #471/#472
 // run, reviewers nonetheless ranged over the whole repo: `security` spent 128
-// turns / 115 Bash calls on a 2-file diff, `conventions` 63 turns / 63. Each
+// turns / 115 Bash calls on a 2-file diff. (`conventions`, the other measured
+// offender at 63 turns / 63 Bash calls, was since demoted entirely — #551.) Each
 // tool call re-sends the accumulated context, so an unbounded search multiplies
 // cost superlinearly in turns while adding little the diff does not already
 // show. This is guidance, not enforcement — `agent()` exposes no turn cap — so
@@ -43,7 +44,18 @@ const SCOPE_DISCIPLINE =
   'quoting, spelling, import order, formatting) — a merged PR has already ' +
   'passed them. Any such results supplied below are authoritative; treat them ' +
   'as settled and spend your budget on what a linter CANNOT decide: logic, ' +
-  'security, missing tests, and violations of documented project conventions.'
+  'security, and missing tests. ' +
+  // #551: this clause used to end "...and violations of documented project
+  // conventions", which was correct while a `conventions` DIMENSION owned that
+  // hunt. With it demoted, the same sentence read by all five survivors would
+  // redistribute convention-hunting across the fan-out instead of removing it —
+  // spending the cost five times rather than once. The digest below still lets a
+  // reviewer NAME a convention a finding already implicates; what is withdrawn is
+  // the instruction to go looking. See ship-issue/conventions-coverage.md.
+  'Do not go hunting for convention violations as a category of their own: no ' +
+  'dimension owns that sweep any more, and the deterministic gates above plus a ' +
+  'scheduled audit cover it. If a change you are ALREADY flagging also breaks a ' +
+  'documented convention, cite it; do not search for more.'
 
 // END SCOPE_DISCIPLINE — do not move this marker; tests/workflow-helpers/
 // ship-issue/06-prescan-conventions.mjs slices the clause above by anchoring on
@@ -197,7 +209,7 @@ const reusedReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   `your instructions. Set category=${dim.category} on every finding and return ` +
   `the typed findings array (empty if none).`
 
-// New dimensions (tests, conventions, decomposition, scope-drift): instructions supplied inline.
+// New dimensions (tests, decomposition, scope-drift): instructions supplied inline.
 const newReviewerPrompt = (dim, manifest, diff = scopeDiff) =>
   READONLY +
   '\n' +

@@ -16,7 +16,7 @@ import { extractHelpers, repoRoot, SHIP } from "../../lib/extract-helpers.mjs";
 export async function run() {
 // #492: re-review narrowing. The selector decides which dimensions run on a
 // re-review cycle and the diff each one reads — the delta-local dimensions
-// (security/correctness/tests/conventions) narrow to the fix-commit delta, while
+// (security/correctness/tests) narrow to the fix-commit delta, while
 // scope-drift always reads the full diff (its AC-completeness check is a
 // whole-change lens). Extracted (like computeClean/applyJudgeVerdicts) so the
 // narrowing decision is testable without executing the harness. The budget stub
@@ -56,11 +56,41 @@ export async function run() {
   eq(narrowingActive(2, "d", []), false, "narrowingActive: empty deltaFiles does not narrow");
   eq(narrowingActive(2, "d", ["a.js"]), true, "narrowingActive: cycle>1 with a real delta narrows");
 
-  // dimensionTouchesDelta: the delta-relevance table. conventions matches any type
-  // (wildcard); security/correctness key off source|database|config (config carries
-  // secrets + config-driven logic bugs); tests off source|test; an unknown dimension
-  // is never relevant.
-  eq(dimensionTouchesDelta("conventions", new Set(["config"])), true, "dimensionTouchesDelta: conventions is '*' (any type)");
+  // dimensionTouchesDelta: the delta-relevance table. security/correctness key off
+  // source|database|config (config carries secrets + config-driven logic bugs);
+  // tests off source|test; an unknown dimension is never relevant.
+  //
+  // #551 — the '*' WILDCARD BRANCH. `conventions` was the table's only wildcard
+  // entry and was demoted out of the fan-out, so no production entry reaches
+  // `relevant.includes('*')` today. The branch is deliberately KEPT (it is a
+  // general mechanism of the table, not a fact about that one dimension), which
+  // means it can only be exercised through a synthetic entry — done here rather
+  // than left untested, since an unreachable-from-production branch with no test
+  // at all is how a future all-types dimension inherits a silently broken one.
+  // Asserted against BOTH a type in the table and one absent from it, so a
+  // regression to `relevant.includes(type)` fails rather than coincidentally
+  // passing.
+  eq(
+    Object.values(DIMENSION_RELEVANT_TYPES).filter((v) => v.includes("*")).length,
+    0,
+    "DIMENSION_RELEVANT_TYPES: no production dimension uses the '*' wildcard after the #551 demotion",
+  );
+  {
+    const saved = DIMENSION_RELEVANT_TYPES["__synthetic_wildcard__"];
+    DIMENSION_RELEVANT_TYPES["__synthetic_wildcard__"] = ["*"];
+    eq(
+      dimensionTouchesDelta("__synthetic_wildcard__", new Set(["config"])),
+      true,
+      "dimensionTouchesDelta: a '*' entry matches a type the table knows",
+    );
+    eq(
+      dimensionTouchesDelta("__synthetic_wildcard__", new Set(["not-a-real-type"])),
+      true,
+      "dimensionTouchesDelta: a '*' entry matches a type the table has never heard of (true wildcard, not a lookup)",
+    );
+    if (saved === undefined) delete DIMENSION_RELEVANT_TYPES["__synthetic_wildcard__"];
+    else DIMENSION_RELEVANT_TYPES["__synthetic_wildcard__"] = saved;
+  }
   eq(dimensionTouchesDelta("security", new Set(["source"])), true, "dimensionTouchesDelta: security touches source");
   eq(dimensionTouchesDelta("security", new Set(["config"])), true, "dimensionTouchesDelta: security touches config (secrets / insecure settings)");
   eq(dimensionTouchesDelta("correctness", new Set(["config"])), true, "dimensionTouchesDelta: correctness touches config (config-driven logic bugs)");
@@ -110,7 +140,7 @@ export async function run() {
   const fullNames = full.entries.map((e) => e.dim.name).sort();
   eq(
     JSON.stringify(fullNames),
-    JSON.stringify(["conventions", "correctness", "decomposition", "scope-drift", "security", "tests"]),
+    JSON.stringify(["correctness", "decomposition", "scope-drift", "security", "tests"]),
     "selectReviewDimensions: full cycle runs every dimension",
   );
   ok(full.entries.every((e) => e.diff === fullDiff), "selectReviewDimensions: full cycle every entry reads the full diff");
@@ -119,7 +149,7 @@ export async function run() {
   eq(full.dimensionsSkipped.length, 0, "selectReviewDimensions: full cycle skips nothing");
 
   // Budget-floor branch: when the shared budget is below the floor, every NEW
-  // dimension (tests/conventions/decomposition/scope-drift) is skipped into dimensionsSkipped and
+  // dimension (tests/decomposition/scope-drift) is skipped into dimensionsSkipped and
   // budgetExhausted flips true — the genuine partial-cycle signal (distinct from a
   // narrowing drop). Reused dimensions (security/correctness) have no budget gate.
   const lowBudget = { total: 100000, remaining: () => 1000, spent: () => 99000 };
@@ -127,7 +157,7 @@ export async function run() {
   eq(starved.budgetExhausted, true, "selectReviewDimensions: sub-floor budget flips budgetExhausted true");
   eq(
     JSON.stringify(starved.dimensionsSkipped.sort()),
-    JSON.stringify(["conventions", "decomposition", "scope-drift", "tests"]),
+    JSON.stringify(["decomposition", "scope-drift", "tests"]),
     "selectReviewDimensions: sub-floor budget skips every NEW dimension into dimensionsSkipped",
   );
   eq(
@@ -139,25 +169,28 @@ export async function run() {
   // Missing delta on cycle > 1 ⇒ non-narrowed fallback (same as cycle 1).
   const noDelta = call({ deltaDiff: "" });
   eq(noDelta.narrowed, false, "selectReviewDimensions: cycle>1 without a delta falls back to full");
-  eq(noDelta.entries.length, 6, "selectReviewDimensions: fallback runs all six dimensions");
+  eq(noDelta.entries.length, 5, "selectReviewDimensions: fallback runs all five dimensions");
   ok(noDelta.entries.every((e) => e.diff === fullDiff), "selectReviewDimensions: fallback reads the full diff");
 
-  // Narrowed, source-only delta: security/correctness/tests/conventions/decomposition
+  // Narrowed, source-only delta: security/correctness/tests/decomposition
   // all touch source and run against the DELTA diff; scope-drift always runs against
-  // the FULL diff. (Here every delta-local dim happens to be relevant, so all six
+  // the FULL diff. (Here every delta-local dim happens to be relevant, so all five
   // appear — the drop case is asserted next.)
   const src = call({});
   eq(src.narrowed, true, "selectReviewDimensions: source-delta cycle is narrowed");
   const byName = Object.fromEntries(src.entries.map((e) => [e.dim.name, e]));
   eq(byName["scope-drift"].diff, fullDiff, "selectReviewDimensions: scope-drift ALWAYS reads the full diff (Fork A)");
   eq(byName["security"].diff, deltaDiff, "selectReviewDimensions: delta-local security reads the delta diff");
-  eq(byName["conventions"].diff, deltaDiff, "selectReviewDimensions: delta-local conventions reads the delta diff");
+  eq(byName["tests"]?.diff, deltaDiff, "selectReviewDimensions: delta-local tests reads the delta diff");
   eq(src.budgetExhausted, false, "selectReviewDimensions: narrowing does not force budget_exhausted");
   eq(src.dimensionsSkipped.length, 0, "selectReviewDimensions: narrowing does not populate dimensions_skipped");
 
   // Narrowed, config-only delta: security + correctness NOW touch config (secrets /
   // config-driven bugs), so they run against the delta; tests does NOT touch config
-  // and did not block ⇒ DROPPED. conventions (wildcard) + scope-drift always run.
+  // and did not block ⇒ DROPPED; decomposition drops too (config is not a
+  // decomposition candidate). scope-drift always runs. Since the #551 demotion of
+  // `conventions` there is no wildcard dimension propping this list up: every name
+  // below is here because its OWN type row matched, which is what the case tests.
   const cfg = call({
     deltaFiles: ["config.yaml"],
     manifest: { classifications: [{ file: "config.yaml", types: ["config"] }] },
@@ -165,8 +198,8 @@ export async function run() {
   const cfgNames = cfg.entries.map((e) => e.dim.name).sort();
   eq(
     JSON.stringify(cfgNames),
-    JSON.stringify(["conventions", "correctness", "scope-drift", "security"]),
-    "selectReviewDimensions: config-only delta keeps security/correctness (config is relevant), drops tests",
+    JSON.stringify(["correctness", "scope-drift", "security"]),
+    "selectReviewDimensions: config-only delta keeps security/correctness (config is relevant), drops tests + decomposition",
   );
   eq(cfg.dimensionsSkipped.length, 0, "selectReviewDimensions: a narrowing DROP is not a partial-cycle signal");
   eq(cfg.budgetExhausted, false, "selectReviewDimensions: a narrowing DROP does not force budget_exhausted");
@@ -249,15 +282,16 @@ export async function run() {
   // specialist, whose checklist carries no OWASP and no correctness lens. Now both
   // run — and CRUCIALLY against the DELTA diff, i.e. via the `touched` path, not the
   // full-diff prior-blocking carry-over (priorBlocking is empty here), so the #492
-  // saving keeps its shape. `tests` still drops (docker is not in its row).
+  // saving keeps its shape. `tests` and `decomposition` still drop (docker is in
+  // neither row).
   const dockerOnly = call({
     deltaFiles: ["Dockerfile"],
     manifest: { classifications: [{ file: "Dockerfile", types: ["docker"] }] },
   });
   eq(
     JSON.stringify(dockerOnly.entries.map((e) => e.dim.name).sort()),
-    JSON.stringify(["conventions", "correctness", "scope-drift", "security"]),
-    "selectReviewDimensions: docker-only delta keeps generic security/correctness (#529), drops tests",
+    JSON.stringify(["correctness", "scope-drift", "security"]),
+    "selectReviewDimensions: docker-only delta keeps generic security/correctness (#529), drops tests + decomposition",
   );
   // `?.diff` (not a bare `.diff`): if the entry is missing — exactly the #529
   // regression — the lookup must RECORD a failure, not throw a TypeError that
@@ -274,8 +308,8 @@ export async function run() {
   });
   eq(
     JSON.stringify(ciOnly.entries.map((e) => e.dim.name).sort()),
-    JSON.stringify(["conventions", "correctness", "scope-drift", "security"]),
-    "selectReviewDimensions: ci-only delta keeps generic security/correctness (#529), drops tests",
+    JSON.stringify(["correctness", "scope-drift", "security"]),
+    "selectReviewDimensions: ci-only delta keeps generic security/correctness (#529), drops tests + decomposition",
   );
   eq(
     ciOnly.entries.find((e) => e.dim.name === "security")?.diff,
@@ -284,7 +318,7 @@ export async function run() {
   );
 
   // A genuinely irrelevant delta (test-only) drops security + correctness (neither
-  // touches `test`) — the actual saving — while tests + conventions + scope-drift run.
+  // touches `test`) — the actual saving — while tests + decomposition + scope-drift run.
   const testOnly = call({
     deltaFiles: ["x_test.py"],
     manifest: { classifications: [{ file: "x_test.py", types: ["test"] }] },
@@ -292,7 +326,7 @@ export async function run() {
   const testOnlyNames = testOnly.entries.map((e) => e.dim.name).sort();
   eq(
     JSON.stringify(testOnlyNames),
-    JSON.stringify(["conventions", "decomposition", "scope-drift", "tests"]),
+    JSON.stringify(["decomposition", "scope-drift", "tests"]),
     "selectReviewDimensions: test-only delta drops security/correctness (the saving)",
   );
 
