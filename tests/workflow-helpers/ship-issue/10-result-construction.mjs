@@ -338,7 +338,7 @@ export function run() {
   // load-bearing on the manifest-failure path, so it is asserted directly rather
   // than assumed to follow from buildResult being correct.
   {
-    const e = emptyResult(false, "", [], 0, false);
+    const e = emptyResult({ budgetExhausted: false, dimensionsSkipped: [], dimensionsRun: 0, noReviewSignal: false });
     for (const k of TOP_LEVEL_KEYS) {
       ok(
         Object.prototype.hasOwnProperty.call(e, k),
@@ -358,26 +358,26 @@ export function run() {
     }
 
     eq(
-      emptyResult(true, "", ["security"], 2, false).clean,
+      emptyResult({ budgetExhausted: true, dimensionsSkipped: ["security"], dimensionsRun: 2, noReviewSignal: false }).clean,
       false,
       "emptyResult: a budget-truncated empty cycle is not clean (#270/#636)",
     );
     eq(
-      emptyResult(false, "", [], 0, true).no_review_signal,
+      emptyResult({ budgetExhausted: false, dimensionsSkipped: [], dimensionsRun: 0, noReviewSignal: true }).no_review_signal,
       true,
       "emptyResult: noReviewSignal reaches the result (#616/#636)",
     );
 
     // The two trailing params #636 added, which let the zero-findings call site
     // stop splicing fields onto the returned object past ORCH_BOUNDARY.
-    const withComments = emptyResult(false, "", [], 1, false, [{ id: "c1" }], 0);
+    const withComments = emptyResult({ budgetExhausted: false, dimensionsSkipped: [], dimensionsRun: 1, noReviewSignal: false, commentsAddressed: [{ id: "c1" }], unresolvedLen: 0 });
     eq(
       withComments.comments_addressed.length,
       1,
       "emptyResult: commentsAddressed is a parameter, not a post-hoc splice (#636)",
     );
     eq(
-      emptyResult(false, "", [], 1, false, [], 2).clean,
+      emptyResult({ budgetExhausted: false, dimensionsSkipped: [], dimensionsRun: 1, noReviewSignal: false, commentsAddressed: [], unresolvedLen: 2 }).clean,
       false,
       "emptyResult: an unresolved comment count forces clean false through the same predicate (#636)",
     );
@@ -400,6 +400,47 @@ export function run() {
       "ship-issue: the terminal return is a column-0 `return buildResult({` — the ORCH_BOUNDARY residue is one call (#636)",
     );
 
+    // Slice out JUST the terminal call's argument object before checking which
+    // keys it passes. A whole-file `includes("  <key>,")` cannot do this job:
+    // `emptyResult` delegates with the SAME keys at the SAME indentation, so the
+    // file contains three `commentsAddressed,` lines and a check over `orch`
+    // matches the wrapper's copy even when the terminal call has dropped its
+    // own. Measured, not reasoned: with a whole-file check in place, deleting
+    // `commentsAddressed,` from the terminal call left the suite green (review
+    // cycle 1 found the missing key; the mutation then showed the obvious fix
+    // did not bite either). The copy under test has to be the one addressed.
+    const termStart = orch.search(/^return buildResult\(\{/m);
+    const termEnd = orch.indexOf("})", termStart);
+    ok(
+      termStart >= 0 && termEnd > termStart,
+      "ship-issue: the terminal buildResult call's argument object is delimited (#636)",
+    );
+    const termCall = orch.slice(termStart, termEnd);
+    // NON-VACUITY, in the direction that can actually fail. The terminal call is
+    // the LAST statement in the harness, so `emptyResult`'s delegation sits
+    // ABOVE it: a slice that ran to end-of-file would still exclude the
+    // wrapper, and a guard phrased as "the slice must not contain
+    // emptyResult" is therefore vacuous — verified by mutating `termEnd` to
+    // `orch.length`, which such a guard did not catch. What must be pinned is
+    // that the slice STARTS at the terminal call (so it cannot drift upward to
+    // cover the wrapper) and stays SMALL (so it cannot swallow the file).
+    ok(
+      termCall.startsWith("return buildResult({"),
+      "ship-issue: the key-check slice starts AT the terminal call, so it cannot cover emptyResult's copy (#636)",
+    );
+    ok(
+      termCall.length < 600 && !termCall.includes("function "),
+      "ship-issue: the key-check slice is one call, not a widened window over the file (#636)",
+    );
+    // On `termEnd` specifically: mutating it to `orch.length` is a genuine
+    // NO-OP here, not an untested path — the terminal call is the last
+    // statement in the harness, so the widened slice gains exactly "})\n" (242
+    // chars vs 245) and every key check above reads identical text. Measured
+    // rather than assumed, and recorded so the next person to notice the
+    // surviving mutation does not add an assertion that cannot fail. If a
+    // future fragment is ever appended below 80-orchestration.js, this stops
+    // being a no-op and the `length < 600` bound above is what catches it.
+
     // The fields the merge invariant reads are PASSED, not recomputed or
     // hardcoded at the call site. Named individually because a single
     // catch-all regex would pass while any one of them silently became a
@@ -408,6 +449,14 @@ export function run() {
       "rawFindings",
       "blocking",
       "deferrable",
+      // `commentsAddressed` belongs here for the same reason as the rest, and
+      // was missed in the first draft (review cycle 1). buildResult defaults it
+      // to `[]`, so dropping this line from the terminal call does not throw —
+      // every findings-present cycle would simply report `comments_addressed:
+      // []` no matter what triage resolved. The sibling check in
+      // 02-judge-disposition.mjs covers only the ZERO-findings emptyResult call,
+      // so it could not see this one.
+      "commentsAddressed",
       "budgetExhausted",
       "dimensionsSkipped",
       "noReviewSignal: allDimensionsFailed",
@@ -415,7 +464,7 @@ export function run() {
       "dimensionsRun: dimensions.length",
     ]) {
       ok(
-        orch.includes(`  ${key},`),
+        termCall.includes(`  ${key},`),
         `ship-issue: the terminal buildResult call passes \`${key}\` (#636)`,
       );
     }

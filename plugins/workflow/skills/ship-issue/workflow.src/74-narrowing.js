@@ -358,28 +358,29 @@ function buildResult(parts) {
 // A THIN WRAPPER over buildResult since #636: the zero-findings shape is the
 // general shape with an empty finding set, so deriving it rather than writing a
 // second literal is what stops the two returns drifting (they previously agreed
-// only by inspection). `commentsAddressed`/`unresolvedLen` are trailing optional
-// params so the findings-present-comments case can be expressed in the call
-// itself instead of by mutating the returned object past ORCH_BOUNDARY.
-function emptyResult(
-  budgetExhausted,
-  note,
-  dimensionsSkipped,
-  dimensionsRun,
-  noReviewSignal,
-  commentsAddressed,
-  unresolvedLen
-) {
-  if (note) log(note)
+// only by inspection).
+//
+// KEYED OBJECT, not positional args (review cycle 1). The first draft extended
+// the positional list to seven, which put two same-typed pairs next to each
+// other — `budgetExhausted`/`noReviewSignal` are both booleans, and
+// `dimensionsSkipped` (dimension-name strings) / `commentsAddressed`
+// ({id,disposition,note} objects) are both arrays. A call site that transposed
+// either pair would type-check silently and surface only as wrong report data:
+// swapped partial-cycle flags, or `dimensions_skipped` full of comment objects.
+// `buildResult` right above takes a keyed `parts` for exactly this reason, and
+// its wrapper should not be the one place that reintroduces the hazard. Two
+// call sites made this cheap to do now rather than after a third arrives.
+function emptyResult(parts) {
+  if (parts.note) log(parts.note)
   return buildResult({
     rawFindings: [],
     blocking: [],
     deferrable: [],
-    commentsAddressed: commentsAddressed || [],
-    unresolvedLen: unresolvedLen || 0,
-    budgetExhausted: !!budgetExhausted,
-    dimensionsSkipped: dimensionsSkipped || [],
-    dimensionsRun: dimensionsRun || 0,
-    noReviewSignal: !!noReviewSignal,
+    commentsAddressed: parts.commentsAddressed || [],
+    unresolvedLen: parts.unresolvedLen || 0,
+    budgetExhausted: !!parts.budgetExhausted,
+    dimensionsSkipped: parts.dimensionsSkipped || [],
+    dimensionsRun: parts.dimensionsRun || 0,
+    noReviewSignal: !!parts.noReviewSignal,
   })
 }

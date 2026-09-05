@@ -346,7 +346,7 @@ export async function run() {
   // is a real row in the tally, and omitting the keys would make it read as
   // "not measured" (the same reasoning that puts token_report on this path).
   {
-    const r = emptyResult(false, undefined, []);
+    const r = emptyResult({ budgetExhausted: false, dimensionsSkipped: [] });
     eq(r.summary?.by_nature?.["defect-in-new-code"], 0, "emptyResult: by_nature present and zeroed (#613)");
     eq(r.summary?.by_rule?.["R8-defect-in-new-code"], 0, "emptyResult: by_rule present and zeroed (#613)");
     eq(
@@ -554,7 +554,7 @@ export async function run() {
     ok(gridDeferrable > 0, "dispositionOf: the grid still produces deferrable findings — not block-everything");
   }
 
-  const r = emptyResult(false);
+  const r = emptyResult({ budgetExhausted: false });
   eq(r.cycle, 2, "emptyResult: cycle reflects args");
   eq(r.phase, "pr-cycle", "emptyResult: phase reflects args");
   eq(r.clean, true, "emptyResult: clean defaults true for the complete empty case");
@@ -567,7 +567,7 @@ export async function run() {
   // #270: a budget-truncated cycle is PARTIAL — never clean, even with no
   // findings — and it names the dimensions that never ran. This is the
   // merge-invariant guard: `clean` must be unforgeable by truncation.
-  const truncated = emptyResult(true, undefined, ["tests", "conventions"]);
+  const truncated = emptyResult({ budgetExhausted: true, dimensionsSkipped: ["tests", "conventions"] });
   eq(truncated.clean, false, "emptyResult: budget-truncated empty cycle is NOT clean");
   eq(truncated.budget_exhausted, true, "emptyResult: budget_exhausted reflects the arg");
   eq(
@@ -585,12 +585,12 @@ export async function run() {
     false,
     "emptyResult: a budget-truncated cycle DID review — partial, not no-signal (#616)",
   );
-  const crashed = emptyResult(false, undefined, [], 0, true);
+  const crashed = emptyResult({ budgetExhausted: false, dimensionsSkipped: [], dimensionsRun: 0, noReviewSignal: true });
   eq(crashed.no_review_signal, true, "emptyResult: no_review_signal set on the crash path (#616)");
   // A fan-out-wide wipeout is as void of review signal as a dead manifest, and
   // must be flagged the same way — otherwise #616 is only half fixed: the
   // crash point moves one phase later and the cycle charges the cap again.
-  const wipeout = emptyResult(true, undefined, ["security", "correctness"], 2, true);
+  const wipeout = emptyResult({ budgetExhausted: true, dimensionsSkipped: ["security", "correctness"], dimensionsRun: 2, noReviewSignal: true });
   eq(wipeout.no_review_signal, true, "emptyResult: an all-dimensions-failed cycle is no-signal (#616)");
   eq(wipeout.clean, false, "emptyResult: a wipeout is still not clean (it is also partial)");
   // The field is always present, never conditionally omitted: the helper's
@@ -603,7 +603,7 @@ export async function run() {
   // The wipeout detection itself lives in the ORCHESTRATION body (past
   // ORCH_BOUNDARY), so no extracted helper can reach it — assert structurally
   // that the flag is both computed and threaded, like the sibling checks below.
-  // Without this, `emptyResult` could accept the 5th arg correctly while the
+  // Without this, `emptyResult` could accept `noReviewSignal` correctly while the
   // zero-findings call site never passes it, and the behavioral test above
   // would still pass.
   {

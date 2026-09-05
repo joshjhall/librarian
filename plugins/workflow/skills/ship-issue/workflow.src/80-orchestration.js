@@ -87,19 +87,19 @@ const manifestAttempt = await attempt(
 if (!manifestAttempt.ok) {
   // The manifest is a single point of failure ahead of the whole fan-out, so its
   // death means NO dimension ever ran — the cycle produced zero review signal.
-  // Flag it as such (5th arg) so the convergence helper does not charge it to
+  // Flag it as such (`noReviewSignal`) so the convergence helper does not charge it to
   // REVIEW_MAX_CYCLES: this is the exact failure observed on PR #615, where a
   // schema-validation failure repeated identically across all five retries and
   // burned a cycle slot having reviewed nothing (#616).
-  const r = emptyResult(
-    false,
+  const r = emptyResult({
+    budgetExhausted: false,
     // Names which failure fired, so the next person debugging this does not have
     // to read a transcript to tell a null return from a caught throw (#646 AC3).
-    manifestFailureNote(manifestAttempt.threw, manifestAttempt.error),
-    [],
-    0,
-    true
-  )
+    note: manifestFailureNote(manifestAttempt.threw, manifestAttempt.error),
+    dimensionsSkipped: [],
+    dimensionsRun: 0,
+    noReviewSignal: true,
+  })
   // A failed manifest is not a clean pass: do not let the skill stop the loop
   // on a degenerate cycle.
   r.clean = false
@@ -300,15 +300,15 @@ if (rawFindings.length === 0) {
   // path as on the findings-present one — a budget-truncated cycle (some
   // dimension never ran) is partial and must not read as clean, even when the
   // dimensions that DID run found nothing.
-  return emptyResult(
+  return emptyResult({
     budgetExhausted,
-    'no findings this cycle',
+    note: 'no findings this cycle',
     dimensionsSkipped,
-    dimensions.length,
-    allDimensionsFailed,
+    dimensionsRun: dimensions.length,
+    noReviewSignal: allDimensionsFailed,
     commentsAddressed,
-    unresolvedComments.length
-  )
+    unresolvedLen: unresolvedComments.length,
+  })
 }
 
 // Stamp a UNIQUE, stable ref onto every finding now that the full set is

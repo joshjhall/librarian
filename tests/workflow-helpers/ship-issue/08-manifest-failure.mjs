@@ -109,7 +109,7 @@ export async function run() {
   // it is NOT a result field. Pin that the contract was not silently widened:
   // a caller reading `.note` would get undefined regardless of which failure
   // fired, so adding it here would be a real (and silent) API change.
-  const failed = emptyResult(false, noteThrew, [], 0, true);
+  const failed = emptyResult({ budgetExhausted: false, note: noteThrew, dimensionsSkipped: [], dimensionsRun: 0, noReviewSignal: true });
   eq(failed?.no_review_signal, true, "emptyResult: the manifest-throw path is flagged no-signal (#646)");
   ok(
     !Object.prototype.hasOwnProperty.call(failed, "note"),
@@ -146,9 +146,15 @@ export async function run() {
     failBlock.includes("manifestFailureNote(manifestAttempt.threw, manifestAttempt.error)"),
     "ship-issue: the manifest failure reports WHICH failure fired (#646 AC3)",
   );
+  // RE-KEYED (#636 review cycle 1): this used to match a bare positional
+  // `\n  true\n)` — the 5th argument of emptyResult's old positional signature.
+  // emptyResult now takes a keyed object, so the flag is named at the call site
+  // and the anchor must name it too. Matching the NAME rather than a position is
+  // strictly stronger: the old regex would equally have matched a `true` that
+  // had drifted into any other trailing slot.
   ok(
-    /\n\s*true\n\s*\)/.test(failBlock),
-    "ship-issue: the manifest failure still passes noReviewSignal=true to emptyResult (#616)",
+    /noReviewSignal:\s*true/.test(failBlock),
+    "ship-issue: the manifest failure still passes noReviewSignal: true to emptyResult (#616)",
   );
   ok(
     failBlock.includes("r.clean = false"),

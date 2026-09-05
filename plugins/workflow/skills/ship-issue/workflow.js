@@ -1717,29 +1717,30 @@ function buildResult(parts) {
 // A THIN WRAPPER over buildResult since #636: the zero-findings shape is the
 // general shape with an empty finding set, so deriving it rather than writing a
 // second literal is what stops the two returns drifting (they previously agreed
-// only by inspection). `commentsAddressed`/`unresolvedLen` are trailing optional
-// params so the findings-present-comments case can be expressed in the call
-// itself instead of by mutating the returned object past ORCH_BOUNDARY.
-function emptyResult(
-  budgetExhausted,
-  note,
-  dimensionsSkipped,
-  dimensionsRun,
-  noReviewSignal,
-  commentsAddressed,
-  unresolvedLen
-) {
-  if (note) log(note)
+// only by inspection).
+//
+// KEYED OBJECT, not positional args (review cycle 1). The first draft extended
+// the positional list to seven, which put two same-typed pairs next to each
+// other — `budgetExhausted`/`noReviewSignal` are both booleans, and
+// `dimensionsSkipped` (dimension-name strings) / `commentsAddressed`
+// ({id,disposition,note} objects) are both arrays. A call site that transposed
+// either pair would type-check silently and surface only as wrong report data:
+// swapped partial-cycle flags, or `dimensions_skipped` full of comment objects.
+// `buildResult` right above takes a keyed `parts` for exactly this reason, and
+// its wrapper should not be the one place that reintroduces the hazard. Two
+// call sites made this cheap to do now rather than after a third arrives.
+function emptyResult(parts) {
+  if (parts.note) log(parts.note)
   return buildResult({
     rawFindings: [],
     blocking: [],
     deferrable: [],
-    commentsAddressed: commentsAddressed || [],
-    unresolvedLen: unresolvedLen || 0,
-    budgetExhausted: !!budgetExhausted,
-    dimensionsSkipped: dimensionsSkipped || [],
-    dimensionsRun: dimensionsRun || 0,
-    noReviewSignal: !!noReviewSignal,
+    commentsAddressed: parts.commentsAddressed || [],
+    unresolvedLen: parts.unresolvedLen || 0,
+    budgetExhausted: !!parts.budgetExhausted,
+    dimensionsSkipped: parts.dimensionsSkipped || [],
+    dimensionsRun: parts.dimensionsRun || 0,
+    noReviewSignal: !!parts.noReviewSignal,
   })
 }
 
@@ -1831,19 +1832,19 @@ const manifestAttempt = await attempt(
 if (!manifestAttempt.ok) {
   // The manifest is a single point of failure ahead of the whole fan-out, so its
   // death means NO dimension ever ran — the cycle produced zero review signal.
-  // Flag it as such (5th arg) so the convergence helper does not charge it to
+  // Flag it as such (`noReviewSignal`) so the convergence helper does not charge it to
   // REVIEW_MAX_CYCLES: this is the exact failure observed on PR #615, where a
   // schema-validation failure repeated identically across all five retries and
   // burned a cycle slot having reviewed nothing (#616).
-  const r = emptyResult(
-    false,
+  const r = emptyResult({
+    budgetExhausted: false,
     // Names which failure fired, so the next person debugging this does not have
     // to read a transcript to tell a null return from a caught throw (#646 AC3).
-    manifestFailureNote(manifestAttempt.threw, manifestAttempt.error),
-    [],
-    0,
-    true
-  )
+    note: manifestFailureNote(manifestAttempt.threw, manifestAttempt.error),
+    dimensionsSkipped: [],
+    dimensionsRun: 0,
+    noReviewSignal: true,
+  })
   // A failed manifest is not a clean pass: do not let the skill stop the loop
   // on a degenerate cycle.
   r.clean = false
@@ -2044,15 +2045,15 @@ if (rawFindings.length === 0) {
   // path as on the findings-present one — a budget-truncated cycle (some
   // dimension never ran) is partial and must not read as clean, even when the
   // dimensions that DID run found nothing.
-  return emptyResult(
+  return emptyResult({
     budgetExhausted,
-    'no findings this cycle',
+    note: 'no findings this cycle',
     dimensionsSkipped,
-    dimensions.length,
-    allDimensionsFailed,
+    dimensionsRun: dimensions.length,
+    noReviewSignal: allDimensionsFailed,
     commentsAddressed,
-    unresolvedComments.length
-  )
+    unresolvedLen: unresolvedComments.length,
+  })
 }
 
 // Stamp a UNIQUE, stable ref onto every finding now that the full set is
