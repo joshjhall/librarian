@@ -236,13 +236,20 @@ test_database_shaped_paths_force_full() {
 # `decomposition` dimension that would turn such a row into a judged finding —
 # so it would decay to an advisory entry and vanish into `clean: true`.
 #
+# `security-scan-unavailable` (#708) joins them for the same reason and is the
+# sharpest instance: the row does not report a finding, it reports that the
+# security scan DID NOT RUN. Routing that cheap drops `security` and returns
+# `clean: true` on a diff nobody scanned — the #538/#571 inert-gate shape.
+# Measured before the fix: a doc-only list carrying this category routed cheap.
+#
 # Fixtures are doc-ONLY, i.e. inputs that route cheap without the rule. That is
 # the divergent case: delete R4 and each of these flips to cheap.
 test_unsurfaceable_prescan_row_forces_full() {
     local list out cat
     list="$(mklist 'README.md' 'docs/guide.md')"
     for cat in file-length ai-file-bloat doc-file-bloat decomposition-seam \
-        okf-missing-type okf-unparseable-frontmatter okf-reserved-file-structure okf-version-drift; do
+        okf-missing-type okf-unparseable-frontmatter okf-reserved-file-structure okf-version-drift \
+        security-scan-unavailable; do
         out="$(route_of "$list" --prescan-categories "$cat")"
         assert_equals "full" "$(val route "$out")" \
             "a HIGH '$cat' pre-scan row forces full — the cheap path cannot surface it as a judged finding (#695/#699)"
