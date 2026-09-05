@@ -350,11 +350,9 @@ behavior is noted inline per check; environment variables referenced here
    blocks here and in `ci-review-protocol.md`:
 
    <!-- contract: args-keys-accepted-set -->
-
    `phase`, `cycle`, `maxCycles`, `files`, `diff`, `prComments`, `issue`,
    `tokenCeiling`, `preScan`, `conventionsDigest`, `reviewRoute`, `deltaDiff`,
    `deltaFiles`, `priorBlockingDimensions`.
-
    <!-- contract: end-args-keys-accepted-set -->
 
    Every one is read by name with an empty-default fallback, so a mistyped key
