@@ -87,19 +87,19 @@ const manifestAttempt = await attempt(
 if (!manifestAttempt.ok) {
   // The manifest is a single point of failure ahead of the whole fan-out, so its
   // death means NO dimension ever ran — the cycle produced zero review signal.
-  // Flag it as such (5th arg) so the convergence helper does not charge it to
+  // Flag it as such (`noReviewSignal`) so the convergence helper does not charge it to
   // REVIEW_MAX_CYCLES: this is the exact failure observed on PR #615, where a
   // schema-validation failure repeated identically across all five retries and
   // burned a cycle slot having reviewed nothing (#616).
-  const r = emptyResult(
-    false,
+  const r = emptyResult({
+    budgetExhausted: false,
     // Names which failure fired, so the next person debugging this does not have
     // to read a transcript to tell a null return from a caught throw (#646 AC3).
-    manifestFailureNote(manifestAttempt.threw, manifestAttempt.error),
-    [],
-    0,
-    true
-  )
+    note: manifestFailureNote(manifestAttempt.threw, manifestAttempt.error),
+    dimensionsSkipped: [],
+    dimensionsRun: 0,
+    noReviewSignal: true,
+  })
   // A failed manifest is not a clean pass: do not let the skill stop the loop
   // on a degenerate cycle.
   r.clean = false
@@ -293,20 +293,22 @@ if (unresolvedComments.length) {
 const allDimensionsFailed = computeAllDimensionsFailed(reviewResults, dimensionsSkipped)
 
 if (rawFindings.length === 0) {
-  const r = emptyResult(
+  // Comments and the unresolved count are passed IN rather than spliced onto the
+  // returned object afterwards (#636): a post-hoc `r.clean = …` is a derivation
+  // living past ORCH_BOUNDARY, where no unit test can reach it. Handing them to
+  // the constructor means `clean` is computed by the same tested helper on this
+  // path as on the findings-present one — a budget-truncated cycle (some
+  // dimension never ran) is partial and must not read as clean, even when the
+  // dimensions that DID run found nothing.
+  return emptyResult({
     budgetExhausted,
-    'no findings this cycle',
+    note: 'no findings this cycle',
     dimensionsSkipped,
-    dimensions.length,
-    allDimensionsFailed
-  )
-  r.comments_addressed = commentsAddressed
-  // Clean only if every comment is resolved-or-deferred AND the cycle was
-  // complete: a budget-truncated cycle (some dimension never ran) is partial and
-  // must not read as clean, even when the dimensions that DID run found nothing.
-  // (blocking is empty on this path, so pass 0 for its length.)
-  r.clean = computeClean(0, unresolvedComments.length, budgetExhausted)
-  return r
+    dimensionsRun: dimensions.length,
+    noReviewSignal: allDimensionsFailed,
+    commentsAddressed,
+    unresolvedLen: unresolvedComments.length,
+  })
 }
 
 // Stamp a UNIQUE, stable ref onto every finding now that the full set is
@@ -368,74 +370,22 @@ budgetExhausted = applied.budgetExhausted
 // visible when watching a run without parsing the result JSON (#553).
 log(`cycle output: ${reviewBudget.spent()} tokens across ${dimensions.length} dimensions`)
 
-const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 }
-for (const f of rawFindings) {
-  if (bySeverity[f.severity] !== undefined) bySeverity[f.severity] += 1
-}
-
-return {
-  cycle: CYCLE,
-  phase: PHASE,
-  scanner: 'next-issue-review',
+// Assemble the cycle result through the SINGLE constructor shared with the
+// zero-findings path (#636). Everything past ORCH_BOUNDARY is unreachable by
+// tests/lib/extract-helpers.mjs, so every derivation this return used to perform
+// inline — the by_severity tally, the two #613 distributions, `clean` — now
+// happens inside `buildResult`, where it is unit-tested. What is left here is a
+// call whose arguments a reader can eyeball, and which
+// tests/workflow-helpers/ship-issue/10-result-construction.mjs pins literally
+// against the raw source, since this one line is still past the boundary.
+return buildResult({
+  rawFindings,
   blocking,
   deferrable,
-  comments_addressed: commentsAddressed,
-  summary: {
-    // Report the FULL PR scope, consistent with emptyResult's `scopeFiles.length`.
-    // On a narrowed cycle `manifest.files` is only the fix-commit delta, so keying
-    // off it would make files_scanned mean different things on the empty vs
-    // findings-present paths of the same cycle (#492 review finding).
-    files_scanned: scopeFiles.length,
-    total_findings: rawFindings.length,
-    by_disposition: { blocking: blocking.length, deferrable: deferrable.length },
-    by_severity: bySeverity,
-    // The two #613 recall measures, counted per cycle so the operator does not
-    // hand-parse every finding to tally them (see summarizeJudgeObservations).
-    //
-    // A finding the judge omitted (or a null-judge cycle) carries neither field;
-    // those are skipped rather than bucketed, so the counts never invent an
-    // observation the judge did not make. `total_findings` above stays the
-    // denominator — deliberately, so `sum(by_nature) < total_findings` is
-    // readable as "the judge did not characterize every finding", which is
-    // itself a signal worth seeing rather than one to paper over.
-    ...summarizeJudgeObservations(rawFindings),
-  },
-  // What this cycle actually cost, reported ALWAYS — including (especially) on
-  // unbounded runs (#553). Sizing a ceiling from guesswork is how you get a
-  // ceiling below where output really lands, and a too-low ceiling is worse than
-  // none: it truncates every cycle, forces `clean` false, drives cycle++ to the
-  // cap, and dead-ends the PR having spent its full budget N times. So the
-  // harness measures first and the operator sets the ceiling from observed data.
-  token_report: {
-    output_tokens: reviewBudget.spent(),
-    ceiling: CYCLE_TOKEN_CEILING || null,
-    bound: budget.total ? 'runtime' : CYCLE_TOKEN_CEILING ? 'caller' : 'none',
-    dimensions_run: dimensions.length,
-  },
-  budget_exhausted: budgetExhausted,
-  dimensions_skipped: dimensionsSkipped,
-  // The SAME flag the zero-findings path passes to `emptyResult`, not a
-  // hardcoded false. Having findings does not imply a dimension reported:
-  // `rawFindings` has two sources, and the second is comment triage
-  // (`dimension: 'review-comment'`), which is gated on `TAIL_FLOOR` (8k) while
-  // the fan-out is gated on `BUDGET_FLOOR` (40k). That staggering is deliberate
-  // — the tail agent is meant to survive budget pressure that already starved
-  // the dimensions — so "every dimension failed, yet a PR-comment finding
-  // surfaced" is a normal-operation state, not a contrived one. Hardcoding
-  // false there charges a cycle in which nothing ever read the diff, which is
-  // exactly #616's harm reopened through the one path its fix did not cover.
-  //
-  // Present on this path as well as in `emptyResult`, so the field's
-  // "always present" contract holds across BOTH returns: the reader defaults an
-  // absent key to false, so an omission here would be indistinguishable from a
-  // deliberate false.
-  no_review_signal: allDimensionsFailed,
-  // A cycle is clean only when nothing blocks, every PR comment is
-  // resolved-or-deferred, AND the cycle was complete (`!budgetExhausted` — no
-  // dimension skipped at build time or nulled mid-barrier). Gating on
-  // budget-exhaustion makes `clean` unforgeable by truncation: a partial review
-  // can never terminate the loop as clean and reach the merge gate — even when
-  // the surviving dimensions produced only deferrable findings. The skill
-  // additionally requires CI-green.
-  clean: computeClean(blocking.length, unresolvedComments.length, budgetExhausted),
-}
+  commentsAddressed,
+  unresolvedLen: unresolvedComments.length,
+  budgetExhausted,
+  dimensionsSkipped,
+  dimensionsRun: dimensions.length,
+  noReviewSignal: allDimensionsFailed,
+})

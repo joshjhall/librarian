@@ -280,12 +280,16 @@ export async function run() {
   // time they are counted is the part that can silently regress, and it was
   // previously only reachable by running the whole harness. (Review cycle 1.)
   //
-  // KNOWN GAP, stated rather than implied: the single `...summarize…(rawFindings)`
-  // spread in the harness's return object sits past ORCH_BOUNDARY, so
-  // extractHelpers cannot reach it and no assertion here covers it. Replacing
-  // that call with `tallyBy([], …)` still passes this suite. What the extraction
-  // buys is that the LOGIC is now pinned; the one-line wiring is verified by the
-  // live harness run instead (a cycle whose summary reports non-zero counts).
+  // GAP CLOSED by #636 — kept as a pointer rather than deleted, because the
+  // reasoning is what stops it reopening. This block used to record that the
+  // `...summarize…(rawFindings)` spread sat past ORCH_BOUNDARY, so replacing it
+  // with `tallyBy([], …)` passed the whole suite (PR #634 mutation 11, the only
+  // one of twelve not caught). That spread now lives inside `buildResult`, in
+  // the pure prefix, and tests/workflow-helpers/ship-issue/10-result-construction.mjs
+  // asserts the distributions are non-zero for judged findings — so the same
+  // mutation now fails. What is covered HERE is still the composition's logic;
+  // what is covered THERE is that it is wired into the result the harness
+  // returns.
   {
     // Compose the two units the way the harness does: judge verdicts in,
     // distributions out — so a break in the wiring between them is caught.
@@ -342,7 +346,7 @@ export async function run() {
   // is a real row in the tally, and omitting the keys would make it read as
   // "not measured" (the same reasoning that puts token_report on this path).
   {
-    const r = emptyResult(false, undefined, []);
+    const r = emptyResult({ budgetExhausted: false, dimensionsSkipped: [] });
     eq(r.summary?.by_nature?.["defect-in-new-code"], 0, "emptyResult: by_nature present and zeroed (#613)");
     eq(r.summary?.by_rule?.["R8-defect-in-new-code"], 0, "emptyResult: by_rule present and zeroed (#613)");
     eq(
@@ -550,7 +554,7 @@ export async function run() {
     ok(gridDeferrable > 0, "dispositionOf: the grid still produces deferrable findings — not block-everything");
   }
 
-  const r = emptyResult(false);
+  const r = emptyResult({ budgetExhausted: false });
   eq(r.cycle, 2, "emptyResult: cycle reflects args");
   eq(r.phase, "pr-cycle", "emptyResult: phase reflects args");
   eq(r.clean, true, "emptyResult: clean defaults true for the complete empty case");
@@ -563,7 +567,7 @@ export async function run() {
   // #270: a budget-truncated cycle is PARTIAL — never clean, even with no
   // findings — and it names the dimensions that never ran. This is the
   // merge-invariant guard: `clean` must be unforgeable by truncation.
-  const truncated = emptyResult(true, undefined, ["tests", "conventions"]);
+  const truncated = emptyResult({ budgetExhausted: true, dimensionsSkipped: ["tests", "conventions"] });
   eq(truncated.clean, false, "emptyResult: budget-truncated empty cycle is NOT clean");
   eq(truncated.budget_exhausted, true, "emptyResult: budget_exhausted reflects the arg");
   eq(
@@ -581,12 +585,12 @@ export async function run() {
     false,
     "emptyResult: a budget-truncated cycle DID review — partial, not no-signal (#616)",
   );
-  const crashed = emptyResult(false, undefined, [], 0, true);
+  const crashed = emptyResult({ budgetExhausted: false, dimensionsSkipped: [], dimensionsRun: 0, noReviewSignal: true });
   eq(crashed.no_review_signal, true, "emptyResult: no_review_signal set on the crash path (#616)");
   // A fan-out-wide wipeout is as void of review signal as a dead manifest, and
   // must be flagged the same way — otherwise #616 is only half fixed: the
   // crash point moves one phase later and the cycle charges the cap again.
-  const wipeout = emptyResult(true, undefined, ["security", "correctness"], 2, true);
+  const wipeout = emptyResult({ budgetExhausted: true, dimensionsSkipped: ["security", "correctness"], dimensionsRun: 2, noReviewSignal: true });
   eq(wipeout.no_review_signal, true, "emptyResult: an all-dimensions-failed cycle is no-signal (#616)");
   eq(wipeout.clean, false, "emptyResult: a wipeout is still not clean (it is also partial)");
   // The field is always present, never conditionally omitted: the helper's
@@ -599,7 +603,7 @@ export async function run() {
   // The wipeout detection itself lives in the ORCHESTRATION body (past
   // ORCH_BOUNDARY), so no extracted helper can reach it — assert structurally
   // that the flag is both computed and threaded, like the sibling checks below.
-  // Without this, `emptyResult` could accept the 5th arg correctly while the
+  // Without this, `emptyResult` could accept `noReviewSignal` correctly while the
   // zero-findings call site never passes it, and the behavioral test above
   // would still pass.
   {
@@ -614,18 +618,30 @@ export async function run() {
       /const allDimensionsFailed\s*=\s*computeAllDimensionsFailed\(reviewResults, dimensionsSkipped\)/.test(orch),
       "ship-issue: the orchestration body calls the extracted predicate, not an inline copy (#616)",
     );
-    // The field must be present on BOTH return paths, not just emptyResult's.
-    // The reader defaults an absent key to false, so an omission on the
-    // findings-bearing path is indistinguishable from an explicit false — and
-    // the behavioral assertions above, which only exercise emptyResult, cannot
-    // see that path at all. Count the sites: one in emptyResult, one in the
-    // non-empty-findings return object.
+    // The field must reach BOTH return paths, not just emptyResult's. The reader
+    // defaults an absent key to false, so an omission on the findings-bearing
+    // path is indistinguishable from an explicit false — and the behavioral
+    // assertions above, which only exercise emptyResult, cannot see that path.
+    //
+    // RE-KEYED BY #636 to survive the buildResult extraction. This used to count
+    // two `no_review_signal:` emission sites, because the field was emitted by
+    // two hand-written object literals that agreed only by inspection. There is
+    // now ONE constructor, so counting literals would assert the very
+    // duplication #636 removed — the property has to be restated over the new
+    // structure rather than relaxed away. Both halves are checked:
+    //   - the single emission lives in buildResult, before ORCH_BOUNDARY, where
+    //     10-result-construction.mjs exercises its default and round-trip; and
+    //   - both call sites past the boundary thread the computed flag in.
     eq(
       (orch.match(/^\s*no_review_signal:/gm) || []).length,
-      2,
-      "ship-issue: no_review_signal is emitted on BOTH return paths, never omitted on one (#616)",
+      1,
+      "ship-issue: no_review_signal is emitted by exactly ONE constructor, so the two paths cannot drift (#616/#636)",
     );
-    // ...and the findings-bearing path must emit the COMPUTED flag, not a
+    ok(
+      /^[ \t]*no_review_signal: !!parts\.noReviewSignal,/m.test(orch),
+      "ship-issue: that emission derives from the passed flag, never a literal (#616/#636)",
+    );
+    // ...and the findings-bearing path must pass the COMPUTED flag, not a
     // literal. Counting emission sites cannot see the value, which is how a
     // hardcoded `false` survived cycle 6: having findings does NOT imply a
     // dimension reported, because `rawFindings` also collects comment-triage
@@ -633,12 +649,12 @@ export async function run() {
     // gated on BUDGET_FLOOR (40k) — so a starved fan-out plus a surviving
     // comment finding is reachable in normal operation.
     ok(
-      /^\s*no_review_signal: allDimensionsFailed,/m.test(orch),
-      "ship-issue: the findings-bearing return emits the computed flag, not a hardcoded false (#616)",
+      /^\s*noReviewSignal: allDimensionsFailed,/m.test(orch),
+      "ship-issue: the findings-bearing return passes the computed flag, not a hardcoded false (#616/#636)",
     );
     ok(
-      !/^\s*no_review_signal: false,/m.test(orch),
-      "ship-issue: no return path hardcodes no_review_signal false",
+      !/^\s*no_review_signal: false,/m.test(orch) && !/^\s*noReviewSignal: false,/m.test(orch),
+      "ship-issue: no return path hardcodes the no-signal flag false",
     );
     // The two floors are what make that state reachable; if they were ever
     // equalized the hazard would vanish, and this comment would be stale
@@ -672,10 +688,28 @@ export async function run() {
     eq(wipeoutOf([null, null], ["security", "tests"]), true, "wipeout: every dispatched dimension failed");
     eq(wipeoutOf([], ["scope-drift"]), true, "wipeout: budget skipped every candidate BEFORE dispatch (#616)");
     eq(wipeoutOf([], []), false, "wipeout: narrowing legitimately selected nothing — complete, not no-signal");
-    const zeroCall = orch.slice(orch.indexOf("if (rawFindings.length === 0) {"));
+    // Slice from the zero-findings branch to the end of its emptyResult call, so
+    // the window is bounded by the CODE rather than by a character count that
+    // silently widens as the call grows (#636 added two trailing params, and a
+    // fixed 400-char window would have started reading past the branch).
+    const zeroStart = orch.indexOf("if (rawFindings.length === 0) {");
+    ok(zeroStart >= 0, "ship-issue: the zero-findings branch is present (#616)");
+    const zeroCall = orch.slice(zeroStart, orch.indexOf("}", orch.indexOf(")", zeroStart)));
     ok(
-      zeroCall.slice(0, 400).includes("allDimensionsFailed"),
+      zeroCall.includes("allDimensionsFailed"),
       "ship-issue: the zero-findings emptyResult call threads allDimensionsFailed (#616)",
+    );
+    // #636: that call also threads the comment state, instead of splicing
+    // `comments_addressed`/`clean` onto the returned object afterwards — a
+    // post-hoc mutation is a derivation past ORCH_BOUNDARY, unreachable by any
+    // unit test, which is the whole class of gap #636 closed.
+    ok(
+      zeroCall.includes("commentsAddressed") && zeroCall.includes("unresolvedComments.length"),
+      "ship-issue: the zero-findings call passes comment state in, rather than splicing it on after (#636)",
+    );
+    ok(
+      !/^[ \t]*r\.comments_addressed = /m.test(orch),
+      "ship-issue: no return path splices comments_addressed onto the result past ORCH_BOUNDARY (#636)",
     );
   }
   // A no-signal cycle is still not clean by virtue of the flag alone — the

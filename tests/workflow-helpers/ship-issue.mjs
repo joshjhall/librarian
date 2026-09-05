@@ -49,6 +49,7 @@ import { run as preScanConventions } from "./ship-issue/06-prescan-conventions.m
 import { run as argValidation } from "./ship-issue/07-arg-validation.mjs";
 import { run as manifestFailure } from "./ship-issue/08-manifest-failure.mjs";
 import { run as routeSelection } from "./ship-issue/09-route-selection.mjs";
+import { run as resultConstruction } from "./ship-issue/10-result-construction.mjs";
 
 const AREA_DIR = join(dirname(fileURLToPath(import.meta.url)), "ship-issue");
 
@@ -64,6 +65,7 @@ const AREAS = [
   ["07-arg-validation.mjs", argValidation],
   ["08-manifest-failure.mjs", manifestFailure],
   ["09-route-selection.mjs", routeSelection],
+  ["10-result-construction.mjs", resultConstruction],
 ];
 
 // Fail when the declared list and the directory disagree, in either direction.

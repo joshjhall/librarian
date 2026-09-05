@@ -27,10 +27,27 @@ export async function run() {
 
   // Both return paths report cost — the findings path and the empty/early path.
   // Excluding the empty path would bias the sample an operator sizes from.
+  //
+  // RE-KEYED BY #636. This counted two `token_report: {` literals back when the
+  // two return paths each built their own object. `buildResult` is now the
+  // single constructor both paths call, so the guarantee is structural rather
+  // than arithmetic — and asserting "2" again would demand the duplication #636
+  // deleted. Restated, not relaxed: exactly one emission, in the shared
+  // constructor, which both paths reach (the call sites are pinned in
+  // 10-result-construction.mjs, and emptyResult's delegation is exercised there
+  // behaviourally).
   eq(
     (src.match(/token_report:\s*\{/g) || []).length,
-    2,
-    "ship-issue: token_report is on BOTH the findings and empty return paths (#553)",
+    1,
+    "ship-issue: token_report is built ONCE, by the constructor both return paths share (#553/#636)",
+  );
+  ok(
+    /function buildResult\(parts\) \{/.test(src) && /return buildResult\(\{/.test(src),
+    "ship-issue: that one constructor is buildResult, and it is actually called (#553/#636)",
+  );
+  ok(
+    /return buildResult\(\{[\s\S]*?\}\)/.test(src.slice(src.indexOf("function emptyResult("))),
+    "ship-issue: emptyResult reaches token_report by delegating, not by a second literal (#553/#636)",
   );
   ok(
     /output_tokens:\s*reviewBudget\.spent\(\)/.test(src),
