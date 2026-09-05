@@ -52,6 +52,11 @@ SEC_BLADE="{""!!"
     printf '%s\n' '-----BEGIN RSA PRIVATE KEY-----'
     printf '%s\n' 'password = "hunter2hunter2"'
     printf '%s\n' 'placeholder = "changeme_placeholder"'
+    # #860 multi-match arms: a placeholder no longer suppresses a real credential
+    # sharing its line, and the key-enumerating evidence path runs for a line
+    # carrying two real secrets.
+    printf '%s\n' 'password = "changeme"; api_key = "realsecretvalue123"'
+    printf '%s\n' 'api_key = "firstrealsecret1"; auth_token = "secondrealsecret2"'
     printf '%s\n' 'from_env = os.environ["API_KEY"]'
     printf '%s\n' 'q = f"SELECT * FROM t WHERE id={i}"'
     printf '%s\n' 'c = "SELECT a FROM t" + tail'
@@ -171,6 +176,13 @@ printf '%s\n' 'print("dbg")' >"$SRCDIR/widget_test.py"
 printf 'stripe = "%s"\n' "$SEC_STRIPE" >"$SRCDIR/secrets.env.example"
 printf '%s\n' '# TODO: doc marker' >"$SRCDIR/notes.md"
 
+# A JSON config drives the #860 quoted-key arm: the credential regex must accept
+# a closing quote on the key (`"api_key":`), which no other corpus file exercises
+# — every source fixture above uses a BARE key. json is a modeled language whose
+# comment pattern never matches, so the lexical gate lets the detector run.
+printf '%s\n' '{"password": "changeme", "api_key": "realsecretvalue123"}' \
+    >"$SRCDIR/config.json"
+
 # An unreadable source file drives the per-file open() OSError arm in both ports.
 SRC_UNREAD="$SRCDIR/unreadable.py"
 printf 'gh = "%s"\n' "$SEC_GHP" >"$SRC_UNREAD"
@@ -183,6 +195,7 @@ for f in "$SRCDIR"/app.py "$SRCDIR"/app.ts "$SRCDIR"/app.rb "$SRCDIR"/app.go \
     "$SRCDIR"/tests/test_helper.py "$SRCDIR"/contest.py \
     "$SRCDIR"/test_widget.py "$SRCDIR"/widget_test.py \
     "$SRCDIR"/trailing_except.py \
+    "$SRCDIR"/config.json \
     "$SRCDIR"/secrets.env.example "$SRCDIR"/notes.md "$SRC_UNREAD"; do
     printf '%s\n' "$f" >>"$SRC_LIST"
 done

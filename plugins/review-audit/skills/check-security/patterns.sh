@@ -573,28 +573,61 @@ while IFS= read -r file; do
     #      "$file_comment_re", which already carries grep -n's "<lineno>:");
     #   2. the PLACEHOLDER test matches only the extracted VALUE, never the
     #      whole line, so a `#` outside the value can no longer suppress.
+    #
+    # #860: EVERY match on the line, not just the first. Two independent defects
+    # were closed here; both emitted nothing in BOTH runtimes, so the TSV parity
+    # gate stayed green on the shared limitation:
+    #   1. FIRST-MATCH-ONLY — `| head -n 1` took one assignment, so a leading
+    #      placeholder suppressed a real secret sharing the line.
+    #   2. QUOTED KEYS NEVER MATCHED — the key had to be followed IMMEDIATELY by
+    #      whitespace/=/:, so `{"api_key": "…"}` did not match at all. The
+    #      `["']?` accepts the closing quote; this, not (1), is what silenced
+    #      #860's headline JSON repro.
+    # ONE ROW PER LINE (the TSV is keyed file/line/category), with the evidence
+    # NAMING EVERY real secret — naming only the first would re-create this bug
+    # in miniature, and the 80-char cap can truncate a later secret off the line.
+    #
+    # The key list is accumulated in a `while` fed by a HEREDOC, not by a pipe: a
+    # piped `while` runs in a SUBSHELL and every key appended there would be
+    # discarded at the loop's end.
     if [ -n "$file_lang" ]; then
-        command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
+        command grep -nEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)["'\'']?[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']' "$file" 2>/dev/null |
             command grep -vE "$file_comment_re" |
             while IFS= read -r raw; do
                 line_num=${raw%%:*}
                 content=${raw#*:}
-                # Extract just the credential value — the assignment fragment,
-                # then peel the surrounding quotes with parameter expansion
-                # (bash-3.2 clean; no sed, whose //I flag is GNU-only).
-                assign=$(command printf '%s' "$content" |
-                    command grep -oEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']' |
-                    command head -n 1)
-                value=${assign#*[\"\']}
-                value=${value%[\"\']}
-                if command printf '%s' "$value" |
-                    command grep -qiE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_)'; then
-                    continue
-                fi
+                # Walk every credential-shaped assignment on the line, peeling
+                # each value's quotes with parameter expansion (bash-3.2 clean;
+                # no sed, whose //I flag is GNU-only) and keeping the KEY of any
+                # match whose VALUE is not a placeholder.
+                cred_keys=""
+                while IFS= read -r assign; do
+                    [ -n "$assign" ] || continue
+                    value=${assign#*[\"\']}
+                    value=${value%[\"\']}
+                    # The placeholder test is VALUE-scoped (#837), never the
+                    # whole line, and applied PER MATCH so one placeholder
+                    # cannot speak for its neighbours.
+                    if command printf '%s' "$value" |
+                        command grep -qiE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_)'; then
+                        continue
+                    fi
+                    cred_key=$(command printf '%s' "$assign" |
+                        command grep -oEi '^[[:alpha:]_]+')
+                    if [ -z "$cred_keys" ]; then
+                        cred_keys="$cred_key"
+                    else
+                        cred_keys="${cred_keys}, ${cred_key}"
+                    fi
+                done <<EOF
+$(command printf '%s' "$content" |
+                    command grep -oEi '(password|passwd|secret|api_key|apikey|auth_token|access_token)["'\'']?[[:space:]]*[=:][[:space:]]*["'\''][^"'\'']{8,}["'\'']')
+EOF
+                [ -n "$cred_keys" ] || continue
                 evidence=$(truncate_chars 80 "$content")
                 command printf '%s\t%s\t%s\t%s\t%s\n' \
                     "$file" "$line_num" "hardcoded-secret" \
-                    "Possible hardcoded credential: ${evidence}" "HIGH"
+                    "Possible hardcoded credential (${cred_keys}): ${evidence}" "HIGH"
             done || true
     fi
 

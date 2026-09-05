@@ -676,22 +676,61 @@ def scan_file(path: str) -> None:
         #   2. the PLACEHOLDER test matches only the captured VALUE, never the
         #      whole line, so a `#` outside the value can no longer suppress.
         if lang and not is_comment(lang, line):
-            m = re.search(
-                r"(password|passwd|secret|api_key|apikey|auth_token|access_token)"
-                r"""\s*[=:]\s*["']([^"']{8,})["']""",
-                line,
-                re.IGNORECASE,
-            )
-            if m and not re.search(
-                r"(changeme|placeholder|xxx|todo|example|replace|your_|test_|fake_|dummy_)",
-                m.group(2),
-                re.IGNORECASE,
-            ):
+            # EVERY match on the line, not just the first (#860). Two independent
+            # defects were closed here; both emitted nothing, in BOTH runtimes,
+            # so validate-python-ports.sh was green throughout (the
+            # parity-gate-hides-shared-defect shape — same-output is not
+            # same-intent):
+            #
+            #   1. FIRST-MATCH-ONLY. `re.search` returns one match, so a leading
+            #      PLACEHOLDER suppressed the whole line and a real secret
+            #      sharing it was never reported:
+            #        password = "changeme"; api_key = "realsecret1"
+            #      `finditer` walks them all.
+            #
+            #   2. QUOTED KEYS NEVER MATCHED. The key had to be followed
+            #      IMMEDIATELY by whitespace/`=`/`:`, so a JSON or JS quoted key
+            #      did not match at all — placeholder or not:
+            #        {"api_key": "realsecretvalue123"}     <- silent on its own
+            #      The `["']?` below accepts the closing quote. This, not (1), is
+            #      what silenced #860's headline repro; `finditer` alone would
+            #      have left it silent. Measured safe: zero new rows across all
+            #      854 tracked files.
+            #
+            # ONE ROW PER LINE, and the evidence NAMES EVERY REAL SECRET. The TSV
+            # is keyed file/line/category, so two rows would share a key. But
+            # naming only the first match would re-create this very bug in
+            # miniature — the line is flagged while the second secret is
+            # invisible — and the 80-char evidence cap can truncate the later
+            # secret off the quoted line entirely, so the key list is the only
+            # thing that keeps it visible.
+            keys = [
+                m.group(1)
+                for m in re.finditer(
+                    r"(password|passwd|secret|api_key|apikey|auth_token|access_token)"
+                    r"""["']?\s*[=:]\s*["']([^"']{8,})["']""",
+                    line,
+                    re.IGNORECASE,
+                )
+                # The placeholder test stays VALUE-scoped (#837) — never the
+                # whole line — so a `#` or a placeholder word elsewhere on the
+                # line cannot suppress. It is applied PER MATCH so one
+                # placeholder cannot speak for its neighbours.
+                if not re.search(
+                    r"(changeme|placeholder|xxx|todo|example|replace|your_|test_|fake_|dummy_)",
+                    m.group(2),
+                    re.IGNORECASE,
+                )
+            ]
+            if keys:
                 emit(
                     path,
                     idx,
                     "hardcoded-secret",
-                    "Possible hardcoded credential: " + cap(line),
+                    "Possible hardcoded credential ("
+                    + ", ".join(keys)
+                    + "): "
+                    + cap(line),
                 )
 
         # --- Category: injection-risk ---

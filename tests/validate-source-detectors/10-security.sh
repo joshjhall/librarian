@@ -67,6 +67,98 @@ test_security_secrets() {
     assert_silent "$SK_SEC" "$list" hardcoded-secret \
         "security: placeholder/env/comment credentials stay silent (denylist boundary)"
 
+    # #860 — TWO INDEPENDENT DEFECTS let a real secret be silently dropped. Both
+    # emitted nothing in BOTH runtimes, so validate-python-ports.sh was green
+    # throughout (parity compares the impls to each other, never to intent), and
+    # each fixture below was mutation-checked against the half it isolates.
+
+    # DEFECT 1 — FIRST-MATCH-ONLY. Only the first credential-shaped match on the
+    # line was inspected, so a leading PLACEHOLDER suppressed the whole line and
+    # the real secret after it was never reported. Both orderings are pinned: the
+    # placeholder-first line is the one that was silent, and the real-first line
+    # guards against a fix that merely reverses the bias.
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        'password = "changeme"; api_key = "realsecretvalue123"' \
+        'api_key = "realsecretvalue123"; password = "changeme"' >"$d/multi.py"
+    list="$(make_list "$d/l" "$d/multi.py")"
+    assert_row_count "$SK_SEC" "$list" hardcoded-secret 2 \
+        "security: a placeholder does not suppress a real credential sharing its line, either order (#860)"
+
+    # DEFECT 2 — QUOTED KEYS NEVER MATCHED. The key had to be followed
+    # IMMEDIATELY by whitespace/=/:, so a JSON or JS quoted key did not match at
+    # all. This fixture carries NO placeholder, which is what isolates it from
+    # defect 1: it was silent on its own, so `finditer` alone cannot make it fire.
+    d="$(fresh_dir)"
+    command printf '%s\n' '{"api_key": "realsecretvalue123"}' >"$d/plain.json"
+    list="$(make_list "$d/l" "$d/plain.json")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: a QUOTED key fires with no placeholder present (#860 defect 2, isolated)"
+
+    # #860's HEADLINE REPRO — needs BOTH fixes: a quoted key (defect 2) whose
+    # first credential is a placeholder (defect 1).
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        '{"password": "changeme", "api_key": "realsecretvalue123"}' >"$d/config.json"
+    list="$(make_list "$d/l" "$d/config.json")"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "Possible hardcoded credential" \
+        "security: the issue's JSON repro fires (#860 AC1)"
+
+    # MULTIPLICITY — one row per line, evidence naming EVERY real secret. The
+    # row-count assertion alone is not enough: it passes while the second secret
+    # is silently dropped, which is this very bug in miniature. So the second
+    # key name is asserted IN THE EVIDENCE. It matters most exactly here — the
+    # 80-char evidence cap can truncate the later secret off a longer line, and
+    # then the key list is the only thing that keeps it visible.
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        '{"api_key": "firstrealsecret1", "auth_token": "secondrealsecret2"}' >"$d/two.json"
+    list="$(make_list "$d/l" "$d/two.json")"
+    assert_row_count "$SK_SEC" "$list" hardcoded-secret 1 \
+        "security: two real secrets on one line emit ONE row (#860 AC3)"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "api_key, auth_token" \
+        "security: the evidence names EVERY real secret, not just the first (#860 AC3)"
+
+    # The SAME keyword twice on one line with two distinct real values. Not
+    # deduped, deliberately: `(api_key, api_key)` reports two real secrets, and
+    # collapsing them to one name would hide the second — the very suppression
+    # this issue fixes, arriving by a different route. Pinned because "one row
+    # per line" plus a key list makes the duplicate-key case a real decision
+    # rather than an accident.
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        'api_key = "realsecretA12"; api_key = "realsecretB34"' >"$d/dup.py"
+    list="$(make_list "$d/l" "$d/dup.py")"
+    assert_row_count "$SK_SEC" "$list" hardcoded-secret 1 \
+        "security: the same keyword twice on one line emits ONE row (#860)"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "api_key, api_key" \
+        "security: a repeated keyword is NOT deduped — both occurrences are named (#860)"
+
+    # The same two properties at N=3 and with IDENTICAL values — the pairwise
+    # fixture above cannot distinguish a general loop from one that special-cases
+    # exactly two matches, and an implementation might plausibly collapse an
+    # exact (key,value) repeat. Neither is collapsed: a copy-pasted secret is
+    # still two real occurrences of a leaked credential.
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        'api_key = "realsecretA12"; api_key = "realsecretB34"; api_key = "realsecretC56"' \
+        'api_key = "samesecret123"; api_key = "samesecret123"' >"$d/dup3.py"
+    list="$(make_list "$d/l" "$d/dup3.py")"
+    assert_row_count "$SK_SEC" "$list" hardcoded-secret 2 \
+        "security: repeats stay one row per LINE at N=3 and for identical values (#860)"
+    assert_fires "$SK_SEC" "$list" hardcoded-secret "api_key, api_key, api_key" \
+        "security: the walk generalizes past the pairwise case (#860)"
+
+    # The placeholder stays value-scoped (#837) even while every match is walked:
+    # a line whose ONLY credentials are placeholders must remain silent, so the
+    # multi-match fix cannot be mistaken for deleting the denylist.
+    d="$(fresh_dir)"
+    command printf '%s\n' \
+        '{"password": "changeme", "api_key": "your_key_here"}' >"$d/allph.json"
+    list="$(make_list "$d/l" "$d/allph.json")"
+    assert_silent "$SK_SEC" "$list" hardcoded-secret \
+        "security: a line of ONLY placeholders stays silent under multi-match (#860)"
+
     # SKIP_GLOBS: a *.env.example carrying a real-looking secret is skipped whole.
     d="$(fresh_dir)"
     command printf 'stripe = "%s"\n' "$STRIPE_TOK" >"$d/secrets.env.example"
