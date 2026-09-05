@@ -18,6 +18,7 @@
 - [Librarian runs outside containers](librarian-runs-outside-containers.md) — Mac/bare-linux/container alike; never hard-depend on the submodule
 - [Never time out a human gate](never-timeout-human-gate.md) — WAIT indefinitely for the answer; never lapse and decide alone
 - [Ask before choosing the issue repo](ask-before-choosing-issue-repo.md) — a cross-repo follow-up is the user's call; don't default
+- [Read issue comments before planning](read-issue-comments-before-planning.md) — the approach may be DECIDED in a comment that overrides the body's framing
 - [Surface follow-ups before declaring done](surface-followups-before-declaring-done.md) — list every deferred finding + a recommendation and ASK; never wait to be asked
 - [L3 broker plan-gate](l3-broker-plan-gate.md) — present each plan in-session, human decides HERE; never route to a TTY
 - [Orchestrate broker-then-send](orchestrate-broker-then-send.md) — orchestrator SENDS the keystroke after approval; never hand back (#280)
@@ -31,6 +32,7 @@
 - [An issue's symbol inventory needs re-measuring](issue-symbol-inventory-needs-remeasuring.md) — the table counts NAMES and has drifted; grep declarations, diff bodies
 - [Gate header claims an unimplemented check](gate-header-claims-an-unimplemented-check.md) — grep for the enforcing code; a rule written before it was testable stays prose
 - [Detector needs a certainty tier](detector-needs-a-certainty-tier.md) — measure the idiom's hit rate before implementing; 723 FPs vs 2 TPs is "not at this tier"
+- [Corpus filter silently disables detectors](corpus-filter-silently-disables-detectors.md) — a `**/*.md` filter makes .json/.sh detectors report clean BY CONSTRUCTION; grep their gating, measure both corpora
 - [An issue's stated cause can be false](issue-cause-may-be-falsified-by-measurement.md) — A/B the SUGGESTED fix; a no-op fix means the diagnosis is wrong (#766)
 - [Size the effect from the right quantity](size-the-effect-from-the-right-quantity.md) — bytes emitted vs the RECORD that accrues; flips "too small to see" into "a large effect is missing"
 - [Measured cause may invert the remedy](measured-cause-may-invert-the-remedy.md) — a real total hides a billing split; check the premise's countable claims first (#787)
