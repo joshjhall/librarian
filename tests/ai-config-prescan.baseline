@@ -1,0 +1,29 @@
+# ai-config pre-scan ratchet baseline — issue #907.
+#
+# Findings from check-ai-config's deterministic pre-scan that exist in the
+# tree TODAY. The scheduled job (.github/workflows/ai-config-prescan.yml)
+# fails on any finding NOT listed here, so this file is what keeps it green
+# on the current tree while still catching the next one.
+#
+# THESE ARE REAL FINDINGS, NOT FALSE POSITIVES. They are recorded as
+# known-and-deferred: fixing them is per-skill prose work, deliberately out
+# of scope for #907 (which is about making the cadence RUN). Removing an
+# entry by fixing its file is always welcome — --regen then tightens the
+# ratchet. ADDING an entry is a deliberate, reviewable diff that wants a
+# reason in the commit message.
+#
+# Format: file<TAB>category<TAB>evidence  (no line number — it churns on
+# unrelated edits and would report known findings as new).
+#
+# Regenerate with: bash bin/ai-config-prescan.sh --regen
+plugins/dev-core/skills/documentation-authoring/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/dev-core/skills/memory-conventions/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/dev-core/skills/shell-scripting/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/review-audit/skills/check-code-health/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/review-audit/skills/check-decomposition/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/review-audit/skills/check-lifecycle/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/review-audit/skills/check-okf-conformance/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/review-audit/skills/check-security/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/workflow/skills/rebase-generated/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/workflow/skills/rebase-imports/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)
+plugins/workflow/skills/rebase-version/SKILL.md	skill-frontmatter	No structural section found (expected ## Workflow, ## Categories, or similar)

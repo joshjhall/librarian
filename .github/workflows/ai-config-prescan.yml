@@ -1,0 +1,68 @@
+name: ai-config pre-scan
+
+# The DETERMINISTIC half of the convention-audit cadence (issue #907, follow-up
+# to #551). #551 demoted the `conventions` review dimension and documented a
+# biweekly `/review-audit:codebase-audit categories=ai-config` sweep as its
+# replacement — but nothing ran that sweep, because this repo had no scheduled
+# workflow at all. This is that missing scheduler.
+#
+# NAMED FOR WHAT IT PERFORMS. This is the "ai-config pre-scan", NOT the
+# "convention audit". It runs check-ai-config's deterministic patterns.py/.sh
+# and nothing else. The LLM-judgment half of the sweep — cross-file consistency
+# against a diff, prose conventions no detector models — is NOT run here and
+# remains an operator ritual (convention-cadence.md). A job named for the full
+# sweep while performing only its mechanical half would be the
+# gate-header-claims-an-unimplemented-check shape this repo files issues about.
+#
+# WHY NOT A HEADLESS `claude -p` THAT RUNS THE REAL SWEEP. There is no auth path
+# in CI today — no ANTHROPIC_* secret and no `claude` invocation in any workflow
+# — so it would mean introducing API credentials plus unbounded recurring
+# per-run spend. Rejected on #907 as disproportionate to a low-severity cadence
+# gap, when the deterministic half is genuinely enforceable for free.
+#
+# NOT A MERGE GATE. Like code-scanning.yml, this is informational and runs on its
+# own schedule — it is not part of ci.yml's merge-gate aggregation and cannot red
+# a PR. It is the scheduled backstop for coverage that was deliberately moved OFF
+# the per-PR path by #551.
+
+on:
+  schedule:
+    # 14:17 UTC on the 1st and 15th of each month. The documented cadence is
+    # "every two weeks"; GitHub cron cannot express a true biweekly interval
+    # (there is no "every 14 days" field), so 1st + 15th is the closest honest
+    # approximation — twice monthly, ~14-16 days apart. Recorded rather than
+    # papered over. Off-the-hour by a prime-ish minute per the usual advice
+    # about scheduled jobs stampeding the top of the hour.
+    - cron: "17 14 1,15 * *"
+  # Escape hatch: the schedule only ever fires on the default branch, so this is
+  # also the ONLY way to exercise the job from a branch or to re-run it on
+  # demand after fixing a finding.
+  workflow_dispatch:
+
+# Least privilege: the scan reads the tree and writes only a step summary.
+permissions:
+  contents: read
+
+jobs:
+  prescan:
+    name: ai-config pre-scan (deterministic half)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A scheduled workflow also fires on forks of the default branch, where it
+    # would scan a tree whose baseline is not ours and mail the fork owner about
+    # it. Pin it to this repository.
+    if: github.repository == 'joshjhall/librarian'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ubuntu-latest ships python3 >= 3.11, so patterns.sh exec's its Python
+      # primary; no setup-python step is needed (and therefore no second `uses:`
+      # to keep pinned). The script fails loud if the scanner or corpus is
+      # missing rather than reporting a clean scan that never ran.
+      #
+      # All logic lives in the script, deliberately: a `run:` block's
+      # regressions are re-orderings that no grep-the-YAML test would catch,
+      # whereas tests/validate-ai-config-prescan.sh can execute the script.
+      - name: Run the deterministic ai-config pre-scan
+        run: bash bin/ai-config-prescan.sh

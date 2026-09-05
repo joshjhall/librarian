@@ -42,6 +42,7 @@
 #  11b5. Plugin prose budget ratchet (tests/lint-prose-budget.sh)
 #  11b5b. Worktree-safe recipes (tests/lint-worktree-recipes.sh)
 #  11b6. Prose-budget gate behavior (tests/validate-prose-budget.sh)
+#  11b6a. ai-config pre-scan ratchet behavior (tests/validate-ai-config-prescan.sh)
 #  11b7. Hook no-op silence (tests/lint-hook-silence.sh)
 #  11b8. Scanner extension-dispatch case parity (tests/lint-scanner-case-dispatch.sh)
 #  11b8a. Pre-scan input-shape guard (tests/lint-prescan-input-guard.sh)
@@ -299,6 +300,11 @@ run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.
 run_stage "Plugin prose budget (ratchet)" bash "$SCRIPT_DIR/lint-prose-budget.sh"
 run_stage "Worktree-safe recipes" bash "$SCRIPT_DIR/lint-worktree-recipes.sh"
 run_stage "Prose-budget gate behavior" bash "$SCRIPT_DIR/validate-prose-budget.sh"
+# The BEHAVIOR of bin/ai-config-prescan.sh, not the scan itself (#907). The scan
+# runs on a schedule (.github/workflows/ai-config-prescan.yml) because #551
+# deliberately moved that coverage off the per-PR path; registering the scan here
+# would reverse that decision. Same gate-vs-meta-gate split as the two rows above.
+run_stage "ai-config pre-scan ratchet behavior" bash "$SCRIPT_DIR/validate-ai-config-prescan.sh"
 run_stage "Hook no-op silence" bash "$SCRIPT_DIR/lint-hook-silence.sh"
 # Steers definition-shaped assertions to assert_file_defines, so the comment
 # explaining a setting can never satisfy the test that the setting exists (#830).
