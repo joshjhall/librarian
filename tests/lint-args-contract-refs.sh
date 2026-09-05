@@ -48,6 +48,16 @@
 # from one source: a fixture that does proves nothing (#886 says so explicitly,
 # and this repo has hit that tautology on #599/#600).
 #
+# DELIBERATELY OUT OF SCOPE: the `// Input (passed verbatim…` header comment
+# block inside workflow.js. It is row 2 of #886's table and it does restate the
+# same list — but it is already pinned, bidirectionally AND in order, by
+# tests/workflow-helpers/ship-issue/07-arg-validation.mjs, which diffs it against
+# KNOWN_ARG_KEYS as ordered sequences. Re-checking it here would be a second
+# table over the same fact — exactly the duplication this issue exists to
+# remove. It is also the copy least able to rot silently: it sits ten lines from
+# the array, in the same generated file, so a drifting edit is visible in one
+# screen. Hence the title'"'"'s "six prose copies".
+#
 # Pure bash + coreutils + awk; no node, no jq, no network. bash-3.2 clean.
 
 set -euo pipefail

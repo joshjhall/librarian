@@ -342,6 +342,26 @@ test_extract_contract_indented_marker_is_a_delimiter() {
         "extract_contract: an indented marker opens a region (list-item nesting)"
     assert_not_contains "$out" "tail prose" \
         "extract_contract: an indented CLOSING marker ends the region"
+
+    # TABS too, not just spaces. The predicate uses [[:space:]], so a narrowing
+    # to a space-only class (`[ ]*`) would still pass every fixture above —
+    # the mutation this case exists to catch. An editor auto-indenting a list
+    # item with a tab is the realistic way that would surface.
+    local dt out_t
+    dt="$(command mktemp -d)"
+    {
+        command printf '1. **Step one**\n\n'
+        command printf '\t<!-- contract: tabbed -->\n\n'
+        command printf '\ttabbed body\n\n'
+        command printf '\t<!-- contract: end-tabbed -->\n\n'
+        command printf '\ttail prose after the tabbed region\n'
+    } >"$dt/a.md"
+    out_t="$(CONTRACT_SEARCH_ROOT="$dt" extract_contract tabbed)"
+    assert_contains "$out_t" "tabbed body" \
+        "extract_contract: a TAB-indented marker opens a region ([[:space:]], not [ ])"
+    assert_not_contains "$out_t" "tail prose" \
+        "extract_contract: a TAB-indented closing marker ends the region"
+    command rm -rf "$dt"
     command rm -rf "$d"
 }
 
