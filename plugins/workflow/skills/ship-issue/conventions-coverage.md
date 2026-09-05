@@ -54,9 +54,13 @@ an LLM reviewer's opinion — they are not advisory.
 The judgment-shaped remainder — CLAUDE.md drift, cross-reference rot, skill and
 agent quality — pairs with `check-ai-config` on a documented biweekly cadence.
 **Read `review-audit`'s `codebase-audit/convention-cadence.md` for that,
-including the enforcement caveat: nothing currently makes it run** (this repo has
-no scheduled workflow at all — tracked in #907). Do not treat this demotion as
-"coverage moved and is now guaranteed elsewhere". It is not.
+including which half is actually enforced.** In brief (#907): the
+**deterministic** half now runs on a schedule —
+`.github/workflows/ai-config-prescan.yml` executes `check-ai-config`'s pre-scan
+twice monthly as a ratchet against a checked-in baseline — while the
+**LLM-judgment** half is still an operator ritual nothing triggers. Do not treat
+this demotion as "coverage moved and is now guaranteed elsewhere". Half of it is
+guaranteed; half of it is a checklist someone must pick up.
 
 ## What nothing covers now
 
