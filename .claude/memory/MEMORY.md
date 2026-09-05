@@ -32,6 +32,7 @@
 - [Gate header claims an unimplemented check](gate-header-claims-an-unimplemented-check.md) — grep for the enforcing code; a rule written before it was testable stays prose
 - [Detector needs a certainty tier](detector-needs-a-certainty-tier.md) — measure the idiom's hit rate before implementing; 723 FPs vs 2 TPs is "not at this tier"
 - [An issue's stated cause can be false](issue-cause-may-be-falsified-by-measurement.md) — A/B the SUGGESTED fix; a no-op fix means the diagnosis is wrong (#766)
+- [An issue's premise may undercount defects](issue-premise-may-undercount-defects.md) — run the issue's OWN repro; if removing the named cause still fails, there are two
 - [Size the effect from the right quantity](size-the-effect-from-the-right-quantity.md) — bytes emitted vs the RECORD that accrues; flips "too small to see" into "a large effect is missing"
 - [Measured cause may invert the remedy](measured-cause-may-invert-the-remedy.md) — a real total hides a billing split; check the premise's countable claims first (#787)
 - [Deferred work may be doable now](deferred-work-may-be-doable-now.md) — "wait for Phase N" is an estimate; probe the blocker before accepting it
@@ -97,6 +98,7 @@
 - [Test defined but never registered](test-defined-but-never-registered.md) — no `run_test` line = never runs; guard by NAME SETS, not counts (#596)
 - [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry masks later assertions; use `?.`
 - [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice (#544, #549)
+- [One row per line must name every hit](one-row-per-line-must-name-every-hit.md) — collapsing N findings re-creates the suppression bug; assert the SECOND hit in the evidence
 - [Verify-then-refetch is not verified](verify-then-refetch-is-not-verified.md) — re-resolving by name installs unaudited bytes; install the verified path
 - [stop/C6-duplicate can hold a live defect](c6-duplicate-stop-can-hold-a-live-defect.md) — a stop verdict on a cycle that ALSO blocked leaves the fix unreviewed (#613)
 
