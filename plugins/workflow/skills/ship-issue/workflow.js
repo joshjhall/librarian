@@ -102,6 +102,11 @@ export const meta = {
 //     conventionsDigest?: string,          // distilled CLAUDE.md/AGENTS.md/memory
 //                                          // rules (#557), so reviewers stop each
 //                                          // re-reading those files
+//     reviewRoute?: 'full' | 'cheap',      // routing verdict from review-route.sh
+//                                          // (#550). 'cheap' ⇒ a DOC-ONLY diff.
+//                                          // Anything but the exact string
+//                                          // 'cheap' means 'full' — a malformed
+//                                          // value fails safe toward full
 //     // --- Re-review narrowing (cycle > 1 only; #492) -------------------------
 //     deltaDiff?:  string,                 // git diff of the fix commits SINCE the last reviewed SHA
 //     deltaFiles?: string[],               // git diff --name-only of that same fix-commit delta
@@ -181,6 +186,7 @@ const KNOWN_ARG_KEYS = [
   'tokenCeiling',
   'preScan',
   'conventionsDigest',
+  'reviewRoute',
   'deltaDiff',
   'deltaFiles',
   'priorBlockingDimensions',
@@ -283,6 +289,24 @@ const conventionsDigestRaw =
   args && typeof args.conventionsDigest === 'string' ? args.conventionsDigest.trim() : ''
 const conventionsDigest = conventionsDigestRaw.slice(0, DIGEST_MAX_CHARS)
 const conventionsDigestTruncated = conventionsDigestRaw.length > conventionsDigest.length
+
+// Routing verdict from scripts/review-route.sh (#550), optional. `cheap` means
+// the caller's classifier proved this diff is DOC-ONLY, so the dimensions whose
+// DIMENSION_RELEVANT_TYPES entry does not claim `docs` have nothing to review.
+//
+// PARSED AS AN ALLOWLIST OF ONE, and that direction is the safety property.
+// Anything that is not the exact string 'cheap' — a typo, null, a number, an
+// object, an absent key — yields 'full'. A malformed value must widen the
+// review, never narrow it: guessing wrong the other way means a diff merging
+// unread by security or correctness.
+//
+// WHY THIS DOES NOT FORGE `clean`. A routed cycle is COMPLETE-BY-DESIGN, not
+// truncated — the same status narrowing already has (#492) — so it does NOT set
+// budgetExhausted or dimensions_skipped, and `computeClean` is untouched. That
+// is sound only because safety rests on the CLASSIFIER: review-route.sh routes
+// cheap solely when every file classifies as doc, and resolves every ambiguity
+// (unknown extension, config file, empty list, bad input) to 'full'.
+const reviewRoute = args && args.reviewRoute === 'cheap' ? 'cheap' : 'full'
 // Caller-supplied output-token ceiling for THIS cycle (#553), optional.
 // Without it the harness is unbounded in practice: every budget gate below is
 // guarded on `budget.total`, which the Workflow runtime populates ONLY from a
@@ -1478,8 +1502,25 @@ const selectReviewDimensions = ({
   budgetFloor,
   reusedDimensions,
   newDimensions,
+  route,
 }) => {
   const narrowed = narrowingActive(cycle, deltaDiff, deltaFiles)
+  // Doc-only routing (#550). `cheap` drops the dimensions that have nothing to
+  // read in a diff containing no source, config, or unknown file.
+  //
+  // ROUTING IS NOT NARROWING AND NOT TRUNCATION, and the difference is what
+  // keeps `clean` honest. A budget-skipped dimension SHOULD have run and did
+  // not — a partial cycle, which can never read clean. A routed-around
+  // dimension had nothing to read. So this path adds NOTHING to
+  // `dimensionsSkipped` and never sets `budgetExhausted`, exactly as narrowing
+  // already behaves.
+  //
+  // WHICH DIMENSIONS SURVIVE is derived from DIMENSION_RELEVANT_TYPES above,
+  // not hardcoded: a dimension runs on a cheap cycle iff its entry claims the
+  // `docs` type. That is the whole lesson of this feature's review history —
+  // five separate blocking findings, every one a place where a hand-maintained
+  // list disagreed with that table. Deriving removes the class.
+  const cheap = route === 'cheap'
   const entries = []
   const dimensionsSkipped = []
   let budgetExhausted = false
@@ -1494,7 +1535,18 @@ const selectReviewDimensions = ({
   // live outside the delta).
   const touchesFor = (dimName) => narrowed && dimensionTouchesDelta(dimName, deltaTypes)
   const priorFor = (dimName) => narrowed && priorSet.has(dimName)
-  const includeDeltaLocal = (dimName) => !narrowed || priorFor(dimName) || touchesFor(dimName)
+  // On a cheap (doc-only) cycle a dimension runs iff its normative entry claims
+  // the `docs` type — DERIVED from DIMENSION_RELEVANT_TYPES, never a second
+  // hardcoded list. `dimensionTouchesDelta` already implements exactly this
+  // lookup (including the '*' wildcard, should one return), so reusing it means
+  // the two can never disagree. Post-#551 the default set is five dimensions
+  // and `decomposition` is the only one whose entry lists `docs`, so a cheap
+  // cycle runs decomposition + scope-drift.
+  const survivesCheapRoute = (dimName) => dimensionTouchesDelta(dimName, new Set(['docs']))
+  const includeDeltaLocal = (dimName) =>
+    cheap
+      ? survivesCheapRoute(dimName)
+      : !narrowed || priorFor(dimName) || touchesFor(dimName)
 
   // Reused dimensions (security, correctness) — cheap, no budget gate, but on a
   // narrowed cycle still subject to the include test.
@@ -1525,7 +1577,7 @@ const selectReviewDimensions = ({
     entries.push({ kind: 'new', dim: d, diff })
   }
 
-  return { entries, budgetExhausted, dimensionsSkipped, narrowed }
+  return { entries, budgetExhausted, dimensionsSkipped, narrowed, cheap }
 }
 
 // `dimensionsRun` is passed in rather than read from the module-scope
@@ -1713,6 +1765,16 @@ const narrowed = narrowingActive(CYCLE, deltaDiff, deltaFiles)
 if (narrowed) {
   log(`re-review cycle ${CYCLE} narrowed to fix delta (${deltaFiles.length} file(s)); scope-drift keeps full diff`)
 }
+// Doc-only routing (#550). Surface it before the selector runs so a routed
+// cycle is never silently indistinguishable from a full one in a transcript —
+// the same reason the narrowing note and the `token bound:` line exist.
+if (reviewRoute === 'cheap') {
+  log(
+    `review route: cheap (doc-only diff) — running only the dimensions whose ` +
+      `DIMENSION_RELEVANT_TYPES entry claims docs, plus scope-drift. This cycle ` +
+      `is complete-by-design, NOT partial: it can still return clean.`
+  )
+}
 const selected = selectReviewDimensions({
   cycle: CYCLE,
   fullDiff: scopeDiff,
@@ -1724,6 +1786,7 @@ const selected = selectReviewDimensions({
   budgetFloor: BUDGET_FLOOR,
   reusedDimensions: REUSED_DIMENSIONS,
   newDimensions: NEW_DIMENSIONS,
+  route: reviewRoute,
 })
 let budgetExhausted = selected.budgetExhausted
 // Names of dimensions that never ran this cycle — skipped at build time (budget
@@ -1748,7 +1811,13 @@ const dimensions = selected.entries
 // gating is unchanged.
 const priorBlockingSet = new Set(priorBlockingDimensions)
 const conditional = []
-for (const name of ['database', 'devops']) {
+// On a cheap route no specialist runs: `database`/`devops` are gated on
+// manifest.needs, set from database/ci/docker file types — none of which a
+// doc-only diff can classify. Skipping the loop outright rather than trusting
+// that arithmetic keeps the route's guarantee a property of ONE branch instead
+// of an emergent consequence of the classifier and the manifest agent
+// agreeing. Like the dimension path, this adds nothing to dimensionsSkipped.
+for (const name of reviewRoute === 'cheap' ? [] : ['database', 'devops']) {
   const needs = !!manifest.needs[name]
   if (!includeSpecialist(name, needs, priorBlockingSet, narrowed)) continue
   const prior = narrowed && priorBlockingSet.has(name)

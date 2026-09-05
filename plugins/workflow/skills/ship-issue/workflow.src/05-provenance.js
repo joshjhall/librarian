@@ -90,6 +90,11 @@
 //     conventionsDigest?: string,          // distilled CLAUDE.md/AGENTS.md/memory
 //                                          // rules (#557), so reviewers stop each
 //                                          // re-reading those files
+//     reviewRoute?: 'full' | 'cheap',      // routing verdict from review-route.sh
+//                                          // (#550). 'cheap' ⇒ a DOC-ONLY diff.
+//                                          // Anything but the exact string
+//                                          // 'cheap' means 'full' — a malformed
+//                                          // value fails safe toward full
 //     // --- Re-review narrowing (cycle > 1 only; #492) -------------------------
 //     deltaDiff?:  string,                 // git diff of the fix commits SINCE the last reviewed SHA
 //     deltaFiles?: string[],               // git diff --name-only of that same fix-commit delta
