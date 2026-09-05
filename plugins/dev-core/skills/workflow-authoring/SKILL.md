@@ -89,6 +89,34 @@ agent the harness drives) and `adversarial-review` (for the self-review pass).
   leaving some *other* column-0 statement still extracts cleanly while silently
   moving the prefix boundary, which only the literal pin catches. A repo-wide
   lint gate was evaluated in #718 and declined as redundant once both exist.
+- **Build the result object in a pure helper BEFORE the boundary.** Everything
+  past `ORCH_BOUNDARY` is unreachable by `extractHelpers`, and that is most of
+  several harnesses — measured 2026-09-05: `ship-issue` 440 lines, `codebase-audit`
+  404, `rebase-agent` 115, `ci-fixer` 110 (`orchestrate` and `code-reviewer` are
+  1-4, because their bodies live in a named function). The terminal
+  `return { … }` sits in that region, so every field it *derives* — a tally, a
+  spread, a computed `clean` — has no regression coverage. Not hypothetical: on
+  PR #634 an all-zero-distribution mutation to `ship-issue`'s return left the
+  entire suite green (#636). Take inputs and do the derivations inside the helper
+  (`buildResult`, `finalResult`) so the residue past the boundary is one call
+  whose arguments a reader can eyeball; lifting only the object *literal* moves
+  the untested expressions to the call site and buys nothing. Have every return
+  path delegate to it — two hand-written literals agree only by inspection.
+- **Cover a boundary-adjacent call site with BOTH layers.** The helper's behavior
+  is unit-tested through `extractHelpers`; the one-line call is pinned literally
+  against `harnessSource(...)`. Neither alone is enough — re-inlining the literal
+  leaves every behavioral assertion passing against a helper nothing calls. Same
+  pairing as the dispatch-tail rule above. Scope an *absence* check to the slice
+  past the boundary (`src.slice(src.search(ORCH_BOUNDARY))`): the expression you
+  are asserting is gone still exists in the prefix, so a whole-file check fails
+  against the correct fix. Assert the slice is non-vacuous too, or a drifted
+  boundary makes all of them pass trivially.
+- **A test that counts N literal emission sites will fight this extraction.**
+  Structural assertions written as "this field appears on both return paths"
+  encode the duplication, so consolidating to one constructor fails them. Re-key
+  them to the new structure — one emission, plus each call site threading its
+  input — rather than relaxing the count; the property they guard is still real
+  (#553/#616 were both re-keyed this way in #636, not deleted).
 - **A raw-source assertion over an orchestration body must tolerate indentation.**
   Anchoring an *absence* check at `^` inside a wrapped body means it can never
   match, so it stays green whether or not the thing it guards survives. Write
