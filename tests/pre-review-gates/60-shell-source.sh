@@ -261,12 +261,22 @@ test_sh_fragment_prefix_allows_three_digits() {
     # multi-segment fragment must not count as its test.
     command printf '%s\n' "echo e" >"$sb/scripts/ruff-version.sh"
     command printf '%s\n' "# test" >"$sb/tests/suite/10-utils-version.sh"
+    # The two controls above are 2-DIGIT, and each width is its own literal glob
+    # — so they cannot catch a regression confined to the 3-digit arm. These two
+    # are their 3-digit twins: verified by mutation that widening ONLY the
+    # 3-digit globs to the rejected `[0-9][0-9][0-9]*-` shorthand passes green
+    # without them.
+    command printf '%s\n' "echo g" >"$sb/scripts/gadget.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/100-notes-gadget.sh"
+    command printf '%s\n' "echo h" >"$sb/scripts/ruff-revision.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/200-utils-revision.sh"
 
     command printf '%s\n' \
         "$sb/scripts/modecheck.sh" "$sb/scripts/widgetry.sh" \
         "$sb/scripts/golem-tracks-runbook.sh" \
         "$sb/scripts/lonely-thing.sh" "$sb/scripts/widget.sh" \
-        "$sb/scripts/ruff-version.sh" >"$sb/files.txt"
+        "$sb/scripts/ruff-version.sh" "$sb/scripts/gadget.sh" \
+        "$sb/scripts/ruff-revision.sh" >"$sb/files.txt"
 
     run_gate_in "$sb" "$sb/files.txt"
 
@@ -294,6 +304,14 @@ test_sh_fragment_prefix_allows_three_digits() {
         "$(category_rows "$GATE_OUT" "missing-test-file" |
             command grep -c 'ruff-version\.sh' || true)" \
         "stripped arm: 10-utils-version.sh must not cover ruff-version.sh (#598 over-match, prefix side)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'gadget\.sh' || true)" \
+        "...and at 3-digit width too: 100-notes-gadget.sh is no fragment (#894)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'ruff-revision\.sh' || true)" \
+        "...stripped arm at 3-digit width: 200-utils-revision.sh must not cover ruff-revision.sh (#894)"
 }
 
 # A `.bash` SOURCE file end-to-end. The `sh | bash)` case label claims .bash is
