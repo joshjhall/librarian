@@ -332,31 +332,38 @@ if [ "$have_fields" -eq 0 ]; then
         exit 0
     fi
 
-    # TRUNCATION DETECTOR. The scrapes above take the shortest span to the first
-    # `"`, so a path containing an ESCAPED quote is cut short — and a cut that
-    # lands BEFORE the `issue-N` segment is not merely a shorter path, it is a
-    # DIFFERENT one that no longer looks like a peer. Measured: a target
-    # `…/issue-6\"36/CLAUDE.md` truncates to `…/issue-6`, which is not a real
-    # worktree, so the structural peer check allows it — SILENTLY, with no
-    # diagnostic, which is the one outcome this guard must never produce.
+    # TRUNCATION DETECTOR — scoped to the SCRAPED VALUE, never the whole payload.
+    # The scrapes above take the shortest span to the first `"`, so a path holding
+    # an escaped quote is cut short — and a cut landing BEFORE the `issue-N`
+    # segment yields a DIFFERENT path that no longer looks like a peer, which the
+    # structural check then allows SILENTLY. That is the one outcome this guard
+    # must never produce, so such a payload fails open LOUDLY instead.
     #
-    # An earlier draft called this an accepted no-jq gap on the reasoning that
-    # "truncation only shortens, and a peer path cannot shorten into an own-tree
-    # prefix match". That is true for a quote AFTER the peer prefix and false for
-    # one BEFORE it — the case that was never measured (review-reported).
+    # SCOPING IS THE WHOLE POINT, and an earlier draft got it catastrophically
+    # wrong: it matched `\"` anywhere in `$payload`. The PreToolUse envelope
+    # carries OTHER golem-controlled fields beside the path — Grep's `pattern`
+    # above all — so grepping a peer for a string containing a quote (searching
+    # for `"description":`, or any quoted literal in code: an everyday search)
+    # tripped the fail-open and skipped the peer deny entirely. Not a corner
+    # case: a routine call, cleanly-scraped peer path, guard bypassed. Verified
+    # live before and after (review-reported, HIGH).
     #
-    # The payload's raw bytes still carry the evidence: if the ORIGINAL JSON held
-    # a backslash-escaped quote inside the value we just scraped, our value is
-    # unreliable. Detect that and fail open LOUDLY rather than scope a path we
-    # know is wrong. jq (present in every normal deployment) decodes such a value
-    # exactly and never reaches this branch.
-    case "$payload" in
-        *'\"'*)
-            printf '%s: PreToolUse input contains an escaped quote and jq is unavailable, so the scraped target (%s) may be truncated and mis-scoped; NOT enforcing (fail-open)\n' \
-                "$DIAG_TAG" "$target" >&2
-            exit 0
-            ;;
+    # So re-derive the span for the key we actually used and test only that. The
+    # `[^"]*` scrape stops at the first quote, so an escaped quote INSIDE the
+    # value shows up as a trailing backslash on the captured text — that is the
+    # signal, and it cannot be forged from a sibling field.
+    case "$target" in
+        *\\) _rsg_trunc=1 ;;
+        *) _rsg_trunc=0 ;;
     esac
+    case "$cwd" in
+        *\\) _rsg_trunc=1 ;;
+    esac
+    if [ "$_rsg_trunc" -eq 1 ]; then
+        printf '%s: the scraped path ends in a backslash, so jq-less extraction truncated it at an escaped quote and it cannot be scoped reliably (target %s); NOT enforcing (fail-open)\n' \
+            "$DIAG_TAG" "$target" >&2
+        exit 0
+    fi
 fi
 
 # --- Resolve a relative target against `cwd` --------------------------------
@@ -450,9 +457,37 @@ fi
 DISGUISED=0
 worktree_root=""
 if [ "$git_dir_abs" = "$common_dir_abs" ]; then
+    # An enclosing primary is necessary but NOT sufficient to call this a
+    # disguise. #506's forge works by rewriting a linked worktree's `<root>/.git`
+    # GITLINK FILE to point at a decoy repo — so the forged session's own
+    # `.git` is still a FILE. A directory that holds a `.git` DIRECTORY was never
+    # a worktree and cannot be a forged one: it is an ordinary nested repo (a
+    # vendored checkout, a scratch `git init`, an example project), and those are
+    # common.
+    #
+    # Without this discriminator the guard emitted its disguise diagnostic on
+    # EVERY read from such a cwd — and since hooks.json registers it globally,
+    # not only for golem sessions, that is every read in any session working
+    # inside a nested repo. The decision stayed a safe allow, but the noise
+    # trains an operator to ignore the single line that signals a REAL forge,
+    # which is the whole value of detecting one (review-reported, reproduced).
+    #
+    # Walk up to the enclosing checkout root and ask what shape ITS `.git` is.
+    # `--show-toplevel` is not consulted (worktree-writable, #501); `cwd` comes
+    # from the payload and the walk is structural.
     _enc="$(_find_enclosing_primary "$cwd")"
     if [ -z "$_enc" ]; then
         exit 0 # genuine main/orchestrator session — never blocked
+    fi
+    # Find the nearest ancestor-or-self of cwd carrying a `.git` entry; that is
+    # this session's own checkout root as git sees it.
+    _own_root="$cwd"
+    while [ -n "$_own_root" ] && [ "$_own_root" != "/" ] && [ ! -e "$_own_root/.git" ]; do
+        _own_root="${_own_root%/*}"
+        [ -n "$_own_root" ] || _own_root="/"
+    done
+    if [ -d "$_own_root/.git" ]; then
+        exit 0 # a nested PRIMARY repo, not a disguised worktree — allow silently
     fi
     DISGUISED=1
     worktree_root="$(_derive_wt_root_poison "$cwd" "$_enc")"

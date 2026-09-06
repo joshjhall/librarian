@@ -292,37 +292,49 @@ test_relative_target_no_cwd_allows_and_is_loud() {
 # `_emit_deny` with unsanitized bytes; it is deliberately unpinned, and this note
 # is why. (Measured 2026-09-05 against the no-jq scraper's truncation behavior.)
 
-# --- No-jq truncation at an escaped quote must fail LOUD, not allow silently --
-# The no-jq scrapes take the shortest span to the first `"`, so a path holding an
-# escaped quote is cut short. An earlier draft called this an accepted gap,
-# reasoning that "truncation only shortens, and a peer path cannot shorten into
-# an own-tree prefix match". True for a quote AFTER the peer prefix — and FALSE
-# for one before it, which was never measured.
+# --- No-jq truncation: LOUD on a truncated PATH, silent on a quoted sibling ---
+# The no-jq scrapes stop at the first `"`, so a path holding an escaped quote is
+# cut short — and a cut landing before the `issue-N` segment yields a path that
+# no longer looks like a peer, which the structural check then allows SILENTLY.
+# So a truncated path fails open LOUDLY instead.
 #
-# Reproduced: a target `…/issue-6\"36/CLAUDE.md` scrapes to `…/issue-6`, a
-# sibling that is not a real worktree, so the structural peer check ALLOWED it
-# with no diagnostic at all. A silent allow is the single outcome this guard must
-# never produce — it is indistinguishable from a working guard.
+# THE SCOPING IS THE CONTRACT, and the first version of this fix inverted it into
+# a live bypass: it looked for `\"` anywhere in the raw payload. The PreToolUse
+# envelope carries other golem-controlled fields beside the path — Grep's
+# `pattern` above all — so a routine `grep '"description":' <peer>` tripped the
+# fail-open and skipped the peer deny entirely, with a cleanly-scraped peer path
+# sitting right there in the payload (review-reported, HIGH, reproduced live).
 #
-# The raw payload still carries the evidence, so the no-jq path now refuses a
-# payload containing an escaped quote and fails open LOUDLY instead of scoping a
-# value it knows may be wrong. jq (present in every normal deployment) decodes
-# such a value exactly and never reaches this branch.
-test_nojq_escaped_quote_fails_open_loudly() {
-    local payload out err
-    # cwd is CLEAN and resolvable; only the TARGET carries the escaped quote, so
-    # any allow here is attributable to the truncation rather than to an
-    # unresolvable cwd (which has its own, already-tested loud path).
-    payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/issue-6\\\\"36/x.txt"}}' \
-        "$WT_DIR" "$WT_PARENT")"
-    local stub="$FIXTURE/stub-bin-nojq"
+# Hence the PAIR below. The first case is the bypass: an ordinary quoted pattern
+# must NOT weaken the decision for a clean peer path. The second is the genuine
+# truncation. Either assertion alone is satisfiable by a broken detector — one by
+# deleting it, the other by making it match everything.
+test_nojq_quoted_pattern_does_not_bypass_peer_deny() {
+    local payload out stub
+    stub="$FIXTURE/stub-bin-nojq"
     command mkdir -p "$stub"
     command ln -sf "$REAL_BASH" "$stub/bash"
     command ln -sf "$REAL_GIT" "$stub/git"
+    # A CLEAN peer path; only the sibling `pattern` field carries an escaped quote.
+    payload="$(printf '{"cwd":"%s","tool_name":"Grep","tool_input":{"pattern":"\\"description\\":","path":"%s"}}' \
+        "$WT_DIR" "$PEER_DIR")"
+    out="$(printf '%s' "$payload" | /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+    assert_contains "$out" '"permissionDecision":"deny"' \
+        "an escaped quote in a SIBLING field (Grep's pattern) must not bypass the peer deny — the detector is scoped to the scraped path, not the whole payload"
+}
+test_nojq_truncated_path_fails_open_loudly() {
+    local payload out err stub
+    stub="$FIXTURE/stub-bin-nojq"
+    command mkdir -p "$stub"
+    command ln -sf "$REAL_BASH" "$stub/bash"
+    command ln -sf "$REAL_GIT" "$stub/git"
+    # The quote is INSIDE the path itself, so the scrape genuinely truncates.
+    payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/issue-6\\"36/x.txt"}}' \
+        "$WT_DIR" "$WT_PARENT")"
     out="$(printf '%s' "$payload" | /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     err="$(printf '%s' "$payload" | /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_output_empty "$out" \
-        "a no-jq payload with an escaped quote emits no deny (fail-open, per the read-guard contract)"
-    assert_contains "$err" "escaped quote" \
-        "...and is LOUD about it — the truncated target must not be scoped silently"
+        "a genuinely truncated path emits no deny (fail-open, per the read-guard contract)"
+    assert_contains "$err" "truncated" \
+        "...and is LOUD about it — a truncated path must not be scoped silently"
 }

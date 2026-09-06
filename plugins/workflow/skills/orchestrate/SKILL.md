@@ -398,7 +398,7 @@ Load `mode-protocol.md` before starting.
 1. **Gather inputs**:
 
    ```bash
-   git worktree list | /usr/bin/wc -l
+   git worktree list | /usr/bin/wc -l   # orchestrator only — never from golem context (#630)
    docker ps --filter "name=agent" --format "{{.Names}}" 2>/dev/null
    docker images -q "*:agent-runner" 2>/dev/null
    ```

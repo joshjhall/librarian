@@ -242,3 +242,55 @@ test_allow_relative_repo_root() {
     assert_equals "allow" "$(decision "$GUARD_OUT")" \
         "a relative path resolving to the repo root (above the worktree dir) is allowed"
 }
+
+# --- A nested independent repo is not a disguise ----------------------------
+# The disguise check asks "is there an enclosing primary?" — necessary but not
+# sufficient. #506's forge rewrites a linked worktree's `<root>/.git` GITLINK
+# FILE, so a forged session's own `.git` is still a FILE. A cwd whose checkout
+# root holds a `.git` DIRECTORY was never a worktree and cannot be a forged one:
+# it is an ordinary nested repo — a vendored checkout, a scratch `git init`, an
+# example project — and those are common.
+#
+# Before this discriminator the guard emitted its disguise diagnostic on EVERY
+# read from such a cwd. hooks.json registers the guard globally, not just for
+# golem sessions, so that is every read in any session working inside a nested
+# repo. The decision stayed a safe allow; the cost was the NOISE. That single
+# stderr line is the only signal a real forge was detected, and burying it under
+# routine false positives trains an operator to ignore it — alert fatigue
+# defeating the detection this PR calls its load-bearing piece.
+#
+# Asserting silence (not just allow) is the point: the old behavior also allowed.
+test_allow_nested_primary_repo_silently() {
+    local nested="$FIXTURE/nested-primary"
+    command mkdir -p "$nested/outer/inner" || {
+        skip_test "nested-repo fixture unavailable"
+        return 0
+    }
+    git_clean -C "$nested/outer" init -q 2>/dev/null || {
+        skip_test "nested-repo fixture unavailable"
+        return 0
+    }
+    git_clean -C "$nested/outer/inner" init -q 2>/dev/null || {
+        skip_test "nested-repo fixture unavailable"
+        return 0
+    }
+    # Arm check: the shape must be the one under test — an enclosing primary
+    # ABOVE a cwd whose own root is a `.git` DIRECTORY. Without both, the case
+    # exercises the ordinary main-session path and proves nothing.
+    if [ ! -d "$nested/outer/.git" ] || [ ! -d "$nested/outer/inner/.git" ]; then
+        skip_test "nested repos did not both materialize"
+        return 0
+    fi
+
+    local out err
+    local payload
+    payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/f.txt"}}' \
+        "$nested/outer/inner" "$nested/outer/inner")"
+    out="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+    err="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+    assert_output_empty "$out" "a nested independent repo is allowed"
+    assert_output_empty "$err" \
+        "...SILENTLY — a benign nested repo must not emit the disguise diagnostic, or the real-forge signal drowns in false positives"
+}
