@@ -192,9 +192,20 @@ _skips_header_written=""
 # not, which puts an alarming-looking error in the middle of a suite that is
 # otherwise fine. Redirecting stderr first means the diagnostic lands in
 # /dev/null along with everything else.
+# `${_skips_header_written:-}`, NOT a bare read, and it is not belt-and-braces.
+# The line above already guards $GITHUB_STEP_SUMMARY defensively; reading the
+# flag bare on the very next line contradicted that, and under `set -u` an
+# out-of-scope read is fatal rather than falsy. The top-level initialisation
+# above covers the normal runner path, but this function is routinely SLICED out
+# of this file and eval'd in isolation — validate-lint-gates.sh, validate-skip-
+# visibility.sh and validate-okf-bundle-gate.sh all do it — where a top-level
+# assignment is not carried along. Found by #697's meta-gate: it passed locally
+# and failed on CI, because the branch only executes when $GITHUB_STEP_SUMMARY
+# is non-empty, i.e. on a runner. Matching the guard style makes every future
+# slicer safe without each one hand-carrying the declaration.
 note_skip_in_step_summary() {
     [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
-    if [ -z "$_skips_header_written" ]; then
+    if [ -z "${_skips_header_written:-}" ]; then
         _skips_header_written=1
         {
             printf '\n### Skipped gates\n\n'
