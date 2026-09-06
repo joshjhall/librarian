@@ -160,6 +160,33 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   per area so a throw outside an assertion cannot mask its siblings. When adding
   a new `.mjs` module directory, add it to `tests/coverage-mjs.sh`'s `--include`
   list or its lines silently vanish from Codecov.
+- **Scanner exclusions ARE project-configurable — via `.claude/pre-review.yml`,
+  and only after the scanner is right** (#894). `ship-issue`'s pre-review
+  pre-scan merges that file over its bundled `test-skip-patterns.default`. It
+  reads three sibling keys that are **distinct claims** — `test_skip_patterns`
+  ("this file needs no test of its own"), `test_patterns` ("this file IS a
+  test"), and `stdout_is_output` ("these writes are the program's output") —
+  so pick by what is structurally true of the file, not by which one silences
+  the row. A sourced fragment (`.`-sourced, no entry point, covered through its
+  parent's suite) is a `test_skip_patterns` entry; it is not a *test*, so
+  `test_patterns` would be a false claim. Two rules govern every addition:
+  (1) **fix the detector before configuring a finding away.** #894 opened with
+  three named files and turned out to be eight, two of which were a glob bug —
+  `tests/golem-scripts/` grew past 99 and the split-suite arm matched exactly
+  two digits, so `100-mode-check.sh` and `110-tracks-runbook.sh` were invisible
+  and their sources read as untested. Config there would have recorded a false
+  claim over a true one; the fix is what makes the file a policy statement
+  rather than a mute button.
+  (2) **an entry states a structural fact, never a preference.** "Has no entry
+  point" qualifies; "we chose not to test this" does not — that file is
+  *untested*, and an exemption would make the gate assert the opposite of the
+  truth, which is the silence-reads-as-a-pass shape (#538/#571) this repo keeps
+  filing issues about. Hence `bin/ruff-version.sh` and the two
+  `.devcontainer/*.sh` lifecycle scripts stay **firing** — the first as the live
+  control that the file is not a blanket mute, the other two because their gap
+  is real and belongs in an issue. Verify a change to that file by A/B: scan
+  `git ls-files '*.sh'` before and after and confirm only the intended rows
+  moved.
 - **The two biggest `workflow.js` harnesses are GENERATED — edit the fragment,
   never the artifact** (#806). `ship-issue/workflow.js` and
   `codebase-audit/workflow.js` are the byte concatenation of the ordered
