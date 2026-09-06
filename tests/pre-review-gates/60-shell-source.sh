@@ -186,6 +186,134 @@ test_sh_stripped_candidate_strips_one_segment() {
         "...and does NOT strip to the last segment — 30-scrape.sh must not match (#598)"
 }
 
+# The split-suite fragment prefix is TWO OR THREE digits, not exactly two (#894).
+#
+# Two and three are ENUMERATED, not unbounded, and the bound is deliberate: the
+# tree today holds 71 two-digit fragments and 2 three-digit ones, and no width
+# is generalizable for free — the `[0-9][0-9]*-` shorthand that would cover
+# every width is precisely the over-match fixed above. A suite that ever passes
+# 999 needs a fourth width added here and in both arms of test-discovery.sh;
+# saying "two or more" would let that read as already handled.
+#
+# tests/golem-scripts/ grew past 99, so `100-mode-check.sh` and
+# `110-tracks-runbook.sh` are real, correctly-named fragments that an exactly-
+# two-digit glob cannot see — golem-mode-check.sh and tracks-runbook.sh were
+# reported untested while their tests sat in the tree. Two rows of a
+# missing-test-file finding that were a DETECTOR BUG, not a coverage gap.
+#
+# Both arms carry the prefix and both were wrong, so both are exercised here:
+#
+#   full-name  sh_test_find_args        100-<name>.sh
+#   stripped   sh_test_find_args_exact  110-<cand>.sh, via one-segment strip
+#
+# THE FIXTURE IS 3-DIGIT ON PURPOSE. A `10-`-prefixed file matches with AND
+# without the fix, so it would pass either way and pin nothing — the divergent
+# input is a prefix longer than two digits. The two-digit control below is what
+# keeps the widening from being mistaken for a removal of the prefix anchor: a
+# glob loosened all the way to `*-<name>.sh` would still pass the first two
+# assertions, so the third names a file whose prefix is not numeric at all.
+#
+# THE FULL-NAME SOURCE IS HYPHENLESS, and that is load-bearing. A hyphenated one
+# (`mode-check.sh`) is ALSO fed to the stripped arm as `check`, whose own
+# `100-check.sh`-shaped glob then matches `100-mode-check.sh` — so reverting the
+# full-name arm alone left this case green, and the mutation survived. Naming the
+# source `modecheck.sh` gives the strip nothing to remove, so the full-name arm
+# is the only route to its test and the assertion fails when that arm regresses.
+#
+# THE LAST TWO ASSERTIONS PIN THE SPELLING, not just the outcome. The widths are
+# enumerated (`[0-9][0-9]-`, `[0-9][0-9][0-9]-`) because the obvious shorthand
+# `[0-9][0-9]*-` is WRONG: a glob `*` matches any characters, not "more digits",
+# so it also matches `10-notes-<name>.sh`. On a short generic stripped candidate
+# that re-opens the over-match test_sh_stripped_candidate_is_exact_only exists to
+# prevent, reached from the prefix side. Both arms therefore get a
+# digits-then-text negative; either one fails if someone collapses the two
+# enumerated globs back into a single `*` form.
+test_sh_fragment_prefix_allows_three_digits() {
+    local sb
+    new_git_sandbox sb
+
+    command mkdir -p "$sb/scripts" "$sb/tests/suite"
+    # Full-name arm: 100-<name>.sh. No hyphen — see the note above.
+    command printf '%s\n' "echo a" >"$sb/scripts/modecheck.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/100-modecheck.sh"
+    # Full-name arm, SUFFIX form: 100-<name>-*.sh. A separate glob from the
+    # exact form above, so it needs its own fixture — verified by mutation that
+    # dropping it alone otherwise passes green. The 2-digit twin is covered by
+    # test_sh_exact_and_fragment_arms_match; this is its 3-digit counterpart.
+    # (sh_test_find_args_exact has no suffix form by design — that arm stays
+    # exact-only, which is what keeps a short stripped candidate anchored.)
+    command printf '%s\n' "echo f" >"$sb/scripts/widgetry.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/100-widgetry-extra.sh"
+    # Stripped arm: golem-tracks-runbook -> tracks-runbook, matched by 110-.
+    command printf '%s\n' "echo b" >"$sb/scripts/golem-tracks-runbook.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/110-tracks-runbook.sh"
+    # Control: the prefix must still be DIGITS. A non-numeric prefix is not a
+    # split-suite fragment and must not resolve.
+    command printf '%s\n' "echo c" >"$sb/scripts/lonely-thing.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/xx-lonely-thing.sh"
+    # Over-match control, FULL-NAME arm: digits then arbitrary TEXT before the
+    # name. `[0-9][0-9]*-widget.sh` would match this; the enumerated widths
+    # must not.
+    command printf '%s\n' "echo d" >"$sb/scripts/widget.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/10-notes-widget.sh"
+    # Over-match control, STRIPPED arm: `ruff-version` strips to `version`, a
+    # short generic token — the very shape #598 measured. An unrelated
+    # multi-segment fragment must not count as its test.
+    command printf '%s\n' "echo e" >"$sb/scripts/ruff-version.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/10-utils-version.sh"
+    # The two controls above are 2-DIGIT, and each width is its own literal glob
+    # — so they cannot catch a regression confined to the 3-digit arm. These two
+    # are their 3-digit twins: verified by mutation that widening ONLY the
+    # 3-digit globs to the rejected `[0-9][0-9][0-9]*-` shorthand passes green
+    # without them.
+    command printf '%s\n' "echo g" >"$sb/scripts/gadget.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/100-notes-gadget.sh"
+    command printf '%s\n' "echo h" >"$sb/scripts/ruff-revision.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/200-utils-revision.sh"
+
+    command printf '%s\n' \
+        "$sb/scripts/modecheck.sh" "$sb/scripts/widgetry.sh" \
+        "$sb/scripts/golem-tracks-runbook.sh" \
+        "$sb/scripts/lonely-thing.sh" "$sb/scripts/widget.sh" \
+        "$sb/scripts/ruff-version.sh" "$sb/scripts/gadget.sh" \
+        "$sb/scripts/ruff-revision.sh" >"$sb/files.txt"
+
+    run_gate_in "$sb" "$sb/files.txt"
+
+    assert_equals "0" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'modecheck\.sh' || true)" \
+        "a 3-digit fragment resolves on the full-name arm: 100-<name>.sh (#894)"
+    assert_equals "0" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'widgetry\.sh' || true)" \
+        "...and on its SUFFIX form too: 100-<name>-*.sh (#894)"
+    assert_equals "0" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'golem-tracks-runbook\.sh' || true)" \
+        "a 3-digit fragment resolves on the stripped arm: 110-<cand>.sh (#894)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'lonely-thing\.sh' || true)" \
+        "the prefix anchor still requires digits — xx-<name>.sh is no fragment (#894)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'widget\.sh' || true)" \
+        "full-name arm: digits then TEXT is no fragment — 10-notes-<name>.sh must not match (#894)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'ruff-version\.sh' || true)" \
+        "stripped arm: 10-utils-version.sh must not cover ruff-version.sh (#598 over-match, prefix side)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'gadget\.sh' || true)" \
+        "...and at 3-digit width too: 100-notes-gadget.sh is no fragment (#894)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'ruff-revision\.sh' || true)" \
+        "...stripped arm at 3-digit width: 200-utils-revision.sh must not cover ruff-revision.sh (#894)"
+}
+
 # A `.bash` SOURCE file end-to-end. The `sh | bash)` case label claims .bash is
 # handled, and both the colocated list and the repo-rooted globs carry .bash
 # arms — but every other case here scans a `.sh` source and varies .bash only on

@@ -1,0 +1,57 @@
+# Project configuration for ship-issue's pre-review pre-scan
+# (plugins/workflow/skills/ship-issue/pre-review-gates.sh).
+#
+# Entries here are merged over the bundled test-skip-patterns.default. The
+# decision to have this file at all, and the rules for adding to it, are
+# recorded in CLAUDE.md § "Scanner exclusions are project-configurable" (#894).
+#
+# The scanner reads three sibling keys and they are DISTINCT claims — pick by
+# what is structurally true of the file, since each suppresses a different thing:
+#
+#   test_skip_patterns  this file needs no test of its own
+#   test_patterns       this file IS a test
+#   stdout_is_output    this file's print/console.log IS the program's output
+#
+# Two standing rules, both load-bearing:
+#
+#   1. Fix the scanner before configuring a finding away. Every entry below was
+#      added only after confirming the row is CORRECT — that no test for the
+#      file exists — rather than a detector miss. #894 found two of its eight
+#      rows were a glob bug (split-suite fragments numbered past 99), and
+#      silencing those here would have recorded a false claim over a true one.
+#   2. An entry states a STRUCTURAL fact about the file, never a preference
+#      about testing it. "Has no entry point" qualifies; "we chose not to test
+#      this" does not — that file is untested, and an exemption would make the
+#      gate assert the opposite of the truth.
+
+test_skip_patterns:
+  # Sourced fragments: `.`-sourced into a parent script, providing functions and
+  # nothing else. Each says "Sourced, not executed" in its own header. There is
+  # no entry point to invoke, so a test named after the file could not run it —
+  # the behaviour is covered through the parent's suite.
+  #
+  # NOT a glob. Three paths each verified sourced-only; `**/*-signals.sh` or
+  # similar would silently absorb a future standalone script that genuinely
+  # needs a test.
+
+  # Provides bounded_run(); sourced by callers needing a timeout(1) without GNU
+  # coreutils. The two copies are pinned identical by tests/lint-bounded-run-sync.sh
+  # (the plugin installs standalone, so it cannot source the repo-level one).
+  - "bin/bounded-run.sh"
+  - "plugins/workflow/scripts/bounded-run.sh"
+
+  # The two per-golem signal families read and rendered by golem-status.sh,
+  # extracted as a sourced fragment (#800).
+  - "plugins/workflow/scripts/golem-status-signals.sh"
+
+  # DELIBERATELY ABSENT — these still fire, and should:
+  #
+  #   bin/ruff-version.sh            a standalone executable with no test of its
+  #                                  own. Kept firing as the live control that
+  #                                  this file is not a blanket mute (#894 AC2).
+  #   .devcontainer/post-create.sh   have entry points and run for real. The
+  #   .devcontainer/post-start.sh    accurate word for them is UNTESTED, not
+  #                                  exempt (post-create is behaviorally covered
+  #                                  only on its ruff stage; post-start has no
+  #                                  coverage at all). Tracked as a real gap by
+  #                                  #948, not silenced by a suppression.

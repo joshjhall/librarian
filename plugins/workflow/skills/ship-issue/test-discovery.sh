@@ -117,7 +117,19 @@ has_repo_rooted_js_test() {
 #              <stem>_*.<ext>, so `tests/validate-golem-scripts.sh` and
 #              `tests/validate-release-notes.sh` both count.
 #   fragment — `NN-<name>.sh` / `NN-<name>-*.sh`, the split-suite layout (#564)
-#              where cases live in tests/<suite>/NN-<area>.sh.
+#              where cases live in tests/<suite>/NN-<area>.sh. The numeric
+#              prefix is TWO **or three** digits (#894): tests/golem-scripts/
+#              has grown past 99, so a two-digit-only glob cannot see
+#              100-mode-check.sh or 110-tracks-runbook.sh and reports their
+#              sources untested while the tests sit in the tree.
+#
+#              The widths are ENUMERATED (`[0-9][0-9]-`, `[0-9][0-9][0-9]-`),
+#              never `[0-9][0-9]*-`. A glob `*` matches ANY characters, not
+#              "more digits", so the `*` spelling also admits arbitrary text
+#              between the prefix and the name: `10-notes-version.sh` would
+#              satisfy `version`, silently suppressing a real finding. That is
+#              the over-match class sh_test_find_args_exact was hardened
+#              against, reached from the prefix side — measured, not theorized.
 #
 # Tokens are never whitespace-bearing: literal find flags plus globs built from
 # a basename with its extension stripped.
@@ -127,7 +139,8 @@ sh_test_find_args() {
 
     for glob in \
         "${name}.sh" "${name}.bash" \
-        "[0-9][0-9]-${name}.sh" "[0-9][0-9]-${name}-*.sh"; do
+        "[0-9][0-9]-${name}.sh" "[0-9][0-9]-${name}-*.sh" \
+        "[0-9][0-9][0-9]-${name}.sh" "[0-9][0-9][0-9]-${name}-*.sh"; do
         if [ "$first" -eq 1 ]; then first=0; else command printf '%s\n' "-o"; fi
         command printf '%s\n' "-name" "$glob"
     done
@@ -159,6 +172,17 @@ sh_test_find_args() {
 # tree, and every one of them is `.sh` — there is no `NN-<area>.bash` anywhere,
 # nor any `.bash` file at all. Adding a `.bash` fragment arm would widen the
 # match surface of the already-restricted stripped candidate to buy nothing.
+#
+# Its numeric prefix admits three digits as well as two (#894), spelled as TWO
+# ENUMERATED globs rather than `[0-9][0-9]*-`. The `*` spelling was written
+# first and is wrong here in the way this function most cares about: a glob `*`
+# matches any characters, not "more digits", so `[0-9][0-9]*-${cand}.sh` also
+# matches `10-notes-${cand}.sh`. On a short generic stripped candidate — the
+# `version` of `ruff-version` — that re-opens the exact over-match measured
+# above (`bin/ruff-version.sh` vs `tests/release/10-version-utils.sh`), just
+# reached from the prefix side instead of the suffix side. Enumerating the
+# widths keeps every character between the prefix and `-${cand}.sh` a digit, so
+# `100-` and `110-` resolve while the candidate anchor stays exact.
 sh_test_find_args_exact() {
     local cand="$1"
     local ext glob first=1
@@ -172,6 +196,7 @@ sh_test_find_args_exact() {
         done
     done
     command printf '%s\n' "-o" "-name" "[0-9][0-9]-${cand}.sh"
+    command printf '%s\n' "-o" "-name" "[0-9][0-9][0-9]-${cand}.sh"
 }
 
 # find_repo_rooted_sh_tests <name-no-ext> [max] — paths of shell tests under

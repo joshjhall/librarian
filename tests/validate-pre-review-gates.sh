@@ -166,6 +166,7 @@ run_fragment_test test_sh_stem_forms_all_match "all 6 stems x 3 forms x both ext
 run_fragment_test test_sh_exact_and_fragment_arms_match "exact same-name and NN-<name> split-suite fragment arms match (#598)"
 run_fragment_test test_sh_stripped_candidate_is_exact_only "the hyphen-stripped candidate is exact-only — no wildcard false negative (#598)"
 run_fragment_test test_sh_stripped_candidate_strips_one_segment "the stripped candidate removes ONE segment, not all (#598)"
+run_fragment_test test_sh_fragment_prefix_allows_three_digits "split-suite fragment prefix is two or three digits, on both arms; digits-then-text is not (#894)"
 run_fragment_test test_bash_source_is_scanned "a .bash SOURCE routes through the sh|bash arm, colocated and repo-rooted (#598)"
 run_fragment_test test_sh_colocated_hyphen_form_matches "the colocated list accepts the hyphen test-<name> form (#598)"
 run_fragment_test test_sh_probe_ignores_directories "a directory named like a shell test does not suppress the finding (#598)"
