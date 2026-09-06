@@ -809,11 +809,20 @@ index_targets() {
     ' "$1"
 }
 
-# fm_get FILE NAME — a frontmatter value by bare name: TOP LEVEL, or exactly one
-# level under a top-level block literally named `metadata:`. Mirrors
-# frontmatter_fields()+field() in the python twin, whose dict holds top-level
-# keys plus `metadata.*` flattened, and whose field() looks up only those two
-# spellings.
+# fm_get FILE NAME — a frontmatter value by bare name: TOP LEVEL, or under a
+# top-level block literally named `metadata:`. Mirrors frontmatter_fields()+
+# field() in the python twin, whose dict holds top-level keys plus `metadata.*`
+# flattened, and whose field() looks up only those two spellings.
+#
+# DEPTH IS NOT LIMITED, and saying so is deliberate. `parent` is reset only by a
+# top-level line, so ANY depth under an open `metadata:` block resolves —
+# `metadata:` / `sub:` / `status: deprecated` yields `deprecated`. The python
+# twin does exactly the same (its `prefix` is likewise touched only by
+# non-indented lines), so this is parity, not a bash quirk. An earlier draft of
+# this comment claimed "exactly one level"; the code never enforced that, and a
+# maintainer who "fixed" the code to match would have BROKEN parity rather than
+# restored it (#669 review cycle 2). Pinned by a two-level fixture in
+# tests/validate-okf-detectors.sh.
 #
 # THE SCOPING IS THE POINT, and an earlier version of this function had the
 # comment without the code: it stripped indentation from every line and returned
@@ -860,9 +869,9 @@ fm_get() {
                 if (k == want && v != "") { print v; exit }
                 next
             }
-            # Indented: only `metadata:`-scoped keys are visible, and only one
-            # level down. A deeper line is inside a nested block, so the parent
-            # is no longer `metadata` for our purposes.
+            # Indented: visible only while the open block is `metadata:`. Depth
+            # is NOT limited — `parent` survives until the next top-level line,
+            # so a key two levels down still resolves, matching the python twin.
             if (parent == "metadata" && k == want && v != "") { print v; exit }
         }
     ' "$1"

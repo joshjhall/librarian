@@ -252,7 +252,14 @@ def frontmatter_fields(lines: list[str]) -> dict[str, str]:
 
 
 def field(fields: dict[str, str], name: str) -> str:
-    """A frontmatter value by bare name, top level or under `metadata.`."""
+    """A frontmatter value by bare name, top level or under `metadata.`.
+
+    ANY depth under an open `metadata:` block resolves, not just one level:
+    `prefix` above is touched only by non-indented lines, so `metadata:` /
+    `sub:` / `status: deprecated` lands as `metadata.status`. The bash twin's
+    `fm_get` mirrors this exactly — a depth limit in either would be a parity
+    break, which is why a two-level fixture pins the behavior (#669 cycle 2).
+    """
     return fields.get(name, fields.get("metadata." + name, ""))
 
 

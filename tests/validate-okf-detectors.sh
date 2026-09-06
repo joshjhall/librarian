@@ -1062,6 +1062,32 @@ test_frontmatter_scoping_parity() {
     assert_fires "$list" memory-stale "status: deprecated" \
         "okf: the same key under metadata: IS read (the scoping is narrow, not off)"
 
+    # (1b) DEPTH IS NOT LIMITED under `metadata:`. Both runtimes reset the
+    # parent only on a top-level line, so a key TWO levels down still resolves.
+    # Pinned because the code's comment once claimed a one-level limit it never
+    # enforced: a maintainer "fixing" the code to match would have broken parity
+    # with the python twin rather than restored it (#669 cycle 2).
+    b="$(graph_bundle)"
+    command printf -- '* [Deep](deep.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\nmetadata:\n  sub:\n    status: deprecated\n---\n\nBody.\n' \
+        >"$b/deep.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-stale "status: deprecated" \
+        "okf: a key two levels under metadata: still resolves (no depth limit, both impls)"
+
+    # (1c) A VALUED top-level key CLOSES an open `metadata:` block, so an
+    # indented line after it is out of scope. This targets the
+    # `parent = (v == "") ? k : ""` reset specifically: with that reset removed,
+    # every other fixture here still passes, because none places an indented
+    # line after a VALUED top-level key that follows an open metadata: block.
+    b="$(graph_bundle)"
+    command printf -- '* [Closed](closed.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\nmetadata:\n  note: x\ntitle: closes the block\n  status: deprecated\n---\n\nBody.\n' \
+        >"$b/closed.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-stale \
+        "okf: a valued top-level key closes the metadata block, so a later indented key is out of scope"
+
     # (2) A nested `type:` appearing BEFORE the real top-level one. The bash twin
     # returned the nested value, so a document legitimately declaring
     # `type: feedback` was reported okf-missing-type and never reached its
@@ -1105,6 +1131,28 @@ test_fm_has_finds_a_non_first_key() {
     list="$(list_bundle "$b")"
     assert_fires "$list" okf-missing-type "no type key" \
         "okf: a concept with no type at all still fires"
+
+    # A key whose NAME is a prefix of another must not be satisfied by it. The
+    # row pattern ends at a TAB (`"$1$TAB"*`), which is what separates `type`
+    # from `typeface`; a bare prefix match would report a typed concept for a
+    # document that never declared one.
+    b="$(graph_bundle)"
+    command printf -- '* [Face](face.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\nname: prefix-only\ntypeface: serif\n---\n\nBody.\n' >"$b/face.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" okf-missing-type "no type key" \
+        "okf: a key that merely STARTS WITH the wanted name does not satisfy it"
+
+    # A value CONTAINING a tab must not break row parsing: the row is
+    # `key<TAB>value<TAB>line`, so an embedded tab makes extra fields, and only
+    # the leading `key<TAB>` anchor keeps the lookup correct.
+    b="$(graph_bundle)"
+    command printf -- '* [Tabbed](tabbed.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\ndescription: has\ta\tembedded tabs\ntype: reference\n---\n\nBody.\n' \
+        >"$b/tabbed.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" okf-missing-type \
+        "okf: a tab inside an earlier value does not hide a later type key"
 }
 
 # ============================================================================
