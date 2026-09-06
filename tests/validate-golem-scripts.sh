@@ -360,6 +360,8 @@ run_fragment_test test_status_checkpoint_elapsed_from_started "golem-status: --c
 run_fragment_test test_status_checkpoint_elapsed_fallback_no_started "golem-status: --checkpoint ELAPSED falls back to a ~-marked worktree-mtime age when .started is absent (#515)"
 run_fragment_test test_status_checkpoint_elapsed_fallback_malformed_started "golem-status: --checkpoint ELAPSED falls back to the mtime anchor on a malformed .started too (#515)"
 run_fragment_test test_status_checkpoint_elapsed_no_anchor_stays_dash "golem-status: --checkpoint ELAPSED stays — with no worktree anchor, never a fabricated ~age (#515)"
+run_fragment_test test_status_checkpoint_elapsed_stat_failure_stays_dash "golem-status: --checkpoint ELAPSED fails open to — when stat returns garbage (#522)"
+run_fragment_test test_status_checkpoint_elapsed_fallback_watch_suppression "golem-status: --checkpoint a mtime-fallback golem still suppresses no-op --watch sweeps (#522)"
 run_fragment_test test_status_checkpoint_empty_and_no_jq_guards "golem-status: --checkpoint empty-state + jq-missing early returns exit 0 (#415)"
 run_fragment_test test_status_checkpoint_pool_header "golem-status: --checkpoint renders the pool.json header ahead of the table (#415)"
 run_fragment_test test_status_checkpoint_live_tail_row "golem-status: --checkpoint renders a (live) tail row for a cache-less session (#415)"
