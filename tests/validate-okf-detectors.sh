@@ -1140,8 +1140,10 @@ test_fm_has_finds_a_non_first_key() {
     # reported okf-missing-type despite declaring one.
     #
     # THE FIXTURE PUTS type LAST, which is the divergent case: a fixture with
-    # `type` first passes with and without the fix. This repo's own 215 memories
-    # all write name:/description: before type:, so this fired on every one.
+    # `type` first passes with and without the fix. It has to be purpose-built —
+    # this repo's bundle contains ZERO files of the triggering shape (all 217
+    # typed memories nest `type` under `metadata:`), so neither the whole-repo
+    # differential nor any real-bundle run could ever have surfaced it.
     b="$(graph_bundle)"
     command printf -- '* [Late](late.md) - x\n' >>"$b/MEMORY.md"
     command printf -- '---\nname: late-type\ndescription: type is the third key\ntype: reference\n---\n\nBody.\n' \

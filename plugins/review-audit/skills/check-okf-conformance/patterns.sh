@@ -523,11 +523,17 @@ parse_frontmatter() {
 # `type` was not the very first frontmatter key was reported okf-missing-type
 # despite declaring one.
 #
-# Not hypothetical, and not small: every one of this repo's own 215 memories
-# writes `name:`/`description:` before `type:`, so all 215 were being reported
-# as missing a type they actually have. Python's dict lookup has no such
-# ordering dependence, which is why this surfaced as a bash/python divergence
-# (#669 review cycle 1) rather than as a wrong-looking report.
+# BLAST RADIUS, MEASURED (2026-09-06) rather than asserted: the bug fires on a
+# concept carrying a TOP-LEVEL `type` that is not the first frontmatter key.
+# Python's dict lookup has no ordering dependence, so bash reported
+# okf-missing-type where python stayed silent — a parity break, not a
+# both-runtimes-wrong report.
+#
+# This repo's own bundle has ZERO such files (all 217 typed memories nest `type`
+# under `metadata:`, which BOTH runtimes correctly report as okf-missing-type per
+# §4.1's top-level requirement), so the fix changes nothing here. That is why it
+# had to be found by a purpose-built fixture: the whole-repo differential is
+# bounded by repo content, and no file in this repo has the triggering shape.
 fm_has() {
     local line
     while IFS= read -r line; do
