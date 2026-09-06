@@ -28,9 +28,10 @@
 # The signal — the last TOP-LEVEL (isSidechain == false) assistant record's
 # `message.stop_reason`:
 #   working  — stop_reason == "tool_use": a tool call is in flight right now.
-#   idle     — stop_reason "end_turn"/"stop_sequence": the turn ended, so the
+#   idle     — stop_reason "end_turn"/"stop_sequence" AND the turn ended on
+#              something that cannot have left background work behind: the
 #              session is parked at its prompt (covers both the #229 errored-idle
-#              and the #447 done-and-idle cases).
+#              and the #447 done-and-idle cases). See THE END_TURN AMBIGUITY.
 #   errored  — the idle subclass that failed: the last top-level assistant record
 #              carries `isApiErrorMessage == true` ("API Error: …"), OR a
 #              `type=="system"` "Unknown command" record trails the last turn
@@ -39,6 +40,48 @@
 # A transcript with no top-level assistant turn yet AND no command error is
 # INDETERMINATE (exit 2) — the caller falls back to the mtime heartbeat rather
 # than assert anything.
+#
+# THE END_TURN AMBIGUITY (issue #890) — the most important thing in this file
+# ---------------------------------------------------------------------------
+# `end_turn` => idle is correct only for a SYNCHRONOUS turn. Whenever work
+# OUTLIVES the turn that started it — a `run_in_background` Bash task, a
+# `Monitor`, or a `Workflow` harness — the turn genuinely ends and the work
+# genuinely continues. #890 measured five false "idle" reports in ONE session,
+# every one a golem doing real work (a test suite, a `git push` running the
+# pre-push hook, a review harness mid-fan-out).
+#
+# Measured on a real transcript in this repo: every `Workflow` tool_use record is
+# immediately followed by an `end_turn`, and the window before the next top-level
+# record ran 2.7 min and 8.7 min. Replaying that transcript against the pre-fix
+# script prints `idle`; against this one it is indeterminate.
+#
+# THE EVIDENCE THIS FILE USES: the tool call in the record immediately BEFORE the
+# end_turn. If it names a background-capable tool (Workflow / Monitor / Bash),
+# the turn MAY have left work running, so `idle` is not a supportable verdict:
+#
+#   last pre-end_turn tool call      | verdict
+#   ---------------------------------|--------------------------
+#   background-capable               | unknown -> exit 2
+#   ordinary (Read/Edit/...) / none  | idle
+#
+# DEGRADE TOWARD UNKNOWN, NEVER TOWARD IDLE. Reaching `idle` now requires
+# POSITIVE evidence that the turn ended on something that cannot have left work
+# behind. An indeterminate verdict hands the golem to the caller's mtime
+# heartbeat — which DOES detect a real stall — instead of calling it idle.
+# Reporting a working golem as idle is the bug; reporting a stalled one as
+# indeterminate merely defers to the tier that was always the fallback.
+#
+# Bash is treated as background-capable even though MOST Bash calls are
+# foreground: the transcript does not record `run_in_background`, so the tool
+# name is all there is. That over-triggers the indeterminate arm — a golem whose
+# last act was an ordinary `git status` degrades to indeterminate rather than
+# idle — and that asymmetry is deliberate, because its cost is a heartbeat
+# fallback while the other direction's cost is the bug this file exists to fix.
+#
+# A SECOND, EXPLICIT SIGNAL IS PLANNED (issue #890, follow-up): a registry a
+# golem writes to declare its open background work, which would upgrade the
+# indeterminate arm above to a positive `working` verdict. It is deliberately NOT
+# part of this change — see that issue for why it is reviewed separately.
 #
 # STALENESS BOUND on `working`. A `working` verdict asserts "a tool call is in
 # flight RIGHT NOW", but the transcript alone cannot prove currency: if the
@@ -212,11 +255,72 @@ class="$(
                            and .value.type == "system"
                            and ((.value.content // "") | test("Unknown command"))) ]
                 | length ) as $unk
-              | if $unk > 0 then "errored" else "idle" end
-            end
+              | if $unk > 0 then "errored"
+                else
+                  # Signal B (#890): the turn ended — did it leave background work
+                  # behind? Emit the tool names from the last top-level record that
+                  # actually MADE a tool call, so the shell can decide
+                  # idle-vs-indeterminate. Emitted as "idle:<name>,<name>" (never a
+                  # bare "idle") so a parser change here cannot silently read as
+                  # the old value.
+                  #
+                  # Collect EVERY tool call made since this turn-run began, not
+                  # just the nearest one. Two distinct slips live here:
+                  #
+                  #  (a) The end_turn record carries its own closing text block, so
+                  #      "the last record with a content array" picks THAT, finds no
+                  #      tool_use, and reads as "ordinary" — restoring the false
+                  #      idle. Measured with the rest of the fix in place.
+                  #  (b) Taking only the nearest TOOL-CALLING record is also wrong:
+                  #      a golem that starts a background task and then makes one
+                  #      more ordinary call before parking
+                  #      (Workflow -> Read -> end_turn) hides the background
+                  #      evidence one hop back. Measured: that shape classified
+                  #      `idle`, and it occurs 3 times across 50 real transcripts
+                  #      in this repo — not a theoretical case.
+                  #
+                  # The scan is BOUNDED by the turn-run start so evidence cannot
+                  # leak in from an already-finished turn. The boundary is the last
+                  # top-level USER record that is a real human message rather than a
+                  # tool_result: a tool_result is the tool loop continuing within
+                  # one turn, whereas a string/text user record is a new prompt.
+                  ( [ $recs | to_entries[]
+                      | select(.key < $last.key
+                               and .value.type == "user"
+                               and ((.value.isSidechain // false) == false)
+                               and ((.value.message.content | type) == "string"
+                                    or ((.value.message.content | type) == "array"
+                                        and ([ .value.message.content[]
+                                               | select(.type == "tool_result") ]
+                                             | length) == 0)))
+                      | .key ] | last // -1 ) as $turn_start
+                  | ( [ $recs | to_entries[]
+                        | select(.key > $turn_start
+                                 and .key <= $last.key
+                                 and .value.type == "assistant"
+                                 and ((.value.isSidechain // false) == false))
+                        | (.value.message.content // [])
+                        | select(type == "array")
+                        | .[] | select(.type == "tool_use") | (.name // "") ]
+                      | unique ) as $names
+                  | ($names | join(",")) as $tools
+                  | "idle:" + $tools
+                end
+              end
         end
     ' "$newest" 2>/dev/null
 )"
+
+# Does a comma-separated tool-name list contain a BACKGROUND-CAPABLE tool?
+# The three mechanisms that can outlive their turn are a `run_in_background` Bash
+# task, a `Monitor`, and a `Workflow` harness. See the header for why Bash is
+# included despite most Bash calls being foreground.
+tools_are_background_capable() {
+    case ",$1," in
+        *,Bash,* | *,Monitor,* | *,Workflow,*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 # Newest transcript mtime in epoch seconds (GNU `stat -c %Y` then BSD `stat -f
 # %m`, mirroring golem-gate-watch.sh's _mtime_epoch). Empty if it cannot stat —
@@ -248,9 +352,26 @@ case "$class" in
                 ;;
         esac
         ;;
-    idle | errored)
-        # Not mtime-gated: a long-idle/errored golem is still correctly idle/errored.
+    errored)
+        # Not mtime-gated: a long-errored golem is still correctly errored.
         command printf '%s\n' "$class"
+        ;;
+    idle:*)
+        # The turn ENDED. Was it on something that could have left background work
+        # running? (#890 — see THE END_TURN AMBIGUITY in the header.) `$class` is
+        # "idle:<tool>,<tool>": the tool names from the last top-level tool-calling
+        # turn, or "idle:" when that turn made none.
+        _tools="${class#idle:}"
+        if tools_are_background_capable "$_tools"; then
+            # NOT evidence of idleness: work may still be running. Degrade to
+            # indeterminate so the caller's mtime heartbeat decides — it detects a
+            # genuine stall, whereas a false `idle` hides a working golem.
+            command echo "golem-transcript-liveness: turn ended after a background-capable tool (${_tools:-none}) — indeterminate, not idle (#890)" >&2
+            exit 2
+        fi
+        # The turn ended on an ordinary tool (or none), which cannot have left
+        # background work behind. Genuinely idle.
+        command printf '%s\n' "idle"
         ;;
     *)
         # "unknown" (no top-level turn, no error) or an empty/failed parse:

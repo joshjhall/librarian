@@ -30,6 +30,178 @@ run_liveness() {
             "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$arg" 2>&1)" || RUN_RC=$?
 }
 
+# #890 — THE MEASURED BUG. A turn that ended immediately after a background-capable
+# tool call must NOT be reported idle: the work may still be running. Five golems
+# were misreported this way in one session (a suite run, a push executing the
+# pre-push hook, a review harness mid-fan-out). Verdict is INDETERMINATE (exit 2),
+# handing the golem to the caller's mtime heartbeat, which detects a real stall.
+test_liveness_background_capable_turn_is_indeterminate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"launched"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "a background-capable turn-end is indeterminate, not idle"
+    # NOT `[ "$RUN_OUT" != 'idle' ]`: run_liveness captures 2>&1 and this path
+    # writes a sentence to stderr, so RUN_OUT can never equal the bare word and the
+    # comparison would be true regardless of the logic. Assert the real property —
+    # nothing was written to STDOUT, which is where a class word would appear.
+    assert_true "[ -z \"\$(command printf '%s' \"$RUN_OUT\" | command grep -c '^idle$')\" ] || [ \"\$(command printf '%s' \"$RUN_OUT\" | command grep -c '^idle$')\" = '0' ]" \
+        "no bare class word is emitted on the indeterminate path (got '$RUN_OUT')"
+}
+
+# Each of the three background-capable tools independently arms the indeterminate
+# arm. Table-driven because the defect is the CLASS — a guard naming only one tool
+# leaves the other two reporting a false idle.
+test_liveness_all_background_tools_are_indeterminate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb tool
+    for tool in Workflow Monitor Bash; do
+        new_sandbox sb
+        plant_transcript "$sb" 42 \
+            "$(command printf '%s\n%s' \
+                "{\"type\":\"assistant\",\"isSidechain\":false,\"message\":{\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"tool_use\",\"name\":\"$tool\"}]}}" \
+                '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"x"}]}}')"
+        run_liveness "$sb" "$sb/.worktrees/issue-42"
+        assert_exit 2 "$RUN_RC" "$tool before end_turn is indeterminate"
+    done
+}
+
+# The NARROWNESS half: a turn ending on an ORDINARY tool cannot have left work
+# behind and is still `idle`. Without this the fix could pass by making everything
+# indeterminate, which would destroy the idle signal the column exists to give.
+test_liveness_ordinary_tool_turn_end_still_idle() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "an ordinary-tool turn-end exits 0"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" "still classifies idle (got '$RUN_OUT')"
+}
+
+# A turn that made NO tool call at all is idle — the plain done-and-parked case
+# (#447). Pins that an empty tool list is not mistaken for background-capable.
+test_liveness_no_tool_call_turn_end_still_idle() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"hi"}]}}'
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a no-tool-call turn-end exits 0"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" "classifies idle (got '$RUN_OUT')"
+}
+
+# The end_turn record carries its OWN content array (its closing text block), so a
+# naive "last content array" read finds no tool_use there, yields an empty list,
+# and reads as `ordinary` — silently restoring the false idle. This fixture has a
+# text block AFTER the background tool call, which is the shape that exposed it.
+test_liveness_trailing_text_does_not_mask_background_tool() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"narration"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"more narration"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "trailing text records do not mask the background tool call"
+}
+
+# The background call is not always the LAST call of the turn. A golem that starts
+# a background task and then makes one more ordinary call before parking
+# (Workflow -> Read -> end_turn) hid the background evidence one hop back and
+# classified `idle`. Measured: this shape occurs 3 times across 50 real
+# transcripts in this repo, so it is an everyday shape, not a corner case. The
+# walk-back therefore accumulates every tool call made since the turn began.
+test_liveness_background_before_ordinary_still_indeterminate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s\n%s\n%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"user","isSidechain":false,"message":{"content":[{"type":"tool_result"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read"}]}}' \
+            '{"type":"user","isSidechain":false,"message":{"content":[{"type":"tool_result"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "a background call earlier in the SAME turn still forces indeterminate"
+}
+
+# The BOUND on that accumulation, and the reason it is not simply "scan
+# everything": evidence from an ALREADY-FINISHED turn must not leak forward, or
+# every golem that ever ran a Workflow would read as indeterminate forever. A real
+# human prompt (a string/text user record, NOT a tool_result) starts a new turn.
+test_liveness_previous_turn_background_does_not_leak() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s\n%s\n%s\n%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"user","isSidechain":false,"message":{"content":[{"type":"tool_result"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"turn one done"}]}}' \
+            '{"type":"user","isSidechain":false,"message":{"content":"a new human prompt"}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"turn two done"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a new human prompt bounds the scan (rc=$RUN_RC, out='$RUN_OUT')"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" \
+        "background evidence from a FINISHED turn does not leak forward (got '$RUN_OUT')"
+}
+
+# A SIDECHAIN (sub-agent) tool call must not drive the verdict: the classifier is
+# about the top-level session's own state. Without this, dropping the isSidechain
+# filter in a future edit would wrongly force indeterminate on every golem whose
+# sub-agent happened to call a background-capable tool.
+test_liveness_sidechain_tool_does_not_drive_verdict() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s\n%s' \
+            '{"type":"assistant","isSidechain":true,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "a sidechain background call does not force indeterminate"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" \
+        "only the top-level session's own tool calls drive the verdict (got '$RUN_OUT')"
+}
+
 # A last top-level assistant turn still in flight (stop_reason "tool_use") → working.
 test_liveness_working() {
     if ! command -v jq >/dev/null 2>&1; then
