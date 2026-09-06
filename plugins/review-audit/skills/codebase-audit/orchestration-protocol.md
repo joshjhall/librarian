@@ -45,6 +45,18 @@ under the break-even). A delegated survey returns the classification and its
 | Config         | `.json`, `.yaml`, `.yml`, `.toml`, `.ini`, `.env*`, `Makefile`, `Dockerfile`            |
 | Doc            | `.md`, `.rst`, `.txt`, `README*`, `CHANGELOG*`, `docs/`                                 |
 | AI Config      | `.claude/`, `CLAUDE.md`, `**/CLAUDE.md`, skill/agent `.md` files, `.claude.json`, hooks |
+| Memory bundle  | `.md` under the resolved memory-bundle root (`$OKF_BUNDLE_ROOT` -> `$MEMORY_BUNDLE_ROOT` -> `.claude/memory`) |
+
+**Memory bundle takes precedence over AI Config and Doc.** A bundle file matches
+all three patterns — it is `.md` (Doc) living under `.claude/` (AI Config) — so
+without an explicit precedence the broader rows win, the `Memory bundle` label is
+never produced, and the Step 2 row keyed on it below routes nothing. The `memory`
+domain would then appear in `domains[]` with an empty file list and report a
+clean bundle it never read, which is the silent-gap failure this repo treats as
+worse than a loud one. Classify by the **resolved bundle root** (the same
+resolution order `check-okf-conformance` and `check-decomposition` share, so one
+setting moves every bundle-aware consumer together); an **empty** root means no
+bundle is configured and no file takes this label.
 
 4. Filter untracked `.env*` files out of scanner manifests. Run
    `git ls-files --error-unmatch <file>` for each `.env*` match — if the file
@@ -121,6 +133,7 @@ scanners based on classification:
 | Config files            | security only                                                 |
 | Doc files               | docs, ai-config, decomposition                                |
 | AI Config files         | ai-config, decomposition                                      |
+| Memory bundle files     | memory, decomposition                                         |
 | Source + paired test    | test-gaps (paired)                             |
 | High-churn files (deep) | all scanners                                   |
 | All files (per scope)   | project agents (self-filtering)                |
@@ -208,8 +221,8 @@ regex-matchable findings at zero LLM cost.
 1. **Map findings to scanner domains**: Match check-\* skill names to audit
    agent domains (e.g., `check-security` → `audit-security`,
    `check-code-health` → `audit-code-health`, `check-decomposition` →
-   `audit-decomposition`). Unmatched findings go into a standalone `pre-scan`
-   findings group.
+   `audit-decomposition`, `check-okf-conformance` → `audit-memory`).
+   Unmatched findings go into a standalone `pre-scan` findings group.
 
 1. **Include pre-scan findings in scanner manifests**: When dispatching each
    audit agent in Step 3, include the relevant pre-scan findings in the task
@@ -244,9 +257,9 @@ before the aggregate step.
 The active scanner set is whatever `map` discovered, with the domain-override
 precedence (a `check-*` skill overrides the `audit-*` agent for its domain; a
 project agent overrides a built-in of the same name). Built-in domains:
-code-health, security, test-gaps, architecture, docs, ai-config, lifecycle; plus
-any project agents discovered under `.claude/agents/audit-*`. The `categories`
-parameter restricts the set.
+code-health, security, test-gaps, architecture, docs, ai-config, lifecycle,
+memory; plus any project agents discovered under `.claude/agents/audit-*`. The
+`categories` parameter restricts the set.
 
 The **verify** pass is adversarial and runs as **one barrier over the full
 cross-domain finding set** (issue #490): a single fresh `checker` that did not

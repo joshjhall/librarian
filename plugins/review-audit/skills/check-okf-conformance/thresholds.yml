@@ -125,3 +125,100 @@ severity_health:
   memory-multi-index: low
   memory-stale: low
   memory-missing-why: low
+
+# --- SLICE C: THE SEMANTIC PASS (#670) ---------------------------------------
+#
+# Slices A and B ask questions a regex can decide. This block configures the
+# ones it cannot: are two memories the same lesson in different words, is a
+# durable lesson sitting in scratch storage, does a memory restate what the repo
+# already records. Its consumer is the `audit-memory` AGENT, not patterns.sh —
+# nothing here is read by either scanner runtime, and no category below is
+# emitted deterministically. That is deliberate: a regex that guessed at these
+# would be the noise generator this slice was designed not to be.
+#
+# CONFIG, NOT CONVENTION — the same rule the health block states, and it matters
+# more here. Every default below is librarian's own habit. A consuming repo that
+# names memories after tickets ON PURPOSE, or keeps everything in one tier, must
+# be able to turn each judgment off without editing an agent definition. An
+# auditor that hardcodes one repo's taste is wrong everywhere else by
+# construction.
+semantic:
+  # WHICH PATHS ARE WHICH TIER. A durable lesson in short-term storage is lost
+  # at the next rebuild; session state committed as long-term knowledge is noise
+  # every future session pays for. Both are invisible to slice A/B, which never
+  # ask what a path MEANS.
+  #
+  # Matched against the bundle-relative path, `*` glob or literal. A bundle with
+  # no tier split configures `short_term` empty and gets ZERO
+  # memory-tier-misplaced rows — the correct answer for a flat bundle, not a
+  # finding on every file. These two are dev-core's memory-conventions skill
+  # (committed root vs gitignored tmp/) stated as config.
+  #
+  # PRECEDENCE: `short_term` is checked FIRST, and the first list that matches
+  # wins. The two lists overlap by construction — the defaults below are a
+  # catch-all `*.md` against a `tmp/` prefix, so `tmp/foo.md` matches BOTH — and
+  # without a stated order the tier of every short-term file is decided by
+  # whichever pattern the reader happens to try first. A config block whose whole
+  # argument is "config, not convention" cannot leave its own shipped defaults
+  # ambiguous, so the order is part of the contract rather than an inference.
+  #
+  # This also means a `long_term` catch-all is the SAFE default spelling: it
+  # cannot swallow the short-term subtree, so a consuming repo adds one
+  # `short_term` prefix without having to re-anchor its long-term patterns.
+  tiers:
+    long_term:
+      - "*.md"
+    short_term:
+      - tmp/*
+      - tmp/**/*
+
+  # WHAT A MEMORY MUST NOT MERELY RESTATE. A memory whose content is already
+  # recorded somewhere the agent can read is a maintenance liability: it drifts
+  # from its source silently, and recall spends budget on it every session.
+  #
+  # Each entry names a SOURCE the agent should check a candidate against before
+  # calling it derivable. Naming the source is what makes the finding
+  # falsifiable — "duplicates CLAUDE.md § Releases" can be argued with; "seems
+  # derivable" cannot. An empty list disables memory-derivable entirely.
+  derivable_sources:
+    - CLAUDE.md
+    - AGENTS.md
+    - README.md
+    - git-history
+
+  # NAMING POLICY. `lesson` = the filename should name the durable lesson, so a
+  # file named after a ticket is a session note wearing a memory's clothes.
+  # `none` disables memory-name-not-lesson for a repo that names by ticket on
+  # purpose. This is the single most repo-specific judgment in the slice, which
+  # is exactly why it is a switch and not an assumption.
+  naming_policy: lesson # lesson | none
+
+  # Filenames exempt from the naming policy regardless — reserved OKF files and
+  # the indexes, none of which name a lesson because none of them IS one.
+  naming_exempt:
+    - index.md
+    - log.md
+    - MEMORY.md
+    - index-*.md
+
+  # HOW SURE THE AGENT MUST BE BEFORE PROPOSING A MERGE. `high` reports only
+  # pairs stating the same lesson with the same trigger; `medium` also reports
+  # pairs that overlap substantially but may be deliberately distinct.
+  #
+  # The default is `high` ON PURPOSE. A merge recommendation is the most
+  # expensive finding in this slice to be wrong about — a bad merge destroys a
+  # distinction someone recorded deliberately, and unlike every other category
+  # here the damage is not reversible by ignoring the row. An auditor that
+  # cannot say "leave it" gets ignored wholesale, and this repo already carries
+  # the inverse lesson as `blocking==[] is not "nothing to fix"`.
+  duplicate_sensitivity: high # high | medium
+
+# Per-category severity for the semantic pass. Advisory, every one of them: this
+# slice RECOMMENDS and never applies. Merges are human-confirmed, and the apply
+# path belongs to slice D, which executes only transforms a human reviewed.
+severity_semantic:
+  memory-near-duplicate: medium
+  memory-tier-misplaced: medium
+  memory-derivable: low
+  memory-weak-index-line: low
+  memory-name-not-lesson: low

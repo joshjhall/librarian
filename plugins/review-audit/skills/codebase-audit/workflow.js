@@ -649,7 +649,9 @@ const mapPrompt = () =>
   `- Glob the file tree within scope: ${sanitize(scope) || '(entire repo)'} (depth: ${depth}).\n` +
   `- EXCLUDE submodule paths (git submodule status --recursive), vendored / ` +
   `third-party dirs, and untracked .env* files; collect every excluded path.\n` +
-  `- Classify files (source/test/config/doc/ai-config) and detect language(s) + ` +
+  `- Classify files (source/test/config/doc/ai-config/memory-bundle; a .md under ` +
+  `the resolved memory-bundle root is memory-bundle, which takes precedence over ` +
+  `the broader ai-config and doc patterns) and detect language(s) + ` +
   `framework + project name and the platform (github/gitlab from git remote).\n` +
   `- Discover the scanners to run: project-level .claude/skills/check-*, ` +
   `user-level ~/.claude/skills/check-*, then backward-compatible ` +
@@ -658,7 +660,8 @@ const mapPrompt = () =>
   `for the same domain; a project agent overrides a built-in of the same name).\n` +
   `- Build ONE domain entry per scanner with its routed file subset (use the ` +
   `Step 2 routing table: source->code-health/security/architecture/lifecycle, ` +
-  `test->test-gaps, config->security, doc->docs+ai-config, ai-config->ai-config; ` +
+  `test->test-gaps, config->security, doc->docs+ai-config, ai-config->ai-config, ` +
+  `memory-bundle->memory+decomposition; ` +
   `project agents self-filter over all in-scope files via routing_hint).\n` +
   (onlyCategories
     ? `- Restrict to these domains only: ${sanitizeList(onlyCategories).join(', ')}.\n`

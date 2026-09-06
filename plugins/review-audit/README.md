@@ -44,7 +44,7 @@ coverage in a `## Language Support` matrix in its own `contract.md`; those
 matrices are gate-checked against both runtimes by
 `tests/lint-language-table-sync.sh`.
 
-## Agents (9)
+## Agents (11)
 
 The `codebase-audit` orchestrator fans out to per-dimension audit agents, then
 routes grouped findings to the objective writer — `issue-writer` (tracker) or
@@ -56,7 +56,9 @@ routes grouped findings to the objective writer — `issue-writer` (tracker) or
 | `audit-ai-config` | Claude Code artifact quality, drift, misconfigurations |
 | `audit-architecture` | Circular deps, coupling, bus-factor, layer violations, god modules |
 | `audit-code-health` | File length, complexity, duplication, dead code, naming |
+| `audit-decomposition` | Oversized files — the concrete seam, or a reasoned decline |
 | `audit-docs` | Stale comments, missing API docs, outdated READMEs |
+| `audit-memory` | Memory-bundle semantics — near-duplicate merges, tier placement, derivable content |
 | `audit-security` | OWASP patterns, secrets, insecure crypto, missing validation |
 | `audit-test-gaps` | Untested APIs, missing error-path/edge-case tests |
 | `issue-writer` | Turns grouped findings into issues; de-dupes before creating |

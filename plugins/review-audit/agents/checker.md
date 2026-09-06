@@ -91,8 +91,10 @@ Determine files to check based on the scope parameter:
 
 - `scope=codebase` or `scope=codebase:<path>`: Glob for all files within
   scope. Run `wc -l` via Bash on source files for line counts. Classify files
-  by extension (source, test, config, doc, AI config) using the same rules as
-  the codebase-audit skill.
+  by extension (source, test, config, doc, AI config, memory bundle) using the
+  same rules as the codebase-audit skill — including its precedence rule, since
+  a memory-bundle file matches the broader `doc` and `AI config` patterns too
+  and would otherwise never carry the label the `memory` domain routes on.
 
 - `scope=diff:<base>...<head>`: Run `git diff --name-only <base>...<head>`
   via Bash. Classify only changed files.

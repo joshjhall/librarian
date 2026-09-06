@@ -17,9 +17,11 @@ two hundred perfectly-formed concepts that no index names are written but never
 recallable. That is invisible to any per-file rule, because it is a property of
 the bundle as a whole.
 
-Still out of scope: semantic quality (near-duplicates, tier placement) is slice
-C, and migration is separate. **Index SIZING is out of scope too, deliberately**
-— see § Index sizing is delegated below.
+Semantic quality — near-duplicate concepts, tier placement, derivable content —
+is **slice C (#670)**, and it is deliberately not a scanner: it lives in the
+`audit-memory` agent, which consumes these rows (see § Pass 2). Migration is
+separate. **Index SIZING is out of scope too, deliberately** — see § Index
+sizing is delegated below.
 
 **Companion files**: See `contract.md` for the output format and the
 conformance-vs-health distinction the certainty tiers carry. See
@@ -165,7 +167,13 @@ configuration alone and no code change.
 ## Pass 2 — LLM Analysis
 
 The pre-scan decides the structural questions on its own; the LLM pass adds the
-judgment a regex cannot:
+judgment a regex cannot. That pass is the **`audit-memory` agent**
+(slice C, #670), which consumes this scanner's rows and adds the semantic
+categories `memory-near-duplicate`, `memory-tier-misplaced`,
+`memory-derivable`, `memory-weak-index-line` and `memory-name-not-lesson`. Its
+conventions are read from the `semantic:` block in `thresholds.yml`, never
+hardcoded, and every finding it emits is advisory: merges are human-confirmed.
+Alongside those, the pass judges:
 
 - **Is a `type` value meaningful?** `type: thing` is conformant and always will
   be — the floor cannot reject it — but a reviewer can note that it carries no
