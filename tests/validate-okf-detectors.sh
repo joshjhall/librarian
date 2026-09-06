@@ -845,6 +845,34 @@ test_memory_orphan() {
     assert_fires "$list" memory-orphan "unlisted.md" \
         "okf: ...and an unmentioned concept in the same bundle is still an orphan"
 
+    # TWO BUNDLES IN ONE FILE LIST. The pass runs once per DISTINCT bundle
+    # directory found in the list, and each concept is judged against ITS OWN
+    # index — a monorepo shape, and the branch that separates "collect the
+    # bundle dirs" from "resolve one root". Without it, a scanner that kept only
+    # the first (or last) directory would look correct on every single-bundle
+    # fixture above.
+    local b2 both
+    b="$(fresh_bundle)"
+    b2="$(fresh_bundle)"
+    command printf -- '# Index\n\n* [A](a.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/a.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/orphan1.md"
+    command printf -- '# Index\n\n* [B](b.md) - x\n' >"$b2/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b2/b.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b2/orphan2.md"
+    both="$(make_list "$b/../../../mb.txt" \
+        "$b/MEMORY.md" "$b/a.md" "$b/orphan1.md" \
+        "$b2/MEMORY.md" "$b2/b.md" "$b2/orphan2.md")"
+    # Each bundle's own orphan is reported...
+    assert_fires "$both" memory-orphan "orphan1.md" \
+        "okf: the first bundle's orphan is found when two bundles share a file list"
+    assert_fires "$both" memory-orphan "orphan2.md" \
+        "okf: the second bundle's orphan is found too (the pass runs per bundle dir)"
+    # ...and neither bundle's INDEXED concept is orphaned by the other's index,
+    # which is what a single-root implementation would get wrong.
+    assert_not_contains "$(emit_rows sh "$both" memory-orphan)" "/a.md" \
+        "okf: a concept indexed in its own bundle is not orphaned by the other's index (bash)"
+
     # A DANGLING WIKI-LINK IS NOT A FINDING (#669 AC). OKF tolerates a link to
     # knowledge not yet written; this repo's own MEMORY.md tells authors to link
     # liberally to names that do not exist yet. Distinct from a dangling INDEX
