@@ -301,6 +301,8 @@ c. **Invoke the `Workflow` tool** with
 `~/.claude/skills/ship-issue/workflow.js` — **already opted in**
 (`ship-protocol.md` § *Workflow authority*, #637) — passing:
 
+<!-- contract: args-keys-pr-cycle -->
+
 ```text
 args: {
   phase: "pr-cycle",
@@ -331,6 +333,8 @@ args: {
   priorBlockingDimensions: [<dimension names that blocked last cycle>]
 }
 ```
+
+<!-- contract: end-args-keys-pr-cycle -->
 
 `diff`/`files` stay the **FULL PR scope** (byte-faithful, from step a, per #267),
 load-bearing on narrowed cycles too; `files` sizes the result summary.

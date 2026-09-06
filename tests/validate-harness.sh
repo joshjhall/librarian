@@ -318,6 +318,71 @@ test_extract_contract_inline_mention_is_not_a_delimiter() {
     command rm -rf "$d"
 }
 
+# An INDENTED marker is still a delimiter (#886). Every ship-issue args-key
+# contract sits inside a numbered-list item, where a column-0 HTML block would
+# end the list and restart its numbering — so the markers must be indented, and
+# both the file-discovery scan and the extraction pass must honor them. Pinned
+# on BOTH halves: an id found only by discovery extracts an empty region, and an
+# empty region is exactly the vacuous pass this helper exists to prevent.
+test_extract_contract_indented_marker_is_a_delimiter() {
+    local d out
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md \
+        '1. **Step one** — prose above.' \
+        '' \
+        '   <!-- contract: indented -->' \
+        '' \
+        '   indented body' \
+        '' \
+        '   <!-- contract: end-indented -->' \
+        '' \
+        '   tail prose after the region'
+    out="$(CONTRACT_SEARCH_ROOT="$d" extract_contract indented)"
+    assert_contains "$out" "indented body" \
+        "extract_contract: an indented marker opens a region (list-item nesting)"
+    assert_not_contains "$out" "tail prose" \
+        "extract_contract: an indented CLOSING marker ends the region"
+
+    # TABS too, not just spaces. The predicate uses [[:space:]], so a narrowing
+    # to a space-only class (`[ ]*`) would still pass every fixture above —
+    # the mutation this case exists to catch. An editor auto-indenting a list
+    # item with a tab is the realistic way that would surface.
+    local dt out_t
+    dt="$(command mktemp -d)"
+    {
+        command printf '1. **Step one**\n\n'
+        command printf '\t<!-- contract: tabbed -->\n\n'
+        command printf '\ttabbed body\n\n'
+        command printf '\t<!-- contract: end-tabbed -->\n\n'
+        command printf '\ttail prose after the tabbed region\n'
+    } >"$dt/a.md"
+    out_t="$(CONTRACT_SEARCH_ROOT="$dt" extract_contract tabbed)"
+    assert_contains "$out_t" "tabbed body" \
+        "extract_contract: a TAB-indented marker opens a region ([[:space:]], not [ ])"
+    assert_not_contains "$out_t" "tail prose" \
+        "extract_contract: a TAB-indented closing marker ends the region"
+    command rm -rf "$dt"
+    command rm -rf "$d"
+}
+
+# ...and the relaxation must not cost the property it replaced: a marker
+# preceded by PROSE is still not a delimiter. Whitespace is allowed; words are
+# not. Without this, the #886 change would silently widen a region to EOF the
+# first time a companion file documented the marker syntax.
+test_extract_contract_indented_mention_is_not_a_delimiter() {
+    local d out
+    d="$(command mktemp -d)"
+    contract_fixture "$d" a.md \
+        '<!-- contract: alpha -->' \
+        'before' \
+        '   Use the `<!-- contract: beta -->` marker, even indented.' \
+        'after'
+    out="$(CONTRACT_SEARCH_ROOT="$d" extract_contract alpha)"
+    assert_contains "$out" "after" \
+        "extract_contract: an INDENTED mid-line mention still does not end the region"
+    command rm -rf "$d"
+}
+
 # Regex-special characters in an id must be matched LITERALLY. The marker search
 # is fixed-string precisely so a `+`/`(` in an id cannot be reinterpreted as a
 # BRE-vs-ERE operator — the silent GNU/BSD divergence CLAUDE.md warns about,
@@ -666,6 +731,8 @@ run_test test_extract_contract_duplicate_within_file_fails "extract_contract: id
 run_test test_extract_contract_empty_id_fails "extract_contract: empty id fails loud"
 run_test test_extract_contract_inline_mention_is_not_a_delimiter "extract_contract: prose mention is not a delimiter"
 run_test test_extract_contract_mention_only_id_is_not_found "extract_contract: mention-only id does not resolve"
+run_test test_extract_contract_indented_marker_is_a_delimiter "extract_contract: indented marker opens and closes a region"
+run_test test_extract_contract_indented_mention_is_not_a_delimiter "extract_contract: indented prose mention is not a delimiter"
 run_test test_extract_contract_regex_special_id_is_literal "extract_contract: regex-special id matches literally"
 run_test test_extract_contract_explicit_file_scopes_the_search "extract_contract: explicit file scopes the search"
 

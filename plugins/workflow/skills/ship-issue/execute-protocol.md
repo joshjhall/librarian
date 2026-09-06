@@ -101,12 +101,18 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      / file `deferrable`, commit + push + re-check CI each cycle, terminate when
      clean + green + every comment resolved-or-deferred **and** the convergence
      predicate says stop (ceiling `REVIEW_MAX_CYCLES`; #596). Its `args` keys:
+
+     <!-- contract: args-keys-execute-summary -->
+
      `phase`, `cycle`, `maxCycles`, `files`, `diff`, `prComments`, `issue`,
-     `preScan`, `conventionsDigest`, plus opt-in `tokenCeiling` and the
-     conditional delta trio
-     (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`). Unknown keys are
-     rejected and **none has a path/file variant** — pass `diff` inline at any
-     size. Full block: `ci-review-protocol.md` step c.
+     `preScan`, `conventionsDigest`, `reviewRoute`, plus opt-in `tokenCeiling`
+     and the conditional delta trio
+     (`deltaFiles`/`deltaDiff`/`priorBlockingDimensions`).
+
+     <!-- contract: end-args-keys-execute-summary -->
+
+     Unknown keys are rejected and **none has a path/file variant** — pass
+     `diff` inline at any size. Full block: `ci-review-protocol.md` step c.
    - **File deferred review findings** — file each via `/workflow:file-issue` (autonomous
      fallback: `gh issue create --body-file`, never interpolating LLM text into a
      shell arg), link them on the PR, and append a "Review findings" section to

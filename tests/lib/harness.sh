@@ -427,6 +427,22 @@ assert_file_not_contains() {
 # then pass against. That vacuous-pass mode is the specific way a prose gate
 # rots into sitting inert while reporting green.
 
+# Shared awk predicate: does line `l` OPEN with marker `m`, ignoring indentation?
+#
+# One definition, used by both the file-discovery scan and the extraction pass,
+# so the two can never disagree about what counts as a delimiter — a divergence
+# would let a file be SELECTED for an id whose region then extracts empty.
+#
+# Whitespace-only prefix, deliberately: an indented marker is still a delimiter
+# (it is inside a list item), while a marker preceded by prose is NOT (a
+# companion file explaining the marker syntax must not truncate a region).
+_CX_STARTS='
+function _cx_starts(l, m,   p) {
+    p = index(l, m)
+    return p > 0 && substr(l, 1, p - 1) ~ /^[[:space:]]*$/
+}
+'
+
 # CONTRACT_SEARCH_ROOT — where extract_contract searches when given no file.
 # Overridable so a gate can narrow the search; a gate that sets it can pin a
 # block wherever it lives.
@@ -456,9 +472,17 @@ extract_contract() {
             command printf 'extract_contract: FATAL — no file given and CONTRACT_SEARCH_ROOT is unset\n' >&2
             return 2
         fi
-        # Line-initial only (see the extraction awk below): a prose mention of
-        # the marker syntax must not make an id look present — or, worse,
-        # duplicated across files, which would abort the suite.
+        # Line-initial, modulo INDENTATION (see the extraction awk below): a
+        # prose mention of the marker syntax must not make an id look present —
+        # or, worse, duplicated across files, which would abort the suite.
+        #
+        # Leading whitespace is allowed because a marker inside a numbered-list
+        # item must be indented to stay in that item: in CommonMark a column-0
+        # HTML block ENDS the list, so the following item restarts at 1. The
+        # ship-issue args-key contracts (#886) are all inside such items. This
+        # costs nothing, because what the anchor actually excludes is a marker
+        # preceded by PROSE ("Use the `<!-- contract: beta -->` marker to…"),
+        # and prose is never whitespace — see the awk helper below.
         #
         # FIXED-STRING, not a regex. The marker is always a literal, and ids are
         # author-supplied, so building a pattern out of one means escaping it —
@@ -467,13 +491,14 @@ extract_contract() {
         # the silent GNU-vs-BSD divergence CLAUDE.md singles out: the pattern
         # quietly stops matching, zero files come back, and the id then reports
         # as "not found". `grep -F` sidesteps the whole class — there is no
-        # pattern to escape — and `-l` + the awk index()==1 check below enforce
+        # pattern to escape — and `-l` + the awk `_cx_starts` check below enforce
         # the line-initial requirement that the `^` anchor used to.
         files="$(command grep -rlF "$marker" "$CONTRACT_SEARCH_ROOT" \
             --include='*.md' 2>/dev/null |
             while IFS= read -r _f; do
-                # Keep only files where the marker STARTS a line.
-                command awk -v m="$marker" 'index($0, m) == 1 { found = 1; exit }
+                # Keep only files where the marker OPENS a line (indent aside).
+                command awk -v m="$marker" "$_CX_STARTS"'
+                    _cx_starts($0, m) { found = 1; exit }
                     END { exit !found }' "$_f" && command printf '%s\n' "$_f"
             done || true)"
     fi
@@ -511,14 +536,16 @@ extract_contract() {
     # Emit from the line AFTER the marker up to (not including) the next
     # contract marker, or EOF.
     #
-    # A delimiter must START the line. Prose that *mentions* the marker syntax
-    # mid-sentence (the companion files explain these markers to their readers)
-    # would otherwise terminate a region early — silently truncating it, so
-    # assertions on the tail half fail with no hint why. Anchoring at column 0
-    # keeps documentation about the mechanism from breaking the mechanism.
-    command awk -v m="$marker" '
-        index($0, m) == 1 { grab = 1; next }
-        grab && index($0, "<!-- contract:") == 1 { exit }
+    # A delimiter must OPEN the line (indentation aside — see _CX_STARTS). Prose
+    # that *mentions* the marker syntax mid-sentence (the companion files explain
+    # these markers to their readers) would otherwise terminate a region early —
+    # silently truncating it, so assertions on the tail half fail with no hint
+    # why. Anchoring at the first non-blank keeps documentation about the
+    # mechanism from breaking the mechanism, while still allowing a marker to be
+    # indented into the list item it belongs to.
+    command awk -v m="$marker" "$_CX_STARTS"'
+        _cx_starts($0, m) { grab = 1; next }
+        grab && _cx_starts($0, "<!-- contract:") { exit }
         grab { print }
     ' "$files"
 }
