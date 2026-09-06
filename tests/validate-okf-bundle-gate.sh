@@ -513,8 +513,12 @@ test_bundle_root_with_sed_metacharacter_is_still_scanned() {
 
     run_gate "$bundle" "$baseline"
 
-    assert_contains "$GATE_OUT" "1 files" \
-        "the file under a metacharacter root is counted"
+    # `(1 files,` not `1 files`: assert_contains is a plain substring test, and
+    # the bare needle is satisfied by "21 files" / "31 files" too, so it could
+    # not distinguish "counted once" from "counted eleven times". The paren and
+    # comma come from the `(%s files, %s findings)` format string.
+    assert_contains "$GATE_OUT" "(1 files," \
+        "exactly one file under a metacharacter root is counted"
     assert_contains "$GATE_OUT" "okf-missing-type" \
         "the finding under a metacharacter root is REPORTED, not silently skipped"
     assert_exit "1" "$GATE_RC" \
@@ -578,11 +582,20 @@ test_non_ascii_filename_is_still_scanned() {
     command git -C "$bundle" config user.email t@example.com
     command git -C "$bundle" config user.name Test
 
-    # Written via printf so the fixture does not depend on this file's own
-    # encoding surviving an editor round-trip.
-    local fname
-    fname="$(command printf 'caf\303\251.md')"
-    nonconformant "$bundle/$fname"
+    # ALL THREE ARMS of the C-quoting rule, not just the non-ASCII one. The
+    # comment on the fix names a quote, a tab, AND a non-ASCII byte as triggers;
+    # pinning only the third would leave the other two verified once by hand and
+    # never again, so a later "simplification" back to a bare `read -r` could
+    # reintroduce them with the suite still green. Written via printf so the
+    # fixture does not depend on this file's own encoding surviving an editor
+    # round-trip. A tab is included only when the filesystem accepts it.
+    local fname n=0
+    for fname in "$(command printf 'caf\303\251.md')" \
+        "$(command printf 'quote\"me.md')" \
+        "$(command printf 'tab\tme.md')"; do
+        nonconformant "$bundle/$fname" 2>/dev/null || continue
+        n=$((n + 1))
+    done
     command git -C "$bundle" add -A
     command git -C "$bundle" commit -qm "add" 2>/dev/null
 
@@ -591,12 +604,51 @@ test_non_ascii_filename_is_still_scanned() {
 
     run_gate "$bundle" "$baseline"
 
-    assert_contains "$GATE_OUT" "1 files" \
-        "the non-ASCII path is counted, not dropped as an unresolvable name"
+    assert_contains "$GATE_OUT" "($n files," \
+        "every C-quoted path is counted, none dropped as an unresolvable name"
     assert_contains "$GATE_OUT" "okf-missing-type" \
-        "the finding under a non-ASCII filename is REPORTED, not silently skipped"
+        "the findings under C-quoted filenames are REPORTED, not silently skipped"
     assert_exit "1" "$GATE_RC" \
-        "the gate FAILS rather than passing over a file it could not resolve"
+        "the gate FAILS rather than passing over files it could not resolve"
+}
+
+# The residual gap the -z fix does NOT close, pinned so it stays loud. $FILE_LIST
+# is one path per line — the scanner's contract (patterns.sh's read loops and
+# patterns.py's splitlines()), not this gate's choice — so a filename containing
+# a literal LF survives `-z` and then splits into two useless lines. Before the
+# guard this reported "2 files, 0 findings" and PASSED, the same silent symptom
+# as the other two. Widening the contract to NUL would mean changing the sibling
+# review-audit plugin, out of scope for #697; failing loud is the right answer
+# either way, since "cannot represent this bundle" must never render as clean.
+test_newline_in_filename_fails_loud_rather_than_silently_skipping() {
+    local bundle baseline fname
+    make_bundle bundle
+    command git -C "$bundle" init -q 2>/dev/null || {
+        skip_test "git unavailable — cannot test newline filenames"
+        return 0
+    }
+    command git -C "$bundle" config user.email t@example.com
+    command git -C "$bundle" config user.name Test
+
+    fname="$(command printf 'new\nline.md')"
+    nonconformant "$bundle/$fname" 2>/dev/null || {
+        skip_test "filesystem rejects a newline in a filename"
+        return 0
+    }
+    command git -C "$bundle" add -A
+    command git -C "$bundle" commit -qm "add" 2>/dev/null
+
+    baseline="$WORKDIR/newline.baseline"
+    write_baseline "$baseline"
+
+    run_gate "$bundle" "$baseline"
+
+    assert_exit "1" "$GATE_RC" \
+        "an unrepresentable path fails the gate rather than passing"
+    assert_contains "$GATE_OUT" "contains a newline" \
+        "the failure names the actual cause"
+    assert_not_contains "$GATE_OUT" "(2 files," \
+        "the corrupted two-line split is never reported as a real count"
 }
 
 # --- --regen ----------------------------------------------------------------
@@ -717,6 +769,8 @@ run_test test_baseline_entry_with_trailing_comment_still_parses \
     "a baseline entry with a trailing # rationale still ratchets"
 run_test test_non_ascii_filename_is_still_scanned \
     "a non-ASCII bundle filename is still scanned (ls-files -z, not C-quoted)"
+run_test test_newline_in_filename_fails_loud_rather_than_silently_skipping \
+    "a newline in a filename fails loud, never a silent partial scan"
 run_test test_regen_writes_the_observed_counts \
     "--regen tightens the baseline to the observed counts"
 run_test test_unknown_argument_is_rejected \
