@@ -55,14 +55,28 @@
 # record ran 2.7 min and 8.7 min. Replaying that transcript against the pre-fix
 # script prints `idle`; against this one it is indeterminate.
 #
-# THE EVIDENCE THIS FILE USES: the tool call in the record immediately BEFORE the
-# end_turn. If it names a background-capable tool (Workflow / Monitor / Bash),
-# the turn MAY have left work running, so `idle` is not a supportable verdict:
+# THE EVIDENCE THIS FILE USES: EVERY top-level tool call made since the current
+# turn began — not merely the one immediately before the `end_turn`. If ANY of
+# them names a background-capable tool (Workflow / Monitor / Bash), the turn may
+# have left work running, so `idle` is not a supportable verdict:
 #
-#   last pre-end_turn tool call      | verdict
+#   tool calls made this turn        | verdict
 #   ---------------------------------|--------------------------
-#   background-capable               | unknown -> exit 2
-#   ordinary (Read/Edit/...) / none  | idle
+#   any background-capable           | unknown -> exit 2
+#   all ordinary (Read/Edit/...)/none| idle
+#
+# "Since the turn began" is bounded by the last top-level USER record that is a
+# real human message rather than a `tool_result` — see the $turn_start derivation
+# in the classifier for why that is the boundary and what it costs to get wrong.
+#
+# THE NEAREST-RECORD-ONLY FORM IS WRONG, and this note is here because it reads
+# as the obvious simplification: a golem that starts a background task and then
+# makes one more ordinary call before parking (Workflow -> Read -> end_turn)
+# hides the background evidence one hop back and classifies `idle`. Measured, and
+# the shape occurs 3 times across 50 real transcripts in this repo. It is pinned
+# by test_liveness_background_before_ordinary_still_indeterminate, which is
+# mutation-verified: reverting to the nearest-record form turns exactly that test
+# red. Do not "simplify" the accumulation back down.
 #
 # DEGRADE TOWARD UNKNOWN, NEVER TOWARD IDLE. Reaching `idle` now requires
 # POSITIVE evidence that the turn ended on something that cannot have left work

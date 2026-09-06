@@ -180,6 +180,49 @@ test_liveness_previous_turn_background_does_not_leak() {
         "background evidence from a FINISHED turn does not leak forward (got '$RUN_OUT')"
 }
 
+# The turn-boundary rule keys on whether a top-level user record carries a
+# tool_result. A record mixing a text block AND a tool_result is the shape neither
+# existing fixture covers, and it decides where the accumulation window starts.
+# Treated as tool-loop CONTINUATION (it carries a tool_result), so background
+# evidence before it still counts — the safe direction: being wrong this way costs
+# a heartbeat fallback, being wrong the other way restores the false idle.
+test_liveness_mixed_content_user_record_is_not_a_boundary() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s\n%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"user","isSidechain":false,"message":{"content":[{"type":"text","text":"note"},{"type":"tool_result"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" \
+        "a text+tool_result user record continues the turn, so earlier background evidence still counts"
+}
+
+# A transcript whose first turn has NO preceding user record at all: the boundary
+# search yields -1 and the scan runs from the start of the transcript. Pins that
+# the sentinel does not silently truncate the window to nothing, which would read
+# as "no tool calls" and hand back a false idle.
+test_liveness_no_preceding_user_record_scans_from_start() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 2 "$RUN_RC" "a turn with no preceding user record still sees its tool calls"
+}
+
 # A SIDECHAIN (sub-agent) tool call must not drive the verdict: the classifier is
 # about the top-level session's own state. Without this, dropping the isSidechain
 # filter in a future edit would wrongly force indeterminate on every golem whose
