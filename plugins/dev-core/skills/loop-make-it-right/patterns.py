@@ -75,11 +75,23 @@ def scan_long_functions(path: str, lines: list[str], ext: str, max_lines: int) -
         for idx, content in enumerate(lines, start=1):
             if not PY_DEF_RE.search(content):
                 continue
-            # indent = char count up to the first non-space, minus that char.
-            # bash: printf %s content | sed 's/[^ ].*//' | wc -c  → leading
-            # spaces + the trailing newline wc counts = (num spaces) + 1.
+            # indent = the column the first non-space character sits at, i.e.
+            # the length of the leading-space run. That is the value the
+            # `^.{0,indent}[^ ]` probe below wants: the extent ends at the first
+            # following line whose non-space starts at the same column or lower.
+            #
+            # The `+ 1` this line used to carry was a real off-by-one (#932), not
+            # a parity concession. It came from modelling the bash fallback's
+            # `sed 's/[^ ].*//' | wc -c` INCLUDING a trailing newline -- but GNU
+            # sed emits no newline for input that lacks one, so the fallback was
+            # in fact returning the plain space count and the two impls disagreed
+            # by one on any body indented exactly one column past its `def`.
+            # (Measured on Linux: a def at indent 4 with a body at indent 5 fired
+            # under bash and stayed silent under python.) The fallback now counts
+            # the run in pure bash; both sides use the space count, which is also
+            # the semantically correct probe width.
             stripped = re.sub(r"[^ ].*", "", content)
-            indent = len(stripped) + 1  # wc -c counts the newline
+            indent = len(stripped)
             # end_line = first following line matching ^.\{0,indent\}[^ ]
             end_off = None
             pat = re.compile(r"^.{0," + str(indent) + r"}[^ ]")
