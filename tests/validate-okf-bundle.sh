@@ -199,9 +199,19 @@ SCAN_ERR="$WORKDIR/scan.err"
 # gate again reports "1 files, 0 findings" and PASSES — the identical silent
 # symptom the sed fix above addressed, arriving by a different route. Measured,
 # not theorised. `-z` emits raw NUL-delimited paths with no quoting at all, and
-# `read -r -d ''` consumes them; NUL is the one byte a filename cannot contain,
-# so the split is exact for every path git can store. This bundle is ASCII
-# today, but the gate ships to consuming repos whose bundles are not.
+# `read -r -d ''` consumes them. This bundle is ASCII today, but the gate ships
+# to consuming repos whose bundles are not.
+#
+# WHAT `-z` DOES NOT FIX, stated precisely rather than overclaimed: the reading
+# side is now exact, but $FILE_LIST is ONE PATH PER LINE — that is the scanner's
+# contract, shared by patterns.sh's read loops and patterns.py's splitlines(),
+# not this gate's choice. A filename containing a literal LF is legal on Linux
+# and survives `-z` intact, then splits into two useless lines here. Measured:
+# such a bundle reports "2 files, 0 findings" and PASSES. Widening the contract
+# to NUL means changing the sibling review-audit plugin, which is out of scope
+# for #697 — so instead the guard below DETECTS the case and fails loud. A
+# residual gap that announces itself is not the failure this file is about; a
+# silent pass is.
 if command git -C "$BUNDLE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     command git -C "$BUNDLE_ROOT" ls-files -z -- '*.md' |
         while IFS= read -r -d '' rel; do
@@ -213,6 +223,31 @@ else
 fi
 
 FILE_COUNT="$(command wc -l <"$FILE_LIST" | command tr -d '[:space:]')"
+
+# A newline in a tracked filename would silently become two bogus lines above
+# (see the FILE_LIST contract note). Catch it by comparing the NUL-delimited
+# count with the line count: they agree for every path the contract can carry,
+# and diverge exactly when one cannot. Fail loud rather than scan a corrupted
+# list — "cannot represent this bundle" must never render as a clean report.
+if command git -C "$BUNDLE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    NUL_COUNT="$(command git -C "$BUNDLE_ROOT" ls-files -z -- '*.md' |
+        command tr -dc '\0' | command wc -c | command tr -d '[:space:]')"
+    if [ "$NUL_COUNT" != "$FILE_COUNT" ]; then
+        command printf 'validate-okf-bundle: %s tracked path(s) but %s file-list line(s) —\n' \
+            "$NUL_COUNT" "$FILE_COUNT" >&2
+        command printf '  a bundle filename contains a newline, which the one-path-per-line\n' >&2
+        command printf '  scanner contract cannot carry. Rename it, or the scan would silently\n' >&2
+        command printf '  skip files. Refusing to report on a corrupted file list.\n' >&2
+        test_file_list_is_representable() {
+            assert_equals "$NUL_COUNT" "$FILE_COUNT" \
+                "every tracked bundle path survives the one-per-line file list"
+        }
+        run_test test_file_list_is_representable \
+            "the bundle's paths are representable in the scanner's file list"
+        generate_report
+        exit 1
+    fi
+fi
 
 # An empty bundle directory is the same claim as an absent one: the gate ran,
 # the corpus was empty.
