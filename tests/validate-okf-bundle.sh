@@ -63,8 +63,9 @@
 # But an advisory gate that only ever prints is not a gate — it cannot prevent
 # NEW drift while #631 is in flight, which is the thing #697 actually asked for.
 # So advisory mode is ADDITIVE-blocking: per-category counts are frozen in
-# tests/okf-bundle.baseline, and a count ABOVE its entry fails. The 302
-# pre-existing rows pass; one new non-conformant memory does not. That is the
+# tests/okf-bundle.baseline, and a count ABOVE its entry fails. Every
+# pre-existing row recorded there passes; one new non-conformant memory does
+# not. That is the
 # same ratchet tests/lint-prose-budget.sh uses for prose growth — a repo idiom,
 # not a new invention. A count that DROPS auto-tightens on --regen, so #631's
 # progress ratchets in and cannot silently regress.
