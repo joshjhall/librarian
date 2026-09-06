@@ -102,6 +102,7 @@
 - [Two lenses, two thresholds](two-lenses-two-thresholds.md) — a fixture sized for the audit lens leaves the review lens silent; both mutations survive green
 - [A surviving mutation may be a real no-op](surviving-mutation-may-be-a-real-no-op.md) — prove unreachable-vs-untested before writing a test that cannot fail (#589) (#663)
 - [A GNU host can't mutate a GNU-ism](gnu-host-cannot-mutate-a-gnu-ism.md) — reverting to the GNU spelling is a NO-OP; mutate to the other platform's outcome (#679)
+- [BSD wc pads its count](bsd-wc-pads-its-count.md) — an interpolated count corrupts a regex interval or evidence string; arithmetic is fine (#932)
 - [Derived key hides the gate it guards](derived-key-hides-the-gate-it-guards.md) — `ext` is of the PATH, the gate is about the NAME; a dotted DIRECTORY diverges and parity is blind
 - [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)
 - [Parity is blind to exit-code divergence](parity-blind-to-exit-code-divergence.md) — a refusal path emits nothing in BOTH impls; assert the exit code, not just stdout (#816)
