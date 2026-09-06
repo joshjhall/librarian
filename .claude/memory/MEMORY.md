@@ -10,6 +10,7 @@
 - [Git, worktrees & releases](index-git-release.md) — cutting a release, merge/push verification, worktree isolation
 - [Golem & orchestration](index-golem.md) — dispatch, gate watching, liveness signals, worktree guards
 - [Review harness & scanners](index-review-audit.md) — review cost/behavior, audit scanners, coverage, autonomy
+- [Test validity](index-test-validity.md) — **read before writing a regression test or trusting a green suite**: tautological fixtures, blind assertions, tests that never ran, mutation testing
 
 ## Operator directives
 
@@ -24,6 +25,7 @@
 - [Ship then merge and prune](ship-then-merge-and-prune.md) — non-autonomous ship carries through to merge+prune once green + clean
 - [Umbrella Closes vs Contributes](umbrella-issue-closes-vs-contributes.md) — one slice → "Contributes to #N" + follow-up (#243)
 - [Closes trailer in squash commit](closes-trailer-in-squash-commit.md) — the squash COMMIT auto-closes even if the PR body says Contributes (#411)
+- [Closing keyword fires from prose](closing-keyword-fires-from-prose.md) — "auto-close #N" in a sentence EXPLAINING the trailer closed the issue; verify state AFTER merge (#936)
 
 ## How I get things wrong (applies to every task)
 
@@ -51,57 +53,27 @@
 - [Background exit code is the wrapper's](background-task-exit-code-is-the-wrappers.md) — a task-notification's "exit code 0" hid a red suite; read the log's own verdict (#921)
 - [Execute the workflow step, don't grep it](execute-the-workflow-step-dont-grep-it.md) — a `run:` block's regressions are re-orderings every grep survives
 - [Scope-drift check before first commit](scope-drift-check-before-first-commit.md) — `git status` before staging, not `git diff` after (#542/#498)
-- [Anchored regex → tautological test](anchored-regex-tautological-test.md) — a fixture the anchor never matched passes with AND without the fix (#599)
-- [A prefix match is not an exact pin](prefix-match-is-not-an-exact-pin.md) — `index()==1` accepts every superset; test the EXTENDING value, not a disjoint one
-- [Line scanner is blind to wrapped calls](line-scanner-blind-to-wrapped-calls.md) — a `\`-split call matches neither half; join first, then COUNT what the scanner sees
-- [Phrase assertion is blind to wrapped prose](phrase-assertion-blind-to-wrapped-prose.md) — the markdown twin: flatten before matching, scope the region, then mutate a reflow
-- [Absence assertion needs a leak fixture](absence-assertion-needs-a-leak-fixture.md) — `ok(!includes(X))` is green when the predicate breaks; pin teeth AND narrowness
-- [Concat boundary defeats a phrase matcher](concat-boundary-defeats-phrase-matcher.md) — a phrase straddling `' + '` stops matching; and a comment-anchored slice silently widens to the whole file
-- [Fixture must express the divergent case](fixture-must-express-the-divergent-case.md) — solve for the input where old and new differ; 5 green tautologies in one session
-- [Gate + evidence converge → tautology](gate-and-evidence-converge-tautology.md) — one fixture both ARMS and SATISFIES the gate (#600)
 - [A fix reintroduces its own failure](fix-reintroduces-its-own-failure.md) — the snapshot/trap/rename a silent-loss fix adds is where the loss reappears
 - [Tolerating a failure still needs the order right](tolerating-a-failure-still-needs-the-order-right.md) — a partial op already destroyed state before failing; mutate the message-only fix (#834)
 - [Moving a check drops its freshness](moving-a-check-drops-its-freshness.md) — the old placement bought proximity to the mutation; check in BOTH places (#813)
-- [Upstream guard hides the branch under test](upstream-guard-hides-the-branch-under-test.md) — arm the condition mid-run, or an earlier guard answers and the test proves nothing (#813)
-- [Prose contract anchored to prose](prose-contract-anchored-to-prose.md) — heading/sentence anchors block the extraction they should survive; use contract ids
-- [Escaped fixture cannot self-match](escaped-fixture-cannot-self-match.md) — `console\.` on disk never matches a `console\.` pattern; passes either way (#604)
-- [Config prose satisfies its own assertion](config-prose-satisfies-its-own-assertion.md) — delete the setting, the comment explaining it keeps the raw-text check green (#737)
 - [A backticked token becomes a category](backticked-token-becomes-a-category.md) — contract.md scrapes EVERY `kebab-word` as a declared category; keep language names bare
 - [End-marker indent over-grows the region](end-marker-indent-overgrows-the-region.md) — a moved START delimiter errors loud; a moved END one silently swallows what follows (#737)
 - [Defeating a linter is not satisfying it](defeating-a-linter-is-not-satisfying-it.md) — use the gate's documented exemption marker; a regex-dodging spelling leaves no trace and breaks silently
 - [Measure a suppression before keeping it](measure-suppression-before-keeping-it.md) — neuter the predicate and diff; a guard can buy 0 rows and cost a false negative (#604)
 - [An exemption is a runtime claim — measure it](exemption-is-a-runtime-claim-measure-it.md) — ask which ACTOR runs it; a ratchet needs a floor too; 3 asserted boundaries wrong in one change
-- [Stale artifact makes the stub pass](stale-artifact-makes-the-stub-pass.md) — a leftover output file satisfied the check a no-output stub should have failed; delete it and re-run
-- [Side effect invisible to the assertion](side-effect-invisible-to-the-assertion.md) — a test corrupted the live golem feed while every stdout check passed; isolate, then probe for delta 0 (#782)
 - [Diff the render before and after](render-diff-before-and-after-an-extraction.md) — a green suite pins only what someone asserted; capture whole output, every mode
 - [split-verify proves the split](split-verify-proves-the-split.md) — tests can't show nothing was DROPPED; run it on every extraction, before the reviewer asks
 - [Split entry point drops the reporter](split-entry-point-drops-the-reporter.md) — rebuilt from run_test lines, it loses generate_report: FAILs while exiting 0 (#899)
-- [Synthetic SCRIPT_DIR needs the new sibling](synthetic-script-dir-needs-the-new-sibling.md) — a new sourced fragment breaks shadow-dir fixtures; fix the fixture, never the assertion
 - [Reproduce outside the tool first](reproduce-outside-the-tool-first.md) — curl before instrumenting; A/B your own capture; a constant duration is a timeout, not congestion
 - [Local pass + CI hang = unbounded wait](local-pass-remote-hang-is-a-timeout-gap.md) — a listen()ing squatter makes connect SUCCEED then block; bound every probe, check the BODY not the connect
-- [A counter in a subshell is discarded](counter-in-subshell-is-discarded.md) — a double called via `$(...)` loses its count and repeats forever; blame the fixture before the code
-- [A preserved fixture can heal](preserved-fixture-can-heal.md) — the kept repro self-healed and proved nothing; capture evidence now, verify against what's broken NOW (#768)
 - [Slow under load is not wedged](slow-under-load-is-not-wedged.md) — check for an advancing child + real memory pressure before calling a process stranded
 - [Confirm PID ownership before killing](confirm-pid-ownership-before-killing.md) — never `pkill -f` a shared script name; a PID may be a peer golem's
 - [A hanging push is the pre-push suite](push-hang-is-the-prepush-suite.md) — 461s of gates before any bytes move; fetches stay instant. Budget 10 min, never --no-verify
 - [Pre-push already runs the suite](prepush-hook-already-runs-the-suite.md) — don't run `run-all.sh`/`just lint` by hand first; run the targeted gate and budget the push
 - [Scratch file under memory fails the push](scratch-file-under-memory-fails-the-push.md) — rumdl lints `.claude/memory/` ignoring gitignore; keep scratch prose OUT, but not at a shared `/tmp` name a peer golem clobbers
-- [Self-skipping test hides the risky branch](self-skipping-test-hides-the-risky-branch.md) — skip-if-tool-absent covers only the present arm; force absence instead (#543)
-- [Shimmed PATH didn't hide the tool](false-negative-from-env-restoring-path.md) — BASH_ENV restores it; assert the absence BEFORE testing what depends on it
-- [Tool-absence fixture needs a symlink farm](tool-absence-fixture-needs-a-symlink-farm.md) — a hand-listed stub PATH dies 127 at a new tool each time, and the no-op assertion stays green
-- [A prefix arm can't detect a suffix strip](prefix-arm-cannot-detect-a-suffix-strip.md) — build the fixture on the arm that DISAGREES when the normalization is removed
+- [Read the memory body, not just the index](read-the-memory-body-not-just-the-index.md) — the index line is a pointer; the trigger and the exception live in the body (#936)
 - [Explicit path still honors gitignore](explicit-path-still-honors-gitignore.md) — a DIRECTORY arg re-applies .gitignore; only a FILE is exempt (#578)
 - [Expand before you scope a path](path-guard-must-expand-before-scoping.md) — unexpanded `~` → nonexistent path → fail-open → silent bypass; same target must decide alike in every spelling (#662)
-- [Mutate after every security fixture](mutate-after-every-security-fixture.md) — 2 injection fixtures passed without the fix too (#596)
-- [Mutate every RULE, not every test](mutation-round-finds-the-untested-rule.md) — the rule with 0 failures is the one the round exists to find
-- [Mutation harness keyed on exit code](mutation-harness-keyed-on-exit-code.md) — ALL rules "survived" means the harness is blind; key on FAIL count, verify one by hand
-- [Mutation restore is never git checkout](mutation-restore-must-not-be-git-checkout.md) — reverts to HEAD and DELETES the uncommitted fix; snapshot-copy instead
-- [Untracked file survives a checkout restore](untracked-file-survives-git-checkout-restore.md) — the same command's opposite failure: a silent no-op, so the mutation stays live
-- [Crashed mutation reads as a survivor](crashed-mutation-reads-as-survivor.md) — an un-applied mutation passes green; assert the edit landed before trusting the verdict
-- [Asymmetric mutation reads as untested](asymmetric-mutation-reads-as-untested.md) — a partially-neutered predicate survives; mutate all arms, then each alone
-- [Two lenses, two thresholds](two-lenses-two-thresholds.md) — a fixture sized for the audit lens leaves the review lens silent; both mutations survive green
-- [A surviving mutation may be a real no-op](surviving-mutation-may-be-a-real-no-op.md) — prove unreachable-vs-untested before writing a test that cannot fail (#589) (#663)
-- [A GNU host can't mutate a GNU-ism](gnu-host-cannot-mutate-a-gnu-ism.md) — reverting to the GNU spelling is a NO-OP; mutate to the other platform's outcome (#679)
 - [BSD wc pads its count](bsd-wc-pads-its-count.md) — an interpolated count corrupts a regex interval or evidence string; arithmetic is fine (#932)
 - [Derived key hides the gate it guards](derived-key-hides-the-gate-it-guards.md) — `ext` is of the PATH, the gate is about the NAME; a dotted DIRECTORY diverges and parity is blind
 - [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)
@@ -111,8 +83,6 @@
 - [Whole-repo diff is bounded by repo content](whole-repo-diff-bounded-by-repo-content.md) — absent input shapes read as parity; grep the shape, 0 files = silent gate (#836)
 - [The correct copy is the one under test](the-correct-copy-is-the-one-under-test.md) — N unpinned copies, and the fixture calls the RIGHT one; grep the test corpus by PATH (#836)
 - [Pinned behavior may be a bug report](pinned-behavior-may-be-a-bug-report.md) — "recorded, not asserted-as-desirable" is a deferred defect; fix the row, comment, and every runtime together
-- [Test defined but never registered](test-defined-but-never-registered.md) — no `run_test` line = never runs; guard by NAME SETS, not counts (#596)
-- [Collect-all assertions must not throw](collect-all-test-assertions-must-not-throw.md) — bare `.field` on a missing entry masks later assertions; use `?.`
 - [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice (#544, #549)
 - [One row per line must name every hit](one-row-per-line-must-name-every-hit.md) — collapsing N findings re-creates the suppression bug; assert the SECOND hit in the evidence
 - [Verify-then-refetch is not verified](verify-then-refetch-is-not-verified.md) — re-resolving by name installs unaudited bytes; install the verified path
