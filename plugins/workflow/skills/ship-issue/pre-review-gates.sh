@@ -1362,6 +1362,28 @@ security_scan_refuse() {
     return 1
 }
 
+# _prescan_ver_gt A B — true when semver A is numerically greater than B.
+# Field-by-field integer compare, mirroring agnix_ver_lt in
+# tests/lint-agnix-clean.sh: `sort -V` is GNU-only and banned here, and a string
+# compare is WRONG in the one case that matters ("10.0.0" < "9.9.9" lexically).
+# A field that is not a plain integer compares as 0, so a malformed or
+# non-numeric directory name can never outrank a real version.
+_prescan_ver_gt() {
+    _pvg_a="$1"
+    _pvg_b="$2"
+    _pvg_i=1
+    while [ "$_pvg_i" -le 3 ]; do
+        _pvg_x="$(command printf '%s' "$_pvg_a" | command cut -d. -f"$_pvg_i")"
+        _pvg_y="$(command printf '%s' "$_pvg_b" | command cut -d. -f"$_pvg_i")"
+        case "$_pvg_x" in '' | *[!0-9]*) _pvg_x=0 ;; esac
+        case "$_pvg_y" in '' | *[!0-9]*) _pvg_y=0 ;; esac
+        [ "$_pvg_x" -gt "$_pvg_y" ] && return 0
+        [ "$_pvg_x" -lt "$_pvg_y" ] && return 1
+        _pvg_i=$((_pvg_i + 1))
+    done
+    return 1
+}
+
 # resolve_security_scanner — print the scanner path on stdout, or nothing.
 #
 # Three probes, in order. The first two shapes genuinely differ and neither
@@ -1378,9 +1400,12 @@ security_scan_refuse() {
 #                         <version>/skills/... — ONE further level up than the
 #                         dev walk, because an installed plugin root carries a
 #                         <version> segment the source tree does not. The version
-#                         is per PLUGIN and is not guaranteed to match workflow's
-#                         own, so it is globbed rather than assumed; newest-last
-#                         sort so a stale side-by-side install does not win.
+#                         is globbed rather than assumed. Selection PREFERS the
+#                         version equal to this plugin's own (bin/release.sh
+#                         stamps all plugins in lockstep, so that is exact and
+#                         needs no version arithmetic), falling back to a
+#                         field-by-field NUMERIC compare -- never a plain `sort`,
+#                         which ranks "10.0.0" below "9.9.9".
 #                         Both walks were verified against a real installed
 #                         layout, not derived on paper — an earlier draft of each
 #                         was off by one level and resolved nothing.
@@ -1401,13 +1426,56 @@ resolve_security_scanner() {
         return 0
     fi
 
-    # `ls -d` + tail over a glob rather than an array: bash 3.2 (stock macOS) is
-    # the floor, and a nullglob-free literal glob would otherwise be returned
+    # `ls -d` over a glob rather than an array: bash 3.2 (stock macOS) is the
+    # floor, and a nullglob-free literal glob would otherwise be returned
     # verbatim when it matches nothing.
-    candidate="$(command ls -d "${SCRIPT_DIR}"/../../../../review-audit/*/"${rel}" 2>/dev/null |
-        command sort | command tail -n 1)"
-    if [ -n "$candidate" ] && [ -f "$candidate" ]; then
-        command printf '%s' "$candidate"
+    #
+    # SELECTION IS NOT A `sort`. An earlier revision took `sort | tail -n 1` and
+    # called it "newest-last" -- a claim plain lexicographic sort does not honor:
+    # "10.0.0" < "9.9.9" as strings, so the FIRST major-version rollover would
+    # have silently selected the stale copy. `sort -V` is the obvious fix and is
+    # banned repo-wide (GNU-only; BSD sort on macOS lacks it, see
+    # tests/lint-agnix-clean.sh), so neither spelling is available.
+    #
+    # Prefer the sibling whose version EQUALS this plugin's own, which is exact
+    # rather than ordered and needs no version arithmetic at all: bin/release.sh
+    # stamps every plugin in lockstep (CLAUDE.md § Releases), so on any installed
+    # tree the matching version is by construction the right one. SCRIPT_DIR here
+    # is <root>/workflow/<version>/skills/ship-issue, so the version is two levels
+    # up from `skills`.
+    _own_ver=""
+    case "$SCRIPT_DIR" in
+        */skills/*)
+            _own_ver="${SCRIPT_DIR%/skills/*}"
+            _own_ver="${_own_ver##*/}"
+            ;;
+    esac
+    if [ -n "$_own_ver" ]; then
+        candidate="${SCRIPT_DIR}/../../../../review-audit/${_own_ver}/${rel}"
+        if [ -f "$candidate" ]; then
+            command printf '%s' "$candidate"
+            return 0
+        fi
+    fi
+
+    # No lockstep match (a hand-installed or partially-updated tree). Fall back to
+    # the numerically greatest version, compared FIELD BY FIELD -- the same idiom
+    # and the same reason as agnix_ver_lt in tests/lint-agnix-clean.sh. A
+    # non-numeric or malformed segment simply never wins the comparison, so a
+    # stray directory cannot hijack the choice.
+    _best=""
+    _best_ver=""
+    for candidate in "${SCRIPT_DIR}"/../../../../review-audit/*/"${rel}"; do
+        [ -f "$candidate" ] || continue
+        _ver="${candidate%/skills/*}"
+        _ver="${_ver##*/}"
+        if [ -z "$_best" ] || _prescan_ver_gt "$_ver" "$_best_ver"; then
+            _best="$candidate"
+            _best_ver="$_ver"
+        fi
+    done
+    if [ -n "$_best" ]; then
+        command printf '%s' "$_best"
         return 0
     fi
 
