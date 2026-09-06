@@ -1,0 +1,16 @@
+# OKF bundle finding baseline — issue #697.
+#
+# Per-category finding counts frozen at their present value. The gate fails
+# a category whose count is ABOVE its entry here, so the existing findings
+# pass while NEW drift does not. A count that drops is tightened by the
+# next --regen; RAISING an entry is a deliberate, reviewable diff that
+# wants a reason in the commit message.
+#
+# These are not targets. The listed findings are what #631 (OKF adoption)
+# exists to drive to zero; this file only stops them growing meanwhile.
+#
+# Regenerate with: tests/validate-okf-bundle.sh --regen
+
+memory-missing-why 79
+okf-missing-type 220
+okf-unparseable-frontmatter 5

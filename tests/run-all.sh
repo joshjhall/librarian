@@ -66,6 +66,8 @@
 #  11g2. Generated workflow.js freshness (tests/lint-workflow-js-generated.sh)
 #  11g3. Shared workflow.js prelude sync (tests/validate-prelude-sync.sh)
 #  11h. Markdown lint — .claude/memory/ (tests/lint-markdown.sh)
+#  11h2. OKF bundle conformance + health — .claude/memory/ (tests/validate-okf-bundle.sh)
+#  11h3. OKF bundle gate behavior (tests/validate-okf-bundle-gate.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
 #  13. seed-worktree-trust path validation (tests/validate-seed-worktree-trust.sh)
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
@@ -190,9 +192,20 @@ _skips_header_written=""
 # not, which puts an alarming-looking error in the middle of a suite that is
 # otherwise fine. Redirecting stderr first means the diagnostic lands in
 # /dev/null along with everything else.
+# `${_skips_header_written:-}`, NOT a bare read, and it is not belt-and-braces.
+# The line above already guards $GITHUB_STEP_SUMMARY defensively; reading the
+# flag bare on the very next line contradicted that, and under `set -u` an
+# out-of-scope read is fatal rather than falsy. The top-level initialisation
+# above covers the normal runner path, but this function is routinely SLICED out
+# of this file and eval'd in isolation — validate-lint-gates.sh, validate-skip-
+# visibility.sh and validate-okf-bundle-gate.sh all do it — where a top-level
+# assignment is not carried along. Found by #697's meta-gate: it passed locally
+# and failed on CI, because the branch only executes when $GITHUB_STEP_SUMMARY
+# is non-empty, i.e. on a runner. Matching the guard style makes every future
+# slicer safe without each one hand-carrying the declaration.
 note_skip_in_step_summary() {
     [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
-    if [ -z "$_skips_header_written" ]; then
+    if [ -z "${_skips_header_written:-}" ]; then
         _skips_header_written=1
         {
             printf '\n### Skipped gates\n\n'
@@ -350,6 +363,8 @@ run_stage "bounded-run.sh copy sync" bash "$SCRIPT_DIR/lint-bounded-run-sync.sh"
 run_stage "Generated workflow.js freshness" bash "$SCRIPT_DIR/lint-workflow-js-generated.sh"
 run_stage "Shared workflow.js prelude sync" bash "$SCRIPT_DIR/validate-prelude-sync.sh"
 run_stage "Markdown lint (.claude/memory/)" bash "$SCRIPT_DIR/lint-markdown.sh"
+run_stage "OKF bundle conformance + health (.claude/memory/)" bash "$SCRIPT_DIR/validate-okf-bundle.sh"
+run_stage "OKF bundle gate behavior" bash "$SCRIPT_DIR/validate-okf-bundle-gate.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-worktree-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"

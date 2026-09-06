@@ -37,6 +37,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINT_PYTHON="$SCRIPT_DIR/lint-python.sh"
 LINT_SHELLCHECK="$SCRIPT_DIR/lint-shellcheck.sh"
 LINT_HOOK_SILENCE="$SCRIPT_DIR/lint-hook-silence.sh"
+VALIDATE_OKF_BUNDLE="$SCRIPT_DIR/validate-okf-bundle.sh"
 RUN_ALL="$SCRIPT_DIR/run-all.sh"
 
 REAL_BASH="$(command -v bash)"
@@ -399,6 +400,8 @@ test_sentinel_constant_agreed_by_every_script() {
         "lint-shellcheck.sh defines the same skip sentinel (#571)"
     assert_file_defines "$RUN_ALL" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
         "run-all.sh defines the same skip sentinel"
+    assert_file_defines "$VALIDATE_OKF_BUNDLE" "SKIP_EXIT_CODE=$SKIP_SENTINEL" \
+        "validate-okf-bundle.sh defines the same skip sentinel (#697)"
 }
 
 # --- The shell gate's own skip path (#571) -----------------------------------
@@ -1212,7 +1215,7 @@ run_test test_skip_message_says_it_did_not_run "the skip message says the gate d
 run_test test_run_stage_renders_skip_not_ok "run_stage renders a 77 stage as [SKIP], not [ok]"
 run_test test_run_stage_skip_does_not_fail_suite "a skipped stage does not fail the suite"
 run_test test_run_stage_still_renders_pass_and_fail "pass/fail rendering is undisturbed"
-run_test test_sentinel_constant_agreed_by_every_script "the skip sentinel agrees across all three scripts (#571)"
+run_test test_sentinel_constant_agreed_by_every_script "the skip sentinel agrees across every gate script (#571, #697)"
 run_test test_shellcheck_gate_skips_with_sentinel "an absent shellcheck exits 77, not 0 (#571)"
 run_test test_shellcheck_gate_runs_when_available "the shell gate really runs when shellcheck is present (#571)"
 run_test test_hook_silence_gate_skips_with_sentinel "an absent jq exits 77, not 0, in the hook-silence gate (#782)"
