@@ -191,8 +191,10 @@ grouping and deduplication.
 
 ### security
 
-`injection`, `auth-bypass`, `data-exposure`, `hardcoded-secret`,
-`insecure-crypto`, `missing-validation`, `dependency-cve`, `xss`
+`injection`, `auth-bypass`, `path-traversal`, `data-exposure`,
+`hardcoded-secret`, `insecure-crypto`, `ssrf`, `insecure-deserialization`,
+`missing-validation`, `dependency-cve`, `xss`, `insecure-design`,
+`logging-monitoring`
 
 ### test-gaps
 

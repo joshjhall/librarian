@@ -27,16 +27,36 @@ When invoked, you receive a work manifest in the task prompt containing:
 Every finding MUST include a `certainty` object. Security findings use
 CRITICAL for high-impact threats that warrant immediate auto-fix with warning.
 
-| Category             | Expected Level | Confidence | Method        | Rationale                             |
-| -------------------- | -------------- | ---------- | ------------- | ------------------------------------- |
-| `hardcoded-secret`   | CRITICAL       | ≥0.9       | deterministic | Regex match on known secret patterns  |
-| `injection`          | CRITICAL       | ≥0.9       | deterministic | Unsanitized input in query/command    |
-| `xss`                | CRITICAL       | ≥0.9       | deterministic | Unescaped output in HTML context      |
-| `auth-bypass`        | HIGH           | ≥0.9       | heuristic     | Missing auth check on protected route |
-| `data-exposure`      | HIGH           | 0.7-0.9    | heuristic     | Sensitive data in logs/responses      |
-| `insecure-crypto`    | HIGH           | ≥0.9       | deterministic | Known weak algorithm (MD5, SHA1, DES) |
-| `missing-validation` | MEDIUM         | 0.7-0.9    | heuristic     | Input boundary without validation     |
-| `dependency-cve`     | MEDIUM         | 0.7-0.9    | heuristic     | Known CVE, needs version context      |
+Every category carries its OWASP Top 10 (2021) id. The ids are not decoration:
+`check-security/owasp-coverage.yml` maps each one to the pass that owns it, and
+`tests/validate-owasp-coverage.sh` fails when a category here has no map row or a
+map row has no category here. Adding a category below means adding its row there.
+
+| Category                   | OWASP | Expected Level | Confidence | Method        | Rationale                                       |
+| -------------------------- | ----- | -------------- | ---------- | ------------- | ----------------------------------------------- |
+| `hardcoded-secret`         | A02   | CRITICAL       | ≥0.9       | deterministic | Regex match on known secret patterns            |
+| `injection`                | A03   | CRITICAL       | ≥0.9       | deterministic | Unsanitized input in query/command              |
+| `xss`                      | A03   | CRITICAL       | ≥0.9       | deterministic | Unescaped output in HTML context                |
+| `auth-bypass`              | A01   | HIGH           | ≥0.9       | heuristic     | Missing auth check on protected route           |
+| `path-traversal`           | A01   | HIGH           | 0.7-0.9    | heuristic     | Needs a reachability call regex cannot make     |
+| `data-exposure`            | A05   | HIGH           | 0.7-0.9    | heuristic     | Sensitive data in logs/responses                |
+| `insecure-crypto`          | A02   | HIGH           | ≥0.9       | deterministic | Known weak algorithm (MD5, SHA1, DES)           |
+| `ssrf`                     | A10   | HIGH           | 0.7-0.9    | heuristic     | Attacker influence on the URL is a judgment     |
+| `insecure-deserialization` | A08   | HIGH           | 0.7-0.9    | heuristic     | Sink is mechanical; untrusted source is not     |
+| `missing-validation`       | A03   | MEDIUM         | 0.7-0.9    | heuristic     | Input boundary without validation               |
+| `dependency-cve`           | A06   | MEDIUM         | 0.7-0.9    | heuristic     | Known CVE, needs version context                |
+| `insecure-design`          | A04   | MEDIUM         | 0.7-0.9    | heuristic     | Design-level, never a single-line match         |
+| `logging-monitoring`       | A09   | LOW            | 0.7-0.9    | heuristic     | An ABSENCE — no pattern can match a missing log |
+
+Note what the Method column says about the five new rows: every one is
+`heuristic`, none `deterministic`. That is the point of this pass. A
+deterministic detector answers "does this line match a dangerous sink"; these
+categories all turn on a second question — is the input attacker-controlled, is
+the resource the caller's, is the absence deliberate — that a line scanner
+cannot reach. `path-traversal` and `ssrf` are `gap:` entries on the pre-scan side
+of `owasp-coverage.yml` for exactly this reason: a same-line proxy for
+"derives from a request" scored 0 true positives in 8 hits over a 753-file
+corpus (#707, follow-up #898). Their coverage is here or nowhere.
 
 ```json
 {
@@ -51,77 +71,21 @@ CRITICAL for high-impact threats that warrant immediate auto-fix with warning.
 
 ## Categories and Checklist
 
-### hardcoded-secret
+**Companion file**: [`../skills/check-security/pass2-checklist.md`](../skills/check-security/pass2-checklist.md)
+carries the full category list — what each one looks for, its severity split,
+and the evidence it must record. **Load it before scanning**; the categories are
+the substance of this agent's work and none of them are summarized here.
 
-- Search for API keys, tokens, passwords, connection strings in source code
-- Patterns: password assignment literals, `api_key`, `secret`, `token`,
-  `Bearer`, `Authorization`, AWS access keys (`AKIA`), private key headers
-- Ignore: test fixtures with obviously fake values, environment variable reads,
-  placeholder strings like `xxx`, `changeme`, `TODO`
-- Severity: critical (real credentials), high (ambiguous)
-- Evidence: the line, what type of secret it appears to be
+It sits beside `owasp-coverage.yml` on purpose. That map assigns every category
+an OWASP id and an owning pass, and `tests/validate-owasp-coverage.sh` fails
+when the two files disagree in either direction — a category with no map row, or
+a mapped claim with no backing text. Adding a category means editing both.
 
-### injection
-
-- SQL: string concatenation or f-strings in SQL queries instead of
-  parameterized queries
-- Command: unsanitized user input passed to shell execution functions
-  (any function that spawns a shell process with string interpolation)
-- Template: unescaped interpolation in HTML templates
-- Path traversal: user input in file paths without sanitization
-- Severity: critical (user-reachable), high (indirect input)
-- Evidence: the vulnerable pattern, input source
-
-### xss
-
-- User-controlled data rendered in HTML without escaping
-- Look for framework-specific patterns that bypass auto-escaping: raw HTML
-  setters in React, Vue, Blade, Jinja, Django, and similar frameworks
-- Severity: high (user-reachable), medium (admin-only)
-- Evidence: the rendering pattern, data source
-
-### auth-bypass
-
-- Missing authentication checks on route handlers or API endpoints
-- Inconsistent auth middleware application across similar routes
-- Default credentials or bypass flags in non-test code
-- Severity: critical (public endpoints), high (internal)
-- Evidence: the unprotected endpoint, nearby protected endpoints for comparison
-
-### data-exposure
-
-- Sensitive data in logs (passwords, tokens, PII, credit card numbers)
-- Error responses leaking stack traces, internal paths, or database details
-- Overly permissive CORS configuration (wildcard origins)
-- Sensitive data in URL query parameters (logged by web servers)
-- Severity: high (PII/credentials), medium (internal details)
-- Evidence: the exposure pattern, what data is leaked
-
-### insecure-crypto
-
-- MD5 or SHA1 used for security purposes (password hashing, signatures)
-- ECB mode encryption, static IVs, hardcoded encryption keys
-- Weak random number generators used for security tokens (non-CSPRNG
-  functions like language-default random instead of cryptographic random)
-- Severity: high (password hashing), medium (other uses)
-- Evidence: the algorithm/function, what it's used for
-
-### missing-validation
-
-- User input accepted without type checking, length limits, or format
-  validation at API boundaries
-- Missing bounds checks on array indices or numeric ranges
-- Missing null/undefined checks on external data
-- Severity: medium (may cause errors), high (may cause security issues)
-- Evidence: the unvalidated input, what boundary it crosses
-
-### dependency-cve
-
-- Check for known-vulnerable dependency patterns (e.g., pinned to a version
-  with known CVEs if version info is visible in lock files or config)
-- Outdated security-sensitive dependencies (crypto libraries, auth frameworks)
-- Severity: varies by CVE severity
-- Evidence: the dependency, version, known issue if identifiable
+The thirteen categories it defines: `hardcoded-secret`, `injection`,
+`path-traversal`, `xss`, `auth-bypass` (route-level authentication AND A01
+object-level authorization), `data-exposure`, `insecure-crypto`, `ssrf`,
+`insecure-deserialization`, `insecure-design`, `logging-monitoring`,
+`missing-validation`, `dependency-cve`.
 
 ## Batch Sub-Agent Dispatching
 
@@ -134,7 +98,13 @@ When the manifest's total source lines exceed 2000, split files into batches of
 1. **If >2000 lines**: Partition files into batches targeting ~2000 lines each
    (never split a single file across batches)
 1. **Dispatch**: Send one Task call per batch using the sub-agent prompt template
-   below. Run all batches in parallel in a single message
+   below. Run all batches in parallel in a single message.
+   **Read `../skills/check-security/pass2-checklist.md` and paste its text into
+   every prompt** — a sub-agent has no access to this agent's own context, so an
+   unsubstituted placeholder gives it no checklist at all. That failure is
+   silent: the worker still returns schema-valid JSON, just with zero findings,
+   which is indistinguishable from a clean batch. Before dispatching, confirm the
+   prompt you built actually contains the category text
 1. **Merge results**: Collect JSON from each sub-agent, concatenate `findings`
    and `acknowledged_findings` arrays, sum `summary` counts
 1. **Deduplicate**: Within-scanner dedup — same file + category + overlapping
@@ -158,7 +128,7 @@ will assign final IDs.
 {batch_file_list}
 
 ## Checklist
-{categories_and_checklist from this agent's Categories and Checklist section}
+{categories_and_checklist — the full text of ../skills/check-security/pass2-checklist.md}
 
 ## Thresholds
 {thresholds from manifest}
@@ -185,8 +155,9 @@ Build a per-file acknowledgment map. When a finding matches an acknowledged
 entry (same file, same category, overlapping line range):
 
 - **All security categories are boolean** (`injection`, `auth-bypass`,
-  `data-exposure`, `hardcoded-secret`, `insecure-crypto`,
-  `missing-validation`, `dependency-cve`, `xss`): Suppress entirely — move
+  `path-traversal`, `data-exposure`, `hardcoded-secret`, `insecure-crypto`,
+  `ssrf`, `insecure-deserialization`, `missing-validation`, `dependency-cve`,
+  `xss`, `insecure-design`, `logging-monitoring`): Suppress entirely — move
   to `acknowledged_findings`.
 - **Stale acknowledgments**: If `date` is present and older than 12 months,
   re-raise with a note that the acknowledgment has expired.

@@ -33,17 +33,31 @@
 #                over-claimed on the path where a defect is cheapest to stop.
 #                No row's OWNER changed (each already named the right pass);
 #                what changed is that the claim is now true on both.
-#   llm-pass2  — a `### <id>` checklist section in
-#                plugins/review-audit/agents/audit-security.md
+#   llm-pass2  — a `## <id>` checklist section in pass2-checklist.md, THIS
+#                DIRECTORY's sibling. It lived in
+#                plugins/review-audit/agents/audit-security.md until #709 moved
+#                it here: the agent had outgrown its 400-line budget, and the
+#                checklist is the half that pairs with this map rather than with
+#                the agent's dispatch mechanics. Co-locating them is what makes
+#                the coupling visible — the gate reads both files to check they
+#                agree, in both directions.
 #   reviewer   — a bullet in SUBREVIEWERS.security in
 #                plugins/dev-core/agents/code-reviewer/workflow.js
 #   gap        — nothing covers it yet; MUST carry a non-empty `reason`
 #
 # `evidence:` names the exact backing text when it differs from the id. The
 # reviewer bullets are prose and carry no slugs at all, so every `reviewer` entry
-# needs one. Giving those checklists real category ids is slice D (#709) — this
-# slice deliberately does not reword them, and `evidence` is what lets the map be
-# honest about the prose as it stands today.
+# still needs one. Slice D (#709) has since landed: the Pass-2 checklist now
+# carries real `## <id>` sections and an A0x column, so most `llm-pass2` rows
+# match on their id alone.
+#
+# `evidence` survives for two reasons that are not going away. The reviewer
+# bullets are still prose. And where a category is covered by BOTH a scanner and
+# the LLM pass, the two rows cannot share an id — hence the `-pass2` suffixes
+# (`ssrf-pass2`, `insecure-deserialization-pass2`), each pointing back at the
+# checklist's real slug. Those pairs are deliberate, not duplication: the scanner
+# owns the SINK, the Pass-2 section owns whether the input reaching it is
+# untrusted, and only the second decides whether a hit is a finding.
 #
 # An entry can be covered at one layer and a gap at another, and several are:
 # `reviewer` sees SSRF as a prose bullet while no deterministic detector exists
@@ -79,6 +93,20 @@ A01:
     - id: path-traversal
       owner: reviewer
       evidence: "Path traversal"
+    - id: path-traversal-pass2
+      owner: llm-pass2
+      evidence: "path-traversal"
+    # A01's other half, and the one a route-level checklist cannot express: a
+    # handler that authenticates the caller correctly, then loads a record by a
+    # request-supplied id without asking whether it belongs to them. Added by
+    # #709 to both checklists; it is business logic end to end, so it has no
+    # prescan row and never will.
+    - id: object-level-authz
+      owner: llm-pass2
+      evidence: "Object-level (authorization)"
+    - id: object-level-authz-reviewer
+      owner: reviewer
+      evidence: "Broken object-level authorization"
     - id: path-traversal-prescan
       owner: gap
       reason: >-
@@ -134,9 +162,12 @@ A03:
 A04:
   name: Insecure Design
   categories:
+    # Was a `gap` until #709 gave it a Pass-2 section. Still has no prescan row
+    # and cannot get one: a missing control is not a pattern. The checklist
+    # section is deliberately restrictive about what counts, because A04 is the
+    # easiest category in the list to fill with architectural opinion.
     - id: insecure-design
-      owner: gap
-      reason: "design-level threat modelling is not regex-reachable and has no Pass-2 checklist section — see #709"
+      owner: llm-pass2
 
 A05:
   name: Security Misconfiguration
@@ -182,13 +213,23 @@ A08:
     - id: insecure-deserialization
       owner: prescan
       detects: [pickle_loads, yaml_load_unsafe, marshal_load, java_readobject, php_unserialize]
+    # Complements the prescan row rather than duplicating it, and the split is
+    # the whole argument for having both: the scanner owns the SINK (it is a
+    # literal call), the Pass-2 section owns whether the input reaching it is
+    # untrusted, which is the half that decides whether a hit is a finding.
+    - id: insecure-deserialization-pass2
+      owner: llm-pass2
+      evidence: "insecure-deserialization"
 
 A09:
   name: Security Logging and Monitoring Failures
   categories:
-    - id: logging-monitoring-failures
-      owner: gap
-      reason: "absence of logging is not detectable by pattern match and has no Pass-2 checklist section — see #709"
+    # Was a `gap` until #709 gave it a Pass-2 section. The old reason's first
+    # clause still holds and always will — an ABSENCE has nothing for a pattern
+    # to match — which is why this stays llm-pass2-only with no prescan row.
+    # What changed is the second clause: the checklist section now exists.
+    - id: logging-monitoring
+      owner: llm-pass2
 
 A10:
   name: Server-Side Request Forgery
@@ -196,6 +237,14 @@ A10:
     - id: ssrf-reviewer
       owner: reviewer
       evidence: "SSRF (server-side request forgery)"
+    # #709. Note this sits alongside the `ssrf` GAP row below, and the pair is
+    # not a contradiction: the gap is about the PRESCAN, measured and declined
+    # at any tier, while this row is the LLM pass that owns exactly the judgment
+    # the scanner could not make. A10 is covered by a human-grade read and not
+    # by a pattern — two different claims, which is why both rows are listed.
+    - id: ssrf-pass2
+      owner: llm-pass2
+      evidence: "ssrf"
     - id: ssrf
       owner: gap
       reason: >-
