@@ -508,9 +508,10 @@ const SUBREVIEWERS = {
     '- Credential exposure (hardcoded secrets, API keys, tokens in source)\n' +
     '- OWASP Top 10 vulnerabilities\n' +
     '- Input validation gaps (unsanitized user input reaching sensitive operations)\n' +
-    '- Insecure deserialization\n' +
-    '- Path traversal\n' +
-    '- SSRF (server-side request forgery)\n' +
+    '- Insecure deserialization — untrusted bytes (request body, cookie, upload) reach a loader that can construct arbitrary types\n' +
+    '- Path traversal — a request value reaches a filesystem path with no containment check after normalization\n' +
+    '- SSRF (server-side request forgery) — a request value reaches the HOST portion of an outbound URL, or a followed redirect does\n' +
+    '- Broken object-level authorization — a request-supplied id is looked up with no owner/tenant predicate (a scoped sibling handler is the tell)\n' +
     '- Insecure cryptographic usage (weak algorithms, hardcoded IVs/salts)',
   bug:
     'You are a bug-focused code reviewer. Analyze the provided code changes for\n' +

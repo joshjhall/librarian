@@ -79,6 +79,20 @@ A01:
     - id: path-traversal
       owner: reviewer
       evidence: "Path traversal"
+    - id: path-traversal-pass2
+      owner: llm-pass2
+      evidence: "path-traversal"
+    # A01's other half, and the one a route-level checklist cannot express: a
+    # handler that authenticates the caller correctly, then loads a record by a
+    # request-supplied id without asking whether it belongs to them. Added by
+    # #709 to both checklists; it is business logic end to end, so it has no
+    # prescan row and never will.
+    - id: object-level-authz
+      owner: llm-pass2
+      evidence: "Object-level (authorization)"
+    - id: object-level-authz-reviewer
+      owner: reviewer
+      evidence: "Broken object-level authorization"
     - id: path-traversal-prescan
       owner: gap
       reason: >-
@@ -134,9 +148,12 @@ A03:
 A04:
   name: Insecure Design
   categories:
+    # Was a `gap` until #709 gave it a Pass-2 section. Still has no prescan row
+    # and cannot get one: a missing control is not a pattern. The checklist
+    # section is deliberately restrictive about what counts, because A04 is the
+    # easiest category in the list to fill with architectural opinion.
     - id: insecure-design
-      owner: gap
-      reason: "design-level threat modelling is not regex-reachable and has no Pass-2 checklist section — see #709"
+      owner: llm-pass2
 
 A05:
   name: Security Misconfiguration
@@ -182,13 +199,23 @@ A08:
     - id: insecure-deserialization
       owner: prescan
       detects: [pickle_loads, yaml_load_unsafe, marshal_load, java_readobject, php_unserialize]
+    # Complements the prescan row rather than duplicating it, and the split is
+    # the whole argument for having both: the scanner owns the SINK (it is a
+    # literal call), the Pass-2 section owns whether the input reaching it is
+    # untrusted, which is the half that decides whether a hit is a finding.
+    - id: insecure-deserialization-pass2
+      owner: llm-pass2
+      evidence: "insecure-deserialization"
 
 A09:
   name: Security Logging and Monitoring Failures
   categories:
-    - id: logging-monitoring-failures
-      owner: gap
-      reason: "absence of logging is not detectable by pattern match and has no Pass-2 checklist section — see #709"
+    # Was a `gap` until #709 gave it a Pass-2 section. The old reason's first
+    # clause still holds and always will — an ABSENCE has nothing for a pattern
+    # to match — which is why this stays llm-pass2-only with no prescan row.
+    # What changed is the second clause: the checklist section now exists.
+    - id: logging-monitoring
+      owner: llm-pass2
 
 A10:
   name: Server-Side Request Forgery
@@ -196,6 +223,14 @@ A10:
     - id: ssrf-reviewer
       owner: reviewer
       evidence: "SSRF (server-side request forgery)"
+    # #709. Note this sits alongside the `ssrf` GAP row below, and the pair is
+    # not a contradiction: the gap is about the PRESCAN, measured and declined
+    # at any tier, while this row is the LLM pass that owns exactly the judgment
+    # the scanner could not make. A10 is covered by a human-grade read and not
+    # by a pattern — two different claims, which is why both rows are listed.
+    - id: ssrf-pass2
+      owner: llm-pass2
+      evidence: "ssrf"
     - id: ssrf
       owner: gap
       reason: >-
