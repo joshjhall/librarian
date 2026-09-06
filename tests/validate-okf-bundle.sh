@@ -174,9 +174,28 @@ SCAN_ERR="$WORKDIR/scan.err"
 # it and stay stable across checkouts. A non-git tree (a tarball export) falls
 # back to `find`, since a gate that only works inside a git checkout would skip
 # silently in exactly the environments least likely to notice.
+#
+# THE PREFIXING IS PURE BASH, NOT sed, and that is load-bearing. `ls-files`
+# emits paths relative to the bundle, so each needs $BUNDLE_ROOT prepended —
+# but `sed "s|^|$BUNDLE_ROOT/|"` splices an operator-controlled value into both
+# the delimiter position and the REPLACEMENT side, where sed gives `&` and `\`
+# their own meanings. Measured on a bundle root containing a literal `&`: sed
+# expands it to the matched text (empty, since the pattern is `^`) and silently
+# DELETES the character from every emitted path. The gate then reports
+# "1 files, 0 findings" and PASSES over a bundle holding a real violation —
+# the scanner skipped a path that does not exist, nothing exited non-zero, and
+# a gate read green on a corpus it never checked. That is precisely the
+# inert-gate failure this whole file exists to make visible, reintroduced by
+# its own plumbing. A `|` in the root breaks the s-command outright.
+#
+# A read/printf loop needs no escaping of $BUNDLE_ROOT at all, so the class
+# cannot recur. `read -r` and `printf '%s\n'` also leave backslashes and
+# leading whitespace in a filename intact, which `echo` would not.
 if command git -C "$BUNDLE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    command git -C "$BUNDLE_ROOT" ls-files -- '*.md' |
-        command sed "s|^|$BUNDLE_ROOT/|" >"$FILE_LIST"
+    command git -C "$BUNDLE_ROOT" ls-files -- '*.md' | while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        command printf '%s\n' "$BUNDLE_ROOT/$rel"
+    done >"$FILE_LIST"
 else
     command find "$BUNDLE_ROOT" -type f -name '*.md' | command sort >"$FILE_LIST"
 fi

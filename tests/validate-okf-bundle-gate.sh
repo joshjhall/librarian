@@ -478,6 +478,82 @@ test_untracked_files_are_out_of_scope() {
         "the UNTRACKED file is out of scope"
 }
 
+# A bundle root holding a sed metacharacter must still be scanned. The first
+# draft prefixed `ls-files` output with `sed "s|^|$BUNDLE_ROOT/|"`, splicing an
+# operator-controlled value ($OKF_BUNDLE_ROOT is documented as overridable) into
+# the replacement side, where `&` means "the matched text". With a `&` in the
+# root every emitted path lost that character, the scanner skipped paths that
+# did not exist, and the gate reported "1 files, 0 findings" and PASSED over a
+# bundle holding a real violation — a gate reading green on a corpus it never
+# checked, which is the exact failure this file exists to prevent.
+#
+# The fixture uses `&` because that is the character that SILENTLY corrupts: a
+# `|` breaks the s-command loudly, so a test built on `|` alone would have been
+# satisfied by a merely-different bug. The assertion is positive (the finding IS
+# reported) rather than a bare exit-code check, since exit 0 was itself the
+# symptom.
+test_bundle_root_with_sed_metacharacter_is_still_scanned() {
+    local parent bundle baseline
+    parent="$(command mktemp -d "$WORKDIR/meta.XXXXXX")"
+    bundle="$parent/a&b"
+    command mkdir -p "$bundle"
+    command git -C "$bundle" init -q 2>/dev/null || {
+        skip_test "git unavailable — cannot test metacharacter bundle roots"
+        return 0
+    }
+    command git -C "$bundle" config user.email t@example.com
+    command git -C "$bundle" config user.name Test
+
+    nonconformant "$bundle/drifted.md"
+    command git -C "$bundle" add drifted.md
+    command git -C "$bundle" commit -qm "add" 2>/dev/null
+
+    baseline="$WORKDIR/meta.baseline"
+    write_baseline "$baseline"
+
+    run_gate "$bundle" "$baseline"
+
+    assert_contains "$GATE_OUT" "1 files" \
+        "the file under a metacharacter root is counted"
+    assert_contains "$GATE_OUT" "okf-missing-type" \
+        "the finding under a metacharacter root is REPORTED, not silently skipped"
+    assert_exit "1" "$GATE_RC" \
+        "the gate FAILS rather than passing over a corpus it could not read"
+}
+
+# A baseline entry may carry a trailing `# why` rationale — raising an entry is
+# meant to be a reviewable decision, so the reason belongs next to it. That form
+# is what makes the whitespace trim in baseline_for() load-bearing:
+# `cat 218 # why` strips to `cat 218 ` and a naive `${rest##* }` yields the
+# EMPTY string, so the entry parses as having no count and silently stops
+# ratcheting — the annotated entry, the one someone deliberately justified, is
+# exactly the one that would quietly go unenforced.
+#
+# Every other case here writes bare `category count` pairs (and the committed
+# baseline carries none either), so without this fixture the trim loop has no
+# coverage at all. Confirmed by mutation: neutering it makes this case report
+# "no baseline entry" and fail.
+test_baseline_entry_with_trailing_comment_still_parses() {
+    local bundle baseline
+    make_bundle bundle
+    nonconformant "$bundle/drifted.md"
+
+    baseline="$WORKDIR/annotated.baseline"
+    {
+        command printf '# annotated baseline\n\n'
+        command printf 'okf-missing-type 1 # deliberate, tracked by #631\n'
+    } >"$baseline"
+
+    run_gate "$bundle" "$baseline"
+
+    assert_exit "0" "$GATE_RC" \
+        "an annotated entry still ratchets (its count is not lost to the comment)"
+    assert_contains "$GATE_OUT" "(baseline 1)" \
+        "the count is parsed from an entry carrying a trailing rationale"
+    assert_not_contains "$GATE_OUT" "no baseline entry" \
+        "an annotated entry is not read as unlisted"
+}
+
 # --- --regen ----------------------------------------------------------------
 
 test_regen_writes_the_observed_counts() {
@@ -590,6 +666,10 @@ run_test test_a_failing_scanner_fails_the_gate \
     "a scanner that fails is not reported as a clean bundle"
 run_test test_untracked_files_are_out_of_scope \
     "gitignored/untracked scratch is out of scope (git-tracked corpus)"
+run_test test_bundle_root_with_sed_metacharacter_is_still_scanned \
+    "a bundle root containing \`&\` is still scanned, not silently skipped"
+run_test test_baseline_entry_with_trailing_comment_still_parses \
+    "a baseline entry with a trailing # rationale still ratchets"
 run_test test_regen_writes_the_observed_counts \
     "--regen tightens the baseline to the observed counts"
 run_test test_unknown_argument_is_rejected \
