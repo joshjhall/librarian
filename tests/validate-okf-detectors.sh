@@ -822,6 +822,29 @@ test_memory_orphan() {
     list="$(list_bundle "$b")"
     assert_silent "$list" memory-orphan "okf: no index in the bundle means no orphans"
 
+    # A PLAIN-LIST INDEX WORKS TOO, not only a linked one. index_targets() falls
+    # back to a bare `some-file.md` mention on any line carrying no markdown
+    # link, and that fallback (python's _BARE_MD_RE with its negative
+    # lookbehind, mirrored by the awk `n == 0` branch and its `pre ~` exclusion)
+    # was reachable by no fixture in either runtime — the same untested-mirror
+    # shape that produced this PR's two parity defects.
+    b="$(fresh_bundle)"
+    command printf -- '# Index\n\nplain-listed.md\n\n* [Linked](linked.md) - x\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/plain-listed.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/linked.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/unlisted.md"
+    list="$(list_bundle "$b")"
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "plain-listed.md" \
+        "okf: a bare-mention index line names its concept (bash)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        assert_not_contains "$(emit_rows py "$list" memory-orphan)" "plain-listed.md" \
+            "okf: a bare-mention index line names its concept (python)"
+    fi
+    # Teeth: the genuinely unlisted concept in the SAME bundle still fires, so
+    # this cannot pass by orphan detection going silent.
+    assert_fires "$list" memory-orphan "unlisted.md" \
+        "okf: ...and an unmentioned concept in the same bundle is still an orphan"
+
     # A DANGLING WIKI-LINK IS NOT A FINDING (#669 AC). OKF tolerates a link to
     # knowledge not yet written; this repo's own MEMORY.md tells authors to link
     # liberally to names that do not exist yet. Distinct from a dangling INDEX
@@ -1006,6 +1029,85 @@ test_health_is_configurable() {
 }
 
 # ============================================================================
+# FRONTMATTER SCOPING + KEY LOOKUP — two parity defects found by review cycle 1.
+#
+# Both are cases where bash and python read THE SAME FILE DIFFERENTLY, which the
+# whole-repo differential could not catch because no file in this repo has the
+# shape that triggers them. Each fixture below is built to be that shape.
+# ============================================================================
+test_frontmatter_scoping_parity() {
+    local b list
+
+    # (1) fm_get scoping. A bare key is visible at the TOP LEVEL or one level
+    # under `metadata:` — NOT under an arbitrary parent, and not at any depth.
+    # The bash twin used to strip indentation from every line and return the
+    # first bare-key match anywhere, so a producer's own structured data under an
+    # unrelated key was read as OKF metadata.
+    b="$(graph_bundle)"
+    command printf -- '* [Unrelated](unrelated.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\nsome_other_block:\n  status: deprecated\n---\n\nBody.\n' \
+        >"$b/unrelated.md"
+    list="$(list_bundle "$b")"
+    # `status: deprecated` under a NON-metadata parent must not make it stale.
+    assert_silent "$list" memory-stale \
+        "okf: a status under an unrelated nested block is not read as OKF metadata"
+
+    # ...and the SAME key under `metadata:` IS read — otherwise the assertion
+    # above would pass on a twin that simply stopped reading nested keys at all.
+    b="$(graph_bundle)"
+    command printf -- '* [Deprecated](dep.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\nmetadata:\n  status: deprecated\n---\n\nBody.\n' \
+        >"$b/dep.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-stale "status: deprecated" \
+        "okf: the same key under metadata: IS read (the scoping is narrow, not off)"
+
+    # (2) A nested `type:` appearing BEFORE the real top-level one. The bash twin
+    # returned the nested value, so a document legitimately declaring
+    # `type: feedback` was reported okf-missing-type and never reached its
+    # body-requirement check.
+    b="$(graph_bundle)"
+    command printf -- '* [Shadowed](shadow.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\nsome_block:\n  type: nested-first\ntype: feedback\n---\n\nNo why here.\n' \
+        >"$b/shadow.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" okf-missing-type \
+        "okf: a nested type: does not shadow the real top-level one"
+    assert_fires "$list" memory-missing-why "**Why:**" \
+        "okf: ...and the top-level type still routes to its body requirement"
+}
+
+test_fm_has_finds_a_non_first_key() {
+    local b list
+
+    # fm_has matched `<TAB>key<TAB>` against the whole FM_KEYS blob, which can
+    # only align on the FIRST row — every later row is preceded by a NEWLINE. So
+    # any concept whose `type` was not the very first frontmatter key was
+    # reported okf-missing-type despite declaring one.
+    #
+    # THE FIXTURE PUTS type LAST, which is the divergent case: a fixture with
+    # `type` first passes with and without the fix. This repo's own 215 memories
+    # all write name:/description: before type:, so this fired on every one.
+    b="$(graph_bundle)"
+    command printf -- '* [Late](late.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\nname: late-type\ndescription: type is the third key\ntype: reference\n---\n\nBody.\n' \
+        >"$b/late.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" okf-missing-type \
+        "okf: a type declared after other keys is found (fm_has is not first-row-only)"
+
+    # Teeth: a concept that genuinely has NO type must still fire, so the
+    # assertion above cannot pass by the detector going silent everywhere.
+    b="$(graph_bundle)"
+    command printf -- '* [None](none.md) - x\n' >>"$b/MEMORY.md"
+    command printf -- '---\nname: no-type-at-all\ndescription: really none\n---\n\nBody.\n' \
+        >"$b/none.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" okf-missing-type "no type key" \
+        "okf: a concept with no type at all still fires"
+}
+
+# ============================================================================
 # UNIT: the config parser and the index matcher, called DIRECTLY (#669).
 #
 # Every fixture above drives these through the scanner end-to-end, which proves
@@ -1163,6 +1265,8 @@ run_test test_memory_multi_index "check-okf-conformance: two indexes claiming on
 run_test test_memory_stale "check-okf-conformance: staleness against an INJECTED date, quoting stale_check"
 run_test test_memory_missing_why "check-okf-conformance: per-type body requirements, and unconfigured types"
 run_test test_health_is_configurable "check-okf-conformance: a foreign vocabulary + index naming works by config alone"
+run_test test_frontmatter_scoping_parity "check-okf-conformance: frontmatter keys are metadata-scoped, and a nested type does not shadow"
+run_test test_fm_has_finds_a_non_first_key "check-okf-conformance: a type declared after other keys is found (fm_has row boundary)"
 run_test test_config_helpers_direct "check-okf-conformance: is_index + read_config_list called directly (both runtimes)"
 run_test test_index_sizing_is_delegated "check-okf-conformance: index sizing stays delegated to check-decomposition"
 

@@ -514,11 +514,30 @@ parse_frontmatter() {
     return 0
 }
 
-# fm_has KEY / fm_value KEY / fm_line KEY — read the parsed block.
+# fm_has KEY — true when the parsed frontmatter carries KEY.
+#
+# LINE-ORIENTED, like fm_field/fm_extra_keys beside it, because FM_KEYS is
+# NEWLINE-delimited rows of `key<TAB>value<TAB>line`. The previous single `case`
+# tested "$TAB$FM_KEYS" for `<TAB>key<TAB>`, which can only align on the FIRST
+# row: every later row is preceded by a NEWLINE, not a tab. So any concept whose
+# `type` was not the very first frontmatter key was reported okf-missing-type
+# despite declaring one.
+#
+# Not hypothetical, and not small: every one of this repo's own 215 memories
+# writes `name:`/`description:` before `type:`, so all 215 were being reported
+# as missing a type they actually have. Python's dict lookup has no such
+# ordering dependence, which is why this surfaced as a bash/python divergence
+# (#669 review cycle 1) rather than as a wrong-looking report.
 fm_has() {
-    case "$TAB$FM_KEYS" in
-        *"$TAB$1$TAB"*) return 0 ;;
-    esac
+    local line
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        case "$line" in
+            "$1$TAB"*) return 0 ;;
+        esac
+    done <<EOF
+$FM_KEYS
+EOF
     return 1
 }
 fm_field() {
@@ -790,18 +809,42 @@ index_targets() {
     ' "$1"
 }
 
-# fm_get FILE NAME — a frontmatter value by bare name, top level or nested one
-# level under a parent (`metadata:`). Mirrors frontmatter_fields()+field() in
-# the python twin: both spellings resolve, so neither convention is privileged.
+# fm_get FILE NAME — a frontmatter value by bare name: TOP LEVEL, or exactly one
+# level under a top-level block literally named `metadata:`. Mirrors
+# frontmatter_fields()+field() in the python twin, whose dict holds top-level
+# keys plus `metadata.*` flattened, and whose field() looks up only those two
+# spellings.
+#
+# THE SCOPING IS THE POINT, and an earlier version of this function had the
+# comment without the code: it stripped indentation from every line and returned
+# the first bare-key match at ANY depth under ANY parent. Three divergences from
+# the python twin, all reproduced (#669 review cycle 1):
+#
+#   * `some_other_block:` / `status: deprecated` — bash fired memory-stale on a
+#     file python considered clean.
+#   * `nested:` / `deeper:` / `stale_after: …` — same, at arbitrary depth.
+#   * a nested `type:` appearing BEFORE the real top-level one — bash returned
+#     the nested value, so a document legitimately declaring `type: feedback`
+#     was reported okf-missing-type and never got its body-requirement check.
+#
+# That is a live production path (PATTERNS_FORCE_BASH, and any host without
+# python3.11+), not just a parity-gate concern: a producer's own structured data
+# under an unrelated key would silently mis-scan.
+#
+# Tracks the current top-level parent the way the python twin tracks `prefix`,
+# and matches an indented line only while that parent is `metadata`.
 fm_get() {
     command awk -v want="$2" '
         NR == 1 && $0 != "---" { exit }
         NR == 1 { next }
         $0 == "---" { exit }
         {
-            line = $0
+            raw = $0
+            line = raw
             sub(/^[ \t]+/, "", line)
             if (line == "" || substr(line, 1, 1) == "#") next
+            # Indented iff the raw line began with whitespace.
+            indented = (raw ~ /^[ \t]/)
             p = index(line, ":")
             if (p == 0) next
             k = substr(line, 1, p - 1)
@@ -809,7 +852,18 @@ fm_get() {
             gsub(/^[ \t]+|[ \t]+$/, "", k)
             gsub(/^[ \t]+|[ \t]+$/, "", v)
             gsub(/^["'"'"']|["'"'"']$/, "", v)
-            if (k == want && v != "") { print v; exit }
+            if (!indented) {
+                # A top-level key with no value OPENS a block; one with a value
+                # closes any open block, mirroring the python twin, where
+                # `prefix` is set only for a valueless top-level key.
+                parent = (v == "") ? k : ""
+                if (k == want && v != "") { print v; exit }
+                next
+            }
+            # Indented: only `metadata:`-scoped keys are visible, and only one
+            # level down. A deeper line is inside a nested block, so the parent
+            # is no longer `metadata` for our purposes.
+            if (parent == "metadata" && k == want && v != "") { print v; exit }
         }
     ' "$1"
 }
