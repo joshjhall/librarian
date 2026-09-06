@@ -761,6 +761,18 @@ test_organization() {
         "organization: the same dir one under the min-files boundary is silent" \
         CHECK_ORG_MIN_FILES=4
 
+    # The COUNT is interpolated into the evidence text, so its formatting is part
+    # of the emitted TSV (#932). BSD `wc` pads to width 7 where GNU does not, so
+    # an unstripped count renders as "has       3 files" on macOS and "has 3
+    # files" under python — a real bash<->python divergence, and the same padding
+    # that made loop-make-it-right emit 114 phantom rows. Asserting the exact
+    # substring pins the formatting on every userland; the surrounding
+    # min-files assertions above match on "no README" and would not notice.
+    assert_fires "$SK_ORG" "$list" "$sb" missing-dir-readme \
+        "has 3 files" \
+        "organization: the file count is unpadded in the evidence (#932)" \
+        CHECK_ORG_MIN_FILES=3
+
     # A dir with a README present is silent even over the threshold.
     new_git_sandbox sb
     : >"$sb/README.md"

@@ -41,6 +41,25 @@
 #      (ci.yml) and tests/probe-bsd-regex.sh provide; this suite runs there too,
 #      so a BSD-only parity break surfaces in that job rather than here.
 #
+#      THIS HAS NOW HAPPENED, and it is worth reading as the worked example of
+#      both limits at once (#932). On the first run of this suite that ever
+#      really executed on macOS, loop-make-it-right's `long-function` arm emitted
+#      114 rows under bash and 0 under python on $FIXDIR/Upper.PY. The cause was
+#      not a regex dialect but a UTILITY one: BSD `wc` pads its count to width 7,
+#      so the bash fallback's `indent` came back as `"      0"` and the
+#      interpolated `^.\{0,      0\}[^ ]` interval was malformed — it matched
+#      nothing, `end_line` stayed empty, and every `def` fell through to the
+#      run-to-EOF fallback. Note what this gate could and could not see: on Linux
+#      BOTH impls emitted zero `long-function` rows, so "they agree" held between
+#      two EMPTY outputs and the arm had no assertion on it at all here. Note
+#      also that root-causing it turned up a SECOND defect the BSD split had
+#      masked — python's `indent` carried a `+ 1` modelling a trailing newline
+#      GNU sed does not emit, so the impls were off by one column on any body
+#      indented one space past its `def`. That one was live on Linux and this
+#      gate was green through it, because no fixture here had that shape.
+#      The correctness cases that now pin the extent live where limit 1 says they
+#      belong: validate-loop-detectors.sh::test_right_long_function_extent_correctness.
+#
 # Pure bash + coreutils + python3; no network, no jq.
 
 set -euo pipefail

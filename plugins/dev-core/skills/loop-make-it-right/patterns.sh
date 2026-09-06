@@ -185,8 +185,34 @@ while IFS= read -r file; do
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    # Count lines until next function/class at same or lower indent
-                    indent=$(command printf '%s' "$content" | command sed 's/[^ ].*//' | command wc -c)
+                    # Count lines until next function/class at same or lower indent.
+                    #
+                    # INDENT IS COUNTED IN PURE BASH, not `sed | wc -c` (#932).
+                    # That pipeline was doubly BSD-unsafe, and its failure was the
+                    # silent #679 shape -- a clean report of the WRONG thing:
+                    #
+                    #   (1) BSD `wc` PADS its count to width 7 (`%7ju`), so indent
+                    #       came back as `"      0"`, and the bounded-repeat BRE
+                    #       below interpolated to `^.\{0,      0\}[^ ]` -- a
+                    #       malformed interval. Whether the host's grep rejects it
+                    #       or reads it as literal text, it matches NOTHING, so
+                    #       end_line stayed empty and EVERY def fell through to the
+                    #       `total - line_num` fallback. On macOS that turned this
+                    #       arm from 0 findings into 114 false HIGHs on the parity
+                    #       fixture -- the exact counts issue #932 reports.
+                    #   (2) BSD `sed` appends a trailing newline to input that
+                    #       lacks one (GNU does not), so `wc -c` would ALSO have
+                    #       read one byte high even unpadded.
+                    #
+                    # `${content%%[! ]*}` is the leading-space run; its length is
+                    # the column the first non-space sits at, which is the value
+                    # the `^.\{0,N\}[^ ]` probe actually wants. Fork-free,
+                    # bash-3.2 clean, and identical on both userlands. It matches
+                    # GNU's old value exactly, so this is not a behavior change on
+                    # Linux -- verify with the `--- Category: long-function ---`
+                    # cases in tests/validate-loop-detectors.sh.
+                    _lead=${content%%[! ]*}
+                    indent=${#_lead}
                     end_line=$(command sed -n "$((line_num + 1)),\$p" "$file" |
                         command grep -n "^.\{0,${indent}\}[^ ]" |
                         command head -1 | command cut -d: -f1)

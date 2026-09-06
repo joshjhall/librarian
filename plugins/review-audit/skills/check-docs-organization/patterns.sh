@@ -225,11 +225,20 @@ candidate_dirs | while IFS= read -r dir; do
     [ -f "${dir}/README" ] && continue
 
     # Count meaningful files (exclude hidden, generated)
+    # `tr -d` the count: BSD `wc` PADS to width 7 (`%7ju`) where GNU does not
+    # (#932). The number is INTERPOLATED INTO THE EVIDENCE TEXT below, so without
+    # this the macOS row reads "has       6 files" against python's "has 6
+    # files" — a bash<->python divergence in the emitted TSV, i.e. a real parity
+    # break rather than a cosmetic one. Measured under a BSD-wc simulation; it is
+    # the same padding that made loop-make-it-right emit 114 phantom rows in #932,
+    # reached through string interpolation instead of a regex interval. The
+    # numeric COMPARISON below tolerates the padding on its own (`[ -ge ]` and
+    # `$(( ))` both strip leading blanks) — the evidence string is what does not.
     file_count=$(command find "$dir" -maxdepth 1 -type f \
         -not -name '.*' \
         -not -name '*.pyc' \
         -not -name '*.o' \
-        2>/dev/null | command wc -l)
+        2>/dev/null | command wc -l | command tr -d '[:space:]')
 
     if [ "$file_count" -ge "$MIN_FILES" ]; then
         relative_dir=$(command echo "$dir" | command sed "s|^${PROJECT_ROOT}/||")
