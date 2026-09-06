@@ -821,7 +821,7 @@ test_py_is_test_file_direct() {
     fi
     # Each line: "<expected> <path>". Printed as "FAIL ..." on mismatch so the
     # assertion below names the specific arm that broke, not just a count.
-    out="$(python3 - "$HEALTH_PY" <<'PY' 2>&1)" || rc=$?
+    command cat >"$WORKDIR/is_test_file.py" <<'PY'
 import importlib.util, sys
 
 spec = importlib.util.spec_from_file_location("health_patterns", sys.argv[1])
@@ -860,6 +860,7 @@ for expected, path in cases:
 if bad == 0:
     print("OK")
 PY
+    out="$(python3 "$WORKDIR/is_test_file.py" "$HEALTH_PY" 2>&1)" || rc=$?
     assert_equals "0" "$rc" "the direct is_test_file probe ran without error"
     assert_equals "OK" "$out" "patterns.py is_test_file: every arm matches its expected branch (#605)"
 }
@@ -893,7 +894,7 @@ test_py_debug_family_direct() {
         skip_test "check-code-health/patterns.py not present"
         return 0
     fi
-    out="$(python3 - "$HEALTH_PY" <<'PY' 2>&1)" || rc=$?
+    command cat >"$WORKDIR/debug_family.py" <<'PY'
 import importlib.util, io, sys
 from contextlib import redirect_stdout
 
@@ -980,6 +981,7 @@ for p in problems:
 if not problems:
     print("OK")
 PY
+    out="$(python3 "$WORKDIR/debug_family.py" "$HEALTH_PY" 2>&1)" || rc=$?
     assert_equals "0" "$rc" "the direct debug-family probe ran without error"
     assert_equals "OK" "$out" \
         "patterns.py debug split: each family fires only on its own input, and scan_file emits print-then-debugger (#687)"
@@ -1006,7 +1008,7 @@ test_py_read_yaml_list_direct() {
         skip_test "check-code-health/patterns.py not present"
         return 0
     fi
-    out="$(python3 - "$HEALTH_PY" <<'PY' 2>&1)" || rc=$?
+    command cat >"$WORKDIR/read_yaml_list.py" <<'PY'
 import importlib.util, os, sys, tempfile
 
 spec = importlib.util.spec_from_file_location("health_patterns", sys.argv[1])
@@ -1078,6 +1080,7 @@ for p in problems:
 if not problems:
     print("OK")
 PY
+    out="$(python3 "$WORKDIR/read_yaml_list.py" "$HEALTH_PY" 2>&1)" || rc=$?
     assert_equals "0" "$rc" "the direct _read_yaml_list probe ran without error"
     assert_equals "OK" "$out" \
         "patterns.py _read_yaml_list: quotes, #684 whitespace rule, and ASCII-only section terminator (#686)"
@@ -1182,7 +1185,7 @@ test_py_md_slug_direct() {
     fi
 
     # --- both Python copies, driven from one table --------------------------
-    out="$(python3 - "$DECOMP_PY" "$SIZING_PY_PORT" <<'PY' 2>&1)" || rc=$?
+    command cat >"$WORKDIR/md_slug.py" <<'PY'
 import importlib.util, sys
 
 def load(name, path):
@@ -1252,6 +1255,7 @@ for text, expected in cases:
 if bad == 0:
     print("OK")
 PY
+    out="$(python3 "$WORKDIR/md_slug.py" "$DECOMP_PY" "$SIZING_PY_PORT" 2>&1)" || rc=$?
     assert_equals "0" "$rc" "the direct md_slug probe ran without error"
     assert_equals "OK" "$out" \
         "md_slug: both Python lenses agree with the expected slug for every rule (#730)"
@@ -1323,7 +1327,7 @@ test_py_family_prefix_direct() {
         return 0
     fi
 
-    out="$(python3 - "$DECOMP_PY" "$SIZING_PY_PORT" <<'PY' 2>&1)" || rc=$?
+    command cat >"$WORKDIR/family_prefix.py" <<'PY'
 import importlib.util, sys
 
 def load(name, path):
@@ -1402,6 +1406,7 @@ for name, expected in cases:
 if bad == 0:
     print("OK")
 PY
+    out="$(python3 "$WORKDIR/family_prefix.py" "$DECOMP_PY" "$SIZING_PY_PORT" 2>&1)" || rc=$?
 
     assert_equals "0" "$rc" "the direct family_prefix probe ran without error"
     assert_equals "OK" "$out" \
