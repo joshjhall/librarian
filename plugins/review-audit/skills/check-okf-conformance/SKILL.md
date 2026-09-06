@@ -1,18 +1,31 @@
 ---
-description: Deterministic Open Knowledge Format (OKF) conformance pre-scan for a memory bundle — required type, parseable frontmatter, reserved-file structure, and version drift. Runs patterns.sh before LLM analysis. Used by the checker agent.
+description: Deterministic Open Knowledge Format (OKF) pre-scan for a memory bundle — schema conformance (type, frontmatter, reserved files, version drift) plus whole-bundle health (orphans, dangling index lines, staleness). Runs patterns.sh before LLM analysis. Used by the checker agent.
 ---
 
 # check-okf-conformance
 
-Memory-bundle schema validation. Answers one question about a bundle of
-markdown concepts: **is it a conformant OKF bundle at the schema floor?**
+Memory-bundle validation in two passes:
 
-Scope is the floor and nothing more. Graph health (orphans, index budgets),
-semantic quality (near-duplicates, tier placement), and migration are separate
-concerns and deliberately out of scope here.
+1. **Conformance (per file)** — is it a conformant OKF bundle at the schema
+   floor? Parseable frontmatter, a non-empty `type`, reserved files per §8/§9.
+1. **Health (whole bundle, #669)** — is the bundle usable as a graph? Are
+   concepts reachable from an index, do index lines point at files that exist,
+   has a memory outlived its own expiry date.
 
-**Companion files**: See `contract.md` for the output format. See
-`thresholds.yml` for the OKF version pin and configurable severity levels.
+The second pass exists because a bundle can be **100% conformant and unusable**:
+two hundred perfectly-formed concepts that no index names are written but never
+recallable. That is invisible to any per-file rule, because it is a property of
+the bundle as a whole.
+
+Still out of scope: semantic quality (near-duplicates, tier placement) is slice
+C, and migration is separate. **Index SIZING is out of scope too, deliberately**
+— see § Index sizing is delegated below.
+
+**Companion files**: See `contract.md` for the output format and the
+conformance-vs-health distinction the certainty tiers carry. See
+`thresholds.yml` for the OKF version pin, the health pass's configurable index
+names and per-type body requirements, and severity levels. The whole-bundle pass
+lives in `bundle_graph.py` (mirrored by a section of `patterns.sh`).
 
 ## The floor
 
@@ -57,6 +70,45 @@ rather than candidates awaiting confirmation.
 | `okf-version-drift`           | A bundle-root `index.md` declaring an `okf_version` that differs from the pinned version. Emitted at **LOW**, at exit 0 (§12).                              |
 | `okf-reserved-file-structure` | An `index.md` carrying frontmatter other than a bundle-root `okf_version` (§8), or a `log.md` date heading that is not ISO 8601 `YYYY-MM-DD` (§9).          |
 
+### Health categories (whole bundle, #669)
+
+These need the whole bundle, not one file. The graph three are pure facts about
+files that exist, so they emit `HIGH`; the two judgment categories emit `MEDIUM`
+as candidates for Pass 2. `contract.md` § Kind states that split as a contract.
+
+| Category                | What it detects                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory-orphan`         | A concept no index names — written but never recallable. Silent when the bundle has **no** index at all: §11 forbids requiring one.                 |
+| `memory-dangling-index` | An index line naming a file that does not exist. Distinct from a dangling `[[wiki-link]]`, which is **tolerated** (knowledge not yet written).      |
+| `memory-multi-index`    | One concept named by two different indexes. A single index naming it twice is a repeated line, not this.                                            |
+| `memory-stale`          | `stale_after` before the (injected) current date, or `status: deprecated`. Quotes the memory's own `stale_check` so the row names what to re-verify. |
+| `memory-missing-why`    | A `type` whose **configured** body sections are absent. A type nobody configured has no requirement.                                                |
+
+## Index sizing is delegated
+
+`memory-index-bloat` is deliberately **not** implemented here. `check-decomposition`
+already sizes memory indexes and recommends a topic-clustered split, measured
+2026-09-05 on a 275-line `MEMORY.md`:
+
+```text
+ai-file-bloat       memory index exceeds high threshold: 275 lines (>250)
+decomposition-seam  index split: 3 topic clusters (...) -> index-<topic>.md
+```
+
+Defining an index budget in this skill's `thresholds.yml` would create a second
+threshold table over the same files that must agree with the first — exactly the
+duplication #663 was filed to eliminate. The budgets live in
+`check-decomposition/thresholds.yml` § `bloat_thresholds`; this scanner reads
+none of them. `tests/validate-okf-detectors.sh` pins the delegation so it cannot
+decay into a silent gap.
+
+## Staleness is judged against an injected date
+
+`$OKF_TODAY` overrides the current date. Production falls back to the real one,
+but every fixture injects, because a staleness test pinned to the real clock
+stops testing what it claims the moment the date rolls past its fixture — the
+failure mode is a silent false pass, not a red test.
+
 ## Bundle discovery
 
 The bundle root is resolved from the environment, not hardcoded:
@@ -90,12 +142,25 @@ and an exit-0 report would describe a bundle that was never fully checked.
 
 ## Portability
 
-Zero repo-specific values. The reserved names are the spec's `index.md` and
-`log.md` and nothing else — in particular this does **not** inherit
-`check-decomposition`'s `MEMORY.md` / `index-*.md` index heuristic, which is one
-repo's naming convention and would mis-classify every other repo's bundle. A
-consuming repo with entirely different type values, file names, and local
-frontmatter extensions gets correct results with zero code changes.
+No repo-specific value is hardcoded. The reserved names are the spec's
+`index.md` and `log.md` and nothing else.
+
+The health pass needs two things the spec does not define — which files are
+indexes, and what a given `type` must contain — so both are **configuration with
+librarian's conventions as the default**, never the contract:
+
+| Setting                    | Default                              | Override                    |
+| -------------------------- | ------------------------------------ | --------------------------- |
+| `health.index_names`       | `MEMORY.md`, `index.md`, `index-*.md` | `$OKF_INDEX_NAMES`          |
+| `health.body_requirements` | `feedback`/`project` need `**Why:**` + `**How to apply:**` | edit `thresholds.yml` |
+
+`check-decomposition` hardcodes those same three index names; here they are a
+default precisely **because** a consuming repo whose index is `toc.md` must not
+be told its entire bundle is orphaned. A repo with an entirely different type
+vocabulary gets **zero** `memory-missing-why` rows rather than a wrong one for
+every file — §4.1 registers no types centrally and requires consumers to tolerate
+unfamiliar ones. Pinned by a fixture: a foreign bundle validates correctly with
+configuration alone and no code change.
 
 ## Pass 2 — LLM Analysis
 

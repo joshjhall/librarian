@@ -235,6 +235,7 @@ plugins/workflow/skills/ship-issue/split-verify.py"
 IMPORTED_MODULES="\
 plugins/review-audit/skills/check-decomposition/loc_engine.py
 plugins/review-audit/skills/check-decomposition/prose_spec.py
+plugins/review-audit/skills/check-okf-conformance/bundle_graph.py
 plugins/workflow/skills/ship-issue/loc_engine.py
 plugins/workflow/skills/ship-issue/prose_spec.py"
 
@@ -416,6 +417,28 @@ while IFS= read -r py; do
             # File-list-not-found arm (a list PATH that does not exist -> OSError).
             run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
                 "$py" "$OKF_NOFILE_LIST" >/dev/null 2>&1 || true
+            # Slice B (#669) — the bundle graph + health pass in bundle_graph.py.
+            # The DATE IS INJECTED so the staleness arms cover the same branches
+            # every run instead of flipping when the real clock passes a fixture
+            # date. Chosen to sit after the corpus's stale_after (2020-01-01).
+            OKF_BUNDLE_ROOT="$OKF_ROOT_REL" OKF_TODAY="2026-09-05" \
+                run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            # ...and the same corpus BEFORE that date, driving the not-yet-stale
+            # side of the comparison.
+            OKF_BUNDLE_ROOT="$OKF_ROOT_REL" OKF_TODAY="2019-01-01" \
+                run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            # Config-override arms: a foreign index name (the literal-match arm
+            # of is_index, plus the no-index-so-no-orphans guard), and an
+            # explicitly EMPTY override (the "configured none" branch that is
+            # distinct from unset).
+            OKF_BUNDLE_ROOT="$OKF_ROOT_REL" OKF_INDEX_NAMES="toc.md" \
+                run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
+            OKF_BUNDLE_ROOT="$OKF_ROOT_REL" OKF_INDEX_NAMES="" \
+                run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+                "$py" "$OKF_LIST" >/dev/null 2>&1 || true
             ;;
         */check-lifecycle/patterns.py)
             # Drive the per-language arms (swift/py/js/go spawn/terminate/handle/

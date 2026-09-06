@@ -100,6 +100,7 @@
 - [Parity gate hides a shared defect](parity-gate-hides-shared-defect.md) — both impls wrong the same way passes green; same-output ≠ same-intent (#684)
 - [Parity is blind to exit-code divergence](parity-blind-to-exit-code-divergence.md) — a refusal path emits nothing in BOTH impls; assert the exit code, not just stdout (#816)
 - [A byte tool can't strip multi-byte](byte-tool-cannot-strip-multibyte.md) — `tr` passes U+202E that Python's isprintable() strips; enumerate literal UTF-8, never `\xNN` (#816)
+- [A config value is not a pattern](config-value-is-not-a-pattern.md) — `notes[1].md` never matches itself via fnmatch/case; try literal equality FIRST (#669)
 - [Whole-repo diff is bounded by repo content](whole-repo-diff-bounded-by-repo-content.md) — absent input shapes read as parity; grep the shape, 0 files = silent gate (#836)
 - [The correct copy is the one under test](the-correct-copy-is-the-one-under-test.md) — N unpinned copies, and the fixture calls the RIGHT one; grep the test corpus by PATH (#836)
 - [Pinned behavior may be a bug report](pinned-behavior-may-be-a-bug-report.md) — "recorded, not asserted-as-desirable" is a deferred defect; fix the row, comment, and every runtime together

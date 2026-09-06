@@ -115,7 +115,50 @@ OKF_LIST="$WORKDIR/okf-list.txt"
     printf '%s\n' "$FIXDIR/okf/README.md"
     # A ghost path inside the bundle — drives the per-file OSError continue.
     printf '%s\n' "$OKFDIR/ghost.md"
+    # Slice B (#669) graph fixtures. The pass reads the bundle DIRECTORY, so
+    # these need only be listed to make the bundle-dir gate fire; the files
+    # above already supply an index (index.md naming minimal.md) plus concepts.
+    printf '%s\n' "$OKFDIR/orphan.md"
+    printf '%s\n' "$OKFDIR/dual.md"
+    printf '%s\n' "$OKFDIR/stale-dated.md"
+    printf '%s\n' "$OKFDIR/deprecated.md"
+    printf '%s\n' "$OKFDIR/needs-why.md"
 } >"$OKF_LIST"
+
+# --- slice B: bundle graph + health fixtures (#669) --------------------------
+# These drive bundle_graph.py's arms: orphan, dangling-index, multi-index, both
+# staleness branches, and the per-type body requirement. Correctness is pinned
+# by tests/validate-okf-detectors.sh; these exist for line coverage.
+
+# A second index, so the multi-index arm has two indexes to disagree over, and a
+# dangling pointer so that arm fires too.
+{
+    printf -- '# Extra index\n\n'
+    printf -- '* [Dual](dual.md) - claimed twice\n'
+    printf -- '* [Ghostly](never-written.md) - dangling index line\n'
+} >"$OKFDIR/index-extra.md"
+
+# Named by BOTH indexes — the multi-index arm.
+printf -- '* [Dual](dual.md) - claimed here too\n' >>"$OKFDIR/index.md"
+printf -- '---\ntype: user\n---\n\nBody.\n' >"$OKFDIR/dual.md"
+
+# Named by no index — the orphan arm.
+printf -- '---\ntype: user\n---\n\nBody.\n' >"$OKFDIR/orphan.md"
+
+# Past its stale_after, WITH a stale_check to quote — the date branch and the
+# quoted-evidence path. The corpus injects OKF_TODAY so this cannot rot.
+{
+    printf -- '---\ntype: reference\nstale_after: 2020-01-01\n'
+    printf -- 'stale_check: "re-derive it"\n---\n\nBody.\n'
+} >"$OKFDIR/stale-dated.md"
+
+# status: deprecated under a nested metadata block — the other stale branch,
+# and the nested-field lookup.
+printf -- '---\ntype: reference\nmetadata:\n  status: deprecated\n---\n\nBody.\n' \
+    >"$OKFDIR/deprecated.md"
+
+# A configured type missing its required sections — the body-requirement arm.
+printf -- '---\ntype: feedback\n---\n\nNo why section.\n' >"$OKFDIR/needs-why.md"
 
 # A list pointing at a path that does not exist — the file-list-not-found arm.
 OKF_NOFILE_LIST="$WORKDIR/okf-nofile-list.txt"
@@ -125,7 +168,12 @@ printf '%s\n' "$WORKDIR/definitely-not-here/list.txt" >"$OKF_NOFILE_LIST"
 # unresolvable-pin fail-loud branch, which the real skill dir can never reach.
 OKF_NOPIN_DIR="$WORKDIR/okf-nopin"
 mkdir -p "$OKF_NOPIN_DIR"
-cp "$PLUGINS_DIR/review-audit/skills/check-okf-conformance/patterns.py" "$OKF_NOPIN_DIR/"
+# bundle_graph.py travels with patterns.py (#669) — it is imported at module
+# load, so a copy without it dies on ImportError before ever reaching the
+# unresolvable-pin branch this fixture exists to drive.
+cp "$PLUGINS_DIR/review-audit/skills/check-okf-conformance/patterns.py" \
+    "$PLUGINS_DIR/review-audit/skills/check-okf-conformance/bundle_graph.py" \
+    "$OKF_NOPIN_DIR/"
 printf -- 'severity:\n  okf-missing-type:\n    absent_or_empty: medium\n' \
     >"$OKF_NOPIN_DIR/thresholds.yml"
 OKF_NOPIN_PY="$OKF_NOPIN_DIR/patterns.py"

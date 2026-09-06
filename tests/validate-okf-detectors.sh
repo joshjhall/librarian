@@ -170,7 +170,14 @@ test_healthy_bundle_is_silent() {
 
     # Root index.md: frontmatter permitted, carrying ONLY okf_version (§8/§12),
     # and matching the pin so there is no drift.
-    command printf -- '---\nokf_version: "0.2"\n---\n\n# Index\n\n* [A](a.md) - a thing\n' >"$b/index.md"
+    #
+    # The index NAMES THE REAL ROOT CONCEPTS (#669). It used to point at a lone
+    # `a.md` that the fixture never created — invisible while the scanner was
+    # per-file, but a genuine `memory-dangling-index` once slice B reads the
+    # bundle as a graph, and it left both root concepts orphaned besides. A
+    # bundle this fixture calls "fully conformant" must now also be structurally
+    # healthy, or it cannot serve as the zero-rows baseline for either pass.
+    command printf -- '---\nokf_version: "0.2"\n---\n\n# Index\n\n* [Minimal](minimal.md) - a thing\n* [Rich](rich.md) - another thing\n' >"$b/index.md"
     # Root log.md with a conformant ISO date heading (§9).
     command printf -- '# Log\n\n## 2026-08-19\n* **Update**: a thing\n' >"$b/log.md"
     # A minimal concept: `type` alone is FULLY conformant (§4.1) — the floor and
@@ -460,14 +467,25 @@ test_permissive_conformance() {
     # (#631) and exactly the kind of producer-defined key a portable validator
     # must not flag.
     b="$(fresh_bundle)"
-    command printf -- '---\ntype: feedback\nstale_after: 2026-10-31\nstale_check: "what specifically rots"\nwholly_invented_key: 42\n---\n\nBody.\n' >"$b/ext.md"
+    # `type: reference`, not `feedback`: this case is about EXTRA KEYS being
+    # tolerated, and the type is incidental to that. `feedback` carries a
+    # configured body requirement (#669), so using it here would drag an
+    # unrelated health rule into a conformance assertion and make the fixture
+    # test two things at once. The body-requirement rule gets its own fixture in
+    # test_memory_missing_why, where a missing **Why:** is the point.
+    command printf -- '---\ntype: reference\nstale_after: 2026-10-31\nstale_check: "what specifically rots"\nwholly_invented_key: 42\n---\n\nBody.\n' >"$b/ext.md"
     list="$(make_list "$b/../../../l" "$b/ext.md")"
     assert_no_rows "$list" "okf: unrecognized extra keys incl. a stale_check extension are conformant"
 
     # §11/§12: a bundle-root index.md with NO okf_version is fine — declaring one
     # is optional.
     b="$(fresh_bundle)"
-    command printf -- '# Index\n\n* [A](a.md) - thing\n' >"$b/index.md"
+    # The index names a concept that EXISTS. Pointing at an absent `a.md` was
+    # invisible to the per-file passes but is a real `memory-dangling-index`
+    # under slice B (#669) — and it has nothing to do with okf_version, which is
+    # what this case is about.
+    command printf -- '---\ntype: user\n---\n\nBody.\n' >"$b/thing.md"
+    command printf -- '# Index\n\n* [A](thing.md) - thing\n' >"$b/index.md"
     list="$(make_list "$b/../../../l" "$b/index.md")"
     assert_no_rows "$list" "okf: a root index.md without okf_version is conformant"
 
@@ -615,7 +633,12 @@ test_fail_loud_runtime() {
     # it. This is the arm that would otherwise only ever run in a broken checkout.
     local fake="$WORKDIR/fake-skill"
     command mkdir -p "$fake"
-    command cp "$SK/patterns.py" "$SK/patterns.sh" "$fake/"
+    # bundle_graph.py travels with patterns.py (#669): it is a REQUIRED sibling
+    # imported at module load, not an optional add-on, so a copy of the skill
+    # without it is not a copy of the skill. Omitting it here made the pin
+    # assertions fail on a ModuleNotFoundError — which would have passed the
+    # "exits non-zero" half for entirely the wrong reason.
+    command cp "$SK/patterns.py" "$SK/patterns.sh" "$SK/bundle_graph.py" "$fake/"
     command printf -- 'severity:\n  okf-missing-type:\n    absent_or_empty: medium\n' >"$fake/thresholds.yml"
     rc=0
     err="$(/usr/bin/env -u OKF_PINNED_VERSION PATTERNS_FORCE_BASH=1 \
@@ -725,7 +748,9 @@ test_pin_resolution_parity() {
     # surface, and the two runtimes must not read one file differently.
     cfg="$WORKDIR/pin-parity"
     command mkdir -p "$cfg"
-    command cp "$SK/patterns.py" "$SK/patterns.sh" "$cfg/"
+    # bundle_graph.py travels with patterns.py — see the note at the fake-skill
+    # copy above; a skill copy missing it fails on an import, not on the pin.
+    command cp "$SK/patterns.py" "$SK/patterns.sh" "$SK/bundle_graph.py" "$cfg/"
     command printf -- 'okf:\n  other: x\n- a top-level list item\n  pinned_version: "9.9"\n' \
         >"$cfg/thresholds.yml"
     rc_sh=0
@@ -755,6 +780,373 @@ test_pin_resolution_parity() {
     fi
 }
 
+# ============================================================================
+# SLICE B (#669) — the whole-bundle graph + health pass.
+#
+# These categories are properties of the BUNDLE AS A GRAPH, which no per-file
+# rule above can decide. Every one is a FINDING AT EXIT 0, exactly like the
+# conformance categories: §11 forbids rejecting a bundle for broken links or a
+# missing index, and a health observation is further still from a rejection.
+# ============================================================================
+
+# graph_bundle — a bundle with one index naming one real concept. The healthy
+# baseline the graph fixtures perturb, so each asserts ONE deviation.
+graph_bundle() {
+    local b
+    b="$(fresh_bundle)"
+    command printf -- '# Index\n\n* [Kept](kept.md) - a thing\n' >"$b/MEMORY.md"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/kept.md"
+    command printf '%s' "$b"
+}
+
+test_memory_orphan() {
+    local b list
+
+    # A concept no index names. THE central slice-B category: the file is
+    # written, conformant, and unrecallable.
+    b="$(graph_bundle)"
+    command printf -- '---\ntype: reference\n---\n\nNobody points here.\n' >"$b/lonely.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-orphan "Concept is named by no index" \
+        "okf: a concept no index names is an orphan"
+    # ...and the INDEXED sibling in the same bundle is NOT reported. Without
+    # this the fixture would pass on a detector that flags every concept.
+    assert_not_contains "$(emit_rows sh "$list" memory-orphan)" "kept.md" \
+        "okf: an indexed concept is not an orphan (bash)"
+
+    # §11: a bundle with NO index at all has no orphans. A bundle that does not
+    # route through indexes is conformant, and reporting every concept in it is
+    # the "fires on everything" failure.
+    b="$(fresh_bundle)"
+    command printf -- '---\ntype: reference\n---\n\nBody.\n' >"$b/solo.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-orphan "okf: no index in the bundle means no orphans"
+
+    # A DANGLING WIKI-LINK IS NOT A FINDING (#669 AC). OKF tolerates a link to
+    # knowledge not yet written; this repo's own MEMORY.md tells authors to link
+    # liberally to names that do not exist yet. Distinct from a dangling INDEX
+    # line, which IS flagged (below).
+    # OVERWRITE the indexed concept rather than appending: `>>` would have left
+    # a second frontmatter block inside the body, making this an unparseable-
+    # frontmatter fixture instead of a wiki-link one.
+    b="$(graph_bundle)"
+    command printf -- '---\ntype: reference\n---\n\nSee [[not-yet-written]].\n' >"$b/kept.md"
+    list="$(make_list "$b/../../../wl" "$b/kept.md")"
+    assert_no_rows "$list" "okf: a dangling [[wiki-link]] is tolerated, not flagged"
+}
+
+test_memory_dangling_index() {
+    local b list
+
+    # An index line promising a file that is not there.
+    b="$(graph_bundle)"
+    command printf -- '* [Ghost](ghost.md) - never written\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-dangling-index "ghost.md" \
+        "okf: an index line naming an absent file fires"
+
+    # An index naming ANOTHER INDEX is ordinary structure, not a dangling
+    # pointer — a root index listing its sub-indexes is the documented shape.
+    b="$(graph_bundle)"
+    command printf -- '* [Sub](index-extra.md)\n' >>"$b/MEMORY.md"
+    command printf -- '# Extra\n\n* [Kept](kept.md) - a thing\n' >"$b/index-extra.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-dangling-index \
+        "okf: an index naming a sibling index is not dangling"
+}
+
+test_memory_multi_index() {
+    local b list
+
+    # One concept claimed by two DIFFERENT indexes.
+    b="$(graph_bundle)"
+    command printf -- '# Extra\n\n* [Kept](kept.md) - also here\n' >"$b/index-extra.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-multi-index "Concept is named by more than one index" \
+        "okf: a concept in two indexes fires"
+    # The evidence NAMES BOTH indexes — a row that said only "duplicated" would
+    # leave the reader to find them.
+    assert_fires "$list" memory-multi-index "index-extra.md" \
+        "okf: the multi-index evidence names the second index"
+
+    # One index naming the same concept TWICE is a duplicate line, not a
+    # multi-index: the category is about two indexes claiming ownership, and
+    # counting repeats would fire on any index that mentions a file in both a
+    # heading and a list.
+    b="$(graph_bundle)"
+    command printf -- '* [Kept again](kept.md) - same index\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-multi-index \
+        "okf: one index naming a concept twice is not a multi-index"
+}
+
+test_memory_stale() {
+    local b list
+
+    # THE DATE IS INJECTED, NEVER READ FROM THE CLOCK (#669 AC). The SAME
+    # fixture is driven from both sides of its own stale_after, so the case
+    # cannot rot into a false pass when the real date rolls past it — which is
+    # exactly how a staleness test quietly stops testing anything.
+    b="$(graph_bundle)"
+    # The stale_check text is kept SHORT on purpose: evidence is capped at 80
+    # CHARACTERS, and a longer quote is truncated mid-word, so an assertion on
+    # the full sentence would fail for the cap rather than for the behavior.
+    command printf -- '---\ntype: reference\nstale_after: 2026-06-30\nstale_check: "re-derive it"\n---\n\nBody.\n' >"$b/dated.md"
+    command printf -- '* [Dated](dated.md) - a thing\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+
+    OKF_TODAY=2026-09-05 assert_fires "$list" memory-stale "past its stale_after" \
+        "okf: a past stale_after fires when today is after it"
+    # THE FINDING QUOTES THE MEMORY'S OWN stale_check (#669 AC) — that field
+    # names the sentence to re-verify, which beats "may be out of date".
+    OKF_TODAY=2026-09-05 assert_fires "$list" memory-stale "re-derive it" \
+        "okf: the stale finding quotes the memory's own stale_check"
+    # The SAME fixture, before the date: silent. This is the arm that proves the
+    # date is genuinely injected rather than incidental.
+    OKF_TODAY=2026-01-01 assert_silent "$list" memory-stale \
+        "okf: the same fixture is silent when today precedes stale_after"
+
+    # `status: deprecated` is stale regardless of any date.
+    b="$(graph_bundle)"
+    command printf -- '---\ntype: reference\nmetadata:\n  status: deprecated\n---\n\nBody.\n' >"$b/old.md"
+    command printf -- '* [Old](old.md) - a thing\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    OKF_TODAY=2026-01-01 assert_fires "$list" memory-stale "status: deprecated" \
+        "okf: status deprecated is stale under a nested metadata block"
+}
+
+test_memory_missing_why() {
+    local b list
+
+    # A configured type whose required body sections are absent.
+    b="$(graph_bundle)"
+    command printf -- '---\ntype: feedback\n---\n\nGuidance with no why.\n' >"$b/fb.md"
+    command printf -- '* [FB](fb.md) - a thing\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_fires "$list" memory-missing-why "**Why:**" \
+        "okf: a feedback memory with no Why section fires"
+
+    # The same type WITH both sections is silent — the arm that stops this
+    # passing on a detector that fires for every configured type.
+    b="$(graph_bundle)"
+    command printf -- '---\ntype: feedback\n---\n\n**Why:** because.\n\n**How to apply:** like so.\n' >"$b/fb.md"
+    command printf -- '* [FB](fb.md) - a thing\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-missing-why \
+        "okf: a feedback memory carrying both sections is silent"
+
+    # AN UNCONFIGURED TYPE HAS NO REQUIREMENT — the portability default, and a
+    # §4.1 obligation: types are not registered centrally and consumers must
+    # tolerate unfamiliar ones, so requiring sections of a type nobody
+    # configured would invent a rule the spec forbids.
+    b="$(graph_bundle)"
+    command printf -- '---\ntype: wholly-unfamiliar\n---\n\nNo sections at all.\n' >"$b/x.md"
+    command printf -- '* [X](x.md) - a thing\n' >>"$b/MEMORY.md"
+    list="$(list_bundle "$b")"
+    assert_silent "$list" memory-missing-why \
+        "okf: an unconfigured type carries no body requirement"
+}
+
+# ============================================================================
+# PORTABILITY (#669 AC) — a bundle with a DIFFERENT type vocabulary and
+# DIFFERENT index naming validates correctly with ZERO code changes.
+#
+# This is the acceptance criterion that keeps librarian's own conventions as
+# DEFAULTS rather than the contract. It is asserted by configuration alone.
+# ============================================================================
+test_health_is_configurable() {
+    local b list
+
+    b="$(fresh_bundle)"
+    command printf -- '# Contents\n\n* [Alpha](alpha.md) - a thing\n' >"$b/toc.md"
+    command printf -- '---\ntype: recipe\n---\n\nNo Why section anywhere.\n' >"$b/alpha.md"
+    command printf -- '---\ntype: recipe\n---\n\nUnlisted.\n' >"$b/beta.md"
+    list="$(list_bundle "$b")"
+
+    # With the DEFAULT config, `toc.md` is not an index — so nothing routes, and
+    # the no-index rule keeps orphan detection silent rather than reporting the
+    # whole bundle. This arm is what makes the next one meaningful.
+    assert_silent "$list" memory-orphan \
+        "okf: an unrecognized index name leaves the bundle unrouted, not all-orphaned"
+
+    # Naming the repo's real index makes the graph resolve: the listed concept
+    # is fine, the unlisted one is an orphan. Configuration only.
+    OKF_INDEX_NAMES="toc.md" assert_fires "$list" memory-orphan "beta.md" \
+        "okf: a repo whose index is toc.md gets correct orphans by config alone"
+    assert_not_contains "$(OKF_INDEX_NAMES="toc.md" emit_rows sh "$list" memory-orphan)" \
+        "alpha.md" "okf: the concept toc.md names is not an orphan (bash)"
+
+    # An unfamiliar type vocabulary produces NO body-requirement findings, with
+    # no code change — `recipe` is configured nowhere.
+    OKF_INDEX_NAMES="toc.md" assert_silent "$list" memory-missing-why \
+        "okf: an unfamiliar type vocabulary yields no missing-why rows"
+
+    # A CONFIGURED NAME CARRYING A GLOB METACHARACTER MUST STILL MATCH ITSELF.
+    # An index literally called `notes[1].md` is a plain filename to its
+    # operator, but reads as a character class to both fnmatch and bash `case` —
+    # and `[1]` does not match the literal text `[1]`, so the file fails to
+    # match its own configured name. The bundle's only index is then classified
+    # as a concept: the index goes unread and EVERY memory is reported orphaned.
+    #
+    # Both impls got this identically wrong, so the parity gates stayed green
+    # while neither worked — the shared-defect shape parity cannot see. Fixed by
+    # trying literal equality for every name before any glob interpretation.
+    b="$(fresh_bundle)"
+    command printf -- '# Bracketed\n\n* [Alpha](alpha.md) - a thing\n' >"$b/notes[1].md"
+    command printf -- '---\ntype: reference\n---\n\nIndexed.\n' >"$b/alpha.md"
+    command printf -- '---\ntype: reference\n---\n\nNot indexed.\n' >"$b/gamma.md"
+    list="$(list_bundle "$b")"
+    # The index is READ: the concept it names is not an orphan...
+    assert_not_contains "$(OKF_INDEX_NAMES="notes[1].md" emit_rows sh "$list" memory-orphan)" \
+        "alpha.md" "okf: a bracketed index name matches itself, so its concept is indexed (bash)"
+    # ...and the genuinely unindexed one still is, so this cannot pass by the
+    # whole bundle simply going silent.
+    OKF_INDEX_NAMES="notes[1].md" assert_fires "$list" memory-orphan "gamma.md" \
+        "okf: with a bracketed index name the unindexed concept is still an orphan"
+}
+
+# ============================================================================
+# UNIT: the config parser and the index matcher, called DIRECTLY (#669).
+#
+# Every fixture above drives these through the scanner end-to-end, which proves
+# the behavior but leaves the helpers unreferenced by name — `untested-public-api`
+# flags exactly that, and it is right to: an end-to-end fixture exercises only
+# the input shapes the bundle happens to contain, so a boundary no fixture spells
+# (an absent key vs a key configured empty, a name that is both a literal and a
+# pattern) is asserted nowhere. check-decomposition's sibling module is unit-
+# tested the same way, and its own comment names literal-vs-glob root matching
+# "the arm most at risk of a parity split" — the class the is_index bug landed in.
+#
+# Asserted against BOTH runtimes, since a helper is where the two can silently
+# diverge while the TSV still matches on this repo's own bundle.
+# ============================================================================
+test_config_helpers_direct() {
+    local cfg out
+
+    if [ "$HAVE_PY" -eq 1 ]; then
+        # No env override needed: every call below passes its names explicitly,
+        # so read_index_names() (the only reader of $OKF_INDEX_NAMES) is not on
+        # this path.
+        out="$(python3 -c "
+import sys
+sys.path.insert(0, '$SK')
+from bundle_graph import is_index, read_config_list
+
+# is_index: a name that is simultaneously a valid literal and a valid glob must
+# match ITSELF. This is the divergent case — a fixture using 'index-*.md' passes
+# with and without the two-pass literal-first order.
+print('bracket-literal', is_index('notes[1].md', ['notes[1].md']))
+print('glob-still-works', is_index('index-extra.md', ['index-*.md']))
+print('glob-no-false-hit', is_index('MEMORY.md', ['index-*.md']))
+print('question-literal', is_index('a?b.md', ['a?b.md']))
+
+# read_config_list: ABSENT key vs key-present-with-no-items are different
+# answers (None vs []), and the caller depends on the difference to tell 'use the
+# default' from 'the operator configured none'. Collapsing them would make a rule
+# impossible to turn off, and no end-to-end fixture can see it.
+print('absent-key', read_config_list('$SK/thresholds.yml', 'no_such_key_here') is None)
+print('present-key', read_config_list('$SK/thresholds.yml', 'index_names'))
+" 2>&1)" || true
+
+        assert_contains "$out" "bracket-literal True" \
+            "okf/unit: a bracketed index name matches itself (python)"
+        assert_contains "$out" "glob-still-works True" \
+            "okf/unit: a genuine glob default still matches (python)"
+        assert_contains "$out" "glob-no-false-hit False" \
+            "okf/unit: the glob does not match an unrelated name (python)"
+        assert_contains "$out" "question-literal True" \
+            "okf/unit: a '?'-bearing literal name matches itself (python)"
+        assert_contains "$out" "absent-key True" \
+            "okf/unit: an ABSENT config key returns None, not an empty list (python)"
+        assert_contains "$out" "MEMORY.md" \
+            "okf/unit: a present config key returns its items (python)"
+    fi
+
+    # The bash twin, driven through the same is_index contract. Sourcing
+    # patterns.sh would execute it, so the function is exercised by invoking the
+    # scanner with an OKF_INDEX_NAMES override and observing the classification
+    # it produces — the only bash-side seam that does not require refactoring the
+    # scanner into a library.
+    local b list
+    b="$(fresh_bundle)"
+    command printf -- '# Bracketed\n\n* [Alpha](alpha.md) - a thing\n' >"$b/notes[1].md"
+    command printf -- '---\ntype: reference\n---\n\nIndexed.\n' >"$b/alpha.md"
+    command printf -- '---\ntype: reference\n---\n\nUnindexed.\n' >"$b/beta.md"
+    list="$(list_bundle "$b")"
+    # The bracketed name is honored as an index: its concept is not an orphan,
+    # and the file it does NOT name still is.
+    assert_not_contains "$(OKF_INDEX_NAMES="notes[1].md" emit_rows sh "$list" memory-orphan)" \
+        "alpha.md" "okf/unit: bash honors a bracketed index name (bash)"
+    OKF_INDEX_NAMES="notes[1].md" assert_fires "$list" memory-orphan "beta.md" \
+        "okf/unit: bash still reports the genuinely unindexed concept (bash)"
+}
+
+# ============================================================================
+# DELEGATION PIN (#669) — index SIZING belongs to check-decomposition.
+#
+# `memory-index-bloat` and the topic-clustered split recommendation are
+# deliberately NOT implemented here: check-decomposition already emits both, and
+# a second detector would fork the one authoritative prose-threshold table that
+# #663/#589 exist to keep singular.
+#
+# That delegation is only safe while the upstream scanner actually still emits
+# those rows. This test is what stops the delegation decaying into a silent gap
+# — the absence of slice-B code would otherwise read as a missing feature to a
+# future reader, and nothing would fail if upstream stopped emitting.
+# ============================================================================
+test_index_sizing_is_delegated() {
+    local decomp="$SKILLS_DIR/check-decomposition/patterns.sh" b list out i
+
+    if [ ! -f "$decomp" ]; then
+        skip_test "check-decomposition is not installed alongside this skill"
+        return
+    fi
+
+    b="$(fresh_bundle)"
+    # An index over the memory_index high budget (250) with three clear topic
+    # clusters for the seam finder to name.
+    {
+        command printf -- '# Memory index\n\n'
+        command printf -- '## Alpha topics\n'
+        i=0
+        while [ "$i" -lt 90 ]; do
+            command printf -- '* [Alpha %s](alpha-%s.md) - hook\n' "$i" "$i"
+            i=$((i + 1))
+        done
+        command printf -- '\n## Beta topics\n'
+        i=0
+        while [ "$i" -lt 90 ]; do
+            command printf -- '* [Beta %s](beta-%s.md) - hook\n' "$i" "$i"
+            i=$((i + 1))
+        done
+        command printf -- '\n## Gamma topics\n'
+        i=0
+        while [ "$i" -lt 90 ]; do
+            command printf -- '* [Gamma %s](gamma-%s.md) - hook\n' "$i" "$i"
+            i=$((i + 1))
+        done
+    } >"$b/MEMORY.md"
+    list="$(make_list "$b/../../../dl" "$b/MEMORY.md")"
+
+    out="$(MEMORY_BUNDLE_ROOT="$FIXTURE_ROOT" PATTERNS_FORCE_BASH=1 \
+        "$REAL_BASH" "$decomp" "$list" 2>/dev/null)"
+
+    assert_contains "$out" "ai-file-bloat" \
+        "okf: check-decomposition still sizes an oversized memory index (delegated)"
+    assert_contains "$out" "memory index" \
+        "okf: the delegated row is typed as a memory index, not generic prose"
+    assert_contains "$out" "decomposition-seam" \
+        "okf: check-decomposition still recommends a split for it (delegated)"
+    # The AC is that the recommendation names CONCRETE CLUSTERS rather than
+    # saying "consider splitting" — assert a cluster name, not just the row.
+    assert_contains "$out" "alpha_topics" \
+        "okf: the delegated split recommendation names concrete topic clusters"
+
+    # ...and THIS scanner stays out of it: no index-sizing category of its own.
+    assert_silent "$list" memory-index-bloat \
+        "okf: check-okf-conformance does not emit its own index-bloat row"
+}
+
 run_test test_healthy_bundle_is_silent "check-okf-conformance: a conformant bundle produces ZERO findings"
 run_test test_missing_type "check-okf-conformance: absent / empty / whitespace-only type"
 run_test test_unparseable_frontmatter "check-okf-conformance: absent, unterminated, and malformed frontmatter"
@@ -765,5 +1157,13 @@ run_test test_bundle_discovery "check-okf-conformance: root override, normalizat
 run_test test_fail_loud_runtime "check-okf-conformance: unresolvable pin / usage / missing list fail LOUD and non-zero"
 run_test test_pin_resolution_parity "check-okf-conformance: bash/python resolve the version pin identically"
 run_test test_evidence_truncation_parity "check-okf-conformance: >80-char multibyte evidence truncation parity"
+run_test test_memory_orphan "check-okf-conformance: orphans, the no-index rule, and tolerated [[wiki-links]]"
+run_test test_memory_dangling_index "check-okf-conformance: a dangling index line vs an index naming an index"
+run_test test_memory_multi_index "check-okf-conformance: two indexes claiming one concept vs a repeated line"
+run_test test_memory_stale "check-okf-conformance: staleness against an INJECTED date, quoting stale_check"
+run_test test_memory_missing_why "check-okf-conformance: per-type body requirements, and unconfigured types"
+run_test test_health_is_configurable "check-okf-conformance: a foreign vocabulary + index naming works by config alone"
+run_test test_config_helpers_direct "check-okf-conformance: is_index + read_config_list called directly (both runtimes)"
+run_test test_index_sizing_is_delegated "check-okf-conformance: index sizing stays delegated to check-decomposition"
 
 generate_report

@@ -249,6 +249,7 @@ test_unsurfaceable_prescan_row_forces_full() {
     list="$(mklist 'README.md' 'docs/guide.md')"
     for cat in file-length ai-file-bloat doc-file-bloat decomposition-seam \
         okf-missing-type okf-unparseable-frontmatter okf-reserved-file-structure okf-version-drift \
+        memory-orphan memory-dangling-index memory-multi-index memory-stale memory-missing-why \
         security-scan-unavailable; do
         out="$(route_of "$list" --prescan-categories "$cat")"
         assert_equals "full" "$(val route "$out")" \

@@ -400,6 +400,34 @@ in_bundle() {
     return 1
 }
 
+# bundle_dir_of PATH — the CONCRETE bundle directory PATH lives in (its prefix
+# up to and including $BUNDLE_ROOT), or nothing when it is not in a bundle.
+# Mirrors bundle_dir_of() in patterns.py.
+#
+# The slice-B pass needs a directory to enumerate, and it MUST come from the file
+# list rather than from "$PWD/$BUNDLE_ROOT": the root is a RELATIVE fragment
+# matched anywhere in a path, so resolving it against the CWD scans a different
+# bundle than the caller passed whenever the two differ — for a fixture under
+# /tmp while the CWD is a repo with its own .claude/memory, that silently reports
+# on the repo's real bundle.
+bundle_dir_of() {
+    local path="$1" tail_part
+    [ -n "$BUNDLE_ROOT" ] || return 0
+    case "$path" in
+        "$BUNDLE_ROOT"/*)
+            command printf '%s' "$BUNDLE_ROOT"
+            return 0
+            ;;
+        */"$BUNDLE_ROOT"/*)
+            # Strip the shortest trailing match so the prefix ENDS at the root.
+            tail_part="/${BUNDLE_ROOT}/${path#*/"$BUNDLE_ROOT"/}"
+            command printf '%s' "${path%"$tail_part"}/$BUNDLE_ROOT"
+            return 0
+            ;;
+    esac
+    return 0
+}
+
 # is_bundle_root_file PATH — PATH sits at the TOP level of the bundle rather than
 # in a subdirectory. §8 permits frontmatter in a bundle-ROOT index.md only.
 is_bundle_root_file() {
@@ -605,7 +633,384 @@ scan_log() {
     done <"$file"
 }
 
+# --- slice B: bundle graph + health (#669) -----------------------------------
+# Mirrors bundle_graph.py function-for-function. Read that file's module
+# docstring for the design: the pass enumerates the bundle ROOT rather than the
+# file list, because an orphan is "no index names this concept" and the index is
+# usually not in the same diff as the concept.
+#
+# Categories and evidence labels — ONE literal each, byte-identical to the C_*/
+# L_* constants in bundle_graph.py.
+C_ORPHAN="memory-orphan"
+C_DANGLING_INDEX="memory-dangling-index"
+C_MULTI_INDEX="memory-multi-index"
+C_STALE="memory-stale"
+C_MISSING_WHY="memory-missing-why"
+
+L_ORPHAN="Concept is named by no index"
+L_DANGLING="Index names a file that does not exist"
+L_MULTI="Concept is named by more than one index"
+L_STALE_DATE="Memory is past its stale_after date"
+L_STALE_DEPRECATED="Memory is marked status: deprecated"
+L_MISSING_WHY="Body is missing a section required for this type"
+
+DEFAULT_INDEX_NAMES="MEMORY.md index.md index-*.md"
+
+# read_config_list FILE KEY — the `- item` list under `health.<KEY>`, one per
+# line. Mirrors read_config_list() in bundle_graph.py, including the
+# absent-vs-empty distinction: an ABSENT key prints nothing and returns 1, an
+# empty one prints nothing and returns 0, so a caller can tell "use the default"
+# from "the operator configured none". Collapsing them would make a rule
+# impossible to turn off.
+read_config_list() {
+    local file="$1" key="$2" line stripped first in_health=0 in_key=0 found=1 item
+    [ -f "$file" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        stripped="${line#"${line%%[![:space:]]*}"}"
+        stripped="${stripped%"${stripped##*[![:space:]]}"}"
+        [ -n "$stripped" ] || continue
+        case "$stripped" in '#'*) continue ;; esac
+        first="${line%"${line#?}"}"
+        case "$first" in
+            ' ' | "$TAB") ;;
+            *)
+                # A column-0 line opens or closes `health:`, and always ends any
+                # key block within it.
+                case "$stripped" in
+                    health:*) in_health=1 ;;
+                    *) in_health=0 ;;
+                esac
+                in_key=0
+                continue
+                ;;
+        esac
+        [ "$in_health" -eq 1 ] || continue
+        case "$stripped" in
+            '- '*)
+                if [ "$in_key" -eq 1 ]; then
+                    item="${stripped#- }"
+                    # Strip an inline comment, then one layer of quotes.
+                    case "$item" in *' #'*) item="${item%% #*}" ;; esac
+                    item="${item#"${item%%[![:space:]]*}"}"
+                    item="${item%"${item##*[![:space:]]}"}"
+                    item="${item#\"}"
+                    item="${item%\"}"
+                    item="${item#\'}"
+                    item="${item%\'}"
+                    command printf '%s\n' "$item"
+                fi
+                continue
+                ;;
+        esac
+        case "$stripped" in
+            "$key":*)
+                in_key=1
+                found=0
+                ;;
+            *) in_key=0 ;;
+        esac
+    done <"$file"
+    return "$found"
+}
+
+# read_index_names — $OKF_INDEX_NAMES -> thresholds.yml -> built-in default.
+# An explicitly EMPTY env override means "no indexes configured", distinct from
+# unset, matching the python twin.
+read_index_names() {
+    local from_config
+    if [ -n "${OKF_INDEX_NAMES+set}" ]; then
+        command printf '%s' "$OKF_INDEX_NAMES"
+        return 0
+    fi
+    if from_config="$(read_config_list "$_here/thresholds.yml" index_names)"; then
+        command printf '%s' "$(command printf '%s' "$from_config" | command tr '\n' ' ')"
+        return 0
+    fi
+    command printf '%s' "$DEFAULT_INDEX_NAMES"
+}
+
+# is_index BASENAME NAMES — true when BASENAME routes recall. Mirrors
+# is_index() in bundle_graph.py, including the two-pass order.
+#
+# LITERAL EQUALITY FIRST, for every name, before any glob interpretation: a
+# configured name is operator input rather than a pattern language they opted
+# into. Checking metacharacters first makes `notes[1].md` a character class that
+# does not match the file literally called `notes[1].md`, so the repo's only
+# index is classified as a concept and every memory in the bundle is reported as
+# an orphan. Both impls did this identically, so parity held while both were
+# wrong — see the python twin for the measurement.
+is_index() {
+    local base="$1" names="$2" n
+    for n in $names; do
+        [ "$base" = "$n" ] && return 0
+    done
+    for n in $names; do
+        case "$n" in
+            *'*'* | *'?'* | *'['*)
+                # shellcheck disable=SC2254 # intentional: a configured glob.
+                case "$base" in
+                    $n) return 0 ;;
+                esac
+                ;;
+        esac
+    done
+    return 1
+}
+
+# index_targets FILE — `<basename>.md<TAB><line>` for every concept an index
+# line points at. Markdown link targets first, else bare mentions on that line,
+# mirroring the python twin's two regexes. Only the basename is kept.
+index_targets() {
+    command awk '
+        {
+            n = 0
+            s = $0
+            while (match(s, /\]\([^)]*\.md\)/)) {
+                t = substr(s, RSTART + 2, RLENGTH - 3)
+                sub(/^.*\//, "", t)
+                print t "\t" NR
+                n++
+                s = substr(s, RSTART + RLENGTH)
+            }
+            if (n == 0) {
+                s = $0
+                while (match(s, /[A-Za-z0-9._-]+\.md/)) {
+                    t = substr(s, RSTART, RLENGTH)
+                    pre = (RSTART > 1) ? substr(s, RSTART - 1, 1) : ""
+                    s = substr(s, RSTART + RLENGTH)
+                    # Mirror the python negative lookbehind: a target preceded
+                    # by (, a word char, / or - was part of a link or path we
+                    # already handled.
+                    if (pre ~ /[(A-Za-z0-9_\/-]/) continue
+                    sub(/^.*\//, "", t)
+                    print t "\t" NR
+                }
+            }
+        }
+    ' "$1"
+}
+
+# fm_get FILE NAME — a frontmatter value by bare name, top level or nested one
+# level under a parent (`metadata:`). Mirrors frontmatter_fields()+field() in
+# the python twin: both spellings resolve, so neither convention is privileged.
+fm_get() {
+    command awk -v want="$2" '
+        NR == 1 && $0 != "---" { exit }
+        NR == 1 { next }
+        $0 == "---" { exit }
+        {
+            line = $0
+            sub(/^[ \t]+/, "", line)
+            if (line == "" || substr(line, 1, 1) == "#") next
+            p = index(line, ":")
+            if (p == 0) next
+            k = substr(line, 1, p - 1)
+            v = substr(line, p + 1)
+            gsub(/^[ \t]+|[ \t]+$/, "", k)
+            gsub(/^[ \t]+|[ \t]+$/, "", v)
+            gsub(/^["'"'"']|["'"'"']$/, "", v)
+            if (k == want && v != "") { print v; exit }
+        }
+    ' "$1"
+}
+
+# okf_today — the date staleness is judged against. INJECTED via $OKF_TODAY so a
+# fixture cannot rot into a false pass (#669 AC); production falls back to the
+# real date.
+okf_today() {
+    local env_val="${OKF_TODAY:-}"
+    env_val="${env_val#"${env_val%%[![:space:]]*}"}"
+    env_val="${env_val%"${env_val##*[![:space:]]}"}"
+    if [ -n "$env_val" ]; then
+        command printf '%s' "$env_val"
+    else
+        command date +%Y-%m-%d
+    fi
+}
+
+# scan_bundle ROOT — the whole-bundle pass.
+#
+# THE ROOT LEVEL ONLY, not a recursive walk — the same deliberate scope limit
+# the python twin documents: OKF §8 gives each directory its own index.md, so
+# judging a concept in sub/ against the ROOT index would report an orphan for
+# every correctly-nested file.
+scan_bundle() {
+    local root="$1" f base names now
+    [ -n "$root" ] || return 0
+    [ -d "$root" ] || return 0
+    names="$(read_index_names)"
+    now="$(okf_today)"
+
+    # Partition the bundle root into indexes and concepts. A reserved non-index
+    # file (log.md) is NEITHER: §9 makes it a changelog, and calling it an
+    # orphan would fire on every conformant bundle in existence.
+    local indexes="" concepts=""
+    for f in "$root"/*.md; do
+        [ -f "$f" ] || continue
+        base="${f##*/}"
+        if is_index "$base" "$names"; then
+            indexes="${indexes}${base}
+"
+        else
+            case "$base" in
+                index.md | log.md) continue ;;
+            esac
+            concepts="${concepts}${base}
+"
+        fi
+    done
+
+    # named = "<target>\t<index>\t<line>" rows. bash-3.2 has no associative
+    # arrays (tests/lint-shell-portability.sh bans `declare -A`), so the graph is
+    # accumulated as newline-delimited text and queried with grep/case — the
+    # idiom the portability gate documents.
+    local named="" idx targets target line_no seen_here
+    while IFS= read -r idx; do
+        [ -n "$idx" ] || continue
+        seen_here=""
+        targets="$(index_targets "$root/$idx")"
+        while IFS="$TAB" read -r target line_no; do
+            [ -n "$target" ] || continue
+            # One index naming a concept twice is a duplicate LINE, not a
+            # multi-index — that category is about two DIFFERENT indexes.
+            case "$seen_here" in
+                *"|$target|"*) continue ;;
+            esac
+            seen_here="${seen_here}|$target|"
+            named="${named}${target}${TAB}${idx}${TAB}${line_no}
+"
+        done <<EOF
+$targets
+EOF
+    done <<EOF
+$indexes
+EOF
+
+    # Dangling + multi-index, walking each distinct target once in first-seen
+    # order (the python twin sorts; both emit one row per target).
+    local seen_targets="" sites n first_idx first_line where
+    while IFS="$TAB" read -r target idx line_no; do
+        [ -n "$target" ] || continue
+        case "$seen_targets" in
+            *"|$target|"*) continue ;;
+        esac
+        seen_targets="${seen_targets}|$target|"
+        # An index pointing at another INDEX is ordinary structure (a root index
+        # naming its sub-indexes), so it is neither dangling nor multi-indexed.
+        case "
+$indexes" in
+            *"
+$target
+"*) continue ;;
+        esac
+        sites="$(command printf '%s' "$named" | command awk -F"$TAB" -v t="$target" '$1 == t { print $2 "\t" $3 }')"
+        first_idx="$(command printf '%s\n' "$sites" | command head -1 | command cut -f1)"
+        first_line="$(command printf '%s\n' "$sites" | command head -1 | command cut -f2)"
+        case "
+$concepts" in
+            *"
+$target
+"*) ;;
+            *)
+                emit "$root/$first_idx" "$first_line" "$C_DANGLING_INDEX" \
+                    "$L_DANGLING: $target" "HIGH"
+                continue
+                ;;
+        esac
+        n="$(command printf '%s\n' "$sites" | command grep -c .)"
+        if [ "$n" -gt 1 ]; then
+            where="$(command printf '%s\n' "$sites" | command cut -f1 | command tr '\n' ',' | command sed 's/,$//; s/,/, /g')"
+            emit "$root/$target" 1 "$C_MULTI_INDEX" "$L_MULTI: $where" "HIGH"
+        fi
+    done <<EOF
+$named
+EOF
+
+    # Orphans. A BUNDLE WITH NO INDEX HAS NO ORPHANS — §11 forbids rejecting a
+    # bundle for missing index.md files, so a bundle that does not route through
+    # indexes must not have every concept reported. Guarded here rather than by
+    # an early return, because the health rules below are per-file and hold
+    # whether or not the bundle indexes anything. Mirrors the python twin.
+    if [ -n "$indexes" ]; then
+        while IFS= read -r base; do
+            [ -n "$base" ] || continue
+            case "
+$named" in
+                *"
+$base$TAB"*) continue ;;
+            esac
+            emit "$root/$base" 1 "$C_ORPHAN" "$L_ORPHAN" "HIGH"
+        done <<EOF
+$concepts
+EOF
+    fi
+
+    # Health: staleness and per-type body requirements.
+    #
+    # The config is read ONCE, outside the per-file loop. Reading it inside meant
+    # re-parsing thresholds.yml for every concept — 222 redundant parses on this
+    # repo's own bundle, for a file that cannot change mid-scan.
+    local status stale_after stale_check ftype reqs spec sections sec missing ev
+    reqs="$(read_config_list "$_here/thresholds.yml" body_requirements || true)"
+    while IFS= read -r base; do
+        [ -n "$base" ] || continue
+        f="$root/$base"
+        status="$(fm_get "$f" status)"
+        stale_after="$(fm_get "$f" stale_after)"
+        stale_check="$(fm_get "$f" stale_check)"
+        if [ "$status" = "deprecated" ]; then
+            emit "$f" 1 "$C_STALE" "$L_STALE_DEPRECATED" "MEDIUM"
+        elif command printf '%s' "$stale_after" | command grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' &&
+            [ "$stale_after" \< "$now" ]; then
+            # QUOTE THE MEMORY'S OWN stale_check (#669) — that field names the
+            # sentence to re-verify, so it beats "may be out of date".
+            ev="$L_STALE_DATE ($stale_after)"
+            [ -n "$stale_check" ] && ev="$ev: $stale_check"
+            emit "$f" 1 "$C_STALE" "$ev" "MEDIUM"
+        fi
+
+        ftype="$(fm_get "$f" type)"
+        [ -n "$ftype" ] || continue
+        missing=""
+        while IFS= read -r spec; do
+            [ -n "$spec" ] || continue
+            case "$spec" in *'='*) ;; *) continue ;; esac
+            sections="${spec#*=}"
+            spec="${spec%%=*}"
+            spec="${spec#"${spec%%[![:space:]]*}"}"
+            spec="${spec%"${spec##*[![:space:]]}"}"
+            [ "$spec" = "$ftype" ] || continue
+            # Sections are `|`-separated; IFS splitting on | is bash-3.2 clean.
+            local old_ifs="$IFS"
+            IFS='|'
+            for sec in $sections; do
+                sec="${sec#"${sec%%[![:space:]]*}"}"
+                sec="${sec%"${sec##*[![:space:]]}"}"
+                [ -n "$sec" ] || continue
+                command grep -qF -- "$sec" "$f" && continue
+                if [ -z "$missing" ]; then
+                    missing="$sec"
+                else
+                    missing="$missing, $sec"
+                fi
+            done
+            IFS="$old_ifs"
+        done <<EOF
+$reqs
+EOF
+        if [ -n "$missing" ]; then
+            emit "$f" 1 "$C_MISSING_WHY" "$L_MISSING_WHY: $missing" "MEDIUM"
+        fi
+    done <<EOF
+$concepts
+EOF
+}
+
 # --- drive -------------------------------------------------------------------
+# The CONCRETE bundle directories seen in the file list, newline-delimited in
+# first-seen order. One list may span more than one bundle (a fixture tree, a
+# monorepo), so the graph pass runs once per distinct directory.
+BUNDLE_DIRS=""
 while IFS= read -r file; do
     [ -n "$file" ] || continue
     [ -f "$file" ] || continue
@@ -618,6 +1023,17 @@ while IFS= read -r file; do
         *) continue ;;
     esac
     in_bundle "$file" || continue
+    seen_dir="$(bundle_dir_of "$file")"
+    if [ -n "$seen_dir" ]; then
+        case "
+$BUNDLE_DIRS" in
+            *"
+$seen_dir
+"*) ;;
+            *) BUNDLE_DIRS="${BUNDLE_DIRS}${seen_dir}
+" ;;
+        esac
+    fi
 
     case "${file##*/}" in
         index.md) scan_index "$file" ;;
@@ -625,3 +1041,15 @@ while IFS= read -r file; do
         *) scan_concept "$file" ;;
     esac
 done <"$FILE_LIST"
+
+# Slice B (#669): GATED ON the file list, not DRIVEN by it. Running the pass only
+# for bundles the list actually referenced keeps a non-bundle diff silent and
+# preserves the empty-list contract; the pass itself reads the bundle from disk,
+# because an index that should name a concept is rarely in the same diff as the
+# concept.
+while IFS= read -r bundle_dir; do
+    [ -n "$bundle_dir" ] || continue
+    scan_bundle "$bundle_dir"
+done <<EOF
+$BUNDLE_DIRS
+EOF
