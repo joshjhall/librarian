@@ -310,10 +310,24 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
    still references the issue.
 
 1. **Label the issue** `status/pr-pending` and remove `status/in-progress`
-   (L1–L2 path; the L3–L4 path already did this inline above):
+   (L1–L2 path; the L3–L4 path already did this inline above). Use the shared
+   transition script — it adds FIRST and removes only if the add succeeded, so a
+   failed add can never strip the existing status label and leave the issue
+   briefly re-selectable by another golem (#636/#921):
 
-   - GitHub: `gh issue edit {N} --add-label "status/pr-pending" --remove-label "status/in-progress"`
-   - GitLab: `glab issue update {N} --label "status/pr-pending" --unlabel "status/in-progress"`
+   ```bash
+   <skill-base-dir>/../../scripts/label-transition.sh set {N} \
+       --add status/pr-pending --remove status/in-progress
+   ```
+
+   Substitute `<skill-base-dir>` with this skill's invocation-header path — this
+   recipe runs worktree-isolated when ship is chained in-turn at L3–L4 (#815,
+   `next-issue/worktree-safe-recipes.md`). The script detects GitHub vs GitLab
+   from the remote; pass `--platform gh|glab` to force it. **Never** collapse
+   this back into one `gh issue edit --add-label … --remove-label …` call:
+   measured against real `gh`, that call applies the **remove** and then fails
+   on the add, leaving the issue with no status label at all — the exact #636
+   exposure.
 
 1. **Comment on the issue**:
 
@@ -418,9 +432,19 @@ Proceed with the steps below only when the review ran and came back `clean`.
 1. **Stage and commit** with `Closes #{N}` in the body (same format as Option 1)
 1. **Verify** the commit message includes `Closes #{N}`
 1. **Do NOT push**
-1. **Label the issue** `status/commit-pending` and remove `status/in-progress`:
-   - GitHub: `gh issue edit {N} --add-label "status/commit-pending" --remove-label "status/in-progress"`
-   - GitLab: `glab issue update {N} --label "status/commit-pending" --unlabel "status/in-progress"`
+1. **Label the issue** `status/commit-pending` and remove `status/in-progress`.
+   Use the shared transition script — add first, remove only on success, so a
+   failed add cannot leave the issue with no status label at all (#636/#921).
+   **This is the exact call that failed on #636**, so it must not be collapsed
+   back into a single `gh issue edit --add-label … --remove-label …`:
+
+   ```bash
+   <skill-base-dir>/../../scripts/label-transition.sh set {N} \
+       --add status/commit-pending --remove status/in-progress
+   ```
+
+   Substitute `<skill-base-dir>` with this skill's invocation-header path
+   (#815, `next-issue/worktree-safe-recipes.md`).
 1. **Comment on the issue** with the commit SHA:
    - **Agent mode** (branch matches `^agent`):
      - GitHub: `gh issue comment {N} --body "Agent {branch} committed fix. Ready for orchestrator review. Commit: {sha}"`

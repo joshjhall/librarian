@@ -114,9 +114,25 @@ test_l1_l2_still_adds_label() {
         return
     fi
 
-    assert_true "command grep -q -- '--add-label \"status/pr-pending\"' '$f'" \
+    # TWO ACCEPTED SPELLINGS, because the CONTRACT is behavioral ("the L1-L2
+    # path still adds the label") while the original assertion was anchored to
+    # one literal command form. #921 moved every status transition onto
+    # scripts/label-transition.sh — which adds FIRST and removes only on
+    # success, so a failed add can no longer strip the existing label — and that
+    # legitimate change makes the `--add-label "status/pr-pending"` spelling
+    # disappear while the behavior it guards is fully intact.
+    #
+    # The guard keeps its teeth: an over-broad "delete every add" fix removes
+    # BOTH spellings and still fails here. What it no longer does is force the
+    # recipe back into the combined `gh issue edit --add-label … --remove-label`
+    # form that #636 was filed for. Matching on `--add status/pr-pending` (the
+    # transition script's flag) rather than the whole invocation keeps the
+    # anchor on the intent, not on the call's surrounding text.
+    assert_true "command grep -qE -- '(--add-label \"status/pr-pending\"|--add status/pr-pending)' '$f'" \
         "the L1-L2 ship path must still ADD status/pr-pending (#654 AC1 guard)"
-    assert_true "command grep -q -- '--label \"status/pr-pending\"' '$f'" \
+    # The GitLab sibling is now handled by the same script (it detects the
+    # platform), so a separate `--label` spelling exists only on the legacy path.
+    assert_true "command grep -qE -- '(--label \"status/pr-pending\"|--add status/pr-pending)' '$f'" \
         "the L1-L2 GitLab sibling must still add status/pr-pending (#654 AC1 guard)"
 }
 
