@@ -352,6 +352,14 @@ if [ "$have_fields" -eq 0 ]; then
     # `[^"]*` scrape stops at the first quote, so an escaped quote INSIDE the
     # value shows up as a trailing backslash on the captured text — that is the
     # signal, and it cannot be forged from a sibling field.
+    #
+    # ACCEPTED FALSE POSITIVE: a path that genuinely ENDS in a backslash (and was
+    # not truncated at all) also trips this, on the no-jq path only. Deliberately
+    # not narrowed — the cost is one spurious stderr line on a pathological path
+    # whose read was going to be allowed either way, and the last attempt to make
+    # this detector cleverer is what produced the sibling-field bypass above.
+    # Erring toward a loud false positive is the correct direction for a check
+    # whose failure mode is a silent allow.
     case "$target" in
         *\\) _rsg_trunc=1 ;;
         *) _rsg_trunc=0 ;;
@@ -487,7 +495,40 @@ if [ "$git_dir_abs" = "$common_dir_abs" ]; then
         [ -n "$_own_root" ] || _own_root="/"
     done
     if [ -d "$_own_root/.git" ]; then
-        exit 0 # a nested PRIMARY repo, not a disguised worktree — allow silently
+        # A `.git` DIRECTORY usually means an ordinary nested repo. USUALLY — and
+        # the exception is a live bypass, not a nicety: a golem can
+        # `rm -rf .git && git init .` at its OWN worktree root, which violates no
+        # write guard (it touches only its own tree) and destroys the gitlink
+        # that was the evidence it ever was a worktree. The result is
+        # structurally identical to a benign nested repo, and an earlier draft of
+        # this check exempted it SILENTLY — no deny, no diagnostic — for a peer
+        # read. That is the single outcome this file exists to avoid, and it was
+        # a REGRESSION: before the check existed the same session fell through to
+        # the loud fail-open (reproduced live, both directions, review-reported).
+        #
+        # The evidence the golem cannot destroy lives in the MAIN checkout: the
+        # worktree registry `<primary>/.git/worktrees/<id>/gitdir`, which still
+        # names the converted path, and which worktree-guard.sh (#475) already
+        # stops a golem from writing. So consult it before believing the
+        # directory. Registry ABSENT => genuinely independent nested repo =>
+        # silent allow. Registry PRESENT => this was a worktree and its identity
+        # was erased => fall through to the disguised path and its LOUD
+        # fail-open. Deleting the registry does not buy silence either: that is
+        # the `_derive_wt_root_poison` case, also loud.
+        _reg_hit=0
+        for _reg in "$_enc"/.git/worktrees/*/gitdir; do
+            [ -f "$_reg" ] || continue
+            _reg_path="$("$CAT" "$_reg" 2>/dev/null | "$HEAD" -n1)"
+            _reg_path="${_reg_path%/.git}"
+            if [ "$_reg_path" = "$_own_root" ]; then
+                _reg_hit=1
+                break
+            fi
+        done
+        if [ "$_reg_hit" -eq 0 ]; then
+            exit 0 # a genuinely nested PRIMARY repo — allow silently
+        fi
+        # else: a converted worktree wearing a primary's clothes — keep going.
     fi
     DISGUISED=1
     worktree_root="$(_derive_wt_root_poison "$cwd" "$_enc")"

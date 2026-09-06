@@ -338,3 +338,26 @@ test_nojq_truncated_path_fails_open_loudly() {
     assert_contains "$err" "truncated" \
         "...and is LOUD about it — a truncated path must not be scoped silently"
 }
+
+# --- The truncation detector's `cwd` arm ------------------------------------
+# The detector tests BOTH scraped values, because a truncated `cwd` mis-scopes
+# just as badly as a truncated target: every peer comparison is derived from the
+# session's own root. Only the `target` arm was covered; a regression dropping
+# the `cwd` arm would have passed the whole suite.
+test_nojq_truncated_cwd_fails_open_loudly() {
+    local payload out err stub
+    stub="$FIXTURE/stub-bin-nojq"
+    command mkdir -p "$stub"
+    command ln -sf "$REAL_BASH" "$stub/bash"
+    command ln -sf "$REAL_GIT" "$stub/git"
+    # The quote is inside CWD; the target is a clean peer path, so a deny would
+    # be the outcome if cwd scoped correctly — which is what makes the loud
+    # fail-open attributable to the cwd arm specifically.
+    payload="$(printf '{"cwd":"%s/we\\\\"ird","tool_name":"Read","tool_input":{"file_path":"%s/peer-file.txt"}}' \
+        "$WT_DIR" "$PEER_DIR")"
+    out="$(printf '%s' "$payload" | /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+    err="$(printf '%s' "$payload" | /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+    assert_output_empty "$out" "a truncated cwd emits no deny (fail-open)"
+    assert_contains "$err" "truncated" \
+        "...and is LOUD — a truncated cwd mis-scopes every peer comparison, so it must not be scoped silently"
+}
