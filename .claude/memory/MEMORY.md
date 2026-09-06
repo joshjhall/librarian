@@ -42,6 +42,7 @@
 - [Required param beats optional default](required-param-beats-optional-default.md) — a smarter default preserves the footgun; require it, and test the omitted AND wrong-value paths
 - [Third instance means fix the shape](third-instance-means-fix-the-shape.md) — 3 review cycles found 3 of 35; measure the class, re-key the structure, table-drive the test
 - [Survey scoped to a glob misses a plugin](survey-scoped-to-a-glob-misses-a-plugin.md) — grep the defective LINE across plugins/; a `check-*` survey missed four `dev-core` twins
+- [New routing label needs every consumer](new-routing-label-needs-every-consumer.md) — a row keyed on a label the classifier never emits routes NOTHING; the generated prompt is what runs
 - [Structural gate where fixtures don't scale](structural-gate-where-fixtures-dont-scale.md) — per-arm × per-site defects need a source-reading gate; narrow the rule, key exemptions off the twin, mutate the vacuity guards
 - [Sync script clobbers a nested region](sync-script-clobbers-nested-region.md) — a wholesale region copy deletes the INNER region's sentinels; sync only after resolving
 - [Redirect order leaks the diagnostic](redirect-order-leaks-the-diagnostic.md) — `>>"$f" 2>/dev/null` still prints; absorbed failure, unabsorbed noise
@@ -53,6 +54,7 @@
 - [Anchored regex → tautological test](anchored-regex-tautological-test.md) — a fixture the anchor never matched passes with AND without the fix (#599)
 - [A prefix match is not an exact pin](prefix-match-is-not-an-exact-pin.md) — `index()==1` accepts every superset; test the EXTENDING value, not a disjoint one
 - [Line scanner is blind to wrapped calls](line-scanner-blind-to-wrapped-calls.md) — a `\`-split call matches neither half; join first, then COUNT what the scanner sees
+- [Phrase assertion is blind to wrapped prose](phrase-assertion-blind-to-wrapped-prose.md) — the markdown twin: flatten before matching, scope the region, then mutate a reflow
 - [Absence assertion needs a leak fixture](absence-assertion-needs-a-leak-fixture.md) — `ok(!includes(X))` is green when the predicate breaks; pin teeth AND narrowness
 - [Concat boundary defeats a phrase matcher](concat-boundary-defeats-phrase-matcher.md) — a phrase straddling `' + '` stops matching; and a comment-anchored slice silently widens to the whole file
 - [Fixture must express the divergent case](fixture-must-express-the-divergent-case.md) — solve for the input where old and new differ; 5 green tautologies in one session
@@ -83,7 +85,7 @@
 - [Confirm PID ownership before killing](confirm-pid-ownership-before-killing.md) — never `pkill -f` a shared script name; a PID may be a peer golem's
 - [A hanging push is the pre-push suite](push-hang-is-the-prepush-suite.md) — 461s of gates before any bytes move; fetches stay instant. Budget 10 min, never --no-verify
 - [Pre-push already runs the suite](prepush-hook-already-runs-the-suite.md) — don't run `run-all.sh`/`just lint` by hand first; run the targeted gate and budget the push
-- [Scratch file under memory fails the push](scratch-file-under-memory-fails-the-push.md) — rumdl lints `.claude/memory/` ignoring gitignore; keep scratch prose in `/tmp/`
+- [Scratch file under memory fails the push](scratch-file-under-memory-fails-the-push.md) — rumdl lints `.claude/memory/` ignoring gitignore; keep scratch prose OUT, but not at a shared `/tmp` name a peer golem clobbers
 - [Self-skipping test hides the risky branch](self-skipping-test-hides-the-risky-branch.md) — skip-if-tool-absent covers only the present arm; force absence instead (#543)
 - [Shimmed PATH didn't hide the tool](false-negative-from-env-restoring-path.md) — BASH_ENV restores it; assert the absence BEFORE testing what depends on it
 - [Tool-absence fixture needs a symlink farm](tool-absence-fixture-needs-a-symlink-farm.md) — a hand-listed stub PATH dies 127 at a new tool each time, and the no-op assertion stays green
@@ -94,6 +96,7 @@
 - [Mutate every RULE, not every test](mutation-round-finds-the-untested-rule.md) — the rule with 0 failures is the one the round exists to find
 - [Mutation harness keyed on exit code](mutation-harness-keyed-on-exit-code.md) — ALL rules "survived" means the harness is blind; key on FAIL count, verify one by hand
 - [Mutation restore is never git checkout](mutation-restore-must-not-be-git-checkout.md) — reverts to HEAD and DELETES the uncommitted fix; snapshot-copy instead
+- [Untracked file survives a checkout restore](untracked-file-survives-git-checkout-restore.md) — the same command's opposite failure: a silent no-op, so the mutation stays live
 - [Crashed mutation reads as a survivor](crashed-mutation-reads-as-survivor.md) — an un-applied mutation passes green; assert the edit landed before trusting the verdict
 - [Asymmetric mutation reads as untested](asymmetric-mutation-reads-as-untested.md) — a partially-neutered predicate survives; mutate all arms, then each alone
 - [Two lenses, two thresholds](two-lenses-two-thresholds.md) — a fixture sized for the audit lens leaves the review lens silent; both mutations survive green

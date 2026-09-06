@@ -18,8 +18,16 @@ costing a full ~520s cycle for a file that is never committed.
 rot unchecked. The cost lands on scratch files that happen to live there.
 
 **How to apply:** when staging scratch prose for a `gh pr create --body-file`,
-write it **outside** the repo (`/tmp/`) rather than under `.claude/memory/tmp/`,
-and delete any scratch file there before pushing. The failure I hit was `MD018`
+write it **outside** the repo rather than under `.claude/memory/tmp/`, and delete
+any scratch file there before pushing.
+
+**But not to a bare `/tmp/<generic-name>`.** Concurrent golems share `/tmp`, so
+`/tmp/pr-body.md` is a name two sessions pick independently — mine was silently
+**overwritten by a peer golem's PR body** mid-run, and the clobber is invisible
+until you read the file back and find someone else's prose. Qualify the path
+(`$HOME/.cache/<tool>/$GOLEM_ID/`, or a per-run `mktemp -d`), or keep it in the
+worktree under a gitignored dir, which is per-golem by construction. Read back
+anything you wrote to a shared path before using it. The failure I hit was `MD018`
 (no space after `#`) on a line beginning with an issue reference like `#742` —
 rumdl parsed it as a heading. Reflowing the line so the `#N` is not line-initial
 fixes it; so does keeping the file out of that tree.
