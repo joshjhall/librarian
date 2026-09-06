@@ -5,6 +5,10 @@ Records the diagnosis and the live macOS evidence for
 ("`loop-make-it-right` long-function arm diverges bash-vs-python on BSD —
 114 rows vs 0").
 
+**Status: CLOSED** — confirmed on `macOS 26.6.2` / `BSD grep 2.6.0-FreeBSD`,
+[run 34059645619](https://github.com/joshjhall/librarian/actions/runs/34059645619/job/101557777887):
+the parity suite went **63/64 → 64/64**. See [VERIFIED — live](#verified--live).
+
 This file exists for the same reason as
 [`bsd-regex-probe-e2e-684.md`](bsd-regex-probe-e2e-684.md): every development
 host in this project runs a **GNU userland**, and on GNU the two impls agree
@@ -174,20 +178,70 @@ platform's outcome*, which is M1b.
 
 ## VERIFIED — live
 
-<!-- Fill from the `bsd-probe` job on the PR for this issue. Transcribe
-     verbatim; do not summarize or tidy. -->
+Transcribed verbatim from the job log.
 
 - **Job**: `BSD/macOS regex probe (informational)` — `.github/workflows/ci.yml`
-- **PR**: *pending*
-- **Host**: *pending*
-- **Result**: *pending*
+- **PR**: [#945](https://github.com/joshjhall/librarian/pull/945),
+  [run 34059645619](https://github.com/joshjhall/librarian/actions/runs/34059645619/job/101557777887)
+- **Host**: `macOS 26.6.2` (`BuildVersion: 25G83`), `Darwin 25.6.0`,
+  `arm64` (`RELEASE_ARM64_VMAPPLE`)
+- **grep**: `grep (BSD grep, GNU compatible) 2.6.0-FreeBSD`
+- **sed**: no `--version` (`sed: illegal option -- -`) — the refusal *is* the
+  identification
+- **Result**: job **passed**; POSIX baseline held
+
+The userland is confirmed BSD before any result below is read — that check is
+what makes this run evidence rather than another GNU baseline.
+
+### The arm this issue is about
 
 ```text
-(paste the `Python-port contract + bash parity` step output here)
+  dev-core/skills/loop-make-it-right/patterns.py: edge-case contract (no-arg exit 1, empty-list exit 0) ... PASS
+  dev-core/skills/loop-make-it-right/patterns.py: bash<->python TSV parity ... PASS
+  dev-core/skills/loop-make-it-right/patterns.py: input-guard exit-code parity (#816) ... PASS
 ```
 
-**Status: OPEN pending the macOS run.** The diagnosis above is reproduced under
-simulation on Linux and is complete, but AC1 ("root-cause the divergence on a
-BSD host") and AC4 (`bsd-probe` green on `main`) are closed only by the real
-run. Until this block is filled, treat the BSD result as *predicted*, not
-*observed*.
+### Whole-suite verdict
+
+```text
+  Total:   64
+  Passed:  64
+  Failed:  0
+  Skipped: 0
+```
+
+**64/64, against the 63/64 that opened this issue.** The failing row
+(`loop-make-it-right: python and bash impls emit identical findings`) is gone,
+and no other row regressed. `check-docs-organization` — the AC5 sibling — also
+reports `bash<->python TSV parity ... PASS` on the same run.
+
+### AC status, closed
+
+| AC | Evidence |
+| --- | --- |
+| 1. Root-cause on a BSD host | Diagnosis above; confirmed by this run going green |
+| 2. Impls agree on macOS | `loop-make-it-right ... bash<->python TSV parity ... PASS` |
+| 3. Correctness fixture | `validate-loop-detectors.sh`, mutation-verified (M1b/M2/M3) |
+| 4. `bsd-probe` green | This run — green on the PR; on `main` at merge |
+| 5. Sibling survey | One further hit found and fixed (`check-docs-organization`) |
+
+**Status: CLOSED.** The prediction made under simulation on Linux — that
+removing the `wc` dependency would take this suite from 63/64 to 64/64 on BSD —
+is now an observation.
+
+### Bonus: the probe's own dialect rows, from this run
+
+Not this issue's subject, but this is a BSD run and the rows are cheap to
+record for [#684](https://github.com/joshjhall/librarian/issues/684):
+
+```text
+  [info] \b under grep -E   (32 sites)                  SUPPORTED
+  [info] \b under grep (BRE)  (6 sites)                 SUPPORTED
+  [info] \b -E rejects partial word                     UNSUPPORTED  (UNSUPPORTED here means correct)
+  [info] \b under sed -E                                UNSUPPORTED
+  [info] [[:<:]] / [[:>:]] under grep -E                SUPPORTED
+```
+
+Note `\b under sed -E` reads **UNSUPPORTED** on BSD while `grep -E` supports it
+— the two engines genuinely differ, exactly as `probe-bsd-regex.sh`'s header
+warned they might. No scanner in this fix depends on it; recorded for #684.
