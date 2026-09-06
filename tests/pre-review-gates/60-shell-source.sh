@@ -186,7 +186,14 @@ test_sh_stripped_candidate_strips_one_segment() {
         "...and does NOT strip to the last segment — 30-scrape.sh must not match (#598)"
 }
 
-# The split-suite fragment prefix is TWO OR MORE digits, not exactly two (#894).
+# The split-suite fragment prefix is TWO OR THREE digits, not exactly two (#894).
+#
+# Two and three are ENUMERATED, not unbounded, and the bound is deliberate: the
+# tree today holds 71 two-digit fragments and 2 three-digit ones, and no width
+# is generalizable for free — the `[0-9][0-9]*-` shorthand that would cover
+# every width is precisely the over-match fixed above. A suite that ever passes
+# 999 needs a fourth width added here and in both arms of test-discovery.sh;
+# saying "two or more" would let that read as already handled.
 #
 # tests/golem-scripts/ grew past 99, so `100-mode-check.sh` and
 # `110-tracks-runbook.sh` are real, correctly-named fragments that an exactly-
@@ -229,6 +236,14 @@ test_sh_fragment_prefix_allows_three_digits() {
     # Full-name arm: 100-<name>.sh. No hyphen — see the note above.
     command printf '%s\n' "echo a" >"$sb/scripts/modecheck.sh"
     command printf '%s\n' "# test" >"$sb/tests/suite/100-modecheck.sh"
+    # Full-name arm, SUFFIX form: 100-<name>-*.sh. A separate glob from the
+    # exact form above, so it needs its own fixture — verified by mutation that
+    # dropping it alone otherwise passes green. The 2-digit twin is covered by
+    # test_sh_exact_and_fragment_arms_match; this is its 3-digit counterpart.
+    # (sh_test_find_args_exact has no suffix form by design — that arm stays
+    # exact-only, which is what keeps a short stripped candidate anchored.)
+    command printf '%s\n' "echo f" >"$sb/scripts/widgetry.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/100-widgetry-extra.sh"
     # Stripped arm: golem-tracks-runbook -> tracks-runbook, matched by 110-.
     command printf '%s\n' "echo b" >"$sb/scripts/golem-tracks-runbook.sh"
     command printf '%s\n' "# test" >"$sb/tests/suite/110-tracks-runbook.sh"
@@ -248,7 +263,8 @@ test_sh_fragment_prefix_allows_three_digits() {
     command printf '%s\n' "# test" >"$sb/tests/suite/10-utils-version.sh"
 
     command printf '%s\n' \
-        "$sb/scripts/modecheck.sh" "$sb/scripts/golem-tracks-runbook.sh" \
+        "$sb/scripts/modecheck.sh" "$sb/scripts/widgetry.sh" \
+        "$sb/scripts/golem-tracks-runbook.sh" \
         "$sb/scripts/lonely-thing.sh" "$sb/scripts/widget.sh" \
         "$sb/scripts/ruff-version.sh" >"$sb/files.txt"
 
@@ -258,6 +274,10 @@ test_sh_fragment_prefix_allows_three_digits() {
         "$(category_rows "$GATE_OUT" "missing-test-file" |
             command grep -c 'modecheck\.sh' || true)" \
         "a 3-digit fragment resolves on the full-name arm: 100-<name>.sh (#894)"
+    assert_equals "0" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'widgetry\.sh' || true)" \
+        "...and on its SUFFIX form too: 100-<name>-*.sh (#894)"
     assert_equals "0" \
         "$(category_rows "$GATE_OUT" "missing-test-file" |
             command grep -c 'golem-tracks-runbook\.sh' || true)" \
