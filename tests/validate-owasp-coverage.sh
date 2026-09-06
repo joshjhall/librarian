@@ -39,6 +39,20 @@
 # validate-scanner-category-parity.sh already uses for exactly this reason, and
 # it is shape-independent.
 #
+# NEVER `printf … | grep -q` UNDER `set -o pipefail` (found live, #709). Both
+# membership tests below use a here-string instead, and the reason is a false
+# FAIL this gate actually produced: `grep -q` exits at its FIRST match, which
+# SIGPIPEs the still-writing `printf` (141), and `pipefail` reports the pipeline
+# as failed — so a category that IS emitted gets reported as missing. The tell is
+# an evidence line that contradicts its own message ("no scanner emits
+# 'command-injection'" directly above an emitted list containing it).
+#
+# It is INTERMITTENT by construction: with a short list the write fits the pipe
+# buffer and completes before grep exits, so it passes. Measured — 1 failure in
+# ~30 runs here, and 400/400 once the write is large enough not to fit. That
+# rarity is the danger: a maintainer sees a one-off red, re-runs it green, and
+# files it as noise. A here-string has no second process and no pipe status.
+#
 # PURE BASH + coreutils. No sed for the YAML — the parser is modelled on
 # read_yaml_list in ship-issue/pre-review-gates.sh, for the reason recorded
 # there: BSD sed (macOS default) rejects multi-command brace blocks and reads \s
@@ -63,7 +77,11 @@ SKILL_DIR="${OWASP_SKILL_DIR:-$REPO_ROOT/plugins/review-audit/skills/check-secur
 COVERAGE_YML="${OWASP_COVERAGE_YML:-$SKILL_DIR/owasp-coverage.yml}"
 PATTERNS_PY="${OWASP_PATTERNS_PY:-$SKILL_DIR/patterns.py}"
 PATTERNS_SH="${OWASP_PATTERNS_SH:-$SKILL_DIR/patterns.sh}"
-PASS2_DOC="${OWASP_PASS2_DOC:-$REPO_ROOT/plugins/review-audit/agents/audit-security.md}"
+# The Pass-2 checklist moved out of agents/audit-security.md into a companion
+# beside this map (#709) — the agent had grown past its 400-line budget, and the
+# checklist is the half that pairs with owasp-coverage.yml rather than with the
+# agent's dispatch mechanics. Rule 3 reads THIS file for llm-pass2 backing text.
+PASS2_DOC="${OWASP_PASS2_DOC:-$SKILL_DIR/pass2-checklist.md}"
 REVIEWER_JS="${OWASP_REVIEWER_JS:-$REPO_ROOT/plugins/dev-core/agents/code-reviewer/workflow.js}"
 
 # The ten 2021 ids. Hardcoded ON PURPOSE: this is the external standard the map
@@ -244,6 +262,13 @@ test_suite "OWASP Top 10 coverage map (#706)"
 
 test_map_exists_and_parses() {
     assert_file_exists "$COVERAGE_YML" "owasp-coverage.yml exists"
+    # Both backing-text targets, asserted BY NAME (#709). Rule 3 would already
+    # fail if either vanished — has_backing greps with 2>/dev/null, so a missing
+    # file makes every claim report unbacked — but it would blame each claim
+    # rather than the moved file, sending the reader to fix N checklist entries
+    # that were never wrong. This turns one relocation into one message.
+    assert_file_exists "$PASS2_DOC" "the Pass-2 checklist companion resolves"
+    assert_file_exists "$REVIEWER_JS" "the reviewer harness resolves"
     [ -f "$COVERAGE_YML" ] || return 0
 
     local ids entries emitted
@@ -277,7 +302,7 @@ test_prescan_ids_are_emitted() {
     emitted="$(emitted_categories)"
     while IFS='|' read -r owner id _; do
         [ "$owner" = "prescan" ] || continue
-        if command printf '%s\n' "$emitted" | command grep -qx "$id"; then
+        if command grep -qx "$id" <<<"$emitted"; then
             :
         else
             _fail "prescan category '$id' is claimed but no scanner emits it" \
@@ -314,7 +339,7 @@ test_emitted_categories_are_mapped() {
         command awk -F'|' '$1 == "prescan" || $1 == "llm-pass2" || $1 == "reviewer" { print $2 }' | command sort -u)"
     while IFS= read -r cat; do
         [ -n "$cat" ] || continue
-        if command printf '%s\n' "$claimed" | command grep -qx "$cat"; then
+        if command grep -qx "$cat" <<<"$claimed"; then
             :
         else
             _fail "scanner emits category '$cat' but the coverage map does not mention it" \

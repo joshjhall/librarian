@@ -33,17 +33,31 @@
 #                over-claimed on the path where a defect is cheapest to stop.
 #                No row's OWNER changed (each already named the right pass);
 #                what changed is that the claim is now true on both.
-#   llm-pass2  — a `### <id>` checklist section in
-#                plugins/review-audit/agents/audit-security.md
+#   llm-pass2  — a `### <id>` checklist section in pass2-checklist.md, THIS
+#                DIRECTORY's sibling. It lived in
+#                plugins/review-audit/agents/audit-security.md until #709 moved
+#                it here: the agent had outgrown its 400-line budget, and the
+#                checklist is the half that pairs with this map rather than with
+#                the agent's dispatch mechanics. Co-locating them is what makes
+#                the coupling visible — the gate reads both files to check they
+#                agree, in both directions.
 #   reviewer   — a bullet in SUBREVIEWERS.security in
 #                plugins/dev-core/agents/code-reviewer/workflow.js
 #   gap        — nothing covers it yet; MUST carry a non-empty `reason`
 #
 # `evidence:` names the exact backing text when it differs from the id. The
 # reviewer bullets are prose and carry no slugs at all, so every `reviewer` entry
-# needs one. Giving those checklists real category ids is slice D (#709) — this
-# slice deliberately does not reword them, and `evidence` is what lets the map be
-# honest about the prose as it stands today.
+# still needs one. Slice D (#709) has since landed: the Pass-2 checklist now
+# carries real `### <id>` sections and an A0x column, so most `llm-pass2` rows
+# match on their id alone.
+#
+# `evidence` survives for two reasons that are not going away. The reviewer
+# bullets are still prose. And where a category is covered by BOTH a scanner and
+# the LLM pass, the two rows cannot share an id — hence the `-pass2` suffixes
+# (`ssrf-pass2`, `insecure-deserialization-pass2`), each pointing back at the
+# checklist's real slug. Those pairs are deliberate, not duplication: the scanner
+# owns the SINK, the Pass-2 section owns whether the input reaching it is
+# untrusted, and only the second decides whether a hit is a finding.
 #
 # An entry can be covered at one layer and a gap at another, and several are:
 # `reviewer` sees SSRF as a prose bullet while no deterministic detector exists
