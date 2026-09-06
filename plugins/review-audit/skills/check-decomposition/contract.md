@@ -110,10 +110,18 @@ still gets bundle rules.
 **The index-line clause is checkable, not just advisory (#729).**
 `ship-issue/split-verify.{py,sh}` emits `split-memory-orphan` (HIGH) when a
 split extracts a concept that no index names. Scope is decomposition-side only
-— "the split just proposed must not orphan its own output"; whole-bundle graph
-health (orphans in files this split never touched) is #669 slice B. The check
+— "the split just proposed must not orphan its own output". The check
 classifies the **post-split** path, since the pre-split argument is typically a
 temp snapshot outside the bundle root.
+
+Whole-bundle graph health — orphans in files this split never touched, plus
+dangling index lines and multi-indexed concepts — now ships in
+`check-okf-conformance`'s health pass (`bundle_graph.py`, #669). The two are
+complementary and neither subsumes the other: `split-verify` judges one proposed
+split at the moment it is made, while the health pass audits the bundle as it
+stands. **Index sizing stays here**: `check-okf-conformance` deliberately
+implements no index budget of its own and delegates to this skill's
+`bloat_thresholds`, so the table above remains the single source.
 
 ### CLAUDE.md / AGENTS.md need no bundle-style seam (#729)
 

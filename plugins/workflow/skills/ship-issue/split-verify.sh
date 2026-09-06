@@ -576,7 +576,9 @@ fi
 # ---- 5. memory-bundle index line (#729) ------------------------------------
 # Mirrors the check-5 block in split-verify.py; see that comment for why the
 # invariant needs to be mechanical rather than advisory prose (#697), and why
-# whole-bundle orphan detection stays out of scope (#669 slice B).
+# whole-bundle orphan detection stays out of scope here. That whole-bundle pass
+# now ships in check-okf-conformance (bundle_graph.py, #669); it audits the
+# bundle as it stands, while this check judges one proposed split as it is made.
 #
 # Classified on POST_ORIGINAL, never on ORIGINAL: the latter is the PRE-split
 # snapshot and is typically a temp path, which is never under the bundle root,

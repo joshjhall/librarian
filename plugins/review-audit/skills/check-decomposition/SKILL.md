@@ -58,8 +58,10 @@ hardcoded. An **empty** root disables memory classification entirely — no
 findings, no error — which is how a consuming repo opts out.
 
 `thresholds.yml` is the **single authoritative source** for these budgets: the
-audit lens, #695's review lens, and #669's index health all read the one table
-rather than forking their own.
+audit lens and #695's review lens read the one table rather than forking their
+own, and `check-okf-conformance`'s bundle-health pass (#669) goes further — it
+implements no index budget at all, leaving index sizing entirely to this skill,
+because a second table over the same files is the duplication #663 removed.
 
 **Split guidance is bundle-shaped, and the generic markdown heading seam is
 suppressed** — a `seam 40-96:` row would be actively wrong advice here:

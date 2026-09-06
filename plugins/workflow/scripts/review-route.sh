@@ -350,6 +350,8 @@ _has_unsurfaceable_category() {
             file-length | ai-file-bloat | doc-file-bloat | decomposition-seam | \
                 okf-missing-type | okf-unparseable-frontmatter | \
                 okf-reserved-file-structure | okf-version-drift | \
+                memory-orphan | memory-dangling-index | memory-multi-index | \
+                memory-stale | memory-missing-why | \
                 security-scan-unavailable)
                 # Restore globbing on BOTH exits, not just the fall-through one:
                 # leaving `set -f` armed would silently disable pathname

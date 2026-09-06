@@ -33,11 +33,13 @@ python3>=3.11 is present). Both emit byte-identical findings — parity is pinne
 tests/validate-python-ports.sh, and the classification behavior by
 tests/validate-okf-detectors.sh. See CLAUDE.md § Key conventions.
 
-ZERO LIBRARIAN-SPECIFIC VALUES. The reserved names are the spec's (`index.md`,
-`log.md`) and nothing else. In particular this does NOT inherit
-check-decomposition's `MEMORY.md` / `index-*.md` index heuristic: those are one
-repo's naming convention, and a portable validator that hardcoded them would
-mis-classify every other repo's bundle.
+NO LIBRARIAN-SPECIFIC VALUE IS HARDCODED. The reserved names are the spec's
+(`index.md`, `log.md`) and nothing else. check-decomposition's `MEMORY.md` /
+`index-*.md` index heuristic is one repo's naming convention, and a portable
+validator that FIXED it would mis-classify every other repo's bundle — so the
+slice-B health pass (bundle_graph.py, #669) takes those three as a CONFIGURABLE
+DEFAULT in thresholds.yml § health.index_names, overridable per repo. Default,
+never contract: that is the distinction this paragraph exists to hold.
 
 Input:  argv[1] = file containing paths to scan (one per line)
 Output: TSV to stdout: file<TAB>line<TAB>category<TAB>evidence<TAB>certainty
@@ -52,6 +54,16 @@ from __future__ import annotations
 import os
 import re
 import sys
+
+# sys.path seeding rather than a package import: this file is executed directly
+# (`python3 patterns.py <list>`), so there is no package context and a relative
+# import would fail. Same idiom as check-decomposition/patterns.py's loc_engine
+# import, for the same reason.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from bundle_graph import scan_bundle  # noqa: E402
 
 EVIDENCE_CAP = 80  # matches truncate_chars 80 in patterns.sh
 
@@ -217,6 +229,30 @@ def emit(path: str, line_no: int, category: str, evidence: str, certainty: str) 
         "\t".join((path, str(line_no), category, evidence[:EVIDENCE_CAP], certainty))
         + "\n"
     )
+
+
+def bundle_dir_of(path: str, root: str) -> str:
+    """The CONCRETE bundle directory PATH lives in — its prefix up to and
+    including ROOT — or "" when it is not in a bundle.
+
+    The slice-B graph pass needs a directory to enumerate, and it MUST come from
+    the file list rather than from `os.path.join(os.getcwd(), root)`. The
+    configured root is a RELATIVE fragment matched anywhere in a path
+    (`in_bundle` accepts `*/ROOT/*`), so resolving it against the CWD scans a
+    different bundle than the one the caller passed whenever the two differ —
+    for a scanner given /tmp/fixture/.claude/memory/x.md while sitting in a repo
+    that has its own .claude/memory, that means silently reporting on the repo's
+    real bundle. Caught by the conformant-bundle fixture, which went from zero
+    rows to rows about files it had never heard of."""
+    if not root:
+        return ""
+    if path.startswith(root + "/"):
+        return root
+    marker = "/" + root + "/"
+    at = path.find(marker)
+    if at < 0:
+        return ""
+    return path[: at + len(marker) - 1]
 
 
 def in_bundle(path: str, root: str) -> bool:
@@ -485,6 +521,10 @@ def main(argv: list[str]) -> int:
         return 1
 
     root = bundle_root()
+    # The CONCRETE bundle directories seen in the file list, in first-seen order.
+    # One list may span more than one bundle (a fixture tree, a monorepo), so the
+    # graph pass runs once per distinct directory.
+    bundle_dirs: list[str] = []
     for path in paths:
         if not path:
             continue
@@ -493,12 +533,24 @@ def main(argv: list[str]) -> int:
         # check" is exit 0, not an error.
         if not path.endswith(".md") or not in_bundle(path, root):
             continue
+        seen_dir = bundle_dir_of(path, root)
+        if seen_dir and seen_dir not in bundle_dirs:
+            bundle_dirs.append(seen_dir)
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 lines = fh.read().splitlines()
         except OSError:
             continue
         scan_file(path, lines, root, pinned)
+
+    # Slice B (#669): the whole-bundle graph + health pass. GATED ON THE FILE
+    # LIST, but not DRIVEN by it — see scan_bundle()'s docstring. Running it only
+    # for bundles the list actually referenced keeps a non-bundle diff silent
+    # (and keeps the empty-list contract: no bundle file, no output), while the
+    # pass itself reads the bundle from disk because an index that should name a
+    # concept is usually not in the same diff as the concept.
+    for bundle_dir in bundle_dirs:
+        scan_bundle(bundle_dir, emit, _thresholds_path())
 
     return 0
 

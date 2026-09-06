@@ -334,8 +334,11 @@ def main(argv: list[str]) -> int:
     # DECOMPOSITION-SIDE ONLY, deliberately. The claim is "the split you were
     # just told to make must not orphan ITS OWN output" — every newly-created
     # concept in `results` must be reachable from an index. Orphan detection
-    # over a WHOLE bundle (including files this split never touched) is #669
-    # slice B, and pulling it in here would silently widen the tool's contract.
+    # over a WHOLE bundle (including files this split never touched) ships in
+    # check-okf-conformance's health pass (bundle_graph.py, #669); pulling it in
+    # here would silently widen this tool's contract. The two are complementary:
+    # that pass audits the bundle as it stands, this one judges a single split at
+    # the moment it is proposed.
     #
     # Reads the index from disk rather than from `results`, because the index
     # line is usually added to an index file the split did not otherwise touch —

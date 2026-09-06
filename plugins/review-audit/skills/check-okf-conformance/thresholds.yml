@@ -62,3 +62,66 @@ min_confidence:
   deterministic: 0.9
   heuristic: 0.7
   llm: 0.5
+
+# --- SLICE B: BUNDLE GRAPH + HEALTH (#669) -----------------------------------
+#
+# Slice A (above) asks whether each FILE meets the OKF schema floor. This block
+# configures the whole-BUNDLE pass: is a concept reachable from an index, does
+# an index promise a file that is not there, is a concept indexed twice, has a
+# memory outlived its own expiry.
+#
+# CONFIG, NOT CONVENTION. Every default below is librarian's own habit, and a
+# consuming repo overrides it without touching code — that portability is an
+# acceptance criterion of #669, not a nicety. Both list keys use the SAME
+# `- item` shape so ONE parser reads both: a second parse shape is a second
+# place the bash and python twins can disagree.
+health:
+  # Which files ROUTE recall. A basename here is matched literally; one
+  # containing `*` is a glob. Everything else under the bundle root that is not
+  # a reserved OKF file is a CONCEPT.
+  #
+  # These three are OKF's `index.md` plus librarian's `MEMORY.md` /
+  # `index-<topic>.md` convention. check-decomposition hardcodes the same three
+  # (prose_spec.py bundle_kind()); here they are defaults precisely BECAUSE a
+  # consuming repo whose index is `toc.md` must not be told its entire bundle is
+  # orphaned. Overridable as OKF_INDEX_NAMES (space-separated).
+  index_names:
+    - MEMORY.md
+    - index.md
+    - index-*.md
+
+  # Per-`type` required body sections, as `<type> = <section> | <section>`.
+  # A type ABSENT from this list has NO body requirement — that is the
+  # portability default: an unfamiliar vocabulary yields ZERO memory-missing-why
+  # rows rather than a wrong one for every file. OKF §4.1 registers no types
+  # centrally and requires consumers to tolerate unknown ones, so requiring
+  # sections of a type nobody configured would contradict the spec.
+  #
+  # The two below are librarian's MEMORY.md rule ("for feedback/project, follow
+  # with **Why:** and **How to apply:** lines") stated as config.
+  body_requirements:
+    - feedback = **Why:** | **How to apply:**
+    - project = **Why:** | **How to apply:**
+
+# NO INDEX LINE BUDGET LIVES HERE — deliberately, and this comment is the
+# reason. Index sizing and the topic-clustered split recommendation are ALREADY
+# emitted by check-decomposition, which owns the one authoritative prose
+# threshold table. Measured 2026-09-05 on a 275-line MEMORY.md:
+#
+#   ai-file-bloat       memory index exceeds high threshold: 275 lines (>250)
+#   decomposition-seam  index split: 3 topic clusters (...) -> index-<topic>.md
+#
+# Defining `memory_index.warning` here would create a SECOND table over the same
+# files that must agree with the first — exactly the duplication #663 was filed
+# to eliminate, and the argument already recorded on #589 for plugin prose. The
+# budgets live in check-decomposition/thresholds.yml § bloat_thresholds
+# (memory_index / memory_concept). Change them there; this scanner reads none.
+
+# Per-category severity for the health pass. Like every slice-A category these
+# are FINDINGS AT EXIT 0 — the bundle is reported, never rejected (§11/§12).
+severity_health:
+  memory-orphan: medium
+  memory-dangling-index: medium
+  memory-multi-index: low
+  memory-stale: low
+  memory-missing-why: low
