@@ -106,7 +106,17 @@ SCANNER="${OKF_BUNDLE_SCANNER:-$REPO_ROOT/plugins/review-audit/skills/check-okf-
 
 # The bundle. $OKF_BUNDLE_ROOT wins, mirroring the scanner's own discovery order
 # so the gate and the tool it drives cannot disagree about what they scanned.
-BUNDLE_ROOT="${OKF_BUNDLE_ROOT:-$REPO_ROOT/.claude/memory}"
+# `+set`/bare-`-`, NOT `:-`, because the scanner resolves its root that way on
+# purpose: an explicitly EMPTY $OKF_BUNDLE_ROOT means "no bundle configured —
+# scan nothing", and is how a consuming repo opts out. `:-` treats empty as
+# unset and would fall back to the real bundle, so `OKF_BUNDLE_ROOT= gate` would
+# scan .claude/memory while the scanner it drives scanned nothing — precisely
+# the disagreement the mirroring is meant to prevent.
+if [ -n "${OKF_BUNDLE_ROOT+set}" ]; then
+    BUNDLE_ROOT="$OKF_BUNDLE_ROOT"
+else
+    BUNDLE_ROOT="$REPO_ROOT/.claude/memory"
+fi
 
 BASELINE_FILE="${OKF_BUNDLE_BASELINE:-$SCRIPT_DIR/okf-bundle.baseline}"
 
@@ -218,35 +228,42 @@ if command git -C "$BUNDLE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             [ -n "$rel" ] || continue
             command printf '%s\n' "$BUNDLE_ROOT/$rel"
         done >"$FILE_LIST"
+    NUL_COUNT="$(command git -C "$BUNDLE_ROOT" ls-files -z -- '*.md' |
+        command tr -dc '\0' | command wc -c | command tr -d '[:space:]')"
 else
     command find "$BUNDLE_ROOT" -type f -name '*.md' | command sort >"$FILE_LIST"
+    NUL_COUNT="$(command find "$BUNDLE_ROOT" -type f -name '*.md' -print0 |
+        command tr -dc '\0' | command wc -c | command tr -d '[:space:]')"
 fi
 
 FILE_COUNT="$(command wc -l <"$FILE_LIST" | command tr -d '[:space:]')"
 
-# A newline in a tracked filename would silently become two bogus lines above
-# (see the FILE_LIST contract note). Catch it by comparing the NUL-delimited
-# count with the line count: they agree for every path the contract can carry,
-# and diverge exactly when one cannot. Fail loud rather than scan a corrupted
-# list — "cannot represent this bundle" must never render as a clean report.
-if command git -C "$BUNDLE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    NUL_COUNT="$(command git -C "$BUNDLE_ROOT" ls-files -z -- '*.md' |
-        command tr -dc '\0' | command wc -c | command tr -d '[:space:]')"
-    if [ "$NUL_COUNT" != "$FILE_COUNT" ]; then
-        command printf 'validate-okf-bundle: %s tracked path(s) but %s file-list line(s) —\n' \
-            "$NUL_COUNT" "$FILE_COUNT" >&2
-        command printf '  a bundle filename contains a newline, which the one-path-per-line\n' >&2
-        command printf '  scanner contract cannot carry. Rename it, or the scan would silently\n' >&2
-        command printf '  skip files. Refusing to report on a corrupted file list.\n' >&2
-        test_file_list_is_representable() {
-            assert_equals "$NUL_COUNT" "$FILE_COUNT" \
-                "every tracked bundle path survives the one-per-line file list"
-        }
-        run_test test_file_list_is_representable \
-            "the bundle's paths are representable in the scanner's file list"
-        generate_report
-        exit 1
-    fi
+# A newline in a filename would silently become two bogus lines above (see the
+# FILE_LIST contract note). Catch it by comparing the NUL-delimited count with
+# the line count: they agree for every path the contract can carry, and diverge
+# exactly when one cannot. Fail loud rather than scan a corrupted list —
+# "cannot represent this bundle" must never render as a clean report.
+#
+# BOTH BRANCHES, and that placement is the whole point. The first draft nested
+# this inside the git `if`, leaving the `find` fallback — the branch a tarball
+# export or a non-git consuming repo takes — with the identical silent pass the
+# guard exists to stop. Each branch now computes its own NUL_COUNT (`ls-files -z`
+# / `find -print0`) and the comparison sits outside both, so the check cannot be
+# reachable for one listing method and not the other.
+if [ "$NUL_COUNT" != "$FILE_COUNT" ]; then
+    command printf 'validate-okf-bundle: %s path(s) but %s file-list line(s) —\n' \
+        "$NUL_COUNT" "$FILE_COUNT" >&2
+    command printf '  a bundle filename contains a newline, which the one-path-per-line\n' >&2
+    command printf '  scanner contract cannot carry. Rename it, or the scan would silently\n' >&2
+    command printf '  skip files. Refusing to report on a corrupted file list.\n' >&2
+    test_file_list_is_representable() {
+        assert_equals "$NUL_COUNT" "$FILE_COUNT" \
+            "every bundle path survives the one-per-line file list"
+    }
+    run_test test_file_list_is_representable \
+        "the bundle's paths are representable in the scanner's file list"
+    generate_report
+    exit 1
 fi
 
 # An empty bundle directory is the same claim as an absent one: the gate ran,

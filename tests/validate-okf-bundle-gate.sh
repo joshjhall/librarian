@@ -651,6 +651,36 @@ test_newline_in_filename_fails_loud_rather_than_silently_skipping() {
         "the corrupted two-line split is never reported as a real count"
 }
 
+# An EXPLICITLY EMPTY $OKF_BUNDLE_ROOT means "no bundle configured — scan
+# nothing", and is how a consuming repo opts out. The scanner resolves its root
+# with `+set`/bare-`-` precisely to preserve that, so the gate must too: with
+# `:-` an empty override reads as unset and falls back to the real bundle, so
+# the gate would scan .claude/memory while the scanner it drives scanned
+# nothing. Mutation-confirmed — reverting to `:-` turns this case red, and
+# nothing else in the suite noticed.
+test_explicitly_empty_bundle_root_scans_nothing() {
+    local baseline
+    baseline="$WORKDIR/emptyroot.baseline"
+    write_baseline "$baseline"
+
+    # run_gate always passes OKF_BUNDLE_ROOT, so an empty value here is exactly
+    # the `set but empty` case (not an absent variable).
+    run_gate "" "$baseline"
+
+    assert_exit "0" "$GATE_RC" "an explicitly empty bundle root is not an error"
+    assert_contains "$GATE_OUT" "nothing to check" \
+        "an explicitly empty bundle root scans nothing"
+    # THE DIVERGENT SIGNAL, chosen by measuring both spellings rather than
+    # guessing. Under `:-` the gate does not error and does not print a
+    # category — it prints `Bundle: <repo>/.claude/memory (225 files, ...)`,
+    # having silently scanned the real bundle. So the assertion that separates
+    # the two is the absence of a Bundle: line at all; a `not_contains` on a
+    # category name passes under BOTH spellings and would have been a
+    # tautology.
+    assert_not_contains "$GATE_OUT" "Bundle:" \
+        "it does NOT silently fall back to scanning the repo's real bundle"
+}
+
 # --- --regen ----------------------------------------------------------------
 
 test_regen_writes_the_observed_counts() {
@@ -716,10 +746,20 @@ test_default_scanner_path_resolves() {
         "the check-okf-conformance scanner exists at the gate's default path"
 }
 
-# The committed baseline must match the real bundle. If it drifts low the suite
-# goes red for everyone; if it drifts high the ratchet is loose and new findings
-# slip in under the allowance. Running the REAL gate against the REAL bundle is
-# the only assertion that catches both.
+# The committed baseline must match the real bundle in BOTH directions. Drifting
+# LOW turns the suite red for everyone; drifting HIGH loosens the ratchet so new
+# findings slip in under an inflated allowance — and the second is the dangerous
+# one, because it is silent.
+#
+# THE EXIT CODE ONLY CATCHES THE FIRST. That was this case's original bug: it
+# asserted `rc == 0 || rc == 77` under a comment claiming it "catches both",
+# while hand-editing the baseline to `okf-missing-type 500` left the gate at
+# exit 0 and this case green. A comment asserting what the code does not check
+# is worse than no check, because it stops anyone else from adding one.
+#
+# So the counts are compared for EQUALITY, parsed from the gate's own
+# `category N (baseline M)` report: every category must sit exactly at its
+# entry, neither under nor over.
 test_committed_baseline_matches_the_real_bundle() {
     local out rc=0
     out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
@@ -730,7 +770,30 @@ test_committed_baseline_matches_the_real_bundle() {
         command printf '%s\n' "$out"
     fi
     assert_true "[ \"$rc\" -eq 0 ] || [ \"$rc\" -eq $SKIP_SENTINEL ]" \
-        "the committed baseline satisfies this repo's own bundle"
+        "the committed baseline is not TIGHTER than this repo's own bundle"
+
+    # A skipped gate produced no report to parse; the sentinel case is covered
+    # by its own test.
+    if [ "$rc" -eq "$SKIP_SENTINEL" ]; then
+        return 0
+    fi
+
+    # Rows look like:  okf-missing-type   220  (baseline 220)
+    # A row reading `(no baseline entry)` or a mismatched pair is drift.
+    local drift
+    drift="$(command printf '%s\n' "$out" | command awk '
+        /\(baseline [0-9]+\)$/ {
+            count = $2
+            gsub(/[^0-9]/, "", $NF)
+            if (count != $NF) print "  " $1 ": observed " count " but baseline " $NF
+            seen++
+        }
+        /\(no baseline entry\)$/ { print "  " $1 ": observed " $2 " with NO baseline entry"; seen++ }
+        END { if (seen == 0) print "  no category rows parsed — the report format changed" }
+    ')"
+
+    assert_equals "" "$drift" \
+        "every category sits EXACTLY at its baseline entry (neither tighter nor inflated)"
 }
 
 run_test test_absent_scanner_exits_the_skip_sentinel \
@@ -771,6 +834,8 @@ run_test test_non_ascii_filename_is_still_scanned \
     "a non-ASCII bundle filename is still scanned (ls-files -z, not C-quoted)"
 run_test test_newline_in_filename_fails_loud_rather_than_silently_skipping \
     "a newline in a filename fails loud, never a silent partial scan"
+run_test test_explicitly_empty_bundle_root_scans_nothing \
+    "an explicitly empty OKF_BUNDLE_ROOT scans nothing (opt-out preserved)"
 run_test test_regen_writes_the_observed_counts \
     "--regen tightens the baseline to the observed counts"
 run_test test_unknown_argument_is_rejected \
