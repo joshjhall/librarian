@@ -797,7 +797,7 @@ Inputs for mode selection:
 | Signal              | How to Detect                                              |
 | ------------------- | ---------------------------------------------------------- |
 | Effort label        | Issue labels: `effort/trivial`, `small`, `medium`, `large` |
-| Session load        | `git worktree list \| wc -l`, running containers count     |
+| Session load        | `git worktree list \| wc -l` (orchestrator only, #630), containers |
 | Container available | `docker images -q project:agent-runner` (non-empty = yes)  |
 | Build cost estimate | Count INCLUDE\_\* flags in devcontainer config             |
 | File overlap risk   | Compare issue's likely files with current working set      |

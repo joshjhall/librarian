@@ -292,6 +292,15 @@ Detect and rebase them — without merging anything into the orchestrator branch
    # match "branch refs/heads/<pr-branch>" → the preceding "worktree <path>" line
    ```
 
+   **This enumeration is ORCHESTRATOR-ONLY (#630).** It is repo-global — the
+   shared common-dir makes it report every golem's worktree — so running it from
+   *golem* context hands that session the whole peer roster as a side effect,
+   which is exactly the read-side leak `hooks/read-scope-guard.sh` exists to
+   close. A golem uses its own cwd (`$PWD`) instead — `git rev-parse
+   --show-toplevel` is advisory only, since a worktree-scoped `core.worktree`
+   can redirect it (#501). Here, in the orchestrator's own session, the
+   enumeration is legitimate and required.
+
    A PR whose branch has **no** worktree: **omit** `worktree` for it — do NOT
    guess a path. The harness escalates any PR with no resolvable worktree as a
    whole-PR manual-rebase review (`no resolvable worktree context`) rather than
@@ -389,7 +398,7 @@ Load `mode-protocol.md` before starting.
 1. **Gather inputs**:
 
    ```bash
-   git worktree list | /usr/bin/wc -l
+   git worktree list | /usr/bin/wc -l   # orchestrator only — never from golem context (#630)
    docker ps --filter "name=agent" --format "{{.Names}}" 2>/dev/null
    docker images -q "*:agent-runner" 2>/dev/null
    ```
