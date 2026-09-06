@@ -204,6 +204,34 @@ test_liveness_mixed_content_user_record_is_not_a_boundary() {
         "a text+tool_result user record continues the turn, so earlier background evidence still counts"
 }
 
+# The boundary predicate has TWO disjuncts for "a real human prompt": a bare
+# STRING content, and an ARRAY carrying no tool_result. The string form is pinned
+# by test_liveness_previous_turn_background_does_not_leak; this is its ARRAY
+# counterpart, and it was the disjunct no fixture reached — measured at 108
+# occurrences across the live transcripts on this machine, so it is the COMMON
+# shape of a human prompt, not an exotic one. Without it, a regression that
+# dropped the array arm would leave every array-form prompt failing to bound the
+# scan, dragging stale background evidence forward across turns forever.
+test_liveness_array_form_prompt_is_a_boundary() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb
+    new_sandbox sb
+    plant_transcript "$sb" 42 \
+        "$(command printf '%s\n%s\n%s\n%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"user","isSidechain":false,"message":{"content":[{"type":"tool_result"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"turn one done"}]}}' \
+            '{"type":"user","isSidechain":false,"message":{"content":[{"type":"text","text":"a new human prompt"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"turn two done"}]}}')"
+    run_liveness "$sb" "$sb/.worktrees/issue-42"
+    assert_exit 0 "$RUN_RC" "an array-form human prompt bounds the scan (rc=$RUN_RC, out='$RUN_OUT')"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" \
+        "background evidence does not leak past an array-form prompt (got '$RUN_OUT')"
+}
+
 # A transcript whose first turn has NO preceding user record at all: the boundary
 # search yields -1 and the scan runs from the start of the transcript. Pins that
 # the sentinel does not silently truncate the window to nothing, which would read

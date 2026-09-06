@@ -325,6 +325,7 @@ run_fragment_test test_status_does_not_leak_the_scripts_stderr "golem-status: co
 run_fragment_test test_status_sources_the_signals_fragment "golem-status: the per-golem signals fragment is sourced and wired in (#800)"
 run_fragment_test test_liveness_background_before_ordinary_still_indeterminate "golem-transcript-liveness: a background call earlier in the same turn still forces indeterminate (#890)"
 run_fragment_test test_liveness_previous_turn_background_does_not_leak "golem-transcript-liveness: background evidence does not leak across a turn boundary (#890)"
+run_fragment_test test_liveness_array_form_prompt_is_a_boundary "golem-transcript-liveness: an array-form human prompt bounds the scan (#890)"
 run_fragment_test test_liveness_mixed_content_user_record_is_not_a_boundary "golem-transcript-liveness: a text+tool_result user record continues the turn (#890)"
 run_fragment_test test_liveness_no_preceding_user_record_scans_from_start "golem-transcript-liveness: no preceding user record scans from the transcript start (#890)"
 run_fragment_test test_liveness_sidechain_tool_does_not_drive_verdict "golem-transcript-liveness: a sidechain tool call does not drive the verdict (#890)"
