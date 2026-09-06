@@ -294,3 +294,82 @@ test_allow_nested_primary_repo_silently() {
     assert_output_empty "$err" \
         "...SILENTLY — a benign nested repo must not emit the disguise diagnostic, or the real-forge signal drowns in false positives"
 }
+
+# --- A CONVERTED worktree is not a nested repo, however much it looks like one --
+# Pairs with test_allow_nested_primary_repo_silently, and exists because that
+# check's first version was a live bypass. A golem can run
+# `rm -rf .git && git init .` at its OWN worktree root — no write-guard
+# violation, it touches only its own tree — which destroys the gitlink that was
+# the evidence it ever was a worktree. What remains is byte-identical in shape to
+# a benign nested repo, and the discriminator exempted it SILENTLY: no deny, no
+# diagnostic, for a peer read. That was a REGRESSION, not merely a gap — before
+# the discriminator existed, the same session hit the loud fail-open.
+#
+# The evidence a golem cannot destroy lives in the MAIN checkout: the worktree
+# registry, which worktree-guard.sh (#475) already stops it from writing. The
+# guard consults it before believing a `.git` directory.
+#
+# Asserting the STDERR is the point. Both arms allow — recovery is PR 2's job —
+# so a decision-only assertion cannot tell the regression from correct behavior.
+test_converted_worktree_still_degrades_loudly() {
+    local root="$FIXTURE/converted"
+    command mkdir -p "$root/main" || {
+        skip_test "converted-worktree fixture unavailable"
+        return 0
+    }
+    git_clean -C "$root/main" init -q 2>/dev/null || {
+        skip_test "converted-worktree fixture unavailable"
+        return 0
+    }
+    git_clean -C "$root/main" config user.email "test@example.com"
+    git_clean -C "$root/main" config user.name "Test"
+    printf 'x\n' >"$root/main/f"
+    git_clean -C "$root/main" add f 2>/dev/null
+    git_clean -C "$root/main" -c commit.gpgsign=false commit -qm s 2>/dev/null
+    git_clean -C "$root/main" worktree add -q -b feature/issue-31 \
+        "$root/main/.worktrees/issue-31" >/dev/null 2>&1 || {
+        skip_test "converted-worktree fixture unavailable"
+        return 0
+    }
+    git_clean -C "$root/main" worktree add -q -b feature/issue-32 \
+        "$root/main/.worktrees/issue-32" >/dev/null 2>&1 || {
+        skip_test "converted-worktree fixture unavailable"
+        return 0
+    }
+    local tmain wt peer
+    tmain="$(cd "$root/main" && pwd)"
+    wt="$tmain/.worktrees/issue-31"
+    peer="$tmain/.worktrees/issue-32"
+    printf 'secret\n' >"$peer/secret.txt"
+
+    # THE CONVERSION: destroy the gitlink, git init in place.
+    command rm -rf "$wt/.git"
+    git_clean -C "$wt" init -q 2>/dev/null || {
+        skip_test "in-place git init unavailable"
+        return 0
+    }
+
+    # Arm checks: the disguise must actually be in place, or this exercises a
+    # different path. `.git` must now be a DIRECTORY (the benign-looking shape),
+    # and the main checkout's registry must still name this path (the evidence).
+    if [ ! -d "$wt/.git" ]; then
+        skip_test "conversion did not produce a .git directory"
+        return 0
+    fi
+    if [ ! -d "$tmain/.git/worktrees" ]; then
+        skip_test "worktree registry absent — cannot test the registry cross-check"
+        return 0
+    fi
+
+    local payload out err
+    payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/secret.txt"}}' \
+        "$wt" "$peer")"
+    out="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+    err="$(printf '%s' "$payload" |
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+    assert_output_empty "$out" \
+        "a converted worktree still fails OPEN (recovery is out of scope for this PR)"
+    assert_contains "$err" "could not resolve the worktree root" \
+        "...but LOUDLY — erasing the gitlink must not buy silence, or the forge is undetectable"
+}
