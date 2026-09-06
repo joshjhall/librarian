@@ -66,6 +66,8 @@
 #  11g2. Generated workflow.js freshness (tests/lint-workflow-js-generated.sh)
 #  11g3. Shared workflow.js prelude sync (tests/validate-prelude-sync.sh)
 #  11h. Markdown lint — .claude/memory/ (tests/lint-markdown.sh)
+#  11h2. OKF bundle conformance + health — .claude/memory/ (tests/validate-okf-bundle.sh)
+#  11h3. OKF bundle gate behavior (tests/validate-okf-bundle-gate.sh)
 #  12. Release toolchain coverage (tests/validate-release.sh)
 #  13. seed-worktree-trust path validation (tests/validate-seed-worktree-trust.sh)
 #  14. golem/worktree helper scripts (tests/validate-golem-scripts.sh)
@@ -350,6 +352,8 @@ run_stage "bounded-run.sh copy sync" bash "$SCRIPT_DIR/lint-bounded-run-sync.sh"
 run_stage "Generated workflow.js freshness" bash "$SCRIPT_DIR/lint-workflow-js-generated.sh"
 run_stage "Shared workflow.js prelude sync" bash "$SCRIPT_DIR/validate-prelude-sync.sh"
 run_stage "Markdown lint (.claude/memory/)" bash "$SCRIPT_DIR/lint-markdown.sh"
+run_stage "OKF bundle conformance + health (.claude/memory/)" bash "$SCRIPT_DIR/validate-okf-bundle.sh"
+run_stage "OKF bundle gate behavior" bash "$SCRIPT_DIR/validate-okf-bundle-gate.sh"
 run_stage "Release toolchain coverage" bash "$SCRIPT_DIR/validate-release.sh"
 run_stage "seed-worktree-trust path validation" bash "$SCRIPT_DIR/validate-seed-worktree-trust.sh"
 run_stage "golem/worktree helper scripts" bash "$SCRIPT_DIR/validate-golem-scripts.sh"
