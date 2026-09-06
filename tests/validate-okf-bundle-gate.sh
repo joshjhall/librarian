@@ -153,26 +153,22 @@ test_absent_scanner_exits_the_skip_sentinel() {
 # rendering.
 render_stage() {
     local code="$1"
-    # `--unset=GITHUB_STEP_SUMMARY` and the `_skips_header_written` declaration
-    # are BOTH required, and both were learned from a CI-only failure (this case
-    # passed locally and failed on the runner).
+    # $GITHUB_STEP_SUMMARY is unset so the probe stays HERMETIC. Without it this
+    # case appends to the REAL job summary of whatever CI run executes it —
+    # measured at 169 bytes reporting `**Demo stage** — did not run (exit 77)`,
+    # a phantom skipped gate a maintainer would then go looking for. A test must
+    # not fabricate CI's own diagnostics.
     #
-    # run_stage's skip branch calls note_skip_in_step_summary, which appends to
-    # $GITHUB_STEP_SUMMARY and guards its one-time header with
-    # `_skips_header_written` — a variable declared at run-all.sh's TOP LEVEL,
-    # outside both function bodies this slices out. Under `set -u` the first
-    # read of it is a fatal unbound-variable error, which killed the subshell
-    # before it could print SUITE_RC. Locally the branch never ran at all
-    # ($GITHUB_STEP_SUMMARY is unset off-CI), so the bug was invisible.
-    #
-    # Unsetting the variable is what keeps this hermetic — otherwise the case
-    # would write "did not run" rows into the REAL job summary of whatever CI
-    # run is executing it, reporting a skipped gate that never happened.
+    # It does NOT need to carry `_skips_header_written`: run-all.sh reads that
+    # flag as `${_skips_header_written:-}`, matching the guard on the line above
+    # it, so the sliced function is safe in isolation. That defensive read was
+    # added by this issue — this harness is what exposed the bare one, which
+    # failed under `set -u` on CI and could not fail locally, since the branch
+    # only runs when $GITHUB_STEP_SUMMARY is non-empty.
     /usr/bin/env --unset=BASH_ENV --unset=GITHUB_STEP_SUMMARY "$REAL_BASH" -c '
         set -uo pipefail
         SKIP_EXIT_CODE=77
         rc=0
-        _skips_header_written=""
         eval "$(command sed -n "/^run_stage() {/,/^}/p" "$1")"
         eval "$(command sed -n "/^note_skip_in_step_summary() {/,/^}/p" "$1")"
         run_stage "Demo stage" sh -c "exit $2"
