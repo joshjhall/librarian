@@ -681,6 +681,27 @@ test_explicitly_empty_bundle_root_scans_nothing() {
         "it does NOT silently fall back to scanning the repo's real bundle"
 }
 
+# A MISSING baseline file must behave like an empty one — every category at an
+# implicit 0 — not like a permissive one. baseline_for() returns early on
+# `[ -f "$BASELINE_FILE" ]`, and every other case here writes a baseline first,
+# so the branch a typo'd $OKF_BUNDLE_BASELINE actually takes had no coverage.
+# Getting it backwards would make a misconfigured path silently disable the
+# ratchet while the gate still reported green — this file's whole subject.
+test_absent_baseline_file_is_treated_as_zero() {
+    local bundle
+    make_bundle bundle
+    nonconformant "$bundle/drifted.md"
+
+    run_gate "$bundle" "$WORKDIR/no-such-baseline-file"
+
+    assert_exit "1" "$GATE_RC" \
+        "an absent baseline file does not silently permit findings"
+    assert_contains "$GATE_OUT" "no baseline entry" \
+        "categories are reported as unlisted rather than as satisfied"
+    assert_contains "$GATE_OUT" "> 0 (baseline)" \
+        "an absent baseline file means an implicit 0, not an implicit pass"
+}
+
 # --- --regen ----------------------------------------------------------------
 
 test_regen_writes_the_observed_counts() {
@@ -836,6 +857,8 @@ run_test test_newline_in_filename_fails_loud_rather_than_silently_skipping \
     "a newline in a filename fails loud, never a silent partial scan"
 run_test test_explicitly_empty_bundle_root_scans_nothing \
     "an explicitly empty OKF_BUNDLE_ROOT scans nothing (opt-out preserved)"
+run_test test_absent_baseline_file_is_treated_as_zero \
+    "an absent baseline file means implicit 0, never an implicit pass"
 run_test test_regen_writes_the_observed_counts \
     "--regen tightens the baseline to the observed counts"
 run_test test_unknown_argument_is_rejected \
