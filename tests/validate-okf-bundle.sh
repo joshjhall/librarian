@@ -48,11 +48,17 @@
 # WHY ADVISORY IS THE DEFAULT, AND WHY IT STILL HAS TEETH
 # ---------------------------------------------------------------------------
 #
-# Measured 2026-09-06 over 223 git-tracked bundle files: 302 findings (218
-# okf-missing-type, 79 memory-missing-why, 5 okf-unparseable-frontmatter; ZERO
+# Measured on this repo's own bundle: several hundred conformance findings, ZERO
 # orphans and ZERO dangling index lines — the graph is healthy, the schema floor
-# is not). Blocking mode cannot land on that tree. Those 302 are what #631 (OKF
-# adoption) exists to fix.
+# is not. Blocking mode cannot land on that tree; those findings are what #631
+# (OKF adoption) exists to fix.
+#
+# NO SNAPSHOT COUNT IS QUOTED HERE ON PURPOSE. The bundle is written by every
+# session, so any number pasted into this comment is wrong within hours — an
+# earlier draft said "223 files / 302 findings" and was stale by 235/315 before
+# the branch even merged. The live counts live in ONE place, tests/okf-bundle.baseline,
+# which the gate enforces and `--regen` rewrites; a prose copy could only ever
+# drift out of agreement with it.
 #
 # But an advisory gate that only ever prints is not a gate — it cannot prevent
 # NEW drift while #631 is in flight, which is the thing #697 actually asked for.

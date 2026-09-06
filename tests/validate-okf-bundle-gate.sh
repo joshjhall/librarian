@@ -714,6 +714,43 @@ test_absent_baseline_file_is_treated_as_zero() {
         "an absent baseline file means an implicit 0, not an implicit pass"
 }
 
+# THE SAME GUARD, ON THE OTHER BRANCH. The file list is built two ways —
+# `ls-files -z` for a git checkout, `find -print0` for a tarball export or a
+# non-git consuming repo — and each computes its own NUL_COUNT. The sibling case
+# above plants its newline filename in a `git init`-ed bundle, so it only ever
+# drives the GIT branch; every other case here uses a plain non-git bundle but
+# plants no newline. That left the find branch's guard with no coverage at all.
+#
+# Which is exactly the regression validate-okf-bundle.sh's own comment warns
+# about: an earlier draft nested the guard inside the git-only `if`, silently
+# unprotecting the fallback. Mutation-confirmed — re-adding that `&& git
+# rev-parse` condition passed all 26 cases before this one existed, and fails
+# this one now. A guard documented as covering both branches needs a case on
+# each, or the documentation is the only thing holding it.
+test_newline_in_filename_fails_loud_on_the_find_fallback() {
+    local bundle baseline fname
+    # NO `git init` — that omission is what selects the find fallback.
+    make_bundle bundle
+
+    fname="$(command printf 'new\nline.md')"
+    nonconformant "$bundle/$fname" 2>/dev/null || {
+        skip_test "filesystem rejects a newline in a filename"
+        return 0
+    }
+
+    baseline="$WORKDIR/newline-find.baseline"
+    write_baseline "$baseline"
+
+    run_gate "$bundle" "$baseline"
+
+    assert_exit "1" "$GATE_RC" \
+        "an unrepresentable path fails the gate on the find fallback too"
+    assert_contains "$GATE_OUT" "contains a newline" \
+        "the find-branch failure names the actual cause"
+    assert_not_contains "$GATE_OUT" "(2 files," \
+        "the corrupted two-line split is never reported as a real count"
+}
+
 # --- --regen ----------------------------------------------------------------
 
 test_regen_writes_the_observed_counts() {
@@ -867,6 +904,8 @@ run_test test_non_ascii_filename_is_still_scanned \
     "a non-ASCII bundle filename is still scanned (ls-files -z, not C-quoted)"
 run_test test_newline_in_filename_fails_loud_rather_than_silently_skipping \
     "a newline in a filename fails loud, never a silent partial scan"
+run_test test_newline_in_filename_fails_loud_on_the_find_fallback \
+    "the newline guard covers the find fallback, not just the git branch"
 run_test test_explicitly_empty_bundle_root_scans_nothing \
     "an explicitly empty OKF_BUNDLE_ROOT scans nothing (opt-out preserved)"
 run_test test_absent_baseline_file_is_treated_as_zero \
