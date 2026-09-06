@@ -208,10 +208,19 @@ test_sh_stripped_candidate_strips_one_segment() {
 #
 # THE FULL-NAME SOURCE IS HYPHENLESS, and that is load-bearing. A hyphenated one
 # (`mode-check.sh`) is ALSO fed to the stripped arm as `check`, whose own
-# `[0-9][0-9]*-check.sh` glob then matches `100-mode-check.sh` — so reverting the
+# `100-check.sh`-shaped glob then matches `100-mode-check.sh` — so reverting the
 # full-name arm alone left this case green, and the mutation survived. Naming the
 # source `modecheck.sh` gives the strip nothing to remove, so the full-name arm
 # is the only route to its test and the assertion fails when that arm regresses.
+#
+# THE LAST TWO ASSERTIONS PIN THE SPELLING, not just the outcome. The widths are
+# enumerated (`[0-9][0-9]-`, `[0-9][0-9][0-9]-`) because the obvious shorthand
+# `[0-9][0-9]*-` is WRONG: a glob `*` matches any characters, not "more digits",
+# so it also matches `10-notes-<name>.sh`. On a short generic stripped candidate
+# that re-opens the over-match test_sh_stripped_candidate_is_exact_only exists to
+# prevent, reached from the prefix side. Both arms therefore get a
+# digits-then-text negative; either one fails if someone collapses the two
+# enumerated globs back into a single `*` form.
 test_sh_fragment_prefix_allows_three_digits() {
     local sb
     new_git_sandbox sb
@@ -227,10 +236,21 @@ test_sh_fragment_prefix_allows_three_digits() {
     # split-suite fragment and must not resolve.
     command printf '%s\n' "echo c" >"$sb/scripts/lonely-thing.sh"
     command printf '%s\n' "# test" >"$sb/tests/suite/xx-lonely-thing.sh"
+    # Over-match control, FULL-NAME arm: digits then arbitrary TEXT before the
+    # name. `[0-9][0-9]*-widget.sh` would match this; the enumerated widths
+    # must not.
+    command printf '%s\n' "echo d" >"$sb/scripts/widget.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/10-notes-widget.sh"
+    # Over-match control, STRIPPED arm: `ruff-version` strips to `version`, a
+    # short generic token — the very shape #598 measured. An unrelated
+    # multi-segment fragment must not count as its test.
+    command printf '%s\n' "echo e" >"$sb/scripts/ruff-version.sh"
+    command printf '%s\n' "# test" >"$sb/tests/suite/10-utils-version.sh"
 
     command printf '%s\n' \
         "$sb/scripts/modecheck.sh" "$sb/scripts/golem-tracks-runbook.sh" \
-        "$sb/scripts/lonely-thing.sh" >"$sb/files.txt"
+        "$sb/scripts/lonely-thing.sh" "$sb/scripts/widget.sh" \
+        "$sb/scripts/ruff-version.sh" >"$sb/files.txt"
 
     run_gate_in "$sb" "$sb/files.txt"
 
@@ -246,6 +266,14 @@ test_sh_fragment_prefix_allows_three_digits() {
         "$(category_rows "$GATE_OUT" "missing-test-file" |
             command grep -c 'lonely-thing\.sh' || true)" \
         "the prefix anchor still requires digits — xx-<name>.sh is no fragment (#894)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'widget\.sh' || true)" \
+        "full-name arm: digits then TEXT is no fragment — 10-notes-<name>.sh must not match (#894)"
+    assert_equals "1" \
+        "$(category_rows "$GATE_OUT" "missing-test-file" |
+            command grep -c 'ruff-version\.sh' || true)" \
+        "stripped arm: 10-utils-version.sh must not cover ruff-version.sh (#598 over-match, prefix side)"
 }
 
 # A `.bash` SOURCE file end-to-end. The `sh | bash)` case label claims .bash is
