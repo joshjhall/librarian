@@ -561,7 +561,7 @@ EOF
 # The fixture is written with printf rather than a heredoc: a quoted heredoc
 # containing the literal terminator `PY` would end THIS file's heredoc early.
 test_negative_case_parse_fires() {
-    local tmp
+    local tmp hard_rc
     tmp="$(command mktemp -d)" || {
         skip_test "mktemp unavailable"
         return 0
@@ -597,6 +597,23 @@ test_negative_case_parse_fires() {
     scan_file_parses "$tmp/good.sh"
     assert_equals "" "$CUR_PARSE_VIOLATIONS" \
         "the temp-file rewrite is NOT flagged — the migration target must be clean (#906)"
+
+    # The OTHER documented outcome: a hard syntax error, where `bash -n` exits
+    # NON-ZERO. The header claims non-empty stderr covers both arms, so both
+    # arms need a fixture — a comment asserting a property nothing tests is how
+    # a later narrowing (e.g. matching only the "unterminated here-document"
+    # substring) would silently drop this half. The exit-code guard is the
+    # point: it pins that the two arms really do differ in exit status, so this
+    # case cannot degenerate into a copy of the warning-only one above.
+    printf '#!/usr/bin/env bash\nif [ x\n' >"$tmp/hard.sh"
+
+    bash -n "$tmp/hard.sh" 2>/dev/null && hard_rc=0 || hard_rc=$?
+    assert_true "[ \"$hard_rc\" -ne 0 ]" \
+        "fixture guard: a hard syntax error really does exit non-zero (the other arm)"
+
+    scan_file_parses "$tmp/hard.sh"
+    assert_not_empty "$CUR_PARSE_VIOLATIONS" \
+        "a hard syntax error IS flagged too — stderr capture is exit-code agnostic (#906)"
 }
 
 # Discover the corpus.
