@@ -317,6 +317,88 @@ test_right_long_function() {
         LOOP_MAX_FUNCTION_LINES=1 LOOP_MAX_NESTING_DEPTH=99 -- "$list"
 }
 
+# --- CORRECTNESS of the python long-function EXTENT (#932) -------------------
+#
+# Not parity — CORRECTNESS. The rest of this file's long-function coverage, and
+# the whole of validate-python-ports.sh, asserts that the two impls AGREE. That
+# is exactly what could not catch #932: on Linux both impls were silent, so
+# "they agree" held between two empty outputs, and the bug only appeared under a
+# second userland. This case pins the NUMBER OF LINES the extent probe computes,
+# which is a claim about the answer rather than about the two answers matching.
+#
+# WHY THE LINE COUNT AND NOT THE FIRING. #932's macOS failure was NOT that the
+# arm stopped emitting: it emitted 114 rows where it should emit none. The
+# padded-`wc` indent produced a malformed `^.\{0,      0\}[^ ]` interval which
+# matched nothing, so `end_line` came back empty and every `def` fell through to
+# the `total - line_num` fallback — i.e. every function was measured as running
+# to END OF FILE. A test that only asked "does long-function fire?" is GREEN in
+# both worlds. Only the count separates them, so the count is what is asserted.
+#
+# The fixture is built so the two readings give visibly different numbers: a
+# 3-line `early` def near the top of a file that is much longer. Correct extent
+# = 3 (ends at the next top-level `def`); the broken fallback = to EOF, which is
+# over 40. With max=2, the correct reading fires with "Function 3 lines" and the
+# broken one fires with a two-digit count — so the assertion distinguishes them
+# by the emitted text and cannot be satisfied by the defect.
+test_right_long_function_extent_correctness() {
+    local d list rows
+    d="$(fresh_dir)"
+
+    {
+        command printf '%s\n' 'def early(a):' '    x = a' '    return x'
+        command printf '%s\n' 'def later(b):'
+        # Padding so the to-EOF fallback yields an unmistakably different number.
+        i=0
+        while [ "$i" -lt 40 ]; do
+            command printf '    step_%s()\n' "$i"
+            i=$((i + 1))
+        done
+        command printf '%s\n' '    return b'
+    } >"$d/extent.py"
+    list="$(make_list "$d/l" "$d/extent.py")"
+
+    # `early` spans exactly 3 lines: def + 2 body lines, ending at `def later`.
+    assert_fires "$SK_RIGHT" long-function "Function 3 lines" \
+        "right: long-function measures a def's REAL extent, not to end-of-file (#932)" \
+        LOOP_MAX_FUNCTION_LINES=2 LOOP_MAX_NESTING_DEPTH=99 -- "$list"
+
+    # The teeth: under the #932 defect `early` is measured to EOF (45 lines), so
+    # this row would read "Function 45 lines". Asserting its ABSENCE is what a
+    # pure-parity check cannot do, since both impls would carry it together.
+    assert_absent "$SK_RIGHT" long-function "Function 45 lines" \
+        "right: a def's extent does not run to end-of-file (#932 fallback)" \
+        LOOP_MAX_FUNCTION_LINES=2 LOOP_MAX_NESTING_DEPTH=99 -- "$list"
+
+    # --- the off-by-one #932 also found, visible on GNU too ------------------
+    #
+    # python computed `indent = len(leading_spaces) + 1`, modelling a trailing
+    # newline that GNU `sed` does not emit. The two impls therefore disagreed by
+    # one column — but ONLY for a body indented exactly one space past its `def`,
+    # which no existing fixture had. `m` is at indent 4 with a body at indent 5,
+    # so N=4 (correct: ends at the col-0 `trailing`) and N=5 (the old python
+    # value: ends immediately at the body) give different extents.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'class C:' '    def m(self):' '     a()' '     b()' \
+        '     c()' 'trailing = 1' >"$d/offbyone.py"
+    list="$(make_list "$d/l" "$d/offbyone.py")"
+
+    assert_fires "$SK_RIGHT" long-function "Function 4 lines" \
+        "right: extent probe uses the leading-SPACE COUNT, not count+1 (#932)" \
+        LOOP_MAX_FUNCTION_LINES=1 LOOP_MAX_NESTING_DEPTH=99 -- "$list"
+
+    # Guard the emitted extent is not the old python reading (stops at the body).
+    rows="$(emit_rows sh "$SK_RIGHT" long-function \
+        LOOP_MAX_FUNCTION_LINES=1 LOOP_MAX_NESTING_DEPTH=99 -- "$list")"
+    assert_not_contains "$rows" "Function 1 lines" \
+        "right: a one-column-deeper body does not truncate the extent (bash) (#932)"
+    if [ "$HAVE_PY" -eq 1 ]; then
+        rows="$(emit_rows py "$SK_RIGHT" long-function \
+            LOOP_MAX_FUNCTION_LINES=1 LOOP_MAX_NESTING_DEPTH=99 -- "$list")"
+        assert_not_contains "$rows" "Function 1 lines" \
+            "right: a one-column-deeper body does not truncate the extent (python) (#932)"
+    fi
+}
+
 test_right_deep_nesting() {
     local d list
 
@@ -902,6 +984,7 @@ run_test test_mixed_case_extension_dispatch "mixed-case: .PY/.TS reach the same 
 run_test test_work_stub_and_body "loop-make-it-work: stub + py/js/go empty-body + EOF boundary"
 run_test test_work_no_assertions "loop-make-it-work: py/js/go no-assertions + has-assert negative"
 run_test test_right_long_function "loop-make-it-right: py + brace long-function (colon-stripped)"
+run_test test_right_long_function_extent_correctness "loop-make-it-right: long-function EXTENT correctness, not parity (#932)"
 run_test test_right_deep_nesting "loop-make-it-right: deep-nesting emit"
 run_test test_right_single_char "loop-make-it-right: single-char fires + loop-counter/'_' skips"
 run_test test_secure_secret "loop-make-it-secure: keyed + AWS secret + *test* SKIP_GLOBS"
