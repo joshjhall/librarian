@@ -33,7 +33,7 @@
 #                over-claimed on the path where a defect is cheapest to stop.
 #                No row's OWNER changed (each already named the right pass);
 #                what changed is that the claim is now true on both.
-#   llm-pass2  — a `### <id>` checklist section in pass2-checklist.md, THIS
+#   llm-pass2  — a `## <id>` checklist section in pass2-checklist.md, THIS
 #                DIRECTORY's sibling. It lived in
 #                plugins/review-audit/agents/audit-security.md until #709 moved
 #                it here: the agent had outgrown its 400-line budget, and the
@@ -48,7 +48,7 @@
 # `evidence:` names the exact backing text when it differs from the id. The
 # reviewer bullets are prose and carry no slugs at all, so every `reviewer` entry
 # still needs one. Slice D (#709) has since landed: the Pass-2 checklist now
-# carries real `### <id>` sections and an A0x column, so most `llm-pass2` rows
+# carries real `## <id>` sections and an A0x column, so most `llm-pass2` rows
 # match on their id alone.
 #
 # `evidence` survives for two reasons that are not going away. The reviewer
