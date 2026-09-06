@@ -1266,6 +1266,56 @@ run_test test_code_scanning_happy_path_marks_present \
     "code-scanning.yml: a healthy install sets present=true"
 run_test test_skipped_stage_reaches_the_step_summary \
     "run_stage: a 77 stage is written to the step summary"
+# A SLICED note_skip_in_step_summary must survive `set -u` WITHOUT the
+# top-level `_skips_header_written=""` line.
+#
+# That function guards $GITHUB_STEP_SUMMARY defensively on its first line, then
+# used to read `$_skips_header_written` bare on the next. run-all.sh initialises
+# the flag at top level, so the normal runner path was fine — but this function
+# is routinely sed-sliced out and eval'd in isolation, and a sliced function body
+# does not carry a top-level assignment. Under `set -u` the first read was then
+# fatal, killing the slicer mid-probe.
+#
+# It could only fail on CI, because the branch is unreachable unless
+# $GITHUB_STEP_SUMMARY is set, which happens on a GitHub runner and nowhere else.
+#
+# NO EXISTING CASE COVERED IT, checked rather than assumed:
+#   * this file's own render_stage sets the variable but ALSO slices
+#     `_skips_header_written=` in alongside the function, so the name is always
+#     defined and the case passes identically with or without the guard;
+#   * validate-lint-gates.sh's render_stage does not slice this function at all.
+# Reverting the guard to a bare read left every suite in the tree green.
+#
+# Hence this probe's deliberate omission: it slices SKIP_EXIT_CODE and the
+# function but NOT the initialisation. That omission IS the test.
+test_sliced_notifier_survives_set_u_without_the_init() {
+    local sumfile out rc=0
+    sumfile="$(command mktemp "$WORKDIR/sliced-summary.XXXXXX")"
+
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        --unset=BASH_ENV \
+        GITHUB_STEP_SUMMARY="$sumfile" \
+        "$REAL_BASH" -c '
+            set -u
+            eval "$(command sed -n "/^SKIP_EXIT_CODE=/p" "$1")"
+            eval "$(command sed -n "/^note_skip_in_step_summary() {/,/^}/p" "$1")"
+            note_skip_in_step_summary "Demo stage"
+            command printf "NOTIFIER_OK\n"
+        ' _ "$RUN_ALL" 2>&1)" || rc=$?
+
+    assert_equals "0" "$rc" \
+        "a sliced note_skip_in_step_summary does not die under set -u"
+    assert_contains "$out" "NOTIFIER_OK" \
+        "the notifier runs to completion when sliced without the top-level init"
+    assert_not_contains "$out" "unbound variable" \
+        "the flag is read defensively, matching the guard on the line above it"
+
+    # Positive companion: without it, all three assertions above would pass
+    # vacuously if the notifier ever returned early for an unrelated reason.
+    assert_file_contains "$sumfile" "Demo stage" \
+        "the sliced notifier really wrote its row (not a vacuous pass)"
+}
+
 run_test test_repeated_skips_share_one_header \
     "run_stage: repeated skips share one section header"
 run_test test_passing_and_failing_stages_add_nothing \
@@ -1276,5 +1326,7 @@ run_test test_run_stage_survives_an_unwritable_summary \
     "run_stage: an unwritable step summary does not abort the suite"
 run_test test_node_absent_branch_reports_its_skip \
     "run-all.sh: the node-absent skip reaches the run page too"
+run_test test_sliced_notifier_survives_set_u_without_the_init \
+    "a sliced note_skip_in_step_summary survives set -u without the top-level init"
 
 generate_report

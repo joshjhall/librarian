@@ -192,9 +192,24 @@ _skips_header_written=""
 # not, which puts an alarming-looking error in the middle of a suite that is
 # otherwise fine. Redirecting stderr first means the diagnostic lands in
 # /dev/null along with everything else.
+#
+# `${_skips_header_written:-}` BELOW IS NOT BELT-AND-BRACES. The function's first
+# line already guards $GITHUB_STEP_SUMMARY defensively; reading the flag bare on
+# the very next line contradicted that, and under `set -u` an out-of-scope read
+# is fatal rather than falsy. The top-level initialisation above covers the
+# normal runner path — but this function is routinely SLICED out of this file
+# with `sed` and eval'd in isolation (validate-skip-visibility.sh and
+# validate-lint-gates.sh both do it), and a sed-extracted function body does not
+# carry a top-level assignment. So every slicer had to hand-carry the
+# declaration or die; matching the guard style retires that for all of them.
+#
+# The bug could only ever appear on CI: the whole branch is gated on
+# $GITHUB_STEP_SUMMARY, which is set on a GitHub runner and nowhere else, so a
+# local run returns before touching the flag. tests/validate-skip-visibility.sh
+# pins it — deliberately slicing the function WITHOUT the initialisation.
 note_skip_in_step_summary() {
     [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
-    if [ -z "$_skips_header_written" ]; then
+    if [ -z "${_skips_header_written:-}" ]; then
         _skips_header_written=1
         {
             printf '\n### Skipped gates\n\n'
