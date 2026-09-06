@@ -71,10 +71,10 @@ corpus (#707, follow-up #898). Their coverage is here or nowhere.
 
 ## Categories and Checklist
 
-**Companion file**: `../skills/check-security/pass2-checklist.md` carries the
-full category list — what each one looks for, its severity split, and the
-evidence it must record. **Load it before scanning**; the categories are the
-substance of this agent's work and none of them are summarized here.
+**Companion file**: [`../skills/check-security/pass2-checklist.md`](../skills/check-security/pass2-checklist.md)
+carries the full category list — what each one looks for, its severity split,
+and the evidence it must record. **Load it before scanning**; the categories are
+the substance of this agent's work and none of them are summarized here.
 
 It sits beside `owasp-coverage.yml` on purpose. That map assigns every category
 an OWASP id and an owning pass, and `tests/validate-owasp-coverage.sh` fails
