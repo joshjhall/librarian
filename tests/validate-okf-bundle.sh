@@ -191,11 +191,23 @@ SCAN_ERR="$WORKDIR/scan.err"
 # A read/printf loop needs no escaping of $BUNDLE_ROOT at all, so the class
 # cannot recur. `read -r` and `printf '%s\n'` also leave backslashes and
 # leading whitespace in a filename intact, which `echo` would not.
+#
+# `-z` IS THE SAME BUG ON THE OTHER SIDE OF THE PIPE. Plain `ls-files` C-QUOTES
+# any path holding a quote, a tab, or a non-ASCII byte: a memory named `café.md`
+# comes back as the 20-character string `"caf\303\251.md"`, quotes and octal
+# escapes included. That names no file on disk, so the scanner skips it and the
+# gate again reports "1 files, 0 findings" and PASSES — the identical silent
+# symptom the sed fix above addressed, arriving by a different route. Measured,
+# not theorised. `-z` emits raw NUL-delimited paths with no quoting at all, and
+# `read -r -d ''` consumes them; NUL is the one byte a filename cannot contain,
+# so the split is exact for every path git can store. This bundle is ASCII
+# today, but the gate ships to consuming repos whose bundles are not.
 if command git -C "$BUNDLE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    command git -C "$BUNDLE_ROOT" ls-files -- '*.md' | while IFS= read -r rel; do
-        [ -n "$rel" ] || continue
-        command printf '%s\n' "$BUNDLE_ROOT/$rel"
-    done >"$FILE_LIST"
+    command git -C "$BUNDLE_ROOT" ls-files -z -- '*.md' |
+        while IFS= read -r -d '' rel; do
+            [ -n "$rel" ] || continue
+            command printf '%s\n' "$BUNDLE_ROOT/$rel"
+        done >"$FILE_LIST"
 else
     command find "$BUNDLE_ROOT" -type f -name '*.md' | command sort >"$FILE_LIST"
 fi

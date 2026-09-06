@@ -554,6 +554,51 @@ test_baseline_entry_with_trailing_comment_still_parses() {
         "an annotated entry is not read as unlisted"
 }
 
+# The SIBLING of the metacharacter case above, and the reason to grep for a
+# class rather than patch the one instance a reviewer named. Fixing the sed
+# splice addressed the corruption on the WRITING side of the pipe; plain
+# `ls-files` corrupts on the READING side. It C-QUOTES any path holding a quote,
+# a tab, or a non-ASCII byte, so a memory named `café.md` arrives as the literal
+# 20-character string `"caf\303\251.md"` — quotes and octal escapes included.
+# That names no file on disk, the scanner skips it, and the gate reports
+# "1 files, 0 findings" and PASSES: byte-identical to the symptom the sed fix
+# had just removed. `-z` plus `read -r -d ''` carries raw NUL-delimited paths,
+# and NUL is the one byte a filename cannot contain.
+#
+# This repo's own bundle is all-ASCII, so nothing here would have caught it —
+# but the gate ships to consuming repos whose bundles are not, and a silent pass
+# there is the whole failure this file exists to prevent.
+test_non_ascii_filename_is_still_scanned() {
+    local bundle baseline
+    make_bundle bundle
+    command git -C "$bundle" init -q 2>/dev/null || {
+        skip_test "git unavailable — cannot test non-ASCII filenames"
+        return 0
+    }
+    command git -C "$bundle" config user.email t@example.com
+    command git -C "$bundle" config user.name Test
+
+    # Written via printf so the fixture does not depend on this file's own
+    # encoding surviving an editor round-trip.
+    local fname
+    fname="$(command printf 'caf\303\251.md')"
+    nonconformant "$bundle/$fname"
+    command git -C "$bundle" add -A
+    command git -C "$bundle" commit -qm "add" 2>/dev/null
+
+    baseline="$WORKDIR/nonascii.baseline"
+    write_baseline "$baseline"
+
+    run_gate "$bundle" "$baseline"
+
+    assert_contains "$GATE_OUT" "1 files" \
+        "the non-ASCII path is counted, not dropped as an unresolvable name"
+    assert_contains "$GATE_OUT" "okf-missing-type" \
+        "the finding under a non-ASCII filename is REPORTED, not silently skipped"
+    assert_exit "1" "$GATE_RC" \
+        "the gate FAILS rather than passing over a file it could not resolve"
+}
+
 # --- --regen ----------------------------------------------------------------
 
 test_regen_writes_the_observed_counts() {
@@ -670,6 +715,8 @@ run_test test_bundle_root_with_sed_metacharacter_is_still_scanned \
     "a bundle root containing \`&\` is still scanned, not silently skipped"
 run_test test_baseline_entry_with_trailing_comment_still_parses \
     "a baseline entry with a trailing # rationale still ratchets"
+run_test test_non_ascii_filename_is_still_scanned \
+    "a non-ASCII bundle filename is still scanned (ls-files -z, not C-quoted)"
 run_test test_regen_writes_the_observed_counts \
     "--regen tightens the baseline to the observed counts"
 run_test test_unknown_argument_is_rejected \
