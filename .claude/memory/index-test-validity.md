@@ -14,6 +14,7 @@ evidence a fix works, and before reporting a mutation round's verdict.
 
 - [Anchored regex → tautological test](anchored-regex-tautological-test.md) — a fixture the anchor never matched passes with AND without the fix (#599)
 - [A prefix match is not an exact pin](prefix-match-is-not-an-exact-pin.md) — `index()==1` accepts every superset; test the EXTENDING value, not a disjoint one
+- [Glob `*` is not "more of the same"](glob-star-is-not-more-of-the-same.md) — `[0-9][0-9]*-` admits digits-then-TEXT, not a third digit; enumerate widths, one control each (#894)
 - [Fixture must express the divergent case](fixture-must-express-the-divergent-case.md) — solve for the input where old and new differ; 5 green tautologies in one session
 - [Gate + evidence converge → tautology](gate-and-evidence-converge-tautology.md) — one fixture both ARMS and SATISFIES the gate (#600)
 - [Escaped fixture cannot self-match](escaped-fixture-cannot-self-match.md) — `console\.` on disk never matches a `console\.` pattern; passes either way (#604)
