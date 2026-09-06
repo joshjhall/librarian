@@ -8,6 +8,12 @@ labels:
   - name: status/on-hold
     color: "D93F0B"
     description: Issue intentionally deferred; not ready to work on
+  # Owned here rather than in ship-issue: this skill is the only consumer — the
+  # priority-walk exclusion filter (state-format.md) and the dependency-queue's
+  # blocked-by detection (dependency-queue.md) both live in next-issue.
+  - name: status/blocked
+    color: "B60205"
+    description: Issue has an unresolved dependency; not ready to work
   - name: severity/critical
     color: "B60205"
     description: Critical severity

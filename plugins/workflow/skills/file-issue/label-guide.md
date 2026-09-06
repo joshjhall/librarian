@@ -86,6 +86,7 @@ Owned by: `/workflow:next-issue`, `/workflow:ship-issue`. Do not apply from `/wo
 | `status/pr-pending`     | `/workflow:ship-issue` |
 | `status/commit-pending` | `/workflow:ship-issue` |
 | `status/on-hold`        | Manual             |
+| `status/blocked`        | Manual             |
 
 ### Audit Labels (namespace: `audit/`)
 

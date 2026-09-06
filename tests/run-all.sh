@@ -89,6 +89,7 @@
 #  14f. context-budget session-length signal (tests/validate-context-budget.sh)
 #  14g. Ephemeral-port allocation + retry (tests/validate-free-port.sh)
 #  14h. Coverage-driver listener start attempt (tests/validate-cov-listener.sh)
+#  14i. Status-label transition ordering (tests/validate-label-transition.sh)
 #
 # Each stage is run to completion (no early exit) so a failure in one still
 # lets the others report. Exits non-zero if any stage fails. No Docker; node +
@@ -304,6 +305,13 @@ run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.
 # restate it. The #597 runtime guard catches an INVENTED key but is structurally
 # blind to a MISSING one, so the subset direction has no other backstop.
 run_stage "Review-harness accepted-args-key refs" bash "$SCRIPT_DIR/lint-args-contract-refs.sh"
+# Two invariants over the status/* label vocabulary (#921): every label named in
+# plugins/**/*.md is declared in some metadata.yml, and no markdown recipe puts
+# an add and a remove in ONE call — measured against real gh, that call applies
+# the remove and then fails the add, leaving the issue with no status label.
+# Offline by construction — a gate that needed `gh` auth would sit on the 77
+# sentinel in CI and pre-push alike.
+run_stage "Status-label refs + transition shape" bash "$SCRIPT_DIR/lint-status-label-refs.sh"
 run_stage "Plugin prose budget (ratchet)" bash "$SCRIPT_DIR/lint-prose-budget.sh"
 run_stage "Worktree-safe recipes" bash "$SCRIPT_DIR/lint-worktree-recipes.sh"
 run_stage "Prose-budget gate behavior" bash "$SCRIPT_DIR/validate-prose-budget.sh"
@@ -374,6 +382,12 @@ run_stage "token-cost reconciliation harness" bash "$SCRIPT_DIR/validate-token-r
 run_stage "context-budget session-length signal" bash "$SCRIPT_DIR/validate-context-budget.sh"
 run_stage "ephemeral-port allocation + retry" bash "$SCRIPT_DIR/validate-free-port.sh"
 run_stage "coverage-driver listener start attempt" bash "$SCRIPT_DIR/validate-cov-listener.sh"
+# The ORDERING of a status-label transition (#636/#921): add first, remove only
+# on success, so a failed add can never strip the existing label and leave an
+# issue briefly re-selectable by another golem. Its fixtures point at a label
+# that does not exist, which is what keeps them discriminating now that #921 has
+# created the two that were missing.
+run_stage "status-label transition ordering" bash "$SCRIPT_DIR/validate-label-transition.sh"
 
 # Render the end-of-run verdict (#854).
 #
