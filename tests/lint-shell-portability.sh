@@ -39,6 +39,33 @@
 # Portable replacements: `[[:space:]]`, `[[:alnum:]_]`, and `grep -E`/`sed -E`
 # where alternation is native. See dev-core's shell-scripting skill.
 #
+# Check 4 — parse errors (#906). A script that does not PARSE under the running
+# bash never executes a single line, so its harness never reaches
+# `generate_report` and the shell exits 0. A suite that died at parse time is
+# therefore indistinguishable from a suite that passed — the #538/#571 shape
+# (a gate sitting inert while reading green), but reached through a grammar
+# error rather than a missing tool, and with no 77 sentinel to protect it
+# because the script never gets far enough to emit one.
+#
+# That is not hypothetical: five heredoc-in-command-substitution sites in
+# tests/validate-python-ports.sh meant the repo's ONLY BSD/bash-3.2 coverage
+# (ci.yml's `bsd-probe` job) had never once run, and reported pass every time.
+#
+# KEYED ON STDERR, NOT ON EXIT CODE. This is load-bearing and must not be
+# "simplified" to `if ! bash -n "$file"`. Measured on bash 5.2: the construct
+# above makes `bash -n` print
+#   `warning: command substitution: 1 unterminated here-document`
+# to stderr and still **exit 0**. An exit-code-keyed check is a tautology — it
+# passes on the very file that motivated this gate. Non-empty stderr covers both
+# outcomes: hard `syntax error` (non-zero) and warning-only (zero).
+#
+# KNOWN LIMITATION, recorded rather than overstated (same posture as the `\b`
+# gap below). This runs under whatever bash the host provides. On bash 5 it
+# catches this class because bash 5 warns about it; it is NOT a general bash-3.2
+# grammar checker, and no pattern-based linter can be one — a construct that
+# bash 5 accepts silently and 3.2 rejects would still slip through. Closing that
+# fully needs a real 3.2 interpreter in CI.
+
 # Scope: `plugins/ tests/ bin/` only. The `containers/` submodule is a separate
 # repo that deliberately requires bash 5 — out of scope here.
 #
@@ -263,6 +290,22 @@ scan_file_gnu_regex() {
     done <"$file"
 }
 
+# scan_file_parses <path> — populate CUR_PARSE_VIOLATIONS with the parser
+# diagnostic when `bash -n` writes ANYTHING to stderr (empty when clean).
+#
+# See "Check 4" in the header for why this keys on stderr rather than on the
+# exit status; changing it to an exit-code test silently re-opens #906.
+CUR_PARSE_VIOLATIONS=""
+scan_file_parses() {
+    local file="$1" diag
+    CUR_PARSE_VIOLATIONS=""
+    # `|| true` so a non-zero bash -n (a hard syntax error) does not abort the
+    # suite under `set -e`; the diagnostic itself is the signal either way.
+    diag="$(bash -n "$file" 2>&1 || true)"
+    [ -n "$diag" ] || return 0
+    CUR_PARSE_VIOLATIONS="$diag"
+}
+
 # Per-file test body (reads CUR_FILE).
 CUR_FILE=""
 test_file_portable() {
@@ -283,6 +326,13 @@ test_file_no_gnu_regex() {
     scan_file_gnu_regex "$CUR_FILE"
     assert_equals "" "$CUR_GNURE_VIOLATIONS" \
         "$(command basename "$CUR_FILE") must use POSIX classes ([[:space:]], [[:alnum:]_]) and -E alternation, not GNU \\s/\\w/\\| (#679)"
+}
+
+# Per-file test body for the parse check (reads CUR_FILE).
+test_file_parses() {
+    scan_file_parses "$CUR_FILE"
+    assert_equals "" "$CUR_PARSE_VIOLATIONS" \
+        "$(command basename "$CUR_FILE") must parse cleanly under \`bash -n\` — a parse error makes the whole suite exit 0 without running (#906)"
 }
 
 # Negative case: scan_file's violation branch must actually fire on each
@@ -498,6 +548,74 @@ EOF
         '\b in a sed expression is NOT flagged either — a KNOWN GAP: BSD sed reads it literally (#684)'
 }
 
+# Negative case for the parse check (#906). Both arms matter:
+#
+#   BAD  — a heredoc nested inside a command substitution. This is the exact
+#          construct that kept the bsd-probe job inert. bash 3.2 cannot parse it
+#          at all; bash 5 accepts it but WARNS, which is what this gate reads.
+#   GOOD — the same probe rewritten with the heredoc OUTSIDE the substitution
+#          (write the script to a file, then run it). This arm is what stops the
+#          check from being a blanket "any heredoc is suspicious" rule and pins
+#          the migration target as genuinely clean.
+#
+# The fixture is written with printf rather than a heredoc: a quoted heredoc
+# containing the literal terminator `PY` would end THIS file's heredoc early.
+test_negative_case_parse_fires() {
+    local tmp hard_rc
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'out="$(python3 - "$ARG" <<%sPY%s 2>&1)" || rc=$?\n' "'" "'"
+        printf 'print("hi")\n'
+        printf 'PY\n'
+    } >"$tmp/bad.sh"
+
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'command cat >"$WORKDIR/probe.py" <<%sPY%s\n' "'" "'"
+        printf 'print("hi")\n'
+        printf 'PY\n'
+        printf 'out="$(python3 "$WORKDIR/probe.py" "$ARG" 2>&1)" || rc=$?\n'
+    } >"$tmp/good.sh"
+
+    # Guard the fixture itself: if `bash -n` ever stops warning on the bad
+    # spelling (a future bash change), the assertion below would pass for the
+    # wrong reason and this gate would quietly become a no-op.
+    assert_not_empty "$(bash -n "$tmp/bad.sh" 2>&1 || true)" \
+        "fixture guard: this bash actually diagnoses heredoc-in-command-substitution"
+
+    scan_file_parses "$tmp/bad.sh"
+    assert_not_empty "$CUR_PARSE_VIOLATIONS" \
+        "heredoc inside a command substitution IS flagged — bash 3.2 cannot parse it (#906)"
+
+    scan_file_parses "$tmp/good.sh"
+    assert_equals "" "$CUR_PARSE_VIOLATIONS" \
+        "the temp-file rewrite is NOT flagged — the migration target must be clean (#906)"
+
+    # The OTHER documented outcome: a hard syntax error, where `bash -n` exits
+    # NON-ZERO. The header claims non-empty stderr covers both arms, so both
+    # arms need a fixture — a comment asserting a property nothing tests is how
+    # a later narrowing (e.g. matching only the "unterminated here-document"
+    # substring) would silently drop this half. The exit-code guard is the
+    # point: it pins that the two arms really do differ in exit status, so this
+    # case cannot degenerate into a copy of the warning-only one above.
+    printf '#!/usr/bin/env bash\nif [ x\n' >"$tmp/hard.sh"
+
+    bash -n "$tmp/hard.sh" 2>/dev/null && hard_rc=0 || hard_rc=$?
+    assert_true "[ \"$hard_rc\" -ne 0 ]" \
+        "fixture guard: a hard syntax error really does exit non-zero (the other arm)"
+
+    scan_file_parses "$tmp/hard.sh"
+    assert_not_empty "$CUR_PARSE_VIOLATIONS" \
+        "a hard syntax error IS flagged too — stderr capture is exit-code agnostic (#906)"
+}
+
 # Discover the corpus.
 scripts_list="$(list_shell_scripts)"
 
@@ -512,6 +630,7 @@ run_test test_negative_case_fires "scan_file flags every forbidden construct (vi
 run_test test_negative_case_paths_fire "scan_file_paths flags hardcoded /usr/bin//bin paths (#443)"
 run_test test_negative_case_gnu_regex_fires "scan_file_gnu_regex flags GNU-only regex constructs (#679)"
 run_test test_word_boundary_exemption_is_pinned "\\b stays exempt — BSD-verified for grep, known gap for sed (#684)"
+run_test test_negative_case_parse_fires "scan_file_parses flags heredoc-in-command-substitution, not its rewrite (#906)"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -519,6 +638,7 @@ while IFS= read -r f; do
     run_test test_file_portable "${f#"$REPO_ROOT"/}: bash-3.2 clean"
     run_test test_file_no_hardcoded_paths "${f#"$REPO_ROOT"/}: no hardcoded core-utility paths (#443)"
     run_test test_file_no_gnu_regex "${f#"$REPO_ROOT"/}: no GNU-only regex constructs (#679)"
+    run_test test_file_parses "${f#"$REPO_ROOT"/}: parses under bash -n (#906)"
 done <<<"$scripts_list"
 
 generate_report
