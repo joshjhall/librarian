@@ -42,3 +42,4 @@ to every task, not just this topic.
 - [Model tier: fable is valid](model-tier-fable-valid.md) — agent `model:` accepts fable; aliases track the latest generation
 - [Namespace pkg fakes an import probe](namespace-package-fakes-import-probe.md) — `import X` passes on an empty ./X/ (PEP 420); probe an attribute
 - [Third-party fix needs a durable lever](third-party-fix-needs-a-durable-lever.md) — a patch to installed plugin files is clobbered by `plugin update`; enumerate config levers first
+- [Parse error exits 0 — key the gate on stderr](parse-error-exits-zero-check-stderr.md) — a script that dies at parse time never runs its harness; `bash -n` may only WARN, so an exit-code-keyed gate is a tautology
