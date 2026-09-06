@@ -571,4 +571,72 @@ test_selftest_missing_owner_fires() {
 }
 run_test test_selftest_missing_owner_fires "self-test: an omitted owner key is rejected"
 
+# --- Self-tests: the backing-text targets must be asserted BY NAME -----------
+#
+# Rule 0's two file-existence assertions (#709) would otherwise be the only
+# checks here exercised on their PASSING branch alone: every fixture points
+# OWASP_PASS2_DOC and OWASP_REVIEWER_JS at the shared stubs, which always exist.
+# An assertion never run against the condition it names is indistinguishable
+# from one that does not work.
+#
+# What these pin is the MESSAGE, not merely a failure. Rule 3 already fails when
+# a backing-text file vanishes — has_backing greps with 2>/dev/null, so every
+# claim reports unbacked — but it blames N innocent claims instead of the one
+# relocation. So each case below asserts the file-level message specifically; a
+# regression that deleted the assertion would still fail the gate via rule 3 and
+# would silently pass a bare "it failed" check.
+#
+# `valid/` is the fixture on purpose: it passes cleanly with both files present
+# (proved by the positive-control self-test above), so the ONLY difference here
+# is the missing path — the divergent input this pair of cases exists to cover.
+
+# run_over_fixture_missing DIR VAR — the same recursive invocation, with exactly
+# one of the two backing-text roots redirected to a path that does not exist.
+# A separate helper rather than a parameter on run_over_fixture: only these two
+# cases need it, and a rarely-used knob on the shared helper is how the other
+# eleven fixtures would quietly acquire a way to skip a file.
+run_over_fixture_missing() {
+    local dir="$1" var="$2"
+    local pass2="$SHARED/pass2.md" reviewer="$SHARED/reviewer.js"
+    # A path under the fixture root that is never created. Not /dev/null and not
+    # a mktemp'd name: it must be absent, and it must stay absent between runs.
+    case "$var" in
+        PASS2) pass2="$FIXROOT/_shared/NO-SUCH-pass2-checklist.md" ;;
+        REVIEWER) reviewer="$FIXROOT/_shared/NO-SUCH-reviewer.js" ;;
+    esac
+    OWASP_SELFTEST=1 \
+        OWASP_COVERAGE_YML="$FIXROOT/$dir/owasp-coverage.yml" \
+        OWASP_PATTERNS_PY="$SHARED/patterns.py" \
+        OWASP_PATTERNS_SH="$SHARED/patterns.sh" \
+        OWASP_PASS2_DOC="$pass2" \
+        OWASP_REVIEWER_JS="$reviewer" \
+        bash "$SCRIPT_DIR/validate-owasp-coverage.sh" 2>&1
+}
+
+test_selftest_missing_pass2_doc_is_named() {
+    local out
+    if out="$(run_over_fixture_missing valid PASS2)"; then
+        _fail "a missing Pass-2 checklist companion must fail the gate" \
+            "but the fixture PASSED — rule 0's existence assertion has no teeth"
+        return 0
+    fi
+    assert_contains "$out" "the Pass-2 checklist companion resolves" \
+        "a moved/renamed PASS2_DOC is reported as one file-level failure"
+}
+run_test test_selftest_missing_pass2_doc_is_named \
+    "self-test: a missing Pass-2 companion is named, not blamed on every claim"
+
+test_selftest_missing_reviewer_js_is_named() {
+    local out
+    if out="$(run_over_fixture_missing valid REVIEWER)"; then
+        _fail "a missing reviewer harness must fail the gate" \
+            "but the fixture PASSED — rule 0's existence assertion has no teeth"
+        return 0
+    fi
+    assert_contains "$out" "the reviewer harness resolves" \
+        "a moved/renamed REVIEWER_JS is reported as one file-level failure"
+}
+run_test test_selftest_missing_reviewer_js_is_named \
+    "self-test: a missing reviewer harness is named, not blamed on every claim"
+
 generate_report
