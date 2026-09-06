@@ -15,9 +15,12 @@
 # never reported as dirtiness, and a refusal is always one the operator can
 # still verify with their own `git status`. A worktree git no longer lists has
 # nothing git-tracked left to lose, so its leftover directory is cleaned rather
-# than skipped — tolerating, without a scary warning, the entries a bindfs/FUSE
-# overlay refuses to release, and removing `.git` LAST so a partial removal stays
-# recognizable as residue on a re-run (#834).
+# than skipped — tolerating, without a scary warning, the entries the macOS
+# virtiofs mount stack refuses to release, and removing `.git` LAST so a partial
+# removal stays recognizable as residue on a re-run (#834). When those entries
+# make the directory undeletable, the `issue-N` PATH is still freed by renaming
+# the tree aside to a `.wedged-*` sibling (#936) — the path is what callers
+# need, and a rename succeeds where unlinking the contents cannot.
 #
 # Belt-and-suspenders: after teardown it repairs a polluted main-repo
 # `core.worktree` (#258). An interrupted `git worktree remove --force` can leave
@@ -459,8 +462,9 @@ leftover_is_worktree_residue() {
     command echo "residue"
 }
 
-# remove_leftover_dir <worktree> — delete a deregistered worktree's leftover
-# directory, tolerating the entries a bindfs/FUSE overlay will not let go (#834).
+# remove_leftover_dir <worktree> — free a deregistered worktree's leftover
+# path: delete it where the filesystem allows, and QUARANTINE it by rename where
+# it does not (#834 tolerated the survivors; #936 frees the path regardless).
 #
 # TWO DIFFERENT ISSUES MEET AT THIS LINE, and conflating them loses one:
 # #813 is about never MISREPORTING dirtiness — a probe that cannot run must not
@@ -468,15 +472,24 @@ leftover_is_worktree_residue() {
 # removal itself: the classification was already correct and the removal was
 # already authorized; the filesystem simply refuses part of it.
 #
-# On the documented macOS/VirtioFS `bindfs` overlay, stale dentries whose inodes
-# are gone return EBADF from `unlink`/`stat` while still appearing in `readdir`
-# (~3,700 `target/debug/incremental/*.o` files in the #813 report). No
-# unprivileged call clears them, and nothing is at risk: git has no record of
-# those files, `.worktrees/` is gitignored, and the golem collision guard reads
-# `git worktree list`, not the directory. So a residual directory is an EXPECTED
-# outcome on that platform, not a fault — and teardown runs unattended, where a
-# `WARNING` costs an operator an adjudication for a condition that is both
-# expected and harmless.
+# THE FAULT IS VIRTIOFS, NOT BINDFS (#936 — this comment previously said
+# bindfs, which points a reader at the wrong layer). On the macOS Docker mount
+# stack, stale dentries whose inodes are gone return EBADF from `unlink`/`stat`
+# while still appearing in `readdir` (~3,700 `target/debug/incremental/*.o`
+# files in the #813 report). Measured in #936: unmounting the bindfs overlay in
+# a private mount namespace leaves the entries failing IDENTICALLY on the bare
+# virtiofs beneath, and a freshly established `mount -t virtiofs` in that
+# namespace fails the same way — so it is not a container-side dentry cache
+# either. The host virtiofsd has lost the inode mapping; NO in-container call
+# repairs it, and no amount of bindfs reconfiguration will help. Do not go
+# refactoring the FUSE layer looking for this.
+#
+# Nothing is at risk: git has no record of those files, `.worktrees/` is
+# gitignored, and the golem collision guard reads `git worktree list`, not the
+# directory. So an undeletable directory is an EXPECTED outcome on that
+# platform, not a fault — and teardown runs unattended, where a `WARNING` costs
+# an operator an adjudication for a condition that is both expected and
+# harmless.
 #
 # ORDER IS THE LOAD-BEARING PART, not the message. `rm -rf` does not stop at the
 # first undeletable entry — it removes everything it CAN and reports failure at
@@ -508,8 +521,43 @@ leftover_is_worktree_residue() {
 # -maxdepth 1` keeps `$wt` itself out of the argument list. No `-name .git`
 # recursion concern — the exclusion is depth-1 only, so a nested `.git` inside a
 # submodule is still removed normally.
+#
+# QUARANTINE (#936). Tolerating the survivors was right, but it left the
+# `issue-N` PATH occupied — and the path, not the bytes, is what callers need:
+# `worktree-new.sh` refuses to reuse an occupied one ("fatal: … already
+# exists"), so the issue becomes permanently un-workable on that machine until
+# someone clears it by hand. The fix rests on a measured asymmetry: the wedged
+# ENTRIES cannot be unlinked, but the CONTAINING DIRECTORY renames fine, and new
+# files can be created and deleted inside the freed path normally (verified
+# against two live remnants, #849/#850). So where the tree cannot be deleted it
+# is moved aside instead, and the path is freed either way.
+#
+# Three properties of the destination, each load-bearing:
+#
+#   distinct per attempt   `.wedged-issue-N-<epoch>-<pid>`. A BARE name is not
+#                          merely untidy — `mv a .wedged-a` twice puts the
+#                          second tree INSIDE the first (`.wedged-a/a`,
+#                          reproduced), nesting one wedged tree in another and
+#                          hiding it from an operator's `ls`.
+#   dotted                 `read-scope-guard.sh` derives peer worktrees as the
+#                          `issue-*` siblings of its own root. An undotted
+#                          `wedged-issue-N` would match that glob and register
+#                          as a phantom peer; a leading `.` misses it for the
+#                          same structural reason `.status` does.
+#   a SIBLING              the rename must stay inside the same directory: it is
+#                          one `rename(2)` on the same filesystem, which is what
+#                          makes it succeed where unlinking the contents cannot.
+#
+# The rename CAN itself fail (measured: EACCES when the parent is unwritable),
+# so it is not assumed — a failure falls through to the in-place reporting that
+# preceded this change rather than announcing a quarantine that did not happen.
+#
+# NO DISK SPACE IS RECLAIMED, and the message must not imply otherwise. Summing
+# live file sizes across both live remnants gave 0 bytes: every wedged entry is
+# a name with no reachable inode. The multi-GB figure an operator sees is
+# host-side space that only a host unlink or a Docker VM restart releases.
 remove_leftover_dir() {
-    local wtdir="$1" survivors
+    local wtdir="$1" survivors quarantine
 
     command find "$wtdir" -mindepth 1 -maxdepth 1 ! -name .git \
         -exec rm -rf {} + 2>/dev/null || true
@@ -561,7 +609,33 @@ remove_leftover_dir() {
     else
         command echo "  cleared leftover directory $wtdir ($survivors entries could not be removed)"
     fi
-    command echo "  (expected on a bindfs/FUSE overlay — nothing git-tracked is at risk)"
+
+    # Free the PATH by rename (#936). See the header for why the destination is
+    # dotted, sibling, and distinct per attempt. `$$` disambiguates two teardowns
+    # racing within the same second; the epoch alone does not.
+    #
+    # `date`/`$$` rather than `mktemp -d`: mktemp CREATES the destination, and
+    # `mv` onto an existing directory moves the source INSIDE it — reintroducing
+    # the nesting this naming exists to prevent.
+    quarantine="$(command dirname "$wtdir")/.wedged-$(command basename "$wtdir")-$(command date -u +%s 2>/dev/null || command echo 0)-$$"
+    if [ -e "$quarantine" ] || [ -L "$quarantine" ]; then
+        # Belt-and-suspenders against the one failure mode this naming exists to
+        # prevent. epoch+pid should never collide (one quarantine per process),
+        # but `mv` onto an EXISTING directory silently moves the source INSIDE
+        # it — so an occupied destination must never be handed to `mv` on the
+        # strength of "should never happen". Refuse rather than nest.
+        command echo "  $wtdir could not be moved aside ($quarantine is occupied), so the path stays occupied"
+    elif command mv "$wtdir" "$quarantine" 2>/dev/null; then
+        command echo "  the path was still occupied, so it was moved aside to $quarantine"
+        command echo "  $wtdir is free again (no disk space is reclaimed in-container —"
+        command echo "   those entries are names with no reachable inode; only a host"
+        command echo "   unlink or a Docker VM restart releases the space)"
+    else
+        # The rename is not assumed. Report the tree where it actually is rather
+        # than claiming a quarantine that did not happen.
+        command echo "  $wtdir could not be moved aside either, so the path stays occupied"
+    fi
+    command echo "  (expected on the macOS virtiofs mount stack — nothing git-tracked is at risk)"
     removed=1
 }
 
@@ -708,7 +782,9 @@ if [ "$listed" -eq 1 ]; then
         else
             # The tree was verified clean, so this is NOT uncommitted work — it
             # is a removal that failed for some other reason (an undeletable
-            # path under a FUSE/bindfs overlay is the observed one). Report what
+            # path on the macOS virtiofs mount stack is the observed one — see
+            # remove_leftover_dir's header for why virtiofs, not the overlay
+            # above it). Report what
             # git actually said instead of the false dirtiness claim #813 was
             # filed about. Note git may ALREADY have deregistered the worktree
             # while failing, so a re-run takes the leftover-directory path above

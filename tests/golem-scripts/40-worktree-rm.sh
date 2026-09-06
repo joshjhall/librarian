@@ -1623,8 +1623,52 @@ make_undeletable() {
 # Restore write permission so the harness's `rm -rf "$WORKDIR"` EXIT trap can
 # actually clean the sandbox — without this the undeletable fixture outlives the
 # run and leaks a directory into $TMPDIR on every invocation.
+#
+# Restores BOTH the original path and the quarantined one (#936). Teardown now
+# renames the wedged tree aside, so by the time a caller restores, the fixture
+# usually no longer lives where `make_undeletable` put it. `chmod`ing only the
+# old path is a silent no-op (it already ends in `|| true`), which is exactly
+# how this leak would come back unnoticed — the caller's assertions all pass
+# while the unwritable directory survives the run.
 restore_undeletable() {
-    command chmod 700 "$1" 2>/dev/null || true
+    local dir="$1" wt_dir
+    command chmod 700 "$dir" 2>/dev/null || true
+    # Teardown now RENAMES the wedged tree aside (#936), so by the time a caller
+    # restores, the fixture usually no longer lives at the path it was planted
+    # at — and `chmod`ing only that path is a silent no-op (it already ends in
+    # `|| true`). Every assertion still passes while the unwritable directory
+    # survives the run and leaks into $TMPDIR, which is exactly how the original
+    # leak this helper exists to prevent would come back unnoticed.
+    #
+    # So restore the whole worktree DIRECTORY, which holds both the original
+    # path and any `.wedged-*` sibling. Truncating at `/.worktrees/` rather than
+    # walking up a fixed number of levels: callers plant fixtures at different
+    # depths (`<wt>/target/debug/incremental`, `<wt>/.git/objects`, `<wt>`
+    # itself), and a fixed walk is wrong for all but one of them.
+    case "$dir" in
+        */.worktrees/*)
+            wt_dir="${dir%%/.worktrees/*}/.worktrees"
+            command chmod -R 700 "$wt_dir" 2>/dev/null || true
+            ;;
+    esac
+}
+
+# quarantine_of <worktree-dir> — echo the single `.wedged-<base>-*` sibling that
+# teardown moved <worktree-dir> aside to, or empty if there is none (#936).
+#
+# Globbed rather than reconstructed: the suffix carries an epoch and a pid the
+# test cannot predict, and that unpredictability is the point (see the script's
+# header — a predictable name nests the second quarantine inside the first).
+quarantine_of() {
+    local wtdir="$1" parent base hit
+    parent="$(command dirname "$wtdir")"
+    base="$(command basename "$wtdir")"
+    for hit in "$parent/.wedged-$base-"*; do
+        [ -d "$hit" ] || continue
+        command echo "$hit"
+        return 0
+    done
+    return 0
 }
 
 # #834: a partial removal is an EXPECTED outcome on a bindfs/FUSE overlay, not a
@@ -1663,7 +1707,7 @@ test_worktree_rm_partial_leftover_removal_is_tolerated() {
     # intent, each of which could report zero for a surviving directory).
     assert_contains "$RUN_OUT" "5 entries could not be removed" \
         "reports every entry still on disk, including the .git it kept"
-    assert_contains "$RUN_OUT" "bindfs" "names the expected cause so it reads as benign"
+    assert_contains "$RUN_OUT" "virtiofs" "names the expected cause so it reads as benign"
     local branches
     branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
         git -C "$sb" branch --list "feature/issue-90")"
@@ -1694,10 +1738,17 @@ test_worktree_rm_partial_removal_keeps_the_residue_fingerprint() {
     restore_undeletable "$blocked"
 
     assert_exit 0 "$RUN_RC" "the partial removal still succeeds"
-    assert_true "[ -e '$sb/.worktrees/issue-91/.git' ]" \
+    # The tree is quarantined by then (#936), so the fingerprint is asserted
+    # where it now LIVES. The contract is unchanged — `.git` must survive the
+    # contents pass — but a fix that deleted `.git` first would still be caught
+    # here, because the quarantined tree would not carry it either.
+    local wedged
+    wedged="$(quarantine_of "$sb/.worktrees/issue-91")"
+    assert_not_empty "$wedged" "the wedged tree was moved aside, not left in place"
+    assert_true "[ -e '$wedged/.git' ]" \
         "the .git fingerprint SURVIVES a partial removal, keeping the dir recognizable"
     # The removal is still real: everything the filesystem allowed is gone.
-    assert_true "[ ! -e '$sb/.worktrees/issue-91/seed.txt' ]" \
+    assert_true "[ ! -e '$wedged/seed.txt' ]" \
         "removable contents are still deleted — tolerating is not skipping"
 }
 
@@ -1798,7 +1849,12 @@ test_worktree_rm_counts_a_git_the_filesystem_refused() {
         "never reports zero entries while the directory survives"
     assert_contains "$RUN_OUT" "3 entries could not be removed" \
         "counts the refused .git subtree (.git, objects, blob) rather than excluding it"
-    assert_true "[ -e '$sb/.worktrees/issue-94' ]" "the directory really did survive"
+    # The directory survived the REMOVAL — asserted where it now lives, since
+    # #936 then moves it aside. The count above is what this case is really
+    # about, and it is computed before the quarantine; the survival assertion
+    # exists to keep that count honest, so it must follow the tree.
+    assert_not_empty "$(quarantine_of "$sb/.worktrees/issue-94")" \
+        "the directory really did survive the removal (quarantined, not deleted)"
 }
 
 # #834 review cycle 2: an EMPTIED but still-present directory gets its own
@@ -1839,6 +1895,22 @@ test_worktree_rm_emptied_but_undeletable_dir_is_not_reported_as_zero() {
     assert_contains "$RUN_OUT" "could not remove the directory itself" \
         "names the actual condition: emptied, but the directory node would not go"
     assert_true "[ -e '$sb/.worktrees/issue-96' ]" "the directory really did survive"
+    # This fixture is ALSO the only one that exercises the quarantine's
+    # rename-FAILURE branch (#936), so it pins that branch's message here rather
+    # than leaving the arm untested. An unwritable parent defeats `mv` for the
+    # same reason it defeats `rmdir`: both the source unlink and the destination
+    # create need write permission on that one directory. Verified live — the
+    # run prints "could not be moved aside either".
+    #
+    # The negative assertion is the load-bearing half: without it, a regression
+    # that swallowed the mv failure (dropping the `elif` and echoing the success
+    # text unconditionally) would still satisfy every other line in this test
+    # while telling an operator the path was freed when it plainly was not —
+    # exactly the misreporting class #813 and #834 exist to prevent.
+    assert_contains "$RUN_OUT" "could not be moved aside either" \
+        "the rename-failure branch reports the tree where it actually is"
+    assert_not_contains "$RUN_OUT" "moved aside to" \
+        "never claims a quarantine that did not happen"
 }
 
 # #834 review cycles 1+2, the total-failure end of the range: NOTHING could be
@@ -1892,8 +1964,16 @@ test_worktree_rm_total_removal_failure_counts_everything() {
     # created": the two differ, and only the former is what the operator sees.
     assert_contains "$RUN_OUT" "3 entries could not be removed" \
         "counts every surviving entry, including the plain-file .git"
-    assert_true "[ -e '$wt/.git' ]" "the file-shaped .git is among the survivors"
-    assert_true "[ ! -e '$wt/sub/f' ]" \
+    # Survivors are asserted at the quarantined path (#936): the count above is
+    # computed before the rename, and the tree it counted then moves. Following
+    # it keeps this case pinning the same contract — which entries survived the
+    # REMOVAL — rather than silently degrading to "the path is gone", which the
+    # quarantine makes true for every implementation.
+    local wedged
+    wedged="$(quarantine_of "$wt")"
+    assert_not_empty "$wedged" "the undeletable tree was moved aside, not lost"
+    assert_true "[ -e '$wedged/.git' ]" "the file-shaped .git is among the survivors"
+    assert_true "[ ! -e '$wedged/sub/f' ]" \
         "a nested file whose own parent stays writable is still removed"
 }
 
@@ -1935,4 +2015,205 @@ test_worktree_rm_single_survivor_reads_singular() {
         "reads singular at the n=1 boundary, and pins the count against an off-by-one"
     assert_not_contains "$RUN_OUT" "1 entries" \
         "never the ungrammatical plural"
+}
+
+# --- #936: quarantine a wedged worktree so the issue-N path is always freed ---
+
+# The issue's core AC, and the reason the quarantine exists at all. #834 taught
+# teardown to TOLERATE entries the filesystem will not unlink — correct, since
+# nothing git-tracked is at risk — but tolerating left the `issue-N` PATH
+# occupied, and the path is what callers actually need: `worktree-new.sh`
+# refuses to reuse an occupied one ("already exists"), so the issue became
+# permanently un-workable on that machine until someone cleared it by hand.
+#
+# Asserted as PATH FREED plus SIBLING PRESENT, not just one of them. "The
+# directory is gone" alone would also pass for an implementation that deleted
+# the tree outright — which cannot work here (that is the whole premise) and
+# would destroy an operator's only copy of whatever is wedged.
+test_worktree_rm_quarantines_a_wedged_worktree() {
+    local sb blocked wedged
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 130
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-130"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-130")"
+
+    run_in "$sb" "$WT_RM" 130
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "a wedged worktree is still a successful teardown"
+    assert_true "[ ! -e '$sb/.worktrees/issue-130' ]" \
+        "the issue-N PATH is freed even though its contents could not be unlinked"
+    wedged="$(quarantine_of "$sb/.worktrees/issue-130")"
+    assert_not_empty "$wedged" \
+        "the tree is moved aside to a .wedged-* sibling, not deleted"
+}
+
+# The AC a delete-based implementation MUST fail. Freeing the path by `rm`ing
+# harder is not an option (the entries cannot be unlinked — that is the premise),
+# but an implementation that TRIED would still pass a bare "path is gone" check
+# on a fixture where the wedge is simulated with permission bits. Pinning the
+# CONTENTS at their new location is what makes this a rename.
+test_worktree_rm_quarantine_preserves_contents() {
+    local sb blocked wedged
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 131
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-131"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-131")"
+
+    run_in "$sb" "$WT_RM" 131
+    restore_undeletable "$blocked"
+
+    wedged="$(quarantine_of "$sb/.worktrees/issue-131")"
+    assert_not_empty "$wedged" "the tree was quarantined"
+    # The undeletable entry itself is what a delete-based fix would destroy.
+    assert_true "[ -e '$wedged/target/debug/incremental/stale.o' ]" \
+        "the wedged entries SURVIVE the move — this is a rename, not a delete"
+}
+
+# The nesting hazard the timestamp+pid suffix exists to prevent, and the mutation
+# this design is really about. Reproduced directly before the fix: with a BARE
+# destination name, `mv a .wedged-a` twice puts the second tree INSIDE the first
+# (`.wedged-a/a`) rather than beside it — because `mv` onto an EXISTING directory
+# moves the source into it. That buries one wedged tree inside another, where an
+# operator's `ls` will never show it.
+#
+# Asserted as "two siblings" AND "no .wedged-* nested inside a .wedged-*": the
+# count alone would pass if a nested second quarantine still left two matches.
+test_worktree_rm_two_quarantines_are_siblings_not_nested() {
+    local sb blocked count nested
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+
+    run_in "$sb" "$WT_NEW" 132
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-132"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-132")"
+    run_in "$sb" "$WT_RM" 132
+    assert_exit 0 "$RUN_RC" "the first teardown quarantines"
+
+    # A SECOND wedged worktree at the same issue-N path — the realistic repeat,
+    # since the path being reusable is exactly what the first quarantine bought.
+    run_in "$sb" "$WT_NEW" 132
+    assert_exit 0 "$RUN_RC" "the freed path is reusable — worktree-new succeeds again"
+    command rm -rf "$sb/.git/worktrees/issue-132"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-132")"
+    run_in "$sb" "$WT_RM" 132
+    restore_undeletable "$blocked"
+
+    assert_exit 0 "$RUN_RC" "the second teardown quarantines too"
+    count="$(command find "$sb/.worktrees" -maxdepth 1 -name '.wedged-issue-132-*' \
+        2>/dev/null | command wc -l | command tr -d '[:space:]')"
+    assert_equals "2" "$count" "two quarantines land as two SIBLINGS"
+    nested="$(command find "$sb/.worktrees" -path '*/.wedged-*/*' -name '.wedged-*' \
+        2>/dev/null | command wc -l | command tr -d '[:space:]')"
+    assert_equals "0" "$nested" \
+        "no quarantine is nested inside another — pins the distinct destination"
+}
+
+# Messaging AC: the operator must not read a freed path as freed SPACE. Summing
+# live file sizes across both live remnants (#849/#850) gave 0 bytes — every
+# wedged entry is a name with no reachable inode, so the multi-GB figure an
+# operator sees is host-side space only a host unlink or a VM restart releases.
+# A quarantine frees a PATH, and claiming otherwise sends someone hunting for
+# disk that never came back.
+test_worktree_rm_quarantine_does_not_claim_reclaimed_space() {
+    local sb blocked
+    if [ "$(command id -u)" = "0" ]; then
+        skip_test "running as root — permission bits cannot make rm fail"
+        return 0
+    fi
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 133
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-133"
+    blocked="$(make_undeletable "$sb/.worktrees/issue-133")"
+
+    run_in "$sb" "$WT_RM" 133
+    restore_undeletable "$blocked"
+
+    assert_contains "$RUN_OUT" "no disk space is reclaimed" \
+        "states plainly that the path was freed but the space was not"
+    # Still an EXPECTED condition, not an incident — the #834 property that an
+    # unattended teardown must not hand its operator an adjudication.
+    assert_not_contains "$RUN_OUT" "WARNING" \
+        "quarantining stays a routine outcome, not a warning"
+}
+
+# Narrowness. Without this, an implementation that quarantined UNCONDITIONALLY —
+# renaming aside on every teardown instead of only when removal failed — passes
+# every case above while leaving a `.wedged-*` tree behind on each of the
+# thousands of ordinary golem teardowns, silently filling the worktree dir.
+test_worktree_rm_ordinary_teardown_never_quarantines() {
+    local sb count
+    new_sandbox sb
+    run_in "$sb" "$WT_NEW" 134
+    assert_exit 0 "$RUN_RC" "worktree-new succeeds"
+    command rm -rf "$sb/.git/worktrees/issue-134"
+
+    run_in "$sb" "$WT_RM" 134
+    assert_exit 0 "$RUN_RC" "an unimpeded leftover removal still succeeds"
+    count="$(command find "$sb/.worktrees" -maxdepth 1 -name '.wedged-*' \
+        2>/dev/null | command wc -l | command tr -d '[:space:]')"
+    assert_equals "0" "$count" \
+        "nothing is quarantined when the directory could simply be removed"
+    assert_not_contains "$RUN_OUT" "moved aside" \
+        "no quarantine message on the ordinary path"
+}
+
+# The quarantine must not become a way to move a symlink aside. The refusal lives
+# UPSTREAM of remove_leftover_dir (leftover_is_worktree_residue refuses every
+# symlink before the removal path is reached), so this asserts the property END
+# TO END rather than re-deriving it: a symlinked worktree path is refused, its
+# target is untouched, and — the part specific to #936 — the link itself is not
+# renamed aside, which would "free" the path while unwedging nothing and
+# stranding a live symlink under a `.wedged-*` name.
+test_worktree_rm_never_quarantines_a_symlink() {
+    local sb outside count
+    new_sandbox sb
+    outside="$(command mktemp -d "$WORKDIR/wedgelink.XXXXXX")" || return 1
+    command printf 'OUTSIDE VIA SYMLINK\n' >"$outside/precious.txt"
+    command touch "$outside/.git"
+    command mkdir -p "$sb/.worktrees"
+    command ln -s "$outside" "$sb/.worktrees/issue-135"
+
+    run_in "$sb" "$WT_RM" 135
+
+    assert_exit 1 "$RUN_RC" "a symlink at the worktree path is still refused"
+    assert_true "[ -L '$sb/.worktrees/issue-135' ]" \
+        "the symlink is left in place, not renamed aside"
+    assert_file_contains "$outside/precious.txt" "OUTSIDE VIA SYMLINK" \
+        "the symlink target is never touched"
+    count="$(command find "$sb/.worktrees" -maxdepth 1 -name '.wedged-*' \
+        2>/dev/null | command wc -l | command tr -d '[:space:]')"
+    assert_equals "0" "$count" "a refused symlink produces no quarantine"
+}
+
+# #936 item 3: the root-cause attribution in the code itself.
+#
+# The comment said the EBADF came from "the documented macOS/VirtioFS `bindfs`
+# overlay", which points the next reader at the wrong layer — and #936 measured
+# that unmounting bindfs in a private mount namespace leaves the entries failing
+# identically on the bare virtiofs beneath, as does a freshly established
+# virtiofs mount. The host virtiofsd has lost the inode mapping; no bindfs
+# reconfiguration can fix it. Asserted against the SOURCE because the wrong
+# attribution costs a future reader a refactor of a layer with nothing to fix,
+# and nothing in the runtime output would ever reveal it.
+test_worktree_rm_attributes_ebadf_to_virtiofs() {
+    assert_file_contains "$WT_RM" "THE FAULT IS VIRTIOFS, NOT BINDFS" \
+        "names the correct layer, and flags the correction for a reader who knows the old text"
+    assert_file_contains "$WT_RM" "unmounting the bindfs overlay" \
+        "records the measurement, so the next reader does not re-run it"
 }
