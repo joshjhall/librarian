@@ -121,7 +121,7 @@ test_fast_command_is_not_delayed() {
     ")"
     assert_not_contains "$out" "TIMEDOUT" "a fast command returns promptly"
     assert_contains "$out" "out=hello" "the subject's stdout still reaches the caller"
-    assert_true "! printf '%s' \"$out\" | command grep -qE 'elapsed=(1[0-9]|[2-9][0-9])'" \
+    assert_true "! command grep -qE 'elapsed=(1[0-9]|[2-9][0-9])' <<<\"$out\"" \
         "a fast command is NOT held for the full bound (note 1)"
 }
 
