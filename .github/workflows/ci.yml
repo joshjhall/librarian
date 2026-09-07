@@ -112,6 +112,14 @@ jobs:
     # So if a shard ever approaches this number, do NOT nudge it. Re-balance the
     # shards, or add one: the partition is a manifest edit plus a stage list, and
     # tests/validate-shards.sh proves nothing was dropped in the move.
+    #
+    # THE CAP EARNED ITS KEEP ON THIS PR'S FIRST RUN. The 20-golem leg was
+    # cancelled here at 20m16s while 10-portability took 5m07s and 30-scanners
+    # 3m11s — and the cause was a real hang (#961: bounded_run bounded the
+    # process but not the capture, so a surviving grandchild held the command
+    # substitution's pipe open for 15 minutes between two adjacent test lines).
+    # Fixed in this PR. That is exactly the case this number exists to bound:
+    # it converted an unbounded stall into a bounded, attributable failure.
     timeout-minutes: 20
     # Fork PRs check out untrusted contributor code as tests/* (checkout uses
     # the PR HEAD), so running the full shell suite would expose the runner —

@@ -35,3 +35,8 @@ run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck
 run_stage "Python lint + format (ruff)" bash "$SCRIPT_DIR/lint-python.sh"
 run_stage "Spell check (typos)" bash "$SCRIPT_DIR/lint-typos.sh"
 run_stage "bounded-run.sh copy sync" bash "$SCRIPT_DIR/lint-bounded-run-sync.sh"
+# The BEHAVIOR of bounded_run, not just the byte-sync of its two copies (#961).
+# The sync gate above pins that the copies match and depend on no GNU coreutils;
+# neither is a claim that the bound works. That gap is what let a bound that had
+# stopped bounding the CAPTURE sit unnoticed until it cost a 15-minute CI stall.
+run_stage "bounded_run behavior (capture bound)" bash "$SCRIPT_DIR/validate-bounded-run.sh"
