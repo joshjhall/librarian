@@ -333,7 +333,7 @@ EOF
 # gc_stub_sudo <sandbox>
 # A no-op `sudo` that records it was reached (touches <sandbox>/sudo_called) and
 # appends each invocation's argument line to <sandbox>/sudo_args — ensure_git_cliff
-# calls it twice (`sudo command mv …` then `sudo command chmod +x …`), so a test
+# calls it twice (`sudo mv …` then `sudo chmod +x …`), so a test
 # can assert both the /usr/local/bin destination and the chmod +x. Always exits 0,
 # so the mv/chmod into /usr/local/bin never touch the real filesystem while the
 # happy path still completes and returns 0.
