@@ -3,6 +3,7 @@
 | Check | Command |
 |---|---|
 | Everything | `bash tests/run-all.sh` |
+| One shard | `bash tests/run-all.sh --shard 10-portability` |
 | Manifest validation | `node tests/validate-manifests.mjs` |
 | Harness self-test | `bash tests/validate-harness.sh` |
 | Skill/agent structural lint | `bash tests/lint-skills-agents.sh` |
@@ -20,6 +21,49 @@ the structural gates and one behavioral gate, runs every stage to completion
 (no early exit), and exits non-zero if any stage fails. It is invoked by both
 CI (`.github/workflows/ci.yml`) and the lefthook `pre-push` hook, so the local
 and CI suites cannot drift.
+
+## Shards (#960)
+
+The stage list lives in `tests/shards/NN-<area>.sh`, not in `run-all.sh`. A bare
+`bash tests/run-all.sh` still runs **every** stage in order, so `just test` and
+the pre-push hook are unchanged; `--shard <name>` runs one, which is what CI's
+`quality-gates` matrix passes.
+
+| Shard | Area | Serial time |
+|---|---|---|
+| `10-portability` | shell portability, shellcheck, ruff, typos, bash↔python parity | ~547s |
+| `20-golem` | golem/worktree helpers, PreToolUse hooks, stop/route decisions | ~344s |
+| `30-scanners` | `check-*` detector fixtures, contract/prose/doc gates | ~408s |
+
+Sharding cut the CI job from ~22 min to roughly the largest shard. `10-portability`
+sets the floor: its Shell portability stage alone was 547s of a 1299s serial run,
+and no split can go below one indivisible stage.
+
+**Adding a stage:** put the `run_stage` line in exactly one shard — never in
+`run-all.sh` — and nowhere else. `tests/validate-shards.sh` fails the suite if a
+shard file is unlisted in `run-all.sh`'s `SHARDS` manifest, if a listed shard is
+missing, if a stage is claimed by two shards, or if any `tests/*.sh` gate is
+dispatched by no shard at all. That last direction is the important one: without
+it a renamed gate could stop running while every shard still reported green.
+
+**Re-balancing** is a manifest edit plus moving `run_stage` lines between shard
+files. If a shard ever approaches its `timeout-minutes`, re-balance or add a
+shard rather than raising the cap — the cap bounds a hang, and raising it is
+what #834 and #932 each did before the split.
+
+**One constraint on re-balancing: worktree-mutating stages stay together.**
+`tests/lib/golem-sandbox.sh` creates and removes git worktrees in the repo under
+test, so two suites using it against the *same checkout* contend on shared
+worktree state. The symptom is a **stall**, not a failure, at an arbitrary point
+— which looks exactly like the `timeout-minutes` cancellation that motivated
+sharding in the first place.
+
+On GitHub Actions each matrix leg gets its own runner and its own checkout, so
+this hazard does not apply there — an assumption worth stating rather than
+inheriting silently. It *is* live locally: two parallel `--shard N` invocations
+share one checkout. Keeping those stages in one shard makes them sequential,
+which is what makes them safe, and `tests/validate-shards.sh` enforces it.
+See #961 for the unbounded capture that turns the contention into a hang.
 
 **Design & roadmap:** see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the test
 layers (unit / integration / behavioral), how each maps to the gate that

@@ -47,6 +47,26 @@
 #      no descriptors once (1) is in place, and its target pid is gone) but it is
 #      why the redirect in (1) is load-bearing rather than cosmetic.
 #
+#   4. THE BOUND MUST COVER THE CAPTURE, NOT ONLY THE PROCESS (#961). Note (1)
+#      closes the WATCHER's hold on the caller's stdout, and says nothing about
+#      the SUBJECT's descendants — which is the hole. `"$@" &` used to inherit
+#      the caller's stdout, which inside `out="$(bounded_run …)"` IS the command
+#      substitution's pipe, so a grandchild surviving the signal blocked `$( )`
+#      long after the bounded process was dead.
+#
+#      Measured on PR #963's CI: a `--watch` case PASSed at 20:01:27 and the
+#      next line appeared at 20:16:27 — fifteen minutes on an idle runner,
+#      ending in the job's timeout-minutes cap. Note (3)'s "harmless" was true
+#      of the watcher and false of the system: this helper's own watchdog is a
+#      grandchild of exactly that shape.
+#
+#      Fixed by giving the subject a temp file for stdout/stderr and relaying it
+#      after the wait, so no descendant ever holds the caller's pipe. NOT via
+#      `setsid` + group-kill, which validate-golem-watch.sh records as tried and
+#      abandoned (#397/#390) for wedging the suite it guards. The relay merges
+#      stdout and stderr into one stream; every caller here captures `2>&1`, but
+#      it is a real contract change.
+#
 # bash-3.2 clean, per CLAUDE.md § Runtime policy.
 
 # bounded_run SECONDS COMMAND [ARG...]
@@ -59,11 +79,17 @@ bounded_run() {
 
     # The marker lives in a private temp dir so concurrent bounded_run calls in
     # one shell cannot read each other's verdict.
-    local mark_dir mark rc=0 pid watcher
+    local mark_dir mark out rc=0 pid watcher
     mark_dir="$(command mktemp -d 2>/dev/null)" || return 2
     mark="$mark_dir/fired"
+    out="$mark_dir/out"
 
-    "$@" &
+    # See note (4). The subject's stdout/stderr go to a FILE, not to the
+    # caller's descriptors, so no descendant of it can hold a command
+    # substitution's pipe open past the bound. stdin is closed for the same
+    # reason in reverse: a subject that inherits and blocks on the caller's
+    # stdin is a second way to outlive the bound.
+    "$@" >"$out" 2>&1 </dev/null &
     pid=$!
 
     # See note (1): the redirect is what keeps a fast command fast.
@@ -92,6 +118,12 @@ bounded_run() {
     wait "$watcher" 2>/dev/null || :
 
     [ -e "$mark" ] && rc=124
+
+    # Relay what the subject wrote. AFTER the wait and the 124 verdict, so the
+    # output is complete and the exit status is already decided — and `cat`
+    # cannot block, because the file has no writer left that we care about.
+    [ -s "$out" ] && command cat "$out"
+
     command rm -rf "$mark_dir" 2>/dev/null
 
     return "$rc"

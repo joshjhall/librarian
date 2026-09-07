@@ -363,25 +363,24 @@ test_trap_spec_arms_int_and_term() {
 
 # --- Run all tests ----------------------------------------------------------
 
-# The suite needs `timeout` to bound the foreground stream. Gate it from inside a
-# run_test body so the counters stay consistent.
-timeout_unavailable() { ! command -v timeout >/dev/null 2>&1; }
-
-test_timeout_available() {
-    if timeout_unavailable; then
-        skip_test "timeout not available — cannot bound the streaming dispatcher"
-        return
-    fi
-    assert_true "command -v timeout" "timeout is available to bound the foreground stream"
-}
-
-run_test test_timeout_available "timeout is available (suite prerequisite)"
-
-if timeout_unavailable; then
-    generate_report
-    exit $?
-fi
-
+# NO `timeout` PREREQUISITE — deliberately (#960). This suite used to gate its
+# ENTIRE body on `command -v timeout`, skipping everything on a host without GNU
+# coreutils. That guard was STALE, not merely narrow: run_watch bounds via
+# `bounded_run` (see its call above), which needs only POSIX sleep/kill/mktemp,
+# so nothing here has depended on timeout(1) since #543.
+#
+# The guard outlived its dependency and nobody noticed, because a skip is silent
+# — and the `test_timeout_available` case that went with it asserted only the
+# guard's own premise, so it stayed green while proving nothing about the
+# dispatcher. Measured A/B on a PATH holding neither `timeout` nor `gtimeout`:
+# all four real cases below PASS, and the sole failure was that vacuous
+# prerequisite. Widening the guard to also accept `gtimeout` (the obvious fix)
+# would have re-asserted a dependency that no longer exists and kept the vacuous
+# test green.
+#
+# So: no gate, and no prerequisite test. If a future change here does reintroduce
+# a hard tool dependency, bound it with bounded_run rather than reinstating a
+# presence check.
 run_test test_both_channels_prefixed "golem-watch: both feed + pane channels are streamed and prefixed"
 run_test test_trap_kills_background_pane "golem-watch: the cleanup trap kills the background pane on foreground exit"
 

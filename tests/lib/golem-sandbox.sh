@@ -338,6 +338,14 @@ run_in_watch() {
                 # lives here, so on a Mac the arm ran anyway and reported 127 as
                 # a test failure. bounded_run has timeout(1) semantics (including
                 # the 124 bound-fired status) with no coreutils dependency.
+                #
+                # Those fragment guards are GONE as of #960. Once the bound moved
+                # here they protected nothing and only hid coverage: measured on a
+                # PATH with neither `timeout` nor `gtimeout`, every case they
+                # skipped PASSES. The note above had said as much for two issues
+                # without anyone acting on it — which is the lesson. If a caller
+                # ever needs a real bound again, use bounded_run; do not
+                # reintroduce a presence check.
                 source "$1"; shift
                 bounded_run "$@"
             ' _ "$REPO_ROOT/bin/bounded-run.sh" "$secs" \

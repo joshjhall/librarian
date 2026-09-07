@@ -471,10 +471,11 @@ test_health_stdout_git_failure_fails_closed() {
         skip_test "python3 unavailable (the bash fallback has no timeout to test)"
         return 0
     fi
-    if ! command -v timeout >/dev/null 2>&1; then
-        skip_test "timeout(1) unavailable to bound the TEST itself"
-        return 0
-    fi
+    # No `command -v timeout` guard (#960). The bound below is `bounded_run`,
+    # which needs only POSIX sleep/kill/mktemp — so the guard that used to sit
+    # here was stale, skipping this case on a coreutils-free host that could run
+    # it perfectly well. Measured: 18/18 cases in this fragment pass with neither
+    # `timeout` nor `gtimeout` on PATH.
 
     stdout_sandbox d "stdout_is_output:" "  - src/cli.py"
 

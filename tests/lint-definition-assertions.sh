@@ -70,6 +70,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
+# bounded_run — bounds the awk-absent probe below without GNU `timeout`, which
+# base macOS does not ship (#543/#960).
+# shellcheck source=bin/bounded-run.sh
+source "$REPO_ROOT/bin/bounded-run.sh"
 
 TESTS_DIR="$SCRIPT_DIR"
 
@@ -476,10 +480,11 @@ test_missing_awk_exits_77() {
     # A PATH with the usual coreutils but deliberately no awk.
     command mkdir -p "$d/bin"
     local tool
-    # `timeout` is linked in too when present — the bound below invokes it from
-    # this restricted PATH, so omitting it makes the probe fail 127 instead of
-    # exercising the skip branch.
-    for tool in bash grep sed find sort basename dirname mktemp rm cat printf head chmod timeout; do
+    # `timeout` is deliberately NOT in this list (#960). The bound is now
+    # bounded_run, which runs in the PARENT shell and resolves its helpers on the
+    # real PATH — it never executes from this restricted one. Linking `timeout`
+    # here would only re-create the coreutils dependency the conversion removed.
+    for tool in bash grep sed find sort basename dirname mktemp rm cat printf head chmod; do
         if command -v "$tool" >/dev/null 2>&1; then
             command ln -sf "$(command -v "$tool")" "$d/bin/$tool" 2>/dev/null || true
         fi
@@ -494,13 +499,20 @@ test_missing_awk_exits_77() {
     #
     # LINT_DEFN_NO_RESPAWN stops the child re-running THIS case and forking a
     # grandchild — without it the probe recurses forever (observed: a 15s bound
-    # hit 124 with no report). `timeout` is a second, independent bound so a
-    # future regression surfaces as a failure rather than a wedged suite; it is
-    # optional (macOS ships no coreutils `timeout`), hence the presence check.
-    local runner=""
-    if command -v timeout >/dev/null 2>&1; then runner="timeout 30"; fi
-    env -i PATH="$d/bin" LINT_DEFN_NO_RESPAWN=1 HOME="$d" \
-        $runner bash --noprofile --norc "$SELF_PATH" >"$d/out" 2>&1 || rc=$?
+    # hit 124 with no report). The bound is a second, independent guard so a
+    # future regression surfaces as a failure rather than a wedged suite.
+    #
+    # bounded_run, not `timeout 30` behind a presence check (#960). The old form
+    # degraded to an UNBOUNDED run wherever GNU coreutils is absent — i.e. it
+    # dropped the bound on exactly the host most likely to need it, the same
+    # shape #543 fixed elsewhere. bounded_run needs only POSIX sleep/kill/mktemp
+    # and keeps timeout(1) semantics including the 124 bound-fired status.
+    #
+    # It runs in THIS shell, so its helpers resolve on the real PATH; only the
+    # child is restricted by `env -i`. That is why `timeout` no longer has to be
+    # linked into $d/bin above — the bound never crosses into the sandbox.
+    bounded_run 30 env -i PATH="$d/bin" LINT_DEFN_NO_RESPAWN=1 HOME="$d" \
+        bash --noprofile --norc "$SELF_PATH" >"$d/out" 2>&1 || rc=$?
     assert_equals "77" "$rc" "with awk absent the gate exits the 77 skip sentinel, not 0"
     assert_contains "$(command cat "$d/out")" "GATE DID NOT RUN" \
         "the skip says the gate did not run, rather than reporting green"

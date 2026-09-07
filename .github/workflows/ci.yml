@@ -71,27 +71,56 @@ jobs:
         run: bash tests/lint-action-pins.sh
 
   quality-gates:
-    name: Skill/agent quality gates
+    name: Skill/agent quality gates (${{ matrix.shard }})
     runs-on: ubuntu-latest
     needs: validate-manifests
-    # 40, not 25 (#932; was 15 before #834). This job runs the whole shell
-    # suite, which grows with every test added, and 25 had drifted to a ~3
-    # MINUTE margin: the three most recent green runs on main took 16m07s,
-    # 22m10s and 22m03s. That is not a budget, it is a coin flip — the next few
-    # tests to land, whatever they are, fail here for having made the suite
-    # slightly longer rather than for anything wrong with them, and the failure
-    # arrives as an opaque mid-stage "operation was canceled" (#834 hit exactly
-    # this at 15, in a stage unrelated to its change; #932 hit it again at 25,
-    # cancelled at 25m15s with every other check green and no test having
-    # actually failed — the Merge gate then correctly refused on a `cancelled`
-    # upstream, so the symptom presented as a red PR with nothing wrong in it).
+    # SHARDED (#960). This job ran tests/run-all.sh's ~96 stages strictly in
+    # sequence on one runner and was 97% of CI wall clock — 22m03s of a 22m47s
+    # run, against 41s for the next-slowest job. The stages are single-threaded
+    # shell spawning short-lived subprocesses, so the runner sat mostly idle:
+    # a serialization problem, not a compute one.
     #
-    # The cap exists to bound a HANG, not to ration normal growth, so it is set
-    # well clear of the real runtime and should be re-checked — not nudged by a
-    # minute — if a run ever approaches it again. 40 leaves ~15 min of headroom
-    # over today's ~22 min. If that margin erodes again the answer is probably
-    # not a bigger number: split this job, or stop running the whole suite here.
-    timeout-minutes: 40
+    # The stage list now lives in tests/shards/NN-<area>.sh and each shard runs
+    # as its own matrix leg. tests/validate-shards.sh (a stage in EVERY shard)
+    # fails the suite if a shard file is unlisted, a listed shard is missing, a
+    # stage is claimed twice, or any tests/*.sh gate is dispatched by no shard —
+    # so the split cannot silently stop running a gate.
+    #
+    # fail-fast: false so one red shard does not cancel its siblings. A
+    # cancelled leg reports `cancelled`, which merge-gate refuses — turning one
+    # genuine failure into two opaque ones and hiding whatever the other shards
+    # would have found.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 10-portability
+          - 20-golem
+          - 30-scanners
+    # 20, RE-DERIVED for a shard rather than inherited from the serial job's 40
+    # (#960 AC6). The 40 was sized for all ~96 stages on one runner (~22 min).
+    # The largest shard is 10-portability, whose Shell portability stage alone
+    # was 547s of the 1299s serial total; with setup that leg is ~10-11 min, so
+    # 20 keeps roughly the same proportional headroom the old cap had.
+    #
+    # WHAT THE CAP IS FOR, unchanged from #834/#932: it bounds a HANG, it does
+    # not ration normal growth. Two previous raises (15 -> 25 -> 40) each
+    # arrived as an opaque mid-stage "operation was canceled" in a stage
+    # unrelated to the change that tripped it, with merge-gate correctly
+    # refusing on the `cancelled` upstream — a red PR with nothing wrong in it.
+    #
+    # So if a shard ever approaches this number, do NOT nudge it. Re-balance the
+    # shards, or add one: the partition is a manifest edit plus a stage list, and
+    # tests/validate-shards.sh proves nothing was dropped in the move.
+    #
+    # THE CAP EARNED ITS KEEP ON THIS PR'S FIRST RUN. The 20-golem leg was
+    # cancelled here at 20m16s while 10-portability took 5m07s and 30-scanners
+    # 3m11s — and the cause was a real hang (#961: bounded_run bounded the
+    # process but not the capture, so a surviving grandchild held the command
+    # substitution's pipe open for 15 minutes between two adjacent test lines).
+    # Fixed in this PR. That is exactly the case this number exists to bound:
+    # it converted an unbounded stall into a bounded, attributable failure.
+    timeout-minutes: 20
     # Fork PRs check out untrusted contributor code as tests/* (checkout uses
     # the PR HEAD), so running the full shell suite would expose the runner —
     # network, environment, GITHUB_TOKEN — to it. Guard the WHOLE job (not just
@@ -617,8 +646,8 @@ jobs:
       # re-run of manifest validation). Calling it here instead of re-listing
       # each gate keeps CI from drifting out of sync with the local `just test`
       # suite when a stage is added or renamed.
-      - name: Run test suite
-        run: bash tests/run-all.sh
+      - name: Run test suite (shard ${{ matrix.shard }})
+        run: bash tests/run-all.sh --shard ${{ matrix.shard }}
 
       # DID THE agnix GATE ACTUALLY RUN? (#766)
       #
@@ -850,6 +879,24 @@ jobs:
   #
   # No checkout / no actions are used here on purpose: the job only reads
   # `needs.*.result`, so it adds no new `uses:` ref for the action-pin gate.
+  #
+  # QUALITY-GATES IS NOW A MATRIX (#960), AND THIS NEEDS NO NEW LOGIC — but the
+  # reason is worth stating, because "it still works" is doing real work here.
+  # `needs.<job>.result` for a matrix job is the AGGREGATE across every leg, not
+  # one leg's result: `success` only when all legs succeeded, and a single
+  # failed, cancelled or skipped leg surfaces as `failure` / `cancelled` /
+  # `skipped`. So the pass conditions below carry over exactly, and AC4's
+  # requirement — that the gate still refuse on a cancelled or skipped shard — is
+  # satisfied by the same `!= success` fallthrough that refused on the serial
+  # job.
+  #
+  # The fork-PR branch also carries over: the job-level `if:` guard is evaluated
+  # per matrix leg, so a fork PR skips ALL legs and the aggregate is `skipped`,
+  # which is what that branch matches.
+  #
+  # Requiring the matrix by NAME in branch protection would mean listing every
+  # leg and updating it whenever a shard is added — this job stays the single
+  # required check, which is why it was created (see the note above).
   merge-gate:
     name: Merge gate
     runs-on: ubuntu-latest

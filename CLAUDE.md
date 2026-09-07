@@ -333,6 +333,33 @@ is loud even though its exit code is still lost. That is a backstop, not a
 license: only the captured form gives a caller an exit code it can trust.
 `tests/validate-run-all-reporting.sh` pins both halves.
 
+**The stage list lives in `tests/shards/`, and CI runs the shards as a matrix**
+(#960). `run-all.sh` no longer lists stages: they sit in ordered
+`tests/shards/NN-<area>.sh` fragments named by a `SHARDS` manifest, the same
+explicit-and-ordered shape (and for the same reason) as `tests/lib/fragments.sh`
+and the `workflow.src/` manifests. A bare `bash tests/run-all.sh` still runs
+**everything**, so `just test` and the pre-push hook are unchanged;
+`--shard 10-portability` runs one leg. Four things to know:
+(1) **Add a stage to exactly one shard**, never to `run-all.sh`.
+(2) **`tests/validate-shards.sh` fails closed in four directions** — an unlisted
+shard on disk, a listed shard that is missing, a stage claimed twice, and any
+`tests/*.sh` gate dispatched by **no** shard. The last is the one sharding
+newly makes possible: with N lists a renamed gate can stop running while every
+shard stays green, and each direction has a negative fixture proving it fires.
+It runs as a stage in **every** shard, because the shard that owns a gate is
+exactly the shard that might not be running.
+(3) **The split is bounded by its largest stage.** Shell portability alone was
+547s of a 1299s serial run, so `10-portability` sets the floor (~10-11 min) no
+matter how the rest is arranged. If a shard nears its `timeout-minutes`,
+re-balance or add a shard — do **not** raise the cap, which is what #834
+and #932 each did before this split.
+(4) **Four gates `sed`-slice functions out of `run-all.sh`** by the anchor
+`/^name() {/,/^}/` (`validate-lint-gates`, `validate-skip-visibility`,
+`validate-run-all-reporting`, `validate-okf-bundle-gate`). `run_stage`,
+`note_skip_in_step_summary`, `print_summary`, `emit_summary` and the bare
+`SKIP_EXIT_CODE=` / `_skips_header_written=` assignments must stay at **column
+0** in that file.
+
 **`git push` already runs the full suite — do not run it by hand first.**
 lefthook's **pre-push** `quality-gates` step is `bash tests/run-all.sh`, globbed
 to `plugins/**`, `tests/**`, and `.github/workflows/**`, so nearly every change

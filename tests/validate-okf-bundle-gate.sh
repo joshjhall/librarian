@@ -797,14 +797,27 @@ test_unknown_argument_is_rejected() {
 
 # --- wiring -----------------------------------------------------------------
 
-# AC1. Both halves: run-all.sh must actually dispatch the gate, and the numbered
-# header block must document it. A dispatch with no header entry drifts from the
-# documented suite; a header entry with no dispatch is a gate that never runs.
+# AC1. The suite must actually dispatch this gate.
+#
+# It now asserts against the SHARD FILES rather than run-all.sh (#960): the
+# stage list moved to tests/shards/, and run-all.sh no longer names any
+# individual gate. The old form checked two things — a dispatch, and a matching
+# entry in run-all.sh's numbered header block — because the header duplicated
+# the dispatch list and the two could drift. #960 deleted the duplicate, so
+# there is exactly one place left to check, and this asserts on that one.
+#
+# Searching the whole shard directory rather than a named shard is deliberate:
+# which shard owns this gate is a balancing decision that may change, and a test
+# that pinned it would fail on a re-balance that broke nothing. What matters is
+# that SOME shard dispatches it — and tests/validate-shards.sh separately proves
+# the shards are all wired in and jointly cover every stage.
 test_run_all_dispatches_the_gate() {
-    assert_file_contains "$RUN_ALL" "validate-okf-bundle.sh" \
-        "run-all.sh dispatches the OKF bundle gate"
-    assert_file_contains "$RUN_ALL" "OKF bundle conformance" \
-        "run-all.sh's header block documents the gate"
+    local hits
+    hits="$(command grep -rl "validate-okf-bundle.sh" "$SCRIPT_DIR/shards" 2>/dev/null)"
+    assert_not_empty "$hits" \
+        "a tests/shards/*.sh dispatches the OKF bundle gate"
+    assert_true "command grep -rq 'OKF bundle conformance' '$SCRIPT_DIR/shards'" \
+        "the dispatch carries the gate's stage label"
 }
 
 # The scanner this gate drives must exist at the path the gate defaults to —

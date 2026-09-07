@@ -1195,9 +1195,19 @@ test_node_absent_branch_reports_its_skip() {
     # invisible-skip asymmetry the change exists to remove, surviving in the one
     # branch that reaches the outcome by a different route.
     #
-    # Sliced out of run-all.sh and driven with a stub PATH that has no `node`,
-    # so the else-branch is genuinely taken rather than simulated.
-    local sb out
+    # Sliced and driven with a stub PATH that has no `node`, so the else-branch
+    # is genuinely taken rather than simulated.
+    #
+    # TWO SOURCES since #960: the run_stage / note_skip_in_step_summary machinery
+    # still comes from run-all.sh (those definitions stay at column 0 there,
+    # precisely so slicers like this keep working), but the node if/else block
+    # itself moved into the shard that owns those two stages. Slicing the block
+    # from run-all.sh now yields NOTHING — an empty eval, an empty $out, and
+    # three assertions failing on a correct tree. Hence NODE_BLOCK_SRC below.
+    local sb out node_src
+    node_src="$(command grep -rl '^if command -v node ' "$SCRIPT_DIR/shards" | command head -n1)"
+    assert_not_empty "$node_src" \
+        "the node-conditional block was located in a shard (it moved out of run-all.sh in #960)"
     stub_dir sb || return 1
     # THE POINT OF THE CASE: stub_dir does not plant node, but remove it
     # explicitly so a future widening of that symlink list cannot silently make
@@ -1214,8 +1224,8 @@ test_node_absent_branch_reports_its_skip() {
             eval "$(command sed -n "/^note_skip_in_step_summary() {/,/^}/p" "$1")"
             eval "$(command sed -n "/^run_stage() {/,/^}/p" "$1")"
             SCRIPT_DIR="$2"
-            eval "$(command sed -n "/^if command -v node /,/^fi$/p" "$1")"
-        ' _ "$RUN_ALL" "$SCRIPT_DIR" 2>&1 || true)"
+            eval "$(command sed -n "/^if command -v node /,/^fi$/p" "$3")"
+        ' _ "$RUN_ALL" "$SCRIPT_DIR" "$node_src" 2>&1 || true)"
 
     assert_contains "$out" "[SKIP] Manifest validation" \
         "the node-absent branch was genuinely taken (no node on the stub PATH)"
