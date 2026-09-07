@@ -834,7 +834,7 @@ EOF
     command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -873,7 +873,7 @@ EOF
     command chmod +x "$sb/probe"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1007,7 +1007,7 @@ test_unverified_outcomes_agree_across_call_sites() {
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1039,7 +1039,7 @@ test_unverified_outcomes_agree_across_call_sites() {
 # An earlier draft of this change called the branch untestable, on the strength
 # of a PATH stub that was never invoked. That diagnosis was wrong, and the reason
 # is worth keeping: BASH_ENV=/etc/bash_env re-sources a profile that RESTORES
-# PATH, so the stub was discarded before the script ran. `--unset=BASH_ENV` is
+# PATH, so the stub was discarded before the script ran. `-uBASH_ENV` is
 # the fix, and this harness already carries that exact idiom for the same reason
 # (see run_launch_auth in tests/lib/golem-sandbox.sh).
 #
@@ -1076,7 +1076,7 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             PATH="$stub:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -1098,7 +1098,7 @@ EOF
     # worth pinning across call sites rather than assuming.
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             PATH="$stub:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \

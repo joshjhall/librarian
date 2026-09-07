@@ -172,7 +172,7 @@ never runs. Both observations were real; the conclusion drawn from them was not.
 
 Review cycle 3 refuted it with the mechanism: `BASH_ENV=/etc/bash_env` re-sources
 a profile that **restores `PATH`**, silently discarding the stub before the
-script ever ran. `--unset=BASH_ENV` fixes it — and this repo's own harness
+script ever ran. `-uBASH_ENV` fixes it — and this repo's own harness
 already carried that exact idiom, for that exact reason, in `run_launch_auth`.
 The test exists now, and a mutation check confirms it is not decorative:
 
