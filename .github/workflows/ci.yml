@@ -74,17 +74,24 @@ jobs:
     name: Skill/agent quality gates
     runs-on: ubuntu-latest
     needs: validate-manifests
-    # 25, not 15 (#834). This job runs the whole shell suite, which grows with
-    # every test added, and at 15 it had drifted to a 26-SECOND margin: the last
-    # green run on main took 14m34s. That is not a budget, it is a coin flip —
-    # the next few tests to land, whatever they are, fail here for having made
-    # the suite slightly longer rather than for anything wrong with them, and
-    # the failure arrives as an opaque mid-stage "operation was canceled"
-    # 15 minutes into CI (#834 hit exactly this, in a stage unrelated to its
-    # change). The cap exists to bound a HANG, not to ration normal growth, so
-    # it is set well clear of the real runtime and should be re-checked — not
-    # nudged by a minute — if a run ever approaches it again.
-    timeout-minutes: 25
+    # 40, not 25 (#932; was 15 before #834). This job runs the whole shell
+    # suite, which grows with every test added, and 25 had drifted to a ~3
+    # MINUTE margin: the three most recent green runs on main took 16m07s,
+    # 22m10s and 22m03s. That is not a budget, it is a coin flip — the next few
+    # tests to land, whatever they are, fail here for having made the suite
+    # slightly longer rather than for anything wrong with them, and the failure
+    # arrives as an opaque mid-stage "operation was canceled" (#834 hit exactly
+    # this at 15, in a stage unrelated to its change; #932 hit it again at 25,
+    # cancelled at 25m15s with every other check green and no test having
+    # actually failed — the Merge gate then correctly refused on a `cancelled`
+    # upstream, so the symptom presented as a red PR with nothing wrong in it).
+    #
+    # The cap exists to bound a HANG, not to ration normal growth, so it is set
+    # well clear of the real runtime and should be re-checked — not nudged by a
+    # minute — if a run ever approaches it again. 40 leaves ~15 min of headroom
+    # over today's ~22 min. If that margin erodes again the answer is probably
+    # not a bigger number: split this job, or stop running the whole suite here.
+    timeout-minutes: 40
     # Fork PRs check out untrusted contributor code as tests/* (checkout uses
     # the PR HEAD), so running the full shell suite would expose the runner —
     # network, environment, GITHUB_TOKEN — to it. Guard the WHOLE job (not just
