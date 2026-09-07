@@ -24,10 +24,38 @@ extract_section() {
     ' "$CHANGELOG"
 }
 
+# strip_blank_edges — drop leading and trailing blank lines from stdin.
+#
+# NOT a sed one-liner. The previous spelling was
+# `sed -e '1{/^$/d}' -e :a -e '/^\n*$/{$d;N;ba' -e '}'`, which GNU sed accepts
+# and **BSD sed REJECTS**: it requires a newline or `;` before a closing `}` and
+# dies with `extra characters at the end of d command`. The enclosing command
+# substitution swallowed that error, `section` came back EMPTY, and the script
+# silently produced the generic fallback notes instead of the real CHANGELOG
+# section — a wrong release body, emitted with exit 0, on any macOS run (#932).
+#
+# Pure bash has no dialect, so the question cannot come back. Trailing blanks are
+# additionally handled by `$( )` itself, which strips trailing newlines.
+strip_blank_edges() {
+    local line lead_done="" out=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip blank lines until the first line with content.
+        if [ -z "$lead_done" ]; then
+            case "$line" in
+                *[![:space:]]*) lead_done=1 ;;
+                *) continue ;;
+            esac
+        fi
+        out="$out$line
+"
+    done
+    command printf '%s' "$out"
+}
+
 section=""
 if [ -f "$CHANGELOG" ]; then
     # Strip leading/trailing blank lines from the captured section.
-    section="$(extract_section | command sed -e '1{/^$/d}' -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
+    section="$(extract_section | strip_blank_edges)"
 fi
 
 if [ -n "$section" ]; then
