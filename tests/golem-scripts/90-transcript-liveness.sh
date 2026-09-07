@@ -1025,3 +1025,220 @@ EOF
     assert_not_contains "$RUN_OUT" "150 tokens" \
         "a missing 'issue' is never scraped to a real count"
 }
+
+# --- Signal A: the background-work registry (#949) --------------------------
+#
+# The tests above pin Signal B, which can only ever say "I don't know" about a
+# turn that ended after a background-capable tool. Signal A is the explicit half:
+# an open registration is POSITIVE evidence, so the same transcript upgrades from
+# indeterminate to a `background` verdict the caller renders as working.
+#
+# These cases need a REAL linked worktree (make_golem_worktree), not the mkdir-ed
+# path the Signal B cases use: the registry lookup derives both the golem id and
+# the status dir from the subject via `git rev-parse`, which only answers
+# correctly from a genuine worktree. A mkdir-ed fixture reads an empty registry
+# and would pass by testing nothing — one of the two fixture defects that sank
+# the withdrawn first attempt.
+
+# run_liveness_wt <sandbox> <worktree-abs-path> — as run_liveness, but for a real
+# worktree whose transcript was planted at its own slug. GOLEM_ID/AGENT_ID are
+# scrubbed: this suite may itself run inside a live golem.
+run_liveness_wt() {
+    local sb="$1" wt="$2" slug
+    slug="$(slug_for "$wt")"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$wt" 2>&1)" || RUN_RC=$?
+    : "$slug"
+}
+
+# plant_transcript_at <sandbox> <worktree-abs-path> <jsonl-body> — plant a
+# transcript at the slug of an ARBITRARY worktree path, so a real linked worktree
+# (any GOLEM_WORKTREE_DIR depth) gets one. plant_transcript hardcodes the default
+# .worktrees/issue-N layout and cannot reach it.
+plant_transcript_at() {
+    local sb="$1" wt="$2" body="$3" slug dir
+    slug="$(slug_for "$wt")"
+    dir="$sb/projects/$slug"
+    command mkdir -p "$dir"
+    command printf '%s\n' "$body" >"$dir/session.jsonl"
+}
+
+# _bg_turn_transcript — the measured #890 shape: a Workflow call, then an
+# end_turn. Signal B alone can only call this indeterminate.
+_bg_turn_transcript() {
+    command printf '%s\n%s' \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+        '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"launched"}]}}'
+}
+
+# THE UPGRADE, and the point of the whole change: the transcript that Signal B
+# can only call indeterminate becomes a positive `background` when the golem
+# registered its work.
+test_liveness_open_registration_upgrades_to_background() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb wt now
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    plant_transcript_at "$sb" "$wt" "$(_bg_turn_transcript)"
+    now="$(command date -u +%s)"
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa workflow "review harness" "$now")"
+    run_liveness_wt "$sb" "$wt"
+    assert_exit 0 "$RUN_RC" "an open registration yields a class, not an indeterminate exit"
+    assert_true "[ '$RUN_OUT' = 'background' ]" "classifies background (got '$RUN_OUT')"
+}
+
+# The CONTROL for the case above, and the reason Signal B cannot be removed: the
+# SAME transcript with NOTHING registered must stay indeterminate. An absent
+# registration is not evidence of idleness — "nothing is running" and "the golem
+# forgot to register" are the same empty file.
+test_liveness_unregistered_background_turn_stays_indeterminate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb wt
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    plant_transcript_at "$sb" "$wt" "$(_bg_turn_transcript)"
+    run_liveness_wt "$sb" "$wt"
+    assert_exit 2 "$RUN_RC" "with nothing registered the verdict stays indeterminate, never idle"
+}
+
+# Signal A must not OVERRIDE Signal B's genuine idle into working on an empty
+# registry — the mirror failure. An ordinary-tool turn end with no registration
+# is still idle, which is the actionable signal an operator needs.
+test_liveness_registry_does_not_break_ordinary_idle() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb wt
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    plant_transcript_at "$sb" "$wt" \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}')"
+    plant_work_registry "$sb" golem-42 ""
+    run_liveness_wt "$sb" "$wt"
+    assert_exit 0 "$RUN_RC" "an ordinary turn-end with an empty registry exits 0"
+    assert_true "[ '$RUN_OUT' = 'idle' ]" "and is still idle, not upgraded (got '$RUN_OUT')"
+}
+
+# A LEAKED registration must not pin the golem to background forever — the
+# acceptance criterion the age bound exists for. The pid is absent so only the
+# age bound can drop it, and the verdict falls back to Signal B's indeterminate.
+test_liveness_aged_out_registration_does_not_pin_background() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb wt old
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    plant_transcript_at "$sb" "$wt" "$(_bg_turn_transcript)"
+    old="$(($(command date -u +%s) - 7200))"
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa workflow "leaked" "$old")"
+    run_liveness_wt "$sb" "$wt"
+    assert_exit 2 "$RUN_RC" "an aged-out registration cannot hold the golem at background"
+}
+
+# MODE 3: a container golem's transcript is not host-readable, so this used to be
+# an unconditional exit 2 and Mode 3 had NO liveness signal at all. The registry
+# lives in the shared status dir, so it can still answer — Mode 3's first signal.
+test_liveness_mode3_no_transcript_with_registration_is_background() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb wt now
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    # Deliberately NO transcript planted.
+    now="$(command date -u +%s)"
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa bash "container suite" "$now")"
+    run_liveness_wt "$sb" "$wt"
+    assert_exit 0 "$RUN_RC" "Mode 3 with an open registration yields a class"
+    assert_true "[ '$RUN_OUT' = 'background' ]" "classifies background with no transcript at all (got '$RUN_OUT')"
+}
+
+# The Mode 3 CONTROL: no transcript AND nothing registered stays exit 2. Absence
+# of a transcript is not evidence of idleness, so this must never assert idle —
+# asserting it would invent the verdict the whole feature exists to stop
+# inventing.
+test_liveness_mode3_no_transcript_no_registration_stays_indeterminate() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb wt
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    run_liveness_wt "$sb" "$wt"
+    assert_exit 2 "$RUN_RC" "no transcript and nothing registered is indeterminate"
+    assert_not_contains "$RUN_OUT" "idle" "and never asserts idle"
+}
+
+# The two-knob boundary at the CLASSIFIER level, not just inside golem-work.sh.
+# The classifier is the observer, so a non-default GOLEM_STATUS_DIR under a
+# multi-segment GOLEM_WORKTREE_DIR must still find the registry — the exact
+# configuration in which the withdrawn version printed `idle` for a working golem.
+test_liveness_background_across_both_env_knobs() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript-liveness needs jq)"
+        return 0
+    fi
+    local sb wt now
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42 nested/worktrees)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    plant_transcript_at "$sb" "$wt" "$(_bg_turn_transcript)"
+    now="$(command date -u +%s)"
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa workflow "review harness" "$now")" \
+        "nested/worktrees/.status"
+    # Run from an UNRELATED cwd, as the gate-watch sweep does.
+    RUN_RC=0
+    RUN_OUT="$(cd "$WORKDIR" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            GOLEM_WORKTREE_DIR=nested/worktrees \
+            GOLEM_STATUS_DIR=nested/worktrees/.status \
+            "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$wt" 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "a multi-segment worktree dir + matching status dir still resolves"
+    assert_true "[ '$RUN_OUT' = 'background' ]" \
+        "classifies background across both non-default knobs (got '$RUN_OUT')"
+}

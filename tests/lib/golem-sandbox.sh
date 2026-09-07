@@ -315,6 +315,132 @@ plant_transcript() {
     command printf '%s\n' "$body" >"$dir/session.jsonl"
 }
 
+# --- background-work registry fixtures (issue #949) -------------------------
+#
+# IDENTITY MUST BE UNSET IN EVERY RUNNER BELOW, and this is the first thing to
+# know about them. golem-work.sh derives a golem id from $GOLEM_ID, else the
+# worktree basename, else $AGENT_ID — and THIS SUITE MAY ITSELF BE RUNNING INSIDE
+# A LIVE GOLEM, whose launch stamped GOLEM_ID into the environment. A runner that
+# inherits it files every fixture under the RUNNER's id, so the assertions pass
+# while testing the harness's identity rather than the code's derivation. One of
+# the two fixture defects that sank the withdrawn first attempt was exactly this.
+# The `--unset=` list below is therefore load-bearing, not hygiene.
+WORK_ID_SCRUB=(GOLEM_ID AGENT_ID)
+
+# make_golem_worktree <sandbox> <issue-N> [worktree-dir]
+# Add a REAL linked git worktree at <worktree-dir>/issue-N (default .worktrees)
+# and echo its absolute path.
+#
+# `git worktree add`, NOT `mkdir`, and that is the second fixture defect from the
+# withdrawn attempt. The id derivation reads `git rev-parse --show-toplevel`, and
+# the observer's status-dir derivation reads `git rev-parse --git-common-dir`;
+# BOTH only answer correctly from a genuine linked worktree. A mkdir-ed directory
+# resolves to the SANDBOX root instead, so the fixture silently exercises a
+# different code path than production and passes.
+#
+# <worktree-dir> is a parameter because the multi-segment case (`nested/worktrees`)
+# is precisely where the withdrawn grandparent-derivation defect hid: a fixture
+# that can only build the default single-segment layout cannot reach it.
+make_golem_worktree() {
+    local sb="$1" n="$2" wtdir="${3:-.worktrees}"
+    command mkdir -p "$sb/$wtdir"
+    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        git -C "$sb" worktree add -q "$sb/$wtdir/issue-$n" -b "issue-$n" >/dev/null 2>&1 || return 1
+    command echo "$sb/$wtdir/issue-$n"
+}
+
+# dead_pid <varname> — assign a pid that is verified NOT signalable right now.
+# Returns 1 if it cannot obtain one, so the caller can skip rather than assert
+# against a precondition that does not hold.
+#
+# WHY THIS EXISTS RATHER THAN AN INLINE `(exit 0) & dead=$!; wait`. That idiom
+# looks deterministic and is not: it asserts a fact about the OS — "this pid is
+# now gone" — that the test does not control. Under a long suite that forks
+# thousands of processes, the number can be live again by the time it is read.
+# Measured: the dead-pid reap case passed three consecutive full runs and then
+# failed the fourth with `Expected: '0' / Actual: '1'`, i.e. the entry was kept
+# because its pid answered `kill -0`.
+#
+# A flaky test here is worse than elsewhere, because this one guards a BOUND:
+# a red run reads as "the reaper is broken" and a green run as "the reaper
+# works", when neither was actually measured. So the precondition is CHECKED —
+# allocate, reap, confirm it is unsignalable, and retry a bounded number of
+# times — which makes the assertion that follows about the code under test
+# rather than about process-table luck.
+#
+# Deliberately NOT a large out-of-range constant (pid_max + 1). That is
+# genuinely unsignalable on Linux, but pid_max is not portable to the macOS
+# target this repo supports, and a pid that could never have existed also would
+# not exercise the reaper's real input.
+dead_pid() {
+    local __out="$1" _p _try=0
+    while [ "$_try" -lt 20 ]; do
+        (exit 0) &
+        _p=$!
+        wait "$_p" 2>/dev/null || true
+        if ! kill -0 "$_p" 2>/dev/null; then
+            printf -v "$__out" '%s' "$_p"
+            return 0
+        fi
+        _try=$((_try + 1))
+    done
+    return 1
+}
+
+# live_pid <varname> — start a long-lived child and assign its pid, VERIFIED
+# signalable. Returns 1 if it cannot obtain one. The caller must
+# `kill`/`wait` the pid when done.
+#
+# The mirror of dead_pid, and needed for the same reason. `command sleep 30 &
+# live=$!` assumes the child is running by the time the assertion reads it; if
+# the fork failed or the child was reaped early, the registry entry is dropped
+# and the test reports "the reaper ate a live entry" when nothing of the sort
+# happened. Checking is one `kill -0`, and it converts a spurious red into an
+# honest skip.
+live_pid() {
+    local __out="$1" _p
+    command sleep 30 &
+    _p=$!
+    if kill -0 "$_p" 2>/dev/null; then
+        printf -v "$__out" '%s' "$_p"
+        return 0
+    fi
+    kill "$_p" 2>/dev/null || true
+    wait "$_p" 2>/dev/null || true
+    return 1
+}
+
+# plant_work_registry <sandbox> <golem-id> <jsonl-body> [status-dir]
+# Write a background-work registry where golem-work.sh resolves it. <status-dir>
+# is sandbox-relative and defaults to .worktrees/.status.
+#
+# An EMPTY body writes an EMPTY FILE, deliberately distinct from writing NO file:
+# both must read as "nothing open", and having both fixtures is what pins the
+# fail-soft contract rather than assuming it.
+plant_work_registry() {
+    local sb="$1" golem="$2" body="$3" sd="${4:-.worktrees/.status}"
+    local dir="$sb/$sd"
+    command mkdir -p "$dir"
+    if [ -n "$body" ]; then
+        command printf '%s\n' "$body" >"$dir/$golem.work.jsonl"
+    else
+        : >"$dir/$golem.work.jsonl"
+    fi
+}
+
+# work_register_line <id> <kind> <desc> <started_epoch> [pid] [max_age] [golem]
+# One `register` event in the shape the real writer emits. Built here rather than
+# hand-typed per test so a schema change lands in ONE place; `started_epoch` is a
+# parameter because the age-out bound is exactly what several cases exercise.
+work_register_line() {
+    local id="$1" kind="$2" desc="$3" epoch="$4" pid="${5:-}" max_age="${6:-}"
+    local golem="${7:-golem-42}" extra=""
+    [ -n "$pid" ] && extra="$extra,\"pid\":$pid"
+    [ -n "$max_age" ] && extra="$extra,\"max_age\":$max_age"
+    command printf '{"event":"register","id":"%s","golem":"%s","kind":"%s","description":"%s","started":"2026-01-01T00:00:00Z","started_epoch":%s%s}' \
+        "$id" "$golem" "$kind" "$desc" "$epoch" "$extra"
+}
+
 # run_scrape <sandbox> <worktree-arg> — invoke golem-token-scrape.sh with the
 # projects base pointed at the sandbox's fake $sb/projects. Captures RUN_RC/RUN_OUT.
 run_scrape() {

@@ -321,3 +321,83 @@ test_liveness_transcript_indeterminate_falls_through() {
     assert_not_contains "$LIVE_OUT" "idle at prompt" \
         "An indeterminate transcript does not fabricate an idle verdict"
 }
+
+# --- background-work registry wiring (#949) ---------------------------------
+
+# THE WHOLE POINT OF THE CHANGE, at the wiring level. A turn that ended while a
+# registered background item is still open must render as WORKING, not as the
+# "idle at prompt" warning. This is the false positive #890 measured five times in
+# one session (a suite run, a push executing the pre-push hook, a review harness
+# mid-fan-out), each time on a golem that was demonstrably working.
+test_liveness_transcript_background_wiring() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    local now
+    now="$(command date -u +%s)"
+    _run_liveness_snapshot_transcript 1200 0 \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"launched"}]}}')" \
+        "{\"event\":\"register\",\"id\":\"work-9-aaaa\",\"golem\":\"golem-7\",\"kind\":\"workflow\",\"description\":\"review harness\",\"started\":\"2026-01-01T00:00:00Z\",\"started_epoch\":$now}"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 for a background transcript"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_contains "$LIVE_OUT" "working" \
+        "An end_turn with open registered work renders as WORKING (#949)"
+    assert_contains "$LIVE_OUT" "background" \
+        "The line names the background-work source (#949)"
+    # THE REGRESSION GUARD: this exact state used to print the idle warning.
+    assert_not_contains "$LIVE_OUT" "idle at prompt" \
+        "A golem with open background work is NOT reported idle at prompt (#949)"
+    assert_not_contains "$LIVE_OUT" "last activity" \
+        "The transcript+registry read wins over the mtime fallback"
+}
+
+# The CONTROL: the golem FORGOT to register. The SAME transcript with an EMPTY
+# registry is indeterminate — the tier emits no class and the sweep falls through
+# to the mtime heartbeat, which can still detect a real stall. It must NOT say
+# idle-at-prompt, because "nothing registered" is not evidence of idleness. This
+# is the distinction the two-signal design turns on, and without this case the
+# test above could pass on a rule that simply never says idle.
+test_liveness_transcript_unregistered_background_falls_through() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    _run_liveness_snapshot_transcript 1200 0 \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"launched"}]}}')"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 on the fall-through"
+    assert_contains "$LIVE_OUT" "golem-7" "The golem appears in the liveness sweep"
+    assert_not_contains "$LIVE_OUT" "idle at prompt" \
+        "An unregistered background turn is NOT reported idle (#949)"
+    assert_contains "$LIVE_OUT" "last activity" \
+        "It falls through to the mtime heartbeat, which can still detect a real stall"
+}
+
+# The item COUNT is rendered, and its plural form is correct. Two open items must
+# read "2 items" — a count that silently rendered 0 or a bare word would hide the
+# fact that the registry is what produced the verdict.
+test_liveness_transcript_background_renders_item_count() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    local now
+    now="$(command date -u +%s)"
+    _run_liveness_snapshot_transcript 1200 0 \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Workflow"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"launched"}]}}')" \
+        "$(command printf '%s\n%s' \
+            "{\"event\":\"register\",\"id\":\"work-9-aaaa\",\"golem\":\"golem-7\",\"kind\":\"workflow\",\"description\":\"harness\",\"started\":\"2026-01-01T00:00:00Z\",\"started_epoch\":$now}" \
+            "{\"event\":\"register\",\"id\":\"work-9-bbbb\",\"golem\":\"golem-7\",\"kind\":\"bash\",\"description\":\"suite\",\"started\":\"2026-01-01T00:00:00Z\",\"started_epoch\":$now}")"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 with two open items"
+    assert_contains "$LIVE_OUT" "background: 2 items" \
+        "The rendered count reflects both open items (#949)"
+}

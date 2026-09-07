@@ -122,7 +122,8 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `golem-gate-watch.sh` | Gate-detection engine shared by status + watch |
 | `golem-resolve.sh <N>` | Emit a `resolved` feed line to clear a golem's send-keys-resolved plan gate from the BLOCKED list on the next sweep (#422) |
 | `golem-token-scrape.sh <worktree>` | Scrape a Mode-2 golem's top-level token count from its newest transcript (deduped by `message.id`), feeding `golem-status.sh`'s frozen-counter signal (#371) |
-| `golem-transcript-liveness.sh <worktree>` | Classify a Mode-2 golem working/idle/errored from its newest transcript's top-level `stop_reason`/`isApiErrorMessage` — the TTY-free headless fallback tier in `golem-gate-watch.sh`'s liveness sweep (#248) |
+| `golem-work.sh register\|complete\|list\|count` | The background-work registry (#949): a golem records work that outlives its turn (backgrounded Bash, `Monitor`, `Workflow`) so a liveness read reports it working, not `idle at prompt`. Protocol: `skills/golem/background-work.md` |
+| `golem-transcript-liveness.sh <worktree>` | Classify a golem working/background/idle/errored from its newest transcript's top-level `stop_reason`/`isApiErrorMessage` plus the background-work registry — the TTY-free headless fallback tier in `golem-gate-watch.sh`'s liveness sweep (#248, #949). The registry arm is the one signal that reaches a Mode-3 container golem |
 | `seed-worktree-trust.sh` | Seed Claude Code workspace trust for a worktree |
 | `recover-journal-partials.sh <journal>` | Recover finding-shaped partials from a `TaskStop`-ped review harness's `journal.jsonl` (#224) |
 | `review-convergence.sh check …` | Decide whether the review loop has converged or should run another cycle — the ordered rule list that replaced the bare `REVIEW_MAX_CYCLES` counter (#596) |
@@ -150,6 +151,7 @@ them as `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`.
 | `GOLEM_WORKTREE_LOCAL_FILES` | `.env .claude/settings.local.json` | Gitignored files copied into a fresh worktree |
 | `GOLEM_BLOCK_TTL` | `3600` | Feed gate-freshness window (seconds) |
 | `GOLEM_WATCH_INTERVAL` | `5` | `--stream*` poll interval (seconds) |
+| `GOLEM_WORK_MAX_AGE` | `3600` | Age-out bound on a background-work registry entry (#949) — deliberately distinct from `GOLEM_STALL_THRESHOLD`; a dead PID is reaped immediately |
 | `GOLEM_STALL_THRESHOLD` | `1200` | Liveness stall window (seconds); also bounds `golem-transcript-liveness.sh`'s `working` verdict (#248) |
 | `CLAUDE_PROJECTS_DIR` | `$HOME/.claude/projects` | Base dir of per-project session transcripts; `golem-token-scrape.sh` and `golem-transcript-liveness.sh` resolve a golem's transcript under it |
 | `BIFROST_URL` | (unset — **required**) | Bifrost gateway **admin API root** for `token-report.sh`. No default by design: AC5 forbids a hardcoded hostname, and the plausible guess is wrong — `ANTHROPIC_BASE_URL` addresses the _proxy_ path, whose `/api/logs/stats` returns the web UI's HTML with HTTP 200. Unset ⇒ exit `2` (usage), distinct from `77` (unreachable) |

@@ -387,6 +387,15 @@ routine ship gates. The final **hand-off** step chooses the `--ship` fast-path
 forward unchanged from Phase 1; `--ship`/`--now` is not autonomy and never
 selects L4. See `## Autonomy Levels` and `autonomy.md`.
 
+## Background Work
+
+Work that outlives the turn that starts it — a `run_in_background` Bash task, a
+`Monitor`, or the ship-issue review `Workflow` harness — makes this session's
+turn end while the work continues, which the liveness read used to report as
+`⚠ idle at prompt` (#949). Register it so an observer sees the truth:
+**`golem/background-work.md`** carries the two-call protocol. Forgetting is safe
+(the verdict degrades to indeterminate, never to idle) but loses the signal.
+
 ## Platform Detection
 
 Detect from the first `origin` remote URL:
