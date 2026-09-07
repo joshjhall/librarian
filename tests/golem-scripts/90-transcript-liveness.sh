@@ -1076,7 +1076,7 @@ run_liveness_wt() {
     slug="$(slug_for "$wt")"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -1260,7 +1260,7 @@ test_liveness_background_across_both_env_knobs() {
     # Run from an UNRELATED cwd, as the gate-watch sweep does.
     RUN_RC=0
     RUN_OUT="$(cd "$WORKDIR" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             GOLEM_WORKTREE_DIR=nested/worktrees \

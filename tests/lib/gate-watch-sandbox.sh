@@ -420,16 +420,16 @@ _run_liveness_snapshot_transcript() {
     #  2. The registry is planted in the SAME status dir the sweep reads, since
     #     that is where a real golem's writer would have put it.
     if [ -n "$registry" ]; then
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" config user.email "test@example.com" 2>/dev/null
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" config user.name "Test" 2>/dev/null
         command printf 'seed\n' >"$tmp/seed.txt"
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" add seed.txt 2>/dev/null
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" worktree add -q "$wt" -b issue-7 >/dev/null 2>&1 || return 1
         command printf '%s\n' "$registry" >"$tmp/.worktrees/.status/golem-7.work.jsonl"
     fi

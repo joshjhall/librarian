@@ -361,7 +361,7 @@ plant_transcript() {
 # inherits it files every fixture under the RUNNER's id, so the assertions pass
 # while testing the harness's identity rather than the code's derivation. One of
 # the two fixture defects that sank the withdrawn first attempt was exactly this.
-# The `--unset=` list below is therefore load-bearing, not hygiene.
+# The `-u` list below is therefore load-bearing, not hygiene.
 WORK_ID_SCRUB=(GOLEM_ID AGENT_ID)
 
 # make_golem_worktree <sandbox> <issue-N> [worktree-dir]
@@ -381,7 +381,7 @@ WORK_ID_SCRUB=(GOLEM_ID AGENT_ID)
 make_golem_worktree() {
     local sb="$1" n="$2" wtdir="${3:-.worktrees}"
     command mkdir -p "$sb/$wtdir"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" worktree add -q "$sb/$wtdir/issue-$n" -b "issue-$n" >/dev/null 2>&1 || return 1
     command echo "$sb/$wtdir/issue-$n"
 }

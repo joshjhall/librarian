@@ -58,6 +58,16 @@ GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
 
+# bounded_run bounds the hanging-uvx cases below WITHOUT GNU `timeout` (#543),
+# which base macOS does not ship. This source line was MISSING when those call
+# sites were ported off `command timeout` (#932): the failure could not
+# reproduce locally, because on a coreutils-free host those very cases
+# `skip_test` for want of `timeout(1)` and never reach the call. On CI, where
+# both uvx and timeout exist, they run and died `bounded_run: command not
+# found` — a skip on the author's host hiding a hard failure on the runner.
+# shellcheck source=bin/bounded-run.sh
+source "$REPO_ROOT/bin/bounded-run.sh"
+
 test_suite "Lint-gate integrity (runner resolution + skip reporting) (#538)"
 
 # --- Sandbox plumbing -------------------------------------------------------

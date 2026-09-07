@@ -45,7 +45,7 @@ run_work() {
     shift
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -65,7 +65,7 @@ run_work_at() {
     shift 3
     RUN_RC=0
     RUN_OUT="$(cd "$cwd" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
             HOME="$cwd" \
             GOLEM_WORKTREE_DIR="$wtdir" \
             GOLEM_STATUS_DIR="$sd" \
@@ -95,8 +95,8 @@ run_work_nojq() {
     done
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             PATH="$stub" \
             HOME="$sb" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -239,7 +239,7 @@ test_work_max_age_is_env_overridable() {
     plant_work_registry "$sb" golem-42 \
         "$(work_register_line work-1-aaaa bash "recent" "$old")"
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status GOLEM_WORK_MAX_AGE=50 \
             "$REAL_BASH" "$WORK" count --golem golem-42 2>&1)"
@@ -594,7 +594,7 @@ test_work_observer_ignores_ambient_golem_id() {
     plant_work_registry "$sb" golem-42 \
         "$(work_register_line work-1-aaaa bash "subject work" "$now")"
     RUN_OUT="$(cd "$WORKDIR" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_ID=golem-999 AGENT_ID=agent-999 \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             "$REAL_BASH" "$WORK" count --worktree "$wt" 2>&1)"
