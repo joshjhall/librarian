@@ -446,7 +446,7 @@ plugin_skill_count() {
     # the stub (the same reason run_launch_auth unsets it).
     if ! _d="$(command mktemp -d 2>/dev/null)"; then
         command rm -f "$tmp"
-        command printf 'noscratch\n'
+        command printf 'noscratchdir\n'
         return 0
     fi
     command rmdir "$_d" 2>/dev/null || true
@@ -455,7 +455,8 @@ plugin_skill_count() {
     #   ""           the probe failed / timed out → the plugin is gone
     #   <digits>     a parsed count (0 = resolves but discovers nothing)
     #   "unparsed"   the probe SUCCEEDED but printed no recognizable count
-    #   "noscratch"  no temp file could be created → nothing was learned
+    #   "noscratch"  no temp FILE could be created → nothing was learned
+    #   "noscratchdir" no temp DIRECTORY could be created → nothing was learned
     if bounded_run "${GOLEM_PLUGIN_PROBE_TIMEOUT:-15}" \
         "$probe" plugin details "$name@$mp" >"$tmp" 2>/dev/null; then
         count="$(command sed -n 's/.*Skills (\([0-9][0-9]*\)).*/\1/p' "$tmp" |
@@ -501,7 +502,16 @@ check_plugin_resolvable() {
         return 0
     fi
     if [ "$count" = "noscratch" ]; then
-        command echo "golem-launch: WARNING could not create a temp file to probe $name@$mp, so resolvability is UNVERIFIED (proceeding; check TMPDIR)." >&2
+        command echo "golem-launch: WARNING could not create a temp FILE to probe $name@$mp, so resolvability is UNVERIFIED (proceeding; check TMPDIR)." >&2
+        return 0
+    fi
+    # Reported separately from the file case on purpose: the two have different
+    # causes and different fixes. A `mktemp -d` failure where plain `mktemp`
+    # succeeded is a directory-entry quota, a FUSE/overlay mount, or an ACL
+    # granting write but not mkdir — telling that operator to "check TMPDIR" for
+    # a temp FILE points at the one thing already known to work.
+    if [ "$count" = "noscratchdir" ]; then
+        command echo "golem-launch: WARNING could not create a temp DIRECTORY to probe $name@$mp (a temp file succeeded), so resolvability is UNVERIFIED (proceeding; TMPDIR permits file creation but not mkdir)." >&2
         return 0
     fi
 

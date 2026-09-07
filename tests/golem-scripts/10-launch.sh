@@ -648,6 +648,14 @@ _plugin_probe_run() {
 # missing-worktree exit 2, with no refusal or warning text. This is the control —
 # without it, a guard that refused unconditionally would pass every test below.
 test_launch_plugin_resolvable_passes() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" ok
@@ -660,6 +668,14 @@ test_launch_plugin_resolvable_passes() {
 # The headline case: the plugin is gone, so launch must refuse with exit 3 rather
 # than dispatch a golem that dies at its first prompt.
 test_launch_plugin_absent_refuses_exit_3() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" notfound
@@ -676,6 +692,14 @@ test_launch_plugin_absent_refuses_exit_3() {
 # dispatches a golem with no /workflow:next-issue; asserting the refusal here is
 # what makes the guard a capability probe rather than a liveness formality.
 test_launch_plugin_zero_skills_refuses() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" zero
@@ -691,6 +715,14 @@ test_launch_plugin_zero_skills_refuses() {
 # blocks for the child's FULL lifetime even though the bound fired. That guard
 # returned the right code after 60s instead of 3s — correct exit, useless bound.
 test_launch_plugin_probe_timeout_is_bounded_refusal() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb start elapsed
     new_sandbox sb
     write_plugin_probe "$sb/probe" hang
@@ -703,6 +735,14 @@ test_launch_plugin_probe_timeout_is_bounded_refusal() {
 
 # The escape hatch mirrors GOLEM_SKIP_VERSION_CHECK=1: warn, then proceed.
 test_launch_plugin_check_escape_hatch() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" notfound
@@ -716,6 +756,14 @@ test_launch_plugin_check_escape_hatch() {
 # guard's contract. Refusing here would break a bare host that dispatches by
 # other means; the launch line's own `claude` fails loudly on its own anyway.
 test_launch_plugin_probe_absent_skips_silently() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     _plugin_probe_run "$sb" "$sb/no-such-probe-binary" launch
@@ -728,6 +776,14 @@ test_launch_plugin_probe_absent_skips_silently() {
 # line. Asserting BOTH halves: a print that refused would break the documented
 # "show me the launch line" path, and one that stayed quiet would hide the fault.
 test_print_plugin_absent_warns_but_emits() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" notfound
@@ -760,6 +816,14 @@ test_plugin_guard_message_namespaces_commands() {
 # leaked its exit 3 here, `launch`'s `preflight || true` would swallow it while a
 # hand-run preflight started failing for a reason its message never mentions.
 test_preflight_plugin_absent_warns_without_changing_exit() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" notfound
@@ -790,6 +854,14 @@ EOF
 # the override while the probe was still called with the default, which is the
 # failure that would make the remediation advice useless.
 test_plugin_probe_honors_marketplace_override() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     command cat >"$sb/probe" <<'EOF'
@@ -831,6 +903,14 @@ EOF
 # rather than two; without it, "simplifying" the empty-count branches back into
 # one would look like a cleanup and would silently arm the outage.
 test_launch_unparseable_probe_output_warns_but_proceeds() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" reworded
@@ -845,6 +925,14 @@ test_launch_unparseable_probe_output_warns_but_proceeds() {
 # Pinned separately so a future change cannot collapse the two branches and call
 # every zero "unparseable" — which would re-open the false pass from the other side.
 test_zero_and_unparsed_are_distinct_outcomes() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/zero" zero
@@ -867,6 +955,14 @@ test_zero_and_unparsed_are_distinct_outcomes() {
 # and proceed, and each must name its OWN cause — a temp-file failure reported as
 # "the CLI format changed" would send an operator to update a working scraper.
 test_launch_unwritable_tmpdir_warns_but_proceeds() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" ok
@@ -875,6 +971,7 @@ test_launch_unwritable_tmpdir_warns_but_proceeds() {
     assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "a scratch-file failure must not block dispatch"
     assert_contains "$RUN_OUT" "UNVERIFIED" "it is announced rather than passing as healthy"
     assert_contains "$RUN_OUT" "TMPDIR" "and names its own cause, not a CLI-format change"
+    assert_contains "$RUN_OUT" "FILE" "the file failure is reported as such, distinct from the directory one"
 }
 
 # The unverified outcomes across the OTHER two call sites. `launch` is covered
@@ -889,6 +986,14 @@ test_launch_unwritable_tmpdir_warns_but_proceeds() {
 # mode dispatch, so this asserts the placement that makes them mode-independent —
 # it is not an exhaustive per-outcome × per-mode matrix.
 test_unverified_outcomes_agree_across_call_sites() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb
     new_sandbox sb
     write_plugin_probe "$sb/probe" reworded
@@ -944,6 +1049,14 @@ test_unverified_outcomes_agree_across_call_sites() {
 # the real asymmetry (a directory-entry quota, some FUSE/overlay mounts, or a
 # write-but-not-mkdir ACL) reproduced faithfully.
 test_launch_scratch_dir_failure_is_unverified_not_absent() {
+    # The guard derives the plugin NAME from its manifest via jq; without jq
+    # running_plugin_name returns empty and check_plugin_resolvable skips
+    # entirely, so every assertion below would be asserting an absent warning.
+    # Same gate, same reason, as the sibling version-skew tests above.
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (plugin guard no-ops without jq)"
+        return 0
+    fi
     local sb stub
     new_sandbox sb
     write_plugin_probe "$sb/probe" ok
@@ -975,5 +1088,25 @@ EOF
     assert_not_contains "$RUN_OUT" "REFUSING to dispatch" \
         "a scratch-DIRECTORY failure is unverified, never a plugin absence"
     assert_contains "$RUN_OUT" "UNVERIFIED" "and it is announced, not passed off as healthy"
+    # The DIRECTORY wording specifically: reporting this as a temp-FILE failure
+    # would send the operator to check the one thing already known to work.
+    assert_contains "$RUN_OUT" "DIRECTORY" "the message names the directory failure, not the file one"
     assert_exit 2 "$RUN_RC" "dispatch proceeds to its normal missing-worktree exit"
+
+    # Same outcome through print — the branch sits before the mode dispatch, and
+    # this is the newest of the three fail-closed guards, so it is the one most
+    # worth pinning across call sites rather than assuming.
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$stub:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_PLUGIN_PROBE="$sb/probe" \
+            GOLEM_PLUGIN_PROBE_TIMEOUT=3 \
+            "$REAL_BASH" "$LAUNCH" print 946 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "print exits 0 on a scratch-directory failure"
+    assert_contains "$RUN_OUT" "UNVERIFIED" "print reaches the same unverified verdict as launch"
+    assert_contains "$RUN_OUT" "tmux new-session" "and still emits the launch line"
 }

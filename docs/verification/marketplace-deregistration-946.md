@@ -93,6 +93,8 @@ Measured in this worktree, 2026-09-06, against the real `claude` CLI and stubs:
 | `Plugin "…" not found.` + exit 1 | **exit 3** | refusal naming `claude plugin marketplace add` |
 | exit 0 but `Skills (0)` | **exit 3** | `resolvable but reports 0 skills` |
 | exit 0, count line **unreadable** | proceeds | `UNVERIFIED` warning (see fail-open below) |
+| no temp **file** creatable | proceeds | `UNVERIFIED` — names the file failure |
+| no temp **directory** creatable | proceeds | `UNVERIFIED` — names the mkdir failure separately |
 | probe hangs 60 s, bound 3 s | **exit 3** | refused after **4 s** |
 | probe absent from `PATH` | proceeds | silent skip (undeterminable) |
 | `GOLEM_SKIP_PLUGIN_CHECK=1` | proceeds | warning only |
@@ -183,6 +185,12 @@ Worth recording as a process point, not just a bug: "I could not find a way to
 test this" is a statement about the search, and it was stated in the source as a
 property of the code. The reviewer disproved it by *running* the stub the draft
 had only reasoned about.
+
+The three unverified causes report **separately**, which is the point of having
+found three: a `mktemp -d` failure where the plain file succeeded is a
+directory-entry quota, a FUSE/overlay mount, or a write-but-not-mkdir ACL —
+telling that operator to "check TMPDIR" for a temp *file* points at the one
+thing already known to work.
 
 The lesson worth carrying: after fixing a fail-closed branch, grep the function
 for **every** other early return that yields the same sentinel. Three instances
