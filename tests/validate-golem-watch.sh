@@ -97,12 +97,22 @@ REAL_BASH="$(command -v bash)"
 
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
+# bounded_run — bounds without GNU `timeout`, which base macOS does not ship
+# (#543/#932). An unguarded `command timeout N ...` exits 127 there and the
+# assertion reads that as the command under test failing.
+# shellcheck source=bin/bounded-run.sh
+source "$REPO_ROOT/bin/bounded-run.sh"
 
 test_suite "golem-watch.sh streaming dispatcher (#221)"
 
 # Module-level scratch dir, cleaned up once when the suite exits. The RETURN-time
 # pkill in run_watch is the primary reaper; this is the backstop.
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 cleanup() {
     # Kill any fake pane process still sleeping, then drop the scratch dir. The
     # sandboxes are `mktemp -d "$WORKDIR/gate.XXXXXX"`, so their paths look like
@@ -253,7 +263,7 @@ run_watch() {
     (
         cd "$dir" &&
             PANE_WORKER_FILE="$worker_file" \
-                command timeout 10 "$REAL_BASH" "$dir/golem-watch.sh"
+                bounded_run 10 "$REAL_BASH" "$dir/golem-watch.sh"
     ) >"$out_file" 2>&1 || true
     WATCH_OUT="$(command cat "$out_file" 2>/dev/null || true)"
     WATCH_WORKER_PID="$(command cat "$worker_file" 2>/dev/null || true)"

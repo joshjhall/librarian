@@ -86,17 +86,17 @@ run_mini_suite() {
     case "$stream" in
         stdout)
             out="$(RUN_ALL_PATH="$RUN_ALL" MINI_BASH="$REAL_BASH" CODES="$*" \
-                /usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+                /usr/bin/env -uBASH_ENV "${GIT_SCRUB[@]/#/-u}" \
                 "$REAL_BASH" -c "$script" 2>/dev/null)"
             ;;
         stderr)
             out="$(RUN_ALL_PATH="$RUN_ALL" MINI_BASH="$REAL_BASH" CODES="$*" \
-                /usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+                /usr/bin/env -uBASH_ENV "${GIT_SCRUB[@]/#/-u}" \
                 "$REAL_BASH" -c "$script" 2>&1 >/dev/null)"
             ;;
         *)
             out="$(RUN_ALL_PATH="$RUN_ALL" MINI_BASH="$REAL_BASH" CODES="$*" \
-                /usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+                /usr/bin/env -uBASH_ENV "${GIT_SCRUB[@]/#/-u}" \
                 "$REAL_BASH" -c "$script" 2>&1)"
             ;;
     esac

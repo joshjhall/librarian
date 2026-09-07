@@ -60,7 +60,12 @@ test_suite "golem-inbox.sh brokered gate reverse channel (#227)"
 # --- Sandbox plumbing -------------------------------------------------------
 
 # Module-level scratch dir, cleaned up once when the suite exits.
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname>
@@ -70,7 +75,7 @@ trap 'command rm -rf "$WORKDIR"' EXIT
 new_sandbox() {
     local __out="$1" dir
     dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" init -q 2>/dev/null || return 1
     command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
@@ -90,7 +95,7 @@ run_inbox() {
     INBOX_RC=0
     INBOX_OUT="$(
         cd "$dir" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$dir" \
                 GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
@@ -116,7 +121,7 @@ run_inbox_nojq() {
     INBOX_RC=0
     INBOX_OUT="$(
         cd "$dir" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub" HOME="$dir" \
                 GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
@@ -254,7 +259,7 @@ test_no_default_guarantee() {
     INBOX_RC=0
     INBOX_OUT="$(
         cd "$sb" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$sb" GOLEM_STATUS_DIR=.worktrees/.status GOLEM_INBOX_WAIT=0 \
                 "$REAL_BASH" "$INBOX" consume golem-9 "$GATE" 2>&1
     )" || INBOX_RC=$?
@@ -274,7 +279,7 @@ test_late_answer_caught_on_reinvoke() {
     # First consume: no answer yet → NO-DECISION (the loop would re-invoke).
     INBOX_OUT="$(
         cd "$sb" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$sb" GOLEM_STATUS_DIR=.worktrees/.status GOLEM_INBOX_WAIT=0 \
                 "$REAL_BASH" "$INBOX" consume golem-2 "$GATE" 2>&1
     )" || true
@@ -298,7 +303,7 @@ test_non_integer_tunables_fail_safe() {
     INBOX_RC=0
     INBOX_OUT="$(
         cd "$sb" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$sb" GOLEM_STATUS_DIR=.worktrees/.status \
                 GOLEM_INBOX_WAIT=abc GOLEM_INBOX_POLL=xyz \
                 "$REAL_BASH" "$INBOX" consume golem-8 "$GATE" 2>&1
@@ -322,7 +327,7 @@ test_leading_zero_tunables_base10() {
     INBOX_RC=0
     INBOX_OUT="$(
         cd "$sb" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$sb" GOLEM_STATUS_DIR=.worktrees/.status \
                 GOLEM_INBOX_WAIT=08 GOLEM_INBOX_POLL=08 \
                 "$REAL_BASH" "$INBOX" consume golem-8 "$GATE" 2>&1

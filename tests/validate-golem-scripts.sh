@@ -23,7 +23,7 @@
 # script inside a fresh `git init` sandbox under a module-level `mktemp -d`, so
 # the script's repo_root resolves the sandbox (never the librarian checkout).
 # Every git call and script invocation is wrapped in
-# `/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}"` so git's hook-exported environment
+# `/usr/bin/env "${GIT_SCRUB[@]/#/-u}"` so git's hook-exported environment
 # (GIT_DIR / GIT_COMMON_DIR / …) cannot pin repo_root to the OUTER repo when the
 # suite runs from a `git push` pre-push hook — the failure mode root-caused in
 # golem-gate-watch (PR #62). HOME is repointed at the sandbox for worktree-new

@@ -19,7 +19,12 @@
 # shellcheck disable=SC2034  # WORKDIR / NOTIFY_* are read by the area fragments
 
 # Module-level scratch dir, cleaned up once when the suite exits.
+# Resolved to the PHYSICAL path: on macOS $TMPDIR is under /var, a symlink to
+# /private/var, so `mktemp -d` returns /var/... while `git rev-parse
+# --show-toplevel` (and realpath-based guards) report /private/var/... Code
+# under test that prefix-matches the two spellings never matches (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname>
@@ -30,7 +35,7 @@ trap 'command rm -rf "$WORKDIR"' EXIT
 new_sandbox() {
     local __out="$1" dir
     dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" init -q 2>/dev/null || return 1
     command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
@@ -61,8 +66,8 @@ run_notify() {
         (
             cd "$dir" &&
                 command printf '%s' "$payload" |
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                    "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                    "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV \
                     PATH="$stub" HOME="$dir" GOLEM_ID="$gid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -70,8 +75,8 @@ run_notify() {
         (
             cd "$dir" &&
                 command printf '%s' "$payload" |
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                    "${GOLEM_SCRUB[@]/#/--unset=}" \
+                /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                    "${GOLEM_SCRUB[@]/#/-u}" \
                     HOME="$dir" GOLEM_ID="$gid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -93,8 +98,8 @@ run_notify_status_dir() {
     (
         cd "$dir" &&
             command printf '%s' "$payload" |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" \
                 HOME="$dir" GOLEM_ID="$gid" GOLEM_STATUS_DIR="$override" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -159,8 +164,8 @@ run_notify_sinks() {
     (
         cd "$dir" &&
             command printf '%s' "$payload" |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub:$PATH" HOME="$dir" GOLEM_ID="$gid" \
                 GOLEM_EVENT_SINKS="$sinks" GOLEM_EVENT_SINK_TIMEOUT="$timeout" \
                 STUB_CAPTURE_DIR="$capdir" STUB_SLEEP="$sleep_s" \

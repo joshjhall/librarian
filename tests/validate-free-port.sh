@@ -53,7 +53,12 @@ restore_alloc
 
 SQUATTED=""
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 SQUAT_PID=""
 cleanup() {
     [ -n "$SQUAT_PID" ] && command kill "$SQUAT_PID" 2>/dev/null || true
@@ -555,22 +560,22 @@ EOF
     }
 
     _write_fixture '}'
-    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l | command tr -d '[:space:]')"
     assert_equals "3" "$got" "A bare closing brace ends the range"
 
     _write_fixture '}   '
-    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l | command tr -d '[:space:]')"
     assert_equals "3" "$got" "Trailing whitespace on the brace still ends it (else the range swallows the decoy)"
 
     _write_fixture '}  # end of target'
-    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l | command tr -d '[:space:]')"
     assert_equals "3" "$got" "An inline comment on the brace still ends it"
 
     # Teeth: the pattern is anchored, so an INDENTED brace is not an end marker.
     # If this captured 3, the pattern would be matching any brace anywhere and
     # the three cases above would prove nothing.
     _write_fixture '    }'
-    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l)"
+    got="$(command sed -n "/^target() {/,$end p" "$f" | command wc -l | command tr -d '[:space:]')"
     assert_true "[ \"$got\" -gt 3 ]" \
         "An INDENTED brace is not an end marker — the tolerance is not blanket"
 

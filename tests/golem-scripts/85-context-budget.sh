@@ -249,7 +249,7 @@ EOF
         command cat >"$shadow/context-budget.sh"
         command chmod +x "$shadow/context-budget.sh"
         RUN_OUT="$(cd "$sb" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
                 GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
                 GOLEM_BASE_REF=HEAD GOLEM_WORKTREE_LOCAL_FILES="" \
@@ -335,7 +335,7 @@ EOF
         "$shadow/golem-status-signals.sh"
     # Deliberately NO context-budget.sh beside it.
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD GOLEM_WORKTREE_LOCAL_FILES="" \
@@ -393,7 +393,7 @@ EOF
         "$shadow/context-budget.sh"
     command chmod -x "$shadow/context-budget.sh"
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD GOLEM_WORKTREE_LOCAL_FILES="" \
@@ -490,7 +490,7 @@ test_status_sources_the_signals_fragment() {
     local sb out
     new_sandbox sb
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \

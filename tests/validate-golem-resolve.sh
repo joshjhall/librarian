@@ -50,7 +50,12 @@ test_suite "golem-resolve.sh clearing-signal helper (#422)"
 
 # --- Sandbox plumbing -------------------------------------------------------
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # new_sandbox <varname> — a fresh `git init` repo with a `.worktrees/.status/`
@@ -60,7 +65,7 @@ trap 'command rm -rf "$WORKDIR"' EXIT
 new_sandbox() {
     local __out="$1" dir
     dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" init -q 2>/dev/null || return 1
     command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
@@ -84,8 +89,8 @@ run_resolve() {
     RESOLVE_RC=0
     (
         cd "$dir" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" \
                 HOME="$dir" \
                 "$REAL_BASH" "$RESOLVE" "$@"
     ) >/dev/null 2>&1 || RESOLVE_RC=$?
@@ -164,16 +169,16 @@ run_resolve_tree() {
         command ln -sf "$REAL_BASH" "$stub/bash"
         (
             cd "$dir" &&
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                    "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+                /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                    "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV \
                     PATH="$stub" HOME="$dir" \
                     "$REAL_BASH" "$script" "$@"
         ) >/dev/null 2>&1 || RESOLVE_RC=$?
     else
         (
             cd "$dir" &&
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                    "${GOLEM_SCRUB[@]/#/--unset=}" \
+                /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                    "${GOLEM_SCRUB[@]/#/-u}" \
                     HOME="$dir" \
                     "$REAL_BASH" "$script" "$@"
         ) >/dev/null 2>&1 || RESOLVE_RC=$?

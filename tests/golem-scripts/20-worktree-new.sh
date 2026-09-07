@@ -30,7 +30,7 @@ test_worktree_new_creates_worktree() {
     assert_file_exists "$sb/.worktrees/issue-31/seed.txt" \
         "the worktree checkout contains the repo's files"
     local branches
-    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-31")"
     assert_not_empty "$branches" "the feature/issue-31 branch was created"
 }
@@ -56,7 +56,7 @@ test_worktree_new_existing_branch_exits_1() {
     run_in "$sb" "$WT_NEW" 33
     assert_exit 0 "$RUN_RC" "first worktree-new succeeds"
     # Drop the worktree only (the branch lingers).
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" worktree remove .worktrees/issue-33 2>/dev/null
     run_in "$sb" "$WT_NEW" 33
     assert_exit 1 "$RUN_RC" "worktree-new with a lingering branch exits 1"
@@ -85,7 +85,7 @@ test_worktree_new_copies_local_files() {
     command printf 'SECRET=1\n' >"$sb/.env"
     local out rc=0
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -160,7 +160,7 @@ test_worktree_new_from_submodule_placement() {
     # (test_worktree_new_copies_local_files, ..._scrubs_tainted_git_env_for_mutations).
     local out rc=0
     out="$(cd "$super/mod" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$super" \
             TMUX= TMUX_TMPDIR="$super/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -189,13 +189,13 @@ test_worktree_new_scrubs_tainted_git_env_for_mutations() {
     local sb outer
     new_sandbox sb
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
 
     # Run worktree-new from the sandbox with the git env TAINTED toward outer.
@@ -214,9 +214,9 @@ test_worktree_new_scrubs_tainted_git_env_for_mutations() {
     assert_exit 0 "$rc" "worktree-new exits 0 despite a tainted git environment"
 
     local sb_branch outer_branch
-    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-78")"
-    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" branch --list "feature/issue-78")"
     assert_not_empty "$sb_branch" \
         "the branch ref lands in the SANDBOX repo, not the tainted GIT_DIR target"
@@ -258,7 +258,7 @@ test_worktree_new_scrubs_git_config_injection_for_mutations() {
     assert_file_exists "$sb/.worktrees/issue-76/seed.txt" \
         "the worktree is created in the sandbox despite the config injection"
     local sb_branch
-    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-76")"
     assert_not_empty "$sb_branch" \
         "the branch ref lands in the sandbox despite the GIT_CONFIG_* injection (scrub clears the dynamic pairs)"
@@ -299,13 +299,13 @@ test_worktree_new_from_submodule_placement_under_taint() {
     # target). Scrubbed setup so its own creation is not itself tainted.
     local outer
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
 
     # Invoke worktree-new from INSIDE the submodule working tree (<super>/mod) with
@@ -334,9 +334,9 @@ test_worktree_new_from_submodule_placement_under_taint() {
     # (#328 no-split-brain). Query through a scrubbed env so the check is not
     # itself tainted.
     local super_branch outer_branch
-    super_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    super_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" branch --list "feature/issue-45")"
-    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" branch --list "feature/issue-45")"
     assert_not_empty "$super_branch" \
         "the branch ref lands in the superproject, not the tainted GIT_DIR target"
@@ -367,13 +367,13 @@ test_worktree_new_readonly_tainted_git_env_fails_loud() {
     local sb outer
     new_sandbox sb
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
 
     # Source worktree-new inside a child bash that makes GIT_DIR/GIT_COMMON_DIR
@@ -402,9 +402,9 @@ test_worktree_new_readonly_tainted_git_env_fails_loud() {
 
     # No mutation: no branch in the sandbox OR the outer repo, and no worktree dir.
     local sb_branch outer_branch
-    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-78")"
-    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" branch --list "feature/issue-78")"
     assert_output_empty "$sb_branch" \
         "no branch ref created in the sandbox (aborted before the mutation)"
@@ -484,7 +484,7 @@ _cred_run() {
     fi
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" PATH="$path_env" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -498,7 +498,7 @@ _cred_run() {
 # has no origin. Used by _cred_run to pick a base ref that actually resolves.
 # _cred_helper_remote_url <sandbox> [remote-name] — that remote's URL, or empty.
 _cred_helper_remote_url() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$1" remote get-url "${2:-origin}" 2>/dev/null || true
 }
 
@@ -509,24 +509,34 @@ _cred_helper_remote_url() {
 # GOLEM_BASE_REF rather than always landing on the `:-origin` fallback.
 _cred_set_remote() {
     local sb="$1" url="$2" name="${3:-origin}"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" remote add "$name" "$url"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" update-ref "refs/remotes/$name/main" HEAD
 }
 
+# --local ON BOTH READS, matching the scope worktree-new.sh writes (#932).
+# A bare `git config --get` returns the MERGED view across system/global/local,
+# so a developer whose real ~/.gitconfig carries a host credential helper (very
+# common — `gh auth login` writes one) sees that helper leak into every sandbox,
+# and the no-op arms below fail with the OPERATOR'S config as the "Output".
+# Measured on a macOS workstation: 4 phantom credential.*.helper keys, zero of
+# them written by the code under test. The sandboxes pin HOME, but these two
+# readers ran outside that pinning. --local is also the more faithful assertion:
+# the script writes --local, so that is the scope a test should inspect.
+#
 # _cred_helper_of <sandbox> <host> — the configured helper for <host>, or empty.
 _cred_helper_of() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$1" config --get "credential.$2.helper" 2>/dev/null || true
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$1" config --local --get "credential.$2.helper" 2>/dev/null || true
 }
 
 # _cred_any_helper <sandbox> — EVERY credential.*.helper key set anywhere in the
 # repo config, so a no-op arm is asserted against all hosts rather than only the
 # one host the test happened to think of.
 _cred_any_helper() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$1" config --get-regexp '^credential\..*\.helper$' 2>/dev/null || true
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$1" config --local --get-regexp '^credential\..*\.helper$' 2>/dev/null || true
 }
 
 # AC1/AC2: an https GitHub remote with `gh` present gets the gh helper, keyed on
@@ -704,7 +714,7 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" PATH="$sb/swallow-bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -914,11 +924,11 @@ _cred_preset_helper() {
     local _cp_first=1 _cp_v
     for _cp_v in "$@"; do
         if [ "$_cp_first" -eq 1 ]; then
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 git -C "$sb" config --local "credential.$host.helper" "$_cp_v"
             _cp_first=0
         else
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 git -C "$sb" config --local --add "credential.$host.helper" "$_cp_v"
         fi
     done
@@ -928,9 +938,13 @@ _cred_preset_helper() {
 # newline-separated. `--get` returns only the LAST value of a multi-valued key
 # (measured, git 2.55), so the multi-valued arms below cannot be asserted with
 # _cred_helper_of.
+# --local for the same reason as the two readers above (#932): a bare --get-all
+# merges the operator's ~/.gitconfig in, which prepends phantom values to the
+# multi-valued assertions here and makes them fail on any developer machine that
+# has run `gh auth login`.
 _cred_all_helpers_of() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$1" config --get-all "credential.$2.helper" 2>/dev/null || true
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$1" config --local --get-all "credential.$2.helper" 2>/dev/null || true
 }
 
 # AC1: a DIFFERENT existing helper is the operator's choice and must survive.

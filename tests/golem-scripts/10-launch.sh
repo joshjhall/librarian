@@ -115,7 +115,7 @@ test_launch_print_level_env_fallback() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_LEVEL=2 \
@@ -131,7 +131,7 @@ test_launch_print_level_flag_beats_env() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_LEVEL=2 \
@@ -177,7 +177,7 @@ test_launch_print_model_set_both_claude_calls() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_MODEL=sonnet \
@@ -244,7 +244,7 @@ test_launch_missing_worktree_exits_2() {
     command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
@@ -278,7 +278,7 @@ EOF
     command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
             CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
@@ -303,7 +303,7 @@ EOF
     command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
             CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
@@ -347,7 +347,7 @@ test_launch_version_match_passes() {
     command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
@@ -371,7 +371,7 @@ test_launch_version_skew_refuses_exit_3() {
     write_installed_plugins "$sb/installed.json" "0.0.1-stale"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
@@ -397,7 +397,7 @@ test_launch_version_skew_escape_hatch() {
     command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_SKIP_VERSION_CHECK=1 \
@@ -426,7 +426,7 @@ test_launch_version_unknown_sentinel_skips() {
     command printf '{}\n' >"$sb/global-settings.json"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
@@ -446,7 +446,7 @@ test_launch_unset_home_does_not_crash() {
     RUN_RC=0
     # Deliberately DO NOT pass HOME or CLAUDE_INSTALLED_PLUGINS.
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=HOME \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uHOME \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
     assert_exit 0 "$RUN_RC" "unset HOME does not crash the guard (print exits 0)"
@@ -462,7 +462,7 @@ test_launch_version_undeterminable_skips() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/no-such-registry.json" \

@@ -697,12 +697,21 @@ test_workflow_js_node_check_detects_syntax_error() {
         skip_test "node not available — cannot prove node --check fires"
         return
     fi
-    local bad
-    bad="$(command mktemp --suffix=.js)"
+    # A .js SUFFIX is required (node --check infers module vs script from it),
+    # but `mktemp --suffix=` is GNU-only: BSD mktemp rejects it AND still exits 0,
+    # so `bad` came back EMPTY and the redirect below failed with a bare
+    # "No such file or directory" naming neither mktemp nor the platform (#932).
+    # Create in a temp DIR instead — portable, and the name is ours to choose.
+    local baddir bad
+    baddir="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return
+    }
+    bad="$baddir/broken.js"
     printf 'function broken( {\n  return 1\n' >"$bad"
     local err rc=0
     err="$(command node --check "$bad" 2>&1)" || rc=$?
-    command rm -f "$bad"
+    command rm -rf "$baddir"
     assert_true "[ $rc -ne 0 ]" "node --check exits non-zero on a syntax error"
     assert_contains "$err" "SyntaxError" "node --check reports a SyntaxError"
 }

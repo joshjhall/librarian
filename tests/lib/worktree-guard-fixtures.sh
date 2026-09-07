@@ -23,13 +23,18 @@
 
 # git_clean <args...> — run git with the hook-exported env scrubbed.
 git_clean() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_GIT" "$@"
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_GIT" "$@"
 }
 
 # --- Fixture: a main checkout + a real linked worktree ----------------------
 # MAIN_DIR is the primary checkout; WT_DIR is a linked worktree of it. Both are
 # real on disk so the hook's `git -C "$cwd" rev-parse` returns true roots.
+# Resolved to the PHYSICAL path: on macOS $TMPDIR is under /var, a symlink to
+# /private/var, so `mktemp -d` returns /var/... while `git rev-parse
+# --show-toplevel` (and realpath-based guards) report /private/var/... Code
+# under test that prefix-matches the two spellings never matches (#932).
 FIXTURE="$(command mktemp -d)"
+FIXTURE="$(cd "$FIXTURE" && command pwd -P)"
 trap 'command rm -rf "$FIXTURE"' EXIT
 MAIN_DIR="$FIXTURE/repo"
 command mkdir -p "$MAIN_DIR"
@@ -127,7 +132,7 @@ run_guard() {
             /usr/bin/env -i PATH="$stub" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     else
         GUARD_OUT="$(printf '%s' "$payload" |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     fi
 }

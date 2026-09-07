@@ -16,7 +16,7 @@
 # gate_with_numstat FILE_LIST NUMSTAT — run the real gate with both arguments.
 gate_with_numstat() {
     GATE_RC=0
-    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$GATE" "$1" "$2" 2>/dev/null)" || GATE_RC=$?
 }
 
@@ -86,7 +86,7 @@ test_missing_sizing_does_not_abort_the_scan() {
     # testing sizing's graceful degradation at all. Fix the FIXTURE, never the
     # assertion ([[synthetic-script-dir-needs-the-new-sibling]]).
     GATE_RC=0
-    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "SECURITY_SCANNER=$SECURITY_SCANNER_REAL" \
         "$REAL_BASH" "$d/gatedir/pre-review-gates.sh" "$(make_list "$d" big.sh app.py)" 2>/dev/null)" || GATE_RC=$?
 

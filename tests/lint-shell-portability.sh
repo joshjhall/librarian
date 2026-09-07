@@ -290,6 +290,104 @@ scan_file_gnu_regex() {
     done <"$file"
 }
 
+# --- GNU-only `env --unset=` ban (#932) -----------------------------------------
+# `env --unset=VAR` is a GNU coreutils long option. BSD `env` (macOS) has no long
+# options at all: it parses `--unset=VAR` as `-u` with the OPERAND `nset=VAR`, and
+# dies with `env: unsetenv nset=VAR: Invalid argument`, exit 1.
+#
+# This is the #679 shape reached by a different route. The failure is loud in
+# isolation but SILENT in situ, because the idiom appears in test sandbox helpers
+# whose `env ... git init` is already `2>/dev/null`-suppressed and whose callers
+# drop the status. The sandbox variable is then never assigned, and the suite dies
+# far away with `sb: unbound variable` — a diagnostic that names neither `env` nor
+# the platform. Found when 46 test files failed this way on a real macOS host.
+#
+# `-uVAR` (attached) is the portable spelling: MEASURED working on both BSD env
+# (macOS 26.6) and GNU coreutils 9.7. It is preferred over separate `-u VAR`
+# because it survives the array idiom these files use —
+# `"${GIT_SCRUB[@]/#/-u}"` expands one token per name, where `/#/-u /` could not.
+#
+# Scoped to lines invoking `env`, matching the GNU-regex ban's scoping rationale:
+# a bare `--unset=` may legitimately appear in prose about some other tool.
+GNUENV_TOOL_RE='(^|[^A-Za-z0-9_-])env([^A-Za-z0-9_-]|$)'
+
+# --- Other GNU-only flags found by the same sweep (#932) -------------------------
+# Each was measured on macOS 26.6 and each fails in the silent direction, which is
+# why they are banned by pattern rather than left to a reviewer's eye:
+#
+#   realpath -m   BSD: `illegal option -- m`. Callers wrap it in `|| echo "$1"`,
+#                 so the path comes back UNRESOLVED. In seed-worktree-trust.sh
+#                 that DEFEATED the symlink under-root guard (issue #21) on every
+#                 Mac. Use the `cd -P`/`pwd -P` walk in that script.
+#   mktemp --suffix=  BSD rejects it AND STILL EXITS 0, so the assigned variable is
+#                 empty and the failure surfaces as a bare redirect error naming
+#                 neither mktemp nor the platform. Create a temp DIR and name the
+#                 file inside it.
+#   touch -d      BSD wants `-t [[CC]YY]MMDDhhmm[.SS]`, prints usage to stderr and
+#                 STILL EXITS 0 — the mtime is silently unchanged, so a staleness
+#                 window never elapses and the test reads "not stale". BSD's `-A`
+#                 adjust form is likewise rejected by GNU: neither spelling is
+#                 portable, so probe `touch -d` on a scratch file and branch
+#                 (backdate_mtime in tests/golem-scripts/90-transcript-liveness.sh).
+#   date -d       GNU-only; BSD spells the epoch form `date -r <epoch>`.
+GNUFLAG_BAD_RE='(^|[^A-Za-z0-9_-])(realpath[[:space:]]+(-[A-Za-z]*[[:space:]]+)*-m([[:space:]]|$)|mktemp[^|;&]*--suffix=|touch[[:space:]]+(-[A-Za-z]*[[:space:]]+)*-d([[:space:]]|$)|date[[:space:]]+(-[A-Za-z]*[[:space:]]+)*-d([[:space:]]|$))'
+
+# scan_file_gnu_env <path> — populate CUR_GNUENV_VIOLATIONS with `line N: <code>`
+# for each GNU-only `env --unset=` on a line that invokes env.
+CUR_GNUENV_VIOLATIONS=""
+scan_file_gnu_env() {
+    local file="$1"
+    CUR_GNUENV_VIOLATIONS=""
+    local lineno=0 line code
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        code="$line"
+        case "$code" in
+            \#*) continue ;;
+        esac
+        # Same required-reason marker contract as the GNU-regex ban above.
+        case "$line" in
+            *"lint-allow-gnu-env:"*[![:space:]]*) continue ;;
+        esac
+        code="${code%%[[:space:]]#*}"
+        # Cheap builtin prefilter before any subprocess.
+        case "$code" in
+            *--unset=*) ;;
+            *) continue ;;
+        esac
+        printf '%s\n' "$code" | command grep -qE "$GNUENV_TOOL_RE" || continue
+        CUR_GNUENV_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+    done <"$file"
+}
+
+# scan_file_gnu_flags <path> — populate CUR_GNUFLAG_VIOLATIONS with `line N: <code>`
+# for each GNU-only coreutils flag (realpath -m, mktemp --suffix=, touch -d,
+# date -d). Same required-reason marker contract as the bans above.
+CUR_GNUFLAG_VIOLATIONS=""
+scan_file_gnu_flags() {
+    local file="$1"
+    CUR_GNUFLAG_VIOLATIONS=""
+    local lineno=0 line code
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        code="$line"
+        case "$code" in
+            \#*) continue ;;
+        esac
+        case "$line" in
+            *"lint-allow-gnu-flag:"*[![:space:]]*) continue ;;
+        esac
+        code="${code%%[[:space:]]#*}"
+        # Cheap builtin prefilter: every banned form needs one of these words.
+        case "$code" in
+            *realpath* | *mktemp* | *touch* | *date*) ;;
+            *) continue ;;
+        esac
+        printf '%s\n' "$code" | command grep -qE "$GNUFLAG_BAD_RE" || continue
+        CUR_GNUFLAG_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+    done <"$file"
+}
+
 # scan_file_parses <path> — populate CUR_PARSE_VIOLATIONS with the parser
 # diagnostic when `bash -n` writes ANYTHING to stderr (empty when clean).
 #
@@ -326,6 +424,20 @@ test_file_no_gnu_regex() {
     scan_file_gnu_regex "$CUR_FILE"
     assert_equals "" "$CUR_GNURE_VIOLATIONS" \
         "$(command basename "$CUR_FILE") must use POSIX classes ([[:space:]], [[:alnum:]_]) and -E alternation, not GNU \\s/\\w/\\| (#679)"
+}
+
+# Per-file test body for the GNU-only coreutils-flag ban (reads CUR_FILE).
+test_file_no_gnu_flags() {
+    scan_file_gnu_flags "$CUR_FILE"
+    assert_equals "" "$CUR_GNUFLAG_VIOLATIONS" \
+        "$(command basename "$CUR_FILE") must avoid GNU-only coreutils flags (realpath -m, mktemp --suffix=, touch -d, date -d) (#932)"
+}
+
+# Per-file test body for the GNU-only `env --unset=` ban (reads CUR_FILE).
+test_file_no_gnu_env() {
+    scan_file_gnu_env "$CUR_FILE"
+    assert_equals "" "$CUR_GNUENV_VIOLATIONS" \
+        "$(command basename "$CUR_FILE") must spell env unset as \`-uVAR\`, not GNU-only \`--unset=VAR\` (#932)"
 }
 
 # Per-file test body for the parse check (reads CUR_FILE).
@@ -440,6 +552,51 @@ EOF
 # equivalents, on prose, on an allow-marked line, or on a `\s` that is payload for
 # ANOTHER language rather than a shell pattern (the fixture case the scoping
 # exists for — see the rationale above scan_file_gnu_regex).
+# Negative case for the GNU-only `env --unset=` ban: scan_file_gnu_env must fire
+# on the GNU spelling in each shape it actually appears in, and stay silent on the
+# portable `-u` forms. Without this the check could sit inert and a clean run
+# would be indistinguishable from an unenforced rule (#932).
+test_negative_case_gnu_env_fires() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/gnuenv.sh" <<'EOF'
+#!/usr/bin/env bash
+literal_hit="$(/usr/bin/env --unset=BASH_ENV cmd)"
+array_hit="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git init)"
+bare_hit="$(env --unset=FOO cmd)"
+command_hit="$(command env --unset=FOO cmd)"
+okattached="$(/usr/bin/env -uBASH_ENV cmd)"
+okseparate="$(/usr/bin/env -u FOO cmd)"
+okarray="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" git init)"
+okmarked="$(env --unset=FOO cmd)"  # lint-allow-gnu-env: GNU-only helper
+bareMarker_hit="$(env --unset=BAR cmd)"  # lint-allow-gnu-env:
+okother="a --unset=X flag belonging to some other tool"
+# a prose comment naming env --unset= is commentenv_ok
+EOF
+
+    scan_file_gnu_env "$tmp/gnuenv.sh"
+
+    assert_not_empty "$CUR_GNUENV_VIOLATIONS" "scan_file_gnu_env flags --unset= (violation branch fires)"
+    assert_contains "$CUR_GNUENV_VIOLATIONS" "literal_hit" 'a literal --unset=NAME is flagged'
+    assert_contains "$CUR_GNUENV_VIOLATIONS" "array_hit" 'the "${ARR[@]/#/--unset=}" array idiom is flagged'
+    assert_contains "$CUR_GNUENV_VIOLATIONS" "bare_hit" 'a bare `env --unset=` is flagged'
+    assert_contains "$CUR_GNUENV_VIOLATIONS" "command_hit" '`command env --unset=` is flagged'
+    assert_contains "$CUR_GNUENV_VIOLATIONS" "bareMarker_hit" 'a REASONLESS lint-allow-gnu-env marker does NOT exempt'
+
+    assert_not_contains "$CUR_GNUENV_VIOLATIONS" "okattached" 'the portable -uNAME form is NOT flagged'
+    assert_not_contains "$CUR_GNUENV_VIOLATIONS" "okseparate" 'the portable -u NAME form is NOT flagged'
+    assert_not_contains "$CUR_GNUENV_VIOLATIONS" "okarray" 'the portable -u array idiom is NOT flagged'
+    assert_not_contains "$CUR_GNUENV_VIOLATIONS" "okmarked" 'a lint-allow-gnu-env line is NOT flagged'
+    assert_not_contains "$CUR_GNUENV_VIOLATIONS" "okother" 'a --unset= with no env on the line is NOT flagged'
+    assert_not_contains "$CUR_GNUENV_VIOLATIONS" "commentenv_ok" 'a full-line comment is NOT flagged'
+}
+
 test_negative_case_gnu_regex_fires() {
     local tmp
     tmp="$(command mktemp -d)" || {
@@ -630,6 +787,7 @@ run_test test_negative_case_fires "scan_file flags every forbidden construct (vi
 run_test test_negative_case_paths_fire "scan_file_paths flags hardcoded /usr/bin//bin paths (#443)"
 run_test test_negative_case_gnu_regex_fires "scan_file_gnu_regex flags GNU-only regex constructs (#679)"
 run_test test_word_boundary_exemption_is_pinned "\\b stays exempt — BSD-verified for grep, known gap for sed (#684)"
+run_test test_negative_case_gnu_env_fires "scan_file_gnu_env flags GNU-only env --unset= (#932)"
 run_test test_negative_case_parse_fires "scan_file_parses flags heredoc-in-command-substitution, not its rewrite (#906)"
 
 while IFS= read -r f; do
@@ -638,6 +796,8 @@ while IFS= read -r f; do
     run_test test_file_portable "${f#"$REPO_ROOT"/}: bash-3.2 clean"
     run_test test_file_no_hardcoded_paths "${f#"$REPO_ROOT"/}: no hardcoded core-utility paths (#443)"
     run_test test_file_no_gnu_regex "${f#"$REPO_ROOT"/}: no GNU-only regex constructs (#679)"
+    run_test test_file_no_gnu_env "${f#"$REPO_ROOT"/}: no GNU-only env --unset= (#932)"
+    run_test test_file_no_gnu_flags "${f#"$REPO_ROOT"/}: no GNU-only coreutils flags (#932)"
     run_test test_file_parses "${f#"$REPO_ROOT"/}: parses under bash -n (#906)"
 done <<<"$scripts_list"
 

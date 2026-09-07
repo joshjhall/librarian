@@ -87,10 +87,15 @@ test_probe_grep_classifies_all_three_verdicts() {
     probe_grep V 'aaa' 'zzz' -E
     assert_equals "UNSUPPORTED" "$V" "a clean non-match classifies UNSUPPORTED, not ERROR (#684)"
 
-    # Exit >= 2 — the tool REJECTED the pattern. GNU does this on BSD's
-    # `[[:<:]]` ("Invalid character class name"), which is why the distinction
-    # is load-bearing rather than cosmetic.
-    probe_grep V 'anything' '[[:<:]]x[[:>:]]' -E
+    # Exit >= 2 — the tool REJECTED the pattern.
+    #
+    # The pattern must be rejected by BOTH userlands, which `[[:<:]]` is NOT:
+    # GNU rejects it ("Invalid character class name") but **BSD ACCEPTS it** and
+    # exits 1, so this assertion read UNSUPPORTED and failed on macOS (#932).
+    # That is the same asymmetry lint-shell-portability.sh documents for `\b`.
+    # `[z-a]` — a reversed range — is rejected by both (measured rc=2 on BSD
+    # grep 2.6.0-FreeBSD and GNU grep 3.11), so the fixture is now userland-neutral.
+    probe_grep V 'anything' '[z-a]' -E
     assert_equals "ERROR" "$V" "a rejected pattern classifies ERROR, not UNSUPPORTED (#684)"
 }
 
@@ -129,7 +134,7 @@ test_probe_grep_rejects_handles_all_three_outcomes() {
 
     # A rejected pattern must stay ERROR, not be laundered into a pass by the
     # inversion — a tool that could not answer has not demonstrated anything.
-    probe_grep_rejects V 'anything' '[[:<:]]x[[:>:]]' -E
+    probe_grep_rejects V 'anything' '[z-a]' -E
     assert_equals "ERROR" "$V" "an ERROR is not inverted into a pass (#684)"
 
     # THE UNREACHABLE ARM: a grep that matches everything, i.e. a broken `-w`
@@ -220,7 +225,7 @@ test_probe_exits_nonzero_when_baseline_cannot_hold() {
     # A working sed is deliberately NOT planted: the probe must fail on the grep
     # baseline alone, without depending on which tool breaks first.
 
-    out="$(command env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(command env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         PATH="$sb/bin" "$REAL_BASH" "$PROBE" 2>&1)" || rc=$?
 
     assert_true "[ \"$rc\" -ne 0 ]" \
@@ -234,7 +239,7 @@ test_probe_exits_nonzero_when_baseline_cannot_hold() {
 # baseline holds and the probe must exit 0.
 test_probe_exits_zero_on_a_healthy_host() {
     local rc=0
-    command env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    command env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         "$REAL_BASH" "$PROBE" >/dev/null 2>&1 || rc=$?
 
     assert_equals "0" "$rc" "control: on a host whose POSIX baseline holds, the probe exits 0"

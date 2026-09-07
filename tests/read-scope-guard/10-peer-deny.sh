@@ -173,9 +173,9 @@ test_deny_peer_from_forged_gitlink_session() {
     local payload err out
     payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/f"}}' "$pwt" "$ppeer")"
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_output_empty "$out" \
         "a disguised session fails OPEN (the read guard never wedges a session it cannot scope)"
     assert_contains "$err" "could not resolve the worktree root" \

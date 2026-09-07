@@ -62,7 +62,12 @@ test_suite "Lint-gate integrity (runner resolution + skip reporting) (#538)"
 
 # --- Sandbox plumbing -------------------------------------------------------
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # stub_dir <varname> — a fresh empty dir to hold PATH stubs, plus the coreutils
@@ -125,8 +130,8 @@ run_gate() {
     local dir="$1"
     command rm -f "$dir/calls.log"
     GATE_RC=0
-    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         HOME="$dir" \
         PATH="$dir/bin" \
         "$REAL_BASH" "$LINT_PYTHON" 2>&1)" || GATE_RC=$?
@@ -239,8 +244,8 @@ test_hanging_uvx_is_bounded_not_wedged() {
     # it returns on its own and this never fires. Exit 124 = the outer timeout
     # fired = the gate wedged.
     local rc=0 out
-    out="$(command timeout 30 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    out="$(bounded_run 30 /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         HOME="$sb" \
         PATH="$sb/bin" \
         UVX_PROBE_TIMEOUT=2 \
@@ -298,8 +303,8 @@ test_hanging_uvx_bounded_without_gnu_timeout() {
     command chmod +x "$sb/bin/uvx"
 
     local rc=0 out
-    out="$(command timeout 30 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    out="$(bounded_run 30 /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         HOME="$sb" \
         PATH="$sb/bin" \
         UVX_PROBE_TIMEOUT=3 \
@@ -346,7 +351,7 @@ test_skip_message_says_it_did_not_run() {
 # exits <exit_code>. Echoes the rendered line plus the resulting rc.
 render_stage() {
     local code="$1"
-    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+    /usr/bin/env -uBASH_ENV "$REAL_BASH" -c '
         set -uo pipefail
         rc=0
         SKIP_EXIT_CODE=77
@@ -419,7 +424,7 @@ test_shellcheck_gate_skips_with_sentinel() {
     local sb out rc=0
     stub_dir sb || return 1 # no shellcheck planted
 
-    out="$(/usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+    out="$(/usr/bin/env -uBASH_ENV "${GIT_SCRUB[@]/#/-u}" \
         PATH="$sb/bin" "$REAL_BASH" "$LINT_SHELLCHECK" 2>&1)" || rc=$?
 
     assert_equals "$SKIP_SENTINEL" "$rc" \
@@ -441,7 +446,7 @@ test_hook_silence_gate_skips_with_sentinel() {
     local sb out rc=0
     stub_dir sb || return 1 # no jq planted
 
-    out="$(/usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+    out="$(/usr/bin/env -uBASH_ENV "${GIT_SCRUB[@]/#/-u}" \
         PATH="$sb/bin" "$REAL_BASH" "$LINT_HOOK_SILENCE" 2>&1)" || rc=$?
 
     assert_equals "$SKIP_SENTINEL" "$rc" \
@@ -476,7 +481,7 @@ test_shellcheck_gate_runs_when_available() {
         return 0
     }
 
-    out="$(/usr/bin/env --unset=BASH_ENV "${GIT_SCRUB[@]/#/--unset=}" \
+    out="$(/usr/bin/env -uBASH_ENV "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$LINT_SHELLCHECK" 2>&1)" || rc=$?
 
     assert_equals "0" "$rc" "the gate passes on this repo's scripts"
@@ -615,7 +620,7 @@ test_justfile_recipe_body_executes() {
 
     # ruff absent, uvx present and probing OK -> must resolve to the PINNED uvx.
     plant_runner "$sb" uvx 0 0
-    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         HOME="$sb" PATH="$sb/bin" "$REAL_SH" -c "$probe" 2>&1 || true)"
     assert_contains "$out" "RESOLVED=uvx ruff@$pin" \
         "the real recipe body parses and resolves to the PINNED uvx when ruff is absent (#542)"
@@ -627,14 +632,14 @@ test_justfile_recipe_body_executes() {
 
     # ruff present -> must win over uvx.
     plant_runner "$sb" ruff 0 0
-    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         HOME="$sb" PATH="$sb/bin" "$REAL_SH" -c "$probe" 2>&1 || true)"
     assert_contains "$out" 'RESOLVED=ruff' \
         "the real recipe body prefers a ruff binary over uvx"
 
     # Neither runner -> must take the skip branch and say so.
     command rm -f "$sb/bin/ruff" "$sb/bin/uvx"
-    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(cd "$REPO_ROOT" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         HOME="$sb" PATH="$sb/bin" "$REAL_SH" -c "$probe" 2>&1 || true)"
     assert_contains "$out" 'did NOT run' \
         "the real recipe body takes the skip branch when no runner resolves"
@@ -679,8 +684,8 @@ test_justfile_hanging_uvx_is_bounded() {
     # pin via a justfile-relative `bash bin/ruff-version.sh`, and just runs
     # recipes from the justfile's directory.
     local rc=0 out
-    out="$(cd "$REPO_ROOT" && command timeout 30 /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV HOME="$sb" PATH="$sb/bin" UVX_PROBE_TIMEOUT=2 \
+    out="$(cd "$REPO_ROOT" && bounded_run 30 /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV HOME="$sb" PATH="$sb/bin" UVX_PROBE_TIMEOUT=2 \
         "$REAL_SH" -c "$probe" 2>&1)" || rc=$?
 
     assert_true "[ \"$rc\" -ne 124 ]" \
@@ -889,7 +894,7 @@ test_required_version_mismatch_actually_blocks_ruff() {
 # branching would drift from the script and keep passing while the real one broke.
 # run_install_action <current> <pinned> <has_uv> <has_pipx>
 run_install_action() {
-    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+    /usr/bin/env -uBASH_ENV "$REAL_BASH" -c '
         eval "$(command sed -n "/^ruff_install_action() {/,/^}/p" "$1")"
         ruff_install_action "$2" "$3" "$4" "$5"
     ' _ "$REPO_ROOT/.devcontainer/post-create.sh" "$1" "$2" "$3" "$4" 2>&1
@@ -993,7 +998,7 @@ test_post_create_dispatch_handles_every_outcome() {
 run_dispatch() {
     local sb="$1" cur="$2" pin="$3" uv="$4" pipx="$5"
     command rm -f "$sb/install.log"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         HOME="$sb" PATH="$sb/bin" \
         current_ruff="$cur" RUFF_VERSION="$pin" have_uv="$uv" have_pipx="$pipx" \
         "$REAL_BASH" -c '
@@ -1076,7 +1081,7 @@ test_post_create_version_parse_is_validated() {
     # stub list purely for the test's own convenience, which is how that list
     # grew an inaccurate "load-bearing" claim in the first place.
     run_parse() {
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin" "$REAL_BASH" -c '
             eval "$(command awk "/^installed_ruff_version\\(\\) \\{/,/^\\}/" "$1")"
             installed_ruff_version || true
@@ -1192,7 +1197,7 @@ esac
 STUB
     command chmod +x "$sb/bin/python3"
 
-    out="$(cd "$REPO_ROOT" && command env --unset=BASH_ENV PATH="$sb/bin" \
+    out="$(cd "$REPO_ROOT" && command env -uBASH_ENV PATH="$sb/bin" \
         bash "$REPO_ROOT/tests/coverage-python.sh" 2>&1)" || rc=$?
 
     assert_equals "0" "$rc" \

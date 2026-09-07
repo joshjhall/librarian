@@ -20,7 +20,7 @@
 new_named_sandbox() {
     local __out="$1" name="$2" dir="$WORKDIR/$2"
     command mkdir -p "$dir" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" init -q 2>/dev/null || return 1
     command mkdir -p "$dir/.worktrees/.status"
     printf -v "$__out" '%s' "$dir"
@@ -29,7 +29,7 @@ new_named_sandbox() {
 # Local to this area: drives the hook with no golem id in the payload, which is
 # precisely what these fallback-branch tests exist to exercise.
 # run_notify_no_gid <sandbox> <payload> [subdir]
-# Like run_notify's jq path but with GOLEM_ID UNSET (via `env --unset=GOLEM_ID`),
+# Like run_notify's jq path but with GOLEM_ID UNSET (via `env -uGOLEM_ID`),
 # so branch 1 of the golem-id derivation cannot resolve and the hook falls back to
 # the worktree-basename branch (or the placeholder). Everything else mirrors
 # run_notify: GIT_* scrubbed, HOME pinned at the sandbox, results captured in
@@ -54,8 +54,8 @@ run_notify_no_gid() {
     (
         cd "$rundir" &&
             command printf '%s' "$payload" |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" -uGOLEM_ID \
                 HOME="$dir" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -157,7 +157,7 @@ test_golemid_issue_basename_from_subdir() {
 # run_notify's nojq mode (incl. the BASH_ENV unset, without which this
 # devcontainer's /etc/bash_env would restore PATH and silently re-enable jq).
 #
-# The `--unset=` options precede the NAME=VALUE assignments deliberately: env
+# The `-u` options precede the NAME=VALUE assignments deliberately: env
 # applies options first, so AGENT_ID is scrubbed by GOLEM_SCRUB and then set
 # back to exactly the value under test, never inherited from the ambient
 # environment.
@@ -173,8 +173,8 @@ run_notify_agent_id() {
         (
             cd "$dir" &&
                 command printf '%s' '{"message":"awaiting a decision"}' |
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                    "${GOLEM_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID --unset=BASH_ENV \
+                /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                    "${GOLEM_SCRUB[@]/#/-u}" -uGOLEM_ID -uBASH_ENV \
                     PATH="$stub" HOME="$dir" AGENT_ID="$aid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -182,8 +182,8 @@ run_notify_agent_id() {
         (
             cd "$dir" &&
                 command printf '%s' '{"message":"awaiting a decision"}' |
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                    "${GOLEM_SCRUB[@]/#/--unset=}" \
+                /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                    "${GOLEM_SCRUB[@]/#/-u}" \
                     HOME="$dir" AGENT_ID="$aid" GOLEM_ID="$gid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -191,8 +191,8 @@ run_notify_agent_id() {
         (
             cd "$dir" &&
                 command printf '%s' '{"message":"awaiting a decision"}' |
-                /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                    "${GOLEM_SCRUB[@]/#/--unset=}" --unset=GOLEM_ID \
+                /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                    "${GOLEM_SCRUB[@]/#/-u}" -uGOLEM_ID \
                     HOME="$dir" AGENT_ID="$aid" \
                     "$REAL_BASH" "$NOTIFY"
         ) >/dev/null 2>&1 || NOTIFY_RC=$?

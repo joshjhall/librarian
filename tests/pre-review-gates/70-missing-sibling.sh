@@ -37,7 +37,7 @@ test_missing_test_discovery_fails_loud() {
     local outfile errfile
     outfile="$(command mktemp)"
     errfile="$(command mktemp)"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$iso/pre-review-gates.sh" "$list" >"$outfile" 2>"$errfile" || rc=$?
     err="$(command cat "$errfile")"
     local out
@@ -73,7 +73,7 @@ test_diff_refusal_strips_control_bytes() {
 
     local errfile rc=0
     errfile="$(command mktemp)"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$GATE" "$list" >/dev/null 2>"$errfile" || rc=$?
     local err
     err="$(command cat "$errfile")"
@@ -122,7 +122,7 @@ open(sys.argv[1], "w").write(line + "\n")' "$list"
 
     local errfile rc=0
     errfile="$(command mktemp)"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$GATE" "$list" >/dev/null 2>"$errfile" || rc=$?
     local err
     err="$(command cat "$errfile")"

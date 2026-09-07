@@ -288,7 +288,7 @@ make_worktree_fixture() {
     git -C "$root/main" config user.name "lint-hook-silence" || return 1
     printf 'fixture\n' >"$root/main/README.md" || return 1
     git -C "$root/main" add README.md >/dev/null 2>&1 || return 1
-    git -C "$root/main" commit -qm "fixture" >/dev/null 2>&1 || return 1
+    git -C "$root/main" -c commit.gpgsign=false commit -qm "fixture" >/dev/null 2>&1 || return 1
     git -C "$root/main" worktree add -q "$root/wt" -b fixture-wt >/dev/null 2>&1 || return 1
     # A SECOND worktree, as a sibling of the first under a shared parent named
     # `issue-*`. The read-scope guard (#630) denies only PEER worktrees, so its
@@ -323,8 +323,13 @@ test_deny_path_still_emits() {
         return 0
     fi
 
-    main_root="$(cd "$fixture/main" && pwd)"
-    wt_root="$(cd "$fixture/wt" && pwd)"
+    # `pwd -P`, not `pwd`: macOS $TMPDIR is under /var, a symlink to
+    # /private/var. The guards resolve their inputs physically, so a payload
+    # carrying the /var spelling never looked like an escape and the guard
+    # correctly emitted NOTHING — making a working guard read as a missing deny
+    # envelope, i.e. this security assertion failed for a fixture reason (#932).
+    main_root="$(cd "$fixture/main" && pwd -P)"
+    wt_root="$(cd "$fixture/wt" && pwd -P)"
 
     # A worktree-escaping target: cwd inside the linked worktree, file_path in
     # the superproject checkout.
@@ -371,9 +376,10 @@ test_read_guard_deny_path_still_emits() {
         return 0
     fi
 
-    main_root="$(cd "$fixture/main" && pwd)"
-    wt_root="$(cd "$fixture/wts/issue-1" && pwd)"
-    peer_root="$(cd "$fixture/wts/issue-2" && pwd)"
+    # `pwd -P` for the same reason as the worktree-guard case above (#932).
+    main_root="$(cd "$fixture/main" && pwd -P)"
+    wt_root="$(cd "$fixture/wts/issue-1" && pwd -P)"
+    peer_root="$(cd "$fixture/wts/issue-2" && pwd -P)"
     : "$main_root"
 
     # cwd inside one golem worktree, target inside its PEER.

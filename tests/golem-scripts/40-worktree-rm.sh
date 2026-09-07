@@ -40,7 +40,7 @@ test_worktree_rm_round_trip() {
     assert_contains "$RUN_OUT" "removed worktree" "reports the worktree removal"
     assert_contains "$RUN_OUT" "deleted branch" "reports the branch deletion"
     local branches
-    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-34")"
     assert_equals "" "$branches" "the feature/issue-34 branch is gone after rm"
 }
@@ -54,7 +54,7 @@ test_worktree_rm_round_trip() {
 # session really is there) distinguishes the two behaviors: the old guarded code
 # would skip the kill (no "killed" line), the new code kills anyway. Pins that
 # `kill-session` is invoked with the exact-name `=golem-N` target and the
-# "killed tmux session" line still prints. --unset=BASH_ENV keeps the
+# "killed tmux session" line still prints. -uBASH_ENV keeps the
 # devcontainer's /etc/bash_env from resetting $PATH and shadowing the stub (see
 # run_launch_auth and the devcontainer-bash-env-path-reset note).
 test_worktree_rm_kills_session_despite_has_session_false() {
@@ -79,11 +79,11 @@ EOF
     local log="$sb/tmux-stub.log"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$log" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -133,11 +133,11 @@ EOF
     local log="$sb/tmux-stub.log"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$log" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -185,11 +185,11 @@ EOF
     local log="$sb/tmux-stub.log"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$log" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -219,7 +219,7 @@ EOF
 #
 # run_kill_outcome <rc> <stderr>
 run_kill_outcome() {
-    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+    /usr/bin/env -uBASH_ENV "$REAL_BASH" -c '
         eval "$(command sed -n "/^tmux_kill_outcome() {/,/^}/p" "$1")"
         tmux_kill_outcome "$2" "$3"
     ' _ "$WT_RM" "$1" "$2" 2>&1
@@ -313,11 +313,11 @@ EOF
     local log="$sb/tmux-stub.log"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$log" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -362,11 +362,11 @@ EOF
     local log="$sb/tmux-stub.log"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$log" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -407,10 +407,10 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -442,10 +442,10 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -487,10 +487,10 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -532,10 +532,10 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -577,14 +577,14 @@ EOF
     local log="$sb/tmux-stub.log"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
             LC_ALL=fr_FR.UTF-8 \
             LANGUAGE=fr \
             LC_MESSAGES=fr_FR.UTF-8 \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$log" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -700,15 +700,15 @@ test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
     # A separate outer repo carrying an identically-named branch. If worktree-rm
     # ran its `git branch -D` in the tainted env, it would delete THIS branch.
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
 
     # Run worktree-rm from the sandbox with the git env TAINTED toward outer.
@@ -718,7 +718,7 @@ test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
     out="$(cd "$sb" &&
         GIT_DIR="$outer/.git" GIT_COMMON_DIR="$outer/.git" \
             HOME="$sb" \
-            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            TMUX='' TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -727,9 +727,9 @@ test_worktree_rm_scrubs_tainted_git_env_for_mutations() {
     assert_exit 0 "$rc" "worktree-rm exits 0 despite a tainted git environment"
 
     local sb_branch outer_branch
-    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-79")"
-    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" branch --list "feature/issue-79")"
     assert_output_empty "$sb_branch" \
         "the SANDBOX branch was deleted (the mutation targeted the right repo)"
@@ -762,7 +762,7 @@ test_worktree_rm_scrubs_git_config_injection_for_mutations() {
         GIT_CONFIG_COUNT=1 \
             GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$hooks" \
             HOME="$sb" \
-            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            TMUX='' TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -773,7 +773,7 @@ test_worktree_rm_scrubs_git_config_injection_for_mutations() {
     assert_true "[ ! -e '$sb/.worktrees/issue-77' ]" \
         "the worktree directory is gone after rm despite the config injection"
     local sb_branch
-    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-77")"
     assert_output_empty "$sb_branch" \
         "the sandbox branch was deleted despite the GIT_CONFIG_* injection (scrub clears the dynamic pairs)"
@@ -805,15 +805,15 @@ test_worktree_rm_readonly_tainted_git_env_fails_loud() {
     # A separate outer repo carrying an identically-named branch: if worktree-rm
     # ran its `git branch -D` in the tainted env it would delete THIS branch.
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" -c commit.gpgsign=false commit -q --allow-empty -m outerseed 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" branch "feature/issue-79" 2>/dev/null || return 1
 
     # Source worktree-rm inside a child bash that makes GIT_DIR/GIT_COMMON_DIR
@@ -822,7 +822,7 @@ test_worktree_rm_readonly_tainted_git_env_fails_loud() {
     local out rc=0
     out="$(cd "$sb" &&
         HOME="$sb" \
-            TMUX='' TMUX_TMPDIR="$sb/.tmux" \
+            TMUX='' TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -841,9 +841,9 @@ test_worktree_rm_readonly_tainted_git_env_fails_loud() {
     # No mutation: the sandbox's worktree+branch survive, and the outer repo's
     # same-named branch is untouched (no cross-repo delete).
     local sb_branch outer_branch
-    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    sb_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-79")"
-    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    outer_branch="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" branch --list "feature/issue-79")"
     assert_not_empty "$sb_branch" \
         "the sandbox branch survives (aborted before the destructive branch -D)"
@@ -912,16 +912,16 @@ test_worktree_rm_repairs_stale_core_worktree() {
     new_sandbox sb
     # Simulate the corruption an interrupted `git worktree remove --force`
     # leaves behind: core.worktree pointing at a now-deleted worktree path.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" config core.worktree "$sb/.worktrees/issue-99"
     run_in "$sb" "$WT_RM" 99
     assert_exit 0 "$RUN_RC" "worktree-rm exits 0 while repairing a stale core.worktree"
     assert_contains "$RUN_OUT" "repaired stale core.worktree" "reports the repair"
     local val inside
-    val="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    val="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" config --get core.worktree || true)"
     assert_equals "" "$val" "the stale core.worktree is unset after repair"
-    inside="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    inside="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" rev-parse --is-inside-work-tree 2>/dev/null || true)"
     assert_equals "true" "$inside" "the main checkout is a work tree again after repair"
 }
@@ -932,12 +932,12 @@ test_worktree_rm_preserves_valid_core_worktree() {
     local sb
     new_sandbox sb
     # Point core.worktree at a path that exists on disk (the sandbox itself).
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" config core.worktree "$sb"
     run_in "$sb" "$WT_RM" 99
     assert_exit 0 "$RUN_RC" "worktree-rm exits 0 with a valid core.worktree"
     local val
-    val="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    val="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" config --get core.worktree || true)"
     assert_equals "$sb" "$val" "a valid, existing core.worktree is left untouched"
 }
@@ -948,7 +948,7 @@ test_worktree_rm_preserves_valid_core_worktree() {
 # way run_kill_outcome slices the tmux classifier. Runs in the caller's cwd so a
 # relative worktree path resolves the way the script uses it.
 run_dirty_state() {
-    /usr/bin/env --unset=BASH_ENV "$REAL_BASH" -c '
+    /usr/bin/env -uBASH_ENV "$REAL_BASH" -c '
         eval "$(command sed -n "/^worktree_dirty_state() {/,/^}/p" "$1")"
         worktree_dirty_state "$2"
     ' _ "$WT_RM" "$1" 2>&1
@@ -1020,7 +1020,7 @@ test_worktree_rm_deregistered_clean_is_not_reported_dirty() {
     assert_true "[ ! -e '$sb/.worktrees/issue-81' ]" \
         "the leftover directory is removed rather than skipped"
     local branches
-    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-81")"
     assert_equals "" "$branches" "teardown continues to the branch after the leftover cleanup"
 }
@@ -1153,8 +1153,8 @@ test_worktree_rm_refuses_a_worktree_dir_outside_the_repo() {
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR="$outside" \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -1227,7 +1227,7 @@ test_worktree_rm_dirty_refusal_leaves_worktree_registered() {
     # The load-bearing half: the refusal happened before any mutation, so the
     # worktree is still registered and the operator's own `git status` works.
     local listed
-    listed="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    listed="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" worktree list --porcelain | command grep -c "issue-83" || true)"
     assert_true "[ '$listed' -gt 0 ]" \
         "the worktree is still registered after the refusal (check ran before the mutation)"
@@ -1270,8 +1270,8 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
-            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1327,8 +1327,8 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
-            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1402,8 +1402,8 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
-            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1470,8 +1470,8 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
-            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1525,8 +1525,8 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
-            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1579,8 +1579,8 @@ EOF
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
-            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -1709,7 +1709,7 @@ test_worktree_rm_partial_leftover_removal_is_tolerated() {
         "reports every entry still on disk, including the .git it kept"
     assert_contains "$RUN_OUT" "virtiofs" "names the expected cause so it reads as benign"
     local branches
-    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    branches="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" branch --list "feature/issue-90")"
     assert_equals "" "$branches" "teardown CONTINUES to the branch after a partial removal"
 }

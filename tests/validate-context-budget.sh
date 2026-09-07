@@ -272,7 +272,7 @@ test_no_subcommand_exits_1() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$CTX_BUDGET" 2>&1)" || RUN_RC=$?
     assert_exit 1 "$RUN_RC" "no arguments is a usage error"
@@ -288,7 +288,7 @@ test_wrong_arity_exits_1() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$CTX_BUDGET" check "$sb" extra-arg 2>&1)" || RUN_RC=$?
     assert_exit 1 "$RUN_RC" "a third argument is a usage error, not a silently ignored extra"
@@ -296,7 +296,7 @@ test_wrong_arity_exits_1() {
 
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$CTX_BUDGET" check 2>&1)" || RUN_RC=$?
     assert_exit 1 "$RUN_RC" "a bare 'check' with no worktree is a usage error"
@@ -308,7 +308,7 @@ test_unknown_subcommand_exits_1() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$CTX_BUDGET" bogus "$sb" 2>&1)" || RUN_RC=$?
     assert_exit 1 "$RUN_RC" "an unknown subcommand is a usage error, not a silent check"
@@ -431,7 +431,7 @@ test_missing_jq_exits_3() {
     command ln -sf "$REAL_BASH" "$stub/bash"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             PATH="$stub" HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$CTX_BUDGET" check "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
     assert_exit 3 "$RUN_RC" "an absent jq exits 3, its own documented code"
@@ -491,7 +491,7 @@ test_dot_worktree_arg_resolves_like_absolute() {
     command mkdir -p "$sb/.worktrees/issue-42"
     RUN_RC=0
     RUN_OUT="$(cd "$sb/.worktrees/issue-42" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$CTX_BUDGET" check "." 2>&1)" || RUN_RC=$?
@@ -675,7 +675,7 @@ test_config_export_propagates_to_the_subprocess() {
     # config.sh's own `export` can carry it across the subprocess boundary.
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" -c 'CONTEXT_BUDGET_THRESHOLD=999999; . "$1"; "$2" check "$3"' \
             _ "$CONFIG_SH" "$CTX_BUDGET" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?

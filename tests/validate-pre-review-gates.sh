@@ -81,6 +81,12 @@ test_suite "pre-review-gates scan categories + skip policy (#83)"
 # rather than in a fragment: the EXIT trap must be installed once for the suite,
 # and several fragments read WORKDIR.
 WORKDIR="$(command mktemp -d)"
+# PHYSICAL path: macOS $TMPDIR sits under /var, a symlink to /private/var, so
+# `mktemp -d` hands back /var/... while git (and the gate's own repo_root)
+# resolve the same dir to /private/var/... Any prefix comparison between the two
+# spellings fails, so declared-convention rows matched against the sandbox path
+# silently missed (#932).
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # Explicit ORDERED fragment list — never a glob (tests/lib/fragments.sh).

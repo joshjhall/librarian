@@ -92,7 +92,7 @@ EOF
 # Invoke tracks-runbook.sh inside the sandbox. `--path-dir DIR` PREPENDS DIR to
 # PATH (for the tmux/gh stubs); omitting it runs against the ambient PATH.
 #
-# --unset=BASH_ENV for the same reason run_launch_auth needs it: in the
+# -uBASH_ENV for the same reason run_launch_auth needs it: in the
 # devcontainer BASH_ENV points at /etc/bash_env, whose /etc/bashrc.d/ scripts
 # hard-RESET $PATH — which would shadow the stubs these cases depend on.
 run_runbook() {
@@ -106,8 +106,8 @@ run_runbook() {
     [ -n "$pathdir" ] && use_path="$pathdir:$PATH"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$use_path" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
@@ -542,8 +542,8 @@ EOF
     command chmod +x "$sb/scripts/golem-launch.sh"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -563,8 +563,8 @@ test_runbook_outside_git_repo_exits_3() {
     outside="$(command mktemp -d "$WORKDIR/nogit.XXXXXX")"
     RUN_RC=0
     RUN_OUT="$(cd "$outside" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$outside" \
             "$REAL_BASH" "$RUNBOOK" render 2>&1)" || RUN_RC=$?
     assert_exit 3 "$RUN_RC" "running outside a git repo with no --status-dir exits 3"
@@ -756,8 +756,8 @@ test_runbook_reports_unknowable_staleness() {
     command ln -s "$jqbin" "$stub/jq"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$stub" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -830,8 +830,8 @@ test_runbook_without_jq_fails_loudly() {
     command mkdir -p "$stub"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$stub" \
             GOLEM_WORKTREE_DIR=.worktrees \

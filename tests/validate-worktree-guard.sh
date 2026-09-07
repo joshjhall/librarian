@@ -81,7 +81,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
     # git env that must NOT leak into the fixture or the hook's own `git -C` — else
     # the OUTER repo's GIT_DIR pins scope to the wrong tree. Held as an array so the
-    # `${arr[@]/#/--unset=}` expansion (bash-3.2 clean) yields one arg per var — the
+    # `${arr[@]/#/-u}` expansion (bash-3.2 clean) yields one arg per var — the
     # same idiom validate-golem-scripts.sh uses.
     GIT_SCRUB=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)

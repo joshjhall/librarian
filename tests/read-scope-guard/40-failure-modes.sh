@@ -180,7 +180,7 @@ test_redirected_root_fails_open_loudly() {
     local payload err
     payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/f"}}' "$pwt" "$ppeer")"
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_contains "$err" "does not contain cwd" \
         "a redirected worktree root degrades LOUDLY (a silent allow here is indistinguishable from a working guard)"
 }
@@ -238,7 +238,7 @@ test_root_escaping_target_allows_and_is_loud() {
     local payload err
     payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"/../../../etc/passwd"}}' "$WT_DIR")"
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_contains "$err" "escapes the filesystem root" \
         "...and is loud about why it could not scope the path"
 }
@@ -262,9 +262,9 @@ test_relative_target_no_cwd_allows_and_is_loud() {
     local payload out err
     payload='{"tool_name":"Read","tool_input":{"file_path":"peer-file.txt"}}'
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_output_empty "$out" \
         "a RELATIVE target with no cwd allows (fail-open), rather than being joined onto nothing"
     assert_contains "$err" "no cwd" \

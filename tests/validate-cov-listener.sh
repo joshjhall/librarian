@@ -69,7 +69,12 @@ eval "real_free_port() $(declare -f free_port | command sed '1d')"
 restore_alloc() { eval 'free_port() { real_free_port; }'; }
 restore_alloc
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 SQUAT_PID=""
 
 # The globals tests/lib/cov-listener.sh reads from its caller. PLUGINS_DIR is

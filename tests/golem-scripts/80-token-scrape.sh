@@ -51,7 +51,7 @@ test_scrape_no_arg_exits_1() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$SCRAPE" 2>&1)" || RUN_RC=$?
     assert_exit 1 "$RUN_RC" "scrape with no argument exits 1 (usage)"
@@ -117,8 +117,8 @@ test_scrape_no_jq_exits_3() {
     # the script use absolute paths so they survive the stripped PATH.
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             PATH="$sb/nojq-bin" \
             "$REAL_BASH" "$SCRAPE" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?

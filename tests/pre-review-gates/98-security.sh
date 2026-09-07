@@ -35,10 +35,10 @@ sec_run() {
     errfile="$(command mktemp)"
     SEC_RC=0
     if [ -n "$override" ]; then
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "SECURITY_SCANNER=$override" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "SECURITY_SCANNER=$override" \
             "$REAL_BASH" "$GATE" "$list" >"$outfile" 2>"$errfile" || SEC_RC=$?
     else
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             "$REAL_BASH" "$GATE" "$list" >"$outfile" 2>"$errfile" || SEC_RC=$?
     fi
     SEC_OUT="$(command cat "$outfile")"
@@ -254,7 +254,7 @@ test_security_scanner_resolves_from_installed_layout() {
     write_vulnerable_source "$d"
 
     SEC_RC=0
-    SEC_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    SEC_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$root/workflow/9.9.9/skills/ship-issue/pre-review-gates.sh" \
         "$(make_list "$d" vuln.py)" 2>/dev/null)" || SEC_RC=$?
 
@@ -308,7 +308,7 @@ test_security_scanner_prefers_the_lockstep_version() {
     write_vulnerable_source "$d"
 
     SEC_RC=0
-    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$root/workflow/9.9.9/skills/ship-issue/pre-review-gates.sh" \
         "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
 
@@ -326,7 +326,7 @@ test_security_scanner_fallback_is_numeric_not_lexicographic() {
     write_vulnerable_source "$d"
 
     SEC_RC=0
-    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$root/workflow/7.7.7/skills/ship-issue/pre-review-gates.sh" \
         "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
 
@@ -353,7 +353,7 @@ test_security_scanner_unresolvable_branch_names_the_search() {
     write_vulnerable_source "$d"
 
     SEC_RC=0
-    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$iso/lonely/pre-review-gates.sh" \
         "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
 
@@ -380,7 +380,7 @@ test_security_scanner_malformed_version_cannot_outrank_a_real_one() {
     write_vulnerable_source "$d"
 
     SEC_RC=0
-    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    SEC_ERR="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$root/workflow/7.7.7/skills/ship-issue/pre-review-gates.sh" \
         "$(make_list "$d" vuln.py)" 2>&1 >/dev/null)" || SEC_RC=$?
 

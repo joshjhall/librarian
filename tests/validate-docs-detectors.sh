@@ -81,7 +81,12 @@ if command -v python3 >/dev/null 2>&1 &&
     HAVE_PY=1
 fi
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # Per-skill directories.
@@ -158,11 +163,19 @@ make_list() {
 new_git_sandbox() {
     local __out="$1" dir
     dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    # Resolve to the PHYSICAL path. On macOS $TMPDIR lives under /var, which is a
+    # symlink to /private/var, so `mktemp -d` hands back a /var path while
+    # `git rev-parse --show-toplevel` (which the detectors call for PROJECT_ROOT)
+    # reports the resolved /private/var one. The detectors gate candidate dirs on
+    # a `case "$dir" in "${PROJECT_ROOT}"/*)` prefix match, so the two spellings
+    # never match and EVERY row is silently dropped -- a clean report of nothing,
+    # the #679 shape. Linux /tmp is not a symlink, so this is macOS-only.
+    dir="$(cd "$dir" && command pwd -P)" || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" config user.name "Test"
     printf -v "$__out" '%s' "$dir"
 }

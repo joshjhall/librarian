@@ -54,7 +54,12 @@ source "$SCRIPT_DIR/lib/harness.sh"
 MEASURE_PY="$REPO_ROOT/plugins/workflow/scripts/measure-spawn-prefix.py"
 MEASURE_SH="$REPO_ROOT/plugins/workflow/scripts/measure-spawn-prefix.sh"
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 test_suite "measure-spawn-prefix behavioral gate (#787)"

@@ -197,8 +197,8 @@ test_sinks_curl_absent_degrades() {
     (
         cd "$sb" &&
             command printf '%s' '{"message":"Claude needs your permission to run git push"}' |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub" HOME="$sb" GOLEM_ID="golem-1" \
                 GOLEM_EVENT_SINKS="http://127.0.0.1:9/x" \
                 "$REAL_BASH" "$NOTIFY"
@@ -234,8 +234,8 @@ test_sinks_fire_when_feed_unwritable() {
     (
         cd "$sb" &&
             command printf '%s' '{"message":"Claude needs your permission to run git push"}' |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub:$PATH" HOME="$sb" GOLEM_ID="golem-1" \
                 GOLEM_STATUS_DIR="readonly/nope/.status" \
                 GOLEM_EVENT_SINKS="http://127.0.0.1:9/x" \
