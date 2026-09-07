@@ -401,3 +401,30 @@ test_liveness_transcript_background_renders_item_count() {
     assert_contains "$LIVE_OUT" "background: 2 items" \
         "The rendered count reflects both open items (#949)"
 }
+
+# The SINGULAR render branch (#949 review). One open item must read "1 item", not
+# "1 items" — and this is the branch a real golem hits most, since the common
+# case is a single suite run or a single review harness. The plural case above
+# cannot cover it: they are separate arms of the same `case`, so a break in one
+# is invisible to the other.
+test_liveness_transcript_background_singular_item() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (transcript tier no-ops without jq)"
+        return 0
+    fi
+    local now
+    now="$(command date -u +%s)"
+    _run_liveness_snapshot_transcript 1200 0 \
+        "$(command printf '%s\n%s' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash"}]}}' \
+            '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"started"}]}}')" \
+        "{\"event\":\"register\",\"id\":\"work-9-aaaa\",\"golem\":\"golem-7\",\"kind\":\"bash\",\"description\":\"run-all.sh\",\"started\":\"2026-01-01T00:00:00Z\",\"started_epoch\":$now}"
+
+    assert_equals "0" "$LIVE_RC" "Liveness snapshot exits 0 with one open item"
+    assert_contains "$LIVE_OUT" "background: 1 item" \
+        "one open item renders in the SINGULAR (#949)"
+    assert_not_contains "$LIVE_OUT" "1 items" \
+        "and not as '1 items'"
+    assert_not_contains "$LIVE_OUT" "idle at prompt" \
+        "still never reported idle at prompt"
+}

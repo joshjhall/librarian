@@ -125,6 +125,53 @@ passing while asserting nothing about age.
 The general lesson, which is the same one the mutation round teaches: **a test
 that depends on an unchecked precondition is not testing what its name says.**
 
+## What the adversarial review found that the mutation round did not
+
+Review cycle 1 returned a **HIGH blocking correctness defect** in
+`work_open_items_nojq`, reproduced independently before fixing:
+
+```text
+  registered: work-…-7da2 (COMPLETED), work-…-1171 (should remain open)
+  jq path:    work-…-1171  two      <- correct
+  no-jq path: work-…-7da2  one      <- the COMPLETED item, open one dropped
+```
+
+The dedup loop set `IFS=$'\n'` for `set -- $oldrecs` and restored it only *after*
+the following `for keep_id in $oldids` loop — but `$ids` is **space**-delimited,
+so with IFS newline-only it never word-split: every id arrived as one iteration,
+`$i` desynchronized from the positional records, and the accumulator corrupted
+for any registry with 2+ lines. Both failure directions are the bug this feature
+exists to prevent: an open item vanishing reads as "nothing open" → `idle`, and a
+completed item surviving pins a false `background`.
+
+**Why five mutants missed it.** They targeted the *defect classes the issue
+named* — the two-knob boundary and numeric validation. This was a third class the
+issue did not name, in a code path the withdrawn version never had reviewed. A
+mutation round proves the tests catch the failures *you thought of*; it says
+nothing about the ones you did not. That is the argument for the adversarial
+review being a separate gate rather than a redundant one.
+
+**Why the suite was green through it.** `test_work_nojq_read_matches_jq_read`
+registered two items, completed none, and asserted only `count`. The reduction's
+dedup loop only runs when a slot must be *dropped*, so a fixture with no
+`complete` never entered it — and count parity held even while identities were
+swapped. Same-number is not same-answer. The test now uses three registers plus a
+complete and asserts **which** items each reader reports.
+
+Two further hardenings came out of the same cycle:
+
+- **The no-jq bounds were untested.** Every bound test called `run_work`, which
+  leaves PATH intact and so exercised only the jq arm — in exactly the
+  stripped-PATH environment the header calls a "full peer, not a degraded stub".
+  Added `test_work_nojq_bounds_match_jq_bounds`.
+- **A dangling flag collapsed to a default.** `--pid` with no value fell to
+  `${1:-}` = `""`, indistinguishable from "never passed", so the entry registered
+  with no pid and silently lost the dead-pid bound. Nine sites shared the shape;
+  `--worktree` was the sharpest, since collapsing it makes an *observer* resolve
+  ambiently and print a well-formed `0` that renders as `idle`. All nine now
+  refuse loudly, and `cmd_count`'s fail-soft contract gained an explicit
+  malformed-invocation-vs-runtime-condition boundary.
+
 ## Reproducing
 
 M1 and M3 need the full suite (they are wiring-level). M2, M4, and M5 are visible

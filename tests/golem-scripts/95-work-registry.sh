@@ -357,18 +357,94 @@ print("VALID")
 # whole value is being readable by an observer that may run under a stripped
 # environment, so they must agree on the same input.
 test_work_nojq_read_matches_jq_read() {
-    local sb now jq_count
+    local sb now jq_count jq_list
     new_sandbox sb
     now="$(_work_now)"
+    # THREE registers and a COMPLETE, not two bare registers. The shape matters:
+    # the reduction's dedup loop only runs when a slot must be dropped, so a
+    # fixture with no `complete` never enters it. The weaker fixture this
+    # replaces (2 registers, 0 completes) passed while the no-jq reader was
+    # reporting the WRONG ITEMS — see the identity assertions below.
     plant_work_registry "$sb" golem-42 \
-        "$(command printf '%s\n%s' \
+        "$(command printf '%s\n%s\n%s\n%s' \
             "$(work_register_line work-1-aaaa bash "one" "$now")" \
-            "$(work_register_line work-2-bbbb monitor "two" "$now")")"
+            "$(work_register_line work-2-bbbb monitor "two" "$now")" \
+            "$(work_register_line work-3-cccc workflow "three" "$now")" \
+            '{"event":"complete","id":"work-1-aaaa","golem":"golem-42"}')"
+
     run_work "$sb" count --golem golem-42
     jq_count="$RUN_OUT"
     run_work_nojq "$sb" count --golem golem-42
     assert_equals "$jq_count" "$RUN_OUT" "the no-jq reader agrees with the jq reader"
-    assert_equals "2" "$RUN_OUT" "and both see both open items"
+    assert_equals "2" "$RUN_OUT" "and both see exactly the two still-open items"
+
+    # COUNT PARITY IS NOT ENOUGH, and this is the whole lesson of the defect that
+    # prompted these lines. A desynchronized reduction emitted the COMPLETED item
+    # and dropped an open one — the count still read 2, so a count-only assertion
+    # was green while the identities were swapped. Same-number is not same-answer:
+    # assert WHICH items each reader reports.
+    run_work "$sb" list --golem golem-42
+    jq_list="$RUN_OUT"
+    run_work_nojq "$sb" list --golem golem-42
+    assert_equals "$jq_list" "$RUN_OUT" \
+        "the two readers report the SAME items, not merely the same number"
+    assert_contains "$RUN_OUT" "work-2-bbbb" "the open items are listed (work-2)"
+    assert_contains "$RUN_OUT" "work-3-cccc" "the open items are listed (work-3)"
+    assert_not_contains "$RUN_OUT" "work-1-aaaa" \
+        "the COMPLETED item is not reported open by the no-jq reader"
+}
+
+# The staleness bounds through the NO-JQ reader (#949 review). Every other bound
+# test calls run_work, which leaves PATH intact and therefore exercises the jq
+# arm; jq is present in dev and CI, so the no-jq reduction's own age arithmetic
+# and field extraction were unverified — in exactly the stripped-PATH environment
+# the header calls out as the reason this path must be a full peer rather than a
+# degraded stub.
+#
+# Table-driven over the three bounds so a future arm cannot be added without a
+# no-jq counterpart being obvious by its absence.
+test_work_nojq_bounds_match_jq_bounds() {
+    local sb now old dead
+    new_sandbox sb
+    now="$(_work_now)"
+    old="$((now - 7200))" # past the 3600 default
+
+    # (a) age-out: an old entry is reaped by BOTH readers.
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa workflow "leaked" "$old")"
+    run_work "$sb" count --golem golem-42
+    assert_equals "0" "$RUN_OUT" "jq reader ages out a leaked entry"
+    run_work_nojq "$sb" count --golem golem-42
+    assert_equals "0" "$RUN_OUT" "no-jq reader ages out a leaked entry too"
+
+    # (b) per-entry max_age wins over the ambient default, in both readers.
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa workflow "long job" "$((now - 5000))" "" 99999)"
+    run_work "$sb" count --golem golem-42
+    assert_equals "1" "$RUN_OUT" "jq reader honors a per-entry max_age"
+    run_work_nojq "$sb" count --golem golem-42
+    assert_equals "1" "$RUN_OUT" "no-jq reader honors a per-entry max_age too"
+
+    # (c) dead pid: reaped by both. The pid is VERIFIED dead (see dead_pid).
+    dead_pid dead || {
+        skip_test "could not obtain a verifiably dead pid"
+        return 0
+    }
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa bash "dead job" "$now" "$dead")"
+    run_work "$sb" count --golem golem-42
+    assert_equals "0" "$RUN_OUT" "jq reader reaps a dead pid"
+    run_work_nojq "$sb" count --golem golem-42
+    assert_equals "0" "$RUN_OUT" "no-jq reader reaps a dead pid too"
+
+    # (d) a torn line is skipped rather than aborting the no-jq read.
+    plant_work_registry "$sb" golem-42 \
+        "$(command printf '%s\n%s\n%s' \
+            "$(work_register_line work-1-aaaa bash "good one" "$now")" \
+            '{"event":"register","id":' \
+            "$(work_register_line work-2-bbbb bash "good two" "$now")")"
+    run_work_nojq "$sb" count --golem golem-42
+    assert_equals "2" "$RUN_OUT" "no-jq reader skips a torn line and counts both intact entries"
 }
 
 # --- numeric validation (the padded-zero defect class) ----------------------
@@ -551,4 +627,90 @@ test_work_unknown_subcommand_fails_loud() {
     run_work "$sb" frobnicate
     assert_true "[ \"$RUN_RC\" != '0' ]" "an unknown subcommand exits non-zero"
     assert_contains "$RUN_OUT" "unknown subcommand" "and says so"
+}
+
+# --- malformed invocation vs runtime fail-soft (#949 review) ----------------
+
+# A DANGLING flag must refuse loudly rather than collapse to an empty value.
+# Table-driven across every flag and subcommand, because the defect is the CLASS:
+# the original `x="${1:-}"` shape appeared at nine sites, and hardening only the
+# one a reviewer happened to name would leave the siblings exposed.
+#
+# `--worktree` is the sharpest case and the reason this is not cosmetic: its
+# whole purpose is to stop an OBSERVER resolving ambiently, so a dangling
+# `--worktree` would read the ASKER's registry, find nothing, and print a
+# well-formed `0` that renders as `idle` — the exact false verdict, arriving
+# through the argument parser.
+test_work_dangling_flag_refuses() {
+    local sb spec
+    new_sandbox sb
+    for spec in \
+        "register:bash:job:--pid" \
+        "register:bash:job:--max-age" \
+        "register:bash:job:--golem" \
+        "count:--worktree" \
+        "count:--golem" \
+        "count:--status-dir" \
+        "list:--worktree" \
+        "list:--golem"; do
+        # ':' -> argument boundary; the trailing field is the dangling flag.
+        local old_ifs="$IFS"
+        IFS=':'
+        # shellcheck disable=SC2086  # deliberate word-split on the ':' spec
+        set -- $spec
+        IFS="$old_ifs"
+        run_work "$sb" "$@"
+        assert_exit 2 "$RUN_RC" "dangling flag refuses: golem-work $spec"
+        assert_contains "$RUN_OUT" "requires a value" \
+            "the refusal names the missing value: $spec"
+    done
+}
+
+# THE CONTROL for the case above, and the reason it does not weaken `count`'s
+# fail-soft contract. A RUNTIME condition — nothing registered, a golem that does
+# not exist, a --worktree that is not a golem worktree, an explicit empty string
+# — must still print an integer and exit 0. Only a MALFORMED INVOCATION refuses.
+test_work_count_stays_fail_soft_on_runtime_conditions() {
+    local sb
+    new_sandbox sb
+    run_work "$sb" count --golem golem-does-not-exist
+    assert_exit 0 "$RUN_RC" "an unknown golem is a runtime condition, not an error"
+    assert_equals "0" "$RUN_OUT" "and counts zero"
+
+    run_work "$sb" count --worktree "$sb/not-a-worktree"
+    assert_exit 0 "$RUN_RC" "a non-worktree path stays fail-soft"
+    assert_equals "0" "$RUN_OUT" "and counts zero"
+
+    # An explicit empty STRING is an argument, not a dangling flag.
+    run_work "$sb" count --worktree ""
+    assert_exit 0 "$RUN_RC" "an explicit empty --worktree value stays fail-soft"
+    assert_equals "0" "$RUN_OUT" "and counts zero"
+}
+
+# cmd_list's observer flags exercised DIRECTLY (#949 review). Every other
+# observer test drives `count`; `list` shares work_observe_target but has its own
+# argument loop and its own error arm, so a break there would be invisible.
+test_work_list_observer_flags() {
+    local sb wt now
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42 nested/worktrees)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    now="$(_work_now)"
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa workflow "review harness" "$now")" \
+        "nested/worktrees/.status"
+
+    # --worktree resolves BOTH halves from the subject, read from an unrelated cwd.
+    run_work_at "$WORKDIR" nested/worktrees nested/worktrees/.status list --worktree "$wt"
+    assert_exit 0 "$RUN_RC" "list --worktree exits 0"
+    assert_contains "$RUN_OUT" "work-1-aaaa" "list --worktree reads the SUBJECT's registry"
+    assert_contains "$RUN_OUT" "review harness" "and renders the description"
+
+    # A path that is not a golem worktree is a usage error for `list` (unlike
+    # `count`, which is contractually fail-soft).
+    run_work_at "$WORKDIR" nested/worktrees nested/worktrees/.status list --worktree "$sb/nope"
+    assert_exit 2 "$RUN_RC" "list refuses a non-golem-worktree path"
+    assert_contains "$RUN_OUT" "not a golem worktree" "and says why"
 }

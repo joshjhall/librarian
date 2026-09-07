@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# golem-work.sh — the golem BACKGROUND-WORK REGISTRY (issue #890).
+# golem-work.sh — the golem BACKGROUND-WORK REGISTRY (issue #949, the explicit
+# half of the two-signal liveness design #890 opened).
 #
 # THE BUG THIS EXISTS FOR. golem-transcript-liveness.sh classifies a golem from
 # the last top-level assistant record's `message.stop_reason`: `tool_use` =>
@@ -37,16 +38,22 @@
 # GOLEM_STALL_THRESHOLD bound exists to prevent.
 #
 # So golem-transcript-liveness.sh carries a SECOND, IMPLICIT signal that requires
-# no registration at all: the tool call in the record just BEFORE the `end_turn`.
-# If that call is background-capable (Workflow / Monitor / a backgrounded Bash),
-# the turn may well have left work behind, and the verdict degrades to
+# no registration at all: EVERY top-level tool call made since the current turn
+# began. If ANY of them is background-capable (Workflow / Monitor / a backgrounded
+# Bash), the turn may well have left work behind, and the verdict degrades to
 # INDETERMINATE rather than to `idle`. The rule, stated once:
 #
-#   registry | last pre-end_turn tool call     | verdict
-#   ---------|---------------------------------|---------------------------
-#   open     | anything                        | background  (working)
-#   empty    | background-capable              | unknown -> exit 2
-#   empty    | ordinary (Read/Edit/...) / none | idle       (as before)
+#   registry | tool calls this turn              | verdict
+#   ---------|-----------------------------------|-------------------------
+#   open     | anything                          | background  (working)
+#   empty    | any background-capable            | unknown -> exit 2
+#   empty    | all ordinary (Read/Edit/...)/none | idle       (as before)
+#
+# EVERY call this turn, not merely the nearest one before the `end_turn`: a golem
+# that starts a background task and then makes one more ordinary call before
+# parking (Workflow -> Read -> end_turn) hides the evidence one hop back. That
+# shape occurs 3 times across 50 real transcripts in this repo. The owning file
+# states the derivation and its boundary; do not re-derive it from here.
 #
 # DEGRADE TOWARD UNKNOWN, NEVER TOWARD IDLE. Reaching `idle` now requires
 # POSITIVE evidence that the last turn ended on something that cannot have left
@@ -423,9 +430,25 @@ work_open_items_nojq() {
         # Drop any existing slot for this id (a re-register or a complete).
         local newids="" newrecs="" i=0 keep_id keep_rec
         local oldids="$ids" oldrecs="$recs"
+        # The two lists split on DIFFERENT separators, so IFS must be newline
+        # for `set -- $oldrecs` and back to the default for `for keep_id in
+        # $oldids` — restore it IMMEDIATELY after the `set --`, never after the
+        # loop.
+        #
+        # THE BUG THIS SHAPE HAD (#949 review). Restoring after the loop leaves
+        # IFS newline-only while `for keep_id in $oldids` runs, and `$ids` is
+        # SPACE-delimited — so it does not word-split at all: every id arrives as
+        # ONE iteration, `$i` desynchronizes from the positional records, and the
+        # accumulator is corrupted for any registry with 2+ lines. Measured: with
+        # two registers and a complete for the first, `list` printed the
+        # COMPLETED item and dropped the open one, while `count` coincidentally
+        # still said 1 and so looked correct. Both directions are the failure this
+        # file exists to prevent — a real item vanishing reads as "nothing open"
+        # -> `idle`, and a completed item surviving pins a false `background`.
         IFS='
 '
         set -- $oldrecs
+        IFS="$IFS_SAVE"
         for keep_id in $oldids; do
             i=$((i + 1))
             eval "keep_rec=\${$i}"
@@ -435,7 +458,6 @@ work_open_items_nojq() {
 "
             fi
         done
-        IFS="$IFS_SAVE"
         ids="$newids"
         recs="$newrecs"
         if [ "$ev" = "register" ]; then
@@ -623,21 +645,59 @@ work_valid_kind() {
     esac
 }
 
+# require_flag_value <flag> <remaining-argc> — refuse a dangling flag (#949
+# review). A flag whose value is missing must NOT collapse to the empty string:
+# empty is indistinguishable from "the flag was never passed", so the command
+# proceeds on an ambient default while the caller believes it stated one.
+#
+# That is the silent-degradation shape this whole file exists to prevent, and
+# `--worktree` is the sharpest instance: its entire purpose is to stop an
+# OBSERVER resolving ambiently, so a dangling `--worktree` reads the ASKER's
+# registry instead of the SUBJECT's, finds nothing, and renders `idle` — the
+# exact false verdict, arriving through the argument parser.
+#
+# Called as `require_flag_value --pid "$#" || return 2` AFTER the `shift`, so
+# $# is the count of arguments still available for the value.
+require_flag_value() {
+    if [ "$2" -eq 0 ]; then
+        command echo "golem-work: $1 requires a value" >&2
+        return 1
+    fi
+    return 0
+}
+
 cmd_register() {
     local kind="" desc="" pid="" max_age="" golem="" seen=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
+            # A DANGLING flag is an error, not an absent value (#949 review).
+            # `--pid` with nothing after it used to fall to `${1:-}` = "", which
+            # is indistinguishable from "the caller never passed --pid" — so the
+            # entry registered successfully with NO pid, silently losing the
+            # dead-pid bound while the caller believed it had armed it. A leaked
+            # entry would then sit `working` for the full hour instead of being
+            # reaped in seconds. Refuse loudly instead: the whole point of this
+            # file is that a degraded signal must never masquerade as a good one.
             --pid)
                 shift
-                pid="${1:-}"
+                if [ "$#" -eq 0 ]; then
+                    command echo "golem-work register: --pid requires a value" >&2
+                    return 2
+                fi
+                pid="$1"
                 ;;
             --max-age)
                 shift
-                max_age="${1:-}"
+                if [ "$#" -eq 0 ]; then
+                    command echo "golem-work register: --max-age requires a value" >&2
+                    return 2
+                fi
+                max_age="$1"
                 ;;
             --golem)
                 shift
-                golem="${1:-}"
+                require_flag_value --golem "$#" || return 2
+                golem="$1"
                 ;;
             *)
                 case "$seen" in
@@ -761,7 +821,8 @@ cmd_complete() {
         case "$1" in
             --golem)
                 shift
-                golem="${1:-}"
+                require_flag_value --golem "$#" || return 2
+                golem="$1"
                 ;;
             *)
                 case "$seen" in
@@ -913,15 +974,18 @@ cmd_list() {
         case "$1" in
             --golem)
                 shift
-                golem="${1:-}"
+                require_flag_value --golem "$#" || return 2
+                golem="$1"
                 ;;
             --status-dir)
                 shift
-                status_dir="${1:-}"
+                require_flag_value --status-dir "$#" || return 2
+                status_dir="$1"
                 ;;
             --worktree)
                 shift
-                worktree="${1:-}"
+                require_flag_value --worktree "$#" || return 2
+                worktree="$1"
                 ;;
             *)
                 command echo "golem-work list: unexpected argument '$1'" >&2
@@ -951,26 +1015,42 @@ cmd_list() {
     return 0
 }
 
-# ALWAYS prints an integer and ALWAYS exits 0 — including when the registry is
-# absent, unreadable, or the golem id cannot be derived. This is the fail-soft
-# contract golem-transcript-liveness.sh depends on: a consumer must be able to
-# read a number without branching on an error, because an errored count that got
-# treated as "0 open" would silently restore the false-idle verdict.
+# ALWAYS prints an integer and ALWAYS exits 0 for any RUNTIME condition — an
+# absent registry, an unreadable one, a golem id that cannot be derived, a
+# `--worktree` that is not a golem worktree. This is the fail-soft contract
+# golem-transcript-liveness.sh depends on: a consumer must be able to read a
+# number without branching on an error, because an errored count treated as
+# "0 open" would silently restore the false-idle verdict.
+#
+# THE ONE EXCEPTION, and why it does not weaken the contract (#949 review): a
+# MALFORMED INVOCATION — a dangling `--golem`/`--status-dir`/`--worktree` with no
+# value — exits 2 instead. That is not a runtime condition the caller should
+# absorb; it is a bug in the call itself, and absorbing it is precisely the
+# failure mode the contract exists to prevent. A dangling `--worktree` silently
+# collapsing to "" would resolve AMBIENTLY — reading the OBSERVER's registry
+# rather than the subject's, finding nothing, and printing a perfectly
+# well-formed `0` that renders as `idle`. Fail-soft covers "I looked and found
+# nothing"; it must not cover "I was asked the wrong question". Note an explicit
+# empty STRING (`--worktree ""`) is an argument, not a dangling flag, and stays
+# on the fail-soft path.
 cmd_count() {
     local golem="" status_dir="" worktree="" n
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --golem)
                 shift
-                golem="${1:-}"
+                require_flag_value --golem "$#" || return 2
+                golem="$1"
                 ;;
             --status-dir)
                 shift
-                status_dir="${1:-}"
+                require_flag_value --status-dir "$#" || return 2
+                status_dir="$1"
                 ;;
             --worktree)
                 shift
-                worktree="${1:-}"
+                require_flag_value --worktree "$#" || return 2
+                worktree="$1"
                 ;;
             *) ;;
         esac

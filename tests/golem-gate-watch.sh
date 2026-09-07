@@ -86,6 +86,7 @@ run_fragment_test test_liveness_transcript_indeterminate_falls_through "Liveness
 run_fragment_test test_liveness_transcript_background_wiring "Liveness registry (#949): open background work renders as WORKING, never 'idle at prompt'"
 run_fragment_test test_liveness_transcript_unregistered_background_falls_through "Liveness registry (#949): an unregistered background turn falls through to the mtime heartbeat"
 run_fragment_test test_liveness_transcript_background_renders_item_count "Liveness registry (#949): the rendered line carries the open-item count"
+run_fragment_test test_liveness_transcript_background_singular_item "Liveness registry (#949): one open item renders in the singular"
 run_fragment_test test_unknown_mode_exits_2 "Unknown mode exits 2 with a usage message"
 run_fragment_test test_no_arg_defaults_to_once "No argument defaults to --once (not the error path)"
 run_fragment_test test_fmt_age_formats "_fmt_age: seconds vs whole-minute formatting"
