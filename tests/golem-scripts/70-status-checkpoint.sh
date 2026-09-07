@@ -1289,3 +1289,154 @@ test_provision_write_status_issue_reassignment_resets_stale_fields() {
     assert_true "[ \"\$(jq -r '.started' '$status_file' 2>/dev/null)\" = '2026-01-01T00:00:00Z' ]" \
         "a numeric-string cached issue is coerced, not treated as a mismatch (started preserved)"
 }
+
+# The mtime fallback's fail-open guard (#522, deferred from #515's review).
+# `_mtime_epoch` swallows a stat failure via `'' | *[!0-9]*) return 0` — the same
+# guard golem-gate-watch.sh and golem-transcript-liveness.sh carry (the latter is
+# pinned by test_liveness_stale_working_stat_failure_fails_open); golem-status.sh
+# grew its own copy in #515 with no test. A `stat` that emits garbage must leave
+# ELAPSED at the bare "—" sentinel, never a fabricated "~<garbage>".
+#
+# The worktree dir AND its `.git` gitlink are planted deliberately: without them
+# _mtime_epoch's `[ -e ]` returns BEFORE calling stat, and the test would pass for
+# the reason test_status_checkpoint_elapsed_no_anchor_stays_dash already covers
+# rather than exercising the guard.
+#
+# Asserting "no ~age" ALONE would be green on the guard-removed build too: without
+# the guard, `$((now - not-a-number))` aborts under `set -u`, so the script CRASHES
+# instead of printing a bogus age — and a crashed run trivially contains no "~".
+# The exit code and the table header are what make the mutation fail (measured).
+test_status_checkpoint_elapsed_stat_failure_stays_dash() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status --checkpoint needs jq)"
+        return 0
+    fi
+    local sb stub t tp d
+    new_sandbox sb
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "review-cycle", "phase": "ship", "blocking": false }
+EOF
+    command mkdir -p "$sb/.worktrees/issue-42"
+    command printf 'gitdir: /somewhere/.git/worktrees/issue-42\n' >"$sb/.worktrees/issue-42/.git"
+    plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
+    # A symlink farm built by walking the REAL $PATH dirs, not a hand-listed set
+    # of the tools this script "needs": that list is always incomplete, because it
+    # grows through transitive callees rather than the script's own body. #810
+    # measured a hand-listed farm dying 127 three times running — at dirname, then
+    # basename/uname inside a shelled-out git subcommand, then mktemp inside a
+    # sibling script — with the target assertion staying green every time, since
+    # the script died before reaching the code under test. First dir wins, so
+    # resolution order mirrors the real PATH.
+    stub="$sb/stub-bin"
+    command mkdir -p "$stub"
+    # Collect the PATH entries under a SCOPED IFS first, then walk them with IFS
+    # back to normal — splitting on ':' only, so an entry holding a space survives
+    # intact. `tr ':' ' '` + an unquoted command substitution does NOT: it re-splits
+    # on default IFS, so "/opt/My Tools/bin" (plausible on the macOS this repo
+    # targets) becomes two fragments that both fail `[ -d ]` and are skipped in
+    # silence — re-creating the very #810 gap this loop exists to close (measured).
+    # Not `read -ra`, which is bash-4; this tree must stay bash-3.2 clean.
+    # ARM the space-in-PATH claim rather than merely asserting it in prose: a real
+    # CI/dev PATH usually holds no space-bearing entry, so without this the loop
+    # behaves identically with the fix and with the old `tr` form, and a regression
+    # back to `tr` would sail through. Prepending a space-bearing dir makes the two
+    # forms DIVERGE on the very run that matters (measured: `tr` drops it, IFS keeps
+    # it), and the assertion below is what fails if the splitting ever regresses.
+    local spacedir="$sb/opt/My Tools/bin"
+    command mkdir -p "$spacedir"
+    : >"$spacedir/zzfarmmarker"
+    command chmod +x "$spacedir/zzfarmmarker"
+    local farm_path="$spacedir:$PATH"
+    local path_dirs=()
+    local IFS=':'
+    for d in $farm_path; do path_dirs+=("$d"); done
+    unset IFS
+    for d in "${path_dirs[@]}"; do
+        [ -d "$d" ] || continue
+        for tp in "$d"/*; do
+            [ -x "$tp" ] && [ ! -d "$tp" ] || continue
+            t="$(command basename "$tp")"
+            [ -e "$stub/$t" ] || command ln -s "$tp" "$stub/$t"
+        done
+    done
+    # The space-bearing directory's binary made it into the farm — i.e. PATH was
+    # split on ':' alone. Under the old `tr ':' ' '` + unquoted-substitution form
+    # this fails, because that dir is torn into two non-existent fragments.
+    assert_true "[ -e '$stub/zzfarmmarker' ]" \
+        "a PATH entry containing a space is farmed intact, not silently skipped (#810)"
+    # Now subtract exactly one behavior: replace the farm's `stat` with a stub
+    # that emits garbage. UNLINK FIRST — a `>` redirect FOLLOWS a symlink, so
+    # writing straight over the farm entry targets the real /usr/bin/stat and dies
+    # "Permission denied" (measured), leaving the real stat live and the guard
+    # untested.
+    command rm -f "$stub/stat"
+    command printf '%s\n' '#!/usr/bin/env bash' 'echo not-a-number' >"$stub/stat"
+    command chmod +x "$stub/stat"
+    # The farm is only worth anything if the stub is what actually resolves.
+    assert_true "[ \"\$(PATH='$stub' command -v stat)\" = '$stub/stat' ]" \
+        "the garbage stat stub is what resolves on the fixture PATH, not the real one"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" \
+            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            CLAUDE_PROJECTS_DIR="$sb/projects" \
+            PATH="$stub" \
+            "$REAL_BASH" "$STATUS" --checkpoint 2>&1)" || RUN_RC=$?
+    assert_exit 0 "$RUN_RC" "a non-numeric stat result fails open — the render still exits 0 (#522)"
+    assert_contains "$RUN_OUT" "STATUS CHECKPOINT" \
+        "the table still renders on a stat failure (proves the guard, not a crash)"
+    assert_true "! printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+        "a garbage stat leaves ELAPSED at the bare — , never a fabricated ~age (#522)"
+}
+
+# The mtime fallback must not defeat #488 no-op suppression (#522, deferred from
+# #515's review). emit_checkpoint_row's comment asserts a SAFETY property —
+# ELAPSED is kept OUT of cp_sig precisely because the fallback's "~Ns" value
+# ADVANCES every sweep — but nothing exercised the fallback across a multi-sweep
+# --watch run, so the claim was prose. This is the regression test for it.
+#
+# Armed, not vacuous: the fallback age was measured advancing ~0s -> ~1s -> ~2s
+# across consecutive 1s sweeps, so folding ELAPSED into cp_sig makes every sweep's
+# signature differ and the full table re-renders each time — failing the
+# exactly-once assertion below.
+#
+# The "no change since" assertion is load-bearing twice over: it proves >=2 sweeps
+# actually ran (a single-sweep run would satisfy the exactly-once count vacuously)
+# AND that the later ones collapsed to the heartbeat. The "~" assertion pins the
+# test to the FALLBACK path — without it the test would also pass for a golem
+# whose ELAPSED was a bare "—" the whole time, i.e. with the fallback never firing.
+test_status_checkpoint_elapsed_fallback_watch_suppression() {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip_test "jq not available (golem-status table needs jq)"
+        return 0
+    fi
+    if ! command -v timeout >/dev/null 2>&1; then
+        skip_test "timeout not available (cannot bound the --watch loop)"
+        return 0
+    fi
+    local sb table_count
+    new_sandbox sb
+    # No "started" → the row's ELAPSED comes from the mtime fallback, which
+    # advances every sweep. That is the whole point of the fixture.
+    command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
+{ "golem": "golem-42", "issue": 42, "branch": "feature/issue-42",
+  "state": "impl", "phase": "make-it-work", "blocking": false }
+EOF
+    command mkdir -p "$sb/.worktrees/issue-42"
+    command printf 'gitdir: /somewhere/.git/worktrees/issue-42\n' >"$sb/.worktrees/issue-42/.git"
+    run_in_watch "$sb" 3 GOLEM_SWEEP_INTERVAL=1 -- --checkpoint --watch --level 3
+    assert_exit 0 "$RUN_RC" "bounded --checkpoint --watch loop over a fallback-ELAPSED golem exits cleanly"
+    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+        "the rendered row really used the ~-marked mtime fallback (not a bare —)"
+    table_count="$(command printf '%s\n' "$RUN_OUT" | command grep -c '^STATUS CHECKPOINT')"
+    assert_true "[ '$table_count' = '1' ]" \
+        "an advancing ~age does not re-render the table each sweep — ELAPSED stays out of cp_sig (got $table_count) (#522)"
+    assert_contains "$RUN_OUT" "no change since" \
+        "later no-op sweeps still collapse to a heartbeat under the fallback (proves >=2 sweeps)"
+}

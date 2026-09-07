@@ -40,6 +40,7 @@ evidence a fix works, and before reporting a mutation round's verdict.
 - [Self-skipping test hides the risky branch](self-skipping-test-hides-the-risky-branch.md) — skip-if-tool-absent covers only the present arm; force absence instead (#543)
 - [Shimmed PATH didn't hide the tool](false-negative-from-env-restoring-path.md) — BASH_ENV restores it; assert the absence BEFORE testing what depends on it
 - [Tool-absence fixture needs a symlink farm](tool-absence-fixture-needs-a-symlink-farm.md) — a hand-listed stub PATH dies 127 at a new tool, and the no-op assertion stays green
+- [Stub write follows the farm symlink](stub-write-follows-the-farm-symlink.md) — `>` over a farm entry hits the REAL binary; `rm -f` the link first, or the stub never runs
 - [Upstream guard hides the branch under test](upstream-guard-hides-the-branch-under-test.md) — arm the condition mid-run, or an earlier guard answers and the test proves nothing (#813)
 - [A counter in a subshell is discarded](counter-in-subshell-is-discarded.md) — a double called via `$(...)` loses its count and repeats forever; blame the fixture before the code
 - [Synthetic SCRIPT_DIR needs the new sibling](synthetic-script-dir-needs-the-new-sibling.md) — a new sourced fragment breaks shadow-dir fixtures; fix the fixture, never the assertion
