@@ -67,6 +67,7 @@
 - [An exemption is a runtime claim — measure it](exemption-is-a-runtime-claim-measure-it.md) — ask which ACTOR runs it; a ratchet needs a floor too; 3 asserted boundaries wrong in one change
 - [Diff the render before and after](render-diff-before-and-after-an-extraction.md) — a green suite pins only what someone asserted; capture whole output, every mode
 - [split-verify proves the split](split-verify-proves-the-split.md) — tests can't show nothing was DROPPED; run it on every extraction, before the reviewer asks
+- [An extracted region breaks its slicers](extracted-region-breaks-its-slicers.md) — a sed-sliced region that MOVES yields an empty eval; the test fails as if the subject regressed
 - [Split entry point drops the reporter](split-entry-point-drops-the-reporter.md) — rebuilt from run_test lines, it loses generate_report: FAILs while exiting 0 (#899)
 - [Reproduce outside the tool first](reproduce-outside-the-tool-first.md) — curl before instrumenting; A/B your own capture; a constant duration is a timeout, not congestion
 - [Local pass + CI hang = unbounded wait](local-pass-remote-hang-is-a-timeout-gap.md) — a listen()ing squatter makes connect SUCCEED then block; bound every probe, check the BODY not the connect
