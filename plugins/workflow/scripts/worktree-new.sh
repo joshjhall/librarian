@@ -234,7 +234,11 @@ case "$cred_url" in
                 # resurfaces much later as the original `fatal:`, at ship time,
                 # with no clue pointing back here. Same fail-loud posture as the
                 # submodule warning above.
-                if [ "$(command git -C "$wt" config --get \
+                # --local here too: the write above is --local, so a bare
+                # (merged) read could confirm success from an operator's GLOBAL
+                # helper when the local write silently failed — precisely the
+                # false "seeded" report this verify block exists to prevent.
+                if [ "$(command git -C "$wt" config --local --get \
                     "credential.${cred_host}.helper" 2>/dev/null)" = "$cred_helper" ]; then
                     command echo "  seeded git credential helper ($cred_cli) for $cred_host"
                 else
