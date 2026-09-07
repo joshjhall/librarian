@@ -854,3 +854,25 @@ test_zero_and_unparsed_are_distinct_outcomes() {
     _plugin_probe_run "$sb" "$sb/reworded" launch
     assert_exit 2 "$RUN_RC" "an unreadable count does not — the two outcomes stay distinct"
 }
+
+# The SAME fail-open question, one layer down. `plugin_skill_count` needs a
+# scratch file to hold the probe's stdout (a command substitution cannot bound —
+# see the timeout test above), and an unwritable TMPDIR makes that mktemp fail.
+# An early `return 0` there would emit an empty count, which the caller reads as
+# "plugin absent" — so a read-only /tmp would refuse every dispatch on the host
+# for a reason having nothing to do with the plugin.
+#
+# Found while re-reading the fix, not by a reviewer: the same defect class as the
+# unparsed branch, reached by a different route. Both must announce UNVERIFIED
+# and proceed, and each must name its OWN cause — a temp-file failure reported as
+# "the CLI format changed" would send an operator to update a working scraper.
+test_launch_unwritable_tmpdir_warns_but_proceeds() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" ok
+    _plugin_probe_run "$sb" "$sb/probe" launch TMPDIR="$sb/no-such-tmpdir"
+    assert_exit 2 "$RUN_RC" "an unusable TMPDIR proceeds (missing-worktree exit 2), never refuses"
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "a scratch-file failure must not block dispatch"
+    assert_contains "$RUN_OUT" "UNVERIFIED" "it is announced rather than passing as healthy"
+    assert_contains "$RUN_OUT" "TMPDIR" "and names its own cause, not a CLI-format change"
+}

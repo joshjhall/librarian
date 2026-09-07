@@ -143,6 +143,20 @@ version as fail-closed. It was a real defect: worth recording that the guard's
 first draft got the failure direction wrong in exactly the way this repo keeps
 filing issues about, just inverted.
 
+Re-reading the fix then turned up **the same defect one layer down**, by a
+different route: `plugin_skill_count` needs a scratch file (a command
+substitution cannot bound — see the timeout note below), and its `mktemp`
+failure path returned early with an empty count, which the caller reads as
+*absent*. An unwritable `TMPDIR` would therefore have refused every dispatch on
+the host, for a reason having nothing to do with the plugin. Same class, same
+correction: announce `UNVERIFIED` and proceed. The two unverified causes report
+**separately** — a scratch-file failure described as "the CLI format changed"
+would send an operator off to update a scraper that works fine.
+
+The lesson worth carrying: after fixing a fail-closed branch, grep the function
+for **every** other early return that yields the same sentinel. One reviewer
+found one; the second instance was reachable the whole time.
+
 **A hang must refuse, not skip.** An unresponsive CLI is not evidence of a
 healthy plugin. The bound needed a correction found during implementation:
 capturing the probe through a command substitution (`out="$(bounded_run …)"`)

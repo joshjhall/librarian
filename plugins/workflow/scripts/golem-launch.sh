@@ -421,12 +421,20 @@ plugin_skill_count() {
     probe="${GOLEM_PLUGIN_PROBE:-claude}"
     [ -n "$name" ] || return 0
     command -v "$probe" >/dev/null 2>&1 || return 0
-    tmp="$(command mktemp 2>/dev/null)" || return 0
+    # A scratch file we cannot create teaches us nothing about the plugin, so it
+    # is "unverified", NOT "absent" — the same distinction the unparsed branch
+    # below draws. Returning empty here would make a read-only /tmp refuse every
+    # dispatch on the host.
+    tmp="$(command mktemp 2>/dev/null)" || {
+        command printf 'noscratch\n'
+        return 0
+    }
     # Three OUTCOMES, not two — the distinction is what keeps a CLI wording
     # change from becoming an outage (see the fail-closed note in the caller):
-    #   ""          the probe failed / timed out → the plugin is gone
-    #   <digits>    a parsed count (0 = resolves but discovers nothing)
-    #   "unparsed"  the probe SUCCEEDED but printed no recognizable count
+    #   ""           the probe failed / timed out → the plugin is gone
+    #   <digits>     a parsed count (0 = resolves but discovers nothing)
+    #   "unparsed"   the probe SUCCEEDED but printed no recognizable count
+    #   "noscratch"  no temp file could be created → nothing was learned
     if bounded_run "${GOLEM_PLUGIN_PROBE_TIMEOUT:-15}" \
         "$probe" plugin details "$name@$mp" >"$tmp" 2>/dev/null; then
         count="$(command sed -n 's/.*Skills (\([0-9][0-9]*\)).*/\1/p' "$tmp" |
@@ -468,7 +476,11 @@ check_plugin_resolvable() {
     # learned nothing about the plugin, so it warns and proceeds at every level;
     # the two outcomes it CAN read (absent, zero-skills) keep refusing.
     if [ "$count" = "unparsed" ]; then
-        command echo "golem-launch: WARNING cannot read a skill count from \`$probe_name plugin details $name@$mp\` — the plugin resolved but its output was unrecognizable, so resolvability is UNVERIFIED (proceeding; the scraper likely needs updating for a new CLI format)." >&2
+        command echo "golem-launch: WARNING cannot read a skill count from \`$probe_name plugin details $name@$mp\` — it resolved but printed no recognizable count, so resolvability is UNVERIFIED (proceeding; the scraper likely needs updating for a new CLI format)." >&2
+        return 0
+    fi
+    if [ "$count" = "noscratch" ]; then
+        command echo "golem-launch: WARNING could not create a temp file to probe $name@$mp, so resolvability is UNVERIFIED (proceeding; check TMPDIR)." >&2
         return 0
     fi
 
