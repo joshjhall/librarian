@@ -288,6 +288,79 @@ test_real_shards_claim_every_stage() {
 # Each shard must be independently runnable — that is the whole premise of the
 # matrix. Asserted structurally (a shard names at least one gate) rather than by
 # running them, which would cost the full suite three times over.
+# --- worktree-mutating stages must not be split across shards ---------------
+
+# THE CONSTRAINT (#960 comment; the hazard #961 makes acute).
+#
+# tests/lib/golem-sandbox.sh CREATES AND REMOVES GIT WORKTREES in the repo under
+# test. Two suites doing that against the SAME checkout contend on shared
+# worktree state, and the symptom is not a failure — it is a STALL at an
+# arbitrary point, whichever run reaches a worktree operation first. Measured on
+# pristine main with 13 GB free and healthy load, so it is contention, not
+# resource starvation, and it cost about an hour of wall clock across two lanes.
+#
+# It presents exactly like the symptom this issue opens with: a job cancelled at
+# `timeout-minutes` with nothing having failed (#932 at 25m15s, #834 at 15m).
+# That resemblance is why the constraint has to be pinned rather than remembered
+# — the next person to see it will reasonably read it as a slow suite.
+#
+# ON GITHUB ACTIONS each matrix leg gets its own runner and its own checkout, so
+# the hazard does not apply there. That is an ASSUMPTION the design should state
+# rather than inherit silently, and it is exactly why this gate is worth having:
+# LOCALLY, `run-all.sh --shard N` runs in the developer's own checkout, and two
+# such invocations in parallel share it. Whether anyone does that today is not
+# the point — nothing currently stops them, and the failure is a silent stall.
+#
+# So: every stage whose suite reaches golem-sandbox.sh must live in ONE shard.
+# Co-locating them means a single shard's stages run sequentially (run_stage is
+# serial), which is what makes them safe. Splitting them across two shards is
+# what would put two worktree-mutating runs in flight at once.
+#
+# Keyed on the SANDBOX rather than on a hand-listed set of stage names: the list
+# of suites that source it changes, and a name list would drift into a false
+# claim. This resolves the current set from the source every run.
+test_worktree_mutating_stages_share_one_shard() {
+    local f base owners="" shard hits
+
+    # Every tests/*.sh whose suite SOURCES the worktree-creating sandbox.
+    #
+    # Both greps match CODE, not prose, and both had to be tightened after this
+    # gate's first run reported a violation that did not exist:
+    #
+    #   - `^[[:space:]]*(source|\.) ` on the consumer side. A bare
+    #     `grep -q golem-sandbox.sh` matched THIS FILE, whose comment above names
+    #     the sandbox — the gate reported itself as a worktree mutator.
+    #   - `^[[:space:]]*run_stage ` on the shard side. A bare `grep -rl "$base"`
+    #     matched every shard's HEADER COMMENT (each names validate-shards.sh),
+    #     so a consumer resolved to whichever shard sorted first rather than to
+    #     the shard that dispatches it.
+    #
+    # Together they produced "10-portability.sh 20-golem.sh" over a correct
+    # partition. A gate whose first finding is its own parser bug is the normal
+    # case for a new structural check — the fix belongs in the checker, never in
+    # the subject it was about to make someone "fix".
+    for f in "$SCRIPT_DIR"/*.sh; do
+        base="${f##*/}"
+        command grep -Eq '^[[:space:]]*(source|\.)[[:space:]].*golem-sandbox\.sh' "$f" 2>/dev/null || continue
+        shard="$(command grep -rlE "^[[:space:]]*run_stage .*/$base\"" "$SHARD_DIR" 2>/dev/null | command head -n1)"
+        [ -n "$shard" ] || continue
+        owners="$owners${shard##*/}
+"
+    done
+
+    # NON-VACUITY FIRST: if the sweep found nothing, the two assertions below
+    # would both pass while checking nothing at all — the shape this whole gate
+    # exists to prevent. golem-sandbox.sh has at least two consumers today.
+    hits="$(command printf '%s' "$owners" | command grep -c . | command tr -d '[:space:]')"
+    assert_true "[ '$hits' -ge 2 ]" \
+        "the sweep found the worktree-mutating suites (found $hits; a zero-hit sweep asserts nothing)"
+
+    local distinct
+    distinct="$(command printf '%s' "$owners" | command grep -v '^$' | command sort -u)"
+    assert_equals 1 "$(command printf '%s\n' "$distinct" | command grep -c .)" \
+        "every worktree-mutating suite is in ONE shard (splitting them lets two runs contend on the same checkout and STALL — got: $(command printf '%s' "$distinct" | command tr '\n' ' '))"
+}
+
 test_each_shard_is_non_empty() {
     local f base n
     for f in "$SHARD_DIR"/*.sh; do
@@ -335,6 +408,7 @@ run_test test_clean_partition_reports_no_duplicates "direction 4 non-vacuity: a 
 run_test test_real_shards_have_no_duplicate_stages "the real manifest has no duplicate stage"
 run_test test_real_manifest_is_parseable_and_complete "the real manifest is parseable, wired, and complete"
 run_test test_real_shards_claim_every_stage "the real shards claim the full stage corpus"
+run_test test_worktree_mutating_stages_share_one_shard "worktree-mutating stages are confined to ONE shard (#960 comment / #961)"
 run_test test_each_shard_is_non_empty "every shard dispatches at least one stage"
 run_test test_default_invocation_selects_every_shard "AC1: a bare invocation selects every shard"
 run_test test_unknown_shard_is_a_hard_error "an unknown --shard fails loudly, never an empty green run"

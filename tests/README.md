@@ -51,6 +51,20 @@ files. If a shard ever approaches its `timeout-minutes`, re-balance or add a
 shard rather than raising the cap — the cap bounds a hang, and raising it is
 what #834 and #932 each did before the split.
 
+**One constraint on re-balancing: worktree-mutating stages stay together.**
+`tests/lib/golem-sandbox.sh` creates and removes git worktrees in the repo under
+test, so two suites using it against the *same checkout* contend on shared
+worktree state. The symptom is a **stall**, not a failure, at an arbitrary point
+— which looks exactly like the `timeout-minutes` cancellation that motivated
+sharding in the first place.
+
+On GitHub Actions each matrix leg gets its own runner and its own checkout, so
+this hazard does not apply there — an assumption worth stating rather than
+inheriting silently. It *is* live locally: two parallel `--shard N` invocations
+share one checkout. Keeping those stages in one shard makes them sequential,
+which is what makes them safe, and `tests/validate-shards.sh` enforces it.
+See #961 for the unbounded capture that turns the contention into a hang.
+
 **Design & roadmap:** see [`ARCHITECTURE.md`](ARCHITECTURE.md) for the test
 layers (unit / integration / behavioral), how each maps to the gate that
 implements it, the priority-ordered gaps, and the LLM-in-the-loop decision.

@@ -6,6 +6,21 @@
 # stop/route decision helpers and the release toolchain all exercise the
 # same sandbox machinery in tests/lib/golem-sandbox.sh.
 #
+# DO NOT MOVE A STAGE OUT OF HERE IF ITS SUITE SOURCES golem-sandbox.sh.
+# That sandbox creates and removes git worktrees in the repo under test, and two
+# suites doing that against the SAME checkout contend on shared worktree state.
+# The symptom is not a failure but a STALL at an arbitrary point — measured on
+# pristine main with 13 GB free and healthy load, so it is contention rather
+# than resource starvation, and it cost ~1h of wall clock across two lanes.
+#
+# It presents exactly like the symptom that motivated this whole issue: a job
+# cancelled at `timeout-minutes` with nothing having failed. On GitHub Actions
+# each matrix leg gets its own runner and checkout so the hazard does not apply,
+# but `run-all.sh --shard N` run twice LOCALLY shares one checkout — that is the
+# live case. Keeping these stages together makes them sequential, which is what
+# makes them safe. tests/validate-shards.sh enforces it. See #961 for the
+# unbounded capture that turns the contention into an unrecoverable hang.
+#
 # SOURCED by tests/run-all.sh (and by tests/validate-shards.sh with a stub
 # run_stage), never executed — hence no shebang. Sourcing with a stub run_stage
 # is what lets the partition be checked WITHOUT running the suite: the stub
