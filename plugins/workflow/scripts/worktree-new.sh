@@ -46,9 +46,22 @@ cd "$root"
 wt="$GOLEM_WORKTREE_DIR/issue-$N"
 br="${GOLEM_BRANCH_PREFIX}${N}"
 
+# Both properties at once, rather than trading one for the other (#928 review).
 # `git worktree list` failing must NOT read as "no such worktree" — that would
-# let this create a second worktree over a broken repo, so its status is kept.
-if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then # lint-allow-pipe-grep-q: git's own failure must propagate, not read as absent
+# let this create a second worktree over a broken repo. But keeping the PIPE to
+# preserve git's exit status also keeps the #928 SIGPIPE inversion this very PR
+# is about: a genuine match makes `grep -q` exit first, git dies 141, and
+# pipefail turns "worktree EXISTS" into "absent". Capture first: the here-string
+# leaves no writer to signal.
+#
+# The `set -e` half is MEASURED, not assumed (git 2.55.0, corrupted .git/HEAD):
+# the capture form exits 128, while the old piped form exits 0 and reports the
+# worktree ABSENT — silently absorbing the failure and proceeding. It carries no
+# regression test: every cheap way to break `git worktree list` also breaks the
+# earlier `repo_root` call, so such a test passes for the wrong reason. Recorded
+# as measured-but-unguarded rather than asserted-and-untested.
+wt_list="$(command git worktree list --porcelain)"
+if command grep -qx "worktree $root/$wt" <<<"$wt_list"; then
     command echo "worktree-new: $wt already exists — remove it first (worktree-rm.sh $N)" >&2
     exit 1
 fi

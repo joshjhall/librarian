@@ -173,7 +173,7 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
    # not all digits. (The guard is independent of permission mode: golems run
    # under the repo's `auto` mode, NOT --dangerously-skip-permissions; see the
    # orchestrate skill § Supervised launch & central feed.)
-   if ! printf '%s' "$ISSUE" | command grep -qE '^[0-9]+$'; then
+   if ! command grep -qE '^[0-9]+$' <<<"$ISSUE"; then
        if [ -n "$ISSUE" ]; then
            echo "WARNING: AGENT_ISSUE='$ISSUE' is not a numeric issue id — starting interactive session instead" >&2
        fi
@@ -215,9 +215,9 @@ pipeline. SKILL.md Steps 1, 3, 4, and 5 surround this step.
            # mid-flight. fail > pending > passing precedence.
            local checks_out
            checks_out="$(command gh pr checks "$pr" 2>/dev/null)"
-           if printf '%s' "$checks_out" | command grep -qiE '\bfail'; then
+           if command grep -qiE '\bfail' <<<"$checks_out"; then
                ci="failing"
-           elif printf '%s' "$checks_out" | command grep -qiE '\bpending|\bin_progress|\bqueued'; then
+           elif command grep -qiE '\bpending|\bin_progress|\bqueued' <<<"$checks_out"; then
                ci="pending"
            else
                ci="passing"

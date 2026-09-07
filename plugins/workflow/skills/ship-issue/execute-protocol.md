@@ -171,7 +171,8 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
      # `.`, `[`, `*`, `^`, `$` in a branch name, all of which are regex
      # metacharacters — an unescaped `fix/v1.2` would match `fix/v1X2` and could
      # withhold `--delete-branch` on a branch no worktree actually holds.
-     if git worktree list --porcelain | command grep -qFx "branch refs/heads/$BRANCH"; then
+     wt_list="$(git worktree list --porcelain)"
+     if command grep -qFx "branch refs/heads/$BRANCH" <<<"$wt_list"; then
          gh pr merge "$PR_NUM" --squash              # a worktree holds it: local prune would fail
      else
          gh pr merge "$PR_NUM" --squash --delete-branch
@@ -212,7 +213,8 @@ Continue here once `gh pr create` / `glab mr create` has opened the PR.
          # Do not ASSERT the reason — check it. A surviving local branch is
          # benign only if a worktree actually holds it; after the
          # `--delete-branch` arm it is the #652 bug itself.
-         if git worktree list --porcelain | command grep -qFx "branch refs/heads/$BRANCH"; then
+         wt_list="$(git worktree list --porcelain)"
+         if command grep -qFx "branch refs/heads/$BRANCH" <<<"$wt_list"; then
              echo "NOTE: local branch $BRANCH still present — a worktree holds it; worktree-rm.sh deletes it at teardown" >&2
          else
              echo "WARNING: local branch $BRANCH still present and NO worktree holds it — the local prune silently failed" >&2

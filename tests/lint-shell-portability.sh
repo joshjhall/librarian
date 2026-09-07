@@ -476,13 +476,20 @@ scan_file_pipe_grep_q() {
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno + 1))
         code="$line"
-        case "$code" in
-            \#*)
-                # A whole-line comment neither violates nor breaks a pending
-                # pipe: `cmd |` followed by a comment line then `grep -q` is
-                # still one pipeline, so the state deliberately survives.
-                continue
-                ;;
+        # A whole-line comment neither violates nor breaks a pending pipe:
+        # `cmd |` followed by a comment line then `grep -q` is still ONE
+        # pipeline, so the state deliberately survives.
+        #
+        # INDENTATION-TOLERANT, and that is load-bearing (#928 review). A bare
+        # `\#*` match only catches a comment at column 0, but this repo indents
+        # its comments 4 spaces. An indented comment then fell through to the
+        # trailing-comment strip below, was reduced to pure whitespace, failed
+        # the `*[![:space:]]*` test in the continuation recompute, and SILENTLY
+        # cleared `pending_pipe` — so a commented multi-line pipeline read as
+        # clean while the header claimed it was covered. Strip leading
+        # whitespace before testing for the `#`.
+        case "${code#"${code%%[![:space:]]*}"}" in
+            \#*) continue ;;
         esac
         code="${code%%[[:space:]]#*}"
         # An explicit `# lint-allow-pipe-grep-q: <reason>` marker exempts a line
@@ -491,10 +498,27 @@ scan_file_pipe_grep_q() {
         # `lint-allow-pipe-grep-q:` with nothing after the colon does NOT exempt,
         # so an exemption can never be taken silently. `*[![:space:]]*` demands
         # at least one non-whitespace character in the tail.
+        # SCOPED TO THE COMMENT, not the raw line (#928 cycle-2 review). Testing
+        # `$line` would exempt a genuine violation whose grep SEARCH STRING
+        # merely contains the marker text — verified: a real
+        # `printf … | grep -q "lint-allow-pipe-grep-q: fake reason"` went
+        # silently unflagged. That is a gate bypass reachable from ordinary
+        # content, so the match runs against the trailing-comment tail only.
+        # (`$line` still, not `$code`: the strip above removed that tail.)
+        #
+        # The `#`-PRESENCE GUARD IS REQUIRED, not belt-and-braces: with no `#`
+        # on the line, `${line#*[[:space:]]#}` strips nothing and returns the
+        # WHOLE line — so the scoped match would silently degrade back to the
+        # raw-line match it replaces, and the bypass would still work. Confirm
+        # a comment exists first, then test only its tail.
         case "$line" in
-            *"lint-allow-pipe-grep-q:"*[![:space:]]*)
-                pending_pipe=0
-                continue
+            *[[:space:]]\#*)
+                case "${line#*[[:space:]]\#}" in
+                    *"lint-allow-pipe-grep-q:"*[![:space:]]*)
+                        pending_pipe=0
+                        continue
+                        ;;
+                esac
                 ;;
         esac
         # Cheap bash prefilter before any subprocess. This scan runs over the
@@ -953,6 +977,12 @@ multiline_hit="$(printf '%s\n' "$hay" |
     grep -q "$n")"
 multiline_cmd_hit="$(command printf '%s\n' "$hay" |
     command grep -qxF "$n")"
+multiline_indented_comment_hit="$(printf '%s\n' "$hay" |
+    # an INDENTED comment between the pipe and its grep (#928 review)
+    grep -q "$n")"
+multiline_col0_comment_hit="$(printf '%s\n' "$hay" |
+# a column-0 comment between the pipe and its grep
+    grep -q "$n")"
 if command grep -qx "$n" <<<"$hay"; then ok_herestring=1; fi
 if command grep -qx "$n" "$file"; then ok_directfile=1; fi
 if printf '%s\n' "$hay" | command grep -c "$n"; then ok_notquiet=1; fi
@@ -960,6 +990,7 @@ if git worktree list | command grep -qx "w"; then ok_marked=1; fi  # lint-allow-
 if git worktree list | command grep -qx "w"; then bareMarker_hit=1; fi  # lint-allow-pipe-grep-q:
 ok_orlist=1 ||
     command grep -qx "$n" <<<"$hay"
+printf '%s' "$hay" | command grep -q "lint-allow-pipe-grep-q: fake" && strBypass_hit=1
 # a prose comment naming printf | grep -q is commentpipeq_ok
 EOF
 
@@ -985,6 +1016,18 @@ EOF
     # scanner's pending-pipe state can reach them.
     assert_contains "$CUR_PIPEQ_VIOLATIONS" "grep -q \"\$n\")" 'a MULTI-LINE pipeline is flagged (continuation state)'
     assert_contains "$CUR_PIPEQ_VIOLATIONS" "command grep -qxF \"\$n\")" 'a MULTI-LINE `command grep` pipeline is flagged'
+    # A comment BETWEEN the pipe and its grep must not break the continuation.
+    # The indented case is the one that regressed (#928 review): a column-0-only
+    # comment test passes against the buggy scanner, so it cannot stand alone.
+    # The scanner reports the `grep -q` LINE, not the assignment it feeds, so
+    # these assert the flagged line numbers (15 and 18 in the fixture) rather
+    # than the variable names. Asserting the name would silently pass on a
+    # scanner that never fired at all, since the name appears in the fixture
+    # regardless.
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "line 15: " \
+        'an INDENTED comment between the pipe and its grep does NOT break the continuation'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "line 18: " \
+        'a column-0 comment between the pipe and its grep does NOT break the continuation'
     # Allowed forms must NOT surface.
     assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "ok_herestring" 'the here-string rewrite is NOT flagged'
     assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "ok_directfile" 'grep reading a file directly is NOT flagged'
@@ -997,7 +1040,57 @@ EOF
     # must NOT buy an exemption, or the escape hatch becomes a silent one.
     assert_contains "$CUR_PIPEQ_VIOLATIONS" "bareMarker_hit" 'a REASONLESS lint-allow-pipe-grep-q marker does NOT exempt'
     assert_contains "$CUR_PIPEQ_VIOLATIONS" "wsMarker_hit" 'a whitespace-only reason does NOT exempt'
+    # The marker must be a real trailing COMMENT, not merely present somewhere on
+    # the line (#928 cycle-2 review). A genuine violation whose grep SEARCH
+    # STRING contains the marker text was silently exempted before this was
+    # scoped — a gate bypass reachable from ordinary content.
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "strBypass_hit" \
+        'the marker inside a grep SEARCH STRING does NOT exempt (must be a comment)'
     assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "commentpipeq_ok" 'a prose comment naming the shape is NOT flagged'
+}
+
+# MARKDOWN-EMBEDDED BASH: a scoped regression gate (#928 cycle-2 review).
+#
+# `list_shell_scripts` globs `*.sh`, so check 5 never walks `plugins/**/*.md` —
+# yet five real `| grep -q` sites lived in EXECUTED bash embedded in two docs:
+# `provision-protocol.md` writes `agent-entrypoint.sh` to disk and runs it under
+# `set -uo pipefail`, and `execute-protocol.md` carries agent-run recipes, one
+# gating a `--delete-branch` decision. The original sweep missed them precisely
+# because it encoded a guess about FILE TYPE — the same shape as the bug it was
+# fixing: a check that reads clean because it looked at the wrong corpus.
+#
+# WHY A SCOPED SCAN RATHER THAN A FULL MARKDOWN CORPUS. Teaching the gate to
+# extract fenced bash from all 34 markdown files carrying bash blocks is a real
+# change with its own false-positive surface — prose examples and
+# deliberately-wrong snippets that SHOULD show the broken form. That belongs in
+# its own issue. This scans only the two files whose sites were actually fixed:
+# enough to stop a regression there without inventing a policy for markdown at
+# large. If the broader gate lands later, delete this.
+MD_EMBEDDED_FILES="
+plugins/workflow/skills/provision-agent/provision-protocol.md
+plugins/workflow/skills/ship-issue/execute-protocol.md
+"
+
+test_markdown_embedded_bash_has_no_pipe_grep_q() {
+    local rel found=0 md_violations=""
+    for rel in $MD_EMBEDDED_FILES; do
+        [ -n "$rel" ] || continue
+        if [ ! -f "$REPO_ROOT/$rel" ]; then
+            # Fail loud rather than skip: a renamed file must not silently
+            # empty this gate (the #538/#571 shape).
+            md_violations="${md_violations}MISSING: $rel"$'\n'
+            continue
+        fi
+        found=$((found + 1))
+        scan_file_pipe_grep_q "$REPO_ROOT/$rel"
+        if [ -n "$CUR_PIPEQ_VIOLATIONS" ]; then
+            md_violations="${md_violations}${rel}: ${CUR_PIPEQ_VIOLATIONS}"
+        fi
+    done
+    assert_true "[ $found -eq 2 ]" \
+        "both markdown files carrying embedded bash are present (gate is not vacuous)"
+    assert_equals "" "$md_violations" \
+        "bash embedded in provision-protocol.md / execute-protocol.md must not pipe into a quiet grep either (#928)"
 }
 
 # Discover the corpus.
@@ -1017,6 +1110,7 @@ run_test test_word_boundary_exemption_is_pinned "\\b stays exempt — BSD-verifi
 run_test test_negative_case_gnu_env_fires "scan_file_gnu_env flags GNU-only env --unset= (#932)"
 run_test test_negative_case_parse_fires "scan_file_parses flags heredoc-in-command-substitution, not its rewrite (#906)"
 run_test test_negative_case_pipe_grep_q_fires "scan_file_pipe_grep_q flags \`| grep -q\` pipelines, incl. multi-line (#928)"
+run_test test_markdown_embedded_bash_has_no_pipe_grep_q "markdown-embedded bash carries no piped quiet-grep either (#928 cycle-2)"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
