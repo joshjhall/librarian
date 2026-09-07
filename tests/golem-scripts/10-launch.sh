@@ -949,10 +949,15 @@ test_launch_scratch_dir_failure_is_unverified_not_absent() {
     write_plugin_probe "$sb/probe" ok
     stub="$sb/mktemp-stub"
     command mkdir -p "$stub"
+    # Delegates via `command -p`, which searches the SYSTEM default PATH and so
+    # cannot re-find this stub (a plain `mktemp` here would recurse forever) —
+    # and, unlike a hardcoded /usr/bin/mktemp, resolves wherever the real binary
+    # lives on the host (#443: no hardcoded core-utility paths). Not `exec`ed:
+    # `command` is a shell builtin, so `exec command …` is a 127.
     command cat >"$stub/mktemp" <<'EOF'
 #!/usr/bin/env bash
 for a in "$@"; do [ "$a" = "-d" ] && exit 1; done
-exec /usr/bin/mktemp "$@"
+command -p mktemp "$@"
 EOF
     command chmod +x "$stub/mktemp"
 
