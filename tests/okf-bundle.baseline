@@ -12,5 +12,5 @@
 # Regenerate with: tests/validate-okf-bundle.sh --regen
 
 memory-missing-why 80
-okf-missing-type 238
+okf-missing-type 239
 okf-unparseable-frontmatter 6
