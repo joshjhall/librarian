@@ -19,6 +19,15 @@
 #   * HOME is repointed at the sandbox, because worktree-new transitively seeds
 #     trust into $HOME/.claude.json via seed-worktree-trust.sh; without the
 #     override a sandbox run would write the operator's real config.
+#   * GOLEM_PLUGIN_PROBE is pointed at a nonexistent path, so golem-launch.sh's
+#     plugin-resolvability guard (#946) reads as UNDETERMINABLE and skips. This
+#     is the truthful setting, not a mute: HOME already points at an empty
+#     sandbox with no plugin install, so a real probe there correctly finds
+#     nothing — every `launch` in the suite would refuse with exit 3 and each
+#     test's own subject would never run. Same reasoning as the TMUX_TMPDIR
+#     isolation below: pin the ambient dependency so a test asserts its own
+#     subject. A test that wants the guard ACTIVE overrides this with its own
+#     stub (see 10-launch.sh's write_plugin_probe / _plugin_probe_run).
 #
 # The consts this file depends on (SCRIPTS, LAUNCH, REAL_BASH, GIT_SCRUB, ...)
 # are defined by the entry point before it sources this file.
@@ -101,6 +110,7 @@ run_in() {
     RUN_OUT="$(cd "$dir" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
+            GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -120,6 +130,7 @@ inbox_in() {
     (cd "$dir" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
+            GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_INBOX_WAIT=0 GOLEM_INBOX_POLL=1 \
@@ -166,6 +177,7 @@ run_launch_auth() {
             -uOP_ANTHROPIC_AUTH_TOKEN_REF \
             -uBASH_ENV \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$sb/tmux-args.log" \
@@ -274,6 +286,7 @@ gate_age_unit() {
         _gau_out="$(cd "$dir" &&
             /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub" HOME="$dir" \
+                GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
                 GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
                 "$REAL_BASH" -c 'source "$1"; _gate_age_suffix "$2" "$3"' \
                 _ "$STATUS" "$golem" "$feed" 2>/dev/null || true)"
@@ -281,6 +294,7 @@ gate_age_unit() {
         _gau_out="$(cd "$dir" &&
             /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$dir" \
+                GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
                 GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
                 "$REAL_BASH" -c 'source "$1"; _gate_age_suffix "$2" "$3"' \
                 _ "$STATUS" "$golem" "$feed" 2>/dev/null || true)"
@@ -307,6 +321,7 @@ run_in_watch() {
     RUN_OUT="$(cd "$dir" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
+            GOLEM_PLUGIN_PROBE="$dir/no-plugin-probe" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -486,6 +501,7 @@ run_scrape() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$SCRAPE" "$arg" 2>&1)" || RUN_RC=$?
 }
@@ -500,6 +516,7 @@ run_status_scrape() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -585,6 +602,7 @@ run_ctx_budget() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$@" \
             "$REAL_BASH" "$CTX_BUDGET" check "$arg" 2>&1)" || RUN_RC=$?

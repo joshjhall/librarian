@@ -135,6 +135,38 @@ claude plugin install workflow@librarian
 
 `plugin update` rolls each plugin forward by semver.
 
+### Recovering a lost registration
+
+The marketplace registration has been observed to **disappear mid-session**,
+taking all three plugins with it. Sessions already running are unaffected — they
+loaded their skills at startup — so nothing surfaces the loss until the *next*
+session starts and fails at its first prompt:
+
+```text
+Unknown command: /workflow:next-issue
+```
+
+Verify with a **capability probe**, not by inspecting
+`~/.claude/plugins/known_marketplaces.json` — a file that still names the
+marketplace while the plugins are gone reads as healthy:
+
+```bash
+claude plugin details workflow@librarian   # expect a NON-ZERO "Skills (N)" count
+```
+
+Re-register and reinstall if it reports nothing:
+
+```bash
+claude plugin marketplace add joshjhall/librarian
+claude plugin install workflow@librarian
+```
+
+In a container the marketplace is the baked directory, so register that path
+instead of the GitHub slug: `claude plugin marketplace add /opt/librarian`.
+
+`golem-launch.sh` runs this probe before every dispatch and refuses to launch a
+golem into the broken state, so parallel runs fail loud rather than idling.
+
 ### Container (pinned / offline)
 
 The `containers` image clones this repo at a pinned tag/SHA and registers it as
