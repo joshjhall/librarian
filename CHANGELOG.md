@@ -5,6 +5,95 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-09-07
+
+### Added
+
+- Phase 2 — model Swift across the four check-* scanners (#869)
+- Map OWASP Top 10 coverage and gate the claim (#888)
+- Broker multi-question AskUserQuestion forms from golems (#901)
+- OWASP slice B — seven new check-security detectors (#707), plus the #859 suite split (#905)
+- Review-routing classifier, inert (part 1 of 2 — #550) (#914)
+- Schedule the deterministic ai-config pre-scan (#907) (#917)
+- Wire review routing into the harness (part 2 of 2 — #550) (#916)
+- Wire check-security into ship-issue's pre-review gates (#708) (#918)
+- Deny golem reads into peer worktrees (#630) (#926)
+- Map the LLM security checklists to OWASP and add the missing categories (#929)
+- OKF slice B — whole-bundle graph + health pass (#669) (#930)
+- OKF slice C — semantic pass over the memory bundle (#670) (#937)
+- Make pre-review scanner exclusions project-configurable (#894) (#953)
+- Gate this repo's own OKF memory bundle in run-all.sh (#697) (#955)
+- Golem background-work registry — the explicit half of #890's liveness signal (#957)
+
+### CI/CD
+
+- Bump github/codeql-action/upload-sarif to v4.37.9 (#864)
+
+### Changed
+
+- Extract the duplicated workflow.js prelude into one generated-and-verified source (#883)
+
+### Documentation
+
+- Record that pre-push already runs the full suite
+- Record two lessons from shipping #836
+- Record two lessons from shipping #767
+- Record the #586-prelude vs #806-generator decision (#811) (#879)
+- Surface the review-harness args contract at the dispatch site (#884)
+- Measure #793's hookify delta — no saving found, plus the container gap (#885)
+- Record eight lessons from the parallel orchestration run
+- Record that a parse-time failure exits 0
+- Record that grep -q under pipefail inverts a match
+- Record the BSD wc padding lesson from #932
+- Record three #936 lessons and split the test-validity index
+- Record two lessons from #890 liveness debugging
+- Expand the grep-q pipefail lesson from the #928 sweep
+- Record three lessons from the #928/#946 lanes
+- Generalize the glob-scoped-survey lesson to extension globs
+- Record that an absent env scrub hides a PATH stub
+
+### Fixed
+
+- Basename-anchor check-lifecycle's bash is_test_file (#865)
+- Drop host-breaking LSP binary paths from .zed/settings.json
+- Seed a git credential helper in new golem worktrees (#810) (#875)
+- Preserve an operator-configured credential helper (#877) (#882)
+- Fail loud when a pre-scan is handed a diff instead of a file list (#891)
+- Surface a run-all.sh failure through a stdout pipe (#854) (#896)
+- Resolve extensionless scripts by shebang (#904)
+- Report a real credential sharing a line with a placeholder (#915)
+- Pick the installed scanner version numerically, not lexically (#919) (#924)
+- Make the BSD parity suite parse under bash 3.2 and gate parse errors (#931)
+- Cross-check the worktree registry before trusting a .git dir (part 2 of 2 — #630) (#935)
+- Add missing status/* labels and make label transitions add-before-remove (#921) (#940)
+- Quarantine a wedged worktree so the issue-N path is freed (#936)
+- Guard note_skip_in_step_summary's flag read under set -u (#951)
+- Stop reporting a background-capable turn-end as idle (#954)
+- Unpad the long-function indent probe for BSD wc, and the BSD sweep it exposed (#932)
+- Refuse golem dispatch when the plugin is unresolvable (#959)
+- Stop `| grep -q` under pipefail inverting a successful match (#928) (#958)
+
+### Improved
+
+- Measure the subagent spawn prefix and correct its cost model (#873)
+- Demote the conventions review dimension to a scheduled audit (#912)
+- Shard run-all.sh into a CI matrix, and delete the stale timeout guards (#963)
+
+### Miscellaneous
+
+- Bump pinned git-cliff to 2.13.1 (#863)
+- Bump containers submodule to v4.19.27
+
+### Testing
+
+- Anchor plant_agnix's default version to the workflow it plants for (#874)
+- Pin the duplicated bash ext->lang table across the scanner pair (#889)
+- Pin is_test_file basename anchoring across all 10 copies (#892)
+- Cover workflow.js result-object construction past ORCH_BOUNDARY (#923)
+- Gate the review-harness accepted-key list against its prose copies (#922)
+- Cover the #515 ELAPSED mtime fallback's fail-open and cp_sig invariants (#952)
+- Re-baseline okf-missing-type 233 -> 236
+
 ## [0.12.0] - 2026-08-29
 
 ### Added
@@ -762,6 +851,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Relocate skill/agent quality gates + fixtures (#12)
 
+[0.13.0]: https://github.com/joshjhall/librarian/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/joshjhall/librarian/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/joshjhall/librarian/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/joshjhall/librarian/compare/v0.10.0...v0.10.1
