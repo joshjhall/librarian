@@ -28,6 +28,9 @@
 # The signal — the last TOP-LEVEL (isSidechain == false) assistant record's
 # `message.stop_reason`:
 #   working  — stop_reason == "tool_use": a tool call is in flight right now.
+#   background — the turn ENDED, but the golem has registered background work
+#              that is still open (issue #949). Positive evidence of live work,
+#              reported by the caller as working. See TWO SIGNALS below.
 #   idle     — stop_reason "end_turn"/"stop_sequence" AND the turn ended on
 #              something that cannot have left background work behind: the
 #              session is parked at its prompt (covers both the #229 errored-idle
@@ -60,10 +63,11 @@
 # them names a background-capable tool (Workflow / Monitor / Bash), the turn may
 # have left work running, so `idle` is not a supportable verdict:
 #
-#   tool calls made this turn        | verdict
-#   ---------------------------------|--------------------------
-#   any background-capable           | unknown -> exit 2
-#   all ordinary (Read/Edit/...)/none| idle
+#   registry (Signal A) | tool calls this turn (Signal B) | verdict
+#   --------------------|---------------------------------|------------------
+#   open item           | anything                        | background
+#   empty / no signal   | any background-capable          | unknown -> exit 2
+#   empty / no signal   | all ordinary (Read/Edit/…)/none | idle
 #
 # "Since the turn began" is bounded by the last top-level USER record that is a
 # real human message rather than a `tool_result` — see the $turn_start derivation
@@ -92,10 +96,33 @@
 # idle — and that asymmetry is deliberate, because its cost is a heartbeat
 # fallback while the other direction's cost is the bug this file exists to fix.
 #
-# A SECOND, EXPLICIT SIGNAL IS PLANNED (issue #890, follow-up): a registry a
-# golem writes to declare its open background work, which would upgrade the
-# indeterminate arm above to a positive `working` verdict. It is deliberately NOT
-# part of this change — see that issue for why it is reviewed separately.
+# TWO SIGNALS, AND WHY NEITHER SUFFICES ALONE (issue #949, the follow-up #890
+# deferred). Everything above is Signal B, the IMPLICIT one. Signal A is the
+# EXPLICIT half — scripts/golem-work.sh, a registry a golem writes to declare
+# open background work:
+#
+#   A. THE REGISTRY (explicit) — an open item says "background work is running"
+#      outright. It is authoritative and cross-process, which is what gives Mode
+#      3 a signal at all (see MODE 3 below). But being explicit, its ABSENCE is
+#      ambiguous BY CONSTRUCTION: "nothing is running" and "the golem forgot to
+#      register" are the same empty file, and only the first is genuinely idle.
+#      A registry-only design must therefore call both idle — reintroducing this
+#      file's bug for every unregistered path — or call both working, which is
+#      the mirror failure the staleness bound below exists to prevent.
+#
+#   B. THE TOOL CALLS THIS TURN (implicit) — described above. Requires no
+#      cooperation from anyone, which is exactly what resolves A's ambiguity.
+#
+# So A is consulted first and can only ever UPGRADE a verdict (indeterminate ->
+# background); when it is silent, B decides exactly as it did before this change.
+# Forgetting to register is therefore safe: it costs the operator a positive
+# signal, never a false idle.
+#
+# A leaked registration cannot become a permanent false `working` — golem-work.sh
+# reaps a dead pid on read and ages an entry out at GOLEM_WORK_MAX_AGE (default
+# 3600, deliberately distinct from GOLEM_STALL_THRESHOLD, which bounds a
+# different question). An absent/unreadable registry or a missing jq yields no
+# open items, leaving B's verdict untouched.
 #
 # STALENESS BOUND on `working`. A `working` verdict asserts "a tool call is in
 # flight RIGHT NOW", but the transcript alone cannot prove currency: if the
@@ -111,10 +138,19 @@
 # mtime-gated — a golem legitimately parked/errored at its prompt for a long time
 # is still correctly idle/errored, and that is the actionable signal.
 #
-# MODE 2 ONLY, same as golem-token-scrape.sh. A Mode 3 container golem runs
-# Claude Code INSIDE its container, so its transcript is not on the host: slug
-# resolution finds no project dir and the script exits 2 (indeterminate), and the
-# caller falls back to the mtime heartbeat — no special-casing needed here.
+# MODE 3 (container golems) — the registry-only path (#949). A Mode 3 container
+# golem runs Claude Code INSIDE its container, so its transcript is not on the
+# host and slug resolution finds no project dir. That used to be an unconditional
+# exit 2, leaving Mode 3 with NO liveness signal at all — the mode #890 singles
+# out as having no fallback, since even a manual process-tree walk cannot cross
+# the container boundary.
+#
+# Signal A closes it: unlike the transcript, the registry lives in the MAIN
+# checkout's shared status dir, so a container golem CAN register and the host CAN
+# read it. With no transcript but an open item we report `background` — Mode 3's
+# first liveness signal. With no transcript AND nothing open we still exit 2:
+# absence of a transcript is not evidence of idleness, and asserting `idle` there
+# would invent the very verdict this file exists to stop inventing.
 #
 # Config (env-overridable; defaults match Claude Code's on-disk layout):
 #   CLAUDE_PROJECTS_DIR    Base dir holding per-project transcript dirs.
@@ -123,11 +159,14 @@
 #                          `working` verdict is demoted to stale/indeterminate.
 #                          Default 1200 (matches golem-gate-watch.sh's liveness
 #                          stall window, so the two agree on "stalled").
+#   GOLEM_WORK_MAX_AGE     Age-out bound on a registry entry (see golem-work.sh).
+#                          Read by the registry lookup, not by this file directly.
 #
 # Usage:
 #   golem-transcript-liveness.sh <worktree-dir>
 #
-# Output: one class word on stdout — `working`, `idle`, or `errored`. FAIL LOUD —
+# Output: one class word on stdout — `working`, `background`, `idle`, or
+# `errored`. FAIL LOUD —
 # the liveness sweep must never act on a bogus reading, so a missing transcript /
 # missing jq / an indeterminate transcript is a non-zero exit with an actionable
 # message, NOT a silent guess. The caller (golem-gate-watch.sh liveness_snapshot)
@@ -135,7 +174,7 @@
 # mtime heartbeat — the same soft/advisory contract as the best-effort pane read.
 #
 # Exit status:
-#   0  class written to stdout (working|idle|errored)
+#   0  class written to stdout (working|background|idle|errored)
 #   1  usage error (no worktree-dir argument)
 #   2  no transcript dir / no *.jsonl session / indeterminate (no top-level turn,
 #      or a `working` verdict demoted stale past GOLEM_STALL_THRESHOLD)
@@ -170,16 +209,70 @@ _bin() {
 }
 CAT="$(_bin cat)"
 DATE="$(_bin date)"
+DIRNAME="$(_bin dirname)"
 STAT="$(_bin stat)"
+
+# Sibling-script dir, for the golem-work.sh registry lookup (#949). Resolved the
+# same way every sibling does, and AFTER _bin so even dirname is PATH-portable.
+SCRIPT_DIR="$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- Signal A: the background-work registry lookup (#949) --------------------
+#
+# Print the number of OPEN registered background items for the golem that owns
+# <worktree>, or 0.
+#
+# DEFINED HERE, ABOVE EVERY CALL SITE, DELIBERATELY. Bash resolves a function at
+# CALL time, so a definition placed below its first use parses clean and dies
+# `command not found` at runtime — and this function's callers all fall back to
+# "no signal" on failure, so that death would be SILENT and would restore the
+# false-idle verdict. The withdrawn first attempt at this change shipped exactly
+# that bug. Keep this block above the classifier.
+#
+# FAIL-SOFT BY CONTRACT: golem-work.sh's `count` always prints an integer and
+# always exits 0 — absent registry, unreadable file, no jq, underivable id — so a
+# caller never has to branch on an error. That matters precisely because an
+# errored count treated as "0 open" is indistinguishable from a genuine "nothing
+# running", and the second reads as `idle`.
+#
+# `--worktree` is what makes the read describe the SUBJECT rather than the ASKER.
+# This script is run BY an observer (the gate-watch sweep, in the main checkout)
+# ABOUT a golem, so `$GOLEM_ID` and the ambient cwd describe the observer. Passing
+# the subject's worktree lets golem-work.sh derive BOTH the golem id and the
+# status dir from that one path — honoring a custom GOLEM_STATUS_DIR and any
+# GOLEM_WORKTREE_DIR depth. Deriving them separately here is what two withdrawn
+# attempts did, and both silently read an empty registry (#949).
+work_open_count() {
+    [ -x "$SCRIPT_DIR/golem-work.sh" ] || {
+        command echo 0
+        return 0
+    }
+    "$SCRIPT_DIR/golem-work.sh" count --worktree "$1" 2>/dev/null || command echo 0
+}
+
+# work_says_background <worktree> — true when the registry holds at least one
+# open item. Wraps work_open_count with the non-numeric guard both call sites
+# need, so "the count came back as garbage" can only ever mean "no signal" in
+# ONE place rather than being re-derived (and possibly re-derived wrongly) at
+# each use.
+work_says_background() {
+    local _n
+    _n="$(work_open_count "$1")"
+    case "$_n" in
+        '' | *[!0-9]*) return 1 ;;
+        0) return 1 ;;
+        *) return 0 ;;
+    esac
+}
 
 usage() {
     "$CAT" >&2 <<'EOF'
 usage: golem-transcript-liveness.sh <worktree-dir>
 
-Prints the golem's liveness class (working|idle|errored) read from its Claude
-Code session transcript to stdout. Exits non-zero (with a message) when the
-transcript is missing/unreadable/indeterminate or jq is unavailable, so the
-caller can fall back to the mtime heartbeat instead of a bogus reading.
+Prints the golem's liveness class (working|background|idle|errored) to stdout,
+read from its Claude Code session transcript and its background-work registry
+(golem-work.sh). Exits non-zero (with a message) when the transcript is
+missing/unreadable/indeterminate and nothing is registered, or jq is unavailable,
+so the caller can fall back to the mtime heartbeat instead of a bogus reading.
 EOF
 }
 
@@ -214,6 +307,17 @@ base="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 project_dir="$base/$slug"
 
 if [ ! -d "$project_dir" ]; then
+    # MODE 3 registry-only path (#949). No host-visible transcript — a container
+    # golem, or a worktree whose session has not started. The registry lives in
+    # the MAIN checkout's shared status dir rather than inside the container, so
+    # it can still answer, and this is the first liveness signal Mode 3 has ever
+    # had.
+    if work_says_background "$worktree"; then
+        command printf '%s\n' "background"
+        exit 0
+    fi
+    # No transcript AND nothing registered: still indeterminate. Absence of a
+    # transcript is not evidence of idleness, so this must never assert `idle`.
     command echo "golem-transcript-liveness: no transcript dir for $worktree ($project_dir)" >&2
     exit 2
 fi
@@ -230,6 +334,12 @@ for f in "$project_dir"/*.jsonl; do
 done
 
 if [ -z "$newest" ]; then
+    # Same registry-only fallback as the missing-dir case above: a project dir
+    # can exist with no session file in it yet.
+    if work_says_background "$worktree"; then
+        command printf '%s\n' "background"
+        exit 0
+    fi
     command echo "golem-transcript-liveness: no *.jsonl session transcript in $project_dir" >&2
     exit 2
 fi
@@ -376,6 +486,21 @@ case "$class" in
         # "idle:<tool>,<tool>": the tool names from the last top-level tool-calling
         # turn, or "idle:" when that turn made none.
         _tools="${class#idle:}"
+
+        # Signal A (#949) — an open registered item is POSITIVE evidence of live
+        # work, so it is consulted FIRST and upgrades what Signal B could only
+        # call indeterminate. It is also the only signal that crosses a process
+        # boundary, which is what makes the Mode 3 arms above possible.
+        #
+        # Its ABSENCE proves nothing, which is why it cannot stand alone and why
+        # Signal B below is unchanged by this addition: "nothing is running" and
+        # "the golem never registered" are the same empty file, and only the
+        # first is genuinely idle.
+        if work_says_background "$worktree"; then
+            command printf '%s\n' "background"
+            exit 0
+        fi
+
         if tools_are_background_capable "$_tools"; then
             # NOT evidence of idleness: work may still be running. Degrade to
             # indeterminate so the caller's mtime heartbeat decides — it detects a

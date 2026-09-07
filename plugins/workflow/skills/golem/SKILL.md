@@ -176,6 +176,13 @@ the plan (human gate at L1–L3, auto at L4), implements, tests, and:
 - **L1–L2** — stops at the routine ship gates. The human runs `/workflow:ship-issue` (now
   or later); it stops again for the human to merge. `/workflow:golem` does not force it.
 
+**Register background work.** When a phase starts work that outlives its turn — a
+`run_in_background` Bash task, a `Monitor`, or the review `Workflow` harness —
+register it so the liveness read does not report this golem as idle while it
+works (#949). One call before, one after; see **`background-work.md`** in this
+skill directory. Forgetting is safe (the classifier degrades to indeterminate,
+never to idle) but costs the orchestrator a usable signal.
+
 The adversarial pre-PR review runs identically to an orchestrated golem's — that
 parity now holds across **all** shipping modes (see `ship-issue/pre-ship-validation.md`
 check #6), so a solo run cannot skip it by choosing commit-only.

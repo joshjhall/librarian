@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "golem-work.schema.json",
+  "title": "Golem Background-Work Registry line (JSONL)",
+  "description": "ONE LINE of .worktrees/.status/{golem}.work.jsonl, the background-work registry written by scripts/golem-work.sh and read by scripts/golem-transcript-liveness.sh (issue #890). NOT a whole-file object schema: the registry is an APPEND-ONLY EVENT LOG, one JSON object per line, because a golem writes it while an orchestrator reads it and `complete` races `register` — an append is atomic under O_APPEND, whereas rewriting a whole-file object loses one of two interleaved writes. The set of OPEN items is the REDUCTION of the log (a `register` with no later `complete` for the same id), not a stored field. Sibling to golem-status.schema.json in the same status dir. The registry exists because an `end_turn` with live background work (a run_in_background Bash task, a Monitor, or a Workflow harness) is structurally indistinguishable from an idle prompt in the transcript alone.",
+  "type": "object",
+  "required": ["event", "id", "golem"],
+  "properties": {
+    "event": {
+      "type": "string",
+      "enum": ["register", "complete"],
+      "description": "`register` opens an item; `complete` closes the item with the same id. A `complete` with no matching `register` is a harmless no-op — `golem-work.sh complete` is idempotent so a skill may call it unconditionally in a cleanup path."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^work-[0-9]+-[0-9a-f]+$",
+      "description": "Correlation id minted by `golem-work.sh register` as work-<epoch>-<rand4> and printed to stdout as `id=...`. The register and its complete carry the SAME id; it is the only key the reduction matches on."
+    },
+    "golem": {
+      "type": "string",
+      "pattern": "^golem-[A-Za-z0-9_.-]+$",
+      "description": "Golem identifier, derived exactly as hooks/golem-notify.sh derives it (GOLEM_ID, else the `issue-N` worktree basename, else AGENT_ID) or passed with --golem. Validated to this charset before it becomes a filename segment, so it can never traverse out of the status dir. Unlike the feed, there is NO `golem-?` orphan sentinel: an un-attributable registration fails loudly rather than accumulating under a shared id no liveness read would match."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["bash", "monitor", "workflow"],
+      "description": "Which background mechanism this item is. Present on `register`. The three kinds are exactly the three that outlive their turn — a run_in_background Bash task, a Monitor, and a Workflow harness — which is why a Bash-only PreToolUse hook could never cover more than one of them (see the auto-registration follow-up)."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable label for the item (e.g. \"run-all.sh\", \"review harness\"), shown by `golem-work.sh list` when an operator is debugging. Caller-supplied, so the no-jq writer strips control characters and backslashes and escapes embedded quotes before interpolating it."
+    },
+    "started": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC time the item was registered. Human-facing; the reader does its arithmetic on started_epoch."
+    },
+    "started_epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix epoch seconds at registration. Written ALONGSIDE the ISO `started` deliberately: the age-out bound needs arithmetic, and re-parsing an ISO string portably (GNU `date -d` vs BSD `date -j -f`) is exactly the silent cross-platform divergence this repo's runtime policy exists to avoid."
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Process id of the background job, when the caller knows it. OPTIONAL but strongly recommended: it is what makes the dead-pid bound work, reaping a crashed job in seconds rather than after max_age. An entry without a pid is bounded only by age. A pid that exists but cannot be signalled (EPERM) counts as ALIVE — the reaper errs toward keeping an entry, since degrading toward `working` is safe and degrading toward `idle` is the bug being fixed. `minimum: 1` is load-bearing rather than cosmetic (#949): `kill -0 0` does not probe a process, it signals the caller's whole process GROUP and returns success, so an entry carrying pid 0 could never be reaped and would sit `working` until the age-out. golem-work.sh enforces the same floor numerically, rejecting `0` along with every padded spelling (`00`, `000`) that a string compare would let through — and a padded value is also invalid JSON here, which only `jq` forgives."
+    },
+    "max_age": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per-entry age-out override in seconds, from `register --max-age`. Absent, the reader applies GOLEM_WORK_MAX_AGE (default 3600). Recorded per-entry so a caller that knows its job is long is not reaped early while everything else keeps the ambient default. Deliberately NOT tied to GOLEM_STALL_THRESHOLD: that bounds \"has this transcript stopped moving?\", this bounds \"could this item still plausibly be running?\"."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC time of a `complete` event. (A `register` records its time in `started`/`started_epoch` instead.)"
+    }
+  },
+  "additionalProperties": false
+}

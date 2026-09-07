@@ -339,8 +339,12 @@ TMUX_STUB
 # $2 = status-file age (sec ago), $3 = transcript body (newline-joined *.jsonl
 # lines; EMPTY plants no transcript so the tier misses and mtime wins). Sets
 # LIVE_RC / LIVE_OUT.
+# $4 (optional, #949) = background-work registry body for golem-7. Planted at
+# <status_dir>/golem-7.work.jsonl, which is where golem-work.sh resolves it for
+# the sweep's worktree, so the transcript tier's registry lookup finds it. Empty
+# or absent plants no registry — the "nothing registered" control.
 _run_liveness_snapshot_transcript() {
-    local stall="$1" age_secs="$2" transcript="$3"
+    local stall="$1" age_secs="$2" transcript="$3" registry="${4:-}"
     local tmp
     tmp="$(command mktemp -d)" || return 1
     # shellcheck disable=SC2064
@@ -370,6 +374,31 @@ _run_liveness_snapshot_transcript() {
     if [ -n "$transcript" ]; then
         command mkdir -p "$fake_projects/$slug"
         command printf '%s\n' "$transcript" >"$fake_projects/$slug/session.jsonl"
+    fi
+
+    # Background-work registry fixture (#949). Two things here are load-bearing:
+    #
+    #  1. A REAL linked worktree, not a mkdir-ed path. The registry lookup derives
+    #     both the golem id and the status dir from the subject via `git rev-parse
+    #     --git-common-dir`, which only answers correctly from a genuine worktree.
+    #     A mkdir-ed $wt reads an empty registry, which reads as "nothing open" —
+    #     so the test would pass while exercising nothing. It is built only when a
+    #     registry is requested, so every pre-existing caller is byte-unchanged.
+    #  2. The registry is planted in the SAME status dir the sweep reads, since
+    #     that is where a real golem's writer would have put it.
+    if [ -n "$registry" ]; then
+        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+            git -C "$tmp" config user.email "test@example.com" 2>/dev/null
+        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+            git -C "$tmp" config user.name "Test" 2>/dev/null
+        command printf 'seed\n' >"$tmp/seed.txt"
+        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+            git -C "$tmp" add seed.txt 2>/dev/null
+        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+            git -C "$tmp" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
+        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+            git -C "$tmp" worktree add -q "$wt" -b issue-7 >/dev/null 2>&1 || return 1
+        command printf '%s\n' "$registry" >"$tmp/.worktrees/.status/golem-7.work.jsonl"
     fi
 
     # Hermetic PATH: real bash + git + jq symlinks (the transcript script needs

@@ -17,6 +17,9 @@
 #                        worktrees.                      Default: .worktrees
 #   GOLEM_STATUS_DIR     Directory holding golem status JSON + feed.jsonl.
 #                        Default: <GOLEM_WORKTREE_DIR>/.status
+#   GOLEM_WORK_MAX_AGE   Seconds a background-work registry entry may sit before
+#                        it is reaped as leaked (#949). Deliberately distinct
+#                        from GOLEM_STALL_THRESHOLD.       Default: 3600
 #   GOLEM_EVENT_SINKS    Space/comma-separated list of http(s):// endpoints the
 #                        golem-notify.sh Notification hook POSTs each classified
 #                        event to, IN ADDITION to feed.jsonl (which is always
@@ -246,6 +249,22 @@
 : "${GOLEM_HEARTBEAT_INTERVAL:=60}"
 : "${GOLEM_LIVENESS_SUMMARY_INTERVAL:=900}"
 
+# Background-work registry age-out (golem-work.sh, #949). An entry in
+# <status_dir>/<golem>.work.jsonl older than this is treated as leaked and
+# dropped on read, so a forgotten `complete` can never pin a golem to `working`
+# forever — the mirror of the GOLEM_STALL_THRESHOLD bound on a frozen `tool_use`.
+#
+# DELIBERATELY NOT GOLEM_STALL_THRESHOLD (1200), though the neighbouring
+# definition makes reusing it tempting. The two bound different QUESTIONS: the
+# stall threshold asks "has this transcript stopped moving?", this asks "could
+# this background item still plausibly be running?". Measured background work in
+# this repo runs 2.7-8.7 min, and a `git push` running the lefthook pre-push
+# suite ~8 min, so 3600 is deliberately generous: a stale `working` is bounded
+# and self-healing, whereas too tight an age-out silently restores the false
+# `idle` that #890 exists to remove. A dead PID is reaped immediately and does
+# not wait for this.
+: "${GOLEM_WORK_MAX_AGE:=3600}"
+
 # Orchestrator-brokered gate reverse channel (golem-inbox.sh, #227): the
 # per-call ceiling and poll interval of `consume`'s bounded-blocking read. The
 # ceiling stays under the Bash tool's 600s per-call limit; the golem re-invokes
@@ -289,7 +308,7 @@ export CONTEXT_BUDGET_THRESHOLD CONTEXT_BUDGET_FLOOR
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
     GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL GOLEM_LIVENESS_SUMMARY_INTERVAL \
-    GOLEM_INBOX_WAIT GOLEM_INBOX_POLL \
+    GOLEM_INBOX_WAIT GOLEM_INBOX_POLL GOLEM_WORK_MAX_AGE \
     GOLEM_MODE_FIX_ATTEMPTS GOLEM_MODE_CHECK_INTERVAL \
     GOLEM_EVENT_SINKS GOLEM_EVENT_SINK_TIMEOUT \
     GOLEM_EVENT_LISTEN_ADDR GOLEM_EVENT_LISTEN_PORT GOLEM_EVENT_MAX_BODY

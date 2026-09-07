@@ -67,9 +67,14 @@
 #      records — structured fields, so immune by construction to the scrollback
 #      self-trip the pane tier had to footer-anchor around). This extends the #229
 #      idle/errored detection to the headless population the pane tier misses.
-# Both stronger reads are best-effort — a golem with no host-visible pane AND no
-# host-readable transcript (e.g. a Mode-3 container golem) falls back to the
-# reworded mtime heartbeat.
+#      That tier ALSO reads the background-work registry (`golem-work.sh`, #949),
+#      which is why it can return a `background` class: a turn that ended while a
+#      registered item is still open is WORKING, not idle at prompt. The registry
+#      lives in the shared status dir rather than inside a container, so this is
+#      the one signal that reaches a Mode-3 golem.
+# Both stronger reads are best-effort — a golem with no host-visible pane, no
+# host-readable transcript, AND nothing registered (e.g. an unregistered Mode-3
+# container golem) falls back to the reworded mtime heartbeat.
 # A golem currently sitting at a fresh feed gate is reported as gated, NOT
 # stalled (the two are distinct — a gate is expected supervision; a stall is
 # the suspect case). This is a SOFT, advisory signal: it never kills, blocks, or
@@ -1010,7 +1015,7 @@ liveness_snapshot() {
         done < <(feed_snapshot "$feed")
     fi
 
-    local now act age pane pclass tclass
+    local now act age pane pclass tclass _bg_n
     now="$("$DATE" +%s)"
     # Stable numeric order so successive snapshots line up for the operator.
     for n in $(command echo "$golems" | "$TR" ' ' '\n' | "$SORT" -n); do
@@ -1061,6 +1066,38 @@ liveness_snapshot() {
             case "$tclass" in
                 working)
                     command printf '%s\t%s\n' "golem-$n" "alive, working (transcript: turn in flight)"
+                    continue
+                    ;;
+                background)
+                    # #949: the turn ended but registered background work is still
+                    # open (a run_in_background Bash task, a Monitor, or a Workflow
+                    # harness). Reported as WORKING, not idle — a false "idle at
+                    # prompt" on exactly this state is the bug #890 measured five
+                    # times in one session.
+                    #
+                    # The item count is a nicety, so it is read fail-soft: any
+                    # non-numeric answer still renders as working, because the
+                    # CLASS already established that. Deriving the verdict from
+                    # this second call instead would make a stripped-PATH failure
+                    # here silently undo the classifier's finding.
+                    #
+                    # --worktree, not --status-dir: it lets golem-work.sh derive
+                    # the id and the status dir from the SUBJECT together, honoring
+                    # a custom GOLEM_STATUS_DIR at any GOLEM_WORKTREE_DIR depth —
+                    # the same reason the classifier passes it (#949).
+                    _bg_n="$("$SCRIPT_DIR/golem-work.sh" count \
+                        --worktree "$root/$GOLEM_WORKTREE_DIR/issue-$n" 2>/dev/null || command echo "")"
+                    case "$_bg_n" in
+                        '' | *[!0-9]* | 0)
+                            command printf '%s\t%s\n' "golem-$n" "alive, working (background work open)"
+                            ;;
+                        1)
+                            command printf '%s\t%s\n' "golem-$n" "alive, working (background: 1 item)"
+                            ;;
+                        *)
+                            command printf '%s\t%s\n' "golem-$n" "alive, working (background: $_bg_n items)"
+                            ;;
+                    esac
                     continue
                     ;;
                 idle)
