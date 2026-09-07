@@ -882,6 +882,12 @@ test_launch_unwritable_tmpdir_warns_but_proceeds() {
 # warn and let the operator proceed, since none of them learned anything about
 # the plugin. A divergence here would mean the arm an operator runs by hand
 # reports a different health verdict than the arm that dispatches.
+#
+# Scope, stated precisely so the name does not over-claim: `unparsed` is driven
+# through print AND preflight; `noscratch` through print (its launch coverage is
+# test_launch_unwritable_tmpdir_warns_but_proceeds). Both branches sit before the
+# mode dispatch, so this asserts the placement that makes them mode-independent —
+# it is not an exhaustive per-outcome × per-mode matrix.
 test_unverified_outcomes_agree_across_call_sites() {
     local sb
     new_sandbox sb
@@ -918,4 +924,51 @@ test_unverified_outcomes_agree_across_call_sites() {
     assert_contains "$RUN_OUT" "UNVERIFIED" "print announces the scratch-file failure"
     assert_contains "$RUN_OUT" "TMPDIR" "naming its own cause, not a CLI-format change"
     assert_contains "$RUN_OUT" "tmux new-session" "and still emits the launch line"
+}
+
+# The THIRD fail-closed instance: bounded_run creates its own marker DIRECTORY
+# and returns 2 when that fails (bounded-run.sh:63) — a return plugin_skill_count
+# cannot distinguish from a probe genuinely exiting 2, which would drop it back
+# into the "plugin absent" bucket and refuse dispatch.
+#
+# An earlier draft of this change called the branch untestable, on the strength
+# of a PATH stub that was never invoked. That diagnosis was wrong, and the reason
+# is worth keeping: BASH_ENV=/etc/bash_env re-sources a profile that RESTORES
+# PATH, so the stub was discarded before the script ran. `--unset=BASH_ENV` is
+# the fix, and this harness already carries that exact idiom for the same reason
+# (see run_launch_auth in tests/lib/golem-sandbox.sh).
+#
+# A plain unwritable TMPDIR cannot reach this branch — it fails the plain-file
+# `mktemp` first and returns at the earlier guard. The stub below is what
+# isolates the arm: it fails ONLY on `-d` and delegates everything else, which is
+# the real asymmetry (a directory-entry quota, some FUSE/overlay mounts, or a
+# write-but-not-mkdir ACL) reproduced faithfully.
+test_launch_scratch_dir_failure_is_unverified_not_absent() {
+    local sb stub
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" ok
+    stub="$sb/mktemp-stub"
+    command mkdir -p "$stub"
+    command cat >"$stub/mktemp" <<'EOF'
+#!/usr/bin/env bash
+for a in "$@"; do [ "$a" = "-d" ] && exit 1; done
+exec /usr/bin/mktemp "$@"
+EOF
+    command chmod +x "$stub/mktemp"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            PATH="$stub:$PATH" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_PLUGIN_PROBE="$sb/probe" \
+            GOLEM_PLUGIN_PROBE_TIMEOUT=3 \
+            "$REAL_BASH" "$LAUNCH" launch 946 2>&1)" || RUN_RC=$?
+
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" \
+        "a scratch-DIRECTORY failure is unverified, never a plugin absence"
+    assert_contains "$RUN_OUT" "UNVERIFIED" "and it is announced, not passed off as healthy"
+    assert_exit 2 "$RUN_RC" "dispatch proceeds to its normal missing-worktree exit"
 }

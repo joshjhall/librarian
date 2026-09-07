@@ -162,14 +162,27 @@ permissions: a directory-entry quota, some FUSE/overlay mounts, or a
 write-but-not-mkdir ACL permits one and refuses the other. Guarded by probing
 `mktemp -d` explicitly before the bounded call.
 
-That third one carries **no test, deliberately** — the honest outcome rather
-than a green one. `command mktemp` resolves through neither a PATH shim (this
-environment's shell re-sources its profile and restores `PATH`, so the shim is
-never consulted) nor a shell function, and an unwritable `TMPDIR` fails the
-plain-file `mktemp` *first*, so the directory branch never executes. A test
-written either way passes **without running the code it names** — a vacuous test
-that reports coverage it does not have, which is worse than an acknowledged gap.
-Verified by inspection and recorded here instead.
+That third one is where this change got something **wrong, and had it caught**.
+An earlier draft shipped the guard with no test and a comment declaring the
+branch untestable: a PATH stub had been tried and was never invoked, and an
+unwritable `TMPDIR` fails the plain-file `mktemp` first, so the directory branch
+never runs. Both observations were real; the conclusion drawn from them was not.
+
+Review cycle 3 refuted it with the mechanism: `BASH_ENV=/etc/bash_env` re-sources
+a profile that **restores `PATH`**, silently discarding the stub before the
+script ever ran. `--unset=BASH_ENV` fixes it — and this repo's own harness
+already carried that exact idiom, for that exact reason, in `run_launch_auth`.
+The test exists now, and a mutation check confirms it is not decorative:
+
+| version | behavior under a stub that fails only `mktemp -d` |
+| --- | --- |
+| guard removed | `WARNING … is not resolvable` — the false refusal |
+| guard present | `WARNING … UNVERIFIED (check TMPDIR)` |
+
+Worth recording as a process point, not just a bug: "I could not find a way to
+test this" is a statement about the search, and it was stated in the source as a
+property of the code. The reviewer disproved it by *running* the stub the draft
+had only reasoned about.
 
 The lesson worth carrying: after fixing a fail-closed branch, grep the function
 for **every** other early return that yields the same sentinel. Three instances

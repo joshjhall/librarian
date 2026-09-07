@@ -439,12 +439,11 @@ plugin_skill_count() {
     # failure as unverified. Third instance of this same fail-closed class in one
     # function — which is the argument for checking every early return, not one.
     #
-    # NOT COVERED BY A TEST, deliberately: `command mktemp` resolves through
-    # neither a PATH shim nor a shell function, and an unwritable TMPDIR fails
-    # the plain-file mktemp above FIRST, so the branch never runs. A test written
-    # either way passes without executing this code — worse than none. Verified
-    # by inspection instead: bounded-run.sh:63 returns 2 when its own `mktemp -d`
-    # fails, and the `if` below cannot tell that from a probe exiting non-zero.
+    # Covered by test_launch_scratch_dir_failure_is_unverified_not_absent, which
+    # needs a PATH stub failing ONLY on `-d` — an unwritable TMPDIR fails the
+    # plain-file mktemp above first and never reaches here. That test must unset
+    # BASH_ENV: it points at a profile that RESTORES PATH, silently discarding
+    # the stub (the same reason run_launch_auth unsets it).
     if ! _d="$(command mktemp -d 2>/dev/null)"; then
         command rm -f "$tmp"
         command printf 'noscratch\n'
