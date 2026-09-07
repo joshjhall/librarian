@@ -24,10 +24,24 @@ refutes it, suspect the plumbing, not the subject (same shape in prose:
 
 **How to apply:** use a here-string — `grep -qx "$needle" <<<"$haystack"` — which
 has no second process and no pipe status. Do NOT sweep this mechanically: some
-pipelines have a genuine upstream whose failure *should* propagate, so each site
-needs a decision. Found live in `validate-owasp-coverage.sh`; the class is 67
-sites in `tests/` plus 39 in `plugins/`/`bin/` (issue #928). Generalize the
-instinct: any `cmd | consumer-that-exits-early` under pipefail is suspect —
-`head`, `grep -q`, `grep -m1`. Related family:
+pipelines have a genuine upstream whose failure *should* propagate (`git worktree
+list | grep -q`, `find -print -quit | grep -q`), so each site needs a decision
+and a stated reason. Found live in `validate-owasp-coverage.sh`, swept in #928;
+`tests/lint-shell-portability.sh` check 5 now bans the shape, with
+`# lint-allow-pipe-grep-q: <reason>` as the escape hatch (a reasonless marker
+does not exempt).
+
+Two lessons that sweep taught beyond the mechanism. **The negated form is the
+dangerous half**: `! upstream | grep -q` turns a real match into failure, then
+`!` flips it to *success* — so the assertion passes while the forbidden thing is
+present. 28 of the sites were this shape. And **a per-line guard under-covers**:
+6 sites split the upstream and the `grep -q` across lines, so the scanner must
+carry pending-pipe state or it silently misses exactly the sites a one-time sweep
+also misses. Note the conversion itself is not observably testable per-site —
+the site passes before *and* after — so the guard's negative-case test, not the
+diff, is what actually proves the work.
+
+Generalize the instinct: any `cmd | consumer-that-exits-early` under pipefail is
+suspect — `head` (72 sites here, unswept), `grep -m1`. Related family:
 [[whole-repo-diff-bounded-by-repo-content]] (a check silently vacuous because of
 its input).
