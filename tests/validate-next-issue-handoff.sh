@@ -89,7 +89,7 @@ test_skill_phase0_defers_plan_mode() {
         "SKILL.md must document that the state write precedes plan mode (#409)"
 
     # Positive: the Phase 0 step explicitly says NOT to enter plan mode there.
-    assert_true "printf '%s' \"\$phase0\" | command grep -qiE 'Do NOT enter plan mode (here|at the start)'" \
+    assert_true "command grep -qiE 'Do NOT enter plan mode (here|at the start)' <<<\"\$phase0\"" \
         "Phase 0 step must explicitly defer plan mode to Phase 2 (#409)"
 }
 

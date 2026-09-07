@@ -282,7 +282,9 @@ br="${GOLEM_BRANCH_PREFIX}${N}"
 removed=0
 
 listed=0
-if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then
+# `git worktree list` failing must NOT read as "already gone" — a broken repo
+# would then be reported as a successful removal, so its status is kept.
+if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then # lint-allow-pipe-grep-q: git's own failure must propagate, not read as removed
     listed=1
 fi
 

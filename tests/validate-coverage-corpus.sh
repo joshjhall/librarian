@@ -294,7 +294,7 @@ test_imported_modules_are_imported() {
         # itself (a file importing its own name proves nothing).
         if ! (cd "$dir" 2>/dev/null && command grep -lE \
             "^[[:space:]]*(from[[:space:]]+${stem}[[:space:]]+import|import[[:space:]]+${stem})" \
-            ./*.py 2>/dev/null | command grep -qv "^\./${stem}\.py$"); then
+            ./*.py 2>/dev/null | command grep -qv "^\./${stem}\.py$"); then # lint-allow-pipe-grep-q: the upstream grep -l exit status IS the signal — no sibling matched means no importer
             missing="$missing $module"
         fi
     done <<EOF

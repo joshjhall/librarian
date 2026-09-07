@@ -66,6 +66,43 @@
 # bash 5 accepts silently and 3.2 rejects would still slip through. Closing that
 # fully needs a real 3.2 interpreter in CI.
 
+# Check 5 — `… | grep -q` under `set -o pipefail` (#928). `grep -q` exits the
+# INSTANT it matches, closing the read end while the upstream is still writing.
+# The writer takes SIGPIPE and dies 141, and `pipefail` promotes that to a
+# pipeline FAILURE — so a membership test reports "not found" precisely BECAUSE
+# the item was found. The verdict is inverted, not merely lost.
+#
+# WHY IT NEEDS A GATE RATHER THAN A ONE-TIME SWEEP: it is SIZE-dependent, not
+# logic-dependent. While the upstream write fits the ~64KB pipe buffer the writer
+# finishes before grep exits, nothing is signalled, and the site passes forever.
+# It arms only once the data grows past the buffer — a data-growth event nobody
+# associates with a test change. Measured on this repo's CI host (match on line
+# 1, 20 runs): 0/20 false FAILs at ~24KB upstream, 20/20 at ~1.3MB, and 0/20 for
+# the here-string rewrite at the same size.
+#
+# The tell is a SELF-CONTRADICTING message: #709 printed `no scanner emits
+# 'command-injection'` directly above an evidence line listing command-injection
+# as emitted. Because it is rare, the usual disposition is worse than a miss — a
+# one-off red gets re-run, comes back green, and is filed as flake.
+#
+# A NEGATED site (`! printf … | grep -q`) fails in the UNSAFE direction: the real
+# match reports failure, `!` flips it to success, and the assertion PASSES while
+# the forbidden thing is present. 28 of the sites #928 swept were this shape.
+#
+# Portable replacement: a here-string — `command grep -qx "$needle" <<<"$hay"` —
+# which has no writer process and no pipe status at all.
+#
+# NOT A BLANKET BAN, because some pipelines have a genuine upstream whose failure
+# SHOULD propagate (`git worktree list | grep -q`, `find -print -quit | grep -q`).
+# Those carry `# lint-allow-pipe-grep-q: <reason>` stating why the exit status is
+# wanted. The reason is REQUIRED and enforced — a bare marker does not exempt.
+#
+# CONTINUATION-AWARE, unlike checks 1-3. Six of #928's sites put the upstream and
+# the `grep -q` on separate lines (upstream ending in `|`). A per-line scanner
+# would silently miss exactly those, and under-covering without saying so is the
+# failure mode this file exists to prevent — so the scan carries the pending-pipe
+# state across lines and reports the violation at the `grep -q` line.
+
 # Scope: `plugins/ tests/ bin/` only. The `containers/` submodule is a separate
 # repo that deliberately requires bash 5 — out of scope here.
 #
@@ -138,7 +175,7 @@ scan_file() {
             *declare* | *local* | *mapfile* | *readarray* | *'${'* | *';;'*) ;;
             *) continue ;;
         esac
-        printf '%s\n' "$code" | command grep -qE "$FORBIDDEN_RE" || continue
+        command grep -qE "$FORBIDDEN_RE" <<<"$code" || continue
         CUR_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
     done <"$file"
 }
@@ -203,7 +240,7 @@ scan_file_paths() {
             */bin/*) ;;
             *) continue ;;
         esac
-        printf '%s\n' "$scan_code" | command grep -qE "$PATHLIT_RE" || continue
+        command grep -qE "$PATHLIT_RE" <<<"$scan_code" || continue
         CUR_PATH_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
     done <"$file"
 }
@@ -301,13 +338,13 @@ scan_file_gnu_regex() {
         esac
         # `grep -P` is flagged on its own — the FLAG is the violation, so this
         # arm is deliberately not gated on the regex-bearing scoping below.
-        if printf '%s\n' "$code" | command grep -qE "$GNUP_FLAG_RE"; then
+        if command grep -qE "$GNUP_FLAG_RE" <<<"$code"; then
             CUR_GNURE_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
             continue
         fi
         # Only regex-bearing lines (see the scoping rationale above).
-        printf '%s\n' "$code" | command grep -qE "$GNURE_TOOL_RE" || continue
-        printf '%s\n' "$code" | command grep -qE "$GNURE_BAD_RE" || continue
+        command grep -qE "$GNURE_TOOL_RE" <<<"$code" || continue
+        command grep -qE "$GNURE_BAD_RE" <<<"$code" || continue
         CUR_GNURE_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
     done <"$file"
 }
@@ -410,6 +447,89 @@ scan_file_gnu_flags() {
     done <"$file"
 }
 
+# --- `… | grep -q` under pipefail ban (#928) -------------------------------------
+# See "Check 5" in the header for the mechanism, the measured size-dependence,
+# and why the exemption exists. Two regexes, because the shape spans lines:
+#
+#   PIPEQ_RE      the whole pipeline on ONE line — something, a pipe, a `grep -q`
+#   PIPEQ_HEAD_RE a `grep -q` STARTING a line, for the continuation case where
+#                 the upstream ended in a trailing `|`
+#
+# `-[A-Za-z]*q` matches the flag bundled anywhere (`-q`, `-qx`, `-qxF`, `-Eq`),
+# which is how the sites in this tree are actually spelled.
+PIPEQ_GREP='(command[[:space:]]+)?(grep|egrep|fgrep)[[:space:]]+(-[A-Za-z]*[[:space:]]+)*-[A-Za-z]*q'
+PIPEQ_RE="\|[[:space:]]*${PIPEQ_GREP}"
+PIPEQ_HEAD_RE="^[[:space:]]*${PIPEQ_GREP}"
+
+# scan_file_pipe_grep_q <path> — populate CUR_PIPEQ_VIOLATIONS with
+# `line N: <code>` for each `… | grep -q` pipeline (empty when clean).
+#
+# CONTINUATION STATE: `pending_pipe` is set when a line ends in a bare `|` and is
+# consumed by the next non-blank line. That is what makes the multi-line spelling
+# visible; without it the six sites #928 found spanning two lines would read as
+# clean forever.
+CUR_PIPEQ_VIOLATIONS=""
+scan_file_pipe_grep_q() {
+    local file="$1"
+    CUR_PIPEQ_VIOLATIONS=""
+    local lineno=0 line code pending_pipe=0 hit
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        code="$line"
+        case "$code" in
+            \#*)
+                # A whole-line comment neither violates nor breaks a pending
+                # pipe: `cmd |` followed by a comment line then `grep -q` is
+                # still one pipeline, so the state deliberately survives.
+                continue
+                ;;
+        esac
+        code="${code%%[[:space:]]#*}"
+        # An explicit `# lint-allow-pipe-grep-q: <reason>` marker exempts a line
+        # whose upstream has a genuine failure that SHOULD propagate. The reason
+        # is REQUIRED and enforced, not merely requested — a bare
+        # `lint-allow-pipe-grep-q:` with nothing after the colon does NOT exempt,
+        # so an exemption can never be taken silently. `*[![:space:]]*` demands
+        # at least one non-whitespace character in the tail.
+        case "$line" in
+            *"lint-allow-pipe-grep-q:"*[![:space:]]*)
+                pending_pipe=0
+                continue
+                ;;
+        esac
+        # Cheap bash prefilter before any subprocess. This scan runs over the
+        # whole corpus on every pre-push, and the overwhelming majority of lines
+        # contain neither a pipe nor a grep; `case` is a builtin, so the grep
+        # below runs only on candidate lines. Same precedent as check 3.
+        hit=0
+        case "$code" in
+            *'|'*grep*) hit=1 ;;
+        esac
+        if [ "$hit" -eq 1 ] && command grep -qE "$PIPEQ_RE" <<<"$code"; then
+            CUR_PIPEQ_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+        elif [ "$pending_pipe" -eq 1 ]; then
+            case "$code" in
+                *grep*)
+                    if command grep -qE "$PIPEQ_HEAD_RE" <<<"$code"; then
+                        CUR_PIPEQ_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+                    fi
+                    ;;
+            esac
+        fi
+        # Recompute the continuation state from THIS line: does it end in a bare
+        # `|`? A `||` is a control operator, not a pipe, so it must not arm the
+        # continuation — hence the `[^|]` guard before the final pipe.
+        pending_pipe=0
+        case "$code" in
+            *[![:space:]]*)
+                if command grep -qE '(^|[^|])\|[[:space:]]*$' <<<"$code"; then
+                    pending_pipe=1
+                fi
+                ;;
+        esac
+    done <"$file"
+}
+
 # scan_file_parses <path> — populate CUR_PARSE_VIOLATIONS with the parser
 # diagnostic when `bash -n` writes ANYTHING to stderr (empty when clean).
 #
@@ -460,6 +580,13 @@ test_file_no_gnu_env() {
     scan_file_gnu_env "$CUR_FILE"
     assert_equals "" "$CUR_GNUENV_VIOLATIONS" \
         "$(command basename "$CUR_FILE") must spell env unset as \`-uVAR\`, not GNU-only \`--unset=VAR\` (#932)"
+}
+
+# Per-file test body for the `| grep -q` ban (reads CUR_FILE).
+test_file_no_pipe_grep_q() {
+    scan_file_pipe_grep_q "$CUR_FILE"
+    assert_equals "" "$CUR_PIPEQ_VIOLATIONS" \
+        "$(command basename "$CUR_FILE") must not pipe into \`grep -q\` under pipefail — a SUCCESSFUL match SIGPIPEs the writer and inverts the verdict; use a here-string (#928)"
 }
 
 # Per-file test body for the parse check (reads CUR_FILE).
@@ -795,6 +922,84 @@ test_negative_case_parse_fires() {
         "a hard syntax error IS flagged too — stderr capture is exit-code agnostic (#906)"
 }
 
+# Negative case: scan_file_pipe_grep_q must fire on every spelling of the shape
+# — including the MULTI-LINE one, which is the whole reason the scanner carries
+# continuation state — and must not fire on the here-string rewrite, on a
+# properly-reasoned exemption, or on a `||` control operator.
+#
+# The multi-line assertions are the load-bearing ones. A per-line scanner passes
+# every other case in this fixture while silently missing the six real sites that
+# span two lines; without `multiline_hit`/`multiline_cmd_hit` a later
+# "simplification" back to a single-line regex would go green.
+test_negative_case_pipe_grep_q_fires() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/pipeq.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if printf '%s\n' "$hay" | grep -q "$n"; then plain_hit=1; fi
+if printf '%s\n' "$hay" | command grep -qx "$n"; then cmd_hit=1; fi
+if ! printf '%s\n' "$hay" | command grep -qxF "$n"; then negated_hit=1; fi
+if printf '%s\n' "$hay" | command grep -Eq "$n"; then flagorder_hit=1; fi
+if locale -a 2>/dev/null | command grep -qixF "$c"; then locale_hit=1; fi
+if git worktree list --porcelain | command grep -qx "w $r"; then git_hit=1; fi
+multiline_hit="$(printf '%s\n' "$hay" |
+    grep -q "$n")"
+multiline_cmd_hit="$(command printf '%s\n' "$hay" |
+    command grep -qxF "$n")"
+if command grep -qx "$n" <<<"$hay"; then ok_herestring=1; fi
+if command grep -qx "$n" "$file"; then ok_directfile=1; fi
+if printf '%s\n' "$hay" | command grep -c "$n"; then ok_notquiet=1; fi
+if git worktree list | command grep -qx "w"; then ok_marked=1; fi  # lint-allow-pipe-grep-q: upstream failure must propagate
+if git worktree list | command grep -qx "w"; then bareMarker_hit=1; fi  # lint-allow-pipe-grep-q:
+ok_orlist=1 ||
+    command grep -qx "$n" <<<"$hay"
+# a prose comment naming printf | grep -q is commentpipeq_ok
+EOF
+
+    # The whitespace-only-reason fixture is appended with printf, NOT written in
+    # the heredoc above: its trailing spaces are the whole point, and a heredoc
+    # line ending in whitespace is silently stripped by formatters/editors —
+    # leaving a fixture byte-identical to the bare-marker one, which would test
+    # nothing while looking like it did. (Same reasoning as check 3's.)
+    command printf '%s\n' \
+        "if git worktree list | command grep -qx \"w\"; then wsMarker_hit=1; fi  # lint-allow-pipe-grep-q:   " \
+        >>"$tmp/pipeq.sh"
+
+    scan_file_pipe_grep_q "$tmp/pipeq.sh"
+
+    assert_not_empty "$CUR_PIPEQ_VIOLATIONS" "scan_file_pipe_grep_q flags the shape (violation branch fires)"
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "plain_hit" 'a bare `| grep -q` is flagged'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "cmd_hit" 'a `| command grep -qx` is flagged'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "negated_hit" 'a NEGATED site is flagged (fails in the unsafe direction)'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "flagorder_hit" '`grep -Eq` (q not first in the bundle) is flagged'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "locale_hit" 'a `locale -a | command grep -qixF` is flagged'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "git_hit" 'an UNMARKED genuine-upstream pipeline is flagged (the marker is what exempts)'
+    # The continuation arm. These two lines carry no pipe of their own — only the
+    # scanner's pending-pipe state can reach them.
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "grep -q \"\$n\")" 'a MULTI-LINE pipeline is flagged (continuation state)'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "command grep -qxF \"\$n\")" 'a MULTI-LINE `command grep` pipeline is flagged'
+    # Allowed forms must NOT surface.
+    assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "ok_herestring" 'the here-string rewrite is NOT flagged'
+    assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "ok_directfile" 'grep reading a file directly is NOT flagged'
+    assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "ok_notquiet" 'a pipe into a NON-quiet grep is NOT flagged (it reads all input)'
+    assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "ok_marked" 'a reasoned lint-allow-pipe-grep-q line is NOT flagged'
+    # `||` is a control operator, not a pipe: it must not arm the continuation,
+    # or every `x ||`-continued line followed by a grep would false-positive.
+    assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "ok_orlist" '`||` does NOT arm the continuation state'
+    # The reason is enforced, not just documented: a marker with an empty tail
+    # must NOT buy an exemption, or the escape hatch becomes a silent one.
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "bareMarker_hit" 'a REASONLESS lint-allow-pipe-grep-q marker does NOT exempt'
+    assert_contains "$CUR_PIPEQ_VIOLATIONS" "wsMarker_hit" 'a whitespace-only reason does NOT exempt'
+    assert_not_contains "$CUR_PIPEQ_VIOLATIONS" "commentpipeq_ok" 'a prose comment naming the shape is NOT flagged'
+}
+
 # Discover the corpus.
 scripts_list="$(list_shell_scripts)"
 
@@ -811,6 +1016,7 @@ run_test test_negative_case_gnu_regex_fires "scan_file_gnu_regex flags GNU-only 
 run_test test_word_boundary_exemption_is_pinned "\\b stays exempt — BSD-verified for grep, known gap for sed (#684)"
 run_test test_negative_case_gnu_env_fires "scan_file_gnu_env flags GNU-only env --unset= (#932)"
 run_test test_negative_case_parse_fires "scan_file_parses flags heredoc-in-command-substitution, not its rewrite (#906)"
+run_test test_negative_case_pipe_grep_q_fires "scan_file_pipe_grep_q flags \`| grep -q\` pipelines, incl. multi-line (#928)"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -821,6 +1027,7 @@ while IFS= read -r f; do
     run_test test_file_no_gnu_env "${f#"$REPO_ROOT"/}: no GNU-only env --unset= (#932)"
     run_test test_file_no_gnu_flags "${f#"$REPO_ROOT"/}: no GNU-only coreutils flags (#932)"
     run_test test_file_parses "${f#"$REPO_ROOT"/}: parses under bash -n (#906)"
+    run_test test_file_no_pipe_grep_q "${f#"$REPO_ROOT"/}: no \`| grep -q\` under pipefail (#928)"
 done <<<"$scripts_list"
 
 generate_report

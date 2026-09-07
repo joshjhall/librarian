@@ -208,14 +208,14 @@ check_site() {
     local k
     # superset: nothing invented
     for k in $named; do
-        if ! command printf '%s\n' "$authority" | command grep -qxF "$k"; then
+        if ! command grep -qxF "$k" <<<"$authority"; then
             CUR_VIOLATIONS="${CUR_VIOLATIONS}${CUR_VIOLATIONS:+
 }$file [$id]: names \`$k\`, which is NOT in KNOWN_ARG_KEYS — the harness throws on it (#597)"
         fi
     done
     # subset: nothing missing
     for k in $expected; do
-        if ! command printf '%s\n' "$named" | command grep -qxF "$k"; then
+        if ! command grep -qxF "$k" <<<"$named"; then
             CUR_VIOLATIONS="${CUR_VIOLATIONS}${CUR_VIOLATIONS:+
 }$file [$id]: is missing \`$k\` — a caller reading this list never passes it, and the harness silently uses the empty default"
         fi

@@ -162,7 +162,7 @@ test_prefers_ruff_binary_when_present() {
     assert_contains "$GATE_LOG" "ruff format --check plugins" "the ruff binary is invoked for format"
     assert_contains "$GATE_OUT" "Runner: ruff on PATH" "the resolved runner is announced"
     # uvx must not be consulted at all when a real ruff exists.
-    assert_true "! printf '%s' \"$GATE_LOG\" | command grep -q '^uvx '" \
+    assert_true "! command grep -q '^uvx ' <<<\"$GATE_LOG\"" \
         "uvx is not invoked when ruff is on PATH"
 }
 
@@ -218,7 +218,7 @@ test_unusable_uvx_skips_rather_than_fails() {
     assert_equals "$SKIP_SENTINEL" "$GATE_RC" "a failing uvx probe yields the skip sentinel"
     assert_contains "$GATE_LOG" "uvx ruff@$(command bash "$REPO_ROOT/bin/ruff-version.sh") --version" \
         "the probe was actually attempted"
-    assert_true "! printf '%s' \"$GATE_LOG\" | command grep -q 'check plugins'" \
+    assert_true "! command grep -q 'check plugins' <<<\"$GATE_LOG\"" \
         "no lint is attempted through an unusable uvx"
 }
 
@@ -377,7 +377,7 @@ test_run_stage_renders_skip_not_ok() {
 
     assert_contains "$out" "[SKIP] Demo stage" "a 77 stage renders as [SKIP]"
     assert_contains "$out" "did not run" "the [SKIP] line says it did not run"
-    assert_true "! printf '%s' \"$out\" | command grep -q '\[ok\] Demo stage'" \
+    assert_true "! command grep -q '\[ok\] Demo stage' <<<\"$out\"" \
         "a 77 stage is NOT rendered as [ok] (the original bug)"
 }
 
@@ -441,7 +441,7 @@ test_shellcheck_gate_skips_with_sentinel() {
         "an absent shellcheck exits the reserved skip sentinel, not 0 (#571)"
     assert_contains "$out" "GATE DID NOT RUN" \
         "the skip message states the gate did not run (#571)"
-    assert_true "! printf '%s' \"$out\" | command grep -q 'Failed:  [1-9]'" \
+    assert_true "! command grep -q 'Failed:  [1-9]' <<<\"$out\"" \
         "a skip is not reported as a failure (#571)"
 }
 
@@ -495,9 +495,9 @@ test_shellcheck_gate_runs_when_available() {
         "$REAL_BASH" "$LINT_SHELLCHECK" 2>&1)" || rc=$?
 
     assert_equals "0" "$rc" "the gate passes on this repo's scripts"
-    assert_true "! printf '%s' \"$out\" | command grep -q 'GATE DID NOT RUN'" \
+    assert_true "! command grep -q 'GATE DID NOT RUN' <<<\"$out\"" \
         "a real run does not report itself as skipped"
-    assert_true "printf '%s' \"$out\" | command grep -qE 'Passed:  [1-9]'" \
+    assert_true "command grep -qE 'Passed:  [1-9]' <<<\"$out\"" \
         "the gate actually linted something (corpus is non-empty)"
 }
 

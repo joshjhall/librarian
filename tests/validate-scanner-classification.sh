@@ -80,7 +80,7 @@ scan_cat() {
 }
 
 # has_row ROWS SUBSTR — 0 if any row contains SUBSTR.
-has_row() { command printf '%s\n' "$1" | command grep -qF "$2"; }
+has_row() { command grep -qF "$2" <<<"$1"; }
 
 # fresh_dir — a unique per-case scratch dir under WORKDIR, so each test is
 # self-contained rather than sharing (and overwriting) one fixture tree.

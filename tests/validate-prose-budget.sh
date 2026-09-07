@@ -242,7 +242,7 @@ test_real_corpus_non_empty() {
     local out
     out="$(command bash "$GATE" 2>&1 || true)"
     assert_contains "$out" "files," "The gate reports a file count on the real tree"
-    if command printf '%s' "$out" | command grep -qE '^  0 files'; then
+    if command grep -qE '^  0 files' <<<"$out"; then
         _fail "The real corpus is empty — the gate is a no-op"
     fi
 }

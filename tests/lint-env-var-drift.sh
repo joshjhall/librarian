@@ -147,11 +147,9 @@ scan_prose_only() {
     while IFS= read -r token; do
         [ -n "$token" ] || continue
         # In code? Then it is implemented — nothing to report.
-        command printf '%s\n' "$source_tokens" |
-            command grep -qxF "$token" && continue
+        command grep -qxF "$token" <<<"$source_tokens" && continue
         # Allowlisted? Then it is agent-interpreted by design.
-        command printf '%s\n' "$allowlist" |
-            command grep -qxF "$token" && continue
+        command grep -qxF "$token" <<<"$allowlist" && continue
         PROSE_ONLY="${PROSE_ONLY}${token}"$'\n'
     done <<EOF
 $prose_tokens
@@ -313,7 +311,7 @@ test_allowlist_is_not_stale() {
     source_tokens="$(tokens_in "$SOURCE_FILES" | command sort -u)"
     while IFS= read -r var; do
         [ -n "$var" ] || continue
-        command printf '%s\n' "$source_tokens" | command grep -qxF "$var" &&
+        command grep -qxF "$var" <<<"$source_tokens" &&
             stale="${stale}${var}"$'\n'
     done <<EOF
 $ALLOWLIST
@@ -330,7 +328,7 @@ test_allowlist_entries_are_documented() {
     prose_tokens="$(tokens_in "$PROSE_FILES" | drop_family_refs | command sort -u)"
     while IFS= read -r var; do
         [ -n "$var" ] || continue
-        command printf '%s\n' "$prose_tokens" | command grep -qxF "$var" ||
+        command grep -qxF "$var" <<<"$prose_tokens" ||
             missing="${missing}${var}"$'\n'
     done <<EOF
 $ALLOWLIST

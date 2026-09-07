@@ -69,7 +69,7 @@ scan_file() {
         case "$ref" in
             ./* | docker://*) continue ;;
         esac
-        if ! printf '%s' "$ref" | command grep -qE "$PIN_RE"; then
+        if ! command grep -qE "$PIN_RE" <<<"$ref"; then
             CUR_VIOLATIONS+="line ${lineno}: ${ref}"$'\n'
         fi
     done < <(_uses_lines "$file")

@@ -91,13 +91,13 @@ test_merge_cleanup_removes_not_adds() {
         "L3-L4 post-merge cleanup must NOT add status/pr-pending (#654 AC1)"
 
     # The fix: it removes it instead, on both platforms.
-    assert_true "printf '%s' \"\$step_a\" | command grep -q -- '--remove-label \"status/pr-pending\"'" \
+    assert_true "command grep -q -- '--remove-label \"status/pr-pending\"' <<<\"\$step_a\"" \
         "L3-L4 post-merge cleanup must remove status/pr-pending (#654 AC1)"
-    assert_true "printf '%s' \"\$step_a\" | command grep -q -- '--unlabel \"status/pr-pending\"'" \
+    assert_true "command grep -q -- '--unlabel \"status/pr-pending\"' <<<\"\$step_a\"" \
         "L3-L4 cleanup must carry the GitLab --unlabel sibling (#654 AC1)"
 
     # status/in-progress removal is pre-existing behavior that must survive.
-    assert_true "printf '%s' \"\$step_a\" | command grep -q -- '--remove-label \"status/in-progress\"'" \
+    assert_true "command grep -q -- '--remove-label \"status/in-progress\"' <<<\"\$step_a\"" \
         "L3-L4 cleanup must still remove status/in-progress (#654 AC1)"
 }
 
@@ -161,20 +161,20 @@ test_teardown_owns_the_sweep() {
     # issue-number token in this file and its companion docs. A bare `N` reads
     # like a literal an agent could paste into a shell verbatim, so pin the
     # spelling rather than just the presence of the command.
-    assert_true "printf '%s' \"\$teardown\" | command grep -q 'gh issue edit {N} --remove-label \"status/pr-pending\"'" \
+    assert_true "command grep -q 'gh issue edit {N} --remove-label \"status/pr-pending\"' <<<\"\$teardown\"" \
         "--teardown must remove status/pr-pending, using the {N} placeholder (#654 AC2)"
-    assert_true "printf '%s' \"\$teardown\" | command grep -q 'glab issue update {N} --unlabel \"status/pr-pending\"'" \
+    assert_true "command grep -q 'glab issue update {N} --unlabel \"status/pr-pending\"' <<<\"\$teardown\"" \
         "--teardown must carry the GitLab --unlabel sibling, using {N} (#654 AC2)"
 
     # Merged-only: the block must say the unmerged branch keeps the label, so a
     # reader cannot hoist the sweep above the MERGED check.
-    assert_true "printf '%s' \"\$teardown\" | command grep -qiE 'merged.only|only on the verified.MERGED|must .*keep. the label'" \
+    assert_true "command grep -qiE 'merged.only|only on the verified.MERGED|must .*keep. the label' <<<\"\$teardown\"" \
         "--teardown must scope the sweep to the verified-MERGED branch (#654 AC2)"
 
     # AC4: the idempotency semantics are documented at the sweep site.
-    assert_true "printf '%s' \"\$teardown\" | command grep -qi 'idempotent'" \
+    assert_true "command grep -qi 'idempotent' <<<\"\$teardown\"" \
         "the sweep site must document idempotency (#654 AC4)"
-    assert_true "printf '%s' \"\$teardown\" | command grep -qiE 'no-op|exits 0'" \
+    assert_true "command grep -qiE 'no-op|exits 0' <<<\"\$teardown\"" \
         "the sweep site must state that removing an absent label is a clean no-op (#654 AC4)"
 }
 

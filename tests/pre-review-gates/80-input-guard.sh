@@ -118,7 +118,7 @@ test_partially_resolvable_list_does_not_warn() {
 
     gate_streams "$list"
     assert_exit 0 "$GS_RC" "a partially-resolvable list exits 0"
-    assert_true "! command printf '%s' \"$GS_ERR\" | command grep -q 'no path listed in'" \
+    assert_true "! command grep -q 'no path listed in' <<<\"$GS_ERR\"" \
         "one resolvable path suppresses the warning"
 }
 

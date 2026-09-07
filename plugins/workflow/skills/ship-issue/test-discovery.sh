@@ -459,7 +459,7 @@ scan_missing_tests() {
             if [ -n "$_PROJECT_ROOT" ] && [ -d "${_PROJECT_ROOT}/tests" ]; then
                 command find "${_PROJECT_ROOT}/tests" \
                     -name "test_${name_no_ext}.py" \
-                    -print -quit 2>/dev/null | command grep -q . && return
+                    -print -quit 2>/dev/null | command grep -q . && return # lint-allow-pipe-grep-q: -quit already stops find at the first hit, so there is no writer left to SIGPIPE
                 # Repo-rooted SHELL test naming this source (#644). Every probe
                 # above is python-named, so in a repo that tests its python from
                 # bash gates the arm cannot resolve by construction and the row

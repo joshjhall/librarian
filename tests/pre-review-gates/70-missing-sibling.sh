@@ -81,9 +81,9 @@ test_diff_refusal_strips_control_bytes() {
 
     assert_exit 1 "$rc" "a control-byte-bearing diff is still refused"
     assert_contains "$err" "Offending line:" "the line is still reported"
-    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command printf '\033')\"" \
+    assert_true "! command grep -q \"$(command printf '\033')\" <<<\"$err\"" \
         "no raw ESC byte survives into the reflected message"
-    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command printf '\007')\"" \
+    assert_true "! command grep -q \"$(command printf '\007')\" <<<\"$err\"" \
         "no raw BEL byte survives into the reflected message"
     assert_contains "$err" "tail" "the printable remainder of the line is preserved"
 }
@@ -129,9 +129,9 @@ open(sys.argv[1], "w").write(line + "\n")' "$list"
     command rm -f "$errfile"
 
     assert_exit 1 "$rc" "a bidi-bearing diff is still refused"
-    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command python3 -c 'print(chr(0x202E))')\"" \
+    assert_true "! command grep -q \"$(command python3 -c 'print(chr(0x202E))')\" <<<\"$err\"" \
         "no bidi override survives into the reflected message"
-    assert_true "! command printf '%s' \"$err\" | command grep -q \"$(command python3 -c 'print(chr(0x200B))')\"" \
+    assert_true "! command grep -q \"$(command python3 -c 'print(chr(0x200B))')\" <<<\"$err\"" \
         "no zero-width space survives into the reflected message"
     assert_contains "$err" "RTLO" "the printable text around the stripped bytes is preserved"
     assert_contains "$err" "tail" "the line is not truncated at the first stripped byte"

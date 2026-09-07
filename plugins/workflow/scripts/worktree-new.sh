@@ -46,7 +46,9 @@ cd "$root"
 wt="$GOLEM_WORKTREE_DIR/issue-$N"
 br="${GOLEM_BRANCH_PREFIX}${N}"
 
-if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then
+# `git worktree list` failing must NOT read as "no such worktree" — that would
+# let this create a second worktree over a broken repo, so its status is kept.
+if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then # lint-allow-pipe-grep-q: git's own failure must propagate, not read as absent
     command echo "worktree-new: $wt already exists — remove it first (worktree-rm.sh $N)" >&2
     exit 1
 fi

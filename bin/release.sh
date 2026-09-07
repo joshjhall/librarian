@@ -117,7 +117,7 @@ done
 [ -z "$VERSION_ARG" ] && usage
 
 # Resolve the target version.
-if command echo "$VERSION_ARG" | command grep -qE '^(major|minor|patch)$'; then
+if command grep -qE '^(major|minor|patch)$' <<<"$VERSION_ARG"; then
     NEW_VERSION="$(bump_version "$CURRENT_VERSION" "$VERSION_ARG")"
 else
     NEW_VERSION="$VERSION_ARG"
@@ -139,7 +139,7 @@ if [ "$NON_INTERACTIVE" = "false" ]; then
     command echo ""
     read -r -p "Continue with release v$NEW_VERSION? (y/n) " -n 1 reply
     command echo ""
-    if ! command echo "$reply" | command grep -qE '^[Yy]$'; then
+    if ! command grep -qE '^[Yy]$' <<<"$reply"; then
         command echo "Release cancelled. For automation: $0 --non-interactive $VERSION_ARG" >&2
         exit 1
     fi

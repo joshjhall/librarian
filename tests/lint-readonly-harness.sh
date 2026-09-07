@@ -78,7 +78,7 @@ missing_fragments_in_block() {
     local block="$1" frag
     while IFS= read -r frag; do
         [ -n "$frag" ] || continue
-        printf '%s\n' "$block" | command grep -qF "$frag" || printf '%s\n' "$frag"
+        command grep -qF "$frag" <<<"$block" || printf '%s\n' "$frag"
     done <<<"$REQUIRED_FRAGMENTS"
 }
 
