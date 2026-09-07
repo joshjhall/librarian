@@ -656,11 +656,24 @@ work_valid_kind() {
 # registry instead of the SUBJECT's, finds nothing, and renders `idle` — the
 # exact false verdict, arriving through the argument parser.
 #
-# Called as `require_flag_value --pid "$#" || return 2` AFTER the `shift`, so
-# $# is the count of arguments still available for the value.
+# Called as `require_flag_value register --pid "$#" || return 2` AFTER the
+# `shift`, so $# is the count of arguments still available for the value.
+#
+# ONE implementation, used by EVERY flag site including --pid/--max-age. An
+# earlier pass hand-rolled the identical `shift; if [ "$#" -eq 0 ]` shape inline
+# at those two sites while the other seven called this helper — two independent
+# implementations of one invariant, so a later change to the contract (the exit
+# code, a new failure mode) applied to one shape would look complete while
+# silently leaving the other stale. That is the same
+# harden-one-knob-and-the-sibling-stays-exposed pattern this hardening existed to
+# close, reintroduced by the fix for it.
+#
+# The subcommand is a parameter so the message names it ("golem-work register:
+# --pid requires a value"): an operator who mistypes a flag should see the same
+# message shape whichever flag it was.
 require_flag_value() {
-    if [ "$2" -eq 0 ]; then
-        command echo "golem-work: $1 requires a value" >&2
+    if [ "$3" -eq 0 ]; then
+        command echo "golem-work $1: $2 requires a value" >&2
         return 1
     fi
     return 0
@@ -680,23 +693,17 @@ cmd_register() {
             # file is that a degraded signal must never masquerade as a good one.
             --pid)
                 shift
-                if [ "$#" -eq 0 ]; then
-                    command echo "golem-work register: --pid requires a value" >&2
-                    return 2
-                fi
+                require_flag_value register --pid "$#" || return 2
                 pid="$1"
                 ;;
             --max-age)
                 shift
-                if [ "$#" -eq 0 ]; then
-                    command echo "golem-work register: --max-age requires a value" >&2
-                    return 2
-                fi
+                require_flag_value register --max-age "$#" || return 2
                 max_age="$1"
                 ;;
             --golem)
                 shift
-                require_flag_value --golem "$#" || return 2
+                require_flag_value register --golem "$#" || return 2
                 golem="$1"
                 ;;
             *)
@@ -821,7 +828,7 @@ cmd_complete() {
         case "$1" in
             --golem)
                 shift
-                require_flag_value --golem "$#" || return 2
+                require_flag_value complete --golem "$#" || return 2
                 golem="$1"
                 ;;
             *)
@@ -974,17 +981,17 @@ cmd_list() {
         case "$1" in
             --golem)
                 shift
-                require_flag_value --golem "$#" || return 2
+                require_flag_value list --golem "$#" || return 2
                 golem="$1"
                 ;;
             --status-dir)
                 shift
-                require_flag_value --status-dir "$#" || return 2
+                require_flag_value list --status-dir "$#" || return 2
                 status_dir="$1"
                 ;;
             --worktree)
                 shift
-                require_flag_value --worktree "$#" || return 2
+                require_flag_value list --worktree "$#" || return 2
                 worktree="$1"
                 ;;
             *)
@@ -1039,17 +1046,17 @@ cmd_count() {
         case "$1" in
             --golem)
                 shift
-                require_flag_value --golem "$#" || return 2
+                require_flag_value count --golem "$#" || return 2
                 golem="$1"
                 ;;
             --status-dir)
                 shift
-                require_flag_value --status-dir "$#" || return 2
+                require_flag_value count --status-dir "$#" || return 2
                 status_dir="$1"
                 ;;
             --worktree)
                 shift
-                require_flag_value --worktree "$#" || return 2
+                require_flag_value count --worktree "$#" || return 2
                 worktree="$1"
                 ;;
             *) ;;

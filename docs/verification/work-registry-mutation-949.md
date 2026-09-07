@@ -172,6 +172,36 @@ Two further hardenings came out of the same cycle:
   refuse loudly, and `cmd_count`'s fail-soft contract gained an explicit
   malformed-invocation-vs-runtime-condition boundary.
 
+## Cycle 2: converged, and one finding about the cycle-1 fix itself
+
+Cycle 2 reviewed the fix delta and returned **zero blocking findings** — the loop
+converged. Its most useful finding was about the *fix*, not the original code:
+
+> The cycle-1 hardening routed 8 of 9 dangling-flag sites through the new
+> `require_flag_value` helper but hand-rolled the identical shape inline at the
+> other two (`--pid`, `--max-age`), leaving two independent implementations of
+> one invariant — and two different message shapes for the same class of error.
+
+That is the same **harden-one-knob-and-the-sibling-stays-exposed** pattern the
+hardening existed to close, reintroduced *by the fix for it*. Worth recording as
+its own lesson: a fix that generalizes a guard should route every site through
+the generalization, or the next change to the contract will look complete while
+leaving a stale twin behind. All ten sites now share one helper, and the message
+carries the subcommand.
+
+Four coverage findings were also taken rather than deferred, since each named a
+branch of new code that no test entered: `cmd_complete`'s id validation,
+`cmd_list`'s stray-positional rejection, `work_compact`'s truncation, and
+`--status-dir` used standalone plus its documented precedence over `--worktree`
+(a comment asserting behavior nothing measured).
+
+**A mutation note on the last one.** Its first mutant *passed*, which looked like
+a vacuous test. It was not — the mutation had been applied to `cmd_list` while
+the test drives `cmd_count`. Re-run against the right function, it fails as
+intended. Recorded because the failure mode is worth naming: **a mutant that
+lands outside the code under test proves nothing in either direction**, and read
+carelessly it retires a good test.
+
 ## Reproducing
 
 M1 and M3 need the full suite (they are wiring-level). M2, M4, and M5 are visible

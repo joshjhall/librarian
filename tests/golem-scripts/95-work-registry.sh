@@ -648,6 +648,7 @@ test_work_dangling_flag_refuses() {
         "register:bash:job:--pid" \
         "register:bash:job:--max-age" \
         "register:bash:job:--golem" \
+        "complete:work-1-aaaa:--golem" \
         "count:--worktree" \
         "count:--golem" \
         "count:--status-dir" \
@@ -713,4 +714,101 @@ test_work_list_observer_flags() {
     run_work_at "$WORKDIR" nested/worktrees nested/worktrees/.status list --worktree "$sb/nope"
     assert_exit 2 "$RUN_RC" "list refuses a non-golem-worktree path"
     assert_contains "$RUN_OUT" "not a golem worktree" "and says why"
+}
+
+# --- cmd_complete + cmd_list validation branches (#949 review cycle 2) -------
+
+# `complete`'s own input validation, mirroring the register-side cases. The id
+# becomes a match key rather than a path, but it is validated to the same
+# charset for the same reason: a malformed key silently matches nothing, and
+# "matched nothing" is indistinguishable from "already closed" — so the failure
+# would be a completed-looking no-op while the entry stays open and pins a false
+# `background`.
+test_work_complete_rejects_malformed_id() {
+    local sb
+    new_sandbox sb
+    run_work "$sb" complete not-work-shaped --golem golem-42
+    assert_exit 2 "$RUN_RC" "an id that is not work-* is rejected"
+    assert_contains "$RUN_OUT" "invalid id" "and says so"
+
+    run_work "$sb" complete "work-../../etc/passwd" --golem golem-42
+    assert_exit 2 "$RUN_RC" "an id carrying path metacharacters is rejected"
+    assert_contains "$RUN_OUT" "invalid id" "and says so"
+
+    run_work "$sb" complete work-1-aaaa work-2-bbbb --golem golem-42
+    assert_exit 2 "$RUN_RC" "a second positional id is rejected"
+    assert_contains "$RUN_OUT" "too many arguments" "and says so"
+}
+
+# `list` takes no positional arguments, so a stray one is a usage error rather
+# than something to silently ignore — an ignored argument is a caller who thinks
+# they filtered the output and did not.
+test_work_list_rejects_positional_argument() {
+    local sb
+    new_sandbox sb
+    run_work "$sb" list foo --golem golem-42
+    assert_exit 2 "$RUN_RC" "a stray positional argument is rejected"
+    assert_contains "$RUN_OUT" "unexpected argument" "and says so"
+}
+
+# work_compact truncates the registry once nothing is open, which is what keeps
+# an append-only log from growing without bound. ASSERT THE FILE, not the count:
+# `count` reads 0 through the reduction whether or not the bytes were actually
+# removed, so a count-only assertion cannot tell compaction from a no-op — the
+# same same-number-is-not-same-answer trap that let cycle 1's defect through.
+test_work_compact_truncates_when_empty() {
+    local sb id reg
+    new_sandbox sb
+    reg="$sb/.worktrees/.status/golem-42.work.jsonl"
+    run_work "$sb" register bash "only item" --golem golem-42
+    id="${RUN_OUT#id=}"
+    assert_true "[ -s '$reg' ]" "the registry has bytes while an item is open"
+    run_work "$sb" complete "$id" --golem golem-42
+    assert_exit 0 "$RUN_RC" "complete exits 0"
+    assert_true "[ ! -s '$reg' ]" \
+        "the registry file is TRUNCATED once nothing is open, not merely reduced to 0"
+}
+
+# --status-dir used DIRECTLY, with a real value, and its precedence over
+# --worktree. Every other observer test reaches the status dir through
+# --worktree (which composes id + dir together), so the standalone flag and the
+# documented "an explicit flag still wins" composition were both unverified —
+# a comment asserting behavior that no test measures.
+test_work_status_dir_flag_and_precedence() {
+    local sb wt now other
+    new_sandbox sb
+    wt="$(make_golem_worktree "$sb" 42 nested/worktrees)" || {
+        skip_test "git worktree add unavailable"
+        return 0
+    }
+    now="$(_work_now)"
+    # The registry --worktree would derive.
+    plant_work_registry "$sb" golem-42 \
+        "$(work_register_line work-1-aaaa workflow "derived" "$now")" \
+        "nested/worktrees/.status"
+    # A DIFFERENT status dir holding two items for the same golem.
+    other="$sb/other-status"
+    command mkdir -p "$other"
+    command printf '%s\n%s\n' \
+        "$(work_register_line work-2-bbbb bash "explicit one" "$now")" \
+        "$(work_register_line work-3-cccc bash "explicit two" "$now")" \
+        >"$other/golem-42.work.jsonl"
+
+    # --status-dir alone (no --worktree) reads the literal path given.
+    run_work_at "$WORKDIR" nested/worktrees nested/worktrees/.status \
+        count --golem golem-42 --status-dir "$other"
+    assert_equals "2" "$RUN_OUT" "--status-dir alone reads the registry at that literal path"
+
+    # An explicit --status-dir WINS over what --worktree would have derived.
+    run_work_at "$WORKDIR" nested/worktrees nested/worktrees/.status \
+        count --worktree "$wt" --status-dir "$other"
+    assert_equals "2" "$RUN_OUT" \
+        "an explicit --status-dir overrides the dir --worktree would derive"
+
+    # Without the override, --worktree derives its own (1 item), proving the
+    # two fixtures are genuinely distinct and the assertion above is not vacuous.
+    run_work_at "$WORKDIR" nested/worktrees nested/worktrees/.status \
+        count --worktree "$wt"
+    assert_equals "1" "$RUN_OUT" \
+        "--worktree alone derives the subject's own status dir (the fixtures differ)"
 }
