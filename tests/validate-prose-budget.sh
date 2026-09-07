@@ -502,12 +502,20 @@ test_regen_aborts_when_snapshot_fails() {
     command printf '#!/usr/bin/env bash\nexit 1\n' >"$stub/mktemp"
     command chmod +x "$stub/mktemp"
 
+    # -uBASH_ENV is load-bearing, not tidiness: in the devcontainer BASH_ENV
+    # points at a profile that re-sources and RESTORES PATH, so the stub above is
+    # discarded before the gate runs. `mktemp` then resolves to the real binary,
+    # the snapshot succeeds, no FATAL is printed, and this arm fails looking for
+    # one that had no reason to appear. Invisible in CI, which sets no BASH_ENV —
+    # the same trap #946's scratch-dir test hit, and the same fix the sandbox
+    # helpers already use (see run_launch_auth in tests/lib/golem-sandbox.sh).
     out="$(
-        PATH="$stub:$PATH" \
+        /usr/bin/env -uBASH_ENV \
+            PATH="$stub:$PATH" \
             PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
             PROSE_BUDGET_BASELINE="$bl" \
             PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \
-            command bash "$GATE" --regen 2>&1
+            bash "$GATE" --regen 2>&1
     )" || rc=$?
 
     assert_true "[ $rc -ne 0 ]" "A failed snapshot aborts the regen (never a silent drop)"
