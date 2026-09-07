@@ -801,7 +801,7 @@ test_print_plugin_absent_warns_but_emits() {
 # must carry the namespaced form only. Asserted against the source because the
 # guard's own text is the subject, not any one runtime path.
 test_plugin_guard_message_namespaces_commands() {
-    assert_true "! command sed -n '/check_plugin_resolvable/,/^}/p' '$LAUNCH' | command grep -qE '(^|[^:])/next-issue'" \
+    assert_true "! command grep -qE '(^|[^:])/next-issue' <<<\"\$(command sed -n '/check_plugin_resolvable/,/^}/p' '$LAUNCH')\"" \
         "the plugin-guard refusal carries no bare (un-namespaced) /next-issue"
     # NON-VACUITY: the namespaced form must actually be present, or a guard that
     # dropped the message entirely would satisfy the assertion above.
