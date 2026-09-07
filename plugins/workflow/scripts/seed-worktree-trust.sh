@@ -101,7 +101,50 @@ fi
 
 # Canonicalize both sides so `..` / symlink traversal can't escape the root.
 # The worktree path may not exist yet (parent dir does), so resolve leniently.
-canon() { command realpath -m -- "$1" 2>/dev/null || command echo "$1"; }
+#
+# `realpath -m` IS GNU-ONLY, AND ITS ABSENCE IS A SECURITY HOLE, NOT A COSMETIC
+# ONE (#932). BSD realpath (macOS) has no `-m`: it exits 1 with `illegal option`,
+# the `||` fallback returns the argument UNRESOLVED, and the under-root check
+# below then compares a path that still contains the symlink. A
+# `.worktrees/issue-N` symlink pointing outside the repo therefore PASSES on
+# macOS and the trust grant is redirected to an arbitrary host directory — the
+# exact issue-#21 attack surface this function exists to close. It failed open,
+# and silently, because the fallback looks like ordinary defensive coding.
+#
+# Resolve in pure shell instead: walk to the deepest EXISTING ancestor, take its
+# physical path via `cd -P` + `pwd -P` (a shell builtin pair — no realpath,
+# readlink, or python needed, identical on both userlands), then re-append the
+# non-existent tail. That reproduces `-m` semantics: full symlink resolution,
+# tolerant of a path that does not exist yet.
+canon() {
+    local p="$1" tail="" base
+    # Make relative input absolute before walking, so `cd` cannot land elsewhere.
+    case "$p" in
+        /*) ;;
+        *) p="$PWD/$p" ;;
+    esac
+    while [ ! -d "$p" ]; do
+        base="${p##*/}"
+        # A trailing slash or a root-level miss leaves nothing to strip: stop
+        # rather than loop forever on an unresolvable prefix.
+        [ -n "$base" ] || break
+        tail="/$base$tail"
+        p="${p%/*}"
+        [ -n "$p" ] || {
+            p="/"
+            break
+        }
+    done
+    if [ -d "$p" ]; then
+        p="$(command cd -P -- "$p" 2>/dev/null && command pwd -P)" || {
+            command echo "$1"
+            return
+        }
+        command echo "${p%/}$tail"
+    else
+        command echo "$1"
+    fi
+}
 repo_root_canon="$(canon "$repo_root")"
 wt_canon="$(canon "$wt_path")"
 
