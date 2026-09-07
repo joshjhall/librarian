@@ -122,6 +122,22 @@ scan_file() {
             \#*) continue ;;
         esac
         code="${code%%[[:space:]]#*}"
+        # Cheap builtin prefilter before any subprocess (#932). Without it this
+        # arm forked a grep for EVERY line of ~108k lines of shell; measured on
+        # 40 files it was 26s vs <1s, and this stage was 42% of the whole CI
+        # job. Every construct FORBIDDEN_RE can match contains one of these
+        # words, so the filter cannot hide a violation — `case` is a builtin, so
+        # the grep now runs only on candidate lines.
+        # NOTE FORBIDDEN_RE is built from THREE alternatives (see above): the
+        # declare/local arm, the `${v,,}`/`${v^^}` parameter-expansion arm, and
+        # `;;&`. The prefilter must cover all three or it silently stops
+        # detecting the ones it misses — an earlier draft covered only the first
+        # and the suite's own negative fixture caught it (`lower_hit` went
+        # unflagged). `${` and `;;` are cheap, exact supersets of arms 2 and 3.
+        case "$code" in
+            *declare* | *local* | *mapfile* | *readarray* | *'${'* | *';;'*) ;;
+            *) continue ;;
+        esac
         printf '%s\n' "$code" | command grep -qE "$FORBIDDEN_RE" || continue
         CUR_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
     done <"$file"
@@ -181,6 +197,12 @@ scan_file_paths() {
         # only absolute-path token is `env` no longer matches — while a line that
         # ALSO invokes a real tool (`env … | /usr/bin/tr …`) still flags.
         scan_code="$(printf '%s\n' "$code" | command sed -E 's#(^|[^A-Za-z0-9_./])/(usr/bin|bin)/env([^/A-Za-z0-9_.-]|$)#\1 \3#g')"
+        # Same builtin prefilter rationale as scan_file (#932): PATHLIT_RE can
+        # only match a line containing a literal `/bin/`, so this is exact.
+        case "$scan_code" in
+            */bin/*) ;;
+            *) continue ;;
+        esac
         printf '%s\n' "$scan_code" | command grep -qE "$PATHLIT_RE" || continue
         CUR_PATH_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
     done <"$file"
