@@ -1378,7 +1378,7 @@ EOF
         "the garbage stat stub is what resolves on the fixture PATH, not the real one"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \

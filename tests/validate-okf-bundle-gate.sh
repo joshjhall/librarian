@@ -118,8 +118,8 @@ run_gate() {
     local bundle="$1" baseline="$2"
     shift 2
     GATE_RC=0
-    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         OKF_BUNDLE_ROOT="$bundle" \
         OKF_BUNDLE_BASELINE="$baseline" \
         "$@" \
@@ -165,7 +165,7 @@ render_stage() {
     # added by this issue — this harness is what exposed the bare one, which
     # failed under `set -u` on CI and could not fail locally, since the branch
     # only runs when $GITHUB_STEP_SUMMARY is non-empty.
-    /usr/bin/env --unset=BASH_ENV --unset=GITHUB_STEP_SUMMARY "$REAL_BASH" -c '
+    /usr/bin/env -uBASH_ENV -uGITHUB_STEP_SUMMARY "$REAL_BASH" -c '
         set -uo pipefail
         SKIP_EXIT_CODE=77
         rc=0
@@ -761,8 +761,8 @@ test_regen_writes_the_observed_counts() {
     baseline="$WORKDIR/regen.baseline"
     write_baseline "$baseline" "okf-missing-type 99"
 
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         OKF_BUNDLE_ROOT="$bundle" \
         OKF_BUNDLE_BASELINE="$baseline" \
         "$REAL_BASH" "$GATE" --regen 2>&1)" || rc=$?
@@ -785,8 +785,8 @@ test_unknown_argument_is_rejected() {
     baseline="$WORKDIR/arg.baseline"
     write_baseline "$baseline"
 
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         OKF_BUNDLE_ROOT="$bundle" \
         OKF_BUNDLE_BASELINE="$baseline" \
         "$REAL_BASH" "$GATE" --wat 2>&1)" || rc=$?
@@ -832,8 +832,8 @@ test_default_scanner_path_resolves() {
 # entry, neither under nor over.
 test_committed_baseline_matches_the_real_bundle() {
     local out rc=0
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         "$REAL_BASH" "$GATE" 2>&1)" || rc=$?
 
     if [ "$rc" -ne 0 ] && [ "$rc" -ne "$SKIP_SENTINEL" ]; then

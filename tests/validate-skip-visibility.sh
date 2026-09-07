@@ -1297,8 +1297,8 @@ test_sliced_notifier_survives_set_u_without_the_init() {
     local sumfile out rc=0
     sumfile="$(command mktemp "$WORKDIR/sliced-summary.XXXXXX")"
 
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         GITHUB_STEP_SUMMARY="$sumfile" \
         "$REAL_BASH" -c '
             set -u
