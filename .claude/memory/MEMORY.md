@@ -59,6 +59,8 @@
 - [A backticked token becomes a category](backticked-token-becomes-a-category.md) — contract.md scrapes EVERY `kebab-word` as a declared category; keep language names bare
 - [End-marker indent over-grows the region](end-marker-indent-overgrows-the-region.md) — a moved START delimiter errors loud; a moved END one silently swallows what follows (#737)
 - [Defeating a linter is not satisfying it](defeating-a-linter-is-not-satisfying-it.md) — use the gate's documented exemption marker; a regex-dodging spelling leaves no trace and breaks silently
+- [Detector must fail OPEN on its own failure](detector-must-fail-open-on-its-own-failure.md) — a guard that couldn't RUN learned nothing; only readable outcomes may refuse; grep every early return sharing the sentinel
+- [Untestable is a claim about your search](untestable-is-a-claim-about-your-search.md) — don't write it into the source; BASH_ENV restored PATH and the harness already had the fix
 - [Measure a suppression before keeping it](measure-suppression-before-keeping-it.md) — neuter the predicate and diff; a guard can buy 0 rows and cost a false negative (#604)
 - [An exemption is a runtime claim — measure it](exemption-is-a-runtime-claim-measure-it.md) — ask which ACTOR runs it; a ratchet needs a floor too; 3 asserted boundaries wrong in one change
 - [Diff the render before and after](render-diff-before-and-after-an-extraction.md) — a green suite pins only what someone asserted; capture whole output, every mode
@@ -66,6 +68,7 @@
 - [Split entry point drops the reporter](split-entry-point-drops-the-reporter.md) — rebuilt from run_test lines, it loses generate_report: FAILs while exiting 0 (#899)
 - [Reproduce outside the tool first](reproduce-outside-the-tool-first.md) — curl before instrumenting; A/B your own capture; a constant duration is a timeout, not congestion
 - [Local pass + CI hang = unbounded wait](local-pass-remote-hang-is-a-timeout-gap.md) — a listen()ing squatter makes connect SUCCEED then block; bound every probe, check the BODY not the connect
+- [Poll pattern matches its own process](poll-pattern-matches-its-own-process.md) — `pgrep -f` in a wait-loop matches the WAITER; it waits on itself until timeout while nothing runs
 - [Slow under load is not wedged](slow-under-load-is-not-wedged.md) — check for an advancing child + real memory pressure before calling a process stranded
 - [Confirm PID ownership before killing](confirm-pid-ownership-before-killing.md) — never `pkill -f` a shared script name; a PID may be a peer golem's
 - [A hanging push is the pre-push suite](push-hang-is-the-prepush-suite.md) — 461s of gates before any bytes move; fetches stay instant. Budget 10 min, never --no-verify
