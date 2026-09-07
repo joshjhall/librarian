@@ -907,4 +907,15 @@ test_unverified_outcomes_agree_across_call_sites() {
             "$REAL_BASH" "$LAUNCH" preflight 2>&1)" || RUN_RC=$?
     assert_contains "$RUN_OUT" "UNVERIFIED" "preflight announces the unverified state too"
     assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "and never refuses on it"
+
+    # The OTHER unverified outcome, through print. `noscratch` and `unparsed`
+    # are separate branches with separate messages, so covering one says nothing
+    # about the other — and an unwritable TMPDIR reaches noscratch through the
+    # plain-file mktemp, which a test can actually drive.
+    write_plugin_probe "$sb/ok" ok
+    _plugin_probe_run "$sb" "$sb/ok" print TMPDIR="$sb/no-such-tmpdir"
+    assert_exit 0 "$RUN_RC" "print exits 0 when no scratch file can be made"
+    assert_contains "$RUN_OUT" "UNVERIFIED" "print announces the scratch-file failure"
+    assert_contains "$RUN_OUT" "TMPDIR" "naming its own cause, not a CLI-format change"
+    assert_contains "$RUN_OUT" "tmux new-session" "and still emits the launch line"
 }
