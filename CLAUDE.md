@@ -129,7 +129,38 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   Prefer a pure-bash parse over `sed` for simple formats (`read_yaml_list` in
   `ship-issue/pre-review-gates.sh` is the worked example); mark a deliberate
   exception `# lint-allow-gnu-regex: <reason>`.
-  `tests/lint-shell-portability.sh` enforces (2) and (3), and `tests/validate-python-ports.sh`
+  (4) No **GNU-only `env --unset=VAR`** (#932): BSD `env` has no long options at
+  all — it reads `--unset=VAR` as `-u` with the operand `nset=VAR` and dies
+  `env: unsetenv nset=VAR: Invalid argument`. Write the attached **`-uVAR`**,
+  measured working on both BSD env (macOS 26.6) and GNU coreutils 9.7; it also
+  survives the array idiom these files use (`"${GIT_SCRUB[@]/#/-u}"`). It is
+  **fail-closed, not silently-wrong** — `env` exits 1 and never execs the child,
+  so no test ever ran against unscrubbed git state; the danger is the
+  *diagnostic*, not the result. Loud in
+  isolation but **uninformative in situ**: the idiom lives in test sandbox helpers whose
+  `env … git init` is already `2>/dev/null`-suppressed and whose callers drop the
+  status, so the sandbox var is never assigned and the suite dies far away with
+  `sb: unbound variable` — naming neither `env` nor the platform. It sat in **46
+  test files** undetected because `run-all.sh` runs only on `ubuntu-latest`; the
+  lone `macos-latest` job (`bsd-probe`) runs just `probe-bsd-regex.sh` and
+  `validate-python-ports.sh`. Mark a deliberate exception
+  `# lint-allow-gnu-env: <reason>`.
+  (5) Two more BSD splits found by the same sweep (#932), both **silent**:
+  **`grep -q` inverts a match under `pipefail`** — `-q` exits on the first match,
+  the upstream writer takes SIGPIPE, and the pipeline reports 141, so a locale
+  that EXISTS read as absent in all 15 `patterns.sh` and their `truncate_chars`
+  silently split multibyte characters (this is `7a7c0ac`'s lesson, reached from
+  the other end; drop `-q` and redirect, and note a `grep -q` on a FILE is fine);
+  and **BSD `sed` needs `;`/newline before a closing `}`** — `-e '1{/^$/d}'` dies
+  with `extra characters at the end of d command`, which inside `$( )` is
+  swallowed and shipped the WRONG release notes at exit 0. Also GNU-only, each
+  measured on macOS 26.6: `realpath -m` (its `|| echo` fallback returns the path
+  UNRESOLVED, which **defeated the symlink under-root guard** in
+  `seed-worktree-trust.sh` — issue #21's surface), `mktemp --suffix=` and
+  `touch -d` (both rejected while **still exiting 0**), and `date -d` (BSD spells
+  it `date -r`). Bound with `bin/bounded-run.sh`, never GNU `timeout`. Mark a
+  deliberate exception `# lint-allow-gnu-flag: <reason>`.
+  `tests/lint-shell-portability.sh` enforces (2)–(5), and `tests/validate-python-ports.sh`
   pins the bash↔python TSV parity of every port (both run by `tests/run-all.sh`,
   so they gate CI and pre-push). The TSV contract
   (`file\tline\tcategory\tevidence\tcertainty`) is the language boundary — a port
@@ -319,8 +350,9 @@ or when a late failure is expensive - mid-release, or before pushing a tag.
 for JSON/YAML/TOML/markdown is dprint/taplo/rumdl (via `just lint`). The two
 in-repo languages each have a `tests/run-all.sh` gate: **shell** →
 `tests/lint-shellcheck.sh` (`shellcheck --severity=warning` over `plugins/ tests/
-bin/`) plus `tests/lint-shell-portability.sh` (bans bash-4 constructs and
-GNU-only regex, macOS bash-3.2 + BSD grep/sed target); **Python** →
+bin/`) plus `tests/lint-shell-portability.sh` (bans bash-4 constructs,
+GNU-only regex, and GNU-only `env --unset=`; macOS bash-3.2 + BSD
+grep/sed/env target); **Python** →
 `tests/lint-python.sh` (`ruff check` +
 `ruff format --check`, config in `ruff.toml`, py311 target). CI installs
 `shellcheck`/`ruff` (and asserts they are on PATH) so they genuinely run there —
