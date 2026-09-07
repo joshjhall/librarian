@@ -26,7 +26,7 @@ gate_streams() {
     local errfile
     errfile="$(command mktemp)"
     GS_RC=0
-    GS_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    GS_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$GATE" "$1" 2>"$errfile")" || GS_RC=$?
     GS_ERR="$(command cat "$errfile")"
     command rm -f "$errfile"
@@ -41,12 +41,12 @@ test_diff_input_fails_loud() {
     command mkdir -p "$dir/repo"
     (
         cd "$dir/repo" || exit 1
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git init -q .
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git init -q .
         command printf 'const a = 1;\n' >file.js
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git add -A
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git -c user.email=t@t -c user.name=t commit -qm init
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git add -A
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm init
         command printf 'const a = 2;\n' >file.js
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git diff >"$dir/real.diff"
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git diff >"$dir/real.diff"
     )
 
     assert_file_contains "$dir/real.diff" "diff --git" "the fixture is a genuine git diff"

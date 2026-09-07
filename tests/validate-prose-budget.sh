@@ -55,7 +55,12 @@ source "$SCRIPT_DIR/lib/harness.sh"
 GATE="$SCRIPT_DIR/lint-prose-budget.sh"
 REAL_THRESHOLDS="$REPO_ROOT/plugins/review-audit/skills/check-decomposition/thresholds.yml"
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 test_suite "prose-budget ratchet gate (#589)"
@@ -485,8 +490,20 @@ test_regen_aborts_when_snapshot_fails() {
     command printf 'plugins/p/agents/big.md 500 # must survive or abort\n' >"$bl"
     command printf '%s/plugins/p/agents/big.md 500 # must survive or abort\n' "$sb" >>"$bl"
 
+    # Sabotage via a FAILING `mktemp` STUB on PATH, not via TMPDIR (#932).
+    # A bogus/read-only TMPDIR is a GNU-only sabotage: GNU mktemp honors TMPDIR
+    # and exits 1, but BSD mktemp (macOS) IGNORES it for a bare `mktemp` and
+    # succeeds in the system temp dir regardless — so the snapshot never failed,
+    # the gate correctly regenned, and this arm failed looking for a FATAL that
+    # had no reason to appear. A stub that simply exits 1 sabotages the same call
+    # on both userlands, and targets the failure the gate actually guards.
+    local stub="$WORKDIR/rat5-stub"
+    command mkdir -p "$stub"
+    command printf '#!/usr/bin/env bash\nexit 1\n' >"$stub/mktemp"
+    command chmod +x "$stub/mktemp"
+
     out="$(
-        TMPDIR="$WORKDIR/no-such-dir" \
+        PATH="$stub:$PATH" \
             PROSE_BUDGET_PLUGINS_DIR="$sb/plugins" \
             PROSE_BUDGET_BASELINE="$bl" \
             PROSE_BUDGET_THRESHOLDS="$REAL_THRESHOLDS" \

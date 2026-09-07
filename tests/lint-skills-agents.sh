@@ -665,7 +665,27 @@ test_workflow_js_node_check() {
         [ -f "$wf_file" ] || continue
         local rel_name node_err
         rel_name="$(command basename "$(command dirname "$wf_file")")"
-        if ! node_err="$(command node --check "$wf_file" 2>&1)"; then
+        # Parse as an ASYNC FUNCTION BODY with `export` stripped — NOT
+        # `node --check` (#932).
+        #
+        # A workflow.js is neither a script nor an ES module. It carries
+        # `export const meta` AND a top-level `return`, which no single node
+        # parse mode accepts: `--check` (script) and `--input-type=module` both
+        # reject the return, and a bare function-body parse rejects the export.
+        # The Workflow tool loads these as a function body with the export
+        # stripped, so that is the only parse that reflects reality.
+        #
+        # `node --check` was passing only by accident of version: node 24
+        # tolerated the top-level return, node 26 rejects it — so this gate
+        # started failing on ALL SIX bundled harnesses on a current node while
+        # every one of them still runs fine. A gate must not be a node-version
+        # tripwire, and must not report a working file as broken.
+        if ! node_err="$(command node -e '
+            const fs = require("fs");
+            let src = fs.readFileSync(process.argv[1], "utf8");
+            src = src.replace(/^export\s+(const|let|var|function|async function|class)/gm, "$1");
+            new (Object.getPrototypeOf(async function () {}).constructor)(src);
+        ' "$wf_file" 2>&1)"; then
             assert_true false \
                 "Workflow $rel_name: workflow.js has a syntax error: ${node_err}"
         fi
@@ -697,12 +717,29 @@ test_workflow_js_node_check_detects_syntax_error() {
         skip_test "node not available — cannot prove node --check fires"
         return
     fi
-    local bad
-    bad="$(command mktemp --suffix=.js)"
+    # A .js SUFFIX is required (node --check infers module vs script from it),
+    # but `mktemp --suffix=` is GNU-only: BSD mktemp rejects it AND still exits 0,
+    # so `bad` came back EMPTY and the redirect below failed with a bare
+    # "No such file or directory" naming neither mktemp nor the platform (#932).
+    # Create in a temp DIR instead — portable, and the name is ours to choose.
+    local baddir bad
+    baddir="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return
+    }
+    bad="$baddir/broken.js"
     printf 'function broken( {\n  return 1\n' >"$bad"
     local err rc=0
-    err="$(command node --check "$bad" 2>&1)" || rc=$?
-    command rm -f "$bad"
+    # Same parse as the live sweep above, so the negative case proves THAT
+    # check fires — a `node --check` here would test a mode the sweep no
+    # longer uses.
+    err="$(command node -e '
+        const fs = require("fs");
+        let src = fs.readFileSync(process.argv[1], "utf8");
+        src = src.replace(/^export\s+(const|let|var|function|async function|class)/gm, "$1");
+        new (Object.getPrototypeOf(async function () {}).constructor)(src);
+    ' "$bad" 2>&1)" || rc=$?
+    command rm -rf "$baddir"
     assert_true "[ $rc -ne 0 ]" "node --check exits non-zero on a syntax error"
     assert_contains "$err" "SyntaxError" "node --check reports a SyntaxError"
 }

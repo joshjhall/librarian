@@ -493,7 +493,7 @@ test_health_stdout_git_failure_fails_closed() {
     # before reaching python — the scan would emit nothing and the fail-closed
     # assertion would fail while the code was correct (which is what happened
     # writing this).
-    out="$(cd "$d" && command timeout 30 env \
+    out="$(cd "$d" && bounded_run 30 env \
         PATH="$stub:$PATH" TMPDIR="$scratch" \
         python3 "$SK_HEALTH/patterns.py" "$STDOUT_LIST" 2>/dev/null)" || rc=$?
 
@@ -527,7 +527,7 @@ test_health_stdout_git_failure_fails_closed() {
     command chmod +x "$stub2/git"
 
     scratch2="$(fresh_dir)"
-    out2="$(cd "$d" && command timeout 30 env \
+    out2="$(cd "$d" && bounded_run 30 env \
         PATH="$stub2:$PATH" TMPDIR="$scratch2" \
         COUNTER="$stub2/n" REAL_GIT="$(command -v git)" \
         python3 "$SK_HEALTH/patterns.py" "$STDOUT_LIST" 2>/dev/null)" || rc2=$?

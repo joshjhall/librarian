@@ -64,6 +64,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=tests/lib/harness.sh
 source "$SCRIPT_DIR/lib/harness.sh"
+# bounded_run — bounds without GNU `timeout`, which base macOS does not ship
+# (#543/#932). An unguarded `command timeout N ...` exits 127 there and the
+# assertion reads that as the command under test failing.
+# shellcheck source=bin/bounded-run.sh
+source "$REPO_ROOT/bin/bounded-run.sh"
 
 test_suite "check-security + check-code-health detector fixtures (#348)"
 

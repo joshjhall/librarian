@@ -287,9 +287,9 @@ test_allow_nested_primary_repo_silently() {
     payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/f.txt"}}' \
         "$nested/outer/inner" "$nested/outer/inner")"
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_output_empty "$out" "a nested independent repo is allowed"
     assert_output_empty "$err" \
         "...SILENTLY — a benign nested repo must not emit the disguise diagnostic, or the real-forge signal drowns in false positives"
@@ -365,9 +365,9 @@ test_converted_worktree_still_degrades_loudly() {
     payload="$(printf '{"cwd":"%s","tool_name":"Read","tool_input":{"file_path":"%s/secret.txt"}}' \
         "$wt" "$peer")"
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_output_empty "$out" \
         "a converted worktree still fails OPEN (recovery is out of scope for this PR)"
     assert_contains "$err" "could not resolve the worktree root" \

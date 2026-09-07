@@ -121,6 +121,52 @@ the sequence is fixture **data** handed to another language rather than a shell
 pattern — mark it `# lint-allow-gnu-regex: <reason>`. The reason is required, so
 the exemption is justified rather than silent.
 
+**BSD `env` has no long options** (same gate, `#932`). `env --unset=VAR` is GNU
+coreutils only; BSD `env` parses it as `-u` with the operand `nset=VAR` and dies
+with `env: unsetenv nset=VAR: Invalid argument`. Write the **attached** form
+`-uVAR`, verified on BSD env (macOS 26.6) and GNU coreutils 9.7:
+
+```bash
+/usr/bin/env -uBASH_ENV cmd                  # portable
+/usr/bin/env "${GIT_SCRUB[@]/#/-u}" git init  # portable, and survives the array idiom
+```
+
+Prefer `-uVAR` over a separate `-u VAR` precisely because of that second line:
+the `${ARR[@]/#/-u}` expansion yields one token per name, which `/#/-u /` cannot.
+
+It is **fail-closed**: `env` exits 1 and never execs the child, so nothing runs
+with a half-scrubbed environment — the hazard is the diagnostic, not a wrong
+result. Loud on its own but **uninformative where it actually lives**: the idiom sits
+in test sandbox helpers whose `env … git init` is already `2>/dev/null`-suppressed
+and whose callers discard the status, so the sandbox variable is simply never
+assigned and the suite dies much later with `sb: unbound variable` — a diagnostic
+naming neither `env` nor the platform. Mark a deliberate exception
+`# lint-allow-gnu-env: <reason>`.
+
+**`grep -q` inverts a match under `pipefail`** (`#932`, first recorded in
+`7a7c0ac`). `-q` exits on the FIRST match, the writer upstream dies of SIGPIPE,
+and `set -o pipefail` reports **141** — so a successful match reads as a failure:
+
+```console
+$ locale -a | grep -qixF C.UTF-8; echo $?
+0
+$ set -o pipefail; locale -a | grep -qixF C.UTF-8; echo $?
+141
+```
+
+Every `patterns.sh` runs under `set -euo pipefail`, so this had 15 detectors
+believing the host had no UTF-8 locale, silently falling back to byte-wise
+truncation and splitting multibyte characters. Drop the `-q` and redirect
+instead — `grep -ixF … >/dev/null 2>&1` — so grep drains its input and no signal
+is raised. Only an issue when grep reads a PIPE; `grep -q` on a FILE is fine.
+
+**BSD `sed` needs a `;` or newline before a closing `}`** (`#932`). GNU accepts
+`sed -e '1{/^$/d}'`; BSD dies with `extra characters at the end of d command`.
+Inside a command substitution that error is swallowed and the result is empty —
+which shipped the wrong release notes from `generate-release-notes.sh` with exit
+0. Put the brace in its own `-e '}'` (the spelling `bin/lib/release/changelog.sh`
+uses, verified on BSD), or better, follow the rule below and parse in bash.
+
 When the input is a simple format (a flat list of scalars, `key: value`), prefer
 **parsing it in bash** over reaching for `sed` at all: parameter expansion and
 `case` have no dialect, so the question cannot come back. `read_yaml_list` in

@@ -262,14 +262,14 @@ test_rust_impl_matches_in_linear_time() {
     list="$(list_of "$f")"
 
     rc=0
-    command timeout 10 /usr/bin/env \
+    bounded_run 10 /usr/bin/env \
         DECOMP_LOC_WARN=5 DECOMP_LOC_HIGH=400 \
         python3 "$PY" "$list" >/dev/null 2>&1 || rc=$?
     assert_exit 0 "$rc" \
         "rust: a long whitespace run after impl does not blow up the matcher (python)"
 
     rc=0
-    command timeout 10 /usr/bin/env \
+    bounded_run 10 /usr/bin/env \
         PATTERNS_FORCE_BASH=1 DECOMP_LOC_WARN=5 DECOMP_LOC_HIGH=400 \
         "$REAL_BASH" "$SH" "$list" >/dev/null 2>&1 || rc=$?
     assert_exit 0 "$rc" \

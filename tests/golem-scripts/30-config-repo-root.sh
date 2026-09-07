@@ -53,7 +53,7 @@ test_config_repo_root_honors_path() {
 
     local out rc=0
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             PATH="$shim" \
             "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "repo_root exits 0 with git resolved via PATH only"
@@ -92,7 +92,7 @@ test_config_repo_root_dirname_root_edge() {
     # for non-interactive bash, which would let the real git outrank the shim.
     local out rc=0
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             PATH="$bin:$PATH" \
             "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "repo_root exits 0 for a filesystem-root repo"
@@ -121,7 +121,7 @@ test_config_repo_root_relative_common_dir() {
 
     local out rc=0
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             PATH="$bin:$PATH" \
             "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "repo_root exits 0 for a relative common dir"
@@ -159,7 +159,7 @@ test_config_repo_root_relative_super_root() {
 
     local out rc=0
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             PATH="$bin:$PATH" \
             "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "repo_root exits 0 for a relative super_root"
@@ -184,7 +184,7 @@ test_config_repo_root_scrubs_tainted_git_env() {
     local sb outer
     new_sandbox sb
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
 
     local out rc=0
@@ -227,7 +227,7 @@ _assert_config_injection_scrubbed() {
     local sb
     new_sandbox sb
     # Seed a known real value the injection tries to override.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" config user.name "REALNAME"
 
     # (a) Bare git under the taint reads the INJECTED value — proves the vector is
@@ -373,7 +373,7 @@ _assert_bool_var_scrubbed() {
     local var="$1"
     local sb
     new_sandbox sb
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" config inject.marker "REALNAME"
 
     # (a0) Baseline: the SAME bare call with NO taint exits 0. Proves the fixture
@@ -385,7 +385,7 @@ _assert_bool_var_scrubbed() {
     # that made these two tests fail under `git push` but pass on a bare run.
     local rc_a0=0
     (cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" HOME="$sb" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" HOME="$sb" \
             "$REAL_BASH" -c 'command git config --get inject.marker' >/dev/null 2>&1) || rc_a0=$?
     assert_exit 0 "$rc_a0" \
         "$var: baseline bare git succeeds without the taint (fixture is sound)"
@@ -396,7 +396,7 @@ _assert_bool_var_scrubbed() {
     # fatal.
     local rc_a=0
     (cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$var=notabool" HOME="$sb" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$var=notabool" HOME="$sb" \
             "$REAL_BASH" -c 'command git config --get inject.marker' >/dev/null 2>&1) || rc_a=$?
     assert_exit 128 "$rc_a" \
         "$var: bare git fatals on the invalid-bool taint (the taint is real)"
@@ -447,7 +447,7 @@ test_config_repo_root_scrubs_readonly_tainted_git_env() {
     local sb outer
     new_sandbox sb
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
 
     # declare -rx makes GIT_DIR/GIT_COMMON_DIR readonly AND exported inside the
@@ -479,35 +479,35 @@ test_config_repo_root_submodule_superproject() {
     super="$(command mktemp -d "$WORKDIR/super.XXXXXX")" || return 1
     name="mod"
     # Inner submodule repo with one commit so it can be added.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
     # Superproject that embeds it as a submodule. `protocol.file.allow=always`
     # is required for a local-path submodule add on modern git.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" config user.name "Test"
-    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$sub" "$name" 2>/dev/null; then
         skip_test "git submodule add unavailable — cannot build the fixture"
         return 0
     fi
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
 
     # Invoke repo_root from INSIDE the submodule working tree.
     local out
     out="$(cd "$super/$name" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             "$REAL_BASH" -c '. "$1"; repo_root' _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "repo_root exits 0 inside a submodule working tree"
     # Compare realpaths (symlinked /tmp on CI runners).
@@ -539,7 +539,7 @@ test_config_repo_root_submodule_superproject() {
 # taint, so GIT_WORK_TREE is what actually diverges the scrubbed and unscrubbed
 # probes (both are on the #279 scrub list, as a real git hook exports them
 # together). Deliberately does NOT wrap the invocation in
-# `env "${GIT_SCRUB[@]/#/--unset=}"` (unlike the #324 test) — the taint must
+# `env "${GIT_SCRUB[@]/#/-u}"` (unlike the #324 test) — the taint must
 # reach repo_root() for the assertion to mean anything (same rationale as
 # test_config_repo_root_scrubs_tainted_git_env). Skips cleanly if
 # `git submodule add` is unavailable (old git / file protocol disallowed).
@@ -550,31 +550,31 @@ test_config_repo_root_submodule_superproject_scrubs_tainted_git_env() {
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     name="mod"
     # Inner submodule repo with one commit so it can be added.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
     # Superproject that embeds it as a submodule.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" config user.name "Test"
-    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$sub" "$name" 2>/dev/null; then
         skip_test "git submodule add unavailable — cannot build the fixture"
         return 0
     fi
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
     # Third, unrelated outer repo whose .git the taint points at.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
 
     # Invoke repo_root from INSIDE the submodule working tree UNDER TAINT: the
@@ -633,31 +633,31 @@ test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env() {
     outer="$(command mktemp -d "$WORKDIR/outer.XXXXXX")" || return 1
     name="mod"
     # Inner submodule repo with one commit so it can be added.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" config user.name "Test"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sub" -c commit.gpgsign=false commit -q --allow-empty -m seed 2>/dev/null || return 1
     # Superproject that embeds it as a submodule.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" config user.name "Test"
-    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$sub" "$name" 2>/dev/null; then
         skip_test "git submodule add unavailable — cannot build the fixture"
         return 0
     fi
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$super" -c commit.gpgsign=false commit -qm "add $name" 2>/dev/null || return 1
     # Third, unrelated outer repo whose .git the taint points at.
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$outer" init -q 2>/dev/null || return 1
 
     # Invoke repo_root from INSIDE the submodule working tree UNDER a READONLY
@@ -699,7 +699,7 @@ test_config_repo_root_submodule_superproject_scrubs_readonly_tainted_git_env() {
 test_config_git_env_scrub_vars_single_source() {
     local out rc=0
     # (1) Sourcing config.sh defines GIT_ENV_SCRUB_VARS as the expected list.
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" -c '. "$1"; command printf "%s" "$GIT_ENV_SCRUB_VARS"' \
         _ "$CONFIG" 2>&1)" || rc=$?
     assert_exit 0 "$rc" "sourcing config.sh succeeds and exposes GIT_ENV_SCRUB_VARS"
@@ -715,7 +715,7 @@ test_config_git_env_scrub_vars_single_source() {
     # a harness bug) pre-exporting an empty/short list must NOT be able to shrink
     # the scrub set and defeat the taint defense (#356).
     local override rc2=0
-    override="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" GIT_ENV_SCRUB_VARS="GIT_DIR" \
+    override="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" GIT_ENV_SCRUB_VARS="GIT_DIR" \
         "$REAL_BASH" -c '. "$1"; command printf "%s" "$GIT_ENV_SCRUB_VARS"' \
         _ "$CONFIG" 2>&1)" || rc2=$?
     assert_exit 0 "$rc2" "sourcing config.sh with a pre-set GIT_ENV_SCRUB_VARS succeeds"
@@ -749,7 +749,7 @@ test_config_git_env_scrub_vars_single_source() {
     # keeps them in the scrub set (#355). Pre-set two pairs and assert both indices
     # appear after the 14 static names.
     local pairs rc4=0
-    pairs="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    pairs="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         GIT_CONFIG_COUNT=2 \
         GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=/x \
         GIT_CONFIG_KEY_1=url.z.insteadOf GIT_CONFIG_VALUE_1=/y \

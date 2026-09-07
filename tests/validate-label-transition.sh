@@ -94,14 +94,14 @@ STUB
 }
 
 # run_lt <sandbox> <args...> — invoke label-transition.sh with the stub on PATH.
-# --unset=BASH_ENV for the reason tests/golem-scripts/110-tracks-runbook.sh
+# -uBASH_ENV for the reason tests/golem-scripts/110-tracks-runbook.sh
 # documents: in the devcontainer BASH_ENV points at /etc/bash_env, whose
 # /etc/bashrc.d/ scripts hard-RESET $PATH — which would shadow the stub and let
 # a real `gh` answer instead. Without this the suite would silently test nothing.
 run_lt() {
     _sb="$1"
     shift
-    RUN_OUT="$(command env --unset=BASH_ENV "PATH=$_sb/bin:$PATH" \
+    RUN_OUT="$(command env -uBASH_ENV "PATH=$_sb/bin:$PATH" \
         "$REAL_BASH" "$LT" "$@" 2>&1)" && RUN_RC=0 || RUN_RC=$?
 }
 
@@ -220,7 +220,7 @@ test_absent_cli_exits_77() {
     sb="$(new_sandbox)"
     command mkdir -p "$sb/bin" # empty: no gh anywhere on PATH
 
-    RUN_OUT="$(command env --unset=BASH_ENV "PATH=$sb/bin" \
+    RUN_OUT="$(command env -uBASH_ENV "PATH=$sb/bin" \
         "$REAL_BASH" "$LT" set 921 --add status/pr-pending \
         --remove status/in-progress --platform gh 2>&1)" && RUN_RC=0 || RUN_RC=$?
 

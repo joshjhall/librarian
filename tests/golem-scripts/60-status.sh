@@ -60,7 +60,7 @@ test_status_blocked_shows_gate_age() {
 EOF
     # A gate dated ~2 minutes ago: recent enough to stay inside the TTL, old
     # enough that _fmt_dur renders "2m" (a non-zero, human-visible age).
-    ts="$(command date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
+    ts="$(command date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null || # lint-allow-gnu-flag: GNU form, BSD -v fallback on the next line
         command date -u -v-130S +%FT%TZ 2>/dev/null)"
     command cat >"$sd/feed.jsonl" <<EOF
 {"golem":"golem-3","event":"gate","message":"push gate","ts":"$ts"}
@@ -123,7 +123,7 @@ EOF
 test_gate_age_suffix_no_jq_empty() {
     local sb out ts
     new_sandbox sb
-    ts="$(command date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null ||
+    ts="$(command date -u -d '130 seconds ago' +%FT%TZ 2>/dev/null || # lint-allow-gnu-flag: GNU form, BSD -v fallback on the next line
         command date -u -v-130S +%FT%TZ 2>/dev/null)"
     command cat >"$sb/.worktrees/.status/feed.jsonl" <<EOF
 {"golem":"golem-3","event":"gate","message":"push gate","ts":"$ts"}
@@ -190,7 +190,7 @@ EOF
 { "golem": "golem-5", "issue": 5, "branch": "feature/issue-5",
   "state": "impl", "phase": "make-it-work", "blocking": false }
 EOF
-    good_ts="$(command date -u -d '60 seconds ago' +%FT%TZ 2>/dev/null ||
+    good_ts="$(command date -u -d '60 seconds ago' +%FT%TZ 2>/dev/null || # lint-allow-gnu-flag: GNU form, BSD -v fallback on the next line
         command date -u -v-60S +%FT%TZ 2>/dev/null)"
     # golem-3's most-recent line has a non-empty but unparsable `ts`; golem-5's
     # is well-formed and recent. Pre-fix, golem-3's line aborted the snapshot jq

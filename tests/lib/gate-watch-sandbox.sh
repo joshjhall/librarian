@@ -29,6 +29,27 @@
 # prompt-overlay matchers, echoing the function's exit code. The subshell
 # isolates the script's `set -uo pipefail` from the harness's `set -euo
 # pipefail`, and `|| rc=$?` keeps a rc-1 (non-match) from aborting under set -e.
+# _gw_backdate <seconds-ago> <file> — set <file>'s mtime that many seconds ago on
+# BOTH userlands. `touch -d @<epoch>` is GNU-only: BSD touch rejects it, prints
+# its usage to stderr, and STILL EXITS 0 — so the mtime is silently left alone,
+# the age window never elapses, and the gate-watch age assertions read the wrong
+# state (#932). BSD wants `-t [[CC]YY]MMDDhhmm[.SS]`, and BSD's own `-A` adjust
+# form is rejected by GNU, so neither spelling is portable: probe `touch -d` on a
+# scratch file and branch. Mirrors backdate_mtime in
+# tests/golem-scripts/90-transcript-liveness.sh.
+_gw_backdate() {
+    local ago="$1" file="$2" target probe
+    target=$(($(command date +%s) - ago))
+    probe="$(command mktemp)" || return 1
+    if command touch -d "@$target" "$probe" 2>/dev/null; then # lint-allow-gnu-flag: this IS the GNU probe; the else branch is the BSD form
+        command rm -f "$probe"
+        command touch -d "@$target" "$file" # lint-allow-gnu-flag: reached only when the probe above proved GNU
+    else
+        command rm -f "$probe"
+        command touch -t "$(command date -r "$target" +%Y%m%d%H%M.%S)" "$file"
+    fi
+}
+
 _pane_rc() {
     local fn="$1" text="$2" rc=0
     (
@@ -78,6 +99,14 @@ _run_once_snapshot() {
     shift
     local tmp
     tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
+    # PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+    # `mktemp -d` yields /var/... while the scripts under test resolve the same
+    # dir to /private/var/... Any prefix match or slug derived from it then
+    # disagrees — here the transcript slug (`/`+`.` -> `-` of the ABSOLUTE
+    # worktree path) is computed from $tmp, so the fixture landed at a slug the
+    # subprocess never looks up and the transcript tier silently missed (#932).
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
     # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
     trap "command rm -rf '$tmp'" RETURN
 
@@ -90,7 +119,7 @@ _run_once_snapshot() {
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
-    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+    /usr/bin/env "${git_scrub[@]/#/-u}" \
         git -C "$tmp" init -q 2>/dev/null || return 1
     command mkdir -p "$tmp/.worktrees/.status"
     local line
@@ -106,7 +135,7 @@ _run_once_snapshot() {
     SNAP_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+            /usr/bin/env "${git_scrub[@]/#/-u}" \
                 GOLEM_BLOCK_TTL="$ttl" GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
                 bash "$GATE_WATCH" --once
@@ -125,13 +154,14 @@ _run_once_snapshot_no_jq() {
     shift
     local tmp
     tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
     # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
     trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
-    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+    /usr/bin/env "${git_scrub[@]/#/-u}" \
         git -C "$tmp" init -q 2>/dev/null || return 1
     command mkdir -p "$tmp/.worktrees/.status"
     local line
@@ -157,7 +187,7 @@ _run_once_snapshot_no_jq() {
     SNAP_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub_bin" \
                 GOLEM_BLOCK_TTL="$ttl" GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \
@@ -178,20 +208,21 @@ _run_liveness_snapshot() {
     shift 2
     local tmp
     tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
     # shellcheck disable=SC2064
     trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
-    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+    /usr/bin/env "${git_scrub[@]/#/-u}" \
         git -C "$tmp" init -q 2>/dev/null || return 1
     command mkdir -p "$tmp/.worktrees/.status"
     # A single golem-7 status-cache file is the activity proxy. Backdate its
     # mtime so age = $age_secs deterministically.
     command printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
         >"$tmp/.worktrees/.status/golem-7.json"
-    command touch -d "@$(($(command date +%s) - age_secs))" \
+    _gw_backdate "$((age_secs))" \
         "$tmp/.worktrees/.status/golem-7.json"
     if [ "$#" -gt 0 ]; then
         local line
@@ -231,13 +262,13 @@ esac
 TMUX_STUB
     command chmod +x "$stub_bin/tmux"
 
-    # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # -uBASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
     # non-interactive bash, which would undo the hermetic PATH (same guard as the
     # jq / tmux-pane stubs).
     LIVE_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub_bin" \
                 GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
                 GOLEM_WORKTREE_DIR=.worktrees \
@@ -270,20 +301,21 @@ _run_liveness_snapshot_tmux() {
     local stall="$1" age_secs="$2" pane_text="$3"
     local tmp
     tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
     # shellcheck disable=SC2064
     trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
-    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+    /usr/bin/env "${git_scrub[@]/#/-u}" \
         git -C "$tmp" init -q 2>/dev/null || return 1
     command mkdir -p "$tmp/.worktrees/.status"
     # golem-7 status cache is the activity proxy that discovers golem-7 into the
     # sweep; backdate its mtime so age = $age_secs deterministically.
     command printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
         >"$tmp/.worktrees/.status/golem-7.json"
-    command touch -d "@$(($(command date +%s) - age_secs))" \
+    _gw_backdate "$((age_secs))" \
         "$tmp/.worktrees/.status/golem-7.json"
 
     # Hermetic PATH: real bash + real git symlinks, plus a fake tmux script.
@@ -309,13 +341,13 @@ esac
 TMUX_STUB
     command chmod +x "$stub_bin/tmux"
 
-    # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # -uBASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
     # non-interactive bash, which would undo the hermetic PATH (same guard as the
     # jq stub). FAKE_PANE_TEXT is read by the fake tmux above.
     LIVE_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub_bin" \
                 FAKE_PANE_TEXT="$pane_text" \
                 GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
@@ -347,20 +379,21 @@ _run_liveness_snapshot_transcript() {
     local stall="$1" age_secs="$2" transcript="$3" registry="${4:-}"
     local tmp
     tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
     # shellcheck disable=SC2064
     trap "command rm -rf '$tmp'" RETURN
 
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
 
-    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+    /usr/bin/env "${git_scrub[@]/#/-u}" \
         git -C "$tmp" init -q 2>/dev/null || return 1
     command mkdir -p "$tmp/.worktrees/.status"
     # golem-7 status cache is the mtime activity proxy (the fall-through target);
     # backdate its mtime so age = $age_secs deterministically.
     command printf '%s\n' '{"golem":"golem-7","issue":7,"phase":"impl"}' \
         >"$tmp/.worktrees/.status/golem-7.json"
-    command touch -d "@$(($(command date +%s) - age_secs))" \
+    _gw_backdate "$((age_secs))" \
         "$tmp/.worktrees/.status/golem-7.json"
 
     # Plant the transcript under a fake CLAUDE_PROJECTS_DIR at the slug the real
@@ -387,16 +420,16 @@ _run_liveness_snapshot_transcript() {
     #  2. The registry is planted in the SAME status dir the sweep reads, since
     #     that is where a real golem's writer would have put it.
     if [ -n "$registry" ]; then
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" config user.email "test@example.com" 2>/dev/null
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" config user.name "Test" 2>/dev/null
         command printf 'seed\n' >"$tmp/seed.txt"
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" add seed.txt 2>/dev/null
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
-        /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+        /usr/bin/env "${git_scrub[@]/#/-u}" \
             git -C "$tmp" worktree add -q "$wt" -b issue-7 >/dev/null 2>&1 || return 1
         command printf '%s\n' "$registry" >"$tmp/.worktrees/.status/golem-7.work.jsonl"
     fi
@@ -424,12 +457,12 @@ esac
 TMUX_STUB
     command chmod +x "$stub_bin/tmux"
 
-    # --unset=BASH_ENV as in the sibling helpers. CLAUDE_PROJECTS_DIR points the
+    # -uBASH_ENV as in the sibling helpers. CLAUDE_PROJECTS_DIR points the
     # transcript script at the planted fixture.
     LIVE_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub_bin" \
                 CLAUDE_PROJECTS_DIR="$fake_projects" \
                 GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
@@ -460,6 +493,7 @@ _run_panes_snapshot_tmux() {
     local pane_text="$1"
     local tmp stub_bin real_bash
     tmp="$(command mktemp -d)" || return 1
+    tmp="$(cd "$tmp" && command pwd -P)" || return 1
     # shellcheck disable=SC2064
     trap "command rm -rf '$tmp'" RETURN
     stub_bin="$tmp/stub-bin"
@@ -477,12 +511,12 @@ case "$1" in
 esac
 TMUX_STUB
     command chmod +x "$stub_bin/tmux"
-    # --unset=BASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
+    # -uBASH_ENV: the devcontainer's /etc/bash_env resets $PATH for every
     # non-interactive bash, which would undo the hermetic PATH.
     PANES_RC=0
     (
         cd "$tmp" &&
-            /usr/bin/env --unset=BASH_ENV PATH="$stub_bin" \
+            /usr/bin/env -uBASH_ENV PATH="$stub_bin" \
                 FAKE_PANE_TEXT="$pane_text" \
                 "$real_bash" "$GATE_WATCH" --once-panes
     ) >"$tmp/out" 2>/dev/null && PANES_RC=0 || PANES_RC=$?

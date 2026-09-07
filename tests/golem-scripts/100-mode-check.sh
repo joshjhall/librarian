@@ -113,8 +113,8 @@ run_mode_check() {
     shift
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -133,14 +133,30 @@ _mode_worktree() {
     command mkdir -p "$wt"
     (
         cd "$wt" || exit 1
-        git init -q .
+        # -b to PIN the initial branch away from `main`. Without it the branch
+        # name comes from the host's init.defaultBranch, and on a host that sets
+        # it to `main` (increasingly the default) the `git branch -f main HEAD`
+        # below targets the CHECKED-OUT branch and git refuses: "cannot force
+        # update the branch 'main' used by worktree at ...". `main` then never
+        # moves to the base commit, `main..HEAD` counts 0, and every drift arm
+        # silently reports no drift — exit 0 with empty output (#932). CI runners
+        # leave init.defaultBranch unset, so this never fired there.
+        git init -q -b golem-base .
         git config user.email t@t.t
         git config user.name t
-        git commit -q --allow-empty -m base
+        # commit.gpgsign=false on EVERY commit, matching what golem-sandbox.sh
+        # already does for its own fixtures. An operator with global commit
+        # signing (`commit.gpgsign=true` + an ssh/gpg agent) otherwise has every
+        # commit here REFUSED — e.g. `error: 1Password: agent returned an
+        # error` — so HEAD never exists, `git branch -f main HEAD` dies with
+        # "not a valid object name", and `main..HEAD` cannot be counted. The
+        # drift arms then report exit 0 and empty output, which reads as "no
+        # drift detected" rather than "the fixture never built" (#932).
+        git -c commit.gpgsign=false commit -q --allow-empty -m base
         git branch -f main HEAD
         local i=0
         while [ "$i" -lt "$commits" ]; do
-            git commit -q --allow-empty -m "work $i"
+            git -c commit.gpgsign=false commit -q --allow-empty -m "work $i"
             i=$((i + 1))
         done
     ) >/dev/null 2>&1
@@ -348,8 +364,8 @@ test_mode_fix_attempts_env_override() {
     plant_mode_tmux "$sb" "$sb/pane.txt"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=main GOLEM_MODE_FIX_ATTEMPTS=1 \
@@ -494,8 +510,8 @@ test_mode_missing_tmux_fails_loud() {
     command mkdir -p "$sb/emptybin"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/emptybin" \
             "$REAL_BASH" "$MODE_CHECK" --once 2>&1)" || RUN_RC=$?
     assert_exit 2 "$RUN_RC" "missing tmux exits 2, not 0"

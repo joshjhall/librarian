@@ -25,8 +25,8 @@ run_notify_worktree_dir() {
     (
         cd "$dir" &&
             command printf '%s' "$payload" |
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" \
                 HOME="$dir" GOLEM_ID="$gid" GOLEM_WORKTREE_DIR="$wt" \
                 "$REAL_BASH" "$NOTIFY"
     ) >/dev/null 2>&1 || NOTIFY_RC=$?
@@ -128,9 +128,9 @@ test_defaults_match_config_sh() {
         return 0
     fi
     local cfg_wt cfg_status
-    cfg_wt="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+    cfg_wt="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/-u}" "$REAL_BASH" -c \
         '. "$1"; printf "%s" "$GOLEM_WORKTREE_DIR"' _ "$CONFIG_SH" 2>/dev/null || true)"
-    cfg_status="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+    cfg_status="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/-u}" "$REAL_BASH" -c \
         '. "$1"; printf "%s" "$GOLEM_STATUS_DIR"' _ "$CONFIG_SH" 2>/dev/null || true)"
     assert_equals ".worktrees" "$cfg_wt" \
         "config.sh resolves GOLEM_WORKTREE_DIR default to .worktrees"
@@ -161,17 +161,17 @@ test_defaults_match_config_sh() {
 test_event_sink_defaults_match_config_sh() {
     local cfg_sinks cfg_timeout hook_sinks hook_timeout
     # config.sh side.
-    cfg_sinks="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+    cfg_sinks="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/-u}" "$REAL_BASH" -c \
         '. "$1"; printf "%s" "$GOLEM_EVENT_SINKS"' _ "$CONFIG_SH" 2>/dev/null || true)"
-    cfg_timeout="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+    cfg_timeout="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/-u}" "$REAL_BASH" -c \
         '. "$1"; printf "%s" "$GOLEM_EVENT_SINK_TIMEOUT"' _ "$CONFIG_SH" 2>/dev/null || true)"
     # Hook side: eval ONLY the two inlined sink-default lines (grep them out so we
     # do not run the whole hook), then print what they resolve to.
     local hook_defaults
     hook_defaults="$(command grep -E '^: "\$\{GOLEM_EVENT_SINK(S|_TIMEOUT):=' "$NOTIFY" || true)"
-    hook_sinks="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+    hook_sinks="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/-u}" "$REAL_BASH" -c \
         "$hook_defaults"'; printf "%s" "$GOLEM_EVENT_SINKS"' 2>/dev/null || true)"
-    hook_timeout="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/--unset=}" "$REAL_BASH" -c \
+    hook_timeout="$(/usr/bin/env "${GOLEM_SCRUB[@]/#/-u}" "$REAL_BASH" -c \
         "$hook_defaults"'; printf "%s" "$GOLEM_EVENT_SINK_TIMEOUT"' 2>/dev/null || true)"
     # Known defaults (guards against BOTH sides drifting together to a new value).
     assert_equals "" "$cfg_sinks" "config.sh GOLEM_EVENT_SINKS default is empty"

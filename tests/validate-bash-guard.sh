@@ -46,7 +46,12 @@ source "$SCRIPT_DIR/lib/harness.sh"
 test_suite "bash-guard.sh PreToolUse hook (#448)"
 
 # Module-level scratch dir for the no-jq stub, cleaned up once at exit.
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # --- Runner -----------------------------------------------------------------

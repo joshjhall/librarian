@@ -12,7 +12,7 @@
 #   * Every sandbox is a fresh `git init` under the module-level WORKDIR, so a
 #     script's repo_root() resolves the sandbox and never the librarian checkout.
 #   * Every git call and script invocation is wrapped in
-#     `/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}"` so git's hook-exported
+#     `/usr/bin/env "${GIT_SCRUB[@]/#/-u}"` so git's hook-exported
 #     environment (GIT_DIR / GIT_COMMON_DIR / ...) cannot pin repo_root to the
 #     OUTER repo when the suite runs from a `git push` pre-push hook — the
 #     failure mode root-caused in golem-gate-watch (PR #62).
@@ -26,8 +26,21 @@
 # shellcheck disable=SC2034  # WORKDIR / RUN_RC / RUN_OUT / TRANSCRIPT_* are read by the area fragments
 
 # Module-level scratch dir, cleaned up once when the suite exits.
+# Resolved to the PHYSICAL path: on macOS $TMPDIR is under /var, a symlink to
+# /private/var, so `mktemp -d` returns /var/... while `git rev-parse
+# --show-toplevel` (and realpath-based guards) report /private/var/... Code
+# under test that prefix-matches the two spellings never matches (#932).
 WORKDIR="$(command mktemp -d)"
-trap 'command rm -rf "$WORKDIR"' EXIT
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
+# A SHORT-rooted parent for tmux sockets. A unix socket path is capped at 104
+# bytes (sun_path, darwin), and tmux appends `tmux-<uid>/default` to
+# TMUX_TMPDIR. macOS $TMPDIR is itself ~49 chars, so a per-sandbox socket under
+# WORKDIR reached 109 bytes and tmux failed with `error connecting to ...
+# (File name too long)` — surfacing as unrelated-looking assertion failures (a
+# spurious `WARNING:` from worktree-rm). Linux /tmp is short enough that this
+# never bit (#932).
+TMUX_ROOT="$(command mktemp -d /tmp/lgtmux.XXXXXX 2>/dev/null)" || TMUX_ROOT=""
+trap 'command rm -rf "$WORKDIR" ${TMUX_ROOT:+"$TMUX_ROOT"}' EXIT
 
 # new_sandbox <varname>
 # Creates a fresh git repo sandbox with one seed commit (so HEAD exists and can
@@ -38,18 +51,29 @@ trap 'command rm -rf "$WORKDIR"' EXIT
 new_sandbox() {
     local __out="$1" dir
     dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" config user.name "Test"
     command printf 'seed\n' >"$dir/seed.txt"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" add seed.txt 2>/dev/null
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
     command mkdir -p "$dir/.worktrees/.status"
+    # Per-sandbox socket dir under the SHORT root (see TMUX_ROOT above), so the
+    # per-sandbox isolation property is unchanged while the path stays under the
+    # 104-byte socket cap. Assigned on EVERY new_sandbox call (never `local`, and
+    # never left stale) so one sandbox's socket dir cannot leak into the next.
+    # Falls back to the in-sandbox dir when the short root could not be made.
+    if [ -n "$TMUX_ROOT" ]; then
+        SANDBOX_TMUX_DIR="$(command mktemp -d "$TMUX_ROOT/s.XXXXXX")" ||
+            SANDBOX_TMUX_DIR="$dir/.tmux"
+    else
+        SANDBOX_TMUX_DIR="$dir/.tmux"
+    fi
     # An empty, per-sandbox tmux socket dir. Pointing TMUX_TMPDIR here makes
     # `tmux ls` find no server (so golem-status/attach see ZERO sessions),
     # isolating the tests from REAL golem-* tmux sessions on the host — without
@@ -75,9 +99,9 @@ run_in() {
     shift 2
     RUN_RC=0
     RUN_OUT="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
-            TMUX= TMUX_TMPDIR="$dir/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -94,7 +118,7 @@ inbox_in() {
     local dir="$1"
     shift
     (cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -128,7 +152,7 @@ run_launch_auth() {
     command mkdir -p "$sb/.worktrees/issue-7"
     command printf '{ "permissions": { "allow": ["Bash(tmux new-session:*)", "Bash(tmux ls:*)", "Bash(tmux kill-session:*)"] } }\n' >"$sb/proj-settings.json"
     command printf '{}\n' >"$sb/global-settings.json"
-    # --unset=BASH_ENV is load-bearing: in the devcontainer BASH_ENV points at
+    # -uBASH_ENV is load-bearing: in the devcontainer BASH_ENV points at
     # /etc/bash_env, which every non-interactive bash sources — and its
     # /etc/bashrc.d/ scripts (a) hard-RESET $PATH (shadowing the $sb/bin stub
     # tmux with the real one) and (b) re-source the real op-secrets cache
@@ -137,13 +161,13 @@ run_launch_auth() {
     # makes the sandbox hermetic (see the devcontainer-bash-env-path-reset note).
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=ANTHROPIC_AUTH_TOKEN --unset=ANTHROPIC_BASE_URL \
-            --unset=OP_ANTHROPIC_AUTH_TOKEN_REF \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uANTHROPIC_AUTH_TOKEN -uANTHROPIC_BASE_URL \
+            -uOP_ANTHROPIC_AUTH_TOKEN_REF \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             TMUX_STUB_LOG="$sb/tmux-args.log" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -192,33 +216,33 @@ _make_super_with_submodule() {
     local __out="$1" inner sup
     inner="$(command mktemp -d "$WORKDIR/smsub.XXXXXX")" || return 1
     sup="$(command mktemp -d "$WORKDIR/smsuper.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$inner" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$inner" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$inner" config user.name "Test"
     command mkdir -p "$inner/bin"
     command printf '#!/bin/sh\n' >"$inner/bin/fix.sh" # lint-allow-path: shebang in generated fixture-script data
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$inner" add bin/fix.sh 2>/dev/null
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$inner" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sup" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sup" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sup" config user.name "Test"
     command printf 'main\n' >"$sup/app.txt"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sup" add app.txt 2>/dev/null
-    if ! /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    if ! /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sup" -c protocol.file.allow=always -c commit.gpgsign=false \
         submodule add -q "$inner" mod 2>/dev/null; then
         return 2
     fi
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sup" -c commit.gpgsign=false commit -qm "add mod" 2>/dev/null || return 1
     command mkdir -p "$sup/.worktrees/.status" "$sup/.tmux"
     command printf '{}\n' >"$sup/.claude.json"
@@ -248,14 +272,14 @@ gate_age_unit() {
         command mkdir -p "$stub"
         command ln -sf "$REAL_BASH" "$stub/bash"
         _gau_out="$(cd "$dir" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub" HOME="$dir" \
                 GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
                 "$REAL_BASH" -c 'source "$1"; _gate_age_suffix "$2" "$3"' \
                 _ "$STATUS" "$golem" "$feed" 2>/dev/null || true)"
     else
         _gau_out="$(cd "$dir" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
                 HOME="$dir" \
                 GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
                 "$REAL_BASH" -c 'source "$1"; _gate_age_suffix "$2" "$3"' \
@@ -281,15 +305,28 @@ run_in_watch() {
     shift # drop the `--`
     RUN_RC=0
     RUN_OUT="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
-            TMUX= TMUX_TMPDIR="$dir/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$dir/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
             GOLEM_WORKTREE_LOCAL_FILES="" \
             "${extra_env[@]}" \
-            timeout "$secs" "$REAL_BASH" "$STATUS" "$@" 2>&1)" || RUN_RC=$?
+            "$REAL_BASH" -c '
+                # Bound via bin/bounded-run.sh, NOT GNU `timeout` (#543/#932).
+                # `timeout` ships with GNU coreutils and is ABSENT on base macOS,
+                # where this line failed with `env: timeout: No such file or
+                # directory` and rc=127. The calling test guards on
+                # `command -v timeout` and skips, but that guard never protected
+                # this helper: the check lives in the fragment while the call
+                # lives here, so on a Mac the arm ran anyway and reported 127 as
+                # a test failure. bounded_run has timeout(1) semantics (including
+                # the 124 bound-fired status) with no coreutils dependency.
+                source "$1"; shift
+                bounded_run "$@"
+            ' _ "$REPO_ROOT/bin/bounded-run.sh" "$secs" \
+            "$REAL_BASH" "$STATUS" "$@" 2>&1)" || RUN_RC=$?
     [ "$RUN_RC" = "124" ] && RUN_RC=0
 }
 
@@ -324,7 +361,7 @@ plant_transcript() {
 # inherits it files every fixture under the RUNNER's id, so the assertions pass
 # while testing the harness's identity rather than the code's derivation. One of
 # the two fixture defects that sank the withdrawn first attempt was exactly this.
-# The `--unset=` list below is therefore load-bearing, not hygiene.
+# The `-u` list below is therefore load-bearing, not hygiene.
 WORK_ID_SCRUB=(GOLEM_ID AGENT_ID)
 
 # make_golem_worktree <sandbox> <issue-N> [worktree-dir]
@@ -344,7 +381,7 @@ WORK_ID_SCRUB=(GOLEM_ID AGENT_ID)
 make_golem_worktree() {
     local sb="$1" n="$2" wtdir="${3:-.worktrees}"
     command mkdir -p "$sb/$wtdir"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb" worktree add -q "$sb/$wtdir/issue-$n" -b "issue-$n" >/dev/null 2>&1 || return 1
     command echo "$sb/$wtdir/issue-$n"
 }
@@ -447,7 +484,7 @@ run_scrape() {
     local sb="$1" arg="$2"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$SCRAPE" "$arg" 2>&1)" || RUN_RC=$?
@@ -461,9 +498,9 @@ run_status_scrape() {
     shift
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
-            TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            TMUX= TMUX_TMPDIR="${SANDBOX_TMUX_DIR:-$sb/.tmux}" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
@@ -546,7 +583,7 @@ run_ctx_budget() {
     shift 2
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$@" \
@@ -569,7 +606,7 @@ iso_ago() {
     local n="$1" now past
     now="$(command date -u +%s)"
     past=$((now - n))
-    command date -u -d "@$past" +%FT%TZ 2>/dev/null && return 0
+    command date -u -d "@$past" +%FT%TZ 2>/dev/null && return 0 # lint-allow-gnu-flag: GNU form, BSD -r fallback on the next line
     command date -u -r "$past" +%FT%TZ 2>/dev/null && return 0
     return 1
 }

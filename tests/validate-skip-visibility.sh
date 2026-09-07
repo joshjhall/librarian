@@ -67,7 +67,12 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 test_suite "Skip visibility + agnix install branches (#741)"
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # --- Extraction --------------------------------------------------------------
@@ -369,8 +374,8 @@ run_step() {
     : >"$dir/summary.md"
     : >"$dir/output.txt"
     STEP_RC=0
-    STEP_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    STEP_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         HOME="$dir" \
         PATH="$dir/bin" \
         GITHUB_STEP_SUMMARY="$dir/summary.md" \
@@ -848,8 +853,8 @@ assert_gate_ran_step() {
     command chmod +x "$sb/tests/lint-agnix-clean.sh"
 
     STEP_RC=0
-    STEP_OUT="$(cd "$sb" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    STEP_OUT="$(cd "$sb" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         HOME="$sb" \
         PATH="$sb/bin" \
         "$REAL_BASH" -e -c "$body" 2>&1)" || STEP_RC=$?
@@ -930,7 +935,7 @@ assert_summary_write_failure_is_survivable() {
     load_step_body "$wf" "Install agnix (pinned)" body || return 1
 
     command mkdir -p "$sb/unwritable-summary"
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         HOME="$sb" PATH="$sb/bin" \
         GITHUB_STEP_SUMMARY="$sb/unwritable-summary" \
         GITHUB_OUTPUT="$sb/output.txt" \
@@ -1064,9 +1069,9 @@ render_stage() {
     local codes="$*"
     local summary_env=(GITHUB_STEP_SUMMARY="$summary")
     if [ "$summary" = "UNSET" ]; then
-        summary_env=(--unset=GITHUB_STEP_SUMMARY)
+        summary_env=(-uGITHUB_STEP_SUMMARY)
     fi
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         "${summary_env[@]}" \
         "$REAL_BASH" -c '
             set -u
@@ -1199,7 +1204,7 @@ test_node_absent_branch_reports_its_skip() {
     # this case take the then-branch and assert nothing.
     command rm -f "$sb/bin/node"
 
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
         HOME="$sb" PATH="$sb/bin" \
         GITHUB_STEP_SUMMARY="$sb/node-summary.md" \
         "$REAL_BASH" -c '
@@ -1292,8 +1297,8 @@ test_sliced_notifier_survives_set_u_without_the_init() {
     local sumfile out rc=0
     sumfile="$(command mktemp "$WORKDIR/sliced-summary.XXXXXX")"
 
-    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        --unset=BASH_ENV \
+    out="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        -uBASH_ENV \
         GITHUB_STEP_SUMMARY="$sumfile" \
         "$REAL_BASH" -c '
             set -u

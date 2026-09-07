@@ -146,7 +146,14 @@ assert_file_list_shape "$FILE_LIST"
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
+    # NOT `grep -qixF`: `-q` exits on the FIRST match, `locale -a` then dies of
+    # SIGPIPE, and under this file's `set -o pipefail` the pipeline reports 141 —
+    # so a locale that EXISTS reads as absent (measured on macOS: rc=0 without
+    # pipefail, rc=141 with it). truncate_chars then silently fell back to the
+    # byte-wise printf and split a multibyte character mid-sequence, which is the
+    # bash<->python divergence #932 surfaced. Same trap the repo recorded in
+    # 7a7c0ac. Dropping -q lets grep drain the input; the redirect keeps it quiet.
+    if locale -a 2>/dev/null | command grep -ixF "$_cand" >/dev/null 2>&1; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -185,8 +192,42 @@ while IFS= read -r file; do
                 while IFS= read -r raw; do
                     line_num=${raw%%:*}
                     content=${raw#*:}
-                    # Count lines until next function/class at same or lower indent
-                    indent=$(command printf '%s' "$content" | command sed 's/[^ ].*//' | command wc -c)
+                    # Count lines until next function/class at same or lower indent.
+                    #
+                    # INDENT IS COUNTED IN PURE BASH, not `sed | wc -c` (#932).
+                    # That pipeline was doubly BSD-unsafe, and its failure was the
+                    # silent #679 shape -- a clean report of the WRONG thing:
+                    #
+                    #   (1) BSD `wc` PADS its count to width 7 (`%7ju`), so indent
+                    #       came back as `"      0"`, and the bounded-repeat BRE
+                    #       below interpolated to `^.\{0,      0\}[^ ]` -- a
+                    #       malformed interval. Measured on macOS 26.6, stock
+                    #       /usr/bin/grep rejects it outright -- `grep: invalid
+                    #       repetition count(s)` -- but the enclosing pipeline
+                    #       still exits 0 (the `head` at its tail is what reports),
+                    #       so the error is SWALLOWED. Either way it matches
+                    #       NOTHING, so
+                    #       end_line stayed empty and EVERY def fell through to the
+                    #       `total - line_num` fallback. On macOS that turned this
+                    #       arm from 0 findings into 114 false HIGHs on the parity
+                    #       fixture -- the exact counts issue #932 reports.
+                    #   (2) The `wc -c` width was fragile independently of the
+                    #       padding: it counts BYTES of the leading-space run plus
+                    #       whatever the upstream `sed` did or did not append, so
+                    #       it only coincided with the wanted column by accident.
+                    #       (Measured on macOS 26.6: BSD `sed` appends NO trailing
+                    #       newline here, so the two userlands disagreed about the
+                    #       count's meaning as well as its formatting.)
+                    #
+                    # `${content%%[! ]*}` is the leading-space run; its length is
+                    # the column the first non-space sits at, which is the value
+                    # the `^.\{0,N\}[^ ]` probe actually wants. Fork-free,
+                    # bash-3.2 clean, and identical on both userlands. It matches
+                    # GNU's old value exactly, so this is not a behavior change on
+                    # Linux -- verify with the `--- Category: long-function ---`
+                    # cases in tests/validate-loop-detectors.sh.
+                    _lead=${content%%[! ]*}
+                    indent=${#_lead}
                     end_line=$(command sed -n "$((line_num + 1)),\$p" "$file" |
                         command grep -n "^.\{0,${indent}\}[^ ]" |
                         command head -1 | command cut -d: -f1)

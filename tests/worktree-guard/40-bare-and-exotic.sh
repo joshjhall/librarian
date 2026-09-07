@@ -29,7 +29,7 @@ test_bare_host_own_worktree_allows_silently() {
     assert_equals "allow" "$(decision "$GUARD_OUT")" "bare-host worktree's own path allowed"
     local err
     err="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/a"}}' "$BARE_WT" "$BARE_WT" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     assert_output_empty "$err" "bare-host own-worktree allow is silent (worktree-first, no diagnostic)"
 }
 test_bare_host_cross_tree_failopen_is_loud() {
@@ -41,9 +41,9 @@ test_bare_host_cross_tree_failopen_is_loud() {
     payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/hooks/x"}}' \
         "$BARE_WT" "$BARE_GITDIR")"
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     assert_contains "$err" "worktree-scope not derivable" "bare-host cross-tree target fails open with a LOUD diagnostic"
     assert_output_empty "$out" "bare-host cross-tree fail-open emits no deny envelope"
 }
@@ -57,9 +57,9 @@ test_exotic_sgd_cross_tree_failopen_is_loud() {
     payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/seed.txt"}}' \
         "$EX_WT" "$EX_MAIN")"
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     assert_contains "$err" "worktree-scope not derivable" "separate-git-dir cross-tree target fails open LOUDLY"
     assert_output_empty "$out" "separate-git-dir cross-tree fail-open emits no deny envelope"
 }
@@ -75,9 +75,9 @@ test_exotic_sgd_core_bare_poison_stays_loud() {
     payload="$(printf '{"cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s/seed.txt"}}' \
         "$EX_WT" "$EX_MAIN")"
     err="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>&1 >/dev/null)" || true
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     assert_contains "$err" "worktree-scope not derivable" "core.bare poison does NOT silence the exotic fail-open (stays loud)"
     assert_output_empty "$out" "core.bare poison emits no deny envelope but also no silent-allow regression"
 }

@@ -130,6 +130,12 @@ source "$SCRIPT_DIR/lib/fragments.sh"
 # design — see the file header) and defines the five scanner drivers.
 # shellcheck source=tests/lib/decomposition-sandbox.sh
 source "$SCRIPT_DIR/lib/decomposition-sandbox.sh"
+# bounded_run — the ReDoS-guard cases in 04-rust.sh bound the matcher without
+# GNU `timeout`, which base macOS does not ship (#543/#932). An unguarded
+# `command timeout 10 ...` there exited 127 (command not found) and the arm read
+# that as the matcher failing, not as a missing tool.
+# shellcheck source=bin/bounded-run.sh
+source "$REPO_ROOT/bin/bounded-run.sh"
 
 source_fragments "$SCRIPT_DIR/validate-decomposition-detectors" \
     01-python.sh \

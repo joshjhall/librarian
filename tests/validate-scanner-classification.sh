@@ -48,19 +48,24 @@ source "$SCRIPT_DIR/lib/harness.sh"
 
 test_suite "scanner test-file classification (#132/#134/#135/#139)"
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # scan SCRIPT LIST — run a scanner with the git env scrubbed, echo only the
 # debug-statement rows (3rd tab-column == debug-statement).
 #
 # PATTERNS_FORCE_BASH is passed THROUGH `env` explicitly rather than relying on
-# a `VAR=x scan ...` prefix: the child is launched via `/usr/bin/env --unset=`,
+# a `VAR=x scan ...` prefix: the child is launched via `/usr/bin/env -u`,
 # and a caller-side prefix on a shell function does not survive into it in a way
 # the shim can read. Empty by default, so the normal cases keep exercising
 # whichever impl the host resolves.
 scan() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "PATTERNS_FORCE_BASH=${PATTERNS_FORCE_BASH:-0}" \
         "$REAL_BASH" "$1" "$2" 2>/dev/null |
         command awk -F '\t' '$3 == "debug-statement"'
@@ -70,7 +75,7 @@ scan() {
 # category (3rd tab-column). scan() is the debug-statement special case; the
 # patterns.sh-only tech-debt-marker / empty-handler tests use this.
 scan_cat() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$1" "$2" 2>/dev/null |
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$1" "$2" 2>/dev/null |
         command awk -F '\t' -v c="$3" '$3 == c'
 }
 

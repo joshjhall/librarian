@@ -139,7 +139,14 @@ assert_file_list_shape "$FILE_LIST"
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
+    # NOT `grep -qixF`: `-q` exits on the FIRST match, `locale -a` then dies of
+    # SIGPIPE, and under this file's `set -o pipefail` the pipeline reports 141 —
+    # so a locale that EXISTS reads as absent (measured on macOS: rc=0 without
+    # pipefail, rc=141 with it). truncate_chars then silently fell back to the
+    # byte-wise printf and split a multibyte character mid-sequence, which is the
+    # bash<->python divergence #932 surfaced. Same trap the repo recorded in
+    # 7a7c0ac. Dropping -q lets grep drain the input; the redirect keeps it quiet.
+    if locale -a 2>/dev/null | command grep -ixF "$_cand" >/dev/null 2>&1; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi

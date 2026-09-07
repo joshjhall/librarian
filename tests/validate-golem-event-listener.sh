@@ -94,7 +94,12 @@ test_prereqs() {
 
 # --- Sandbox + listener lifecycle -------------------------------------------
 
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 # Track a started listener so the EXIT trap always reaps it.
 LISTENER_PID=""
 cleanup() {
@@ -110,7 +115,7 @@ trap cleanup EXIT
 new_sandbox() {
     local __out="$1" _newdir
     _newdir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$_newdir" init -q 2>/dev/null || return 1
     command mkdir -p "$_newdir/.worktrees/.status"
     printf -v "$__out" '%s' "$_newdir"
@@ -145,8 +150,8 @@ start_listener() {
     local dir="$1" port="$2" tries=0
     (
         cd "$dir" &&
-            exec /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+            exec /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV \
                 HOME="$dir" \
                 GOLEM_EVENT_LISTEN_ADDR=127.0.0.1 GOLEM_EVENT_LISTEN_PORT="$port" \
                 "$REAL_BASH" "$LISTENER_SH"
@@ -270,8 +275,8 @@ test_post_gate_surfaces_via_gatewatch() {
     assert_file_contains "$dir/.worktrees/.status/feed.jsonl" '"event":"gate"' \
         "feed line carries the gate event kind"
     # Surface it through the UNCHANGED floor.
-    out="$(cd "$dir" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV HOME="$dir" \
+    out="$(cd "$dir" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV HOME="$dir" \
         GOLEM_STATUS_DIR=.worktrees/.status "$REAL_BASH" "$GATE_WATCH" --once 2>/dev/null || true)"
     assert_contains "$out" "golem-5" "gate-watch --once surfaces golem-5"
     assert_contains "$out" "Claude needs your permission to push" \
@@ -355,8 +360,8 @@ test_malformed_ts_does_not_blank_floor() {
     # the jq pipeline never aborts.
     assert_file_not_contains "$dir/.worktrees/.status/feed.jsonl" '2026-07-21T10:00:00.123456Z' \
         "malformed ts is NOT written verbatim (re-stamped on ingress)"
-    out="$(cd "$dir" && /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        "${GOLEM_SCRUB[@]/#/--unset=}" --unset=BASH_ENV HOME="$dir" \
+    out="$(cd "$dir" && /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        "${GOLEM_SCRUB[@]/#/-u}" -uBASH_ENV HOME="$dir" \
         GOLEM_STATUS_DIR=.worktrees/.status "$REAL_BASH" "$GATE_WATCH" --once 2>/dev/null || true)"
     assert_contains "$out" "golem-1" "malformed-ts golem still surfaces"
     assert_contains "$out" "golem-2" "sibling well-formed golem NOT blanked by the bad ts"
@@ -452,7 +457,7 @@ test_shim_fails_loud_without_python() {
     # Unset BASH_ENV: on a devcontainer it points at /etc/bash_env, which sources
     # /etc/bashrc.d/*.sh (one of which can block on an auth check) and would hang
     # the reduced-PATH child — the repo-standard PATH-stub-test precaution.
-    out="$(/usr/bin/env --unset=BASH_ENV PATH="$bindir" "$REAL_BASH" "$LISTENER_SH" 2>&1)" || rc=$?
+    out="$(/usr/bin/env -uBASH_ENV PATH="$bindir" "$REAL_BASH" "$LISTENER_SH" 2>&1)" || rc=$?
     assert_true "[ '$rc' -ne 0 ]" "shim exits non-zero when python3>=3.11 absent"
     assert_contains "$out" "python3>=3.11" "shim message names the Python floor"
 }

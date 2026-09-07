@@ -17,6 +17,34 @@
 # script through liveness_snapshot's wiring; these pin its own contract in
 # isolation.
 
+# backdate_mtime <file> <seconds-ago> — set <file>'s mtime that many seconds in
+# the past, on BOTH userlands.
+#
+# NEITHER spelling is portable, which is why this is a helper rather than a flag
+# (#932). GNU touch takes `-d @<epoch>`; BSD touch rejects it ("out of range or
+# illegal time specification") and wants `-t [[CC]YY]MMDDhhmm[.SS]`, while BSD's
+# `-A [-]HHMMSS` adjust form is rejected by GNU. The failure was SILENT in the
+# worst way: BSD touch printed its usage to stderr and still **exited 0**, so the
+# file kept its current mtime, the staleness window never elapsed, and the arm
+# reported exit 0 ("not stale") instead of the expected exit 2 — a real
+# assertion failure whose stderr looked like unrelated noise.
+#
+# `date -r <epoch>` (BSD) vs `date -d @<epoch>` (GNU) splits the same way, so the
+# formatted-timestamp path is chosen by probing `touch -d` on a scratch file
+# rather than by sniffing `uname`.
+backdate_mtime() {
+    local file="$1" ago="$2" target probe
+    target=$(($(command date +%s) - ago))
+    probe="$(command mktemp)" || return 1
+    if command touch -d "@$target" "$probe" 2>/dev/null; then # lint-allow-gnu-flag: this IS the GNU probe; the else branch is the BSD form
+        command rm -f "$probe"
+        command touch -d "@$target" "$file" # lint-allow-gnu-flag: reached only when the probe above proved GNU          # GNU
+    else
+        command rm -f "$probe"
+        command touch -t "$(command date -r "$target" +%Y%m%d%H%M.%S)" "$file" # BSD
+    fi
+}
+
 # run_liveness <sandbox> <worktree-arg> — invoke golem-transcript-liveness.sh with
 # the projects base pointed at the sandbox's fake $sb/projects. Captures
 # RUN_RC/RUN_OUT.
@@ -24,7 +52,7 @@ run_liveness() {
     local sb="$1" arg="$2"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$arg" 2>&1)" || RUN_RC=$?
@@ -407,7 +435,7 @@ test_liveness_no_arg_exits_1() {
     new_sandbox sb
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" "$REAL_BASH" "$TRANSCRIPT_LIVENESS" 2>&1)" || RUN_RC=$?
     assert_exit 1 "$RUN_RC" "no worktree arg exits 1 (usage)"
     assert_contains "$RUN_OUT" "usage:" "prints usage on the no-arg path"
@@ -420,8 +448,8 @@ test_liveness_no_jq_exits_3() {
     command mkdir -p "$sb/nojq-bin"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" CLAUDE_PROJECTS_DIR="$sb/projects" \
             PATH="$sb/nojq-bin" \
             "$REAL_BASH" "$TRANSCRIPT_LIVENESS" "$sb/.worktrees/issue-42" 2>&1)" || RUN_RC=$?
@@ -462,7 +490,7 @@ test_liveness_stale_working_demoted() {
         '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
     # Backdate the planted session transcript well past the default 1200s window.
     tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
-    command touch -d "@$(($(command date +%s) - 3600))" "$tfile"
+    backdate_mtime "$tfile" 3600
     run_liveness "$sb" "$sb/.worktrees/issue-42"
     assert_exit 2 "$RUN_RC" "a stale 'working' transcript is demoted to indeterminate (exit 2)"
     assert_contains "$RUN_OUT" "stale 'working'" "names the staleness demotion"
@@ -481,10 +509,10 @@ test_liveness_stale_working_threshold_overridable() {
     plant_transcript "$sb" 42 \
         '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}'
     tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
-    command touch -d "@$(($(command date +%s) - 3600))" "$tfile"
+    backdate_mtime "$tfile" 3600
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             GOLEM_STALL_THRESHOLD=7200 \
@@ -506,7 +534,7 @@ test_liveness_stale_idle_not_demoted() {
     plant_transcript "$sb" 42 \
         '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}'
     tfile="$sb/projects/$(slug_for "$sb/.worktrees/issue-42")/session.jsonl"
-    command touch -d "@$(($(command date +%s) - 3600))" "$tfile"
+    backdate_mtime "$tfile" 3600
     run_liveness "$sb" "$sb/.worktrees/issue-42"
     assert_exit 0 "$RUN_RC" "a long-idle transcript still classifies (exit 0)"
     assert_true "[ '$RUN_OUT' = 'idle' ]" "a stale idle transcript is not demoted (got '$RUN_OUT')"
@@ -541,7 +569,7 @@ test_liveness_stale_working_stat_failure_fails_open() {
     command chmod +x "$stub/stat"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             PATH="$stub:/usr/bin:/bin" \
@@ -565,7 +593,7 @@ test_liveness_newest_session_wins() {
     # Older session: idle. Newer session: working. The newer must win.
     command printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"end_turn"}}' \
         >"$dir/old.jsonl"
-    command touch -d "@$(($(command date +%s) - 600))" "$dir/old.jsonl"
+    backdate_mtime "$dir/old.jsonl" 600
     command printf '%s\n' '{"type":"assistant","isSidechain":false,"message":{"stop_reason":"tool_use"}}' \
         >"$dir/new.jsonl"
     run_liveness "$sb" "$sb/.worktrees/issue-42"
@@ -924,7 +952,7 @@ test_scrape_relative_worktree_path() {
     # $(command pwd) and must land on the same $sb/.worktrees/issue-42 slug.
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             "$REAL_BASH" "$SCRAPE" ".worktrees/issue-42" 2>&1)" || RUN_RC=$?
@@ -982,8 +1010,8 @@ test_status_no_jq_skips_token_block() {
 EOF
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -1048,7 +1076,7 @@ run_liveness_wt() {
     slug="$(slug_for "$wt")"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -1232,7 +1260,7 @@ test_liveness_background_across_both_env_knobs() {
     # Run from an UNRELATED cwd, as the gate-watch sweep does.
     RUN_RC=0
     RUN_OUT="$(cd "$WORKDIR" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "${WORK_ID_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "${WORK_ID_SCRUB[@]/#/-u}" \
             HOME="$sb" \
             CLAUDE_PROJECTS_DIR="$sb/projects" \
             GOLEM_WORKTREE_DIR=nested/worktrees \

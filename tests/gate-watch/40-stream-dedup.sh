@@ -273,7 +273,7 @@ test_ghost_gate_dropped_when_no_trace() {
     trap "command rm -rf '$tmp'" RETURN
     local git_scrub=(GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_COMMON_DIR
         GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES)
-    /usr/bin/env "${git_scrub[@]/#/--unset=}" \
+    /usr/bin/env "${git_scrub[@]/#/-u}" \
         git -C "$tmp" init -q 2>/dev/null || return 1
     command mkdir -p "$tmp/.worktrees/.status"
     local ts
@@ -319,7 +319,7 @@ TMUX_STUB
     local out rc=0
     out="$(
         cd "$tmp" &&
-            /usr/bin/env "${git_scrub[@]/#/--unset=}" --unset=BASH_ENV \
+            /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub_bin" \
                 GOLEM_BLOCK_TTL=999999999999 GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \

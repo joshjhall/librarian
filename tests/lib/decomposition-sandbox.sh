@@ -34,7 +34,12 @@ if command -v python3 >/dev/null 2>&1 &&
     HAVE_PY=1
 fi
 
+# Resolved to the PHYSICAL path: on macOS $TMPDIR is under /var, a symlink to
+# /private/var, so `mktemp -d` returns /var/... while `git rev-parse
+# --show-toplevel` (and realpath-based guards) report /private/var/... Code
+# under test that prefix-matches the two spellings never matches (#932).
 WORKDIR="$(command mktemp -d)"
+WORKDIR="$(cd "$WORKDIR" && command pwd -P)"
 trap 'command rm -rf "$WORKDIR"' EXIT
 
 # Compact thresholds so small fixtures reach the seam/size arms. Applied to

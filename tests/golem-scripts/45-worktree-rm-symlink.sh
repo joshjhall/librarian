@@ -81,10 +81,10 @@ _plant_git_raw_stub() {
     # not the operator's preference.
     quoted="$(
         probe="$(command mktemp -d "$WORKDIR/quote.XXXXXX")" || exit 1
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" HOME="$probe" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" HOME="$probe" \
             git -C "$probe" init -q 2>/dev/null
         command touch "$probe/$path" 2>/dev/null
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" HOME="$probe" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" HOME="$probe" \
             git -C "$probe" -c core.quotePath=true status --porcelain 2>/dev/null |
             command sed -n '1s/^...//p'
     )"
@@ -219,10 +219,10 @@ _sandbox_with_symlink() {
     command printf 'target contents\n' >"$box/$target"
     command printf 'other contents\n' >"$box/OTHER.md"
     (cd "$box" && command ln -s "$target" "$link") || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$box" add -A 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$box" commit -qm "add symlink" 2>/dev/null || return 1
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$box" -c commit.gpgsign=false commit -qm "add symlink" 2>/dev/null || return 1
     eval "$__out=\$box"
 }
 
@@ -234,15 +234,15 @@ test_worktree_rm_forces_past_stale_symlink_attrs() {
     _sandbox_with_symlink sb AGENTS.md CLAUDE.md || return 1
     run_in "$sb" "$WT_NEW" 60
     assert_exit 0 "$RUN_RC" "worktree-new succeeds with a committed symlink"
-    blob="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    blob="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb/.worktrees/issue-60" rev-parse HEAD:AGENTS.md 2>/dev/null || true)"
     assert_not_empty "$blob" "the symlink has an index blob to compare against"
     _plant_git_raw_stub "$sb" "$blob" AGENTS.md || return 1
     # PATH-prepend the stub so worktree-rm's own git calls see the forged --raw.
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -285,14 +285,14 @@ test_worktree_rm_refuses_dirty_regular_file_beside_symlink() {
     _sandbox_with_symlink sb AGENTS.md CLAUDE.md || return 1
     run_in "$sb" "$WT_NEW" 62
     assert_exit 0 "$RUN_RC" "worktree-new succeeds with a committed symlink"
-    blob="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    blob="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb/.worktrees/issue-62" rev-parse HEAD:AGENTS.md 2>/dev/null || true)"
     command printf 'UNCOMMITTED USER WORK\n' >>"$sb/.worktrees/issue-62/seed.txt"
     _plant_git_raw_stub "$sb" "$blob" AGENTS.md || return 1
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -352,14 +352,14 @@ test_worktree_rm_forces_past_stale_symlink_non_ascii_path() {
     _sandbox_with_symlink sb "$link" CLAUDE.md || return 1
     run_in "$sb" "$WT_NEW" 66
     assert_exit 0 "$RUN_RC" "worktree-new succeeds with a non-ASCII symlink path"
-    blob="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    blob="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb/.worktrees/issue-66" rev-parse "HEAD:$link" 2>/dev/null || true)"
     assert_not_empty "$blob" "the non-ASCII symlink has an index blob"
     _plant_git_raw_stub "$sb" "$blob" "$link" || return 1
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -383,20 +383,20 @@ test_worktree_rm_counts_multiple_stale_symlinks() {
     _sandbox_with_symlink sb AGENTS.md CLAUDE.md || return 1
     # A second committed symlink, mirroring .codegraph in the real fixture.
     (cd "$sb" && command ln -s CLAUDE.md SECOND.md)
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" git -C "$sb" add -A 2>/dev/null
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-        git -C "$sb" commit -qm "second symlink" 2>/dev/null
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" git -C "$sb" add -A 2>/dev/null
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+        git -C "$sb" -c commit.gpgsign=false commit -qm "second symlink" 2>/dev/null
     run_in "$sb" "$WT_NEW" 67
     assert_exit 0 "$RUN_RC" "worktree-new succeeds with two committed symlinks"
-    blob_a="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    blob_a="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb/.worktrees/issue-67" rev-parse HEAD:AGENTS.md 2>/dev/null || true)"
-    blob_b="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    blob_b="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$sb/.worktrees/issue-67" rev-parse HEAD:SECOND.md 2>/dev/null || true)"
     _plant_git_raw_stub_multi "$sb" "$blob_a" AGENTS.md "$blob_b" SECOND.md
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \

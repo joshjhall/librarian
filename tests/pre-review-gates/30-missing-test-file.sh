@@ -586,7 +586,7 @@ test_declared_pattern_repos_are_cleaned_up() {
 
     GATE_RC=0
     GATE_OUT="$(cd "$sb" &&
-        TMPDIR="$tmp" /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        TMPDIR="$tmp" /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             "$REAL_BASH" "$GATE" "$sb/files.txt" 2>/dev/null)" || GATE_RC=$?
 
     assert_exit 0 "$GATE_RC" "the gate run itself succeeded (leak check is meaningful)"

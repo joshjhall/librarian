@@ -25,7 +25,7 @@ GATE_RC=0
 GATE_OUT=""
 run_gate() {
     GATE_RC=0
-    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    GATE_OUT="$(/usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         "$REAL_BASH" "$GATE" "$1" 2>/dev/null)" || GATE_RC=$?
 }
 
@@ -67,16 +67,16 @@ fresh_dir() {
 new_git_sandbox() {
     local __out="$1" dir
     dir="$(command mktemp -d "$WORKDIR/sandbox.XXXXXX")" || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" init -q 2>/dev/null || return 1
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" config user.email "test@example.com"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" config user.name "Test"
     command printf 'seed\n' >"$dir/seed.txt"
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" add seed.txt 2>/dev/null
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
         git -C "$dir" -c commit.gpgsign=false commit -qm seed 2>/dev/null || return 1
     printf -v "$__out" '%s' "$dir"
 }
@@ -88,7 +88,7 @@ run_gate_in() {
     local dir="$1" list="$2"
     GATE_RC=0
     GATE_OUT="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             "$REAL_BASH" "$GATE" "$list" 2>/dev/null)" || GATE_RC=$?
 }
 
@@ -104,7 +104,7 @@ run_gate_in_err() {
     errfile="$(command mktemp "$WORKDIR/stderr.XXXXXX")"
     GATE_RC=0
     GATE_OUT="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             "$REAL_BASH" "$GATE" "$list" 2>"$errfile")" || GATE_RC=$?
     GATE_ERR="$(command cat "$errfile")"
     command rm -f "$errfile"

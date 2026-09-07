@@ -80,8 +80,15 @@ ensure_git_cliff() {
     fi
 
     if command tar xz -f "$temp_dir/$asset" -C "$temp_dir"; then
-        sudo command mv "$temp_dir/git-cliff-${version}/git-cliff" /usr/local/bin/
-        sudo command chmod +x /usr/local/bin/git-cliff
+        # NO `command` after `sudo` (SC2232). `command` is a shell BUILTIN, so
+        # sudo tries to exec a binary of that name: there is none on Linux —
+        # where release.yml actually runs — and the install would have died
+        # `sudo: command: command not found`. (macOS happens to ship a
+        # /usr/bin/command, which is why this never failed locally.) The repo's
+        # #443 `command <tool>` convention exists to defeat shell aliases in THIS
+        # shell; it does not apply across a sudo exec boundary.
+        sudo mv "$temp_dir/git-cliff-${version}/git-cliff" /usr/local/bin/
+        sudo chmod +x /usr/local/bin/git-cliff
         command rm -rf "$temp_dir"
         command echo "✓ git-cliff installed successfully"
         return 0

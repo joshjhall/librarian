@@ -51,7 +51,7 @@ EOF
 render_source_seq() {
     local __out="$1" dir="$2" interval="$3" _rss_out
     _rss_out="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
             TMUX= TMUX_TMPDIR="$dir/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
@@ -128,7 +128,7 @@ EOF
 render_source_gap() {
     local __out="$1" dir="$2" interval="$3" _rsg_out
     _rsg_out="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
             TMUX= TMUX_TMPDIR="$dir/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
@@ -234,7 +234,7 @@ test_status_checkpoint_zero_golem_heartbeat_single_line() {
 { "size": 3, "slots": [], "backlog_depth": 0, "accepting": "open" }
 EOF
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             "$REAL_BASH" -c 'source "$1"; render_checkpoint "$2"; render_checkpoint "$2"' \
@@ -258,7 +258,7 @@ EOF
 render_source_multi() {
     local __out="$1" dir="$2" interval="$3" _rsm_out
     _rsm_out="$(cd "$dir" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$dir" \
             TMUX= TMUX_TMPDIR="$dir/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
@@ -528,13 +528,13 @@ esac
 exit 0
 EOF
     command chmod +x "$sb/bin/tmux"
-    # --unset=BASH_ENV: in the devcontainer BASH_ENV points at /etc/bash_env,
+    # -uBASH_ENV: in the devcontainer BASH_ENV points at /etc/bash_env,
     # which resets $PATH on non-interactive bash and would shadow the stub tmux
     # with the real one (see the devcontainer-bash-env-path-reset note).
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
@@ -833,8 +833,8 @@ test_status_checkpoint_empty_and_no_jq_guards() {
 EOF
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
@@ -906,8 +906,8 @@ EOF
     command chmod +x "$sb/bin/tmux"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
@@ -1048,8 +1048,8 @@ EOF
         fi
         RUN_RC=0
         RUN_OUT="$(cd "$sb" &&
-            /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-                --unset=BASH_ENV \
+            /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+                -uBASH_ENV \
                 HOME="$sb" \
                 PATH="$sb/bin:$PATH" \
                 TMUX= TMUX_TMPDIR="$sb/.tmux" \
@@ -1098,8 +1098,8 @@ EOF
     command chmod +x "$sb/bin/tmux"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
-            --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            -uBASH_ENV \
             HOME="$sb" \
             PATH="$sb/bin:$PATH" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
@@ -1378,7 +1378,7 @@ EOF
         "the garbage stat stub is what resolves on the fixture PATH, not the real one"
     RUN_RC=0
     RUN_OUT="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" --unset=BASH_ENV \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" -uBASH_ENV \
             HOME="$sb" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \

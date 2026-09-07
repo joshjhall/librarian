@@ -67,11 +67,16 @@ test_suite "bash-guard.sh Rule B — main-session git into a worktree (#662, #66
 # Two worktrees, not one: the peer-to-peer case (a golem reaching into ANOTHER
 # golem's tree) is a real topology in an orchestrate run and must deny, and with
 # only one worktree "own" and "peer" cannot be told apart at all.
+# PHYSICAL path: macOS $TMPDIR is under /var, a symlink to /private/var, so
+# `mktemp -d` returns /var/... while git and realpath-based code resolve the
+# same dir to /private/var/... Any prefix match between the two spellings
+# fails, silently dropping rows or refusing valid paths (#932).
 FIXTURE="$(command mktemp -d)"
+FIXTURE="$(cd "$FIXTURE" && command pwd -P)"
 trap 'command rm -rf "$FIXTURE"' EXIT
 
 git_clean() {
-    /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_GIT" "$@"
+    /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_GIT" "$@"
 }
 
 MAIN_DIR="$FIXTURE/repo"
@@ -105,7 +110,7 @@ run_guard() {
     payload="$(jq -cn --arg c "$cmd" --arg w "$cwd" \
         '{cwd:$w, tool_name:"Bash", tool_input:{command:$c}}')"
     GUARD_OUT="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             "$REAL_BASH" "$guard" 2>/dev/null)" || true
 }
 
@@ -566,7 +571,7 @@ test_failopen_no_cwd() {
     local payload out
     payload="$(jq -cn '{tool_name:"Bash", tool_input:{command:"git reset --hard"}}')"
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     assert_equals "allow" "$(decision "$out")" "a payload with NO cwd fails open (allow)"
 }
 test_failopen_nonexistent_target() {
@@ -626,7 +631,7 @@ test_worktree_rm_still_works() {
 
     local out rc=0
     out="$(cd "$sb" &&
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -663,7 +668,7 @@ test_rule_a_subagent_still_denied() {
     payload="$(jq -cn --arg w "$MAIN_DIR" \
         '{cwd:$w, agent_id:"a1", tool_name:"Bash", tool_input:{command:"rm -rf src/"}}')"
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     assert_equals "deny" "$(decision "$out")" "Rule A: a subagent \`rm -rf\` is still DENIED after the gate move"
 }
 test_rule_a_subagent_scratch_still_allowed() {
@@ -672,7 +677,7 @@ test_rule_a_subagent_scratch_still_allowed() {
     payload="$(jq -cn --arg w "$MAIN_DIR" \
         '{cwd:$w, agent_id:"a1", tool_name:"Bash", tool_input:{command:"rm -rf /tmp/scan/out"}}')"
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$GUARD" 2>/dev/null)" || true
     assert_equals "allow" "$(decision "$out")" "Rule A: the subagent /tmp scratch carve-out still ALLOWS"
 }
 
@@ -976,7 +981,7 @@ test_mutation_neutered_gate() {
     payload="$(jq -cn --arg w "$MAIN_DIR" \
         '{cwd:$w, agent_id:"a1", tool_name:"Bash", tool_input:{command:"rm -rf src/"}}')"
     out="$(printf '%s' "$payload" |
-        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" "$REAL_BASH" "$m" 2>/dev/null)" || true
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" "$REAL_BASH" "$m" 2>/dev/null)" || true
     assert_equals "deny" "$(decision "$out")" \
         "MUTATION: mutant 1 still denies Rule A (it broke ONLY Rule B)"
 }
