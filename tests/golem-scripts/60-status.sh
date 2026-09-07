@@ -357,10 +357,6 @@ test_status_watch_loops_with_env_override() {
         skip_test "jq not available (golem-status table needs jq)"
         return 0
     fi
-    if ! command -v timeout >/dev/null 2>&1; then
-        skip_test "timeout not available (cannot bound the --watch loop)"
-        return 0
-    fi
     local sb
     new_sandbox sb
     command cat >"$sb/.worktrees/.status/golem-42.json" <<'EOF'
@@ -382,10 +378,6 @@ EOF
 # level-scaled default (L4 -> 900s). We can't wait 900s, so assert only that the
 # header reports the resolved default and the first render happened.
 test_status_watch_uses_resolver_default() {
-    if ! command -v timeout >/dev/null 2>&1; then
-        skip_test "timeout not available (cannot bound the --watch loop)"
-        return 0
-    fi
     local sb
     new_sandbox sb
     run_in_watch "$sb" 2 -- --watch --level 4

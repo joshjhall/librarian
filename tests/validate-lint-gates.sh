@@ -228,15 +228,15 @@ test_unusable_uvx_skips_rather_than_fails() {
 # Distinct from the failing-probe case above: that one exits promptly non-zero,
 # this one never returns on its own.
 test_hanging_uvx_is_bounded_not_wedged() {
-    if ! command -v timeout >/dev/null 2>&1; then
-        skip_test "timeout(1) unavailable — cannot bound the hang case"
-        return 0
-    fi
-
+    # No `command -v timeout` guard, and no `timeout` symlink (#960). The outer
+    # bound is bounded_run, which needs only POSIX sleep/kill/mktemp, and the
+    # gate under test bounds itself the same way — so neither side has wanted
+    # coreutils since #543. The guard that used to sit here skipped this case on
+    # a coreutils-free host that runs it fine; the symlink contradicted
+    # stub_dir's own note that `timeout` is deliberately kept out of the stub.
     local sb
     stub_dir sb || return 1
     command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
-    command ln -sf "$(command -v timeout)" "$sb/bin/timeout" 2>/dev/null || true
     command ln -sf "$(command -v kill)" "$sb/bin/kill" 2>/dev/null || true
 
     # A uvx whose --version probe never returns.
@@ -280,14 +280,14 @@ test_hanging_uvx_is_bounded_not_wedged() {
 # killed by the outer bound); with bounded_run it returns on its own in ~the
 # UVX_PROBE_TIMEOUT and reports the skip sentinel.
 #
-# The outer `timeout` here runs on the TEST-RUNNER's real PATH, not the stub's,
-# so bounding this case does not reintroduce the dependency being tested.
+# The outer bound here is bounded_run in the TEST RUNNER's shell, not the stub's
+# PATH, so bounding this case does not reintroduce the dependency being tested.
+#
+# It also carries no `command -v timeout` guard any more (#960): the guard was
+# self-defeating here above all, since this is THE case about hosts with no GNU
+# timeout and it skipped itself on exactly those hosts. The stripped-PATH fixture
+# below is untouched and remains the point of the case.
 test_hanging_uvx_bounded_without_gnu_timeout() {
-    if ! command -v timeout >/dev/null 2>&1; then
-        skip_test "timeout(1) unavailable to bound the TEST itself (the gate under test needs none)"
-        return 0
-    fi
-
     local sb
     stub_dir sb || return 1
     # bounded_run's own dependencies — POSIX, and all this fix needs.
@@ -612,13 +612,18 @@ test_justfile_recipe_body_executes() {
     local sb out
     stub_dir sb || return 1
 
-    # `timeout` and `sleep` are NOT in stub_dir's symlink list, and without them
-    # the recipe's `command -v timeout` fails and every case below silently takes
-    # the UNBOUNDED else-branch — the bounded path this test exists to cover
-    # would never execute. Plant them, as test_hanging_uvx_is_bounded_not_wedged
-    # already does for the same reason.
-    command ln -sf "$(command -v timeout)" "$sb/bin/timeout" 2>/dev/null || true
+    # `sleep` and `kill` are NOT in stub_dir's symlink list, and the recipe's
+    # bound needs both: it calls bounded_run, whose watchdog is sleep + kill.
+    # Without them the probe cannot be bounded and the path this case exists to
+    # cover would not execute.
+    #
+    # `timeout` is deliberately NOT planted (#960). The comment here used to say
+    # the recipe's `command -v timeout` would fail without it — but the recipe
+    # has bounded via bounded_run since #544, so the symlink was propping up a
+    # branch that no longer exists while contradicting stub_dir's own note that
+    # `timeout` is kept out of the stub on purpose.
     command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
+    command ln -sf "$(command -v kill)" "$sb/bin/kill" 2>/dev/null || true
 
     # The recipe reads the pin with a path RELATIVE to the justfile
     # (`bash bin/ruff-version.sh`), which is correct under just — it runs recipes
@@ -662,11 +667,10 @@ test_justfile_recipe_body_executes() {
 # returns and asserts the recipe body gives up and degrades to the skip branch,
 # mirroring test_hanging_uvx_is_bounded_not_wedged's coverage of lint-python.sh.
 test_justfile_hanging_uvx_is_bounded() {
-    if ! command -v timeout >/dev/null 2>&1; then
-        skip_test "timeout(1) unavailable — cannot bound the hang case"
-        return 0
-    fi
-
+    # No guard, no `timeout` symlink (#960) — same reasoning as the two cases
+    # above. The recipe under test bounds via bounded_run (justfile's `elif
+    # command -v uvx … && bounded_run "${UVX_PROBE_TIMEOUT:-60}" …`), and the
+    # outer bound is bounded_run in this shell.
     local body
     body="$(extract_lint_recipe_body)"
     assert_not_empty "$body" "recipe body extracted for the hang case"
@@ -674,7 +678,6 @@ test_justfile_hanging_uvx_is_bounded() {
 
     local sb
     stub_dir sb || return 1
-    command ln -sf "$(command -v timeout)" "$sb/bin/timeout" 2>/dev/null || true
     command ln -sf "$(command -v sleep)" "$sb/bin/sleep" 2>/dev/null || true
 
     # A uvx whose --version probe never returns.

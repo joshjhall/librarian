@@ -521,13 +521,16 @@ test_launch_auth_no_source_no_injection() {
 
 # `op read` hangs → the time-bounded wrapper kills it and dispatch still
 # completes. A fake `op` that sleeps 60s stands in; OP_ANTHROPIC_AUTH_TOKEN_REF is
-# set with no cache/env token, so resolution reaches the bounded op arm. Skipped
-# where neither timeout nor gtimeout exists (the arm no-ops there by design).
+# set with no cache/env token, so resolution reaches the bounded op arm.
+#
+# NOT skipped on a coreutils-free host (#960). The guard here used to check for
+# `timeout` or `gtimeout` and skip, on the stated grounds that "the arm no-ops
+# there by design" — which stopped being true when #543 rewrote
+# _bounded_op_read to use bounded_run specifically so the op probe would both
+# run AND stay bounded on base macOS. The guard was therefore skipping the one
+# host whose behaviour it was rewritten to fix, and its rationale asserted the
+# opposite of what golem-launch.sh does.
 test_launch_auth_op_hang_is_bounded() {
-    if ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
-        skip_test "neither timeout nor gtimeout available (bounded-op arm is a no-op)"
-        return 0
-    fi
     local sb log
     new_sandbox sb
     command cat >"$sb/bin-op" <<'EOF'
