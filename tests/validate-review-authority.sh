@@ -300,11 +300,11 @@ test_skipped_review_blocks_auto_merge() {
 
     assert_not_empty "$para" \
         "execute-protocol.md must carry the skipped-is-not-clean paragraph (#637 AC3)"
-    assert_true "printf '%s' \"\$para\" | command grep -qiE 'stopped-with-blocking'" \
+    assert_true "command grep -qiE 'stopped-with-blocking' <<<\"\$para\"" \
         "the skip clause must equate a skip with stopped-with-blocking (#637 AC3)"
-    assert_true "printf '%s' \"\$para\" | command grep -qiE 'never auto-merge|do \*\*NOT\*\* merge'" \
+    assert_true "command grep -qiE 'never auto-merge|do \*\*NOT\*\* merge' <<<\"\$para\"" \
         "the skip clause must carry the never-auto-merge rule (#637 AC3)"
-    assert_true "printf '%s' \"\$para\" | command grep -q 'status/pr-pending'" \
+    assert_true "command grep -q 'status/pr-pending' <<<\"\$para\"" \
         "the skip clause itself must park the PR with status/pr-pending (#637 AC3)"
 
     # The merge invariant must also name the skip as a dead-end trigger; that
@@ -336,16 +336,16 @@ test_option2_gates_on_review_status() {
     opt2="$(command awk '/^## Option 2/{f=1} /^## Option 3/{f=0} f' "$f")"
     assert_not_empty "$opt2" \
         "execute-protocol.md must have an Option 2 section (positive control, #637 AC3)"
-    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'skipped'" \
+    assert_true "command grep -qiE 'skipped' <<<\"\$opt2\"" \
         "Option 2 must address a skipped review before pushing (#637 AC3)"
     # BOTH halves of the disjunction, not just the skip. Narrowing the gate to
     # react only to a mechanically-skipped review would let a run with live
     # blocking findings push to `main` — the same class of gap, reopened.
-    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'stopped-with-blocking'" \
+    assert_true "command grep -qiE 'stopped-with-blocking' <<<\"\$opt2\"" \
         "Option 2 must also gate on stopped-with-blocking, not just skipped (#637 AC3)"
-    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'do NOT .?git push|not .?git push'" \
+    assert_true "command grep -qiE 'do NOT .?git push|not .?git push' <<<\"\$opt2\"" \
         "Option 2 must forbid the push when the review did not run clean (#637 AC3)"
-    assert_true "printf '%s' \"\$opt2\" | command grep -qiE 'Option 3'" \
+    assert_true "command grep -qiE 'Option 3' <<<\"\$opt2\"" \
         "Option 2 must name the commit-only fallback (#637 AC3)"
 }
 
@@ -380,9 +380,9 @@ test_cap_exhaustion_respects_option2_gate() {
     ' "$f")"
     assert_not_empty "$para" \
         "pre-ship-validation.md must have an Autonomous cap-exceeded bullet (positive control, #637)"
-    assert_true "printf '%s' \"\$para\" | command grep -qiE 'Option 2 review gate|apply the .*review gate'" \
+    assert_true "command grep -qiE 'Option 2 review gate|apply the .*review gate' <<<\"\$para\"" \
         "the cap-exceeded bullet must defer to the Option 2 review gate (#637 AC3)"
-    assert_true "printf '%s' \"\$para\" | command grep -qiE 'stopped-with-blocking'" \
+    assert_true "command grep -qiE 'stopped-with-blocking' <<<\"\$para\"" \
         "the cap-exceeded bullet must name the state it produces (#637 AC3)"
 }
 

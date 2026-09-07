@@ -171,8 +171,7 @@ check_prev_lines() {
     local file="$1" target_line="$2" pattern="$3"
     local start=$((target_line - 3))
     [ "$start" -lt 1 ] && start=1
-    command sed -n "${start},$((target_line - 1))p" "$file" 2>/dev/null |
-        command grep -qE "$pattern"
+    command grep -qE "$pattern" <<<"$(command sed -n "${start},$((target_line - 1))p" "$file" 2>/dev/null)"
 }
 
 while IFS= read -r file; do
@@ -206,7 +205,7 @@ while IFS= read -r file; do
                     if ! check_prev_lines "$file" "$line_num" '"""'; then
                         # Also check if function body starts with docstring
                         next_lines=$(command sed -n "$((line_num + 1)),$((line_num + 2))p" "$file" 2>/dev/null)
-                        if ! command echo "$next_lines" | command grep -qE '^[[:space:]]+"""'; then
+                        if ! command grep -qE '^[[:space:]]+"""' <<<"$next_lines"; then
                             evidence=$(truncate_chars 80 "$content")
                             command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-api" \
@@ -245,7 +244,7 @@ while IFS= read -r file; do
                     func_name=$(command echo "$content" | command grep -oE 'func [A-Z][A-Za-z0-9]*' | command awk '{print $2}')
                     if [ -n "$func_name" ]; then
                         prev_line=$(command sed -n "$((line_num - 1))p" "$file" 2>/dev/null)
-                        if ! command echo "$prev_line" | command grep -q "// ${func_name}"; then
+                        if ! command grep -q "// ${func_name}" <<<"$prev_line"; then
                             evidence=$(truncate_chars 80 "$content")
                             command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-api" \

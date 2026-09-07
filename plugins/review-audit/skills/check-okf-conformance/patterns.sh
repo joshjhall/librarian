@@ -133,7 +133,7 @@ PINNED="$(read_pinned_version "$_here/thresholds.yml")"
 if [ -z "$PINNED" ]; then
     fail "no OKF version pin — set OKF_PINNED_VERSION or provide \`okf.pinned_version\` in thresholds.yml. It is the single source of the pin; without it version drift cannot be judged."
 fi
-if ! command printf '%s' "$PINNED" | command grep -qE '^[0-9]+\.[0-9]+$'; then
+if ! command grep -qE '^[0-9]+\.[0-9]+$' <<<"$PINNED"; then
     fail "OKF version pin is not a <major>.<minor> version: $PINNED (spec §12). A malformed pin would silently never match a declared version."
 fi
 
@@ -659,7 +659,7 @@ scan_log() {
         heading="${line#\#\#}"
         heading="${heading#"${heading%%[![:space:]]*}"}"
         heading="${heading%"${heading##*[![:space:]]}"}"
-        if ! command printf '%s' "$heading" | command grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+        if ! command grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' <<<"$heading"; then
             emit "$file" "$idx" "$C_RESERVED_STRUCTURE" "$L_LOG_DATE: $heading" "MEDIUM"
         fi
     done <"$file"
@@ -1036,7 +1036,7 @@ EOF
         stale_check="$(fm_get "$f" stale_check)"
         if [ "$status" = "deprecated" ]; then
             emit "$f" 1 "$C_STALE" "$L_STALE_DEPRECATED" "MEDIUM"
-        elif command printf '%s' "$stale_after" | command grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' &&
+        elif command grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' <<<"$stale_after" &&
             [ "$stale_after" \< "$now" ]; then
             # QUOTE THE MEMORY'S OWN stale_check (#669) — that field names the
             # sentence to re-verify, so it beats "may be out of date".

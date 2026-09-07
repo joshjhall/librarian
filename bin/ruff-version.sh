@@ -63,7 +63,7 @@ if [ -z "$version" ]; then
     exit 1
 fi
 
-if ! command printf '%s' "$version" | command grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+if ! command grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$version"; then
     command printf 'ERROR: required-version in %s is not an exact X.Y.Z pin: %s\n' \
         "$RUFF_TOML" "$version" >&2
     command printf '       A range would let the install paths drift apart again.\n' >&2

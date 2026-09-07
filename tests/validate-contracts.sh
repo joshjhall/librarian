@@ -468,27 +468,27 @@ test_check_contract_enum_values() {
         local severity effort cert_level cert_method cert_conf
         severity="$(jq -r '.severity // empty' "$tmpfile" 2>/dev/null)"
         if [ -n "$severity" ]; then
-            assert_true "printf '%s' '$severity' | command grep -qE '^(critical|high|medium|low)$'" \
+            assert_true "command grep -qE '^(critical|high|medium|low)$' <<<'$severity'" \
                 "check-* skill $skill_name: invalid severity '$severity'"
         fi
         effort="$(jq -r '.effort // empty' "$tmpfile" 2>/dev/null)"
         if [ -n "$effort" ]; then
-            assert_true "printf '%s' '$effort' | command grep -qE '^(trivial|small|medium|large)$'" \
+            assert_true "command grep -qE '^(trivial|small|medium|large)$' <<<'$effort'" \
                 "check-* skill $skill_name: invalid effort '$effort'"
         fi
         cert_level="$(jq -r '.certainty.level // empty' "$tmpfile" 2>/dev/null)"
         if [ -n "$cert_level" ]; then
-            assert_true "printf '%s' '$cert_level' | command grep -qE '^(CRITICAL|HIGH|MEDIUM|LOW)$'" \
+            assert_true "command grep -qE '^(CRITICAL|HIGH|MEDIUM|LOW)$' <<<'$cert_level'" \
                 "check-* skill $skill_name: invalid certainty level '$cert_level'"
         fi
         cert_method="$(jq -r '.certainty.method // empty' "$tmpfile" 2>/dev/null)"
         if [ -n "$cert_method" ]; then
-            assert_true "printf '%s' '$cert_method' | command grep -qE '^(deterministic|heuristic|llm)$'" \
+            assert_true "command grep -qE '^(deterministic|heuristic|llm)$' <<<'$cert_method'" \
                 "check-* skill $skill_name: invalid certainty method '$cert_method'"
         fi
         cert_conf="$(jq -r '.certainty.confidence // empty' "$tmpfile" 2>/dev/null)"
         if [ -n "$cert_conf" ]; then
-            assert_true "printf '%s' '$cert_conf' | command grep -qE '^[01]\\.?[0-9]*$'" \
+            assert_true "command grep -qE '^[01]\\.?[0-9]*$' <<<'$cert_conf'" \
                 "check-* skill $skill_name: certainty confidence '$cert_conf' out of 0-1 range"
         fi
         command rm -f "$tmpfile"
@@ -597,7 +597,7 @@ test_category_cross_check() {
 
         while IFS= read -r cat; do
             [ -z "$cat" ] && continue
-            assert_true "printf '%s' '$contract_cats' | command grep -qF '$cat'" \
+            assert_true "command grep -qF '$cat' <<<'$contract_cats'" \
                 "check-* skill $skill_name: patterns.sh outputs category '$cat' not declared in contract.md"
         done <<<"$patterns_cats"
     done < <(list_prefixed_skill_dirs "check-")

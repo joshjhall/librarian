@@ -166,10 +166,10 @@ test_bash_severities_are_asymmetric() {
 
         # The diff arm exits; the warning arm must not.
         assert_true \
-            "command awk '/looks like a DIFF/,/;;/' '$script' | command grep -q 'exit 1'" \
+            "command grep -q 'exit 1' <<<\"\$(command awk '/looks like a DIFF/,/;;/' '$script')\"" \
             "$rel: the diff arm exits 1"
         assert_true \
-            "! command awk '/no path listed in/,/^    fi/' '$script' | command grep -qE '(exit|return) 1'" \
+            "! command grep -qE '(exit|return) 1' <<<\"\$(command awk '/no path listed in/,/^    fi/' '$script')\"" \
             "$rel: the unresolvable-path arm does NOT exit non-zero"
 
         # The warning is guarded on a NON-EMPTY list, or every empty-list
@@ -248,7 +248,7 @@ test_python_guard_defined_and_called() {
         # the diff-arm write and the `if os.path.exists` that follows it, so a
         # `return 0` elsewhere in the function cannot satisfy it.
         assert_true \
-            "command awk '/input looks like a DIFF/,/os.path.exists/' '$script' | command grep -q 'return 1'" \
+            "command grep -q 'return 1' <<<\"\$(command awk '/input looks like a DIFF/,/os.path.exists/' '$script')\"" \
             "$rel: the diff arm returns 1, not 0"
     done < <(list_python_prescans)
 

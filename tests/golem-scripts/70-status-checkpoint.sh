@@ -713,7 +713,7 @@ EOF
     assert_exit 0 "$RUN_RC" "golem-status --checkpoint with a .started anchor exits 0"
     # ~130s → 2m (well past the 60s boundary, so a few seconds of test latency
     # can't flip the arm). Match the render form, not an exact minute count.
-    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '[0-9]+m'" \
+    assert_true "command grep -Eq '[0-9]+m' <<<\"\$RUN_OUT\"" \
         "ELAPSED renders a real minutes duration derived from .started"
     assert_not_contains "$RUN_OUT" "frozen 0m" "a >60s elapsed never rounds to 0m"
 }
@@ -745,7 +745,7 @@ EOF
     assert_exit 0 "$RUN_RC" "golem-status --checkpoint with no .started exits 0"
     # The ELAPSED cell shows a "~"-prefixed approximate age (e.g. "~0s"/"~1m"),
     # never a bare "—". Match the "~<digits><unit>" render form.
-    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+    assert_true "command grep -Eq '~[0-9]+[sm]' <<<\"\$RUN_OUT\"" \
         "ELAPSED falls back to a ~-marked worktree-mtime age when .started is absent (#515)"
 }
 
@@ -771,7 +771,7 @@ EOF
     plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
     run_status_scrape "$sb" --checkpoint
     assert_exit 0 "$RUN_RC" "golem-status --checkpoint with a malformed .started exits 0"
-    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+    assert_true "command grep -Eq '~[0-9]+[sm]' <<<\"\$RUN_OUT\"" \
         "an unparsable .started still falls through to the ~-marked mtime fallback (#515)"
 }
 
@@ -794,7 +794,7 @@ EOF
     plant_transcript "$sb" 42 "$TRANSCRIPT_MIXED"
     run_status_scrape "$sb" --checkpoint
     assert_exit 0 "$RUN_RC" "golem-status --checkpoint with no anchor exits 0"
-    assert_true "! printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+    assert_true "! command grep -Eq '~[0-9]+[sm]' <<<\"\$RUN_OUT\"" \
         "no worktree anchor → ELAPSED stays — , never a fabricated ~age (#515)"
 }
 
@@ -949,11 +949,11 @@ EOF
     # NOT in lane [42], and only a prefix (unpadded) match would pull it in. The
     # golem-4 row (its trailing space disambiguates it from golem-42) must render
     # and its first (TRACK) cell must not be L0.
-    assert_true "command printf '%s\n' \"\$RUN_OUT\" | command grep -q 'golem-4 '" "golem-4 renders a row"
-    assert_true "! command printf '%s\n' \"\$RUN_OUT\" | command grep 'golem-4 ' | command grep -q '^L0'" \
+    assert_true "command grep -q 'golem-4 ' <<<\"\$RUN_OUT\"" "golem-4 renders a row"
+    assert_true "! command grep -q '^L0' <<<\"\$(command grep 'golem-4 ' <<<\"\$RUN_OUT\")\"" \
         "golem-4 is NOT pulled into lane 0 (issue 42's lane) by a prefix match"
     # golem-42 IS in lane 0 → its row starts with L0 (proves the lane join works).
-    assert_true "command printf '%s\n' \"\$RUN_OUT\" | command grep 'golem-42' | command grep -q '^L0'" \
+    assert_true "command grep -q '^L0' <<<\"\$(command grep 'golem-42' <<<\"\$RUN_OUT\")\"" \
         "golem-42 IS grouped under its lane (L0)"
 }
 
@@ -989,7 +989,7 @@ EOF
     assert_contains "$RUN_OUT" "state-token" "STAGE falls back to .state when .phase_detail and .phase are absent"
     # golem-3 has no Stage source at all → its STAGE cell is the "—" sentinel. Its
     # STATE is also "—" (no .state), so assert the golem-3 row carries a "—" cell.
-    assert_true "command printf '%s\n' \"\$RUN_OUT\" | command grep 'golem-3 ' | command grep -q '—'" \
+    assert_true "command grep -q '—' <<<\"\$(command grep 'golem-3 ' <<<\"\$RUN_OUT\")\"" \
         "STAGE degrades to — when no .phase_detail/.phase/.state is present"
 }
 
@@ -1387,7 +1387,7 @@ EOF
     assert_exit 0 "$RUN_RC" "a non-numeric stat result fails open — the render still exits 0 (#522)"
     assert_contains "$RUN_OUT" "STATUS CHECKPOINT" \
         "the table still renders on a stat failure (proves the guard, not a crash)"
-    assert_true "! printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+    assert_true "! command grep -Eq '~[0-9]+[sm]' <<<\"\$RUN_OUT\"" \
         "a garbage stat leaves ELAPSED at the bare — , never a fabricated ~age (#522)"
 }
 
@@ -1424,7 +1424,7 @@ EOF
     command printf 'gitdir: /somewhere/.git/worktrees/issue-42\n' >"$sb/.worktrees/issue-42/.git"
     run_in_watch "$sb" 3 GOLEM_SWEEP_INTERVAL=1 -- --checkpoint --watch --level 3
     assert_exit 0 "$RUN_RC" "bounded --checkpoint --watch loop over a fallback-ELAPSED golem exits cleanly"
-    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '~[0-9]+[sm]'" \
+    assert_true "command grep -Eq '~[0-9]+[sm]' <<<\"\$RUN_OUT\"" \
         "the rendered row really used the ~-marked mtime fallback (not a bare —)"
     table_count="$(command printf '%s\n' "$RUN_OUT" | command grep -c '^STATUS CHECKPOINT')"
     assert_true "[ '$table_count' = '1' ]" \

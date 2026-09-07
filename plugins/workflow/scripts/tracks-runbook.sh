@@ -202,8 +202,7 @@ stale_flags_for() {
     # next-issue/dependency-queue.md parses. POSIX classes only — BSD grep reads
     # \s/\w as literals, so a GNU-only spelling would silently match nothing
     # here and report every plan as dependency-free.
-    if command printf '%s' "$body" |
-        command grep -qiE '(blocked by|depends on)[[:space:]]*#[0-9]+' 2>/dev/null; then
+    if command grep -qiE '(blocked by|depends on)[[:space:]]*#[0-9]+' <<<"$body" 2>/dev/null; then
         command echo "    ! #$issue declares a dependency (Blocked by / Depends on) — check it is placed ahead in this lane"
     fi
 }

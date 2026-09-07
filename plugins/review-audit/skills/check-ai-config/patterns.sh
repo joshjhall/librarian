@@ -235,7 +235,7 @@ check_agent_frontmatter() {
     fi
 
     # Check for frontmatter existence
-    if ! command head -1 "$file" 2>/dev/null | command grep -q '^---$'; then
+    if ! command grep -q '^---$' <<<"$(command head -1 "$file" 2>/dev/null)"; then
         command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "agent-frontmatter" \
             "Missing YAML frontmatter (no opening ---)" "HIGH"
@@ -304,7 +304,7 @@ check_skill_frontmatter() {
     esac
 
     # Check for frontmatter with description
-    if ! command head -1 "$file" 2>/dev/null | command grep -q '^---$'; then
+    if ! command grep -q '^---$' <<<"$(command head -1 "$file" 2>/dev/null)"; then
         command printf '%s\t%s\t%s\t%s\t%s\n' \
             "$file" "1" "skill-frontmatter" \
             "Missing YAML frontmatter (no opening ---)" "HIGH"

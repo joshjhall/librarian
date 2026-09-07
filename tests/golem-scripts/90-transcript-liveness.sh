@@ -735,7 +735,7 @@ EOF
     assert_exit 0 "$RUN_RC" "golem-status with a populated container row exits 0"
     assert_contains "$RUN_OUT" "4242 tokens, frozen" \
         "a posted container golem renders the mechanical frozen phrase, same as Mode 2 (#390)"
-    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq '4242 tokens, frozen [0-9]+m'" \
+    assert_true "command grep -Eq '4242 tokens, frozen [0-9]+m' <<<\"\$RUN_OUT\"" \
         "the seeded ~130s anchor renders _fmt_dur's minutes arm ('frozen Nm')"
     assert_not_contains "$RUN_OUT" "awaiting token push" "a posted container is not shown as pending"
     # READ-ONLY: golem-status must not rewrite the producer-owned fields.
@@ -899,7 +899,7 @@ EOF
     assert_exit 0 "$RUN_RC" "golem-status with a ~20s anchor exits 0"
     # ~20s is well below the 60s boundary, so a few seconds of test latency can't
     # flip the arm. Match the render form, not an exact second count.
-    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq 'frozen [0-9]+s'" \
+    assert_true "command grep -Eq 'frozen [0-9]+s' <<<\"\$RUN_OUT\"" \
         "an anchor under 60s renders _fmt_dur's seconds arm ('frozen Ns')"
     assert_not_contains "$RUN_OUT" "frozen 0m" "a sub-minute freeze never rounds to minutes"
 }
@@ -926,14 +926,14 @@ EOF
     run_status_scrape "$sb"
     assert_exit 0 "$RUN_RC" "golem-status with a ~130s anchor exits 0"
     # ~130s is well above the 60s boundary (renders "2m"), clear of test latency.
-    assert_true "printf '%s' \"\$RUN_OUT\" | command grep -Eq 'frozen [0-9]+m'" \
+    assert_true "command grep -Eq 'frozen [0-9]+m' <<<\"\$RUN_OUT\"" \
         "an anchor at/above 60s renders _fmt_dur's minutes arm ('frozen Nm')"
     # And NO token line renders the seconds form — a bogus dual-render (minute +
     # second line for the same golem) must fail. `grep -q` matches any line, so
     # `!` is true only when zero lines carry a 'tokens, frozen Ns' form. (An
     # earlier `grep -Evq` was tautological: header/other lines always fail the
     # match, so per-line inversion was unconditionally true — #392 pre-PR review.)
-    assert_true "! printf '%s' \"\$RUN_OUT\" | command grep -Eq 'tokens, frozen [0-9]+s'" \
+    assert_true "! command grep -Eq 'tokens, frozen [0-9]+s' <<<\"\$RUN_OUT\"" \
         "the minutes arm never also emits a seconds-form freeze line"
 }
 

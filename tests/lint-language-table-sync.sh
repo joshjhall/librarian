@@ -748,7 +748,7 @@ test_matrices_present() {
     fi
     found="$(report_lines MATRIX | command awk '{print $2}' | command sort)"
     for skill in check-security check-code-health check-lifecycle check-docs-missing-api; do
-        if command printf '%s\n' "$found" | command grep -qx "$skill"; then
+        if command grep -qx "$skill" <<<"$found"; then
             declared="yes"
         else
             declared="no"

@@ -208,7 +208,7 @@ while IFS= read -r file; do
                     # dead (#183).
                     next_line=$(command sed -n "$((line_num + 1)),\$p" "$file" |
                         command grep -m1 -E '[^[:space:]]' | command head -1)
-                    if echo "$next_line" | command grep -qE '^[[:space:]]*(pass|\.\.\.)[[:space:]]*$' 2>/dev/null; then
+                    if command grep -qE '^[[:space:]]*(pass|\.\.\.)[[:space:]]*$' <<<"$next_line" 2>/dev/null; then
                         evidence=$(truncate_chars 80 "$content")
                         command printf '%s\t%s\t%s\t%s\t%s\n' \
                             "$file" "$line_num" "empty-body" \

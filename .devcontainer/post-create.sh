@@ -163,7 +163,12 @@ resolved_ruff="$(installed_ruff_version || true)"
 # left as-is (drop the volume to force a clean re-index).
 echo "==> Ensuring codegraph index..."
 if command -v codegraph >/dev/null; then
-    if codegraph status 2>&1 | grep -q "Not initialized"; then
+    # A failed `codegraph status` must NOT fall through to "index already
+    # present" — the pipeline's exit status is the signal, so it is kept.
+    # NOTE: .devcontainer/ is outside tests/lint-shell-portability.sh's corpus
+    # (plugins/ tests/ bin/), so the marker below documents the decision rather
+    # than satisfying an enforced gate.
+    if codegraph status 2>&1 | grep -q "Not initialized"; then # lint-allow-pipe-grep-q: a failed status is not a healthy index
         echo "    No index found — running codegraph init..."
         codegraph init
     else

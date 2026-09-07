@@ -282,7 +282,18 @@ br="${GOLEM_BRANCH_PREFIX}${N}"
 removed=0
 
 listed=0
-if command git worktree list --porcelain | command grep -qx "worktree $root/$wt"; then
+# Both properties at once, rather than trading one for the other (#928 review).
+# `git worktree list` failing must NOT read as "already gone" — a broken repo
+# would then be reported as a successful removal. But keeping the PIPE to
+# preserve git's exit status also keeps the #928 SIGPIPE inversion: a genuine
+# match makes `grep -q` exit first, git dies 141, and pipefail flips "IS listed"
+# to listed=0 — feeding the CHECK-BEFORE-MUTATING guard below a false negative.
+# Capture first: the here-string leaves no writer to signal. The `set -e` half is
+# MEASURED (git 2.55.0, corrupted .git/HEAD): capture exits 128, the old piped
+# form exits 0 and reports the worktree absent. Unguarded by a test for the
+# reason recorded in worktree-new.sh.
+wt_list="$(command git worktree list --porcelain)"
+if command grep -qx "worktree $root/$wt" <<<"$wt_list"; then
     listed=1
 fi
 

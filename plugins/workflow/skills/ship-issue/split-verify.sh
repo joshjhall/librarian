@@ -529,7 +529,7 @@ if [ "$ORIG_LANG" = "md" ]; then
     SURVIVING="$(md_headings "$POST_ORIGINAL")"
     while IFS= read -r heading; do
         [ -n "$heading" ] || continue
-        command printf '%s\n' "$SURVIVING" | command grep -qxF -- "$heading" && continue
+        command grep -qxF -- "$heading" <<<"$SURVIVING" && continue
         # Which file received this heading? The FIRST match wins, mirroring
         # python's setdefault.
         dest="$(LC_ALL=C command awk -F'\t' -v h="$heading" '$1 == h { print $2; exit }' "$HEADING_DEST_FILE" 2>/dev/null || true)"
@@ -546,10 +546,10 @@ if [ "$ORIG_LANG" = "md" ]; then
         anchor="$(command printf '%s' "$heading" | LC_ALL=C command tr '[:upper:]' '[:lower:]' |
             LC_ALL=C command sed 's/[^a-z0-9 -]//g; s/^[ ]*//; s/[ ]*$//; s/ /-/g')"
         # Reachable only via a link to ITS OWN destination, or its anchor.
-        if command printf '%s\n' "$LINKS" | command grep -qF -- "$dest"; then
+        if command grep -qF -- "$dest" <<<"$LINKS"; then
             continue
         fi
-        if command printf '%s\n' "$LINKS" | command grep -qF -- "#${anchor}"; then
+        if command grep -qF -- "#${anchor}" <<<"$LINKS"; then
             continue
         fi
         UNREACH_N=$((UNREACH_N + 1))
@@ -629,7 +629,7 @@ $(command cat "$idx")"
         sv_i=$((sv_i + 1))
         [ "$(sv_bundle_kind "$sv_r")" = "concept" ] || continue
         sv_base="${sv_r##*/}"
-        command printf '%s\n' "$INDEX_TEXT" | command grep -qF -- "$sv_base" && continue
+        command grep -qF -- "$sv_base" <<<"$INDEX_TEXT" && continue
         ORPHAN_N=$((ORPHAN_N + 1))
         if [ -z "$ORPHANS" ]; then
             ORPHANS="$sv_base"

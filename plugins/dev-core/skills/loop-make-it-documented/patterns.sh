@@ -241,10 +241,10 @@ while IFS= read -r file; do
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
                         prev_content=$(command sed -n "${prev_line}p" "$file")
-                        if ! command printf '%s' "$prev_content" | command grep -qE '^[[:space:]]*\*/' 2>/dev/null; then
+                        if ! command grep -qE '^[[:space:]]*\*/' <<<"$prev_content" 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
                             category="undocumented-export"
-                            if command printf '%s' "$content" | command grep -q 'class' 2>/dev/null; then
+                            if command grep -q 'class' <<<"$content" 2>/dev/null; then
                                 category="undocumented-public-class"
                             fi
                             command printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -267,7 +267,7 @@ while IFS= read -r file; do
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
                         prev_content=$(command sed -n "${prev_line}p" "$file")
-                        if ! command printf '%s' "$prev_content" | command grep -qE "^// ${func_name}" 2>/dev/null; then
+                        if ! command grep -qE "^// ${func_name}" <<<"$prev_content" 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
                             command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-export" \
@@ -285,7 +285,7 @@ while IFS= read -r file; do
                     prev_line=$((line_num - 1))
                     if [ "$prev_line" -gt 0 ]; then
                         prev_content=$(command sed -n "${prev_line}p" "$file")
-                        if ! command printf '%s' "$prev_content" | command grep -qE '^[[:space:]]*#' 2>/dev/null; then
+                        if ! command grep -qE '^[[:space:]]*#' <<<"$prev_content" 2>/dev/null; then
                             evidence=$(truncate_chars 60 "$content")
                             command printf '%s\t%s\t%s\t%s\t%s\n' \
                                 "$file" "$line_num" "undocumented-public-function" \

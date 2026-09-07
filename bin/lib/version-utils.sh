@@ -21,7 +21,7 @@ readonly _LIBRARIAN_VERSION_UTILS_INCLUDED=1
 # Returns:
 #   0 if it matches ^[0-9]+\.[0-9]+\.[0-9]+$, 1 otherwise.
 is_semver() {
-    command echo "$1" | command grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'
+    command grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
 }
 
 # bump_version - increment a semantic version.

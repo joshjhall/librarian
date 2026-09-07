@@ -240,11 +240,10 @@ workflow_meta_violations() {
         }
     ' "$wf_file")"
 
-    if printf '%s\n' "$meta_block" |
-        command grep -qE "['\"][[:space:]]*[+]|[+][[:space:]]*['\"]"; then
+    if command grep -qE "['\"][[:space:]]*[+]|[+][[:space:]]*['\"]" <<<"$meta_block"; then
         printf 'concat\n'
     fi
-    if printf '%s\n' "$meta_block" | command grep -qF '${'; then
+    if command grep -qF '${' <<<"$meta_block"; then
         printf 'interp\n'
     fi
 }
@@ -289,13 +288,13 @@ workflow_phase_meta_mismatch() {
     local title
     while IFS= read -r title; do
         [ -n "$title" ] || continue
-        if ! printf '%s\n' "$meta_titles" | command grep -qxF "$title"; then
+        if ! command grep -qxF "$title" <<<"$meta_titles"; then
             printf 'phase-not-in-meta: %s\n' "$title"
         fi
     done <<<"$phase_titles"
     while IFS= read -r title; do
         [ -n "$title" ] || continue
-        if ! printf '%s\n' "$phase_titles" | command grep -qxF "$title"; then
+        if ! command grep -qxF "$title" <<<"$phase_titles"; then
             printf 'meta-not-in-phase: %s\n' "$title"
         fi
     done <<<"$meta_titles"
@@ -641,11 +640,11 @@ test_workflow_meta_pure_literal() {
         rel_name="$(command basename "$(command dirname "$wf_file")")"
         violations="$(workflow_meta_violations "$wf_file")"
 
-        if printf '%s\n' "$violations" | command grep -qx "concat"; then
+        if command grep -qx "concat" <<<"$violations"; then
             assert_true false \
                 "Workflow $rel_name: meta uses string concatenation (must be a single literal)"
         fi
-        if printf '%s\n' "$violations" | command grep -qx "interp"; then
+        if command grep -qx "interp" <<<"$violations"; then
             assert_true false \
                 "Workflow $rel_name: meta uses template interpolation (must be a pure literal)"
         fi
@@ -901,7 +900,7 @@ test_skill_required_tools_guard_detects_drift() {
     unreferenced="$(skill_unreferenced_required_tools "$fixture")"
     assert_contains "$unreferenced" "kubectl" \
         "Detector flags a declared-but-unreferenced required tool"
-    if printf '%s\n' "$unreferenced" | command grep -qx "grep"; then
+    if command grep -qx "grep" <<<"$unreferenced"; then
         assert_true false \
             "Detector must NOT flag the referenced tool 'grep' in the fixture"
     fi
@@ -993,7 +992,7 @@ test_agent_destructive_clause_guard_detects_drift() {
     # Rationale table, absent from the bullet) detectable. Prove the extractor
     # really is bounded: the fixture's Output Format section sits after
     # Restrictions and must not be scanned.
-    if agent_restrictions_section "$good" | command grep -q '^## '; then
+    if command grep -q '^## ' <<<"$(agent_restrictions_section "$good")"; then
         assert_true false \
             "Restrictions extractor must stop at the next heading, not run to EOF"
     fi
