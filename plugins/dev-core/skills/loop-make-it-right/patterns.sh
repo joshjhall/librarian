@@ -146,7 +146,14 @@ assert_file_list_shape "$FILE_LIST"
 # (char-wise); fall back to the byte-wise printf if no UTF-8 locale exists.
 _PRESCAN_UTF8_LOCALE=""
 for _cand in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
-    if locale -a 2>/dev/null | command grep -qixF "$_cand"; then
+    # NOT `grep -qixF`: `-q` exits on the FIRST match, `locale -a` then dies of
+    # SIGPIPE, and under this file's `set -o pipefail` the pipeline reports 141 —
+    # so a locale that EXISTS reads as absent (measured on macOS: rc=0 without
+    # pipefail, rc=141 with it). truncate_chars then silently fell back to the
+    # byte-wise printf and split a multibyte character mid-sequence, which is the
+    # bash<->python divergence #932 surfaced. Same trap the repo recorded in
+    # 7a7c0ac. Dropping -q lets grep drain the input; the redirect keeps it quiet.
+    if locale -a 2>/dev/null | command grep -ixF "$_cand" >/dev/null 2>&1; then
         _PRESCAN_UTF8_LOCALE="$_cand"
         break
     fi
@@ -194,15 +201,23 @@ while IFS= read -r file; do
                     #   (1) BSD `wc` PADS its count to width 7 (`%7ju`), so indent
                     #       came back as `"      0"`, and the bounded-repeat BRE
                     #       below interpolated to `^.\{0,      0\}[^ ]` -- a
-                    #       malformed interval. Whether the host's grep rejects it
-                    #       or reads it as literal text, it matches NOTHING, so
+                    #       malformed interval. Measured on macOS 26.6, stock
+                    #       /usr/bin/grep rejects it outright -- `grep: invalid
+                    #       repetition count(s)` -- but the enclosing pipeline
+                    #       still exits 0 (the `head` at its tail is what reports),
+                    #       so the error is SWALLOWED. Either way it matches
+                    #       NOTHING, so
                     #       end_line stayed empty and EVERY def fell through to the
                     #       `total - line_num` fallback. On macOS that turned this
                     #       arm from 0 findings into 114 false HIGHs on the parity
                     #       fixture -- the exact counts issue #932 reports.
-                    #   (2) BSD `sed` appends a trailing newline to input that
-                    #       lacks one (GNU does not), so `wc -c` would ALSO have
-                    #       read one byte high even unpadded.
+                    #   (2) The `wc -c` width was fragile independently of the
+                    #       padding: it counts BYTES of the leading-space run plus
+                    #       whatever the upstream `sed` did or did not append, so
+                    #       it only coincided with the wanted column by accident.
+                    #       (Measured on macOS 26.6: BSD `sed` appends NO trailing
+                    #       newline here, so the two userlands disagreed about the
+                    #       count's meaning as well as its formatting.)
                     #
                     # `${content%%[! ]*}` is the leading-space run; its length is
                     # the column the first non-space sits at, which is the value
