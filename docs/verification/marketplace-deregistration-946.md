@@ -153,9 +153,28 @@ correction: announce `UNVERIFIED` and proceed. The two unverified causes report
 **separately** — a scratch-file failure described as "the CLI format changed"
 would send an operator off to update a scraper that works fine.
 
+Review cycle 2 then found a **third** instance in the same function, and it is
+the least visible: `bounded_run` creates its own marker *directory* and returns
+2 when that fails (`bounded-run.sh:63`) — a return this code cannot tell apart
+from a probe exiting non-zero, so it lands back in the "absent" bucket. A plain
+file check does not cover it, because file creation and `mkdir` are distinct
+permissions: a directory-entry quota, some FUSE/overlay mounts, or a
+write-but-not-mkdir ACL permits one and refuses the other. Guarded by probing
+`mktemp -d` explicitly before the bounded call.
+
+That third one carries **no test, deliberately** — the honest outcome rather
+than a green one. `command mktemp` resolves through neither a PATH shim (this
+environment's shell re-sources its profile and restores `PATH`, so the shim is
+never consulted) nor a shell function, and an unwritable `TMPDIR` fails the
+plain-file `mktemp` *first*, so the directory branch never executes. A test
+written either way passes **without running the code it names** — a vacuous test
+that reports coverage it does not have, which is worse than an acknowledged gap.
+Verified by inspection and recorded here instead.
+
 The lesson worth carrying: after fixing a fail-closed branch, grep the function
-for **every** other early return that yields the same sentinel. One reviewer
-found one; the second instance was reachable the whole time.
+for **every** other early return that yields the same sentinel. Three instances
+turned up in one function — one from each reviewer pass and one from re-reading —
+and each was reachable the whole time.
 
 **A hang must refuse, not skip.** An unresponsive CLI is not evidence of a
 healthy plugin. The bound needed a correction found during implementation:

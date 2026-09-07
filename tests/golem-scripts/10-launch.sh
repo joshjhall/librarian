@@ -876,3 +876,35 @@ test_launch_unwritable_tmpdir_warns_but_proceeds() {
     assert_contains "$RUN_OUT" "UNVERIFIED" "it is announced rather than passing as healthy"
     assert_contains "$RUN_OUT" "TMPDIR" "and names its own cause, not a CLI-format change"
 }
+
+# The unverified outcomes across the OTHER two call sites. `launch` is covered
+# above; this pins that `print` and `preflight` agree with it — all three must
+# warn and let the operator proceed, since none of them learned anything about
+# the plugin. A divergence here would mean the arm an operator runs by hand
+# reports a different health verdict than the arm that dispatches.
+test_unverified_outcomes_agree_across_call_sites() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" reworded
+    command printf '{}\n' >"$sb/proj-settings.json"
+    command printf '{}\n' >"$sb/global-settings.json"
+
+    _plugin_probe_run "$sb" "$sb/probe" print
+    assert_exit 0 "$RUN_RC" "print exits 0 on an unreadable count"
+    assert_contains "$RUN_OUT" "UNVERIFIED" "print announces the unverified state"
+    assert_contains "$RUN_OUT" "tmux new-session" "print still emits the launch line"
+
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_PLUGIN_PROBE="$sb/probe" \
+            GOLEM_PLUGIN_PROBE_TIMEOUT=3 \
+            CLAUDE_PROJECT_SETTINGS=proj-settings.json \
+            CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
+            "$REAL_BASH" "$LAUNCH" preflight 2>&1)" || RUN_RC=$?
+    assert_contains "$RUN_OUT" "UNVERIFIED" "preflight announces the unverified state too"
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "and never refuses on it"
+}

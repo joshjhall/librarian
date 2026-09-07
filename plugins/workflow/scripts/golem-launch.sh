@@ -417,7 +417,7 @@ EOF
 # bound over a 60s hang returned 124 after 60s through a substitution, and after
 # 3s through a file. Capturing to a file holds no pipe, so the bound is real.
 plugin_skill_count() {
-    local name="$1" mp="$2" probe tmp count
+    local name="$1" mp="$2" probe tmp count _d
     probe="${GOLEM_PLUGIN_PROBE:-claude}"
     [ -n "$name" ] || return 0
     command -v "$probe" >/dev/null 2>&1 || return 0
@@ -429,6 +429,28 @@ plugin_skill_count() {
         command printf 'noscratch\n'
         return 0
     }
+    # bounded_run creates its OWN marker DIRECTORY and returns 2 when that fails —
+    # a return this function cannot tell apart from a probe that genuinely exited
+    # 2, so it would collapse straight back into the "absent" bucket. The two
+    # mktemp modes are not equivalent: a host can permit file creation while
+    # refusing mkdir (a directory-entry quota, some FUSE/overlay mounts, an ACL
+    # granting write but not mkdir), so the file above succeeding does not prove
+    # the directory will. Probe the mode bounded_run actually needs and report a
+    # failure as unverified. Third instance of this same fail-closed class in one
+    # function — which is the argument for checking every early return, not one.
+    #
+    # NOT COVERED BY A TEST, deliberately: `command mktemp` resolves through
+    # neither a PATH shim nor a shell function, and an unwritable TMPDIR fails
+    # the plain-file mktemp above FIRST, so the branch never runs. A test written
+    # either way passes without executing this code — worse than none. Verified
+    # by inspection instead: bounded-run.sh:63 returns 2 when its own `mktemp -d`
+    # fails, and the `if` below cannot tell that from a probe exiting non-zero.
+    if ! _d="$(command mktemp -d 2>/dev/null)"; then
+        command rm -f "$tmp"
+        command printf 'noscratch\n'
+        return 0
+    fi
+    command rmdir "$_d" 2>/dev/null || true
     # Three OUTCOMES, not two — the distinction is what keeps a CLI wording
     # change from becoming an outage (see the fail-closed note in the caller):
     #   ""           the probe failed / timed out → the plugin is gone

@@ -174,6 +174,7 @@ run_fragment_test test_plugin_probe_honors_marketplace_override "golem-launch: G
 run_fragment_test test_launch_unparseable_probe_output_warns_but_proceeds "golem-launch: unreadable probe output warns but never blocks dispatch (#946)"
 run_fragment_test test_zero_and_unparsed_are_distinct_outcomes "golem-launch: an explicit zero and an unreadable count stay distinct (#946)"
 run_fragment_test test_launch_unwritable_tmpdir_warns_but_proceeds "golem-launch: an unwritable TMPDIR warns but never blocks dispatch (#946)"
+run_fragment_test test_unverified_outcomes_agree_across_call_sites "golem-launch: print/preflight agree with launch on unverified outcomes (#946)"
 run_fragment_test test_worktree_new_non_integer_exits_2 "worktree-new: non-integer arg exits 2"
 run_fragment_test test_worktree_new_creates_worktree "worktree-new: creates the issue worktree + branch"
 run_fragment_test test_worktree_new_duplicate_exits_1 "worktree-new: duplicate worktree exits 1"
