@@ -92,11 +92,12 @@ Measured in this worktree, 2026-09-06, against the real `claude` CLI and stubs:
 | real CLI, plugin healthy | proceeds | no warning; launch line emitted |
 | `Plugin "…" not found.` + exit 1 | **exit 3** | refusal naming `claude plugin marketplace add` |
 | exit 0 but `Skills (0)` | **exit 3** | `resolvable but reports 0 skills` |
+| exit 0, count line **unreadable** | proceeds | `UNVERIFIED` warning (see fail-open below) |
 | probe hangs 60 s, bound 3 s | **exit 3** | refused after **4 s** |
 | probe absent from `PATH` | proceeds | silent skip (undeterminable) |
 | `GOLEM_SKIP_PLUGIN_CHECK=1` | proceeds | warning only |
 
-Two of those rows are the point of the design:
+Three of those rows are the point of the design:
 
 **Zero skills must refuse.** The container-side guard this replaces greps
 `known_marketplaces.json` and reports success on the strength of the grep, so a
@@ -120,6 +121,27 @@ golem-launch: exit 0 with zero skills still refuses (#946)  [10-launch.sh] ... F
 A clean, targeted kill in both directions: the assertion detects the weakening,
 and nothing else in the suite fails spuriously alongside it — so the test is
 pinning the count, not a coincidence of the surrounding setup.
+
+**An unreadable count must NOT refuse.** `plugin details` has no structured
+output mode — probed directly: `--json` is rejected as an unknown option, and
+`--help` lists no other flag — so the count is scraped from human-readable text.
+That scraper will eventually stop matching: a rewording, an added ANSI sequence,
+a localized string. The question is which way it fails when that happens.
+
+Treating unreadable output as *absent* would refuse **every dispatch on every
+host** the moment the CLI's phrasing changed — a total outage, in the exact
+opposite direction from the false pass this guard was built to catch. So the
+probe reports **three** outcomes rather than two (gone / a real count /
+`unparsed`), and only the two it can actually read cause a refusal. A scraper
+that no longer understands its input has learned nothing about the plugin, so it
+warns loudly and proceeds. Both directions are pinned by tests, including one
+asserting that an explicit `Skills (0)` and an unreadable line stay **distinct** —
+collapsing them would look like a cleanup and would silently arm the outage.
+
+This came out of the pre-PR review, which flagged the original single-branch
+version as fail-closed. It was a real defect: worth recording that the guard's
+first draft got the failure direction wrong in exactly the way this repo keeps
+filing issues about, just inverted.
 
 **A hang must refuse, not skip.** An unresponsive CLI is not evidence of a
 healthy plugin. The bound needed a correction found during implementation:

@@ -609,6 +609,16 @@ EOF
 sleep 60
 EOF
             ;;
+        reworded)
+            # Exit 0, but the count line no longer says "Skills (N)" — what a CLI
+            # rewording, an added ANSI sequence, or a localized string looks like.
+            command cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+echo "workflow 9.9.9"
+echo "  Commands (10)  file-issue, golem, next-issue"
+exit 0
+EOF
+            ;;
     esac
     command chmod +x "$path"
 }
@@ -738,4 +748,109 @@ test_plugin_guard_message_namespaces_commands() {
     # dropped the message entirely would satisfy the assertion above.
     assert_true "command grep -q '/workflow:next-issue' '$LAUNCH'" \
         "the namespaced /workflow:next-issue is actually present in the guard"
+}
+
+# The guard has THREE call sites (launch / print / preflight) and the tests above
+# drive only two. `preflight` is the one an operator runs by hand, and both
+# README.md and orchestrate/SKILL.md now document it as reporting plugin health —
+# so an untested third arm is a documented feature with no coverage.
+#
+# Two properties, and the second is the subtle one: preflight must WARN, but its
+# own exit code must stay governed by the settings-rules check. If the guard
+# leaked its exit 3 here, `launch`'s `preflight || true` would swallow it while a
+# hand-run preflight started failing for a reason its message never mentions.
+test_preflight_plugin_absent_warns_without_changing_exit() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" notfound
+    # Settings with all three rules present → preflight's own verdict is exit 0.
+    command cat >"$sb/proj-settings.json" <<'EOF'
+{ "permissions": { "allow": ["Bash(tmux new-session:*)", "Bash(tmux ls:*)", "Bash(tmux kill-session:*)"] } }
+EOF
+    command printf '{}\n' >"$sb/global-settings.json"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_PLUGIN_PROBE="$sb/probe" \
+            GOLEM_PLUGIN_PROBE_TIMEOUT=3 \
+            CLAUDE_PROJECT_SETTINGS=proj-settings.json \
+            CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
+            "$REAL_BASH" "$LAUNCH" preflight 2>&1)" || RUN_RC=$?
+    assert_contains "$RUN_OUT" "WARNING" "preflight surfaces the unresolvable plugin"
+    assert_exit 0 "$RUN_RC" "the guard does not change preflight's own exit code"
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "preflight reports, it does not refuse"
+}
+
+# GOLEM_MARKETPLACE is an operator-facing knob the refusal message itself tells
+# people to set, so it must actually reach the probe. Asserted through a
+# RECORDING stub rather than through the message alone: the message could name
+# the override while the probe was still called with the default, which is the
+# failure that would make the remediation advice useless.
+test_plugin_probe_honors_marketplace_override() {
+    local sb
+    new_sandbox sb
+    command cat >"$sb/probe" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$RECORD_ARGV"
+echo 'Plugin not found.' >&2
+exit 1
+EOF
+    command chmod +x "$sb/probe"
+    RUN_RC=0
+    RUN_OUT="$(cd "$sb" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/--unset=}" \
+            HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_PLUGIN_PROBE="$sb/probe" \
+            GOLEM_PLUGIN_PROBE_TIMEOUT=3 \
+            GOLEM_MARKETPLACE=other-mp \
+            RECORD_ARGV="$sb/argv.log" \
+            "$REAL_BASH" "$LAUNCH" print 946 2>&1)" || RUN_RC=$?
+    local argv
+    argv="$(command cat "$sb/argv.log" 2>/dev/null || true)"
+    assert_contains "$argv" "@other-mp" "the probe is invoked against the overridden marketplace"
+    assert_not_contains "$argv" "@librarian" "the default marketplace is not used once overridden"
+    assert_contains "$RUN_OUT" "other-mp" "the operator-facing message names the marketplace actually probed"
+}
+
+# THE FAIL-OPEN DIRECTION. The count is scraped from the CLI's human-readable
+# text because `plugin details` has no structured output mode (probed: no
+# --json). So the scraper WILL eventually stop matching — a rewording, an ANSI
+# sequence, a localized string — and the question is which way it fails then.
+#
+# Treating unparseable output as "plugin absent" would refuse EVERY dispatch on
+# EVERY host the moment the CLI's phrasing changed: a total outage, in the exact
+# opposite direction from the false pass this guard exists to catch. A scraper
+# that cannot read its input has learned nothing, so it must warn and proceed.
+#
+# This test is the whole reason the guard distinguishes three probe outcomes
+# rather than two; without it, "simplifying" the empty-count branches back into
+# one would look like a cleanup and would silently arm the outage.
+test_launch_unparseable_probe_output_warns_but_proceeds() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" reworded
+    _plugin_probe_run "$sb" "$sb/probe" launch
+    assert_exit 2 "$RUN_RC" "unrecognizable output proceeds (reaches missing-worktree exit 2), never refuses"
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "a CLI rewording must not block dispatch"
+    assert_contains "$RUN_OUT" "UNVERIFIED" "but it is announced, not silently treated as healthy"
+}
+
+# The companion assertion: a probe that exits 0 while reporting a real ZERO is a
+# different fact from one whose output cannot be read, and must keep refusing.
+# Pinned separately so a future change cannot collapse the two branches and call
+# every zero "unparseable" — which would re-open the false pass from the other side.
+test_zero_and_unparsed_are_distinct_outcomes() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/zero" zero
+    write_plugin_probe "$sb/reworded" reworded
+    _plugin_probe_run "$sb" "$sb/zero" launch
+    assert_exit 3 "$RUN_RC" "an explicit zero count still refuses"
+    _plugin_probe_run "$sb" "$sb/reworded" launch
+    assert_exit 2 "$RUN_RC" "an unreadable count does not — the two outcomes stay distinct"
 }

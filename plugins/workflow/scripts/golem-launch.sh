@@ -422,12 +422,18 @@ plugin_skill_count() {
     [ -n "$name" ] || return 0
     command -v "$probe" >/dev/null 2>&1 || return 0
     tmp="$(command mktemp 2>/dev/null)" || return 0
-    # A non-zero exit (plugin not found) or a 124 timeout yields no count, which
-    # the caller reads as "not resolvable" — same disposition as an explicit zero.
+    # Three OUTCOMES, not two — the distinction is what keeps a CLI wording
+    # change from becoming an outage (see the fail-closed note in the caller):
+    #   ""          the probe failed / timed out → the plugin is gone
+    #   <digits>    a parsed count (0 = resolves but discovers nothing)
+    #   "unparsed"  the probe SUCCEEDED but printed no recognizable count
     if bounded_run "${GOLEM_PLUGIN_PROBE_TIMEOUT:-15}" \
         "$probe" plugin details "$name@$mp" >"$tmp" 2>/dev/null; then
         count="$(command sed -n 's/.*Skills (\([0-9][0-9]*\)).*/\1/p' "$tmp" |
             command head -1)"
+        # Exit 0 with nothing matched: the plugin resolved, but this scraper no
+        # longer understands the output. Say so rather than reporting an absence.
+        [ -n "$count" ] || count="unparsed"
     fi
     command rm -f "$tmp"
     command printf '%s\n' "${count:-}"
@@ -440,16 +446,31 @@ plugin_skill_count() {
 # Silent when the probe is undeterminable (no `claude` on PATH, no plugin name)
 # or when the plugin is healthy.
 check_plugin_resolvable() {
-    local mode="$1" name mp count
+    local mode="$1" name mp count probe_name
     name="$(running_plugin_name)"
     # No manifest / no jq → undeterminable, same skip contract as the skew guard.
     [ -n "$name" ] || return 0
-    command -v "${GOLEM_PLUGIN_PROBE:-claude}" >/dev/null 2>&1 || return 0
+    probe_name="${GOLEM_PLUGIN_PROBE:-claude}"
+    command -v "$probe_name" >/dev/null 2>&1 || return 0
     mp="${GOLEM_MARKETPLACE:-librarian}"
 
     count="$(plugin_skill_count "$name" "$mp")"
     # Healthy: resolved AND discovered at least one skill.
     [ -n "$count" ] && [ "$count" -gt 0 ] 2>/dev/null && return 0
+
+    # UNPARSEABLE OUTPUT IS NOT AN ABSENT PLUGIN. The count is scraped from the
+    # CLI's human-readable text, because `plugin details` has no structured
+    # output mode (probed: no --json). So a future rewording, an added ANSI
+    # sequence, or a localized string would make every probe return nothing —
+    # and treating that as "gone" would refuse EVERY dispatch on EVERY host: an
+    # outage in the exact opposite direction from the false pass this guard
+    # exists to catch. A scraper that no longer understands its input has
+    # learned nothing about the plugin, so it warns and proceeds at every level;
+    # the two outcomes it CAN read (absent, zero-skills) keep refusing.
+    if [ "$count" = "unparsed" ]; then
+        command echo "golem-launch: WARNING cannot read a skill count from \`$probe_name plugin details $name@$mp\` — the plugin resolved but its output was unrecognizable, so resolvability is UNVERIFIED (proceeding; the scraper likely needs updating for a new CLI format)." >&2
+        return 0
+    fi
 
     local detail="not resolvable"
     [ "${count:-0}" = "0" ] && [ -n "$count" ] && detail="resolvable but reports 0 skills"
