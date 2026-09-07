@@ -615,8 +615,7 @@ while IFS= read -r file; do
                     # The placeholder test is VALUE-scoped (#837), never the
                     # whole line, and applied PER MATCH so one placeholder
                     # cannot speak for its neighbours.
-                    if command printf '%s' "$value" |
-                        command grep -qiE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_)'; then
+                    if command grep -qiE '(changeme|placeholder|xxx|TODO|example|REPLACE|your_|test_|fake_|dummy_)' <<<"$value"; then
                         continue
                     fi
                     cred_key=$(command printf '%s' "$assign" |
