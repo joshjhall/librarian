@@ -62,6 +62,20 @@
 # When either version is undeterminable (no install record / no jq — the common
 # host / bare-linux case) the check SKIPS silently, never breaking a valid run.
 #
+# Plugin-resolvability guard (#946): the skew guard above catches a STALE plugin;
+# this one catches an ABSENT one. The `librarian` marketplace registration has
+# been seen to vanish from known_marketplaces.json MID-SESSION, taking every
+# plugin with it. Running golems are unaffected, so nothing surfaces the loss
+# until the next dispatch — where the new golem dies on `Unknown command:
+# /workflow:next-issue` and idles, which the watcher reads as a QUIET lane rather
+# than a broken one. Before dispatching, `launch` probes CAPABILITY (`claude
+# plugin details <name>@<marketplace>` exiting 0 AND reporting a non-zero skill
+# count) and refuses (exit 3) with a remediation naming the exact re-register
+# commands. Deliberately a capability probe and not a grep of the registration
+# file: a file that still names the marketplace while the plugins are gone is
+# precisely the false-pass this guard exists to catch. When `claude` is not on
+# PATH the check SKIPS silently (undeterminable), never breaking a valid run.
+#
 # Autonomy level: the launch line carries `/workflow:next-issue <N> --level M`,
 # which is what persists `autonomy_level` into the next-issue state file (and
 # from there drives /ship-issue's merge disposition). The level is resolved per
@@ -85,6 +99,17 @@
 #                            cache sourced for ANTHROPIC_AUTH_TOKEN/BASE_URL.
 #   OP_ANTHROPIC_AUTH_TOKEN_REF (unset) — an `op://…` ref read (time-bounded) as
 #                            the last-resort token source when `op` is on PATH.
+# Plugin-resolvability overrides (env-overridable):
+#   GOLEM_MARKETPLACE        (librarian) — the marketplace the plugin is probed
+#                            under; set it when installed under another name.
+#   GOLEM_PLUGIN_PROBE       (claude) — the probe binary. Absent from PATH → the
+#                            check skips silently.
+#   GOLEM_PLUGIN_PROBE_TIMEOUT (15) — wall-clock bound on the probe; a timeout is
+#                            a REFUSAL, not a skip (an unresponsive CLI is not
+#                            evidence of a healthy plugin).
+#   GOLEM_SKIP_PLUGIN_CHECK  (unset) — set to 1 to downgrade a detected
+#                            unresolvable plugin from a fatal refusal to a warning.
+#
 # Version-skew overrides (env-overridable):
 #   CLAUDE_INSTALLED_PLUGINS ($HOME/.claude/plugins/installed_plugins.json) —
 #                            the active-install registry the guard reads.
@@ -101,7 +126,8 @@
 #   0  success (preflight: rules present in at least one scope; launch: started)
 #   2  usage error
 #   3  preflight: launch rules MISSING in both scopes (actionable, not opaque);
-#      launch: plugin version skew detected (running helper != active install)
+#      launch: plugin version skew detected (running helper != active install),
+#      or the plugin is not resolvable / reports zero skills (#946)
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(command dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -342,6 +368,129 @@ EOF
     exit 3
 }
 
+# --- plugin-resolvability guard (#946) --------------------------------------
+#
+# The version-skew guard above catches a STALE plugin. This one catches an
+# ABSENT one. The `librarian` marketplace registration has been observed to
+# vanish from ~/.claude/plugins/known_marketplaces.json MID-SESSION, taking all
+# three plugins with it. Golems already running are unaffected (they loaded
+# their skills at startup), so the loss is INVISIBLE until the next dispatch —
+# at which point each new golem dies at its first prompt with
+# `Unknown command: /workflow:next-issue` and then sits there. golem-gate-watch
+# classifies that pane as `idle`, so the orchestrator sees a quiet lane rather
+# than a broken one and a four-lane run silently becomes a three-lane run.
+#
+# Probe CAPABILITY, never a file. The container-side guard this mirrors greps
+# known_marketplaces.json for the marketplace name and prints a checkmark on the
+# strength of that grep — so a file that still names `librarian` while the
+# plugins are gone reports success and installs nothing. That is this repo's
+# recurring "a gate that reports pass while doing nothing" class (#538/#571),
+# and repeating it one level up would buy nothing.
+#
+# Hence BOTH halves are asserted: `claude plugin details <name>@<marketplace>`
+# must exit 0 AND report a non-zero skill count. Exit 0 alone accepts a plugin
+# that resolves but discovers no components — exactly the false-pass shape
+# CLAUDE.md already prescribes this probe to catch, since manifest validation
+# does not exercise component discovery.
+#
+# Fail-loud vs skip-silently, matching the version-skew contract above:
+#   claude absent from PATH  → skip silently (undeterminable). The launch line's
+#                              own `claude` invocation fails loudly on its own.
+#   probe fails / times out  → REFUSE. An unresponsive CLI is not evidence of a
+#                              healthy plugin, so 124 is a refusal, not a skip.
+
+# plugin_skill_count <name> <marketplace> — echo the skill count `claude plugin
+# details` reports, or nothing when the plugin does not resolve / the probe
+# fails or times out. Bounded via bounded-run.sh so a wedged CLI can never hang
+# dispatch (same treatment as the `op read` probe above).
+#
+# The count is parsed with a POSIX bracket expression rather than \d or \s —
+# macOS ships BSD sed, which reads those as literals (CLAUDE.md § Runtime
+# policy). GOLEM_PLUGIN_PROBE (default `claude`) is the probe binary, overridable
+# so the tests can stub it without a PATH shim.
+#
+# The probe's stdout goes to a TEMP FILE, never a command substitution. This is
+# load-bearing, not style: bounded_run kills the process it launched, but an
+# orphaned GRANDCHILD (a `claude` that spawned a helper) keeps the substitution's
+# pipe write end open, so `out="$(bounded_run …)"` blocks for the grandchild's
+# full lifetime even though the bound fired and returned 124. Measured: a 3s
+# bound over a 60s hang returned 124 after 60s through a substitution, and after
+# 3s through a file. Capturing to a file holds no pipe, so the bound is real.
+plugin_skill_count() {
+    local name="$1" mp="$2" probe tmp count
+    probe="${GOLEM_PLUGIN_PROBE:-claude}"
+    [ -n "$name" ] || return 0
+    command -v "$probe" >/dev/null 2>&1 || return 0
+    tmp="$(command mktemp 2>/dev/null)" || return 0
+    # A non-zero exit (plugin not found) or a 124 timeout yields no count, which
+    # the caller reads as "not resolvable" — same disposition as an explicit zero.
+    if bounded_run "${GOLEM_PLUGIN_PROBE_TIMEOUT:-15}" \
+        "$probe" plugin details "$name@$mp" >"$tmp" 2>/dev/null; then
+        count="$(command sed -n 's/.*Skills (\([0-9][0-9]*\)).*/\1/p' "$tmp" |
+            command head -1)"
+    fi
+    command rm -f "$tmp"
+    command printf '%s\n' "${count:-}"
+}
+
+# check_plugin_resolvable <mode> — verify the running helper's own plugin still
+# resolves with a non-zero skill count, and act per <mode>:
+#   launch → fatal (exit 3) unless GOLEM_SKIP_PLUGIN_CHECK=1 downgrades to a warn
+#   print  → always a warning only (print has no side effect worth blocking)
+# Silent when the probe is undeterminable (no `claude` on PATH, no plugin name)
+# or when the plugin is healthy.
+check_plugin_resolvable() {
+    local mode="$1" name mp count
+    name="$(running_plugin_name)"
+    # No manifest / no jq → undeterminable, same skip contract as the skew guard.
+    [ -n "$name" ] || return 0
+    command -v "${GOLEM_PLUGIN_PROBE:-claude}" >/dev/null 2>&1 || return 0
+    mp="${GOLEM_MARKETPLACE:-librarian}"
+
+    count="$(plugin_skill_count "$name" "$mp")"
+    # Healthy: resolved AND discovered at least one skill.
+    [ -n "$count" ] && [ "$count" -gt 0 ] 2>/dev/null && return 0
+
+    local detail="not resolvable"
+    [ "${count:-0}" = "0" ] && [ -n "$count" ] && detail="resolvable but reports 0 skills"
+
+    if [ "$mode" = "print" ]; then
+        command echo "golem-launch: WARNING $name@$mp is $detail — a golem launched now would die on \`Unknown command: /workflow:next-issue\` (#946). Re-register before dispatching." >&2
+        return 0
+    fi
+
+    # mode = launch. Escape hatch downgrades the refusal to a warning.
+    if [ "${GOLEM_SKIP_PLUGIN_CHECK:-}" = "1" ]; then
+        command echo "golem-launch: WARNING $name@$mp is $detail (GOLEM_SKIP_PLUGIN_CHECK=1, proceeding anyway)." >&2
+        return 0
+    fi
+
+    command cat >&2 <<EOF
+golem-launch: REFUSING to dispatch — $name@$mp is $detail.
+
+A golem launched now would die at its FIRST prompt with
+\`Unknown command: /workflow:next-issue\` and then idle SILENTLY (#946) — the
+watcher reads that pane as idle, so the lane looks quiet rather than broken.
+
+The marketplace registration can disappear mid-session; already-running golems
+keep working, so nothing surfaces the loss until the next dispatch.
+
+Remediation (host / bare Linux):
+  claude plugin marketplace add joshjhall/librarian
+  claude plugin install $name@$mp
+  claude plugin details $name@$mp        # verify: a NON-ZERO Skills (N) count
+
+In a container the baked marketplace is a local directory — register that path
+instead of the GitHub slug:
+  claude plugin marketplace add /opt/librarian
+
+If this refusal is wrong (probing a plugin installed under another marketplace),
+set GOLEM_MARKETPLACE=<name>, or re-run with GOLEM_SKIP_PLUGIN_CHECK=1 to
+downgrade this refusal to a warning.
+EOF
+    exit 3
+}
+
 # resolve_level [flag-level] — echo the effective autonomy level (1-4) with
 # precedence: an explicit --level value > $GOLEM_LEVEL env > the built-in
 # default 4. Validates the result as a single digit 1-4; on an out-of-range or
@@ -390,6 +539,11 @@ launch_line() {
 cmd="${1:-}"
 case "$cmd" in
     preflight)
+        # Report plugin resolvability first, warn-only, so the operator sees BOTH
+        # findings in one run. Warn-only here because preflight is a report:
+        # `launch` is where the same condition is fatal (#946), and it calls the
+        # guard itself rather than relying on this arm.
+        check_plugin_resolvable print
         preflight
         ;;
     print)
@@ -401,8 +555,10 @@ case "$cmd" in
         # Optional `--level M` after the issue number; else $GOLEM_LEVEL / 4.
         LEVEL_FLAG="$(parse_level_flag "${3:-}" "${4:-}")" || exit $?
         LEVEL="$(resolve_level "$LEVEL_FLAG")" || exit $?
-        # Warn (never block) if the emitted line's namespace may be stale.
+        # Warn (never block) if the emitted line's namespace may be stale, or
+        # if the plugin the line invokes is not resolvable at all (#946).
         check_version_skew print
+        check_plugin_resolvable print
         launch_line "$N" "$LEVEL"
         command echo ""
         ;;
@@ -421,6 +577,12 @@ case "$cmd" in
         # if this stale helper would emit commands the active plugin can't resolve
         # (#230). Skips silently when versions match or are undeterminable.
         check_version_skew launch
+        # Then refuse if the plugin whose commands the launch line invokes is
+        # gone or component-less (#946). Deliberately NOT inside preflight(),
+        # which is called `|| true` just below so an allow-once host can still
+        # proceed — a fatal check placed there would be silently swallowed,
+        # which is the very failure mode this guard exists to end.
+        check_plugin_resolvable launch
         # Preflight next so a missing rule surfaces as guidance, not an opaque
         # classifier denial. Continue on exit 3 so a host that authorizes
         # allow-once (without persisting the rule) can still proceed this run.

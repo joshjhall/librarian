@@ -109,6 +109,7 @@ run_runbook() {
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             -uBASH_ENV \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             PATH="$use_path" \
             TMUX= TMUX_TMPDIR="$sb/.tmux" \
             TMUX_STUB_LOG="$sb/tmux-args.log" \
@@ -545,6 +546,7 @@ EOF
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             -uBASH_ENV \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
             "$REAL_BASH" "$sb/scripts/tracks-runbook.sh" render --no-staleness 2>&1)" || RUN_RC=$?
@@ -759,6 +761,7 @@ test_runbook_reports_unknowable_staleness() {
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             -uBASH_ENV \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             PATH="$stub" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \
@@ -833,6 +836,7 @@ test_runbook_without_jq_fails_loudly() {
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             -uBASH_ENV \
             HOME="$sb" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             PATH="$stub" \
             GOLEM_WORKTREE_DIR=.worktrees \
             GOLEM_STATUS_DIR=.worktrees/.status \

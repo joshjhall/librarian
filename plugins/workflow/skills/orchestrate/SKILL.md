@@ -140,6 +140,18 @@ dispatch is sequential and cheap — **not** workflow-driven.
    dedicated classifier-stable launcher entrypoint the classifier could be taught
    to trust remains open under #282, not built yet.
 
+   **Preflight also probes plugin resolvability (#946).** The same run reports
+   whether `workflow@librarian` still resolves with a non-zero skill count. The
+   marketplace registration has been observed to **vanish mid-session**: golems
+   already running keep working (they loaded their skills at startup), so nothing
+   surfaces the loss until the next dispatch — where the new golem dies at its
+   first prompt on `Unknown command: /workflow:next-issue` and idles. Gate-watch
+   classifies that pane as **idle**, so a four-lane run silently becomes a
+   three-lane one. `launch` therefore **refuses** (exit 3) on an unresolvable
+   plugin, naming the re-register commands; `preflight` and `print` only warn.
+   Re-register with `claude plugin marketplace add joshjhall/librarian` (or the
+   baked `/opt/librarian` directory in a container), then re-dispatch.
+
 1. **Launch the autonomous pipeline** as a process in each golem:
 
    ```bash

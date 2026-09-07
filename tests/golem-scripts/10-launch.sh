@@ -117,6 +117,7 @@ test_launch_print_level_env_fallback() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_LEVEL=2 \
             "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
@@ -133,6 +134,7 @@ test_launch_print_level_flag_beats_env() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_LEVEL=2 \
             "$REAL_BASH" "$LAUNCH" print 5 --level 1 2>&1)" || RUN_RC=$?
@@ -179,6 +181,7 @@ test_launch_print_model_set_both_claude_calls() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" TMUX= TMUX_TMPDIR="$sb/.tmux" \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_WORKTREE_DIR=.worktrees GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_MODEL=sonnet \
             "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
@@ -246,6 +249,7 @@ test_launch_missing_worktree_exits_2() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
             CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
@@ -280,6 +284,7 @@ EOF
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
             CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
             "$REAL_BASH" "$LAUNCH" preflight 2>&1)" || RUN_RC=$?
@@ -305,6 +310,7 @@ EOF
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
             CLAUDE_GLOBAL_SETTINGS="$sb/global-settings.json" \
             "$REAL_BASH" "$LAUNCH" preflight 2>&1)" || RUN_RC=$?
@@ -349,6 +355,7 @@ test_launch_version_match_passes() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
@@ -373,6 +380,7 @@ test_launch_version_skew_refuses_exit_3() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
             "$REAL_BASH" "$LAUNCH" launch 999 2>&1)" || RUN_RC=$?
@@ -399,6 +407,7 @@ test_launch_version_skew_escape_hatch() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_SKIP_VERSION_CHECK=1 \
             CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
@@ -428,6 +437,7 @@ test_launch_version_unknown_sentinel_skips() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/installed.json" \
             CLAUDE_PROJECT_SETTINGS=proj-settings.json \
@@ -464,6 +474,7 @@ test_launch_version_undeterminable_skips() {
     RUN_OUT="$(cd "$sb" &&
         /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
             HOME="$sb" GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_PLUGIN_PROBE="$sb/no-plugin-probe" \
             GOLEM_STATUS_DIR=.worktrees/.status \
             CLAUDE_INSTALLED_PLUGINS="$sb/no-such-registry.json" \
             "$REAL_BASH" "$LAUNCH" print 5 2>&1)" || RUN_RC=$?
@@ -547,4 +558,184 @@ test_launch_auth_cache_marker_no_token_warns() {
     assert_contains "$RUN_OUT" "WARNING" "warns when a cache marker is present but no token resolves"
     log="$(command cat "$sb/tmux-args.log" 2>/dev/null || true)"
     assert_not_contains "$log" "ANTHROPIC_AUTH_TOKEN" "no empty token is injected"
+}
+
+# --- golem-launch.sh plugin-resolvability guard (#946) ----------------------
+#
+# The skew guard above catches a STALE plugin; this guard catches an ABSENT one.
+# The marketplace registration has been observed to vanish mid-session, after
+# which every NEW golem dies on `Unknown command: /workflow:next-issue` and then
+# idles — which the watcher reads as a quiet lane, not a broken one.
+#
+# The probe binary is stubbed via GOLEM_PLUGIN_PROBE rather than by shimming
+# `claude` onto PATH: the tests then never depend on whether the host running
+# them has a real `claude`, and a stub cannot be shadowed by one.
+
+# write_plugin_probe <path> <mode> — fabricate a stub standing in for
+# `claude plugin details`. Modes mirror the states the guard must separate:
+#   ok        exit 0, a non-zero skill count  → healthy
+#   notfound  exit 1, the CLI's real message  → gone
+#   zero      exit 0 but "Skills (0)"         → resolves, discovers nothing
+#   hang      sleeps past any sane bound      → unresponsive
+write_plugin_probe() {
+    local path="$1" mode="$2"
+    case "$mode" in
+        ok)
+            command cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+echo "workflow 9.9.9"
+echo "  Skills (10)  file-issue, golem, next-issue"
+exit 0
+EOF
+            ;;
+        notfound)
+            command cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+echo 'Plugin "workflow@librarian" not found.' >&2
+exit 1
+EOF
+            ;;
+        zero)
+            command cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+echo "workflow 9.9.9"
+echo "  Skills (0)  "
+exit 0
+EOF
+            ;;
+        hang)
+            command cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+sleep 60
+EOF
+            ;;
+    esac
+    command chmod +x "$path"
+}
+
+# _plugin_probe_run <sandbox> <probe-path> <subcommand> [extra-env...]
+# Run golem-launch.sh with the stub wired in. Mirrors run_in's scrubbing but adds
+# the probe env; a short timeout keeps the hang case from stalling the suite.
+_plugin_probe_run() {
+    local dir="$1" probe="$2" sub="$3"
+    shift 3
+    RUN_RC=0
+    RUN_OUT="$(cd "$dir" &&
+        /usr/bin/env "${GIT_SCRUB[@]/#/-u}" \
+            HOME="$dir" \
+            TMUX= TMUX_TMPDIR="$dir/.tmux" \
+            GOLEM_WORKTREE_DIR=.worktrees \
+            GOLEM_STATUS_DIR=.worktrees/.status \
+            GOLEM_BASE_REF=HEAD \
+            GOLEM_WORKTREE_LOCAL_FILES="" \
+            GOLEM_PLUGIN_PROBE="$probe" \
+            GOLEM_PLUGIN_PROBE_TIMEOUT=3 \
+            "$@" \
+            "$REAL_BASH" "$LAUNCH" "$sub" 946 2>&1)" || RUN_RC=$?
+}
+
+# A resolvable plugin must not interfere: the run falls through to its normal
+# missing-worktree exit 2, with no refusal or warning text. This is the control —
+# without it, a guard that refused unconditionally would pass every test below.
+test_launch_plugin_resolvable_passes() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" ok
+    _plugin_probe_run "$sb" "$sb/probe" launch
+    assert_exit 2 "$RUN_RC" "a resolvable plugin passes the guard, reaching missing-worktree exit 2"
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "no refusal for a healthy plugin"
+    assert_not_contains "$RUN_OUT" "not resolvable" "no warning for a healthy plugin"
+}
+
+# The headline case: the plugin is gone, so launch must refuse with exit 3 rather
+# than dispatch a golem that dies at its first prompt.
+test_launch_plugin_absent_refuses_exit_3() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" notfound
+    _plugin_probe_run "$sb" "$sb/probe" launch
+    assert_exit 3 "$RUN_RC" "an unresolvable plugin refuses dispatch with exit 3"
+    assert_contains "$RUN_OUT" "REFUSING to dispatch" "the refusal is loud"
+    assert_contains "$RUN_OUT" "Unknown command" "names the symptom the operator would otherwise see"
+    assert_contains "$RUN_OUT" "claude plugin marketplace add" "names the actual fix, not just the problem"
+}
+
+# THE FALSE-PASS CASE. The probe exits 0 but reports zero components — a plugin
+# that resolves yet discovers nothing, which is exactly what CLAUDE.md warns
+# manifest validation cannot see. An exit-code-only check passes this and
+# dispatches a golem with no /workflow:next-issue; asserting the refusal here is
+# what makes the guard a capability probe rather than a liveness formality.
+test_launch_plugin_zero_skills_refuses() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" zero
+    _plugin_probe_run "$sb" "$sb/probe" launch
+    assert_exit 3 "$RUN_RC" "exit 0 with zero skills still refuses (not an exit-code-only check)"
+    assert_contains "$RUN_OUT" "reports 0 skills" "the message distinguishes zero-skills from wholly absent"
+}
+
+# An unresponsive CLI is not evidence of a healthy plugin, so a timeout is a
+# REFUSAL, not a skip — and it must be bounded. The elapsed-time assertion is the
+# real subject: an earlier draft captured the probe through a command
+# substitution, where an orphaned grandchild holds the pipe open and the caller
+# blocks for the child's FULL lifetime even though the bound fired. That guard
+# returned the right code after 60s instead of 3s — correct exit, useless bound.
+test_launch_plugin_probe_timeout_is_bounded_refusal() {
+    local sb start elapsed
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" hang
+    start="$(command date +%s)"
+    _plugin_probe_run "$sb" "$sb/probe" launch
+    elapsed=$(($(command date +%s) - start))
+    assert_exit 3 "$RUN_RC" "a timed-out probe refuses rather than passing"
+    assert_true "[ $elapsed -lt 30 ]" "the probe is genuinely bounded (took ${elapsed}s against a 60s hang)"
+}
+
+# The escape hatch mirrors GOLEM_SKIP_VERSION_CHECK=1: warn, then proceed.
+test_launch_plugin_check_escape_hatch() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" notfound
+    _plugin_probe_run "$sb" "$sb/probe" launch GOLEM_SKIP_PLUGIN_CHECK=1
+    assert_exit 2 "$RUN_RC" "the escape hatch downgrades the refusal, reaching missing-worktree exit 2"
+    assert_contains "$RUN_OUT" "GOLEM_SKIP_PLUGIN_CHECK=1" "the downgrade is still announced"
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "no refusal under the escape hatch"
+}
+
+# No probe binary on PATH → undeterminable → skip SILENTLY, matching the skew
+# guard's contract. Refusing here would break a bare host that dispatches by
+# other means; the launch line's own `claude` fails loudly on its own anyway.
+test_launch_plugin_probe_absent_skips_silently() {
+    local sb
+    new_sandbox sb
+    _plugin_probe_run "$sb" "$sb/no-such-probe-binary" launch
+    assert_exit 2 "$RUN_RC" "an absent probe skips the guard, reaching missing-worktree exit 2"
+    assert_not_contains "$RUN_OUT" "REFUSING to dispatch" "no refusal when the probe is undeterminable"
+    assert_not_contains "$RUN_OUT" "not resolvable" "and no warning either — the skip is silent"
+}
+
+# `print` has no side effect worth blocking, so it warns and still emits the
+# line. Asserting BOTH halves: a print that refused would break the documented
+# "show me the launch line" path, and one that stayed quiet would hide the fault.
+test_print_plugin_absent_warns_but_emits() {
+    local sb
+    new_sandbox sb
+    write_plugin_probe "$sb/probe" notfound
+    _plugin_probe_run "$sb" "$sb/probe" print
+    assert_exit 0 "$RUN_RC" "print still exits 0 with an unresolvable plugin"
+    assert_contains "$RUN_OUT" "WARNING" "print warns about the unresolvable plugin"
+    assert_contains "$RUN_OUT" "tmux new-session" "print still emits the launch line"
+}
+
+# The refusal text is operator-facing: a human reads it and TYPES what it says.
+# A bare `/next-issue` does not resolve as installed (#584/#230), so the message
+# must carry the namespaced form only. Asserted against the source because the
+# guard's own text is the subject, not any one runtime path.
+test_plugin_guard_message_namespaces_commands() {
+    assert_true "! command sed -n '/check_plugin_resolvable/,/^}/p' '$LAUNCH' | command grep -qE '(^|[^:])/next-issue'" \
+        "the plugin-guard refusal carries no bare (un-namespaced) /next-issue"
+    # NON-VACUITY: the namespaced form must actually be present, or a guard that
+    # dropped the message entirely would satisfy the assertion above.
+    assert_true "command grep -q '/workflow:next-issue' '$LAUNCH'" \
+        "the namespaced /workflow:next-issue is actually present in the guard"
 }
