@@ -139,10 +139,21 @@ test_unacceptable_result_fails_closed() {
 # check unreachable on every passing run — the promotion looking done while
 # gating nothing.
 #
-# Pinned by asserting the helper is invoked for BOTH jobs, and that no bare
-# `exit 0` precedes them.
+# Pinned by asserting the helper is invoked for BOTH jobs, and that the block
+# contains NO `exit 0` at all.
+#
+# The zero-`exit 0` assertion is deliberately whole-block rather than positional,
+# and that is the second attempt: the first scanned only as far as the opening
+# `check_gate` line, which made it blind to an `exit 0` inserted BETWEEN the two
+# calls — exactly the regression its own message claimed to catch, and a message
+# asserting a property the check lacked. Scanning the whole block is both simpler
+# and strictly stronger, because a correct implementation has exactly one
+# success path: fall off the end after the `rc` check. Every `exit 0` is
+# therefore a short-circuit by construction, wherever it sits, and no ordering
+# logic is needed to say so. (The validate-manifests guard exits 1, not 0, so it
+# is unaffected.)
 test_both_gates_are_checked_before_any_exit() {
-    local block calls early_exit
+    local block calls exit_zeroes
     block="$(merge_gate_block)"
 
     calls="$(printf '%s\n' "$block" |
@@ -155,13 +166,10 @@ test_both_gates_are_checked_before_any_exit() {
     assert_contains "$block" 'check_gate "bsd-probe"' \
         "bsd-probe is evaluated through the shared helper"
 
-    # No `exit 0` may appear before the checks — that is exactly the
-    # short-circuit this case exists to prevent. (The manifests guard above them
-    # exits 1, never 0, so it is not caught by this.)
-    early_exit="$(printf '%s\n' "$block" |
-        command awk '/^[[:space:]]*check_gate[[:space:]]/ { exit } /exit 0/ { print }')"
-    assert_equals "" "$early_exit" \
-        "No 'exit 0' short-circuits the gate before both checks have run"
+    exit_zeroes="$(printf '%s\n' "$block" |
+        command grep -cE '^[[:space:]]*exit[[:space:]]+0[[:space:]]*$' || true)"
+    assert_equals "0" "$exit_zeroes" \
+        "The gate has NO 'exit 0' anywhere — its only success path is falling off the end after the rc check, so any 'exit 0' short-circuits a later gate"
 }
 
 run_test test_anchor_is_not_vacuous "merge-gate anchor resolves (vacuity guard)"
