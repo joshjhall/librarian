@@ -143,15 +143,28 @@ test_unacceptable_result_fails_closed() {
 # contains NO `exit 0` at all.
 #
 # The zero-`exit 0` assertion is deliberately whole-block rather than positional,
-# and that is the second attempt: the first scanned only as far as the opening
-# `check_gate` line, which made it blind to an `exit 0` inserted BETWEEN the two
-# calls — exactly the regression its own message claimed to catch, and a message
-# asserting a property the check lacked. Scanning the whole block is both simpler
-# and strictly stronger, because a correct implementation has exactly one
-# success path: fall off the end after the `rc` check. Every `exit 0` is
-# therefore a short-circuit by construction, wherever it sits, and no ordering
-# logic is needed to say so. (The validate-manifests guard exits 1, not 0, so it
-# is unaffected.)
+# and it took three attempts to get right — worth recording, because each failure
+# was the same mistake in a new place: the detector was narrower than the property
+# its message claimed.
+#
+#   v1 scanned only as far as the opening `check_gate` line (awk's `exit` halts
+#      the program), so it was blind to an `exit 0` inserted BETWEEN the two
+#      calls — precisely the regression it named. Wrong on POSITION.
+#   v2 scanned the whole block but anchored `^…$`, matching only a line that is
+#      nothing but `exit 0`. `exit 0;`, `exit 0  # fast path`, `cond && exit 0`
+#      and `if c; then exit 0; fi` all sailed through. Wrong on SHAPE — and the
+#      v1 mutation test missed it because it happened to use the bare form.
+#
+# v3 (this one) strips inline comments, then matches `exit 0` as a STATEMENT
+# anywhere on the line: at line start or after a `;`/`&&`/`||`/`then`/`else`, and
+# terminated by a `;`, `&`, `|`, whitespace, or end of line. The `0` must be a
+# whole token, so `exit 01` and `exit 0x` do not match.
+#
+# Whole-block is the right scope because a correct implementation has exactly one
+# success path — falling off the end after the `rc` check — so every `exit 0` is a
+# short-circuit by construction, wherever it sits, and no ordering logic is needed
+# to say so. (The validate-manifests guard exits 1, not 0, so it is unaffected.)
+# All five shapes above are mutation-verified to fail this assertion.
 test_both_gates_are_checked_before_any_exit() {
     local block calls exit_zeroes
     block="$(merge_gate_block)"
@@ -166,10 +179,17 @@ test_both_gates_are_checked_before_any_exit() {
     assert_contains "$block" 'check_gate "bsd-probe"' \
         "bsd-probe is evaluated through the shared helper"
 
+    # `sed 's/#.*$//'` is a deliberate over-approximation: it also blanks a `#`
+    # inside a quoted string. That can only ever HIDE text from the scan, and the
+    # gate is looking for `exit 0` — a `#` preceding one would have to sit inside
+    # a string on the same line, which no success path does. Erring toward
+    # scanning less of a line is safe here; erring toward a narrower PATTERN,
+    # which is what v1 and v2 did, is not.
     exit_zeroes="$(printf '%s\n' "$block" |
-        command grep -cE '^[[:space:]]*exit[[:space:]]+0[[:space:]]*$' || true)"
+        command sed 's/#.*$//' |
+        command grep -cE '(^|[;&|]|[[:space:]](then|else))[[:space:]]*exit[[:space:]]+0([[:space:]]|[;&|]|$)' || true)"
     assert_equals "0" "$exit_zeroes" \
-        "The gate has NO 'exit 0' anywhere — its only success path is falling off the end after the rc check, so any 'exit 0' short-circuits a later gate"
+        "The gate has NO 'exit 0' in any shape (bare, ;-terminated, commented, &&-chained, or inline in a then/else) — its only success path is falling off the end after the rc check"
 }
 
 run_test test_anchor_is_not_vacuous "merge-gate anchor resolves (vacuity guard)"
