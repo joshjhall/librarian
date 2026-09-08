@@ -362,9 +362,11 @@ rather than theme (tagged at their call sites). Two things #964 measured that ar
 easy to re-derive wrongly: per-leg **setup is 17–22s, not ~120s** (the larger
 figure double-counts runner queue time, which is why per-shard conditional setup
 was rejected — it would save seconds and risks a shard silently losing a linter,
-the #538/#571 inert-gate shape); and a rebalance that touches only
-`20-golem`/`30-scanners` **cannot** move wall clock, since `10-portability` is
-the critical path by construction. If a shard nears its `timeout-minutes`,
+the #538/#571 inert-gate shape); and **that** rebalance had to move stages out of
+`10-portability`, because while it held the 522s leg no change to the other two
+could move wall clock at all. That is spent now — the legs are close, so the next
+rebalance is an ordinary three-way comparison, and only the 364s floor is fixed.
+If a shard nears its `timeout-minutes`,
 re-balance or add a shard — do **not** raise the cap, which is what #834
 and #932 each did before this split.
 (4) **Four gates `sed`-slice functions out of `run-all.sh`** by the anchor

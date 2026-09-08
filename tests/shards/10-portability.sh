@@ -3,9 +3,14 @@
 # it (#960, re-balanced #964).
 #
 # THIS SHARD IS SIZED BY ITS FLOOR, NOT BY A THEME. `Shell portability` is 364s
-# and cannot be subdivided, so it is the matrix's critical path: no arrangement
-# of the other two shards can make the suite finish sooner than this one stage.
-# Everything else here is small enough to ride along without raising that floor.
+# and cannot be subdivided, so it sets the matrix's LOWER BOUND: no arrangement
+# of the three shards can make the suite finish sooner than this one stage.
+# Everything else here is small enough to ride along without raising that bound.
+#
+# Note "lower bound" is not the same as "the slowest leg". Post-#964 the legs are
+# close enough (337 / 350 / 260s) that 20-golem currently finishes last, and
+# which leg leads varies with runner speed. This shard is the one that CANNOT
+# get faster; that is the property that matters here.
 #
 # ON THE 364s, since the older 547s figure is still quoted in #960's history:
 # they measure different things. 547s came from the PRE-SHARDING serial run, all
@@ -27,9 +32,10 @@
 # three legs are 337 / 350 / 260s, within ~90s of each other instead of ~347s,
 # and CI wall clock went 542s -> 370s.
 #
-# SO: adding a stage here raises the critical path ~1:1, unlike the other two
-# shards which still have slack. Measure before adding, and prefer 30-scanners
-# unless the gate genuinely needs to sit beside Shell portability.
+# SO: this shard has the least slack of the three (30-scanners has ~90s more).
+# Prefer 30-scanners for a new gate unless it genuinely needs to sit beside Shell
+# portability — and measure all three sums first either way, since the legs are
+# close enough that a single 50s+ stage decides which one finishes last.
 #
 # SOURCED by tests/run-all.sh (and by tests/validate-shards.sh with a stub
 # run_stage), never executed — hence no shebang. Sourcing with a stub run_stage
