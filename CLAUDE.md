@@ -349,12 +349,15 @@ shard stays green, and each direction has a negative fixture proving it fires.
 It runs as a stage in **every** shard, because the shard that owns a gate is
 exactly the shard that might not be running.
 (3) **The split is bounded by its largest stage, and #964 balanced it to that
-floor.** Shell portability is indivisible and ~95% of its leg, so
+floor.** Shell portability is indivisible and is essentially its whole leg (335s
+of 337s in run 34187725583; the other eight stages cost 0–1s each), so
 `10-portability` sets the floor no matter how the rest is arranged. That bound is
-**structural, not a number**: the same stage measured 364s / 357s / 335s across
-three runs of identical code, so never carry one of those figures forward as
-fixed. (The 547s this file used to quote was the pre-sharding **serial** run —
-same stage, different context, not comparable.) The three legs now sit within
+**structural, not a number**: the stage's own runtime varies ~8% run to run on
+identical code, so never carry one figure forward as fixed — and never pair a
+stage time with a leg total from a *different* run, since the pre-#964 samples
+came from a leg that still held four more gates. (The 547s this file used to
+quote was the pre-sharding **serial** run — same stage, different context, not
+comparable either.) The three legs now sit within
 ~90s of each other (337 / 350 / 260s measured post-move, run 34187725583; CI
 wall clock 542s → 370s) — absolute numbers are runner-dependent and swing ±30%
 between runs, so compare sums within one run, never across two. Which means

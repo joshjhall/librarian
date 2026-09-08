@@ -2,17 +2,21 @@
 # The Shell-portability shard: one indivisible stage, and whatever fits beside
 # it (#960, re-balanced #964).
 #
-# THIS SHARD IS SIZED BY ITS FLOOR, NOT BY A THEME. `Shell portability` is ~95%
-# of this leg and cannot be subdivided, so it sets the matrix's LOWER BOUND: no
-# arrangement of the three shards makes the suite finish sooner than that one
-# stage. Everything else here rides along without materially raising the bound.
+# THIS SHARD IS SIZED BY ITS FLOOR, NOT BY A THEME. `Shell portability` cannot
+# be subdivided and is essentially the whole leg, so it sets the matrix's LOWER
+# BOUND: no arrangement of the three shards makes the suite finish sooner than
+# that one stage. The other eight stages here cost 0-1s each.
 #
-# The bound is STRUCTURAL, not a specific number. Measured samples of that stage:
-# 364s, 357s, 335s (runs 34166830481, 34165410091, 34187725583) — same code, ~8%
-# spread, and the leg total tracks it (337s in the last of those). So the durable
-# claim is "this stage is indivisible and dominates its leg", not "the floor is
-# N seconds". Re-derive per run by reading its `[ok] Shell portability … (Ns)`
-# line; do not carry a number across runs.
+# The bound is STRUCTURAL, not a specific number, and the two must not be mixed.
+# In the post-move composition (run 34187725583) the stage was 335s of a 337s
+# leg — the only same-composition stage/leg pairing measured so far. Two earlier
+# samples, 364s (34166830481) and 357s (34165410091), predate the move and are
+# NOT comparable as a share: that leg still carried the four gates #964 shifted
+# out (+157s), so the stage was ~70% of a ~522s leg. Read across all three, the
+# stage's own runtime varies ~8% on identical code. So the durable claim is "this
+# stage is indivisible and dominates its leg", never "the floor is N seconds".
+# Re-derive per run from its `[ok] Shell portability … (Ns)` line, and pair it
+# only with a leg total from that same run.
 #
 # WHY THE OLDER 547s FIGURE IS NOT COMPARABLE: it came from the PRE-SHARDING
 # serial run, all ~96 stages on one runner. The stage did not get faster, and
@@ -35,11 +39,12 @@
 # three legs are 337 / 350 / 260s, within ~90s of each other instead of ~347s,
 # and CI wall clock went 542s -> 370s.
 #
-# SO: prefer 30-scanners for a new gate — it carries ~90s more slack than this
-# shard — unless the gate genuinely needs to sit beside Shell portability. Either
-# way measure all three sums within one run first: 337 / 350 / 260s leaves only
-# ~13s between the top two, so a stage of even that size changes which leg
-# finishes last, while 30-scanners can absorb considerably more.
+# SO: prefer 30-scanners for a new gate unless it genuinely needs to sit beside
+# Shell portability. Either way measure all three sums within one run first. From
+# run 34187725583 (337 / 350 / 260s): only 13s separates the top two legs, so a
+# stage even that small changes which one finishes last, while 30-scanners sits
+# 77s below this leg and 90s below 20-golem — that gap is its headroom before it
+# becomes the leg that decides the matrix.
 #
 # SOURCED by tests/run-all.sh (and by tests/validate-shards.sh with a stub
 # run_stage), never executed — hence no shebang. Sourcing with a stub run_stage
