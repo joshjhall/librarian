@@ -54,6 +54,27 @@ merge_gate_block() {
             inb { print }'
 }
 
+# count_exit_zero — read shell text on stdin, print how many `exit 0` STATEMENTS
+# it contains. Used both by the gate assertion and by the detector's own
+# regression test, so the two can never drift: a fixture that re-spelled the
+# pattern would be testing a copy, not the thing that runs.
+#
+# `sed 's/#.*$//'` strips inline comments. It is a deliberate over-approximation
+# — it also blanks a `#` inside a quoted string — and it cuts BOTH ways, so
+# neither direction is left implied:
+#   - It can HIDE a real `exit 0` that sits after a `#` inside a string. No
+#     success path does that, and the strip is what makes `exit 0  # note`
+#     detectable at all.
+#   - It does NOT make the match string-aware, so `echo "x; exit 0"` WOULD be
+#     flagged. That is a known, accepted false positive: this gate reads one
+#     small hand-maintained YAML block, and over-reporting there is a visible
+#     failure someone fixes, where under-reporting is the silent hole v1 and v2
+#     both shipped.
+count_exit_zero() {
+    command sed 's/#.*$//' |
+        command grep -cE '(^|[;&|)]|[[:space:]](then|else))[[:space:]]*exit[[:space:]]+0([[:space:]]|[;&|]|$)' || true
+}
+
 # --- cases ------------------------------------------------------------------
 
 # The vacuity guard, first and on its own. Every other case scopes to
@@ -156,15 +177,21 @@ test_unacceptable_result_fails_closed() {
 #      v1 mutation test missed it because it happened to use the bare form.
 #
 # v3 (this one) strips inline comments, then matches `exit 0` as a STATEMENT
-# anywhere on the line: at line start or after a `;`/`&&`/`||`/`then`/`else`, and
-# terminated by a `;`, `&`, `|`, whitespace, or end of line. The `0` must be a
-# whole token, so `exit 01` and `exit 0x` do not match.
+# anywhere on the line: at line start or after a `;`/`&&`/`||`/`)`/`then`/`else`,
+# and terminated by a `;`, `&`, `|`, whitespace, or end of line. The `0` must be a
+# whole token, so `exit 01` and `exit 0x` do not match. The `)` covers a
+# case-statement arm (`*) exit 0 ;;`) — a sixth shape, found by review after v3
+# closed the first five, which is the honest reason the boundary class is a class
+# and not an enumeration.
 #
 # Whole-block is the right scope because a correct implementation has exactly one
 # success path — falling off the end after the `rc` check — so every `exit 0` is a
 # short-circuit by construction, wherever it sits, and no ordering logic is needed
 # to say so. (The validate-manifests guard exits 1, not 0, so it is unaffected.)
-# All five shapes above are mutation-verified to fail this assertion.
+#
+# Every shape named above is pinned by test_exit_zero_detector_catches_all_shapes
+# below, NOT merely by the prose here — three rounds of "verified by hand during
+# development" is exactly what let v1 and v2 ship.
 test_both_gates_are_checked_before_any_exit() {
     local block calls exit_zeroes
     block="$(merge_gate_block)"
@@ -179,17 +206,48 @@ test_both_gates_are_checked_before_any_exit() {
     assert_contains "$block" 'check_gate "bsd-probe"' \
         "bsd-probe is evaluated through the shared helper"
 
-    # `sed 's/#.*$//'` is a deliberate over-approximation: it also blanks a `#`
-    # inside a quoted string. That can only ever HIDE text from the scan, and the
-    # gate is looking for `exit 0` — a `#` preceding one would have to sit inside
-    # a string on the same line, which no success path does. Erring toward
-    # scanning less of a line is safe here; erring toward a narrower PATTERN,
-    # which is what v1 and v2 did, is not.
-    exit_zeroes="$(printf '%s\n' "$block" |
-        command sed 's/#.*$//' |
-        command grep -cE '(^|[;&|]|[[:space:]](then|else))[[:space:]]*exit[[:space:]]+0([[:space:]]|[;&|]|$)' || true)"
+    exit_zeroes="$(printf '%s\n' "$block" | count_exit_zero)"
     assert_equals "0" "$exit_zeroes" \
-        "The gate has NO 'exit 0' in any shape (bare, ;-terminated, commented, &&-chained, or inline in a then/else) — its only success path is falling off the end after the rc check"
+        "The gate has NO 'exit 0' in any shape (bare, ;-terminated, commented, &&-chained, case arm, or inline in a then/else) — its only success path is falling off the end after the rc check"
+}
+
+# The detector's OWN regression test, over synthetic input (#947 review cycle 3).
+#
+# Every previous version of count_exit_zero was "verified by hand during
+# development" and shipped a hole anyway — twice. A comment claiming five shapes
+# were checked is not a check; it cannot fail. So the shapes are enumerated here
+# as data, and a future simplification of the pattern that narrows it back to v1
+# or v2 behavior fails THIS case rather than being rediscovered by review.
+#
+# The negative arm matters just as much: a detector that flags `exit 01` or a
+# mention inside a string would be reverted by whoever hits the false positive,
+# taking the real coverage with it.
+test_exit_zero_detector_catches_all_shapes() {
+    local caught missed
+
+    # Each line is a distinct way to spell a short-circuiting `exit 0`.
+    caught="$(printf '%s\n' \
+        'exit 0' \
+        '  exit 0;' \
+        '  exit 0  # fast path' \
+        '  [ "$x" = y ] && exit 0' \
+        '  false || exit 0' \
+        '  if c; then exit 0; fi' \
+        '  if c; then :; else exit 0; fi' \
+        '  *) exit 0 ;;' | count_exit_zero)"
+    assert_equals "8" "$caught" \
+        "Every spelling of a short-circuiting 'exit 0' is detected (8 shapes)"
+
+    # Things that merely LOOK like one. A false positive here would make the
+    # gate unusable and get the detector weakened.
+    missed="$(printf '%s\n' \
+        '  exit 01' \
+        '  exit 0x' \
+        '  exit 1' \
+        '  echo "exit 0 is banned"' \
+        '  # exit 0' | count_exit_zero)"
+    assert_equals "0" "$missed" \
+        "Near-misses are NOT flagged: exit 01, exit 0x, exit 1, a mention in a string, a commented-out line"
 }
 
 run_test test_anchor_is_not_vacuous "merge-gate anchor resolves (vacuity guard)"
@@ -198,5 +256,6 @@ run_test test_bsd_result_is_bound_from_needs "BSD_RESULT is bound from needs.bsd
 run_test test_skip_is_tolerated_only_on_a_fork_pr "A skip is tolerated only on a fork PR"
 run_test test_unacceptable_result_fails_closed "An unacceptable result fails closed"
 run_test test_both_gates_are_checked_before_any_exit "Both gates are checked before any exit"
+run_test test_exit_zero_detector_catches_all_shapes "The exit-0 detector catches every shape (and no near-miss)"
 
 generate_report
