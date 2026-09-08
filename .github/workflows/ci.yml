@@ -99,9 +99,36 @@ jobs:
           - 30-scanners
     # 20, RE-DERIVED for a shard rather than inherited from the serial job's 40
     # (#960 AC6). The 40 was sized for all ~96 stages on one runner (~22 min).
-    # The largest shard is 10-portability, whose Shell portability stage alone
-    # was 547s of the 1299s serial total; with setup that leg is ~10-11 min, so
-    # 20 keeps roughly the same proportional headroom the old cap had.
+    # After #964's re-balance the three legs are within ~90s of each other
+    # (337 / 350 / 260s of stage time, measured on run 34187725583; wall clock
+    # 542s -> 370s), so 20 is now ~3x headroom on every leg rather than ~2x on
+    # the worst one. Absolute stage times are runner-dependent — the same gates
+    # swung ~30% between the before and after runs with no code change — so
+    # re-measure within a single run before concluding a leg has grown.
+    # Left at 20 deliberately: the cap bounds a
+    # hang, and tightening it to track a balanced partition would convert normal
+    # growth into the opaque cancellation described below.
+    #
+    # THE FLOOR IS `Shell portability` — indivisible, and essentially the whole
+    # 10-portability leg (335s of 337s in run 34187725583; every other stage in
+    # that leg costs 0-1s). No partition finishes sooner than that one stage, which is
+    # why that leg cannot be balanced DOWN and the other two are balanced up to
+    # it. That is a structural bound, not a fixed number: the stage's own runtime
+    # varies ~8% run to run on identical code. Do not compare a stage time against
+    # a leg total from a DIFFERENT run — the pre-#964 samples came from a leg that
+    # still held four more gates. It is also NOT the same claim as "the slowest
+    # leg": at these margins 20-golem finished last (350s vs 337s), and which leg
+    # leads varies with runner speed.
+    #
+    # SETUP IS NOT THE LEVER — measured for #964 AC1, because the issue proposed
+    # per-shard conditional setup on an estimate of ~120s/leg. Summing every
+    # non-suite step in run 34161239573's successor (34166830481) gives 17s /
+    # 19s / 22s. The ~120s came from subtracting stage sums from the UI's wall
+    # clock, which also includes RUNNER QUEUE TIME — not work this job controls.
+    # So splitting the linter installs per shard would buy seconds while risking
+    # a shard that silently loses a tool its gate needs (the #538/#571/#766
+    # inert-gate shape). The single "Verify linters are on PATH" assertion below
+    # stays whole for every leg, which is what keeps that risk at zero.
     #
     # WHAT THE CAP IS FOR, unchanged from #834/#932: it bounds a HANG, it does
     # not ration normal growth. Two previous raises (15 -> 25 -> 40) each

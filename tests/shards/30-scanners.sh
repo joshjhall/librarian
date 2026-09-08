@@ -1,10 +1,30 @@
 # shellcheck shell=bash
-# Scanner, detector, contract and prose stages (#960).
+# Scanner, detector, contract and prose stages, plus five balance-motivated
+# arrivals (#960, re-balanced #964).
 #
-# The long tail: ~408s across the check-* detector fixtures, the skill and
-# agent structural gates, the doc/prose budgets and the manifest sync
-# checks. No single stage here dominates, so this shard is the one that
-# absorbs new gates without changing the matrix's critical path.
+# The long tail: ~175s across the check-* detector fixtures, the skill and agent
+# structural gates, the doc/prose budgets and the manifest sync checks. No
+# single stage here dominates.
+#
+# THIS SHARD NO LONGER ABSORBS NEW GATES FOR FREE. That was true when it ran
+# 175s against a 522s critical path; #964 spent that slack deliberately, moving
+# 157s off 10-portability and 21s off 20-golem. Measured after the move
+# (run 34187725583): 337 / 350 / 260s, i.e. the three legs within ~90s of each
+# other instead of ~347s. The headroom that made this the safe place to add a
+# gate is the same headroom the re-balance consumed — so measure the three sums
+# before adding anything substantial here, and do not treat this header's old
+# promise as still operative.
+#
+# TREAT ANY ABSOLUTE NUMBER HERE AS RUNNER-DEPENDENT. The same stages measured
+# 88s/52s pre-move and 59s/34s post-move (differential/shellcheck) with no code
+# change between them, so a ±30% swing between runs is normal. What is stable is
+# the ORDERING and the fact that no leg dominates; re-measure before concluding a
+# shard has grown, and compare sums within one run, never across two.
+#
+# FIVE STAGES BELOW ARE HERE FOR BALANCE, NOT THEME. They are tagged
+# individually at their call sites. Do not reunite them with their thematic
+# siblings in 10-portability without re-measuring: that grouping is exactly what
+# #964 traded away, and it cost ~157s of wall clock per CI run.
 #
 # SOURCED by tests/run-all.sh (and by tests/validate-shards.sh with a stub
 # run_stage), never executed — hence no shebang. Sourcing with a stub run_stage
@@ -114,3 +134,34 @@ run_stage "Shared workflow.js prelude sync" bash "$SCRIPT_DIR/validate-prelude-s
 run_stage "Markdown lint (.claude/memory/)" bash "$SCRIPT_DIR/lint-markdown.sh"
 run_stage "OKF bundle conformance + health (.claude/memory/)" bash "$SCRIPT_DIR/validate-okf-bundle.sh"
 run_stage "OKF bundle gate behavior" bash "$SCRIPT_DIR/validate-okf-bundle-gate.sh"
+
+# --- Balance-motivated arrivals (#964) --------------------------------------
+#
+# The five stages below do NOT belong to this shard's theme. Four came from
+# 10-portability, where they sat beside the indivisible `Shell portability` stage
+# and made that leg the slowest at 522s; one came from 20-golem. Moving them cut
+# CI wall clock from 542s to 370s (measured, run 34187725583). What remains is
+# the Shell-portability floor, which no further rebalance beats.
+#
+# Each is thematically a language/runtime gate, and each will read as misplaced
+# here. That is the trade #964 made knowingly: theme lost to ~157s per run. If
+# you move one back, re-measure all three shard sums first — this shard has the
+# most slack of the three (260s against 337s and 350s in that run), so it can
+# absorb a stage the others cannot, and moving one OUT of here is the change most
+# likely to cost wall clock.
+#
+# None of these sources tests/lib/golem-sandbox.sh, which is why they were
+# eligible to move at all: the worktree-mutating suites must stay together in
+# 20-golem (see that shard's header, and
+# validate-shards.sh::test_worktree_mutating_stages_share_one_shard).
+run_stage "Python-port contract + bash parity" bash "$SCRIPT_DIR/validate-python-ports.sh"
+run_stage "Pre-scan bash<->python differential" bash "$SCRIPT_DIR/validate-prescan-differential.sh"
+run_stage "Shellcheck (bundled shell scripts)" bash "$SCRIPT_DIR/lint-shellcheck.sh"
+# The BEHAVIOR of bounded_run, not just the byte-sync of its two copies (#961).
+# `bounded-run.sh copy sync` (still in 10-portability) pins that the copies match
+# and depend on no GNU coreutils; neither is a claim that the bound works. That
+# gap is what let a bound that had stopped bounding the CAPTURE sit unnoticed
+# until it cost a 15-minute CI stall. The two are now in different shards — they
+# check different things and neither depends on the other's outcome.
+run_stage "bounded_run behavior (capture bound)" bash "$SCRIPT_DIR/validate-bounded-run.sh"
+run_stage "coverage-driver listener start attempt" bash "$SCRIPT_DIR/validate-cov-listener.sh"

@@ -348,9 +348,30 @@ newly makes possible: with N lists a renamed gate can stop running while every
 shard stays green, and each direction has a negative fixture proving it fires.
 It runs as a stage in **every** shard, because the shard that owns a gate is
 exactly the shard that might not be running.
-(3) **The split is bounded by its largest stage.** Shell portability alone was
-547s of a 1299s serial run, so `10-portability` sets the floor (~10-11 min) no
-matter how the rest is arranged. If a shard nears its `timeout-minutes`,
+(3) **The split is bounded by its largest stage, and #964 balanced it to that
+floor.** Shell portability is indivisible and is essentially its whole leg (335s
+of 337s in run 34187725583; every other stage in that leg costs 0–1s), so
+`10-portability` sets the floor no matter how the rest is arranged. That bound is
+**structural, not a number**: the stage's own runtime varies ~8% run to run on
+identical code, so never carry one figure forward as fixed — and never pair a
+stage time with a leg total from a *different* run, since the pre-#964 samples
+came from a leg that still held four more gates. (The 547s this file used to
+quote was the pre-sharding **serial** run — same stage, different context, not
+comparable either.) The three legs now sit within
+~90s of each other (337 / 350 / 260s measured post-move, run 34187725583; CI
+wall clock 542s → 370s) — absolute numbers are runner-dependent and swing ±30%
+between runs, so compare sums within one run, never across two. Which means
+`30-scanners` is **no longer the free slot for a new heavy gate**; re-measure all
+three sums before adding one, and note that five stages live there for balance
+rather than theme (tagged at their call sites). Two things #964 measured that are
+easy to re-derive wrongly: per-leg **setup is 17–22s, not ~120s** (the larger
+figure double-counts runner queue time, which is why per-shard conditional setup
+was rejected — it would save seconds and risks a shard silently losing a linter,
+the #538/#571 inert-gate shape); and **that** rebalance had to move stages out of
+`10-portability`, because while it held the 522s leg no change to the other two
+could move wall clock at all. That is spent now — the legs are close, so the next
+rebalance is an ordinary three-way comparison, bounded only by the
+Shell-portability stage being indivisible. If a shard nears its `timeout-minutes`,
 re-balance or add a shard — do **not** raise the cap, which is what #834
 and #932 each did before this split.
 (4) **Four gates `sed`-slice functions out of `run-all.sh`** by the anchor

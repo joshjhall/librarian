@@ -1,10 +1,24 @@
 # shellcheck shell=bash
-# Golem, worktree, hook and workflow-decision stages (#960).
+# Golem, worktree, hook and workflow-decision stages (#960, re-balanced #964).
 #
-# Carries the second-largest stage: golem/worktree helper scripts, 285s
-# (22%). Grouped by area — the golem lifecycle, the PreToolUse hooks, the
-# stop/route decision helpers and the release toolchain all exercise the
-# same sandbox machinery in tests/lib/golem-sandbox.sh.
+# Carries the second-largest stage: golem/worktree helper scripts, 234s after
+# #961 fixed the unbounded capture that had it reading as 1175s. Grouped by
+# area — the golem lifecycle, the PreToolUse hooks, the stop/route decision
+# helpers and the release toolchain all exercise the same sandbox machinery in
+# tests/lib/golem-sandbox.sh.
+#
+# `Lint-gate integrity` (54-62s) STAYS HERE, and is not golem-specific. #964
+# named it as movable and measured the move: shifting it to 30-scanners would
+# have made that shard the critical path and given back most of the win. It is
+# parked here for BALANCE. If the shards are ever re-cut, this is the first stage
+# to reconsider — but re-measure all three sums before moving it, rather than
+# moving it because it reads as out of place here. It is.
+#
+# NOTE: after #964's move this shard is the narrow critical path (350s against
+# 337s and 260s, run 34187725583) — the three are within ~90s, so which one leads
+# varies with runner speed. That is the intended end state, not a defect: the
+# floor is `Shell portability` in 10-portability, and no partition beats it by
+# more than the slack between these sums.
 #
 # DO NOT MOVE A STAGE OUT OF HERE IF ITS SUITE SOURCES golem-sandbox.sh.
 # That sandbox creates and removes git worktrees in the repo under test, and two
@@ -56,7 +70,6 @@ run_stage "golem-watch streaming dispatcher" bash "$SCRIPT_DIR/validate-golem-wa
 run_stage "token-cost reconciliation harness" bash "$SCRIPT_DIR/validate-token-report.sh"
 run_stage "context-budget session-length signal" bash "$SCRIPT_DIR/validate-context-budget.sh"
 run_stage "ephemeral-port allocation + retry" bash "$SCRIPT_DIR/validate-free-port.sh"
-run_stage "coverage-driver listener start attempt" bash "$SCRIPT_DIR/validate-cov-listener.sh"
 # The ORDERING of a status-label transition (#636/#921): add first, remove only
 # on success, so a failed add can never strip the existing label and leave an
 # issue briefly re-selectable by another golem. Its fixtures point at a label
