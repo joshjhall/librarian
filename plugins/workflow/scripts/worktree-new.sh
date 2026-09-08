@@ -11,6 +11,7 @@
 # Config (env-overridable; defaults in config.sh):
 #   GOLEM_WORKTREE_DIR  (.worktrees)  GOLEM_BRANCH_PREFIX (feature/issue-)
 #   GOLEM_BASE_REF      (origin/main) GOLEM_WORKTREE_LOCAL_FILES
+#   GOLEM_CARGO_CACHE_DIR (/cache/target)
 #
 # Usage: worktree-new.sh <issue-number>
 set -euo pipefail
@@ -265,6 +266,173 @@ case "$cred_url" in
         fi
         ;;
 esac
+
+# Seed a per-worktree Rust build-artifact directory OFF the repo mount (#944).
+#
+# WHY: on the macOS Docker stack the repo lives on virtiofs, whose host-side
+# daemon loses inode mappings and leaves stale dentries that return EBADF from
+# `unlink`/`stat` while still appearing in `readdir` — an undeletable worktree
+# (#936 corrected #834's attribution to this layer; NO in-container call repairs
+# it). Every wedged entry in the two live remnants was a
+# `target/debug/incremental/*.o`. #936 landed the QUARANTINE, which makes the
+# wedge recoverable; this is the PREVENTION half, so it forms less often.
+#
+# WHY THE SETTINGS FILE AND NOT `.cargo/config.toml` — measured, git 2.55.0.
+# The obvious durable spelling is `build.target-dir` in a worktree
+# `.cargo/config.toml`. It cannot be used, because that file is UNTRACKED and
+# nothing available can hide it from `git status`:
+#
+#   exclude file                                  | honored?
+#   ----------------------------------------------|---------
+#   .git/worktrees/<wt>/info/exclude (per-worktree)| NO  — `?? .cargo/`
+#   .git/info/exclude (shared)                     | yes — but see below
+#
+# So the worktree reads DIRTY and worktree-rm.sh refuses teardown on every
+# golem — trading a rare wedge for a guaranteed teardown refusal. The shared
+# exclude does work, but it is repo-wide and outlives the worktree: it equally
+# suppresses `.cargo/` in the MAIN checkout, a far larger blast radius than this
+# change appears to have. (`git config --worktree` is not an escape either:
+# `extensions.worktreeConfig` is unset by default, so git refuses it.)
+#
+# Nor can this be an `export`, which is what #936 originally proposed: this is a
+# one-shot script whose environment dies with it, while `cargo` runs minutes or
+# hours later in some other process.
+#
+# The settings file clears all three traps at once: in a repo whose TRACKED
+# .gitignore covers `.claude/settings.local.json` (librarian's does), writing it
+# cannot dirty the worktree, so teardown is unaffected; Claude Code sets `env`
+# for every session AND ITS SUBPROCESSES, so a later `cargo` invocation actually
+# sees it; and it is scoped to this worktree alone.
+#
+# The file is USUALLY already present, copied by the GOLEM_WORKTREE_LOCAL_FILES
+# loop above — but that list is operator-overridable, so this block does not
+# depend on it: an absent file is created here holding only the env key. Said
+# explicitly because the reverse claim ("it is already copied in") would be a
+# comment asserting something the code does not guarantee.
+#
+# That ignore property is VERIFIED per-repo below rather than assumed — it holds
+# for librarian but is not universal, and getting it wrong reproduces the very
+# dirty-worktree failure this paragraph rules out.
+#
+# SCOPE, stated plainly: this reaches `cargo` when the build is invoked from a
+# Claude Code session in this worktree — the golem case, which is what forms the
+# wedge, since a golem's builds all run through that machinery. A human who opens
+# their own terminal in the worktree and types `cargo build` gets the default
+# ./target and can still wedge it; nothing here writes a shell profile, and the
+# repo-file alternative that WOULD cover them is the `.cargo/config.toml` ruled
+# out above. That is a deliberate coverage limit, not an oversight: #936's
+# quarantine already makes the resulting wedge recoverable.
+#
+# PER-WORKTREE, never shared: one target dir across parallel golems would
+# serialise them on cargo's file lock.
+#
+# Best-effort and SILENT when unsuitable — an absent, unwritable, or
+# still-wedging cache location leaves behaviour byte-identical (no write, no
+# output). The location is a runtime PROBE, not an assumption: measured in the
+# devcontainer, both /cache and /workspace report overlayfs, so "/cache is
+# obviously off virtiofs" is exactly the belief that had to be checked.
+cargo_cache_fstype() {
+    # Echo the filesystem type backing $1 by longest-prefix match over
+    # /proc/mounts, or nothing when it cannot be determined. Linux-only by
+    # design; a host without /proc/mounts (macOS) yields nothing and the caller
+    # skips, which is the safe direction — see the caller's comment.
+    local target="$1" mp fstype prefix best_mp="" best_fs=""
+    [ -r /proc/mounts ] || return 0
+    while read -r _dev mp fstype _rest; do
+        # Strip a trailing slash before building the prefix, so the ROOT
+        # mountpoint `/` compares as `` + `/…` rather than `//…` — the latter
+        # matches nothing, which made every path outside a deeper mount probe
+        # as UNKNOWN and silently refuse the seed on every host (caught by the
+        # positive-case test, invisible to the no-op ones).
+        prefix="${mp%/}"
+        case "$target" in
+            "$mp" | "$prefix"/*)
+                if [ "${#mp}" -ge "${#best_mp}" ]; then
+                    best_mp="$mp"
+                    best_fs="$fstype"
+                fi
+                ;;
+        esac
+    done </proc/mounts
+    command echo "$best_fs"
+}
+
+cargo_seed_target="$GOLEM_CARGO_CACHE_DIR/issue-$N"
+# The CONFIGURED directory must itself already exist. Deliberately NOT an
+# ancestor walk: climbing to the deepest existing parent makes an absent cache
+# location probe as PRESENT (every path has an existing ancestor, ultimately
+# `/`), and the mkdir below then CREATES the location that was supposed to be
+# missing — so "absent leaves behaviour unchanged" (AC4) silently becomes
+# "absent gets provisioned anywhere the operator happened to point". Requiring
+# the dir up front also makes the override a real off switch: pointing
+# GOLEM_CARGO_CACHE_DIR at a nonexistent path disables the seed, which is what
+# the test sandboxes rely on.
+if [ -d "$GOLEM_CARGO_CACHE_DIR" ] && [ -w "$GOLEM_CARGO_CACHE_DIR" ] &&
+    command -v jq >/dev/null 2>&1; then
+    # CANONICALIZE before probing. /proc/mounts lists RESOLVED mountpoints, so a
+    # literal-path prefix match classifies the mount that happens to contain the
+    # path STRING rather than the one that will actually hold the writes. With a
+    # symlinked cache dir (or a symlinked ancestor) the two differ — measured:
+    # the same directory reads `overlay` through /tmp/link and `tmpfs` at its
+    # real /dev/shm path. The dangerous direction is a FALSE NEGATIVE: a benign
+    # fstype reported for a target whose real backing store is virtiofs, which
+    # is precisely what this probe exists to refuse.
+    #
+    # Fall back to the raw path when readlink is absent or fails, so the
+    # behaviour degrades to the previous (still fail-safe-on-unknown) reading
+    # rather than erroring. `readlink -f` is not among the GNU-only flags this
+    # repo bans; BSD readlink has supported -f since macOS 12.3, and the
+    # fallback covers anything older.
+    cargo_probe_dir="$(command readlink -f "$GOLEM_CARGO_CACHE_DIR" 2>/dev/null)" ||
+        cargo_probe_dir=""
+    [ -n "$cargo_probe_dir" ] || cargo_probe_dir="$GOLEM_CARGO_CACHE_DIR"
+    # Refuse the filesystems that produce the wedge. virtiofs is the measured
+    # culprit; fuse.* covers the bindfs overlay layered on it, and 9p is the
+    # same class of host-passthrough mount on other Docker backends. An
+    # UNKNOWN type (no /proc/mounts — e.g. a bare macOS host) also refuses:
+    # skipping costs only the optimisation, while seeding onto a wedging mount
+    # would relocate the very failure this prevents.
+    cargo_fs="$(cargo_cache_fstype "$cargo_probe_dir")"
+    cargo_fs_ok=""
+    case "$cargo_fs" in
+        "" | virtiofs | fuse | fuse.* | 9p) ;;
+        *) cargo_fs_ok="yes" ;;
+    esac
+    # The write is only safe while the target is IGNORED by the repo. That is
+    # true of librarian (.claude/settings.local.json is in the TRACKED
+    # .gitignore) but is not a property of every consuming repo, and the whole
+    # reason this mechanism was chosen over `.cargo/config.toml` is that an
+    # untracked file makes the worktree read DIRTY — whereupon worktree-rm.sh
+    # refuses teardown on every golem. So ASK GIT rather than assume: if the
+    # path is not ignored, skip silently and leave the worktree pristine. Found
+    # the hard way — the first implementation skipped this check and turned 18
+    # unrelated worktree-rm tests red with `?? .claude/`.
+    cargo_ignored=""
+    if [ -n "$cargo_fs_ok" ] && command git -C "$wt" check-ignore -q \
+        ".claude/settings.local.json" 2>/dev/null; then
+        cargo_ignored="yes"
+    fi
+    if [ -n "$cargo_ignored" ] && command mkdir -p "$cargo_seed_target" 2>/dev/null; then
+        cargo_settings="$wt/.claude/settings.local.json"
+        command mkdir -p "$wt/.claude"
+        [ -f "$cargo_settings" ] || command printf '{}\n' >"$cargo_settings"
+        # Temp file ADJACENT to the target, committed with an atomic `mv` —
+        # never a `cat >` truncate, which on an interrupted write would leave
+        # the worktree's settings corrupt and its permission gates unloadable.
+        # Same discipline seed-worktree-trust.sh documents for ~/.claude.json.
+        cargo_tmp="$cargo_settings.944.$$"
+        if command jq --arg t "$cargo_seed_target" \
+            '.env = ((.env // {}) + {CARGO_TARGET_DIR: $t})' \
+            "$cargo_settings" >"$cargo_tmp" 2>/dev/null &&
+            command mv "$cargo_tmp" "$cargo_settings"; then
+            command echo "  seeded CARGO_TARGET_DIR=$cargo_seed_target ($cargo_fs)"
+        else
+            # Leave the original settings untouched on any failure: a malformed
+            # existing file, a jq error, or a failed rename all land here.
+            command rm -f "$cargo_tmp"
+        fi
+    fi
+fi
 
 # Seed a workspace-trust entry for the new worktree path so the copied
 # settings.local.json (defaultMode "auto" + push/PR `ask` gates) actually

@@ -242,6 +242,19 @@
 # Gitignored machine-local files a push from inside a worktree needs.
 : "${GOLEM_WORKTREE_LOCAL_FILES:=.env .claude/settings.local.json}"
 
+# Root under which each worktree gets its own Rust build-artifact directory
+# (worktree-new.sh seeds CARGO_TARGET_DIR=<this>/issue-N, #944). Points OFF the
+# repo mount on purpose: on the macOS Docker stack the repo lives on virtiofs,
+# whose lost inode mappings are what wedge a worktree (#936), and every wedged
+# entry in the live remnants was a high-churn `target/debug/incremental/*.o`.
+#
+# A DEFAULT, not an assertion: worktree-new.sh probes this location at runtime
+# (present, writable, and not itself on the wedging filesystem) and no-ops when
+# it is unsuitable — `/cache` is NOT assumed safe. Measured in the devcontainer:
+# both /cache and /workspace report overlayfs, so the probe has to be real.
+# Override to relocate it, or to a nonexistent path to disable the seed.
+: "${GOLEM_CARGO_CACHE_DIR:=/cache/target}"
+
 # Liveness/heartbeat (SOFT, advisory — never auto-kills a golem):
 # how long a golem may show no progress before it is flagged a possible stall,
 # and the poll interval of the liveness stream.
@@ -306,7 +319,8 @@ export TOKEN_REPORT_TIMEOUT TOKEN_REPORT_RECONCILE_PCT
 export CONTEXT_BUDGET_THRESHOLD CONTEXT_BUDGET_FLOOR
 
 export GOLEM_WORKTREE_DIR GOLEM_STATUS_DIR GOLEM_BRANCH_PREFIX GOLEM_LEVEL \
-    GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_STALL_THRESHOLD \
+    GOLEM_MODEL GOLEM_BASE_REF GOLEM_WORKTREE_LOCAL_FILES GOLEM_CARGO_CACHE_DIR \
+    GOLEM_STALL_THRESHOLD \
     GOLEM_HEARTBEAT_INTERVAL GOLEM_LIVENESS_SUMMARY_INTERVAL \
     GOLEM_INBOX_WAIT GOLEM_INBOX_POLL GOLEM_WORK_MAX_AGE \
     GOLEM_MODE_FIX_ATTEMPTS GOLEM_MODE_CHECK_INTERVAL \
