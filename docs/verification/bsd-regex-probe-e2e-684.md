@@ -198,4 +198,6 @@ explicit `# lint-allow-gnu-regex:` marker — marking only the one that trips
 today would leave the other silently depending on the scanner's blind spot.
 
 Verified by mutation: injecting `sed -E 's/\bx\b/y/'` into a corpus file turns
-the gate red naming that file; reverting returns it to 2250/2250.
+the gate red naming that file; reverting returns it to 2258/2258 (the count on
+`4811a53`, this change's base — the mutation was first run against 2250/2250 on
+the pre-rebase base, with the same result).
