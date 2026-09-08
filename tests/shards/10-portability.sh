@@ -17,6 +17,12 @@
 # Add a stage HERE, not in run-all.sh — and add it to exactly one shard.
 
 run_stage "Action pin format" bash "$SCRIPT_DIR/lint-action-pins.sh"
+# merge-gate composition (#947). Sits beside the action-pin gate because it is
+# the other structural reader of .github/workflows/ci.yml, not because it is
+# about portability. merge-gate is the single required branch-protection check,
+# so nothing else in the suite notices if bsd-probe falls back out of its
+# `needs:` — every shard would stay green while the gate stopped gating.
+run_stage "merge-gate composition" bash "$SCRIPT_DIR/validate-merge-gate.sh"
 run_stage "Shell portability (bash 3.2 clean)" bash "$SCRIPT_DIR/lint-shell-portability.sh"
 # Regex-dialect probe (#684). Here it asserts only the POSIX baseline — the
 # spellings #679 migrated TO — which must hold on every host; its word-boundary

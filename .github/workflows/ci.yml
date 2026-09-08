@@ -768,20 +768,27 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  # BSD/macOS regex probe (issue #684). INFORMATIONAL, never a merge gate:
-  # deliberately absent from merge-gate's `needs:` below, same posture as the
-  # coverage job.
+  # BSD/macOS regex probe (issue #684). BLOCKING as of #947 — it is in
+  # merge-gate's `needs:` below, unlike the coverage job.
   #
   # WHY IT EXISTS. #679 swept GNU-only regex out of the shell scanners because
   # BSD grep/sed read `\s`/`\w`/BRE `\|` as literals — the pattern stops matching,
   # the scanner emits zero rows, and the scan still exits 0, so macOS sees a clean
-  # report of nothing. One construct was left out of that ban on purpose: `\b`,
-  # used at 38 sites. The belief that modern BSD `grep -E` supports it had never
-  # been checked on a BSD host, only asserted, and #679 declined to change 38
-  # sites on an assumption. This job is what turns that into evidence: it is the
-  # repo's ONLY BSD userland, and its output decides whether `\b` becomes a
-  # documented exemption in lint-shell-portability.sh or those sites get ported
-  # to POSIX `grep -w`.
+  # report of nothing. One construct was left out of that ban on purpose: `\b`.
+  # The belief that modern BSD `grep -E` supports it had never been checked on a
+  # BSD host, only asserted, and #679 declined to change those sites on an
+  # assumption. This job is what turned that into evidence: it is the repo's ONLY
+  # BSD userland.
+  #
+  # THAT QUESTION IS NOW SETTLED, and the answer lives in
+  # tests/lint-shell-portability.sh (test_word_boundary_exemption_is_pinned).
+  # Measured here on macos-latest (BSD grep 2.6.0-FreeBSD): `\b` is SUPPORTED
+  # under both `grep -E` and plain `grep` (BRE), so the tree's sites are safe and
+  # the ban deliberately omits it — no port to `grep -w` was needed. BSD **sed**
+  # is the half that does break (it reads `\b` as a literal); zero sites use it
+  # there, and that asymmetry is recorded as an asserted KNOWN GAP rather than
+  # left to be rediscovered. Do not re-litigate this from a GNU host, where the
+  # evidence cannot be reproduced.
   #
   # WHY NOT THE FULL SUITE. Running tests/run-all.sh here would be the obvious
   # move and is deliberately not done. Its ~60 stages have never run under BSD
@@ -793,37 +800,58 @@ jobs:
   # confirming under a second userland, and the gate self-skips cleanly when its
   # runtime is absent).
   #
-  # NON-BLOCKING BY DESIGN, for now. This is the first BSD exposure in the repo's
-  # history; a surprise here must not red unrelated PRs. Once the `\b` question
-  # is settled and the probe has run clean for a while, promoting it into
-  # merge-gate's `needs:` is the natural follow-up.
+  # WHY IT NOW BLOCKS (#947). It was non-blocking for its first stretch of life,
+  # on the reasoning that a first BSD exposure must not red unrelated PRs. Both
+  # conditions that comment set for promotion have since been met:
+  #
+  #   - The `\b` question is settled (above), so a red leg here is a real finding
+  #     rather than an open dialect argument.
+  #   - The probe ran clean: 7 consecutive green legs on `main`, from
+  #     2026-09-07T17:41Z (the #945 merge closing #932) through 2026-09-08T04:02Z.
+  #     The failures immediately before that window all predate the merge and ARE
+  #     the #932 defect — i.e. the one time this job went red, it was right.
+  #
+  # Leaving it informational had become the very exposure it was built to close,
+  # one level up: before #906 the job had never actually executed (a bash-3.2
+  # parse error made it exit 0 and report a false pass for its whole life), so it
+  # went from decorative to load-bearing without its gating status catching up. A
+  # signal watched by nobody that gates nothing cannot stop a BSD-only regression
+  # from merging.
   #
   # Fork PRs are skipped on the same trust boundary as quality-gates: checkout
   # pulls the PR HEAD, so tests/probe-bsd-regex.sh would be untrusted
-  # contributor code executing on the runner.
+  # contributor code executing on the runner. merge-gate tolerates that skip ONLY
+  # on a fork event — a skip on a same-repo push fails the gate, so this job
+  # silently ceasing to run cannot read as a pass.
   #
-  # COST, ACCEPTED DELIBERATELY. macOS runners bill at a higher multiplier than
-  # Linux (~10x), and this job has no path filter, so it runs on every same-repo
-  # push/PR including ones touching only docs. That is a considered trade, not an
-  # oversight:
+  # COST, RE-MEASURED AND MUCH SMALLER THAN IT LOOKS. macOS runners bill at a
+  # higher multiplier than Linux (~10x) and this job has no path filter, so the
+  # obvious worry is that promoting it makes every docs-only PR wait on a macOS
+  # leg. Measured, it does not:
   #
-  #   - A per-job `paths:` filter does not exist in Actions — `paths` is a
-  #     workflow-level `on:` key, so scoping this one job would mean splitting it
-  #     into its own workflow file. A step-level changed-files check would not
-  #     help either: billing starts at runner spin-up, which has already happened
-  #     by the time any step can decide to skip.
-  #   - The work is a handful of `grep`/`sed` invocations plus one parity gate —
-  #     seconds of compute. `timeout-minutes: 5` caps the exposure of a hang at
-  #     roughly a Linux job's typical run, and this repo is public (where GitHub
-  #     does not bill Actions minutes at all).
+  #   - This job takes ~30-40s wall clock. merge-gate does not start until ~9
+  #     MINUTES later, because it also waits on quality-gates, whose
+  #     `10-portability` shard alone is ~10-11 min. The probe finishes long
+  #     inside that window, so promoting it adds ZERO time to the critical path —
+  #     a docs-only PR was already waiting on the shard matrix, which strictly
+  #     dominates.
+  #   - This repo is PUBLIC, where GitHub does not bill Actions minutes at all.
+  #     The ~10x multiplier is a non-cost here; it would matter on a private fork
+  #     of this setup, which is why the multiplier is still named rather than
+  #     dropped.
   #   - Running it everywhere is also the point: a BSD regression can be
   #     introduced by a change to any scanner, and a path filter narrow enough to
   #     save meaningful minutes would be wide enough to miss one.
   #
-  # If the cost ever does bite, the fix is a separate workflow file with
-  # `on.pull_request.paths` — not a step-level guard.
+  # A per-job `paths:` filter does not exist in Actions — `paths` is a
+  # workflow-level `on:` key, so scoping this one job would mean splitting it
+  # into its own workflow file. A step-level changed-files check would not help
+  # either: billing starts at runner spin-up, which has already happened by the
+  # time any step can decide to skip. So if the calculus ever does change (this
+  # repo going private, or the probe growing far beyond seconds of compute), the
+  # fix is that separate workflow file — not a step-level guard.
   bsd-probe:
-    name: BSD/macOS regex probe (informational)
+    name: BSD/macOS regex probe
     runs-on: macos-latest
     needs: validate-manifests
     timeout-minutes: 5
@@ -857,8 +885,8 @@ jobs:
   # Aggregating gate (issue #53). A skipped step does not fail its job, and a
   # skipped JOB reports neither success nor failure — so without this, a fork PR
   # (quality-gates skipped) would leave no single check that means "everything
-  # that should have run, ran and passed". merge-gate consumes both upstream
-  # results via `needs` + `if: always()` (so it runs even when quality-gates is
+  # that should have run, ran and passed". merge-gate consumes every upstream
+  # result via `needs` + `if: always()` (so it runs even when an upstream job is
   # skipped or a dependency failed) and is the safe candidate for a required
   # branch-protection check.
   #
@@ -866,9 +894,16 @@ jobs:
   #   - validate-manifests must have succeeded (it runs on every event); AND
   #   - quality-gates must have succeeded, OR been legitimately skipped because
   #     this is a fork PR (the shell suite is withheld from forks by design;
-  #     it runs on maintainer push to an in-repo branch and at release time).
-  # Any other state — a real failure, a cancellation, or quality-gates skipped
+  #     it runs on maintainer push to an in-repo branch and at release time); AND
+  #   - bsd-probe must have succeeded, OR been skipped on that same fork-PR
+  #     boundary (#947 — see the rationale above the job for why it now blocks).
+  # Any other state — a real failure, a cancellation, or either job skipped
   # on a NON-fork event — fails the gate.
+  #
+  # The two fork-skippable gates are evaluated through one `check_gate` helper
+  # rather than duplicated branches, and BOTH are checked before any exit, so a
+  # green quality-gates cannot short-circuit past the BSD result. `rc` collects
+  # the verdict so a run failing both reports both, instead of only the first.
   #
   # Org-member-fork edge: a PR from an org member's personal fork has
   # head.repo.full_name != github.repository, so it is treated as external and
@@ -900,7 +935,7 @@ jobs:
   merge-gate:
     name: Merge gate
     runs-on: ubuntu-latest
-    needs: [validate-manifests, quality-gates]
+    needs: [validate-manifests, quality-gates, bsd-probe]
     if: always()
     timeout-minutes: 5
     steps:
@@ -910,6 +945,7 @@ jobs:
         env:
           MANIFESTS_RESULT: ${{ needs.validate-manifests.result }}
           QUALITY_RESULT: ${{ needs.quality-gates.result }}
+          BSD_RESULT: ${{ needs.bsd-probe.result }}
           IS_FORK_PR: >-
             ${{ github.event_name == 'pull_request' &&
                 github.event.pull_request.head.repo.full_name != github.repository }}
@@ -917,6 +953,7 @@ jobs:
           set -euo pipefail
           echo "validate-manifests: ${MANIFESTS_RESULT}"
           echo "quality-gates:      ${QUALITY_RESULT}"
+          echo "bsd-probe:          ${BSD_RESULT}"
           echo "fork PR:            ${IS_FORK_PR}"
 
           if [ "${MANIFESTS_RESULT}" != "success" ]; then
@@ -924,15 +961,38 @@ jobs:
             exit 1
           fi
 
-          if [ "${QUALITY_RESULT}" = "success" ]; then
-            echo "All required gates passed."
-            exit 0
+          # Both fork-skippable gates are checked before ANY exit, so neither can
+          # be shadowed by the other's success. (Before #947 the quality-gates
+          # success path exited 0 immediately; adding bsd-probe under that shape
+          # would have left the new gate unreachable on every green run — the
+          # promotion would have looked done while gating nothing.)
+          rc=0
+
+          # check_gate <label> <result> <skip-notice>
+          # Accepts `success`, or `skipped` ONLY on a fork PR. Anything else —
+          # failure, cancellation, or a skip on a NON-fork event — is refused.
+          # That last case is the one that matters most: it is what stops a job
+          # quietly ceasing to run from reading as a pass (#538/#571).
+          check_gate() {
+            if [ "$2" = "success" ]; then
+              return 0
+            fi
+            if [ "$2" = "skipped" ] && [ "${IS_FORK_PR}" = "true" ]; then
+              echo "::notice::$3"
+              return 0
+            fi
+            echo "::error::$1 result '$2' is not acceptable for this event."
+            rc=1
+          }
+
+          check_gate "quality-gates" "${QUALITY_RESULT}" \
+            "quality-gates shell suite is skipped for fork PRs by design (issue #47); it runs on maintainer push to an in-repo branch and at release time. Manifest + action-pin gates did run."
+
+          check_gate "bsd-probe" "${BSD_RESULT}" \
+            "bsd-probe is skipped for fork PRs by design (#684); checkout pulls the PR HEAD, so the probe would be untrusted contributor code on the runner. It runs on maintainer push to an in-repo branch."
+
+          if [ "$rc" -ne 0 ]; then
+            exit 1
           fi
 
-          if [ "${QUALITY_RESULT}" = "skipped" ] && [ "${IS_FORK_PR}" = "true" ]; then
-            echo "::notice::quality-gates shell suite is skipped for fork PRs by design (issue #47); it runs on maintainer push to an in-repo branch and at release time. Manifest + action-pin gates did run."
-            exit 0
-          fi
-
-          echo "::error::quality-gates result '${QUALITY_RESULT}' is not acceptable for this event."
-          exit 1
+          echo "All required gates passed."
