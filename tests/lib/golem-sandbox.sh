@@ -19,6 +19,13 @@
 #   * HOME is repointed at the sandbox, because worktree-new transitively seeds
 #     trust into $HOME/.claude.json via seed-worktree-trust.sh; without the
 #     override a sandbox run would write the operator's real config.
+#   * GOLEM_CARGO_CACHE_DIR is pointed at a nonexistent path inside the sandbox,
+#     so worktree-new.sh's cargo-target seed (#944) reads as UNSUITABLE and
+#     no-ops. Without it the real default (/cache) is inherited: on any machine
+#     where /cache happens to exist and be writable — every devcontainer — the
+#     suite would WRITE THERE and every worktree-new test would gain an extra
+#     output line. Same pin-the-ambient-dependency reasoning as GOLEM_PLUGIN_PROBE
+#     and TMUX_TMPDIR; the seed's own tests set it explicitly instead.
 #   * GOLEM_PLUGIN_PROBE is pointed at a nonexistent path, so golem-launch.sh's
 #     plugin-resolvability guard (#946) reads as UNDETERMINABLE and skips. This
 #     is the truthful setting, not a mute: HOME already points at an empty
@@ -116,6 +123,7 @@ run_in() {
             GOLEM_STATUS_DIR=.worktrees/.status \
             GOLEM_BASE_REF=HEAD \
             GOLEM_WORKTREE_LOCAL_FILES="" \
+            GOLEM_CARGO_CACHE_DIR="$dir/no-cargo-cache" \
             "$REAL_BASH" "$script" "$@" 2>&1)" || RUN_RC=$?
 }
 

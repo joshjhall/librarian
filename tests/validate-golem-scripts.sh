@@ -98,6 +98,7 @@ source "$SCRIPT_DIR/lib/golem-sandbox.sh"
 source_fragments "$SCRIPT_DIR/golem-scripts" \
     10-launch.sh \
     20-worktree-new.sh \
+    25-worktree-new-cargo.sh \
     30-config-repo-root.sh \
     40-worktree-rm.sh \
     45-worktree-rm-symlink.sh \
@@ -207,6 +208,17 @@ run_fragment_test test_worktree_new_credential_helper_identical_existing_is_sile
 run_fragment_test test_worktree_new_credential_helper_multivalued_existing_is_preserved "worktree-new: a multi-valued helper reads as configured and survives whole (#877)"
 run_fragment_test test_worktree_new_credential_helper_multivalued_ending_in_ours_is_preserved "worktree-new: a multi-valued helper whose last value is ours is still preserved — pins --get-all (#877)"
 run_fragment_test test_worktree_new_credential_helper_global_scope_does_not_suppress_seed "worktree-new: a GLOBAL-scope helper does not suppress the local seed — read scope matches write (#877 review)"
+run_fragment_test test_worktree_new_cargo_seeds_target_dir "worktree-new: seeds a per-worktree CARGO_TARGET_DIR into settings.local.json (#944)"
+run_fragment_test test_worktree_new_cargo_target_is_per_worktree "worktree-new: two worktrees get DISTINCT cargo target dirs — no shared cargo lock (#944)"
+run_fragment_test test_worktree_new_cargo_absent_cache_is_noop "worktree-new: an absent cache location leaves behaviour unchanged (#944)"
+run_fragment_test test_worktree_new_cargo_unwritable_cache_is_noop "worktree-new: an unwritable cache location leaves behaviour unchanged (#944)"
+run_fragment_test test_worktree_new_cargo_refuses_wedging_filesystems "worktree-new: the fs probe refuses virtiofs/fuse/9p/unknown (#944)"
+run_fragment_test test_worktree_new_cargo_fstype_resolves_under_root_mount "worktree-new: the fs probe resolves the root mountpoint — no '//*' prefix bug (#944)"
+run_fragment_test test_worktree_new_cargo_probes_through_a_symlinked_cache_dir "worktree-new: the fs probe canonicalizes a SYMLINKED cache dir — no false-negative virtiofs (#944 review c1)"
+run_fragment_test test_worktree_new_cargo_seed_leaves_worktree_clean "worktree-new: the seed leaves the worktree CLEAN — teardown still succeeds (#944 AC5)"
+run_fragment_test test_worktree_new_cargo_malformed_settings_leaves_original_intact "worktree-new: a malformed settings file leaves the original intact and cleans the temp (#944 review c1)"
+run_fragment_test test_worktree_new_cargo_unignored_settings_is_noop "worktree-new: refuses to seed where the settings path is not gitignored — worktree stays clean (#944)"
+run_fragment_test test_worktree_new_cargo_no_jq_is_noop "worktree-new: jq absent — the cargo seed skips cleanly (#944)"
 run_fragment_test test_config_repo_root_no_hardcoded_usr_bin "config.sh: repo_root has no hardcoded /usr/bin/* tool paths (#278)"
 run_fragment_test test_config_repo_root_honors_path "config.sh: repo_root resolves via PATH, not command git (#278)"
 run_fragment_test test_config_repo_root_dirname_root_edge "config.sh: repo_root returns '/' for a /.git common dir (#278)"
