@@ -350,7 +350,7 @@ It runs as a stage in **every** shard, because the shard that owns a gate is
 exactly the shard that might not be running.
 (3) **The split is bounded by its largest stage, and #964 balanced it to that
 floor.** Shell portability is indivisible and is essentially its whole leg (335s
-of 337s in run 34187725583; the other eight stages cost 0–1s each), so
+of 337s in run 34187725583; every other stage in that leg costs 0–1s), so
 `10-portability` sets the floor no matter how the rest is arranged. That bound is
 **structural, not a number**: the stage's own runtime varies ~8% run to run on
 identical code, so never carry one figure forward as fixed — and never pair a

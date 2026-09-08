@@ -5,7 +5,9 @@
 # THIS SHARD IS SIZED BY ITS FLOOR, NOT BY A THEME. `Shell portability` cannot
 # be subdivided and is essentially the whole leg, so it sets the matrix's LOWER
 # BOUND: no arrangement of the three shards makes the suite finish sooner than
-# that one stage. The other eight stages here cost 0-1s each.
+# that one stage. Every other stage in the leg costs 0-1s (eight of them: the
+# seven listed below plus `Shard partition`, which run-all.sh injects into every
+# shard rather than a shard file declaring it).
 #
 # The bound is STRUCTURAL, not a specific number, and the two must not be mixed.
 # In the post-move composition (run 34187725583) the stage was 335s of a 337s

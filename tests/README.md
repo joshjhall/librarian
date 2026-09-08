@@ -42,7 +42,7 @@ run, never across two.
 Sharding cut the CI job from ~22 min to roughly the largest shard.
 `10-portability` sets the floor: its Shell portability stage cannot be
 subdivided and is essentially that whole leg (335s of 337s in run 34187725583 —
-the other eight stages cost 0–1s each), so no partition finishes sooner than
+every other stage in that leg costs 0–1s), so no partition finishes sooner than
 that one stage. The bound is **structural, not a number** — the stage's own
 runtime varies ~8% run to run on identical code. Two cautions when re-deriving
 it: pair a stage time only with a leg total from the **same** run (the pre-#964

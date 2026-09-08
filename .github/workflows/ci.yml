@@ -110,8 +110,8 @@ jobs:
     # growth into the opaque cancellation described below.
     #
     # THE FLOOR IS `Shell portability` — indivisible, and essentially the whole
-    # 10-portability leg (335s of 337s in run 34187725583; the other eight stages
-    # cost 0-1s each). No partition finishes sooner than that one stage, which is
+    # 10-portability leg (335s of 337s in run 34187725583; every other stage in
+    # that leg costs 0-1s). No partition finishes sooner than that one stage, which is
     # why that leg cannot be balanced DOWN and the other two are balanced up to
     # it. That is a structural bound, not a fixed number: the stage's own runtime
     # varies ~8% run to run on identical code. Do not compare a stage time against
