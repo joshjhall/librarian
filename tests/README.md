@@ -37,7 +37,10 @@ the pre-push hook are unchanged; `--shard <name>` runs one, which is what CI's
 
 Sharding cut the CI job from ~22 min to roughly the largest shard.
 `10-portability` sets the floor: its Shell portability stage alone is 364s and
-cannot be subdivided, so no partition finishes sooner than that.
+cannot be subdivided, so no partition finishes sooner than that. (Older notes
+quote 547s for the same stage — that was the pre-sharding *serial* run, all ~96
+stages on one runner. The stage did not get faster; 364s is what it costs inside
+its own matrix leg, and it reproduces: 364s and 357s in two recent green runs.)
 
 **#964 re-balanced these to the floor.** The original split was drawn
 before #961 fixed an unbounded capture that made `golem/worktree helper scripts`

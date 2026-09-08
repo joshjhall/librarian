@@ -7,6 +7,15 @@
 # of the other two shards can make the suite finish sooner than this one stage.
 # Everything else here is small enough to ride along without raising that floor.
 #
+# ON THE 364s, since the older 547s figure is still quoted in #960's history:
+# they measure different things. 547s came from the PRE-SHARDING serial run, all
+# ~96 stages on one runner; 364s is this stage inside its own matrix leg. The
+# stage itself did not get faster and nothing in #964 touched
+# tests/lint-shell-portability.sh. 364s is reproducible, not a lucky sample —
+# runs 34166830481 and 34165410091 measured 364s and 357s. Re-derive it the same
+# way (read the `[ok] Shell portability … (Ns)` line from a green leg) rather
+# than comparing against a serial-era number.
+#
 # #964 traded away the original grouping deliberately. This shard used to hold
 # every language-level gate (shellcheck, ruff, typos, the bash<->python
 # differential) because they share a theme and a toolchain — a real and readable

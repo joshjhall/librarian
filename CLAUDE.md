@@ -350,7 +350,9 @@ It runs as a stage in **every** shard, because the shard that owns a gate is
 exactly the shard that might not be running.
 (3) **The split is bounded by its largest stage, and #964 balanced it to that
 floor.** Shell portability alone is 364s and indivisible, so `10-portability`
-sets the floor no matter how the rest is arranged. The three legs now sit within
+sets the floor no matter how the rest is arranged (the 547s this file used to
+quote was the pre-sharding **serial** run — same stage, different context; 364s
+is its cost inside a matrix leg and reproduces across runs). The three legs now sit within
 ~12s of each other (~365 / 355 / 353s of stage time) — which means
 `30-scanners` is **no longer the free slot for a new heavy gate**; re-measure all
 three sums before adding one, and note that five stages live there for balance
