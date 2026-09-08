@@ -40,11 +40,13 @@ stages swing ±30% between runs with no code change. Compare sums within a singl
 run, never across two.
 
 Sharding cut the CI job from ~22 min to roughly the largest shard.
-`10-portability` sets the floor: its Shell portability stage alone is 364s and
-cannot be subdivided, so no partition finishes sooner than that. (Older notes
-quote 547s for the same stage — that was the pre-sharding *serial* run, all ~96
-stages on one runner. The stage did not get faster; 364s is what it costs inside
-its own matrix leg, and it reproduces: 364s and 357s in two recent green runs.)
+`10-portability` sets the floor: its Shell portability stage cannot be
+subdivided and is ~95% of that leg, so no partition finishes sooner than that
+one stage. The bound is **structural, not a number** — the same stage measured
+364s, 357s and 335s across three runs of identical code. (Older notes quote 547s
+for it; that was the pre-sharding *serial* run, all ~96 stages on one runner, so
+it is not comparable. The stage never got faster — the measurement context
+changed.)
 
 **#964 re-balanced these to the floor.** The original split was drawn
 before #961 fixed an unbounded capture that made `golem/worktree helper scripts`

@@ -2,24 +2,27 @@
 # The Shell-portability shard: one indivisible stage, and whatever fits beside
 # it (#960, re-balanced #964).
 #
-# THIS SHARD IS SIZED BY ITS FLOOR, NOT BY A THEME. `Shell portability` is 364s
-# and cannot be subdivided, so it sets the matrix's LOWER BOUND: no arrangement
-# of the three shards can make the suite finish sooner than this one stage.
-# Everything else here is small enough to ride along without raising that bound.
+# THIS SHARD IS SIZED BY ITS FLOOR, NOT BY A THEME. `Shell portability` is ~95%
+# of this leg and cannot be subdivided, so it sets the matrix's LOWER BOUND: no
+# arrangement of the three shards makes the suite finish sooner than that one
+# stage. Everything else here rides along without materially raising the bound.
 #
-# Note "lower bound" is not the same as "the slowest leg". Post-#964 the legs are
-# close enough (337 / 350 / 260s) that 20-golem currently finishes last, and
-# which leg leads varies with runner speed. This shard is the one that CANNOT
-# get faster; that is the property that matters here.
+# The bound is STRUCTURAL, not a specific number. Measured samples of that stage:
+# 364s, 357s, 335s (runs 34166830481, 34165410091, 34187725583) — same code, ~8%
+# spread, and the leg total tracks it (337s in the last of those). So the durable
+# claim is "this stage is indivisible and dominates its leg", not "the floor is
+# N seconds". Re-derive per run by reading its `[ok] Shell portability … (Ns)`
+# line; do not carry a number across runs.
 #
-# ON THE 364s, since the older 547s figure is still quoted in #960's history:
-# they measure different things. 547s came from the PRE-SHARDING serial run, all
-# ~96 stages on one runner; 364s is this stage inside its own matrix leg. The
-# stage itself did not get faster and nothing in #964 touched
-# tests/lint-shell-portability.sh. 364s is reproducible, not a lucky sample —
-# runs 34166830481 and 34165410091 measured 364s and 357s. Re-derive it the same
-# way (read the `[ok] Shell portability … (Ns)` line from a green leg) rather
-# than comparing against a serial-era number.
+# WHY THE OLDER 547s FIGURE IS NOT COMPARABLE: it came from the PRE-SHARDING
+# serial run, all ~96 stages on one runner. The stage did not get faster, and
+# nothing in #964 touched tests/lint-shell-portability.sh — the measurement
+# context changed, not the code.
+#
+# "Lower bound" is also not "the slowest leg". Post-#964 the legs are close
+# enough (337 / 350 / 260s in run 34187725583) that 20-golem finished last, and
+# which one leads varies with runner speed. This shard is the one that CANNOT get
+# faster; that is the property that matters here.
 #
 # #964 traded away the original grouping deliberately. This shard used to hold
 # every language-level gate (shellcheck, ruff, typos, the bash<->python
@@ -32,10 +35,11 @@
 # three legs are 337 / 350 / 260s, within ~90s of each other instead of ~347s,
 # and CI wall clock went 542s -> 370s.
 #
-# SO: this shard has the least slack of the three (30-scanners has ~90s more).
-# Prefer 30-scanners for a new gate unless it genuinely needs to sit beside Shell
-# portability — and measure all three sums first either way, since the legs are
-# close enough that a single 50s+ stage decides which one finishes last.
+# SO: prefer 30-scanners for a new gate — it carries ~90s more slack than this
+# shard — unless the gate genuinely needs to sit beside Shell portability. Either
+# way measure all three sums within one run first: 337 / 350 / 260s leaves only
+# ~13s between the top two, so a stage of even that size changes which leg
+# finishes last, while 30-scanners can absorb considerably more.
 #
 # SOURCED by tests/run-all.sh (and by tests/validate-shards.sh with a stub
 # run_stage), never executed — hence no shebang. Sourcing with a stub run_stage

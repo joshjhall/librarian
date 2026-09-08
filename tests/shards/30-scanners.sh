@@ -138,15 +138,17 @@ run_stage "OKF bundle gate behavior" bash "$SCRIPT_DIR/validate-okf-bundle-gate.
 # --- Balance-motivated arrivals (#964) --------------------------------------
 #
 # The five stages below do NOT belong to this shard's theme. Four came from
-# 10-portability, where they sat beside `Shell portability` (364s, indivisible)
-# and made that leg the critical path at 522s; one came from 20-golem. Moving
-# them cut CI wall clock from 542s to 370s (measured, run 34187725583). The
-# remaining floor is Shell portability alone, which no further rebalance beats.
+# 10-portability, where they sat beside the indivisible `Shell portability` stage
+# and made that leg the slowest at 522s; one came from 20-golem. Moving them cut
+# CI wall clock from 542s to 370s (measured, run 34187725583). What remains is
+# the Shell-portability floor, which no further rebalance beats.
 #
 # Each is thematically a language/runtime gate, and each will read as misplaced
 # here. That is the trade #964 made knowingly: theme lost to ~157s per run. If
-# you move one back, re-measure all three shard sums first — the partition is
-# balanced to within ~12s, so a single 50s+ stage changes which leg is critical.
+# you move one back, re-measure all three shard sums first — this shard has the
+# most slack of the three (260s against 337s and 350s in that run), so it can
+# absorb a stage the others cannot, and moving one OUT of here is the change most
+# likely to cost wall clock.
 #
 # None of these sources tests/lib/golem-sandbox.sh, which is why they were
 # eligible to move at all: the worktree-mutating suites must stay together in

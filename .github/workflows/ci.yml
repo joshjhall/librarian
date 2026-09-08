@@ -109,9 +109,13 @@ jobs:
     # hang, and tightening it to track a balanced partition would convert normal
     # growth into the opaque cancellation described below.
     #
-    # THE FLOOR IS `Shell portability`, 364s and indivisible. No partition can
-    # finish sooner than that one stage, so 10-portability is the critical path
-    # by construction and the other two are balanced up to it, not against it.
+    # THE FLOOR IS `Shell portability` — indivisible, and ~95% of its leg. No
+    # partition finishes sooner than that one stage, which is why 10-portability
+    # cannot be balanced DOWN and the other two are balanced up to it. That is a
+    # structural bound, not a fixed number: the stage measured 364s / 357s / 335s
+    # across three runs of the same code. It is also NOT the same claim as "the
+    # slowest leg" — at these margins 20-golem finished last (350s vs 337s), and
+    # which leg leads varies with runner speed.
     #
     # SETUP IS NOT THE LEVER — measured for #964 AC1, because the issue proposed
     # per-shard conditional setup on an estimate of ~120s/leg. Summing every
