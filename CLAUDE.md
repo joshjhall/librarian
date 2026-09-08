@@ -348,9 +348,19 @@ newly makes possible: with N lists a renamed gate can stop running while every
 shard stays green, and each direction has a negative fixture proving it fires.
 It runs as a stage in **every** shard, because the shard that owns a gate is
 exactly the shard that might not be running.
-(3) **The split is bounded by its largest stage.** Shell portability alone was
-547s of a 1299s serial run, so `10-portability` sets the floor (~10-11 min) no
-matter how the rest is arranged. If a shard nears its `timeout-minutes`,
+(3) **The split is bounded by its largest stage, and #964 balanced it to that
+floor.** Shell portability alone is 364s and indivisible, so `10-portability`
+sets the floor no matter how the rest is arranged. The three legs now sit within
+~12s of each other (~365 / 355 / 353s of stage time) — which means
+`30-scanners` is **no longer the free slot for a new heavy gate**; re-measure all
+three sums before adding one, and note that five stages live there for balance
+rather than theme (tagged at their call sites). Two things #964 measured that are
+easy to re-derive wrongly: per-leg **setup is 17–22s, not ~120s** (the larger
+figure double-counts runner queue time, which is why per-shard conditional setup
+was rejected — it would save seconds and risks a shard silently losing a linter,
+the #538/#571 inert-gate shape); and a rebalance that touches only
+`20-golem`/`30-scanners` **cannot** move wall clock, since `10-portability` is
+the critical path by construction. If a shard nears its `timeout-minutes`,
 re-balance or add a shard — do **not** raise the cap, which is what #834
 and #932 each did before this split.
 (4) **Four gates `sed`-slice functions out of `run-all.sh`** by the anchor

@@ -29,15 +29,32 @@ The stage list lives in `tests/shards/NN-<area>.sh`, not in `run-all.sh`. A bare
 the pre-push hook are unchanged; `--shard <name>` runs one, which is what CI's
 `quality-gates` matrix passes.
 
-| Shard | Area | Serial time |
+| Shard | Area | Stage time |
 |---|---|---|
-| `10-portability` | shell portability, shellcheck, ruff, typos, bash↔python parity | ~547s |
-| `20-golem` | golem/worktree helpers, PreToolUse hooks, stop/route decisions | ~344s |
-| `30-scanners` | `check-*` detector fixtures, contract/prose/doc gates | ~408s |
+| `10-portability` | shell portability (364s, indivisible), ruff, typos, regex probes | ~365s |
+| `20-golem` | golem/worktree helpers, PreToolUse hooks, stop/route decisions | ~355s |
+| `30-scanners` | `check-*` detector fixtures, contract/prose/doc gates, shellcheck, bash↔python parity | ~353s |
 
-Sharding cut the CI job from ~22 min to roughly the largest shard. `10-portability`
-sets the floor: its Shell portability stage alone was 547s of a 1299s serial run,
-and no split can go below one indivisible stage.
+Sharding cut the CI job from ~22 min to roughly the largest shard.
+`10-portability` sets the floor: its Shell portability stage alone is 364s and
+cannot be subdivided, so no partition finishes sooner than that.
+
+**#964 re-balanced these to the floor.** The original split was drawn
+before #961 fixed an unbounded capture that made `golem/worktree helper scripts`
+read as 1175s instead of 234s, leaving the legs at 522 / 376 / 175s. Four gates
+moved out of `10-portability` (bash↔python differential, shellcheck, python-port
+contract, `bounded_run` behavior) and one out of `20-golem` (coverage-driver
+listener), all into `30-scanners` — cutting the critical path from ~542s to
+~365s. The three legs are now within ~12s of each other, so `30-scanners` is no
+longer free headroom for a new heavy gate: measure all three sums before adding
+one. Those five stages sit in `30-scanners` for **balance, not theme**, and are
+tagged as such at their call sites.
+
+**Setup cost is not the lever** (#964 AC1). Summing every non-suite CI step per
+leg gives 17 / 19 / 22s, not the ~120s the issue estimated — that figure came
+from subtracting stage sums from the UI wall clock, which includes runner queue
+time. Per-shard conditional setup was therefore rejected: it would save seconds
+and risks a shard silently losing a linter its gate needs.
 
 **Adding a stage:** put the `run_stage` line in exactly one shard — never in
 `run-all.sh` — and nowhere else. `tests/validate-shards.sh` fails the suite if a
