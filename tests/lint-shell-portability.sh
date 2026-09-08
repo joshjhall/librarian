@@ -265,25 +265,46 @@ scan_file_paths() {
 # itself, per the `PATHLIT_RE` precedent above).
 # `\b` IS EXEMPT FROM THIS BAN — MEASURED, NOT ASSUMED (#679, settled in #684).
 #
-# It is a GNU extension like the others, and 38 sites depend on it. #679 left it
-# out because modern BSD `grep -E` was *believed* to support it, and a 38-site
-# rewrite is worth doing only against an observed failure. #684 stopped treating
-# that belief as settled and measured it on a real BSD host.
+# It is a GNU extension like the others, and many sites depend on it. #679 left
+# it out because modern BSD `grep -E` was *believed* to support it, and a
+# tree-wide rewrite is worth doing only against an observed failure. #684 stopped
+# treating that belief as settled and measured it on a real BSD host.
 #
 # THE FINDING (macos-latest, Darwin 25.5.0, "BSD grep 2.6.0-FreeBSD" — the
 # `bsd-probe` job in ci.yml running tests/probe-bsd-regex.sh):
 #
-#   \b under grep -E   (32 sites) ....... SUPPORTED
-#   \b under grep (BRE) (6 sites) ....... SUPPORTED
+#   \b under grep -E .................... SUPPORTED
+#   \b under grep (BRE) ................. SUPPORTED
 #   \b under sed -E ..................... UNSUPPORTED   <-- the one real hazard
 #   [[:<:]] / [[:>:]] under grep -E ..... SUPPORTED     (GNU: ERROR, exit 2)
 #
-# So every `\b` in the tree is safe: all 38 sites are `grep`, and BSD grep honors
-# `\b` in BOTH dialects. **BSD `sed` does NOT** — but no site uses `\b` in a sed
-# expression, so nothing needed porting. That asymmetry is the reason the
-# exemption is scoped to grep rather than blanket: a future `sed -E 's/\bfoo\b/'`
-# would silently stop substituting on macOS, the exact #679 failure mode, and
-# this ban would not catch it. If you add one, port it or mark it.
+# THE PREDICATE THE EXEMPTION RESTS ON — one claim, kept true by a gate rather
+# than by prose (#968):
+#
+#   Every `\b` in the shell tree reaches `grep`, which BSD honors.
+#
+# **BSD `sed` does NOT** honor it, and fails silently at exit 0. That asymmetry
+# is why the exemption is scoped to grep rather than blanket, and why the sed
+# half is now ENFORCED by `scan_file_sed_word_boundary` below instead of being
+# recorded as a known gap. Earlier revisions of this comment carried a per-
+# dialect site tally (38 = 32 + 6). Those numbers drifted as the tree moved, and
+# four files stated them inconsistently (this one, probe-bsd-regex.sh,
+# validate-regex-probe.sh, and docs/verification/bsd-regex-probe-e2e-684.md);
+# they are gone on purpose — a count is decoration, the predicate is what
+# correctness depends on, and one claim is cheaper to keep true than four.
+#
+# TO RE-DERIVE THE INVENTORY (rather than trusting a number in a comment):
+#
+#   git ls-files -z '*.sh' | xargs -0 grep -nE '\\b'
+#
+# Read the result knowing that A SAME-LINE TOOL NAME IS NOT THE WHOLE STORY: most
+# hits name no tool at all, because the pattern reaches one indirectly — through
+# a helper (`emit_rows '\b…'` in check-lifecycle/patterns.sh, which runs
+# `grep -nE`), a variable (`XSS_SAFE_PATTERN` in check-security/patterns.sh), or
+# a continuation line (ship-issue/test-discovery.sh). Any tally built by grepping
+# for `grep` on the same line will be wrong, which is how the old numbers were
+# arrived at. `\b` in `*.py` is outside this subject entirely — Python's `re`
+# honors it on every platform.
 #
 # THERE IS NO SINGLE PORTABLE SPELLING — which is why the answer had to be
 # measured rather than reasoned. GNU accepts `\b` and REJECTS `[[:<:]]` outright;
@@ -346,6 +367,67 @@ scan_file_gnu_regex() {
         command grep -qE "$GNURE_TOOL_RE" <<<"$code" || continue
         command grep -qE "$GNURE_BAD_RE" <<<"$code" || continue
         CUR_GNURE_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
+    done <"$file"
+}
+
+# --- `\b` under `sed` — the exemption's SAFETY PREDICATE, enforced (#968) --------
+# The `\b` exemption above is not unconditional: it is sound only while every
+# `\b` in the tree reaches `grep`. BSD grep honors `\b`; BSD **sed reads it as a
+# literal**, and does so at exit 0 — a `sed -E 's/\bfoo\b/bar/'` simply stops
+# substituting on macOS while the script reports success. That is the #679
+# silent-failure shape, and the GNU-regex ban above deliberately does not cover
+# it (its bad-construct list is `\s\S\w\W` and BRE `\|`, not `\b`).
+#
+# #684 measured the hazard and recorded it as a KNOWN GAP in prose. #968 promotes
+# it from comment to gate, because a prose assertion about what the tree does not
+# contain rots the moment someone adds the thing — which is exactly the shape
+# this repo keeps filing issues about (silence reading as a pass, #538/#571).
+#
+# LINE-SCOPED, AND HONEST ABOUT IT. This check fires on a line that both invokes
+# `sed` and carries `\b`. That is a real bound, not a complete one: a pattern can
+# reach a tool through a helper (`emit_rows '\b…'` -> `grep -nE`), a variable
+# (`XSS_SAFE_PATTERN`), or a continuation line, and this scanner sees none of
+# those couplings. It is still worth having — the hazard it must catch is someone
+# writing a `sed` substitution with `\b` in it, and that is overwhelmingly a
+# single line — but do not read a clean run as proof that no `\b` reaches sed by
+# some indirect route. `tests/probe-bsd-regex.sh` is the worked counterexample:
+# its genuine `sed` reach is `probe_sed …` (no literal `sed` on the line, so this
+# scanner misses it) while the adjacent display label DOES say `sed` (so this
+# scanner flags it). Both carry an explicit marker there.
+#
+# Same required-reason marker contract as its siblings, and deliberately the SAME
+# marker vocabulary as the GNU-regex ban (`lint-allow-gnu-regex:`) — this is the
+# same hazard class reached from the other end, not a fourth thing to remember.
+SEDWB_TOOL_RE='(^|[^A-Za-z0-9_-])sed([^A-Za-z0-9_-]|$)'
+
+# scan_file_sed_word_boundary <path> — populate CUR_SEDWB_VIOLATIONS with
+# `line N: <code>` for each `\b` on a line that invokes `sed`.
+CUR_SEDWB_VIOLATIONS=""
+scan_file_sed_word_boundary() {
+    local file="$1"
+    CUR_SEDWB_VIOLATIONS=""
+    local lineno=0 line code
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        code="$line"
+        case "$code" in
+            \#*) continue ;;
+        esac
+        case "$line" in
+            *"lint-allow-gnu-regex:"*[![:space:]]*) continue ;;
+        esac
+        code="${code%%[[:space:]]#*}"
+        # Cheap builtin prefilter before any subprocess: `\b` needs a backslash.
+        case "$code" in
+            *'\'*) ;;
+            *) continue ;;
+        esac
+        case "$code" in
+            *'\b'*) ;;
+            *) continue ;;
+        esac
+        printf '%s\n' "$code" | command grep -qE "$SEDWB_TOOL_RE" || continue
+        CUR_SEDWB_VIOLATIONS+="line ${lineno}: ${code#"${code%%[![:space:]]*}"}"$'\n'
     done <"$file"
 }
 
@@ -592,6 +674,13 @@ test_file_no_gnu_regex() {
         "$(command basename "$CUR_FILE") must use POSIX classes ([[:space:]], [[:alnum:]_]) and -E alternation, not GNU \\s/\\w/\\| (#679)"
 }
 
+# Per-file test body for the `\b`-under-sed ban (reads CUR_FILE).
+test_file_no_sed_word_boundary() {
+    scan_file_sed_word_boundary "$CUR_FILE"
+    assert_equals "" "$CUR_SEDWB_VIOLATIONS" \
+        "$(command basename "$CUR_FILE") must not use \\b in a sed expression — BSD sed reads it as a literal, silently, at exit 0 (#968)"
+}
+
 # Per-file test body for the GNU-only coreutils-flag ban (reads CUR_FILE).
 test_file_no_gnu_flags() {
     scan_file_gnu_flags "$CUR_FILE"
@@ -833,21 +922,24 @@ EOF
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "commentgnu_ok" "A prose comment naming the constructs is NOT flagged"
 }
 
-# The `\b` EXEMPTION, pinned (#684). Measured on macos-latest (BSD grep
-# 2.6.0-FreeBSD): `\b` is SUPPORTED under both `grep -E` and plain `grep` (BRE),
-# so all 38 sites in the tree are safe and the ban deliberately omits it. See the
-# rationale block above GNURE_BAD_RE for the full probe output.
+# The `\b` EXEMPTION, pinned (#684), together with the PREDICATE it rests on
+# (#968). Measured on macos-latest (BSD grep 2.6.0-FreeBSD): `\b` is SUPPORTED
+# under both `grep -E` and plain `grep` (BRE), so a `\b` that reaches grep is
+# safe and the GNU-regex ban deliberately omits it. See the rationale block above
+# GNURE_BAD_RE for the full probe output.
 #
 # This is a pin, not a preference: without it, someone tightening GNURE_BAD_RE to
-# "also catch \b" would flag 38 working sites and force a rewrite the evidence
+# "also catch \b" would flag every working site and force a rewrite the evidence
 # says is unnecessary — and the reasoning would have to be rediscovered from
 # scratch on a GNU host, where it cannot be.
 #
 # The `sed` half is the one thing the probe found that DOES break: BSD sed reads
-# `\b` as a literal. No site uses it there today, so nothing needed porting, and
-# that asymmetry is exactly what the last assertion records — a documented
-# KNOWN GAP rather than an oversight. If a `sed -E 's/\bfoo\b/'` is ever added it
-# will silently stop substituting on macOS and this ban will not catch it.
+# `\b` as a literal, at exit 0. #684 recorded that asymmetry as a KNOWN GAP,
+# because no site used `\b` under sed and the GNU-regex ban would not catch one.
+# #968 CLOSED that gap: `scan_file_sed_word_boundary` now fires on it, so the
+# last assertion below asserts coverage rather than documenting a hole. The two
+# scanners are checked together here on one fixture precisely because their
+# split is the whole point — grep-exempt, sed-banned, from the same `\b`.
 test_word_boundary_exemption_is_pinned() {
     local tmp
     tmp="$(command mktemp -d)" || {
@@ -867,15 +959,89 @@ EOF
     scan_file_gnu_regex "$tmp/wb.sh"
 
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "ereb_ok" \
-        '\b under grep -E is NOT flagged — BSD-verified SUPPORTED, 32 sites (#684)'
+        '\b under grep -E is NOT flagged — BSD-verified SUPPORTED (#684)'
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "breb_ok" \
-        '\b under plain grep (BRE) is NOT flagged — BSD-verified SUPPORTED, 6 sites (#684)'
-    # KNOWN GAP, asserted so it cannot be mistaken for coverage: BSD sed reads
-    # `\b` literally, but the ban is scoped to the constructs #679 swept and does
-    # not cover it. Zero sites use it, so this documents the hole rather than a
-    # regression.
+        '\b under plain grep (BRE) is NOT flagged — BSD-verified SUPPORTED (#684)'
+    # The GNU-regex ban still does not cover the sed case — its bad-construct
+    # list is `\s\S\w\W` and BRE `\|`, and widening it would break the grep
+    # exemption above. That is why the sed half is a SEPARATE scanner rather
+    # than another entry in GNURE_BAD_RE.
     assert_not_contains "$CUR_GNURE_VIOLATIONS" "sedb_gap" \
-        '\b in a sed expression is NOT flagged either — a KNOWN GAP: BSD sed reads it literally (#684)'
+        '\b in a sed expression is not the GNU-regex ban'"'"'s business (#684)'
+
+    # ...but it IS caught, by the scanner #968 added. This is the assertion that
+    # flipped: #684 pinned this as a documented hole (assert_not_contains against
+    # a gate that would never fire); the gap is now closed, so the same fixture
+    # line must surface here or the promotion from prose to gate is inert.
+    scan_file_sed_word_boundary "$tmp/wb.sh"
+
+    assert_contains "$CUR_SEDWB_VIOLATIONS" "sedb_gap" \
+        '\b under sed IS flagged — BSD sed reads it as a literal, at exit 0 (#968)'
+    assert_not_contains "$CUR_SEDWB_VIOLATIONS" "ereb_ok" \
+        'the sed ban does NOT touch \b under grep -E — the exemption still stands (#968)'
+    assert_not_contains "$CUR_SEDWB_VIOLATIONS" "breb_ok" \
+        'the sed ban does NOT touch \b under plain grep (BRE) (#968)'
+}
+
+# Negative case for the `\b`-under-sed ban (#968): the violation branch must
+# fire, and the escape hatch must be as strict as its siblings'. The marker arms
+# are not ceremony — a required reason is what keeps an exemption from being
+# takeable silently, and it is enforced by the same `*[![:space:]]*` tail test
+# the GNU-regex and env bans use.
+test_negative_case_sed_word_boundary_fires() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/sedwb.sh" <<'EOF'
+#!/usr/bin/env bash
+sedE_hit="$(sed -E 's/\bfoo\b/bar/' f)"
+sedBRE_hit="$(sed 's/\bfoo\b/bar/' f)"
+cmdsed_hit="$(command sed -E 's/\bx\b/y/' f)"
+grepE_ok="$(grep -nE '\bfoo\b' f)"
+grepBRE_ok="$(grep -n '\bfoo\b' f)"
+sedok="$(sed -E 's/[[:<:]]foo[[:>:]]/bar/' f)"
+okmarked="$(sed -E 's/\bfoo\b/bar/' f)"  # lint-allow-gnu-regex: a stated reason exempts
+bareMarker_hit="$(sed -E 's/\bq\b/r/' f)"  # lint-allow-gnu-regex:
+okpayload="a python string r\"\bword\b\" handed to another language"
+EOF
+
+    # Whitespace-only reason, appended with printf for the #906-era reason
+    # recorded above the sibling test: a heredoc line ending in trailing spaces
+    # is silently stripped by editors and formatters, which would leave this
+    # fixture byte-identical to the bare-marker one — testing nothing while
+    # looking like it did.
+    command printf '%s\n' \
+        "wsMarker_hit=\"\$(sed -E 's/\\bz\\b/w/' f)\"  # lint-allow-gnu-regex:   " \
+        >>"$tmp/sedwb.sh"
+
+    scan_file_sed_word_boundary "$tmp/sedwb.sh"
+
+    assert_not_empty "$CUR_SEDWB_VIOLATIONS" \
+        'scan_file_sed_word_boundary flags \b under sed (violation branch fires)'
+    assert_contains "$CUR_SEDWB_VIOLATIONS" "sedE_hit" '\b under sed -E is flagged'
+    assert_contains "$CUR_SEDWB_VIOLATIONS" "sedBRE_hit" '\b under plain sed (BRE) is flagged'
+    assert_contains "$CUR_SEDWB_VIOLATIONS" "cmdsed_hit" '\b under `command sed` is flagged'
+    # The grep exemption must survive this ban, or #684's measured evidence is
+    # being overridden by a check aimed at a different tool.
+    assert_not_contains "$CUR_SEDWB_VIOLATIONS" "grepE_ok" '\b under grep -E is NOT flagged'
+    assert_not_contains "$CUR_SEDWB_VIOLATIONS" "grepBRE_ok" '\b under plain grep is NOT flagged'
+    # BSD's own boundary spelling under sed is not this ban's business: it is the
+    # portable-on-BSD form, and GNU rejects it outright — that irreducible split
+    # is why neither spelling can be mandated tree-wide (#684).
+    assert_not_contains "$CUR_SEDWB_VIOLATIONS" "sedok" '[[:<:]] under sed is NOT flagged'
+    assert_not_contains "$CUR_SEDWB_VIOLATIONS" "okmarked" \
+        'a lint-allow-gnu-regex line with a reason is NOT flagged'
+    assert_contains "$CUR_SEDWB_VIOLATIONS" "bareMarker_hit" \
+        'a REASONLESS lint-allow-gnu-regex marker does NOT exempt'
+    assert_contains "$CUR_SEDWB_VIOLATIONS" "wsMarker_hit" \
+        'a whitespace-only reason does NOT exempt'
+    assert_not_contains "$CUR_SEDWB_VIOLATIONS" "okpayload" \
+        'a \b payload with no sed invocation on the line is NOT flagged'
 }
 
 # Negative case for the parse check (#906). Both arms matter:
@@ -1106,7 +1272,8 @@ run_test test_corpus_non_empty "Shell-script corpus is non-empty (gate is not a 
 run_test test_negative_case_fires "scan_file flags every forbidden construct (violation path)"
 run_test test_negative_case_paths_fire "scan_file_paths flags hardcoded /usr/bin//bin paths (#443)"
 run_test test_negative_case_gnu_regex_fires "scan_file_gnu_regex flags GNU-only regex constructs (#679)"
-run_test test_word_boundary_exemption_is_pinned "\\b stays exempt — BSD-verified for grep, known gap for sed (#684)"
+run_test test_word_boundary_exemption_is_pinned "\\b stays exempt for grep, banned under sed (#684/#968)"
+run_test test_negative_case_sed_word_boundary_fires "scan_file_sed_word_boundary flags \\b under sed (#968)"
 run_test test_negative_case_gnu_env_fires "scan_file_gnu_env flags GNU-only env --unset= (#932)"
 run_test test_negative_case_parse_fires "scan_file_parses flags heredoc-in-command-substitution, not its rewrite (#906)"
 run_test test_negative_case_pipe_grep_q_fires "scan_file_pipe_grep_q flags \`| grep -q\` pipelines, incl. multi-line (#928)"
@@ -1118,6 +1285,7 @@ while IFS= read -r f; do
     run_test test_file_portable "${f#"$REPO_ROOT"/}: bash-3.2 clean"
     run_test test_file_no_hardcoded_paths "${f#"$REPO_ROOT"/}: no hardcoded core-utility paths (#443)"
     run_test test_file_no_gnu_regex "${f#"$REPO_ROOT"/}: no GNU-only regex constructs (#679)"
+    run_test test_file_no_sed_word_boundary "${f#"$REPO_ROOT"/}: no \\b under sed (#968)"
     run_test test_file_no_gnu_env "${f#"$REPO_ROOT"/}: no GNU-only env --unset= (#932)"
     run_test test_file_no_gnu_flags "${f#"$REPO_ROOT"/}: no GNU-only coreutils flags (#932)"
     run_test test_file_parses "${f#"$REPO_ROOT"/}: parses under bash -n (#906)"

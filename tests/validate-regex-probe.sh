@@ -2,7 +2,10 @@
 # Regex-probe reporting integrity (#684).
 #
 # tests/probe-bsd-regex.sh is the instrument that decides the `\b` question for
-# the 38 sites #679 left alone. Its whole value is telling SUPPORTED from
+# the sites #679 left alone (no count is stated here on purpose — #968 dropped
+# the tallies that had drifted across four files in favour of the predicate they
+# were decoration for: every `\b` in the shell tree reaches `grep`, which
+# tests/lint-shell-portability.sh now enforces). Its whole value is telling SUPPORTED from
 # UNSUPPORTED from ERROR on a host nobody here can run — so if its classification
 # or its exit status is wrong, the macOS verdict it produces is wrong, and wrong
 # in the silent direction #679 is about.

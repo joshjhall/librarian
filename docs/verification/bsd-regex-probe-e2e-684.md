@@ -135,3 +135,69 @@ None required for item 1 — the disposition is settled and pinned. The `sed` ga
 is documented rather than gated; if a `\b`-in-sed site is ever introduced, extend
 `GNURE_BAD_RE` to cover `sed` specifically (not `grep`, which this evidence
 exempts).
+
+## Addendum — 2026-09-08, issue #968: the counts were wrong, the predicate held
+
+[#968](https://github.com/joshjhall/librarian/issues/968) re-derived the
+inventory and acted on the Follow-up above. Everything before this section is
+left exactly as observed on the 2026 macOS run — the transcript is evidence, and
+the interpretation beside it is what was believed at the time. Two claims in it
+have since been superseded.
+
+**The site counts (38 = 32 + 6) are retired, not corrected.** They had drifted:
+this file, `probe-bsd-regex.sh`, `lint-shell-portability.sh`, and
+`validate-regex-probe.sh` each stated them, #947's body said 37, and a live
+count on 2026-09-08 matched none of those. The numbers were internally
+consistent when written; the tree moved underneath them.
+
+They were also **derived by a method that cannot be right.** Measuring afresh:
+
+```bash
+git ls-files -z '*.sh' | xargs -0 grep -nE '\\b'
+```
+
+returned, on the tree this change was based on (`4811a53`, before the change
+itself landed), 131 `\b`-bearing shell lines — 55 naming `grep` on the line, 9 naming
+`sed`, and **69 naming no tool at all**. That last group is the largest, because
+a pattern usually reaches its tool indirectly: through a helper
+(`emit_rows '\b…'` in `check-lifecycle/patterns.sh`, which runs `grep -nE`), a
+variable (`XSS_SAFE_PATTERN` in `check-security/patterns.sh`, consumed by
+`grep -nE`), or a continuation line (`ship-issue/test-discovery.sh`). Any tally
+built by grepping for `grep` on the same line undercounts by construction. So
+the counts are gone rather than refreshed — a count is decoration; the predicate
+is what the exemption's correctness rests on, and one claim is cheaper to keep
+true than four.
+
+Those four numbers are a **dated snapshot in a dated transcript**, not a claim
+anyone should maintain: this change alone moved them to 173/65/32 by adding
+fixtures and prose that themselves contain `\b`. That is the point rather than an
+irony — it is why no count survives in the *code*, and why the recipe above is
+recorded instead of its output.
+
+**"Zero sites use it [`\b` under sed]" was already false when written.**
+`probe-bsd-regex.sh` reaches `sed` with `\b` at its `probe_sed` row — the row
+that produced the `\b under sed -E … UNSUPPORTED` line in the transcript above.
+It is correct and must stay: this file's instrument has to contain the construct
+it measures. But it means the prose asserted something stronger than the tree
+supported. The predicate itself — *every `\b` in the shell tree reaches `grep`* —
+holds for all **non-probe** code, verified by tracing every indirect consumer.
+
+**The gap is now gated, per the Follow-up above.** The remedy differs from the
+one predicted there in one respect: extending `GNURE_BAD_RE` to cover `sed`
+would not work, because that regex is applied to any line invoking
+`grep|sed|awk` and adding `\b` to it would flag the `grep` sites this evidence
+exempts. The sed half therefore lives in a **separate scanner**,
+`scan_file_sed_word_boundary`, dispatched per-file as
+`test_file_no_sed_word_boundary`.
+
+It is **line-scoped, and says so.** The probe is the worked counterexample in
+both directions: the genuine `sed` reach (`probe_sed …`) carries no literal
+`sed` on the line and is *missed*, while the adjacent `info "\b under sed -E"`
+display label says `sed` and invokes nothing, so it is *flagged*. Both carry an
+explicit `# lint-allow-gnu-regex:` marker — marking only the one that trips
+today would leave the other silently depending on the scanner's blind spot.
+
+Verified by mutation: injecting `sed -E 's/\bx\b/y/'` into a corpus file turns
+the gate red naming that file; reverting returns it to 2258/2258 (the count on
+`4811a53`, this change's base — the mutation was first run against 2250/2250 on
+the pre-rebase base, with the same result).

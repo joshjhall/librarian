@@ -8,7 +8,7 @@
 # statically.
 #
 # One construct was deliberately left OUT of that ban: `\b`. Modern BSD `grep -E`
-# is widely believed to support it, and 38 sites depend on it — but the belief
+# is widely believed to support it, and many sites depend on it — but the belief
 # had never been checked on a BSD host, only asserted. #684 exists to settle it.
 #
 # This file is that check. It is a PROBE, not a lint: it makes no claim about
@@ -181,15 +181,20 @@ require "[[:space:]] under sed -E" "$V"
 
 hdr "Word boundaries (the #684 question)"
 
-# The 38 sites split by dialect: 32 use `grep -E`, 6 use plain `grep` (BRE).
-# The BRE six are the higher risk — they are the shell-interpolated symbol
-# probes, where a non-match reads as "no test exists" and produces a FALSE
-# untested-public-api finding at HIGH.
+# Both dialects are in use in the tree. The BRE sites are the higher risk — they
+# are the shell-interpolated symbol probes, where a non-match reads as "no test
+# exists" and produces a FALSE untested-public-api finding at HIGH.
+#
+# No site count is stated here on purpose (#968): it drifted as the tree moved,
+# and four files disagreed about it. The claim that matters is the predicate —
+# every `\b` in the shell tree reaches `grep` — and that is enforced by
+# `scan_file_sed_word_boundary` in tests/lint-shell-portability.sh, which is
+# also where the re-derivation recipe lives.
 probe_grep V 'def my_func():' '\bmy_func\b' -E
-info "\\b under grep -E   (32 sites)" "$V"
+info "\\b under grep -E" "$V"
 
 probe_grep V 'def my_func():' '\bmy_func\b'
-info "\\b under grep (BRE)  (6 sites)" "$V"
+info "\\b under grep (BRE)" "$V"
 
 # The negative half: a boundary that WORKS must also still exclude a partial
 # word. A `\b` read as a literal `b` fails to match here too, so this row alone
@@ -197,8 +202,18 @@ info "\\b under grep (BRE)  (6 sites)" "$V"
 probe_grep V 'def my_func_extra():' '\bmy_func\b' -E
 info "\\b -E rejects partial word" "$V" "UNSUPPORTED here means correct"
 
-probe_sed V 'my_func x' 's/\bmy_func\b/HIT/' 'HIT x'
-info "\\b under sed -E" "$V"
+# The one row measuring the hazard the `\b`-under-sed ban exists to prevent. This
+# file is the instrument, so it must contain the construct it measures — the two
+# lines below are the single legitimate `\b`-with-sed site in the tree (#968).
+#
+# Note which line the ban would actually see: `scan_file_sed_word_boundary` is
+# LINE-scoped, so the `probe_sed` call below carries the real `sed` reach but no
+# literal `sed` on the line (the tool is inside the helper at the top of this
+# file), while the `info` label says `sed` and invokes nothing. Both are marked,
+# because marking only the one that trips today would leave the other silently
+# depending on the scanner's blind spot.
+probe_sed V 'my_func x' 's/\bmy_func\b/HIT/' 'HIT x' # lint-allow-gnu-regex: this probe's job is measuring \b under BSD sed
+info "\\b under sed -E" "$V"                         # lint-allow-gnu-regex: display label for the row above, not a sed invocation
 
 # BSD's own boundary syntax. GNU REJECTS these outright (exit 2 -> ERROR), which
 # is precisely why neither spelling can be applied tree-wide unconditionally.
@@ -247,6 +262,6 @@ fi
 
 printf '  POSIX baseline holds on this host.\n'
 printf '  Word-boundary rows above are INFORMATIONAL — read them from the\n'
-printf '  macos-latest run to decide the disposition of the 38 `\\b` sites\n'
+printf '  macos-latest run to decide the disposition of the `\\b` sites\n'
 printf '  (documented exemption vs. port to `grep -w`). See issue #684.\n'
 exit 0
