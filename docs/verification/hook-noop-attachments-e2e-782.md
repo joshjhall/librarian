@@ -16,7 +16,7 @@ Measured on `feature/issue-782` at `6c0920f`, 2026-08-24.
 
 | # | Acceptance criterion | Status |
 | --- | --- | --- |
-| 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated. (The *operator-side* `hookify` fix is host-only and is re-enabled in every container — see § AC#1 revisited) |
+| 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated. (The *operator-side* `hookify` fix was host-only and re-enabled in every container until containers#897 landed — see § AC#1 revisited, then § AC#1 re-verified for the fresh-container confirmation) |
 | 2 | `dev-core` guidance documents silence-by-default with measured rationale | **PASS** — `shell-scripting/SKILL.md` § Hook Output Contract |
 | 3 | A hook that must emit `{}` carries a comment saying why | **PASS (vacuous)** — no shipped hook emits on a no-op path, so none needs the comment; the rule is documented for the case that arises |
 | 4 | Before/after measured with `token-report.sh`, delta recorded | **MEASURED, NOT CONCLUSIVE (#793, 2026-09-03)** — 9-day post-fix window; `avg_prompt_per_request` rose **+13.5%**, i.e. **no saving is detectable**. Reported as found. A contamination confound (containers#897) remains until that lands; see § AC#4 |
@@ -495,6 +495,54 @@ already-enabled plugin (`:451`), so existing containers need a one-time
 The pinned submodule was **not** edited from the #793 run — CLAUDE.md pins it
 (`update = none`) for devcontainer builds only.
 
+## AC#1 re-verified — the container fix holds (#887)
+
+containers#897 landed and shipped in **containers v4.20.0**, pinned here at
+`4146d6d9` by `ee37ab9`. This section is [#887](https://github.com/joshjhall/librarian/issues/887)'s
+verification half: the section above establishes that a *pin bump alone* proves
+nothing, because `claude-setup` runs at container **startup** and never disables
+an already-enabled plugin (`:451`). So the claim needed a **fresh** container,
+not a restarted one.
+
+### VERIFIED — live (fresh container on v4.20.0, 2026-09-07)
+
+Container booted 21:33:18; `~/.claude` is **not** a mounted volume here (only
+`/workspace`, `/cache/codegraph`, and a 1Password tmpfs are — confirmed with
+`mount`), so this settings state was written from scratch by this boot's
+`claude-setup`.
+
+| Check | Result |
+| --- | --- |
+| `grep -c hookify ~/.claude/settings.json` | **0** |
+| `claude plugin list \| grep -i hookify` | no match (rc 1) |
+| `hookify` in `settings.json` `hooks` block | **False** |
+| attached hooks, all 8 events | `claude-host-event.sh` **only**, 1 per event |
+| `grep -n DEFAULT_PLUGINS= /usr/local/bin/claude-setup` | `hookify` **absent** from the installed list |
+
+The fourth row is what closes AC#4 of #887 — the emission measured in the table
+above cannot occur, because no `hookify` hook is attached to any event. That is
+a stronger result than re-running the four scripts by hand: the scripts still
+exist on disk (`~/.claude/plugins/marketplaces/claude-plugins-official/plugins/hookify`
+is present, since the marketplace ships it) and would still print `{}` if
+invoked. What changed is that **nothing invokes them**.
+
+Upstream also guarded the fix rather than just applying it —
+`claude-setup:671-678` carries a comment naming #897 and the cost mechanism, and
+points at `test_default_plugins_excludes_hookify`
+(`tests/unit/features/claude-code-setup.sh:959`, dispatched at `:2603`). So a
+future edit that re-adds `hookify` to the default list fails a test rather than
+silently restoring the contamination.
+
+### What this does and does not settle
+
+It settles the **confound**, not the measurement. #782's AC#4 recorded the
+before/after as *measured, not conclusive* — `avg_prompt_per_request` rose
+**+13.5%** over the 9-day post-fix window, i.e. no saving was detectable — and
+named containers#897 as a live contamination source, since every container was
+re-enabling the plugin the host had disabled. That source is now gone. A clean
+re-measure is therefore possible for the first time, and remains open under
+issue #793. Nothing in this section is evidence that a saving exists.
+
 ## #793 disposition — two ACs stay open
 
 This file closes #793's **measurement** ACs; two remain genuinely open, so
@@ -502,7 +550,7 @@ issue #793 must **not** be auto-closed on the strength of this work:
 
 | #793 AC | State |
 | --- | --- |
-| hookify disabled/patched on the operator machine | **PARTIAL** — host yes, containers no (§ AC#1 revisited); [containers#897](https://github.com/joshjhall/containers/issues/897) |
+| hookify disabled/patched on the operator machine | **DONE (2026-09-07)** — host yes; containers yes since [containers#897](https://github.com/joshjhall/containers/issues/897) shipped in v4.20.0 and was verified in a fresh container (§ AC#1 re-verified). Was PARTIAL — host-only — until that pin bump. |
 | Filed upstream against `claude-plugins-official` | **OPEN — blocked** on a token with issue-write there (§ below) |
 | Before/after captured with `token-report.sh` | **DONE** (§ AC#4) |
 | Delta recorded in this file | **DONE** (§ AC#4) |
@@ -510,7 +558,13 @@ issue #793 must **not** be auto-closed on the strength of this work:
 The delivering commit therefore says **`Contributes to #793`**, not
 `Closes #793` — a squash-merge would otherwise auto-close an issue with two
 unmet criteria. #793 stays open pending the upstream filing and a clean
-re-measure once containers#897 lands.
+re-measure.
+
+**Update 2026-09-07:** containers#897 has landed and is verified in a fresh
+container (§ AC#1 re-verified), so the re-measure is now unblocked — but not
+done. #793 still stays open: the upstream filing against
+`claude-plugins-official` remains blocked on a token with issue-write there, and
+no post-fix measurement window has been collected yet.
 
 ## Upstream report — ready to file
 
