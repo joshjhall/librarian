@@ -8,11 +8,18 @@
 #
 # THIS SHARD NO LONGER ABSORBS NEW GATES FOR FREE. That was true when it ran
 # 175s against a 522s critical path; #964 spent that slack deliberately, moving
-# 157s off 10-portability and 21s off 20-golem to land all three shards within
-# ~12s of each other (365 / 355 / 353). The headroom that made this the safe
-# place to add a gate is the same headroom the re-balance consumed — so measure
-# the three sums before adding anything substantial here, and do not treat this
-# header's old promise as still operative.
+# 157s off 10-portability and 21s off 20-golem. Measured after the move
+# (run 34187725583): 337 / 350 / 260s, i.e. the three legs within ~90s of each
+# other instead of ~347s. The headroom that made this the safe place to add a
+# gate is the same headroom the re-balance consumed — so measure the three sums
+# before adding anything substantial here, and do not treat this header's old
+# promise as still operative.
+#
+# TREAT ANY ABSOLUTE NUMBER HERE AS RUNNER-DEPENDENT. The same stages measured
+# 88s/52s pre-move and 59s/34s post-move (differential/shellcheck) with no code
+# change between them, so a ±30% swing between runs is normal. What is stable is
+# the ORDERING and the fact that no leg dominates; re-measure before concluding a
+# shard has grown, and compare sums within one run, never across two.
 #
 # FIVE STAGES BELOW ARE HERE FOR BALANCE, NOT THEME. They are tagged
 # individually at their call sites. Do not reunite them with their thematic
@@ -133,8 +140,8 @@ run_stage "OKF bundle gate behavior" bash "$SCRIPT_DIR/validate-okf-bundle-gate.
 # The five stages below do NOT belong to this shard's theme. Four came from
 # 10-portability, where they sat beside `Shell portability` (364s, indivisible)
 # and made that leg the critical path at 522s; one came from 20-golem. Moving
-# them cut the matrix's critical path from ~542s to ~365s — the floor set by
-# Shell portability alone, which no further rebalance can beat.
+# them cut CI wall clock from 542s to 370s (measured, run 34187725583). The
+# remaining floor is Shell portability alone, which no further rebalance beats.
 #
 # Each is thematically a language/runtime gate, and each will read as misplaced
 # here. That is the trade #964 made knowingly: theme lost to ~157s per run. If

@@ -23,7 +23,9 @@
 # theme cost ~157s of wall clock on every CI run. The four gates that left
 # (differential 88s, shellcheck 52s, python-port 11s, bounded_run 6s) are now in
 # 30-scanners, tagged there as balance-motivated so nobody reunites them by
-# theme without re-measuring.
+# theme without re-measuring. Measured after the move (run 34187725583): the
+# three legs are 337 / 350 / 260s, within ~90s of each other instead of ~347s,
+# and CI wall clock went 542s -> 370s.
 #
 # SO: adding a stage here raises the critical path ~1:1, unlike the other two
 # shards which still have slack. Measure before adding, and prefer 30-scanners

@@ -99,9 +99,13 @@ jobs:
           - 30-scanners
     # 20, RE-DERIVED for a shard rather than inherited from the serial job's 40
     # (#960 AC6). The 40 was sized for all ~96 stages on one runner (~22 min).
-    # After #964's re-balance the three legs are within ~12s of each other
-    # (~365 / 355 / 353s of stage time), so 20 is now ~3x headroom on every leg
-    # rather than ~2x on the worst one. Left at 20 deliberately: the cap bounds a
+    # After #964's re-balance the three legs are within ~90s of each other
+    # (337 / 350 / 260s of stage time, measured on run 34187725583; wall clock
+    # 542s -> 370s), so 20 is now ~3x headroom on every leg rather than ~2x on
+    # the worst one. Absolute stage times are runner-dependent — the same gates
+    # swung ~30% between the before and after runs with no code change — so
+    # re-measure within a single run before concluding a leg has grown.
+    # Left at 20 deliberately: the cap bounds a
     # hang, and tightening it to track a balanced partition would convert normal
     # growth into the opaque cancellation described below.
     #

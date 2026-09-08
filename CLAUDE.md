@@ -353,7 +353,9 @@ floor.** Shell portability alone is 364s and indivisible, so `10-portability`
 sets the floor no matter how the rest is arranged (the 547s this file used to
 quote was the pre-sharding **serial** run — same stage, different context; 364s
 is its cost inside a matrix leg and reproduces across runs). The three legs now sit within
-~12s of each other (~365 / 355 / 353s of stage time) — which means
+~90s of each other (337 / 350 / 260s measured post-move, run 34187725583; CI
+wall clock 542s → 370s) — absolute numbers are runner-dependent and swing ±30%
+between runs, so compare sums within one run, never across two. Which means
 `30-scanners` is **no longer the free slot for a new heavy gate**; re-measure all
 three sums before adding one, and note that five stages live there for balance
 rather than theme (tagged at their call sites). Two things #964 measured that are

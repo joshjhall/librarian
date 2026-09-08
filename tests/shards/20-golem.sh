@@ -7,13 +7,18 @@
 # helpers and the release toolchain all exercise the same sandbox machinery in
 # tests/lib/golem-sandbox.sh.
 #
-# `Lint-gate integrity` (62s) STAYS HERE, and is not golem-specific. #964 named
-# it as movable and measured the move: shifting it to 30-scanners would put that
-# shard at 415s against this one's 293s, making 30-scanners the new critical
-# path and giving back most of the win. It is parked here for BALANCE. If the
-# shards are ever re-cut, this is the first stage to reconsider — but re-measure
-# all three sums before moving it, rather than moving it because it reads as
-# out of place here. It is.
+# `Lint-gate integrity` (54-62s) STAYS HERE, and is not golem-specific. #964
+# named it as movable and measured the move: shifting it to 30-scanners would
+# have made that shard the critical path and given back most of the win. It is
+# parked here for BALANCE. If the shards are ever re-cut, this is the first stage
+# to reconsider — but re-measure all three sums before moving it, rather than
+# moving it because it reads as out of place here. It is.
+#
+# NOTE: after #964's move this shard is the narrow critical path (350s against
+# 337s and 260s, run 34187725583) — the three are within ~90s, so which one leads
+# varies with runner speed. That is the intended end state, not a defect: the
+# floor is `Shell portability` in 10-portability, and no partition beats it by
+# more than the slack between these sums.
 #
 # DO NOT MOVE A STAGE OUT OF HERE IF ITS SUITE SOURCES golem-sandbox.sh.
 # That sandbox creates and removes git worktrees in the repo under test, and two
