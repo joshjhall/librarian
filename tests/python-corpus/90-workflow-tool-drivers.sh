@@ -423,3 +423,42 @@ if [ -f "$MEASURE_PY" ]; then
     unset _rpt
     run_count=$((run_count + 1))
 fi
+
+# --- scripts/delegation-adoption.py — delegation adoption (#797) -------------
+#
+# Driven against the synthetic ADOPT_ROOT rather than the developer's real
+# ~/.claude/projects, for the same reason as the sibling above: --root makes the
+# run hermetic and deterministic, and a real root would be EMPTY in CI, leaving
+# every reporting branch unexecuted while still exiting 0.
+ADOPTION_PY="$PLUGINS_DIR/workflow/scripts/delegation-adoption.py"
+if [ -f "$ADOPTION_PY" ]; then
+    # The three reports over the mixed harness/direct corpus. `adoption` renders
+    # the split and the per-type grouping; `opportunities` walks the main-session
+    # results and applies the break-even product; `ac5` scores both the anchored
+    # and the unanchored return value.
+    for _arpt in adoption opportunities ac5; do
+        run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+            "$ADOPTION_PY" "$_arpt" --root "$ADOPT_ROOT" >/dev/null 2>&1 || true
+    done
+    # Default subcommand (argparse nargs="?" -> adoption) on the same corpus.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$ADOPTION_PY" --root "$ADOPT_ROOT" >/dev/null 2>&1 || true
+    # The zero-delegation asymmetry, both halves: with main sessions but no
+    # spawns, `adoption` takes its exit-3 arm while `opportunities` succeeds and
+    # reports the denominator. Driving only one would leave the branch that
+    # makes a measured zero meaningful unexecuted.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$ADOPTION_PY" adoption --root "$ADOPT_NOSPAWN" >/dev/null 2>&1 || true
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$ADOPTION_PY" opportunities --root "$ADOPT_NOSPAWN" >/dev/null 2>&1 || true
+    # Missing root -> exit 3, for both the spawn-keyed and session-keyed arms.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$ADOPTION_PY" adoption --root "$ADOPT_GHOST" >/dev/null 2>&1 || true
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$ADOPTION_PY" opportunities --root "$ADOPT_GHOST" >/dev/null 2>&1 || true
+    # Usage error (exit 2) -> argparse's invalid-choice arm.
+    run_coverage run --parallel-mode --source="$PLUGINS_DIR" \
+        "$ADOPTION_PY" bogus-report --root "$ADOPT_ROOT" >/dev/null 2>&1 || true
+    unset _arpt
+    run_count=$((run_count + 1))
+fi

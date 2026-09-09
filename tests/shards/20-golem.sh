@@ -58,6 +58,7 @@ run_stage "review convergence stop decision" bash "$SCRIPT_DIR/validate-review-c
 run_stage "review routing decision" bash "$SCRIPT_DIR/validate-review-route.sh"
 run_stage "autonomy-resolver decision table + parity" bash "$SCRIPT_DIR/validate-autonomy-resolve.sh"
 run_stage "measure-spawn-prefix accounting" bash "$SCRIPT_DIR/validate-measure-spawn-prefix.sh"
+run_stage "delegation-adoption measurement" bash "$SCRIPT_DIR/validate-delegation-adoption.sh"
 run_stage "golem-notify Notification hook" bash "$SCRIPT_DIR/validate-golem-notify.sh"
 run_stage "golem-event-listener receiver" bash "$SCRIPT_DIR/validate-golem-event-listener.sh"
 run_stage "bash-guard PreToolUse hook" bash "$SCRIPT_DIR/validate-bash-guard.sh"
