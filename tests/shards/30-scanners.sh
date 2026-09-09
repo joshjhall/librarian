@@ -115,6 +115,12 @@ run_stage "Definition-shaped assertions" bash "$SCRIPT_DIR/lint-definition-asser
 run_stage "Scanner extension-dispatch case parity" bash "$SCRIPT_DIR/lint-scanner-case-dispatch.sh"
 run_stage "Pre-scan input-shape guard" bash "$SCRIPT_DIR/lint-prescan-input-guard.sh"
 
+# The evidence-field twin of the guard above, and warranted for the same two
+# reasons (#902): truncate_chars is copied byte-identically into 15 files, and
+# pre-review-gates.sh carries it with NO .py sibling — so the parity corpus,
+# which pairs a .py with its .sh, structurally cannot reach that one.
+run_stage "Evidence-field CR strip" bash "$SCRIPT_DIR/lint-evidence-cr-strip.sh"
+
 # The same shape, one predicate over: is_test_file's name arms must match the
 # BASENAME, so a DIRECTORY named test_helpers/ can never make real source
 # beneath it read as test code. Fixed by hand twice (#568, #836) before anything
