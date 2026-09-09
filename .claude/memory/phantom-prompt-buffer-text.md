@@ -33,8 +33,15 @@ alone; it suggests the TUI composing a suggested reply, not random text.
 or `S-Tab` — never free text. Also ruled out that run: zero tmux clients attached
 (`tmux list-clients` empty, all sessions `attached=0`), the only other Claude
 session on the box had four MCP servers as its sole children (no tmux, no shell),
-and no configured hook writes to a pane. Most likely the Claude Code TUI
-rendering a suggested next action, not actual pending input.
+and no configured hook writes to a pane.
+
+**IDENTIFIED (operator, 2026-09-09): it is Claude Code's recommended autocomplete
+/ suggested next input.** That fits every observation — it appears after the
+golem asks a question, always reads as a plausible answer to *that* question,
+and `C-u` cannot clear it because there is nothing in the buffer to clear. The
+suggestion feature is upstream; what is ours is that the orchestrator's pane
+readers cannot tell a suggestion from queued input. Tracked as #977 (reopened
+and reframed — it was wrongly closed as "external, nothing to fix").
 
 **Risk:** benign WHILE inert (buffer only submits on Enter, which nothing sends).
 BUT if any stray Enter ever reached that pane (misfired send-keys, monitor/script
@@ -52,6 +59,6 @@ not editable input), and a stray Enter could submit it. Reap the session instead
 queued. (3) **Do not escalate it as an intrusion** — the 2026-09-09 session
 reached "untrusted input channel" on three data points before checking this
 file; the memory directory had it documented since July. Read the body, not just
-the index ([[read-the-memory-body-not-just-the-index]]). Filed as a low-sev issue
-on recurrence. Relates to [[idle-detector-false-positive-own-monitors]] and
+the index ([[read-the-memory-body-not-just-the-index]]). Tracked as #977.
+Relates to [[idle-detector-false-positive-own-monitors]] and
 [[orchestrate-broker-then-send]] (only directed digit/Enter sends are compliant).
