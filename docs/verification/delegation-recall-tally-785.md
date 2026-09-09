@@ -255,13 +255,19 @@ What the data **does not** establish, stated as plainly as the prior art demands
   ~417 tokens with no `file:line` anchors — small is the direction AC5 wants and
   unanchored is not, but it was a docs question with no repo location to cite, so
   it is weak evidence about *doc lookups* and none about fan-out investigations.
-  (b) **The anchor test is deliberately strict.** It requires a path separator,
-  an alphabetic extension, and no URL scheme — so a bare `config.sh:41` with no
-  directory scores `no`. Three false positives were measured and removed during
-  review (a source URL, a scheme-less `host.tld:port`, a numeric extension), each
-  of which would have scored a return value that merely *mentioned* something as
-  having "cited its sources". Since this yes/no is the whole verdict, a missed
-  citation costs less than a manufactured one. (c) **`delegation-adoption.sh ac5`
+  (b) **The anchor test recognizes `path/to/file.ext:LINE` and nothing looser.**
+  It requires a path separator, an alphabetic extension and a line number, and
+  rejects any token carrying a URL scheme — so a bare `config.sh:41` with no
+  directory scores `no`, while `src/app.py:42:` (pytest/mypy) and
+  `pkg/mod.py:42:5` (ripgrep) score `yes`. Getting there took three review
+  cycles and five measured errors in both directions: three false positives
+  (a source URL, a scheme-less `host.tld:port`, a numeric extension) that would
+  have scored a return value merely *mentioning* something as having "cited its
+  sources", and two false negatives (the two formats above) that would have
+  under-reported the behavior the guidance exists to produce. The checks are one
+  regex rather than a chain of guards because each incremental guard fixed one
+  shape and broke another — and once even disarmed the test for a different
+  guard. (c) **`delegation-adoption.sh ac5`
   does not measure what AC5 names.** AC5 asks
   whether the *parent's* context growth is bounded by the conclusion; the
   subcommand sizes the *subagent's return value* and checks for anchors. That is

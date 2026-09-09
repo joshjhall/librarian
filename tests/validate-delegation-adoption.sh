@@ -354,6 +354,52 @@ test_ac5_keeps_scanning_past_a_rejected_token() {
         "a rejected token does not abort the scan for a later real anchor"
 }
 
+test_ac5_accepts_a_trailing_colon_citation() {
+    # REGRESSION (review cycle 3 — a FALSE NEGATIVE the cycle-2 hardening
+    # introduced). `src/app.py:42:` is the pytest/mypy/compiler error format: the
+    # citation is followed immediately by a colon and more prose. Splitting on
+    # the LAST colon gave an empty tail, so the token was rejected before any
+    # other check — the single most common real citation shape scored `no`.
+    #
+    # Both error directions corrupt the verdict. A false positive invents
+    # evidence; a false negative under-reports the behavior the guidance exists
+    # to produce.
+    local root="$WORKDIR/trailcolon"
+    direct_spawn "$root" d1 general-purpose "Found it in src/app.py:42: the assertion fails"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          11      yes" \
+        "a trailing-colon citation is still an anchor"
+}
+
+test_ac5_accepts_a_line_col_citation() {
+    # The sibling false negative: `pkg/mod.py:42:5` (ripgrep --vimgrep, many
+    # linters). Splitting on the last colon put `:42` inside the extension, which
+    # then failed the alphabetic test. Both shapes are why the checks became one
+    # regex instead of a chain of string operations.
+    local root="$WORKDIR/linecol"
+    direct_spawn "$root" d1 general-purpose "Traced to pkg/mod.py:42:5 in the vimgrep output"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          11      yes" \
+        "a file:line:col citation is still an anchor"
+}
+
+test_ac5_keeps_scanning_past_a_rejected_host_port() {
+    # The separator sibling of test_ac5_keeps_scanning_past_a_rejected_token.
+    # That one puts a URL first, so it only proves the `://` arm keeps scanning.
+    # This one leads with a scheme-less host:port — rejected by the PATTERN
+    # rather than the scheme guard — and follows it with a real citation, which
+    # is the input where "keep scanning" and "give up on first rejection"
+    # disagree for that arm.
+    local root="$WORKDIR/hostthenok"
+    direct_spawn "$root" d1 general-purpose "It calls database.io:5432 and the bug is in src/app.py:42"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          14      yes" \
+        "a rejected host:port does not abort the scan for a later real anchor"
+}
+
 test_string_shaped_content_is_not_dropped() {
     # REGRESSION (review cycle 1): a message's `content` may be a bare STRING
     # rather than a block list. Returning [] for that shape silently dropped a
@@ -584,6 +630,9 @@ run_test test_ac5_rejects_a_source_url_as_an_anchor "AC5 rejects a source URL as
 run_test test_ac5_rejects_a_numeric_extension "AC5 rejects a numeric extension"
 run_test test_ac5_rejects_a_scheme_less_host_port "AC5 rejects a scheme-less host:port"
 run_test test_ac5_keeps_scanning_past_a_rejected_token "AC5 keeps scanning past a rejected token"
+run_test test_ac5_accepts_a_trailing_colon_citation "AC5 accepts a trailing-colon citation"
+run_test test_ac5_accepts_a_line_col_citation "AC5 accepts a file:line:col citation"
+run_test test_ac5_keeps_scanning_past_a_rejected_host_port "AC5 keeps scanning past a rejected host:port"
 run_test test_string_shaped_content_is_not_dropped "String-shaped message content is not dropped"
 run_test test_wrong_shaped_content_yields_no_blocks "Wrong-shaped message content yields no blocks"
 run_test test_ac5_reports_na_for_a_spawn_with_no_answer "AC5 reports n/a for a spawn that never answered"

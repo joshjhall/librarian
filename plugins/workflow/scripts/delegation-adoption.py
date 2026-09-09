@@ -69,6 +69,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 MIN_PYTHON = (3, 11)
@@ -88,6 +89,10 @@ CHARS_PER_TOKEN = 4
 # line, a short git output. Without it the opportunity count is dominated by
 # hundreds of trivial results whose products are noise.
 RESULT_FLOOR_TOKENS = 2_000
+
+# A `path/to/file.ext:LINE` citation. Compiled once; see _has_anchor for what
+# each part excludes and why this is one pattern rather than a chain of guards.
+ANCHOR_RE = re.compile(r"[\w.\-]*/[\w.\-]+\.[A-Za-z]{1,4}:\d+")
 
 
 def _require_python() -> None:
@@ -228,51 +233,45 @@ def iter_opportunities(root: pathlib.Path):
 
 
 def _has_anchor(text: str) -> bool:
-    """True when the text cites at least one `path:line` anchor.
+    r"""True when the text cites at least one `path/to/file.ext:LINE` anchor.
 
     AC5 asks whether a delegation returned a CONCLUSION -- an answer plus the
     anchors to verify it -- rather than a transcript of what it read. Anchors are
     the cheap, checkable half of that; the size column beside it carries the
-    other half.
+    other half. This yes/no IS that verdict, so both error directions corrupt the
+    measurement: a false positive scores a return value that merely MENTIONED
+    something as having cited its sources, and a false negative under-reports the
+    behavior the guidance is trying to produce.
 
-    A URL WITH A PORT IS NOT AN ANCHOR. `https://example.com:8080/x` splits on
-    its last colon into a head containing "/" and a digit-leading tail, which is
-    the exact shape a `path:line` citation has -- so a return value that merely
-    quotes a link would score as "cited its sources". Since the yes/no this
-    returns is the whole of AC5's conclusion-vs-dump verdict, that false positive
-    reads as evidence of the behavior being measured. Tokens carrying a scheme
-    are therefore rejected before the shape test, and the head must contain a
-    path separator AND end in an alphabetic extension -- see the inline note,
-    where each of the three conditions names the false positive it excludes.
+    ONE PATTERN RATHER THAN A CHAIN OF GUARDS. This started as incremental string
+    surgery -- reject a scheme, require a separator, require an alphabetic
+    extension -- and each addition fixed one shape while breaking another. Three
+    false positives and two false negatives were measured across three review
+    cycles; the version-string test even stopped discriminating when a later
+    guard rejected its fixture one condition earlier. Stating the shape once is
+    what makes the whole set checkable at a glance.
+
+    What ANCHOR_RE requires, and what each part excludes:
+
+      `/`                a path separator, so a bare `config.sh:41` and a
+                         scheme-less `database.io:5432` (a TLD is
+                         indistinguishable from a short extension) are both out.
+      `.[A-Za-z]{1,4}`   an ALPHABETIC extension, so `build/app.v2:8080` is out.
+                         No source extension is a number.
+      `:\d+`             a line number.
+
+    `search`, not `match`, so surrounding punctuation and a trailing `:col` come
+    free -- `src/app.py:42:` (pytest/mypy) and `pkg/mod.py:42:5` (ripgrep
+    --vimgrep) both hit, and those two shapes are why this is a regex.
+
+    A scheme-carrying token is rejected up front: a URL ending in a real source
+    extension (`https://host/src/app.py:42`) satisfies the pattern but cites no
+    local file.
     """
     for token in text.replace("\n", " ").split():
         if "://" in token:
             continue
-        head, sep, tail = token.rpartition(":")
-        if not (sep and head and tail[:1].isdigit()):
-            continue
-        # THREE conditions, and dropping any one readmits a false positive that
-        # was measured, not imagined:
-        #
-        #   a path separator   `database.io:5432` and `api.dev:8443` are bare
-        #                      host:port mentions with no scheme, so the `://`
-        #                      guard never sees them -- and a TLD is
-        #                      indistinguishable from a short file extension.
-        #                      Requiring "/" is what separates a hostname from a
-        #                      path. (Cycle-2 regression: an earlier spelling of
-        #                      this fix dropped it and readmitted both.)
-        #   an extension       a bare `a/b:443` names no file.
-        #   ALPHABETIC         `v2.0.31:8080` ends in a numeric "extension" and
-        #                      would otherwise read as a citation. No source
-        #                      extension is a number.
-        #
-        # A bare `config.sh:41` with no directory therefore scores NO. That is
-        # the deliberate trade: this heuristic decides AC5's verdict, so a
-        # missed citation costs less than a manufactured one.
-        if "/" not in head:
-            continue
-        stem, dot, ext = head.rpartition(".")
-        if dot and stem and 1 <= len(ext) <= 4 and ext.isalpha():
+        if ANCHOR_RE.search(token):
             return True
     return False
 
