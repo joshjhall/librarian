@@ -76,7 +76,12 @@ declared_status_labels() {
                     # Extraction is what raised the blast radius; the trim is what
                     # bounds it. Order matters: strip the comment before trimming
                     # trailing space, or the space the comment left behind stays.
-                    sub(/[[:space:]]*#.*$/, "")
+                    # A COMMENT NEEDS WHITESPACE BEFORE THE `#`; YAML says so, and
+                    # GitHub allows `#` inside a label name. Trimming from ANY `#`
+                    # turned the valid name `status/a#b` into `status/a` — which
+                    # would then report as "declared but absent" forever. Require
+                    # the space, so only a real comment is removed.
+                    sub(/[[:space:]]+#.*$/, "")
                     gsub(/["'"'"']/, "")
                     sub(/[[:space:]]+$/, "")
                     print

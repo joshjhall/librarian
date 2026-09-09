@@ -665,6 +665,39 @@ test_parser_ignores_trailing_comments_and_quotes() {
     assert_not_contains "$declared" "'" "no label carries a stray quote"
 }
 
+test_a_hash_inside_a_label_name_is_not_a_comment() {
+    local box declared
+    box="$(command mktemp -d)"
+    SANDBOXES="$SANDBOXES $box"
+    command mkdir -p "$box/plugins/p/skills/s"
+    # YAML only starts a comment at a `#` PRECEDED BY WHITESPACE, and GitHub
+    # permits `#` inside a label name. The first draft of the comment trim matched
+    # any `#`, which silently truncated the valid name `status/a#b` to `status/a` —
+    # a name that would then read as "declared but absent from the repo" on every
+    # single run. Caught by probing the trim's edge cases rather than by a test of
+    # the happy path, so both arms are pinned here: a real comment goes, an
+    # in-name hash stays.
+    {
+        command printf 'labels:\n'
+        command printf '  - name: status/hash#inname\n'
+        command printf '  - name: "status/quoted#hash"  # a real comment\n'
+        command printf '  - name: status/trailing  # another real comment\n'
+    } >"$box/plugins/p/skills/s/metadata.yml"
+
+    declared="$(
+        # shellcheck source=bin/lib/label-vocab.sh
+        . "$VOCAB_LIB"
+        declared_status_labels "$box/plugins"
+    )"
+    assert_contains "$declared" "status/hash#inname" \
+        "an unquoted in-name hash survives (it is not a comment)"
+    assert_contains "$declared" "status/quoted#hash" \
+        "a quoted in-name hash survives while its trailing comment is removed"
+    assert_not_contains "$declared" "a real comment" "the real comment text is gone"
+    assert_contains "$declared" "status/trailing" "and its name is left intact"
+    assert_not_contains "$declared" "status/trailing " "with no trailing whitespace"
+}
+
 # --- one parser, two callers (#663) -----------------------------------------
 
 test_shared_parser_is_the_only_parser() {
@@ -780,6 +813,7 @@ run_test test_a_multiline_label_name_cannot_open_a_heading "a multi-line label n
 run_test test_md_safe_collapses_a_tab_in_a_live_label_name "md_safe collapses a tab, driven through the real script"
 run_test test_gh_err_temp_file_is_cleaned_on_gh_failure_paths "the stderr temp file is cleaned on gh's own failure paths"
 run_test test_parser_ignores_trailing_comments_and_quotes "the shared parser trims trailing comments and quotes"
+run_test test_a_hash_inside_a_label_name_is_not_a_comment "a # inside a label name is not a comment"
 run_test test_first_temp_file_is_cleaned_when_second_mktemp_fails "the trap re-arm: no temp file is orphaned by a later mktemp failure"
 run_test test_refactored_offline_gate_still_enforces_both_rules "the refactored offline gate is EXECUTED, not grepped"
 run_test test_shared_parser_is_the_only_parser "one parser: neither caller carries a copy"
