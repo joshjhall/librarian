@@ -92,7 +92,12 @@ fi
 # bare "command not found" at whatever line reaches it first, which is the one
 # outcome the loop exists to prevent. sed/grep/mktemp are near-universal, but
 # "near-universal" is not the contract this script claims for itself.
-for tool in gh sort comm awk sed grep mktemp; do
+# `find` is used TRANSITIVELY, by declared_status_labels in bin/lib/label-vocab.sh
+# — the sourced library is as much a dependency as a direct call, and omitting it
+# meant an absent `find` died with a bare "find: command not found" and an
+# undocumented exit code instead of the curated FATAL/2 this loop promises. `rm`
+# runs in the EXIT trap, where a failure would silently skip cleanup.
+for tool in gh sort comm awk sed grep mktemp find rm; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         command printf 'label-vocab-reconcile: FATAL — %s not found on PATH.\n' "$tool" >&2
         command printf '  This job needs network + gh auth by design; refusing to report no drift.\n' >&2
@@ -139,10 +144,21 @@ fi
 GH_LABEL_LIMIT=500
 LIVE_RAW=""
 GH_RC=0
-LIVE_RAW="$(command gh label list --limit "$GH_LABEL_LIMIT" --json name --jq '.[].name' 2>&1)" || GH_RC=$?
+# STDOUT AND STDERR ARE CAPTURED SEPARATELY, not merged with `2>&1`. A merged
+# capture puts any incidental gh warning (a deprecation notice, a redirect note)
+# into LIVE_RAW on the SUCCESS path, where it is then counted by the truncation
+# guard and fed to the status/ filter as though it were a label name. A warning is
+# not a label, and the guard whose whole job is "is this list complete?" must not
+# be reading diagnostics as data. Stderr is kept aside and used only where it is
+# actually wanted: the failure diagnostic below.
+GH_ERR="$(command mktemp)" || exit 2
+# shellcheck disable=SC2064  # expand the path now, at trap-registration time
+trap "command rm -f '$GH_ERR'" EXIT
+LIVE_RAW="$(command gh label list --limit "$GH_LABEL_LIMIT" --json name --jq '.[].name' 2>"$GH_ERR")" || GH_RC=$?
 if [ "$GH_RC" -ne 0 ]; then
     command printf 'label-vocab-reconcile: FATAL — `gh label list` exited %s.\n' "$GH_RC" >&2
     command printf '  Output was:\n' >&2
+    command sed 's/^/    /' "$GH_ERR" >&2
     command printf '%s\n' "$LIVE_RAW" | command sed 's/^/    /' >&2
     command printf '  Zero labels from a failed query is not an empty repo.\n' >&2
     exit 2
@@ -181,11 +197,11 @@ LIVE="$({ command printf '%s\n' "$LIVE_RAW" |
 # /tmp, an fd or quota limit between the two calls) — the exit path runs with no
 # trap registered at all. So arm after the first, then RE-arm to cover the second.
 DECL_F="$(command mktemp)" || exit 2
-# shellcheck disable=SC2064  # expand the path now, at trap-registration time
-trap "command rm -f '$DECL_F'" EXIT
+# shellcheck disable=SC2064  # expand the paths now, at trap-registration time
+trap "command rm -f '$GH_ERR' '$DECL_F'" EXIT
 LIVE_F="$(command mktemp)" || exit 2
 # shellcheck disable=SC2064  # expand the paths now, at trap-registration time
-trap "command rm -f '$DECL_F' '$LIVE_F'" EXIT
+trap "command rm -f '$GH_ERR' '$DECL_F' '$LIVE_F'" EXIT
 
 command printf '%s\n' "$DECLARED" >"$DECL_F"
 if [ -n "$LIVE" ]; then
@@ -221,6 +237,20 @@ emit() {
     fi
 }
 
+# md_safe - neutralize a LIVE label name for the markdown report.
+#
+# The declared side is repo content and trusted; the live side comes from
+# `gh label list`, and label creation is a triage-level permission. The step
+# summary renders as GFM, so a name carrying a backtick escapes its code span and
+# one carrying `[...](...)` becomes a link — enough to misrepresent the report
+# even though GitHub's renderer blocks script execution. A report whose whole
+# value is being believed should not be reshapeable by the thing it reports on.
+# Backtick, brackets and parens are replaced rather than stripped, so evidence of
+# an odd name survives instead of vanishing.
+md_safe() {
+    command printf '%s' "$1" | command tr '`[]()' '?????'
+}
+
 emit "## status/* label vocabulary reconciliation"
 emit ""
 emit "- declared in \`plugins/**/metadata.yml\`: **${N_DECLARED}**"
@@ -248,7 +278,7 @@ if [ "$N_MISSING" -gt 0 ]; then
     emit ""
     command printf '%s\n' "$MISSING" | while IFS= read -r lbl; do
         [ -n "$lbl" ] || continue
-        emit "- \`${lbl}\`"
+        emit "- \`$(md_safe "$lbl")\`"
     done
 fi
 
@@ -262,7 +292,7 @@ if [ "$N_EXTRA" -gt 0 ]; then
     emit ""
     command printf '%s\n' "$EXTRA" | while IFS= read -r lbl; do
         [ -n "$lbl" ] || continue
-        emit "- \`${lbl}\`"
+        emit "- \`$(md_safe "$lbl")\`"
     done
 fi
 

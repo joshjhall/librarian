@@ -129,7 +129,12 @@ stub_gh() {
             {
                 command printf '#!/usr/bin/env bash\n'
                 for lbl in "$@"; do
-                    command printf 'printf "%%s\\n" %s\n' "$lbl"
+                    # SINGLE-QUOTED in the generated shim. Unquoted, a label name
+                    # containing shell metacharacters — which a markdown-injection
+                    # fixture needs — is a syntax error in the stub itself, so the
+                    # case fails for a fixture reason while looking like a subject
+                    # failure.
+                    command printf "printf '%%s\\n' '%s'\n" "$lbl"
                 done
                 command printf 'exit 0\n'
             } >"$shim"
@@ -408,7 +413,17 @@ test_truncated_label_list_exits_two() {
     # truncated page — so the run must refuse (2) rather than report the declared
     # label as deleted (1). This is the same class as the auth-failure case: an
     # incomplete comparison must never wear the costume of a finding.
-    stub_gh "$box" many 500
+    #
+    # The count is DERIVED from the script's own GH_LABEL_LIMIT, not written as
+    # 500. A literal here would keep passing while testing nothing the moment
+    # somebody raised the limit: the shim would emit fewer labels than the page
+    # size, the guard would correctly not fire, and the case would assert exit 2
+    # against a run that had no reason to refuse.
+    local limit
+    limit="$(command awk -F= '/^GH_LABEL_LIMIT=/ { print $2; exit }' "$RECONCILE_SH")"
+    assert_true "[ -n '$limit' ]" \
+        "the fixture read GH_LABEL_LIMIT from the script (a blank limit makes this case vacuous)"
+    stub_gh "$box" many "$limit"
 
     run_reconcile "$box"
     assert_exit 2 "$RC_CODE" "a possibly-truncated label list exits 2, not 1"
@@ -423,20 +438,125 @@ test_label_list_below_the_limit_is_not_truncation() {
     # The guard's other arm: a large-but-complete list must still reconcile. A
     # guard keyed on the wrong comparison would refuse every real run, which is
     # the failure mode that gets a scheduled job muted.
-    # 498 pad labels PLUS the declared one = 499 raw lines, one UNDER the guard's
-    # `-ge` comparison against the 500 page size. Off-by-one matters here and the
-    # first draft got it wrong (499 pads + 1 = exactly 500, which trips the guard):
-    # this arm is precisely about the boundary, so the count is derived, not eyeballed.
-    # The extra label is spliced BEFORE the shim's `exit 0`, not appended after it
-    # — appending put it past the exit, where it never ran and the case failed for
-    # a fixture reason rather than a subject one.
-    stub_gh "$box" many 498
-    command sed -i.bak 's|^exit 0$|printf "status/in-progress\\n"\nexit 0|' "$box/ghbin/gh"
-    command rm -f "$box/ghbin/gh.bak"
+    # The boundary arm: pads + 1 declared label = limit - 1, one UNDER the guard's
+    # `-ge` comparison. Off-by-one matters here and the first draft got it wrong
+    # (499 pads + 1 = exactly 500, which TRIPPED the guard), so the count is now
+    # DERIVED from the same GH_LABEL_LIMIT the script uses rather than restated as
+    # a literal that can drift from it.
+    #
+    # Built by REWRITING the shim rather than `sed`-splicing it. Two reasons, both
+    # measured: a `\n` in a sed REPLACEMENT is GNU-only (BSD sed emits a literal
+    # `n`, so this fixture would silently break on macOS — CLAUDE.md § Runtime
+    # policy), and appending after the shim's `exit 0` put the extra label PAST the
+    # exit, where it never ran.
+    local limit pads
+    limit="$(command awk -F= '/^GH_LABEL_LIMIT=/ { print $2; exit }' "$RECONCILE_SH")"
+    assert_true "[ -n '$limit' ]" \
+        "the fixture read GH_LABEL_LIMIT from the script (a blank limit makes this arm vacuous)"
+    pads=$((limit - 2))
+    # stub_gh normally creates this directory; this case writes the shim itself.
+    command mkdir -p "$box/ghbin"
+    {
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'i=1\n'
+        command printf 'while [ "$i" -le %s ]; do printf "pad/%%s\\n" "$i"; i=$((i + 1)); done\n' "$pads"
+        command printf 'printf "status/in-progress\\n"\n'
+        command printf 'exit 0\n'
+    } >"$box/ghbin/gh"
+    command chmod +x "$box/ghbin/gh"
 
     run_reconcile "$box"
     assert_exit 0 "$RC_CODE" "a complete list just under the limit reconciles normally"
     assert_contains "$RC_OUT" "No drift" "and reports clean"
+}
+
+test_first_temp_file_is_cleaned_when_second_mktemp_fails() {
+    local box out rc=0 leftover
+    box="$(make_sandbox status/in-progress)"
+    stub_gh "$box" ok status/in-progress
+
+    # A `mktemp` that SUCCEEDS once then FAILS, which is the exact shape cycle 1
+    # found leaking: the trap used to be armed only after both calls, so the
+    # second's `|| exit 2` ran with no trap and orphaned the first file. The
+    # counter lives in the sandbox so the stub is stateful across invocations.
+    #
+    # This is the arm that DISAGREES if the re-arm is reverted — without it the
+    # fix was asserted only by its own comment.
+    command mkdir -p "$box/tmpbin"
+    {
+        command printf '#!/usr/bin/env bash\n'
+        command printf 'c="%s/mktemp.count"\n' "$box"
+        command printf 'n=0\n'
+        command printf '[ -f "$c" ] && n="$(cat "$c")"\n'
+        command printf 'n=$((n + 1)); printf "%%s" "$n" > "$c"\n'
+        # Let the gh-stderr file and the FIRST comparison file through, then fail.
+        command printf 'if [ "$n" -ge 3 ]; then printf "mktemp: no space\\n" >&2; exit 1; fi\n'
+        command printf 'f="%s/scratch.$n"; : > "$f"; printf "%%s\\n" "$f"\n' "$box"
+    } >"$box/tmpbin/mktemp"
+    command chmod +x "$box/tmpbin/mktemp"
+
+    out="$(/usr/bin/env -uBASH_ENV PATH="$box/tmpbin:$box/ghbin:$PATH" LABEL_VOCAB_ROOT="$box" \
+        "$REAL_BASH" --noprofile --norc "$RECONCILE_SH" 2>&1)" || rc=$?
+    assert_exit 2 "$rc" "a failing mktemp exits 2, not a clean or drift verdict"
+    # THE PROPERTY: every scratch file handed out before the failure was removed.
+    # A reverted re-arm leaves one behind.
+    leftover="$(command ls "$box"/scratch.* 2>/dev/null | command grep -c . || true)"
+    assert_equals "0" "$leftover" \
+        "no temp file is orphaned when a later mktemp fails (the trap re-arm)"
+    assert_not_contains "$out" "No drift" "a run that could not stage its files claims nothing"
+}
+
+test_refactored_offline_gate_still_enforces_both_rules() {
+    local box out rc=0
+    # EXECUTE the refactored gate, don't grep it. The diff replaced its inline awk
+    # with the shared library, and grepping for "label-vocab.sh" proves only that
+    # the source mentions the file — not that Rule 1, Rule 2, or the new
+    # missing-library branch still behave. A verbatim code move is exactly the
+    # change most likely to look right and run wrong.
+    box="$(command mktemp -d)"
+    SANDBOXES="$SANDBOXES $box"
+    command mkdir -p "$box/plugins/p/skills/s" "$box/bin/lib" "$box/tests"
+    command cp "$VOCAB_LIB" "$box/bin/lib/label-vocab.sh"
+    command cp "$LINT_SH" "$box/tests/lint-status-label-refs.sh"
+    command printf 'labels:\n  - name: status/in-progress\n' \
+        >"$box/plugins/p/skills/s/metadata.yml"
+
+    # Clean corpus: the one referenced label is declared -> exit 0.
+    command printf 'Use the `status/in-progress` label.\n' >"$box/plugins/p/skills/s/SKILL.md"
+    out="$(/usr/bin/env -uBASH_ENV "$REAL_BASH" --noprofile --norc \
+        "$box/tests/lint-status-label-refs.sh" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "the refactored gate passes a clean fixture"
+
+    # Rule 1: an UNDECLARED reference must still be caught through the shared parser.
+    rc=0
+    command printf 'Also `status/ghost` here.\n' >>"$box/plugins/p/skills/s/SKILL.md"
+    out="$(/usr/bin/env -uBASH_ENV "$REAL_BASH" --noprofile --norc \
+        "$box/tests/lint-status-label-refs.sh" 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "Rule 1 still fires after the parser was extracted"
+    assert_contains "$out" "status/ghost" "and names the undeclared label"
+
+    # The new fail-loud branch: no library -> exit 2, never an empty vocabulary.
+    rc=0
+    command rm -f "$box/bin/lib/label-vocab.sh"
+    out="$(/usr/bin/env -uBASH_ENV "$REAL_BASH" --noprofile --norc \
+        "$box/tests/lint-status-label-refs.sh" 2>&1)" || rc=$?
+    assert_exit 2 "$rc" "a missing shared library exits 2, not 0 and not 200 findings"
+    assert_contains "$out" "FATAL" "the diagnostic names itself fatal"
+}
+
+test_markdown_in_a_live_label_name_is_neutralized() {
+    local box
+    box="$(make_sandbox status/in-progress)"
+    # A live label name carrying markdown. Label creation is a triage-level
+    # permission and the step summary renders as GFM, so an unescaped name could
+    # reshape the very report the job exists to have believed.
+    stub_gh "$box" ok status/in-progress 'status/x[bad](http://e.invalid)'
+
+    run_reconcile "$box"
+    assert_exit 1 "$RC_CODE" "the undeclared label is still reported as drift"
+    # The name is still identifiable (evidence survives) but is no longer markup.
+    assert_contains "$RC_OUT" "status/x" "the label is still named in the report"
+    assert_not_contains "$RC_OUT" "](http" "the link syntax is neutralized"
 }
 
 # --- one parser, two callers (#663) -----------------------------------------
@@ -548,6 +668,9 @@ run_test test_missing_plugins_dir_exits_two "fail loud: an absent plugins/ exits
 run_test test_unknown_argument_is_rejected "usage: an unknown argument is rejected before any work"
 run_test test_truncated_label_list_exits_two "fail loud: a possibly-truncated label list exits 2"
 run_test test_label_list_below_the_limit_is_not_truncation "the truncation guard does not fire below the limit"
+run_test test_markdown_in_a_live_label_name_is_neutralized "a live label name cannot inject markdown into the report"
+run_test test_first_temp_file_is_cleaned_when_second_mktemp_fails "the trap re-arm: no temp file is orphaned by a later mktemp failure"
+run_test test_refactored_offline_gate_still_enforces_both_rules "the refactored offline gate is EXECUTED, not grepped"
 run_test test_shared_parser_is_the_only_parser "one parser: neither caller carries a copy"
 run_test test_both_callers_derive_the_same_vocabulary "one parser: both callers derive the same vocabulary"
 run_test test_workflow_is_dispatchable_and_informational "the workflow is dispatchable and cannot red a PR"
