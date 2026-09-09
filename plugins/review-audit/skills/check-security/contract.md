@@ -47,7 +47,7 @@ for the same reason — one cell cannot carry two letters):
 | Language    | ext(s)             | secret-literal | credential-assignment | injection-risk | xss-risk | insecure-crypto |
 | ----------- | ------------------ | -------------- | --------------------- | -------------- | -------- | --------------- |
 | Python      | py                 | L              | L                     | M              | L        | L               |
-| JavaScript  | js, jsx, mjs, cjs  | L              | L                     | M (js/jsx only) | L        | L               |
+| JavaScript  | js, jsx, mjs, cjs  | L              | L                     | M              | L        | L               |
 | TypeScript  | ts, tsx            | L              | L                     | M              | L        | L               |
 | Ruby        | rb                 | L              | L                     | M              | L        | L               |
 | Rust        | rs                 | L              | L                     | M              | L        | L               |
@@ -230,9 +230,11 @@ the macros differ in argument position: `format!` takes the format string first,
 while `write!`/`writeln!` take the `Write` destination first and the format
 string second. A single `(format!|write!|writeln!)\s*\(\s*"` alternation makes
 the `write!`/`writeln!` branches dead code — no valid call has its format string
-in argument one. The JS narrowing is real: the template-literal arm dispatches on
-`js`/`jsx`/`ts`/`tsx` only, so `.mjs`/`.cjs` reach the lexical-independent
-detectors but not that arm.
+in argument one. The template-literal arm dispatches on
+`js`/`jsx`/`ts`/`tsx`/`mjs`/`cjs` as of #840. Before that it omitted
+`.mjs`/`.cjs`, which made the scanner contradict itself: its own lexical model
+(`EXT_LANG` / `lang_of`) resolves both to `js`, so every lang-gated detector
+beside it already scanned a `.mjs` that this one skipped.
 
 Detector classification per ADR 0002 § 3:
 

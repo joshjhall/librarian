@@ -400,9 +400,70 @@ each other once 1 is in.
    for the first. Spell the trailing boundary as an alternation of the ways the
    construct can legally continue (`catch([[:space:]][^{}]*)?\{`), not as a
    negated class. Both directions are now fixture-pinned in both runtimes.
-3. **Phase 3 — TypeScript / JavaScript** ([#840](https://github.com/joshjhall/librarian/issues/840)). Audit the existing arms against this
-   contract and fill the matrix. Consider whether TS should split from JS, as
-   #726 found for the decomposition lenses.
+3. **Phase 3 — TypeScript / JavaScript** ([#840](https://github.com/joshjhall/librarian/issues/840)) — **landed**. The issue named two
+   gaps; the audit measured **four**, and the extra two are the interesting part.
+
+   **`.mjs`/`.cjs` were missing from four detector arms, in both runtimes:**
+   `check-code-health`'s `empty-handler`, `check-security`'s `injection-risk`,
+   all four of `check-lifecycle`'s categories, and
+   `check-docs-missing-api`'s sole arm. Only `check-code-health`'s two
+   `debug-statement` families had them.
+
+   **The shared-region boundary predicted exactly which arms were stale, and
+   that is the reusable finding for Phases 4 and 5.** The two arms that carried
+   `.mjs`/`.cjs` are the two inside `# >>> shared:` sync regions; every arm
+   outside one was left behind. #568 widened the extension list where
+   `validate-shared-scanner-sync.sh` was watching, and nowhere else — so a
+   future extension widening should be assumed to have reached the synced arms
+   only, and every unsynced arm re-checked by hand. The symptom was an
+   intra-scanner contradiction: a `console.log` in `foo.mjs` was caught while an
+   empty `catch {}` in the same file was not.
+
+   **Why no gate caught this.** Every one of the four gaps was **symmetric**
+   across the two runtimes — py and sh were short in identical ways — so
+   `validate-python-ports.sh` compared two silences and passed. That is the
+   failure its own header warns about ("both impls break the same way"), and it
+   means dual-runtime parity is structurally incapable of finding a missing
+   extension. The per-cell matrix check (#847) could not see it either: the
+   matrices were *accurate*, honestly recording the narrowing as
+   `M (js/jsx only)`. A correct description of a defect still describes a
+   defect.
+
+   **The TS-vs-JS split question (the phase's open design question): answered
+   NO, deliberately — keep the distinct lexical keys, do not split the arms.**
+   #726's reasoning does not transfer. It split TS from JS in the decomposition
+   lens because `UNIT_RE` is a **segmenter**: it must recognize
+   `interface`/`type`/`enum`/`namespace` to find unit boundaries, so aliasing TS
+   to JS made every type-level declaration invisible. The four scanners here are
+   **line scanners** with no unit model. The only place a language key is
+   consumed is `COMMENT_RE`, where `js` and `ts` are byte-identical
+   (`^[ \t]*(?://|/\*|\*)`) and correctly so — TS and JS spell comments the same
+   way.
+
+   One caveat, measured rather than assumed: `check-docs-missing-api`'s shared
+   arm matches `type|interface|enum`, and it **does** fire on
+   `export interface Foo {}` in a `.js` file — a line scanner matches the text
+   whether or not the syntax is legal JavaScript. That is a tolerable
+   over-match, not a harmless impossibility: such a line is either TypeScript in
+   a misnamed file or a genuine syntax error, and reporting it undocumented is
+   defensible in both cases. It is recorded here because the tempting version of
+   this argument — "those forms cannot appear in JS, so the superset is inert" —
+   is false, and a future phase should not lean on it.
+
+   The keys stay **distinct** (not merged) for two reasons: § 2's subset rule
+   forbids contradicting the normative table, which has them distinct; and a
+   future TS-only detector needs somewhere to attach. But splitting the arms
+   today would add four branches with byte-identical bodies and no behavior
+   change. **A shared key is not the same defect as a shared arm** — the
+   question to ask of a future language pair is whether any detector *branches*
+   on the distinction, not whether the languages differ.
+
+   **Measured effect.** On this repo's own 26 tracked `.mjs`/`.cjs` files the
+   widening produces **+26 rows**, all `undocumented-public-api` — real by that
+   detector's declared contract (its JS doc marker is `/**`; `bin/*.mjs` and
+   `tests/**/*.mjs` document their exports with `//` instead). The
+   `check-code-health` rows on those files were already firing before the
+   change, via the debug arms that already covered the extensions.
 4. **Phase 4 — Python** ([#841](https://github.com/joshjhall/librarian/issues/841)). Audit and fill, same shape as Phase 3.
 5. **Phase 5 — Bash** ([#842](https://github.com/joshjhall/librarian/issues/842)). Full arms; currently `check-docs-missing-api` only.
    Closes #622.

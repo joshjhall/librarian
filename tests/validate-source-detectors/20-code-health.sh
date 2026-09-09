@@ -167,6 +167,27 @@ test_health_empty_handler() {
     assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
         "health: JS empty catch fires"
 
+    # ESM/CJS empty catch (#840). The SAME source in a .mjs/.cjs file, which is
+    # the whole point: .js above is the CONTROL, so a green pair here proves the
+    # extension list closed the gap rather than the fixture firing on anything.
+    #
+    # This arm sits OUTSIDE the `>>> shared:` regions that #568 widened, which
+    # is exactly why it was left behind while both debug-statement families in
+    # this same scanner gained .mjs/.cjs — an intra-scanner split where a
+    # console.log in foo.mjs was caught and an empty catch {} was not. The gap
+    # was SYMMETRIC across py/sh, so validate-python-ports.sh could never see it.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'try { risky(); } catch (e) {}' >"$d/c.mjs"
+    list="$(make_list "$d/l" "$d/c.mjs")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: ESM (.mjs) empty catch fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'try { risky(); } catch (e) {}' >"$d/c.cjs"
+    list="$(make_list "$d/l" "$d/c.cjs")"
+    assert_fires "$SK_HEALTH" "$list" empty-handler "Empty catch block" \
+        "health: CJS (.cjs) empty catch fires"
+
     # Ruby empty rescue.
     d="$(fresh_dir)"
     command printf '%s\n' 'begin' '  risky' 'rescue' 'end' >"$d/r.rb"

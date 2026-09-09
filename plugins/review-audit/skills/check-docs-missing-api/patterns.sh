@@ -227,7 +227,7 @@ while IFS= read -r file; do
             ;;
 
         # --- JavaScript/TypeScript ---
-        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx])
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             # Find exported functions, classes, types
             command grep -nE '^export (function|class|const|type|interface|enum) ' "$file" 2>/dev/null |
                 while IFS= read -r raw; do

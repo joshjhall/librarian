@@ -34,7 +34,7 @@ separate columns here.
 | Language     | ext(s)          | tech-debt-marker | debug-print | debugger | empty-handler |
 | ------------ | --------------- | ---------------- | ----------- | -------- | ------------- |
 | Python       | py              | L                | M           | M        | M             |
-| JavaScript   | js, jsx, mjs, cjs | L              | M           | M        | M (js/jsx only) |
+| JavaScript   | js, jsx, mjs, cjs | L              | M           | M        | M               |
 | TypeScript   | ts, tsx         | L                | M           | M        | M             |
 | Go           | go              | L                | M           | —        | M             |
 | Java, Kotlin | java, kt        | L                | M           | —        | M             |
@@ -45,10 +45,10 @@ separate columns here.
 
 <!-- contract: end-check-code-health-language-support -->
 
-Two raggednesses are real and deliberate to record rather than smooth over:
+One raggedness is real and deliberate to record rather than smooth over
+(a second, `empty-handler`'s missing `.mjs`/`.cjs`, was closed by #840 — see
+below):
 
-- `empty-handler` covers .js/.jsx/.ts/.tsx but **not** .mjs/.cjs, while both debug
-  families do. A .mjs empty `catch {}` is missed today.
 - The debug-print family covers Go and Java/Kotlin but not Ruby; the
   debugger-statement family is the reverse. Rust (#838) is in **both**: the
   `print!`/`println!`/`eprint!`/`eprintln!` macro family is stdout output and so
@@ -61,6 +61,14 @@ Two raggednesses are real and deliberate to record rather than smooth over:
   so there is nothing analogous to `dbg!`, `pdb.set_trace` or the `debugger`
   keyword. The cell would still be `—` after an exhaustive search, which is why
   it is declared rather than left for a future phase.
+
+`empty-handler` gained `.mjs`/`.cjs` in #840, closing an intra-scanner
+contradiction: both debug families covered those extensions while this one did
+not, so a `console.log` in `foo.mjs` was caught and an empty `catch {}` in the
+same file was not. The split was not arbitrary — the two debug families sit
+inside `# >>> shared:` sync regions and received #568's widening; this arm sits
+outside one and was missed. The gap was **symmetric** across the two runtimes,
+so `validate-python-ports.sh` compared two silences and passed.
 
 Swift's `empty-handler` arm needs its own pattern rather than an extension of the
 js/java one, and the reason is the whole shape of the #622 bug. Swift's `catch`

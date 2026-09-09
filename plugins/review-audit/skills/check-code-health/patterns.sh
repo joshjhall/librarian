@@ -656,7 +656,7 @@ while IFS= read -r file; do
                     fi
                 done || true
             ;;
-        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx])
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             # JS/TS: catch with empty body
             command grep -nE -- 'catch[[:space:]]*\([^)]*\)[[:space:]]*\{[[:space:]]*\}' "$file" 2>/dev/null |
                 while IFS= read -r raw; do

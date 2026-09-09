@@ -535,6 +535,23 @@ test_missing_api() {
         "JS/TS: export function doThing" \
         "missing-api ts: an undocumented export fires"
 
+    # ESM/CJS (#840). `export function` is the ESM spelling, so .mjs is the
+    # extension where this detector is MOST expected to apply — and it was the
+    # one it skipped. The .ts case above is the control for these two.
+    d="$(fresh_dir)"
+    command printf '%s\n' "const A = 1;" "export function doThing() {}" >"$d/u.mjs"
+    list="$(make_list "$d/l" "$d/u.mjs")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "JS/TS: export function doThing" \
+        "missing-api mjs: an undocumented ESM export fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' "const A = 1;" "export function doThing() {}" >"$d/u.cjs"
+    list="$(make_list "$d/l" "$d/u.cjs")"
+    assert_fires "$SK_MISSAPI" "$list" "$WORKDIR" undocumented-public-api \
+        "JS/TS: export function doThing" \
+        "missing-api cjs: an undocumented export fires"
+
     d="$(fresh_dir)"
     command printf '%s\n' "/** Does the thing. */" "export function doThing() {}" >"$d/doc.ts"
     list="$(make_list "$d/l" "$d/doc.ts")"

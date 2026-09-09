@@ -739,7 +739,7 @@ def scan_file(path: str) -> None:
         if ext == "py":
             if re.search(r"""f["'](SELECT|INSERT|UPDATE|DELETE|DROP)\b""", line):
                 emit(path, idx, "injection-risk", "SQL in f-string: " + cap(line))
-        elif ext in ("js", "ts", "jsx", "tsx"):
+        elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
             if re.search(r"`(SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\$\{", line):
                 emit(
                     path,

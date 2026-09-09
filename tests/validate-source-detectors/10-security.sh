@@ -671,6 +671,24 @@ test_security_injection() {
     assert_fires "$SK_SEC" "$list" injection-risk "SQL in template literal" \
         "security: JS/TS SQL template literal fires"
 
+    # ESM/CJS template-literal SQL (#840). injection-risk is this scanner's ONLY
+    # extension-keyed detector, and it omitted .mjs/.cjs while the scanner's own
+    # lexical model (EXT_LANG / lang_of) resolved both to `js` — so the
+    # lang-gated detectors beside it (credential assignment, SQL concat,
+    # insecure-crypto) already scanned a .mjs that this one skipped. The scanner
+    # contradicted itself; .ts above is the control for these two.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const q = `SELECT * FROM t WHERE x=${v}`;' >"$d/q.mjs"
+    list="$(make_list "$d/l" "$d/q.mjs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in template literal" \
+        "security: ESM (.mjs) SQL template literal fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const q = `SELECT * FROM t WHERE x=${v}`;' >"$d/q.cjs"
+    list="$(make_list "$d/l" "$d/q.cjs")"
+    assert_fires "$SK_SEC" "$list" injection-risk "SQL in template literal" \
+        "security: CJS (.cjs) SQL template literal fires"
+
     # Ruby string-interpolation SQL.
     d="$(fresh_dir)"
     command printf '%s\n' 'sql = "SELECT * FROM t WHERE id=#{id}"' >"$d/q.rb"

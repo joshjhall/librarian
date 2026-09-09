@@ -43,7 +43,7 @@ per-language dispatch to declare.
 | ---------- | --------------- | ------------------- | ---------------------- | --------------- | ----------------- |
 | Swift      | swift           | M                   | M                      | M               | M                 |
 | Python     | py              | M                   | M                      | M               | —                 |
-| JavaScript | js, jsx         | M                   | M                      | M               | M                 |
+| JavaScript | js, jsx, mjs, cjs | M                 | M                      | M               | M                 |
 | TypeScript | ts, tsx         | M                   | M                      | M               | M                 |
 | Go         | go              | M                   | M                      | M               | —                 |
 | Rust       | rs              | M                   | M                      | M               | M                 |

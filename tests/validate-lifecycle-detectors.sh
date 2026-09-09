@@ -148,6 +148,21 @@ test_unreaped_subprocess() {
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: JS spawn/execFile/exec fires"
 
+    # ESM/CJS (#840). This scanner has ONE arm covering all four categories, so
+    # the missing .mjs/.cjs made every lifecycle category blind to them at once.
+    # The .js case above is the control for these two.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const child = spawn("ls", args)' >"$d/c.mjs"
+    list="$(make_list "$d/l" "$d/c.mjs")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: ESM (.mjs) spawn fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const child = spawn("ls", args)' >"$d/c.cjs"
+    list="$(make_list "$d/l" "$d/c.cjs")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: CJS (.cjs) spawn fires"
+
     # Go exec.Command
     d="$(fresh_dir)"
     command printf '%s\n' 'cmd := exec.Command("ls")' >"$d/d.go"
