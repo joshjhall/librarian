@@ -241,8 +241,9 @@ def _has_anchor(text: str) -> bool:
     quotes a link would score as "cited its sources". Since the yes/no this
     returns is the whole of AC5's conclusion-vs-dump verdict, that false positive
     reads as evidence of the behavior being measured. Tokens carrying a scheme
-    are therefore rejected before the shape test, and the head must end in a
-    plausible file extension.
+    are therefore rejected before the shape test, and the head must contain a
+    path separator AND end in an alphabetic extension -- see the inline note,
+    where each of the three conditions names the false positive it excludes.
     """
     for token in text.replace("\n", " ").split():
         if "://" in token:
@@ -250,12 +251,26 @@ def _has_anchor(text: str) -> bool:
         head, sep, tail = token.rpartition(":")
         if not (sep and head and tail[:1].isdigit()):
             continue
-        # Require a real extension (`.py`, `.sh`, `.md`...) rather than merely a
-        # "." or "/" somewhere in the head: a bare `host:443` clears the looser
-        # test without naming a file. The extension must be ALPHABETIC, not
-        # merely alphanumeric -- `v2.0.31:8080` ends in a numeric "extension"
-        # and would otherwise read as a citation. No source extension is a
-        # number.
+        # THREE conditions, and dropping any one readmits a false positive that
+        # was measured, not imagined:
+        #
+        #   a path separator   `database.io:5432` and `api.dev:8443` are bare
+        #                      host:port mentions with no scheme, so the `://`
+        #                      guard never sees them -- and a TLD is
+        #                      indistinguishable from a short file extension.
+        #                      Requiring "/" is what separates a hostname from a
+        #                      path. (Cycle-2 regression: an earlier spelling of
+        #                      this fix dropped it and readmitted both.)
+        #   an extension       a bare `a/b:443` names no file.
+        #   ALPHABETIC         `v2.0.31:8080` ends in a numeric "extension" and
+        #                      would otherwise read as a citation. No source
+        #                      extension is a number.
+        #
+        # A bare `config.sh:41` with no directory therefore scores NO. That is
+        # the deliberate trade: this heuristic decides AC5's verdict, so a
+        # missed citation costs less than a manufactured one.
+        if "/" not in head:
+            continue
         stem, dot, ext = head.rpartition(".")
         if dot and stem and 1 <= len(ext) <= 4 and ext.isalpha():
             return True

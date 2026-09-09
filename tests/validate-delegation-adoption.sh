@@ -304,17 +304,54 @@ test_ac5_rejects_a_source_url_as_an_anchor() {
         "a URL is not a path:line anchor even when it ends in a source extension"
 }
 
-test_ac5_rejects_a_version_string_as_an_anchor() {
-    # The case that isolates the ALPHABETIC-extension requirement. `v2.0.31:8080`
-    # carries no scheme, so the `://` guard never sees it, and `31` passes an
-    # `isalnum()` extension test — the spelling this replaced. No real source
-    # extension is a number.
-    local root="$WORKDIR/verstring"
-    direct_spawn "$root" d1 general-purpose "Running v2.0.31:8080 in the container"
+test_ac5_rejects_a_numeric_extension() {
+    # Isolates the ALPHABETIC-extension requirement, and the fixture has to work
+    # harder than it looks. The obvious `v2.0.31:8080` stopped discriminating the
+    # moment cycle 2 added the path-separator guard — with no "/" it is rejected
+    # one condition earlier, so the test passed with `isalpha()` reverted to
+    # `isalnum()` and proved nothing (measured).
+    #
+    # `build/app.v2:8080` carries a path separator AND a numeric extension, so it
+    # reaches the extension check and is rejected only by `isalpha()`.
+    local root="$WORKDIR/numext"
+    direct_spawn "$root" d1 general-purpose "The artifact is deployed at build/app.v2:8080 now"
     run_adoption ac5 "$root"
     assert_equals "0" "$RC" "ac5 exits 0"
-    assert_contains "$OUT" "general-purpose                           9       no" \
-        "a numeric-suffixed version string is not an anchor"
+    assert_contains "$OUT" "general-purpose                          12       no" \
+        "a numeric extension is not a source extension"
+}
+
+test_ac5_rejects_a_scheme_less_host_port() {
+    # REGRESSION (review cycle 2 — a defect the cycle-1 FIX introduced). That fix
+    # dropped the original `"/" in head` requirement, so `database.io:5432` and
+    # `api.dev:8443` scored as citations: no scheme, so the `://` guard never
+    # sees them, and a TLD is indistinguishable from a short file extension.
+    # Bare host:port mentions are common in exactly the ops-flavored transcripts
+    # this tool classifies, so this manufactured the same false "cited its
+    # sources" verdict the cycle-1 fix was written to remove.
+    local root="$WORKDIR/hostport"
+    direct_spawn "$root" d1 general-purpose "The service listens on database.io:5432 in prod"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          11       no" \
+        "a scheme-less host:port is not a path:line anchor"
+}
+
+test_ac5_keeps_scanning_past_a_rejected_token() {
+    # The three guards `continue`; they must not `return False`/`break`. Every
+    # other rejection fixture holds exactly ONE anchor-shaped token, so a
+    # `continue` and an early `return False` produce identical output on them —
+    # the tests would not tell the two implementations apart.
+    #
+    # This fixture is the input where they DIFFER: a rejected URL token FIRST,
+    # then a genuine `path:line` anchor later in the same message. Only
+    # continue-and-keep-scanning reaches the real citation.
+    local root="$WORKDIR/mixed"
+    direct_spawn "$root" d1 general-purpose "See https://example.com/docs, the fix is in src/app.py:42 upstream"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          16      yes" \
+        "a rejected token does not abort the scan for a later real anchor"
 }
 
 test_string_shaped_content_is_not_dropped() {
@@ -337,6 +374,26 @@ test_string_shaped_content_is_not_dropped() {
     # anchor merely defaulting true.
     assert_contains "$OUT" "general-purpose                          13      yes" \
         "a bare-string assistant turn is read, not silently dropped"
+}
+
+test_wrong_shaped_content_yields_no_blocks() {
+    # _blocks' third branch: content present but neither list nor string (a dict,
+    # a number). It must return [] rather than raise or mis-normalize — the
+    # string-normalization added in cycle 1 must not have widened into "accept
+    # anything". Distinct from the no-answer case below, which omits the record.
+    local root="$WORKDIR/badshape" dir
+    dir="$root/proj/sess/subagents"
+    command mkdir -p "$dir"
+    {
+        command printf '{"type":"user","message":{"role":"user","content":"investigate"}}\n'
+        command printf '{"type":"assistant","message":{"role":"assistant","content":42}}\n'
+        command printf '{"type":"assistant","message":{"role":"assistant","content":{}}}\n'
+    } >"$dir/agent-w1.jsonl"
+    command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-w1.meta.json"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "a wrong-shaped content does not crash the run"
+    assert_contains "$OUT" "general-purpose                         n/a      n/a" \
+        "neither a number nor an object is read as an answer"
 }
 
 test_ac5_reports_na_for_a_spawn_with_no_answer() {
@@ -524,8 +581,11 @@ run_test test_opportunities_ignores_subagent_transcripts "Opportunities ignores 
 run_test test_ac5_classifies_an_anchored_conclusion "AC5 classifies an anchored conclusion"
 run_test test_ac5_classifies_an_unanchored_dump "AC5 classifies an unanchored dump"
 run_test test_ac5_rejects_a_source_url_as_an_anchor "AC5 rejects a source URL as an anchor"
-run_test test_ac5_rejects_a_version_string_as_an_anchor "AC5 rejects a version string as an anchor"
+run_test test_ac5_rejects_a_numeric_extension "AC5 rejects a numeric extension"
+run_test test_ac5_rejects_a_scheme_less_host_port "AC5 rejects a scheme-less host:port"
+run_test test_ac5_keeps_scanning_past_a_rejected_token "AC5 keeps scanning past a rejected token"
 run_test test_string_shaped_content_is_not_dropped "String-shaped message content is not dropped"
+run_test test_wrong_shaped_content_yields_no_blocks "Wrong-shaped message content yields no blocks"
 run_test test_ac5_reports_na_for_a_spawn_with_no_answer "AC5 reports n/a for a spawn that never answered"
 run_test test_subagent_type_sidecar_key_is_honoured "The subagent_type sidecar key is honoured"
 run_test test_ac5_says_untested_when_nothing_was_delegated "AC5 says UNTESTED when nothing was delegated"

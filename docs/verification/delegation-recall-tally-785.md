@@ -255,7 +255,14 @@ What the data **does not** establish, stated as plainly as the prior art demands
   ~417 tokens with no `file:line` anchors — small is the direction AC5 wants and
   unanchored is not, but it was a docs question with no repo location to cite, so
   it is weak evidence about *doc lookups* and none about fan-out investigations.
-  (b) **`delegation-adoption.sh ac5` does not measure what AC5 names.** AC5 asks
+  (b) **The anchor test is deliberately strict.** It requires a path separator,
+  an alphabetic extension, and no URL scheme — so a bare `config.sh:41` with no
+  directory scores `no`. Three false positives were measured and removed during
+  review (a source URL, a scheme-less `host.tld:port`, a numeric extension), each
+  of which would have scored a return value that merely *mentioned* something as
+  having "cited its sources". Since this yes/no is the whole verdict, a missed
+  citation costs less than a manufactured one. (c) **`delegation-adoption.sh ac5`
+  does not measure what AC5 names.** AC5 asks
   whether the *parent's* context growth is bounded by the conclusion; the
   subcommand sizes the *subagent's return value* and checks for anchors. That is
   a defensible proxy — the parent can only absorb what it was handed — but it is
