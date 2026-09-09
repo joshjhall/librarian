@@ -207,10 +207,25 @@ die() {
 # check-decomposition/loc_engine.py — and makes every other copy a SUBSET of it:
 # a scanner may cover FEWER extensions, but may never CONTRADICT it. The source
 # list below is that subset (py/js/jsx/mjs/cjs/ts/tsx/rs/go/sh/bash/swift).
-# NOTE: tests/lint-language-table-sync.sh does NOT cover this file (verified:
-# it scans the four check-* scanners only). The subset relationship above is a
-# convention this file follows by hand, not a gated invariant — do not read the
-# ADR reference as protection. Extending that gate here is filed as #913.
+#
+# THAT SUBSET RELATIONSHIP IS GATED (#913), by
+# tests/lint-review-route-lang.sh — not by tests/lint-language-table-sync.sh,
+# which scans the four check-* scanners only and is shaped around a
+# `patterns.{py,sh}` pair plus a `## Language Support` matrix this file has
+# neither of. The gate parses the arms below and applies one rule: an EXT_LANG
+# lang of `md` must classify `doc`, every other lang must classify `source`.
+# `unknown` is never a violation — it is the fail-safe direction (R3), and a
+# gate that punished it would push edits toward routing a doubtful extension
+# cheap. It also asserts that every `source`-arm extension exists in EXT_LANG,
+# and that every `doc`-arm extension is either markdown there or listed in that
+# gate's explicit UNGOVERNED_DOC tuple (rst, adoc).
+#
+# ITS RESIDUAL LIMIT, so the reference is not read as more protection than it
+# is: EXT_LANG cannot adjudicate an extension it does not model, so the
+# contradiction check is silent on those by construction — which is why the two
+# arms where that silence would be dangerous carry their own assertions. The
+# `config` arm is deliberately ungated: R5 forces `full` for config regardless,
+# so a wrong entry there costs review budget, never safety.
 #
 # The doc/config set follows the existing precedent in
 # check-lifecycle/patterns.sh, which skips exactly
