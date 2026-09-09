@@ -102,6 +102,14 @@ run_stage "Review-harness accepted-args-key refs" bash "$SCRIPT_DIR/lint-args-co
 # Offline by construction — a gate that needed `gh` auth would sit on the 77
 # sentinel in CI and pre-push alike.
 run_stage "Status-label refs + transition shape" bash "$SCRIPT_DIR/lint-status-label-refs.sh"
+# The ONLINE half of that same contract (#938). The gate above is offline by
+# construction and therefore blind to the drift that CAUSED #921 — a label deleted
+# or renamed in the repo changes nothing under plugins/**. That direction needs
+# `gh` auth, so the scan runs on a schedule
+# (.github/workflows/label-vocab-reconcile.yml) and only its BEHAVIOR is gated
+# here, against a stubbed `gh`. Same gate-vs-meta-gate split as the ai-config
+# pre-scan row below; both halves read one parser, bin/lib/label-vocab.sh.
+run_stage "status/* vocabulary reconciler behavior" bash "$SCRIPT_DIR/validate-label-vocab-reconcile.sh"
 run_stage "Plugin prose budget (ratchet)" bash "$SCRIPT_DIR/lint-prose-budget.sh"
 run_stage "Worktree-safe recipes" bash "$SCRIPT_DIR/lint-worktree-recipes.sh"
 run_stage "Prose-budget gate behavior" bash "$SCRIPT_DIR/validate-prose-budget.sh"

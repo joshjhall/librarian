@@ -27,18 +27,25 @@
 # skip sentinel — rendered `[SKIP] … did not run`, which catches nothing. The
 # metadata.yml union is checkable everywhere, always.
 #
-# THE OTHER HALF OF THE CONTRACT — AND THIS GATE'S BLIND SPOT (#938).
+# THE OTHER HALF OF THE CONTRACT — AND THIS GATE'S BLIND SPOT (#938, now closed).
 # Being offline costs one direction, and it is the direction that caused #921:
 #
 #   prose names a label no metadata.yml declares   -> caught HERE
-#   a declared label is deleted/renamed IN THE REPO -> INVISIBLE here
+#   a declared label is deleted/renamed IN THE REPO -> caught by the SCHEDULED
+#                                                     reconciler, never here
 #
 # Nothing in plugins/** changes when someone renames a label in the GitHub UI, so
 # this gate stays green while the pipeline's label calls start failing exactly as
-# they did on #636. Closing that requires network + `gh` auth, which is why it is
-# a SCHEDULED job rather than a stage here — tracked as #938, modelled on
-# .github/workflows/ai-config-prescan.yml (#907), this repo's one scheduled
-# workflow. Read the two as one contract: neither half is sufficient alone.
+# they did on #636. Closing that requires network + `gh` auth, so it lives in a
+# SCHEDULED job rather than a stage here:
+#
+#   .github/workflows/label-vocab-reconcile.yml  the schedule (+ workflow_dispatch)
+#   bin/label-vocab-reconcile.sh                 the two-direction comparison
+#   tests/validate-label-vocab-reconcile.sh      its behavior gate, stubbed gh
+#
+# READ THE TWO AS ONE CONTRACT: neither half is sufficient alone, and BOTH read
+# the same declared vocabulary through bin/lib/label-vocab.sh — one parser, so a
+# drift cannot make one half report what the other cannot see (#663).
 #
 # PROSE THAT FORBIDS THE PATTERN IS NOT AN INSTANCE OF IT. execute-protocol.md
 # now says "never collapse this back into one `gh issue edit --add-label …
@@ -74,24 +81,21 @@ fi
 FAILURES=0
 
 # --- The declared vocabulary ------------------------------------------------
-# Union of `- name: status/...` entries across every plugins/**/metadata.yml.
-declared_labels() {
-    command find "$PLUGINS_DIR" -type f -name 'metadata.yml' 2>/dev/null |
-        while IFS= read -r meta; do
-            [ -n "$meta" ] || continue
-            command awk '
-                /^labels:/ { inblock = 1; next }
-                inblock && /^[a-zA-Z_]+:/ { inblock = 0 }
-                inblock && /^[[:space:]]*-[[:space:]]*name:[[:space:]]*status\// {
-                    sub(/^[[:space:]]*-[[:space:]]*name:[[:space:]]*/, "")
-                    gsub(/"/, "")
-                    print
-                }
-            ' "$meta"
-        done | command sort -u
-}
+# Parsed by bin/lib/label-vocab.sh, which the scheduled reconciler sources too —
+# see the header. A MISSING library is fatal (exit 2), never an empty vocabulary:
+# an unsourced parser would make every reference in the corpus undeclared at
+# once, which reads as 200 findings rather than as the one real defect.
+LABEL_VOCAB_LIB="$REPO_ROOT/bin/lib/label-vocab.sh"
+if [ ! -f "$LABEL_VOCAB_LIB" ]; then
+    command printf 'lint-status-label-refs: FATAL — the shared label parser is missing at\n' >&2
+    command printf '  %s\n' "$LABEL_VOCAB_LIB" >&2
+    command printf '  Refusing to run: with no parser every reference reads as undeclared.\n' >&2
+    exit 2
+fi
+# shellcheck source=bin/lib/label-vocab.sh
+. "$LABEL_VOCAB_LIB"
 
-DECLARED="$(declared_labels)"
+DECLARED="$(declared_status_labels "$PLUGINS_DIR")"
 
 if [ -z "$DECLARED" ]; then
     command printf 'No status/* labels declared in any metadata.yml — the gate has nothing to check against.\n' >&2
