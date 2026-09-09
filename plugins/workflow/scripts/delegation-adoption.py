@@ -102,11 +102,13 @@ RESULT_FLOOR_TOKENS = 2_000
 # but quadratic, which is slow enough to matter.
 ANCHOR_RE = re.compile(r"/[^/\s:]+\.[A-Za-z]{1,4}:\d+")
 
-# A token that begins `host.tld/` -- a URL wearing no scheme. `://` does not
-# catch `example.com/repo/blob/main/src/app.py:42` or `www.example.com/a/b.py:9`,
-# and both end in a real source extension, so ANCHOR_RE alone matches them. A
-# link is not a citation however it is spelled.
-DOMAIN_PREFIX_RE = re.compile(r"^[\w\-]+(?:\.[\w\-]+)+/")
+# A token that begins `host.tld/` or `host.tld:PORT/` -- a URL wearing no scheme.
+# `://` does not catch `example.com/repo/blob/main/src/app.py:42`,
+# `www.example.com/a/b.py:9` or `api.example.com:8080/v1/src/app.py:42`, and each
+# ends in a real source extension, so ANCHOR_RE alone matches them. The optional
+# port is not decoration: without it a `:8080` between host and path defeats the
+# whole check. A link is not a citation however it is spelled.
+DOMAIN_PREFIX_RE = re.compile(r"^[\w\-]+(?:\.[\w\-]+)+(?::\d+)?/")
 
 
 def _require_python() -> None:
@@ -145,15 +147,29 @@ def _agent_type(jsonl: pathlib.Path) -> str:
     return data.get("agentType") or data.get("subagent_type") or "(unknown)"
 
 
-def _is_harness(jsonl: pathlib.Path) -> bool:
+def _is_harness(jsonl: pathlib.Path, root: pathlib.Path) -> bool:
     """True when this spawn was fanned out by a workflow.js harness.
 
     Keyed on a `workflows/` PATH SEGMENT, not a substring: a session directory
     that merely contains the letters "workflows" (a worktree named for the
     workflow plugin, say) must not silently reclassify every direct spawn in it
     as harness traffic and manufacture the zero this tool exists to test.
+
+    Scoped to the path RELATIVE TO ROOT, because the absolute path carries
+    directories that say nothing about the spawn. A corpus living anywhere under
+    an ancestor named `workflows` -- an archive, a worktree, an unrelated parent
+    -- classified every direct spawn as harness traffic and reported
+    "delegated investigations: 0" when the true answer was 1. Whether a spawn was
+    fanned out is a fact about the corpus, so only the corpus-relative path may
+    decide it.
     """
-    return "workflows" in jsonl.parts
+    try:
+        relative = jsonl.relative_to(root)
+    except ValueError:
+        # Not under root at all. Refuse to guess rather than fall back to the
+        # absolute path, which is the bug above.
+        return False
+    return "workflows" in relative.parts
 
 
 def iter_spawns(root: pathlib.Path):
@@ -164,7 +180,7 @@ def iter_spawns(root: pathlib.Path):
         yield {
             "file": str(jsonl.relative_to(root)),
             "agent_type": _agent_type(jsonl),
-            "kind": "harness" if _is_harness(jsonl) else "direct",
+            "kind": "harness" if _is_harness(jsonl, root) else "direct",
             "path": jsonl,
         }
 
@@ -172,7 +188,14 @@ def iter_spawns(root: pathlib.Path):
 def _iter_records(jsonl: pathlib.Path):
     """Yield parsed records from a JSONL transcript, skipping unparseable lines."""
     try:
-        lines = jsonl.read_text().splitlines()
+        # errors="replace", not strict: a transcript can embed raw bytes from a
+        # tool result, and read_text() raises UnicodeDecodeError (a ValueError,
+        # NOT an OSError) on the first invalid one. Strict decoding aborted the
+        # entire scan over a single bad file -- turning a real corpus into a
+        # crash that a caller swallowing the exit code reads as "no findings",
+        # which is the false zero this tool exists to prevent. The sibling
+        # _agent_type already guards its read for exactly this reason.
+        lines = jsonl.read_text(errors="replace").splitlines()
     except OSError as exc:
         print(f"warning: unreadable {jsonl}: {exc}", file=sys.stderr)
         return

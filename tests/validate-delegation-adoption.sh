@@ -501,6 +501,68 @@ test_ac5_rejects_a_wrapped_domain_url() {
         "a wrapped domain URL is still not an anchor"
 }
 
+test_ac5_rejects_a_ported_domain_url() {
+    # The fifth URL spelling (review cycle 5). A `:8080` between host and path
+    # defeats a domain pattern that requires the `/` immediately after the TLD,
+    # so `api.example.com:8080/v1/src/app.py:42` sailed through and matched the
+    # trailing `/app.py:42`. The port is optional in DOMAIN_PREFIX_RE for
+    # precisely this reason.
+    local root="$WORKDIR/ported"
+    direct_spawn "$root" d1 general-purpose "See api.example.com:8080/v1/src/app.py:42 for detail"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          13       no" \
+        "a domain with a port is still not an anchor"
+}
+
+test_non_utf8_transcript_does_not_abort_the_scan() {
+    # REGRESSION (review cycle 5). read_text() defaults to STRICT utf-8 and
+    # raises UnicodeDecodeError -- a ValueError, NOT the OSError the handler
+    # caught -- so one transcript carrying raw bytes from a tool result crashed
+    # the entire scan. Callers that swallow the exit code (the coverage driver
+    # uses `|| true`) would read that crash as "no findings": the false zero
+    # this tool exists to prevent, produced by the tool itself.
+    #
+    # The good spawn must still be REPORTED, not merely survived — that is the
+    # difference between degrading and silently dropping data.
+    local root="$WORKDIR/badbytes" dir
+    dir="$root/proj/sess/subagents"
+    command mkdir -p "$dir"
+    {
+        command printf '{"type":"user","message":{"role":"user","content":"investigate"}}\n'
+        command printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"answer at src/a.py:4"}]}}\n'
+    } >"$dir/agent-good.jsonl"
+    command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-good.meta.json"
+    # A raw 0xff byte: valid on disk, invalid utf-8.
+    command printf '{"bad":"\377\376"}\n' >"$dir/agent-bad.jsonl"
+    command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-bad.meta.json"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "a non-utf8 transcript does not crash the scan"
+    assert_contains "$OUT" "general-purpose                           5      yes" \
+        "and the readable spawn is still scored"
+}
+
+test_harness_check_ignores_directories_above_the_root() {
+    # REGRESSION (review cycle 5). The harness/direct split read the ABSOLUTE
+    # path, so a corpus living anywhere under an ancestor named `workflows` --
+    # an archive, a worktree, an unrelated parent -- classified every direct
+    # spawn as harness fan-out and reported "delegated investigations: 0" when
+    # the true answer was 1. That is this tool's headline number, produced
+    # wrongly by a directory name outside the corpus entirely.
+    local root="$WORKDIR/ancestor/workflows/corpus" dir
+    dir="$root/proj/sess/subagents"
+    command mkdir -p "$dir"
+    command printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"x"}]}}\n' \
+        >"$dir/agent-d1.jsonl"
+    command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-d1.meta.json"
+    run_adoption adoption "$root"
+    assert_equals "0" "$RC" "adoption exits 0"
+    assert_contains "$OUT" "direct  (Agent tool)  1" \
+        "an ancestor named workflows does not reclassify a direct spawn"
+    assert_contains "$OUT" "harness (workflow.js) 0" \
+        "and nothing is counted as harness fan-out"
+}
+
 test_string_shaped_content_is_not_dropped() {
     # REGRESSION (review cycle 1): a message's `content` may be a bare STRING
     # rather than a block list. Returning [] for that shape silently dropped a
@@ -739,6 +801,9 @@ run_test test_ac5_rejects_a_scheme_less_domain_url "AC5 rejects a scheme-less do
 run_test test_ac5_rejects_a_protocol_relative_url "AC5 rejects a protocol-relative URL"
 run_test test_ac5_accepts_a_wrapped_citation "AC5 accepts a wrapped citation"
 run_test test_ac5_rejects_a_wrapped_domain_url "AC5 rejects a wrapped domain URL"
+run_test test_ac5_rejects_a_ported_domain_url "AC5 rejects a ported domain URL"
+run_test test_non_utf8_transcript_does_not_abort_the_scan "A non-utf8 transcript does not abort the scan"
+run_test test_harness_check_ignores_directories_above_the_root "The harness check ignores directories above the root"
 run_test test_string_shaped_content_is_not_dropped "String-shaped message content is not dropped"
 run_test test_wrong_shaped_content_yields_no_blocks "Wrong-shaped message content yields no blocks"
 run_test test_ac5_reports_na_for_a_spawn_with_no_answer "AC5 reports n/a for a spawn that never answered"

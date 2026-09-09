@@ -182,6 +182,17 @@ plugins/workflow/scripts/delegation-adoption.sh opportunities
 plugins/workflow/scripts/delegation-adoption.sh ac5
 ```
 
+**Two defects found in review would each have produced a FALSE zero here**, and
+both are worth naming because they are the failure mode this instrument was
+built to rule out rather than commit. (1) The harness/direct split read the
+*absolute* path, so a corpus living under any ancestor directory named
+`workflows` classified every direct spawn as harness fan-out and reported zero
+delegated investigations — a directory name outside the corpus deciding the
+headline number. (2) A transcript carrying raw non-UTF-8 bytes crashed the whole
+scan, which a caller swallowing the exit code would read as "nothing found".
+Both are fixed and pinned by tests that fail without the fix. The figures below
+were re-derived after those fixes.
+
 **The harness count is a moving figure; the finding is not.** Re-running the
 commands above later returns a *larger* total, because every `ship-issue` review
 cycle — including the one that reviewed the PR closing this issue — adds spawns
@@ -266,7 +277,8 @@ What the data **does not** establish, stated as plainly as the prior art demands
   would each have scored a return value merely *mentioning* something as having
   "cited its sources", and two false negatives (the two formats above) that
   would have under-reported the behavior the guidance exists to produce. A URL
-  is not a citation however it is spelled, and it took four spellings to say so.
+  is not a citation however it is spelled, and it took five spellings to say so
+  (the fifth being a domain carrying a port, `api.example.com:8080/v1/a.py:42`).
   **Scope check, so a later reader weighs this correctly:** the anchor column
   feeds exactly one row of this tally — row 2, the docs lookup already discounted
   above — and forcing the check to return `yes` unconditionally changes no
