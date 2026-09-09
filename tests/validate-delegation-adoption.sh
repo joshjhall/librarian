@@ -276,7 +276,94 @@ test_ac5_classifies_an_unanchored_dump() {
     direct_spawn "$root" d1 general-purpose "I read many files and here is everything I saw with no citations"
     run_adoption ac5 "$root"
     assert_equals "0" "$RC" "ac5 exits 0 on an unanchored return"
-    assert_contains "$OUT" "no" "an unanchored return is not a conclusion"
+    assert_contains "$OUT" "general-purpose                          16       no" \
+        "an unanchored return is not a conclusion"
+}
+
+test_ac5_rejects_a_source_url_as_an_anchor() {
+    # REGRESSION (review cycle 1): a token shaped `head:digits` where the head
+    # contains "/" or "." reads as a `path:line` citation — so a return value
+    # that merely QUOTES A LINK scored as "cited its sources", manufacturing
+    # evidence for the very behavior AC5 measures.
+    #
+    # The fixture is a URL whose path ends in a REAL source extension
+    # (`.../src/app.py:42`). That is deliberate and is the only shape that
+    # isolates the `://` guard: a plain `https://example.com:8080/x` is already
+    # rejected by the extension check (its extension is `com`), so a test built
+    # on one passes with the guard deleted and proves nothing — measured, this
+    # test survived its own mutation until the fixture was changed to this.
+    local root="$WORKDIR/urlport"
+    direct_spawn "$root" d1 general-purpose "I found it at https://github.com/org/repo/blob/main/src/app.py:42 upstream"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    # Assert the ROW, not a bare "no": the trailing explanation contains the
+    # letters "no" inside "unanchored"/"not", so a substring check passes with
+    # the guard deleted — measured, this assertion survived its own mutation
+    # until it was anchored to the column.
+    assert_contains "$OUT" "general-purpose                          18       no" \
+        "a URL is not a path:line anchor even when it ends in a source extension"
+}
+
+test_ac5_rejects_a_version_string_as_an_anchor() {
+    # The case that isolates the ALPHABETIC-extension requirement. `v2.0.31:8080`
+    # carries no scheme, so the `://` guard never sees it, and `31` passes an
+    # `isalnum()` extension test — the spelling this replaced. No real source
+    # extension is a number.
+    local root="$WORKDIR/verstring"
+    direct_spawn "$root" d1 general-purpose "Running v2.0.31:8080 in the container"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                           9       no" \
+        "a numeric-suffixed version string is not an anchor"
+}
+
+test_string_shaped_content_is_not_dropped() {
+    # REGRESSION (review cycle 1): a message's `content` may be a bare STRING
+    # rather than a block list. Returning [] for that shape silently dropped a
+    # spawn's final answer and skipped string-shaped tool_results — shrinking
+    # both what ac5 scores and the opportunity denominator, quietly.
+    local root="$WORKDIR/strcontent" dir
+    dir="$root/proj/sess/subagents"
+    command mkdir -p "$dir"
+    {
+        command printf '{"type":"user","message":{"role":"user","content":"investigate"}}\n'
+        command printf '{"type":"assistant","message":{"role":"assistant","content":"The answer is at plugins/workflow/scripts/config.sh:41"}}\n'
+    } >"$dir/agent-s1.jsonl"
+    command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-s1.meta.json"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0 on string-shaped content"
+    assert_contains "$OUT" "yes" \
+        "a bare-string assistant turn is read, not silently dropped"
+}
+
+test_ac5_reports_na_for_a_spawn_with_no_answer() {
+    # A direct spawn that errored or was killed before answering has no
+    # assistant text. That is a THIRD state — distinct from "returned a dump" —
+    # and the row must say so rather than scoring an absent answer as 0 tokens.
+    local root="$WORKDIR/noanswer" dir
+    dir="$root/proj/sess/subagents"
+    command mkdir -p "$dir"
+    command printf '{"type":"user","message":{"role":"user","content":"investigate"}}\n' \
+        >"$dir/agent-n1.jsonl"
+    command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-n1.meta.json"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0 when a spawn never answered"
+    assert_contains "$OUT" "n/a" "an unanswered spawn reports n/a, not a score"
+}
+
+test_subagent_type_sidecar_key_is_honoured() {
+    # _agent_type falls back to `subagent_type` when `agentType` is absent.
+    # Every other fixture writes agentType, so without this the fallback is
+    # dead code that could be deleted with the suite still green.
+    local root="$WORKDIR/subtypekey" dir
+    dir="$root/proj/sess/subagents"
+    command mkdir -p "$dir"
+    command printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"x"}]}}\n' \
+        >"$dir/agent-k1.jsonl"
+    command printf '{"subagent_type":"Explore"}\n' >"$dir/agent-k1.meta.json"
+    run_adoption adoption "$root"
+    assert_equals "0" "$RC" "adoption exits 0"
+    assert_contains "$OUT" "Explore" "the subagent_type sidecar key is honoured"
 }
 
 test_ac5_says_untested_when_nothing_was_delegated() {
@@ -430,6 +517,11 @@ run_test test_opportunities_does_not_require_any_spawn "Opportunities works with
 run_test test_opportunities_ignores_subagent_transcripts "Opportunities ignores subagent transcripts"
 run_test test_ac5_classifies_an_anchored_conclusion "AC5 classifies an anchored conclusion"
 run_test test_ac5_classifies_an_unanchored_dump "AC5 classifies an unanchored dump"
+run_test test_ac5_rejects_a_source_url_as_an_anchor "AC5 rejects a source URL as an anchor"
+run_test test_ac5_rejects_a_version_string_as_an_anchor "AC5 rejects a version string as an anchor"
+run_test test_string_shaped_content_is_not_dropped "String-shaped message content is not dropped"
+run_test test_ac5_reports_na_for_a_spawn_with_no_answer "AC5 reports n/a for a spawn that never answered"
+run_test test_subagent_type_sidecar_key_is_honoured "The subagent_type sidecar key is honoured"
 run_test test_ac5_says_untested_when_nothing_was_delegated "AC5 says UNTESTED when nothing was delegated"
 run_test test_malformed_records_and_journal_are_tolerated "Malformed records and journal.jsonl are tolerated"
 run_test test_non_object_sidecar_falls_back_instead_of_crashing "A non-object meta sidecar falls back, not crashes"

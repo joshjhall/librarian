@@ -182,6 +182,15 @@ plugins/workflow/scripts/delegation-adoption.sh opportunities
 plugins/workflow/scripts/delegation-adoption.sh ac5
 ```
 
+**The harness count is a moving figure; the finding is not.** Re-running the
+commands above later returns a *larger* total, because every `ship-issue` review
+cycle — including the one that reviewed the PR closing this issue — adds spawns
+under `subagents/workflows/**`. It stood at 118 when this row was captured and at
+138 an hour later, all of the growth harness fan-out. What does **not** move is
+the column the verdict rests on: **direct spawns stayed at 1**, and delegated
+investigations at 0. Read row 1's total as a snapshot and the direct count as the
+measurement.
+
 The absolute spawn counts are local-machine figures, not fleet spend, so § *Why
 no absolute figures* does not bite: publishing "118 spawns on one dev box"
 discloses no org-wide volume. The token figures stay as ratios and per-item
@@ -241,11 +250,19 @@ What the data **does not** establish, stated as plainly as the prior art demands
   **zero**. There was nothing to recall, so no evidence about recall was
   produced, in either direction. Anyone later citing this file for a recall claim
   is citing a measurement that did not happen.
-- **AC5 is one sample and not the right shape.** The lone direct spawn returned
-  ~417 tokens with no `file:line` anchors. Small is the direction AC5 wants and
-  unanchored is not, but it was a docs question with no repo location to cite —
-  so it is weak evidence about *doc lookups*, and no evidence about the fan-out
-  investigations AC5 was written for. n=1 shows direction, never a rate.
+- **AC5 is one sample, the wrong shape, and measured by a PROXY.** Two separate
+  shortfalls, and the second is easy to miss. (a) The lone direct spawn returned
+  ~417 tokens with no `file:line` anchors — small is the direction AC5 wants and
+  unanchored is not, but it was a docs question with no repo location to cite, so
+  it is weak evidence about *doc lookups* and none about fan-out investigations.
+  (b) **`delegation-adoption.sh ac5` does not measure what AC5 names.** AC5 asks
+  whether the *parent's* context growth is bounded by the conclusion; the
+  subcommand sizes the *subagent's return value* and checks for anchors. That is
+  a defensible proxy — the parent can only absorb what it was handed — but it is
+  not the growth measurement, and the `~417 tok` figure in row 2 is a return-value
+  size, not a measured parent-context delta. The growth recipe in § AC5 above is
+  **unimplemented**, deliberately: there is no fan-out delegation in this corpus
+  to run it against. Implement it when adoption is non-zero.
 - **AC6 is deferred**, per § Per-model windows: no gateway, no after-window, and
   no mechanism for the change it looks for.
 - **Nothing here is fleet-general.** One machine, three days, one operator's

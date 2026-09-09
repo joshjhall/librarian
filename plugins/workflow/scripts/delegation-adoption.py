@@ -43,7 +43,18 @@ result three turns from the end.
 Subcommands:
   adoption       harness-vs-direct spawn split, grouped by agentType
   opportunities  inline investigation results clearing the break-even
-  ac5            per-direct-spawn: is the return value a conclusion or a dump?
+  ac5            per-direct-spawn return-value size + anchor presence
+
+WHAT `ac5` DOES NOT MEASURE. #785's AC5 asks whether the PARENT's context growth
+across a delegation is bounded by the conclusion rather than by the volume the
+subagent read. That is a measurement over the PARENT transcript's per-turn cache
+accounting. This subcommand does not take it: it sizes the SUBAGENT's return
+value and checks whether it carries `path:line` anchors -- a proxy for
+"conclusion, not transcript", on the sound reasoning that the parent can only
+absorb what it was handed. Read its output as return-value shape, never as
+measured parent-context growth. The growth recipe lives in
+docs/verification/delegation-recall-tally-785.md § AC5 and is unimplemented here
+because the corpus contains no fan-out delegation to run it against.
 
 Exit codes: 0 = success; 2 = usage error; 3 = no transcripts found.
 
@@ -156,9 +167,22 @@ def _iter_records(jsonl: pathlib.Path):
 
 
 def _blocks(record: dict) -> list:
-    """The content blocks of a record, or empty when it carries none."""
+    """The content blocks of a record, normalized to a list.
+
+    A message's `content` is a list of blocks OR a bare string -- the schema
+    permits the latter for a simple text-only turn, and real transcripts contain
+    both. Returning [] for the string shape would silently drop a spawn's final
+    answer (changing what `ac5` scores) and skip a string-shaped tool_result
+    (shrinking the opportunity denominator). Both are wrong-but-quiet outcomes,
+    which is the failure mode this whole tool exists to avoid, so the string is
+    lifted into the one-block form its callers already understand.
+    """
     content = (record.get("message") or {}).get("content")
-    return content if isinstance(content, list) else []
+    if isinstance(content, list):
+        return content
+    if isinstance(content, str) and content:
+        return [{"type": "text", "text": content}]
+    return []
 
 
 def _text_of(block: dict) -> str:
@@ -210,10 +234,30 @@ def _has_anchor(text: str) -> bool:
     anchors to verify it -- rather than a transcript of what it read. Anchors are
     the cheap, checkable half of that; the size column beside it carries the
     other half.
+
+    A URL WITH A PORT IS NOT AN ANCHOR. `https://example.com:8080/x` splits on
+    its last colon into a head containing "/" and a digit-leading tail, which is
+    the exact shape a `path:line` citation has -- so a return value that merely
+    quotes a link would score as "cited its sources". Since the yes/no this
+    returns is the whole of AC5's conclusion-vs-dump verdict, that false positive
+    reads as evidence of the behavior being measured. Tokens carrying a scheme
+    are therefore rejected before the shape test, and the head must end in a
+    plausible file extension.
     """
     for token in text.replace("\n", " ").split():
+        if "://" in token:
+            continue
         head, sep, tail = token.rpartition(":")
-        if sep and head and tail[:1].isdigit() and ("/" in head or "." in head):
+        if not (sep and head and tail[:1].isdigit()):
+            continue
+        # Require a real extension (`.py`, `.sh`, `.md`...) rather than merely a
+        # "." or "/" somewhere in the head: a bare `host:443` clears the looser
+        # test without naming a file. The extension must be ALPHABETIC, not
+        # merely alphanumeric -- `v2.0.31:8080` ends in a numeric "extension"
+        # and would otherwise read as a citation. No source extension is a
+        # number.
+        stem, dot, ext = head.rpartition(".")
+        if dot and stem and 1 <= len(ext) <= 4 and ext.isalpha():
             return True
     return False
 
@@ -312,6 +356,10 @@ def cmd_ac5(spawns: list[dict]) -> None:
     print(
         f"\nn={len(direct)}. A conclusion is small and anchored; a transcript is "
         f"large and\nunanchored. At small n this shows direction, not a rate."
+    )
+    print(
+        "NOTE: this is return-value shape, NOT the parent-context growth AC5\n"
+        "names. See the module docstring and the tally's § AC5."
     )
 
 
