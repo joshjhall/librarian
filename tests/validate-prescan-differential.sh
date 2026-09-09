@@ -9,14 +9,46 @@
 #
 #   1. the WHOLE librarian-proper tree (plugins/ tests/ bin/ .github/ docs/) —
 #      real files exercise the categories/languages actually present in the repo,
-#      and
 #   2. a per-category / per-language FIXTURE LIBRARY (fixtures/ below) — synthetic
-#      files that exercise branches the repo itself does not contain (Rust, Kotlin,
-#      empty handlers, multibyte evidence, set -e edge cases, …).
+#      files that exercise CONTENT branches the repo itself does not contain
+#      (Rust, Kotlin, empty handlers, multibyte evidence, set -e edge cases, …),
+#      and
+#   3. a PATH-SHAPE corpus (shapes/ below) — synthetic files whose CONTENT is
+#      deliberately identical and whose PATHS are the awkward ones: test_*
+#      directories, __tests__ under a non-test parent, spec/ inside src/,
+#      near-miss basenames (contest.py), uppercase extensions, spaces.
 #
 # Any byte difference between the two implementations is a divergence and fails
 # the gate: the two must be equivalent, full stop. drift-detect (the two-arg
 # outlier) is diffed with its own actual/planned fixture pair.
+#
+# WHAT EACH CORPUS DOES AND DOES NOT BOUND (#867).
+#
+# Corpus 1 is bounded by THE REPO'S OWN CONTENT. It can only ask the two
+# runtimes about inputs this tree happens to contain today, so an absent input
+# shape is not covered and the gate still reports green — and coverage SHRINKS
+# SILENTLY when the last file of some shape is deleted. That is not
+# hypothetical: it is exactly how #836 survived. check-lifecycle's bash
+# is_test_file spelled its name arms as PATH globs (`*/test_*.*`), where a
+# bash `case` glob's `*` crosses `/`, so a directory named test_helpers/
+# silenced every finding for real source beneath it while its python twin
+# scanned it. `git ls-files | grep -c "/test_[^/]*/"` returns 0, so this gate
+# diffed the two impls over every tracked file and found no difference.
+#
+# Corpus 3 exists to close that: it asks the path questions regardless of what
+# the tree looks like, and test_shape_corpus_is_non_vacuous below MUTATES a
+# copy of a scanner back to the pre-#836 spelling to prove the corpus can still
+# detect the regression that once shipped past here. The per-arm coverage
+# report (report_path_shape_coverage) prints how many REAL files reach each
+# classification arm, so an arm at zero is readable rather than invisible.
+#
+# None of the three is a substitute for the per-detector suites. Parity is
+# same-OUTPUT, never same-INTENT: a defect present in BOTH impls passes here by
+# construction (the #684 limit that validate-python-ports.sh documents at
+# length). A fixture asserting the INTENDED match belongs in
+# validate-lifecycle-detectors.sh et al., and the is_test_file ANCHORING
+# invariant itself is pinned structurally by tests/lint-test-file-anchoring.sh
+# (#866), not here.
 #
 # Skips (does not fail) when python3>=3.11 is unavailable, mirroring
 # validate-python-ports.sh. Pure bash + coreutils + python3; no network.
@@ -256,6 +288,88 @@ AKIA_FIXTURE="AKIA""ABCDEFGHIJKLMNOP"
 FIX_CORPUS="$WORKDIR/fixture-corpus.txt"
 command find "$FIXDIR" -type f 2>/dev/null | command sort >"$FIX_CORPUS"
 
+# --- Corpus 3: the PATH-SHAPE corpus ----------------------------------------
+# Corpus 2 above varies CONTENT across ordinary, well-behaved paths. This one
+# does the opposite: every file gets BYTE-IDENTICAL content, and only the PATH
+# varies. That is what makes a divergence here attributable — if the two impls
+# disagree on two files holding the same bytes, the disagreement is in path
+# classification (is_test_file and its neighbours), not in a detector regex.
+#
+# The shapes are chosen from is_test_file's own arms plus the awkward spellings
+# #867 named. Adding one is a one-line `shape_file` call; keep the near-miss
+# entries, which pin the OPPOSITE direction (#568) — contest.py must NOT be
+# treated as a test just because "test" appears in the basename.
+SHAPEDIR="$WORKDIR/shapes"
+
+# shape_file RELPATH — create RELPATH under $SHAPEDIR with the shared probe
+# content. Content is chosen to trip several categories at once (lifecycle's
+# unreaped-subprocess and terminate-without-kill, code-health's TODO marker and
+# debug-statement) so a path-classification divergence shows up in more than one
+# tool. Parent dirs are created as needed; RELPATH may contain spaces.
+shape_file() {
+    command mkdir -p "$SHAPEDIR/$(command dirname "$1")"
+    command cat >"$SHAPEDIR/$1" <<'EOF'
+# TODO: shared probe content — identical in every path-shape fixture
+import subprocess
+proc = subprocess.Popen(["true"])
+proc.terminate()
+print("debug")
+EOF
+}
+
+# Directory arms — a `tests`/`test`/`__tests__`/`spec` SEGMENT anywhere.
+shape_file "src/tests/helper.py"
+shape_file "lib/test/util.py"
+shape_file "src/vendor/__tests__/helper.py"
+shape_file "src/spec/runner.py"
+# __pycache__ is an is_test_file directory arm too. The REPO corpus filters it
+# out by construction (`grep -vE '__pycache__'` above), so this corpus is the
+# only place the arm is reachable at all.
+shape_file "src/__pycache__/mod.py"
+
+# The #836 shape: a directory whose NAME begins test_ but which is NOT a test
+# segment. A name arm spelled as a path glob (`*/test_*.*`) wrongly matches it
+# and silences real source beneath. Zero such directories exist in the tree
+# (`git ls-files | grep -c "/test_[^/]*/"` == 0), which is why the repo corpus
+# could never ask this question.
+shape_file "src/test_helpers/production.py"
+# The same near-miss one segment over: `__tests___helpers` STARTS WITH the
+# `__tests__` arm's text but is a different segment, so it must NOT classify as
+# a test. Covered by the `near:__tests__-dir` arm in SHAPE_ARMS below, which is
+# what keeps this fixture from becoming an unasserted decoration.
+shape_file "src/__tests___helpers/production.py"
+
+# Basename arms — these SHOULD classify as tests, wherever they sit.
+shape_file "src/test_util.py"
+shape_file "src/util_test.py"
+shape_file "src/util_spec.py"
+shape_file "src/a.test.py"
+shape_file "src/a.spec.py"
+
+# NEAR MISSES — these must NOT classify as tests. A bare *test* glob wrongly
+# matches all three; segment/basename anchoring is what keeps them scanned.
+shape_file "src/contest.py"
+shape_file "src/latest.py"
+shape_file "src/attestation.py"
+shape_file "src/protester.py"
+
+# Basename tokenizer edges — hyphens and interior dots.
+shape_file "src/my-mod.v2.py"
+shape_file "src/.hidden.py"
+
+# UPPERCASE extension. Zero files in the tracked tree have one
+# (`git ls-files | grep -cE '\.[A-Z]+$'` == 0), so case-dispatch divergence on
+# the extension is unreachable from the repo corpus.
+shape_file "src/Legacy.PY"
+
+# A path containing a SPACE. Zero in the tracked tree. Representable here
+# because the corpus file is NEWLINE-delimited — a path containing a NEWLINE is
+# NOT representable, so never add one.
+shape_file "src/my dir/a.py"
+
+SHAPE_CORPUS="$WORKDIR/shape-corpus.txt"
+command find "$SHAPEDIR" -type f 2>/dev/null | command sort >"$SHAPE_CORPUS"
+
 # --- Two-arg drift-detect fixtures ------------------------------------------
 DRIFT_ACTUAL="$WORKDIR/drift-actual.txt"
 DRIFT_PLANNED="$WORKDIR/drift-planned.txt"
@@ -317,6 +431,15 @@ test_fixture_corpus() {
     done < <(single_arg_tools)
 }
 
+test_shape_corpus() {
+    local sh
+    while IFS= read -r sh; do
+        [ -n "$sh" ] || continue
+        CUR_LABEL="$(command basename "$(command dirname "$sh")") [path shapes]"
+        diff_one_arg "$sh" "$SHAPE_CORPUS"
+    done < <(single_arg_tools)
+}
+
 test_drift_detect() {
     local sh="$PLUGINS_DIR/dev-core/skills/drift-detect/patterns.sh"
     local py="${sh%patterns.sh}patterns.py"
@@ -335,6 +458,157 @@ $(command diff <(printf '%s\n' "$b") <(printf '%s\n' "$p") | command head -40)"
 test_corpora_non_empty() {
     assert_true "[ -s '$REPO_CORPUS' ]" "repo corpus is non-empty"
     assert_true "[ -s '$FIX_CORPUS' ]" "fixture corpus is non-empty"
+    assert_true "[ -s '$SHAPE_CORPUS' ]" "path-shape corpus is non-empty"
+}
+
+# --- Path-shape coverage (#867) ---------------------------------------------
+#
+# The differential's first corpus can only ask about shapes the tree contains,
+# and nothing in its output distinguishes "the runtimes agree everywhere" from
+# "the runtimes were never asked the interesting question". These two functions
+# split that concern by WHERE the zero occurs, and they fail differently on
+# purpose:
+#
+#   * ZERO IN THE REPO TREE IS REPORTED, NEVER FAILED. Several arms are legitimately
+#     at zero here today (that is the whole finding of #867), so failing on it
+#     would make the gate unlandable and would assert a falsehood — the shape's
+#     absence is a fact about this repo, not a defect. Printing it turns an
+#     invisible gap into a readable one.
+#   * ZERO IN THE SHAPE CORPUS IS A FAILURE. That corpus is purpose-built, so an
+#     arm reaching zero there means a fixture stopped exercising the arm it was
+#     written for — the same vacuity guard test_trailing_colon_preserved uses.
+#
+# SHAPE_ARMS: one "label<TAB>ERE" row per classification arm. Bash 3.2 has no
+# associative arrays (CLAUDE.md), so this is a newline-delimited string. The
+# regexes are POSIX ERE against a full path — no \s, \w or GNU-only spellings,
+# since BSD grep reads those as literals (#679).
+SHAPE_ARMS='seg:tests/	(^|/)tests/
+seg:test/	(^|/)test/
+seg:__tests__/	(^|/)__tests__/
+seg:spec/	(^|/)spec/
+seg:__pycache__/	(^|/)__pycache__/
+dir:test_*/	/test_[^/]*/
+base:test_*.*	/test_[^/]*\.[^/]*$
+base:*_test.*	/[^/]*_test\.[^/]*$
+base:*_spec.*	/[^/]*_spec\.[^/]*$
+base:*.test.*	/[^/]*\.test\.[^/]*$
+base:*.spec.*	/[^/]*\.spec\.[^/]*$
+path:uppercase-ext	/[^/]*\.[A-Z][A-Z]*$
+path:with-space	[/][^/]*[ ]
+path:dotted-base	/[^/]*\.[^/.]*\.[^/.]*$
+near:__tests__-dir	/__tests___[^/]*/
+near:test-in-basename	/(contest|latest|attestation|protester)\.'
+
+# count_arm CORPUS ERE — how many paths in CORPUS match ERE. `grep -c` on a
+# FILE, never `grep -q` in a pipeline: under `pipefail`, `-q` exits on the first
+# match, the writer takes SIGPIPE and the pipeline reports 141, inverting a
+# successful match into a failure (#928/#932).
+count_arm() {
+    command grep -cE -- "$2" "$1" 2>/dev/null || true
+}
+
+# Prints the per-arm table AND asserts the table is not empty.
+#
+# The print is the point (it is what makes an absent shape readable), but a
+# function dispatched through run_test that cannot fail always shows PASS, which
+# is indistinguishable from a real check to anyone scanning the tally — the
+# inert-gate shape this repo keeps filing issues about (#538/#571). So it also
+# asserts that SHAPE_ARMS actually parsed: a mangled table (a tab lost to an
+# editor, the quoting broken) would otherwise print a header and nothing else
+# and still read as PASS.
+report_path_shape_coverage() {
+    local label ere n_repo n_shape note rows=0
+    printf '    path-shape coverage (repo tree / shape corpus):\n'
+    while IFS="$(printf '\t')" read -r label ere; do
+        [ -n "$label" ] || continue
+        # A row whose ERE is empty means the tab separator was lost; counting it
+        # as a row would let a mangled table satisfy the assertion below.
+        [ -n "$ere" ] || continue
+        n_repo="$(count_arm "$REPO_CORPUS" "$ere")"
+        n_shape="$(count_arm "$SHAPE_CORPUS" "$ere")"
+        note=""
+        [ "${n_repo:-0}" -eq 0 ] && note="   [absent from tree — synthetic only]"
+        printf '      %-22s %6s / %-4s%s\n' "$label" "${n_repo:-0}" "${n_shape:-0}" "$note"
+        rows=$((rows + 1))
+    done <<EOF
+$SHAPE_ARMS
+EOF
+    # Pinned at the current arm count, not at >0: a table that silently shrinks
+    # is the failure mode worth catching, and >0 would tolerate losing all but
+    # one row.
+    assert_true "[ $rows -ge 16 ]" \
+        "coverage table parsed every arm row (got $rows)"
+}
+
+# Every arm must be reached by the shape corpus, or that corpus is asserting
+# less than it looks like it does.
+test_shape_corpus_covers_every_arm() {
+    local label ere n
+    while IFS="$(printf '\t')" read -r label ere; do
+        [ -n "$label" ] || continue
+        n="$(count_arm "$SHAPE_CORPUS" "$ere")"
+        assert_true "[ ${n:-0} -gt 0 ]" \
+            "shape corpus exercises arm $label (matched ${n:-0} fixture paths)"
+    done <<EOF
+$SHAPE_ARMS
+EOF
+}
+
+# NON-VACUITY: the shape corpus must be able to detect the very regression that
+# shipped past this gate (#836/#867 acceptance criterion 3).
+#
+# Mutating a COPY under $WORKDIR, never the tracked scanner: rewrite
+# check-lifecycle's basename arms back to the pre-#836 path-glob spelling, where
+# a `case` glob's `*` crosses `/` and so `*/test_*.*` also matches the DIRECTORY
+# src/test_helpers/. The mutant must then DISAGREE with the unmodified python
+# primary over the shape corpus. If it agrees, the corpus lost the fixture that
+# made it bite and test_shape_corpus above would be reporting a false green.
+test_shape_corpus_is_non_vacuous() {
+    local orig="$PLUGINS_DIR/review-audit/skills/check-lifecycle/patterns.sh"
+    local py="$PLUGINS_DIR/review-audit/skills/check-lifecycle/patterns.py"
+    [ -f "$orig" ] && [ -f "$py" ] || {
+        skip_test "check-lifecycle not present"
+        return 0
+    }
+    local mutant="$WORKDIR/mutant-patterns.sh"
+    # The pre-#836 spelling: name arms matched against the whole path.
+    command sed \
+        -e 's|^    case "\${1##\*/}" in$|    case "$1" in|' \
+        -e 's|^        test_\*\.\*) return 0 ;;$|        test_*.* \| */test_*.*) return 0 ;;|' \
+        "$orig" >"$mutant"
+
+    # Guard: if the sed stopped matching (the scanner was reformatted), the
+    # "mutant" is a verbatim copy and the assertion below would pass vacuously
+    # by comparing the FIXED impl against itself.
+    assert_true "! command cmp -s '$orig' '$mutant'" \
+        "mutation actually rewrote check-lifecycle's is_test_file"
+
+    local m p m_shape p_shape
+    m="$(PATTERNS_FORCE_BASH=1 bash "$mutant" "$SHAPE_CORPUS" 2>/dev/null | command sort)" || true
+    p="$(python3 "$py" "$SHAPE_CORPUS" 2>/dev/null | command sort)" || true
+
+    # The detection itself: the two must NOT agree. assert_equals asserts
+    # sameness, so express the difference as a computed yes/no rather than
+    # inverting it — a bare `[ "$m" != "$p" ]` inside an assert_true string
+    # would hide both operands from the failure message.
+    if [ "$m" != "$p" ]; then
+        assert_equals "differ" "differ" \
+            "shape corpus DETECTS the pre-#836 is_test_file regression (mutant != python)"
+    else
+        assert_equals "differ" "identical" \
+            "shape corpus DETECTS the pre-#836 is_test_file regression (mutant != python)"
+    fi
+
+    # And name the specific shape that does the detecting, so a future edit that
+    # drops src/test_helpers/ fails here with a readable reason rather than
+    # quietly weakening the corpus. `grep -c` on a here-string, never `grep -q`
+    # in a pipeline (#928).
+    m_shape="$(printf '%s\n' "$m" | command grep -cF 'test_helpers/production.py')" || true
+    p_shape="$(printf '%s\n' "$p" | command grep -cF 'test_helpers/production.py')" || true
+    assert_equals "0" "${m_shape:-0}" \
+        "mutant skips src/test_helpers/production.py (the #836 shape)"
+    assert_true "[ ${p_shape:-0} -gt 0 ]" \
+        "python still scans src/test_helpers/production.py (got ${p_shape:-0} rows)"
 }
 
 # Trailing colons survive into evidence, in BOTH impls (#549).
@@ -437,6 +711,10 @@ test_trailing_ws_preserved() {
 run_test test_corpora_non_empty "Differential corpora are non-empty (gate is not a no-op)"
 run_test test_repo_corpus "Every tool: bash==python over the whole repo tree"
 run_test test_fixture_corpus "Every tool: bash==python over the per-category fixtures"
+run_test test_shape_corpus "Every tool: bash==python over the path-shape corpus (#867)"
+run_test test_shape_corpus_covers_every_arm "Path-shape corpus reaches every classification arm (#867)"
+run_test test_shape_corpus_is_non_vacuous "Path-shape corpus detects the pre-#836 is_test_file regression (#867)"
+run_test report_path_shape_coverage "Path-shape coverage report — arms at zero in the real tree are visible (#867)"
 run_test test_drift_detect "drift-detect: bash==python over actual/planned fixtures"
 run_test test_trailing_colon_preserved "Trailing colons survive into evidence in both impls (#549)"
 run_test test_trailing_ws_preserved "Trailing whitespace survives into evidence in both impls (#549)"
