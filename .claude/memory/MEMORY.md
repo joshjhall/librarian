@@ -50,7 +50,7 @@
 - [Redirect order leaks the diagnostic](redirect-order-leaks-the-diagnostic.md) — `>>"$f" 2>/dev/null` still prints; absorbed failure, unabsorbed noise
 - [grep -q under pipefail inverts a match](grep-q-under-pipefail-inverts-a-match.md) — SIGPIPE makes a SUCCESSFUL match report FAILURE, but only past the 64KB pipe buffer (#928)
 - [A combined label call partially applies](combined-label-call-partially-applies.md) — gh applies the REMOVE then fails the add; "failed" leaves NO label, not the old one (#921)
-- [Background exit code is the wrapper's](background-task-exit-code-is-the-wrappers.md) — a task-notification's "exit code 0" hid a red suite; read the log's own verdict (#921)
+- [Background exit code is the wrapper's](background-task-exit-code-is-the-wrappers.md) — a task-notification's "exit code 0" hid a red suite AND a blocked push; read the log's own verdict (#921, #699)
 - [Execute the workflow step, don't grep it](execute-the-workflow-step-dont-grep-it.md) — a `run:` block's regressions are re-orderings every grep survives
 - [Scope-drift check before first commit](scope-drift-check-before-first-commit.md) — `git status` before staging, not `git diff` after (#542/#498)
 - [A fix reintroduces its own failure](fix-reintroduces-its-own-failure.md) — the snapshot/trap/rename a silent-loss fix adds is where the loss reappears

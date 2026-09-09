@@ -20,8 +20,16 @@ Exit code is 1.
 reached by a different route — capturing instead of piping does not protect you
 once the run is backgrounded.
 
-**How to apply:** for a backgrounded gate or suite, never report green off the
-notification. Read the log's own verdict line (`run-all.sh` mirrors the banner
+Seen again on #699, this time on **`git push`**: the notification said `exit
+code 0` while the log ended `[FAIL] Shell portability` / `error: failed to push
+some refs`. The pre-push hook had *blocked the push* — nothing was on the remote.
+So this is not a test-runner quirk: it applies to any backgrounded command whose
+real verdict is in its output, and a "successful" push notification is
+specifically not evidence that the branch exists upstream (`git status -sb`, or
+the absence of an `[ahead N]`, is).
+
+**How to apply:** for a backgrounded gate, suite, or push, never report green off
+the notification. Read the log's own verdict line (`run-all.sh` mirrors the banner
 plus failed-stage names to stderr precisely so it survives). If a suite prints
 no self-verdict, re-run it in the foreground before calling it green. A doubled
 verdict in the log is expected under `2>&1` — the stdout copy plus the stderr
