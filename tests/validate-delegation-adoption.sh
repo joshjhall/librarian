@@ -400,6 +400,52 @@ test_ac5_keeps_scanning_past_a_rejected_host_port() {
         "a rejected host:port does not abort the scan for a later real anchor"
 }
 
+test_anchor_scan_is_linear_on_a_pathological_token() {
+    # The anchor pattern's `[^/\s:]+` segment is load-bearing for SPEED. The
+    # natural spelling `[\w.\-]*/[\w.\-]+` lets both sides match dots, so the
+    # engine retries every split of a dotted token: measured 8.5s on one 40k-char
+    # token versus 0.4ms here. This tool reads arbitrary transcript text, so such
+    # a token is not hypothetical.
+    #
+    # Asserted as a WALL-CLOCK BOUND, which is blunt — so the number matters.
+    # MEASURED on this fixture: linear 17ms, quadratic 8,444ms (a 500x gap). A
+    # 30s ceiling was tried first and did NOT discriminate: the bad spelling
+    # finished inside it and the test passed under its own mutation. 3s sits
+    # ~175x above the real cost (ample headroom for a slow or loaded runner)
+    # while still failing the quadratic spelling by 2.8x.
+    #
+    # bounded-run.sh is the repo's portable timeout (never GNU `timeout`).
+    local root="$WORKDIR/pathological" dir big
+    dir="$root/proj/sess/subagents"
+    command mkdir -p "$dir"
+    # 20k 'a', a slash, then 20k 'b.' — the shape that makes the naive pattern
+    # backtrack. Built with printf, not a loop, to keep the fixture cheap.
+    big="$(command printf 'a%.0s' $(command seq 1 20000))/$(command printf 'b.%.0s' $(command seq 1 20000))c"
+    {
+        command printf '{"type":"user","message":{"role":"user","content":"investigate"}}\n'
+        command printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n' "$big"
+    } >"$dir/agent-p1.jsonl"
+    command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-p1.meta.json"
+    # bounded-run.sh is SOURCED, not executed — it provides the `bounded_run`
+    # FUNCTION. Running it as a script is a silent no-op that returns 0 without
+    # ever invoking the command, which is exactly how the first version of this
+    # test passed under its own mutation.
+    if [ ! -f "$REPO_ROOT/bin/bounded-run.sh" ]; then
+        skip_test "bounded-run.sh not found"
+        return
+    fi
+    # shellcheck source=bin/bounded-run.sh
+    . "$REPO_ROOT/bin/bounded-run.sh"
+    set +e
+    OUT="$(bounded_run 3 python3 "$ADOPTION_PY" ac5 --root "$root" 2>&1)"
+    RC=$?
+    set -e
+    # 0, explicitly. 124 is bounded_run's timeout status, so a quadratic pattern
+    # fails here with a status that names the cause; any other non-zero is a real
+    # crash and fails the same assertion.
+    assert_equals "0" "$RC" "the anchor scan completes well inside 3s (124 = bound hit)"
+}
+
 test_string_shaped_content_is_not_dropped() {
     # REGRESSION (review cycle 1): a message's `content` may be a bare STRING
     # rather than a block list. Returning [] for that shape silently dropped a
@@ -633,6 +679,7 @@ run_test test_ac5_keeps_scanning_past_a_rejected_token "AC5 keeps scanning past 
 run_test test_ac5_accepts_a_trailing_colon_citation "AC5 accepts a trailing-colon citation"
 run_test test_ac5_accepts_a_line_col_citation "AC5 accepts a file:line:col citation"
 run_test test_ac5_keeps_scanning_past_a_rejected_host_port "AC5 keeps scanning past a rejected host:port"
+run_test test_anchor_scan_is_linear_on_a_pathological_token "Anchor scan is linear on a pathological token"
 run_test test_string_shaped_content_is_not_dropped "String-shaped message content is not dropped"
 run_test test_wrong_shaped_content_yields_no_blocks "Wrong-shaped message content yields no blocks"
 run_test test_ac5_reports_na_for_a_spawn_with_no_answer "AC5 reports n/a for a spawn that never answered"

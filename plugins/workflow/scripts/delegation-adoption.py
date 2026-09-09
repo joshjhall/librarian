@@ -92,7 +92,15 @@ RESULT_FLOOR_TOKENS = 2_000
 
 # A `path/to/file.ext:LINE` citation. Compiled once; see _has_anchor for what
 # each part excludes and why this is one pattern rather than a chain of guards.
-ANCHOR_RE = re.compile(r"[\w.\-]*/[\w.\-]+\.[A-Za-z]{1,4}:\d+")
+#
+# `[^/\s:]+` -- one path segment containing no separator, space or colon -- is
+# load-bearing for SPEED, not just meaning. The natural spelling `[\w.\-]*/[\w.\-]+`
+# lets both sides match dots, so the engine retries every possible split of a
+# dotted token: measured 8.5s on a single 40k-character token, versus 0.4ms here.
+# This tool reads whatever text a transcript happens to contain, so a token that
+# large is not hypothetical. Not catastrophic backtracking (no nested quantifier)
+# but quadratic, which is slow enough to matter.
+ANCHOR_RE = re.compile(r"/[^/\s:]+\.[A-Za-z]{1,4}:\d+")
 
 
 def _require_python() -> None:
@@ -256,6 +264,8 @@ def _has_anchor(text: str) -> bool:
       `/`                a path separator, so a bare `config.sh:41` and a
                          scheme-less `database.io:5432` (a TLD is
                          indistinguishable from a short extension) are both out.
+      `[^/\s:]+`         one path segment, no colons -- and the spelling that
+                         keeps the match linear (see ANCHOR_RE).
       `.[A-Za-z]{1,4}`   an ALPHABETIC extension, so `build/app.v2:8080` is out.
                          No source extension is a number.
       `:\d+`             a line number.
