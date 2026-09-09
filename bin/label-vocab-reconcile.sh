@@ -259,12 +259,19 @@ emit() {
 # the next line. Those are collapsed to a space FIRST, before the metacharacter
 # pass, so nothing can arrive at the report on a line of its own.
 #
+# `:` IS IN THE SET BECAUSE OF AUTOLINKS. GFM linkifies a bare `https://x` with no
+# bracket syntax at all, so neutralizing `[`/`]`/`(`/`)` alone still lets a label
+# name plant a clickable link in a report maintainers are asked to trust. Killing
+# the `:` breaks the scheme and costs nothing — a `:` is not valid in a GitHub
+# label name anyway, so no real label is altered by this.
+#
 # Characters are REPLACED, not deleted: an odd name should still be visible as
 # evidence rather than silently becoming a different-looking name. All of these
 # are single-byte ASCII, so `tr` (a byte tool) is safe here — a multi-byte
 # character in a label name passes through untouched, which is what we want.
 md_safe() {
-    command printf '%s' "$1" | command tr '\n\r\t' '   ' | command tr '`[]()*_~#|<>' '????????????'
+    command printf '%s' "$1" | command tr '\n\r\t' '   ' |
+        command tr '`[]()*_~#|<>:' '?????????????'
 }
 
 emit "## status/* label vocabulary reconciliation"

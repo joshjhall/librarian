@@ -698,6 +698,123 @@ test_a_hash_inside_a_label_name_is_not_a_comment() {
     assert_not_contains "$declared" "status/trailing " "with no trailing whitespace"
 }
 
+test_reconciler_missing_shared_parser_exits_two() {
+    local box out rc=0
+    # THE TWIN GUARD. Both callers carry a near-identical "shared parser missing"
+    # fail-loud branch, and the execution test below covers the OFFLINE gate's copy
+    # — but the reconciler's is the half that runs unattended in the scheduled job,
+    # and it had no coverage at all. Without the curated FATAL, `.` on a missing
+    # file under `set -euo pipefail` aborts with a bare bash "No such file or
+    # directory": still non-zero, but not the documented exit-2 contract, and not a
+    # diagnostic anyone reading a weekly job's log could act on.
+    #
+    # The reconciler resolves its library from its OWN $SCRIPT_DIR, not from
+    # LABEL_VOCAB_ROOT, so the script itself must be copied into the sandbox for its
+    # sibling lib/ to be the one we delete. Copying only the library would leave the
+    # real one in place and the guard would never fire — the case would pass for the
+    # wrong reason.
+    box="$(make_sandbox status/in-progress)"
+    stub_gh "$box" ok status/in-progress
+    command mkdir -p "$box/bin/lib"
+    command cp "$RECONCILE_SH" "$box/bin/label-vocab-reconcile.sh"
+    command cp "$VOCAB_LIB" "$box/bin/lib/label-vocab.sh"
+
+    # Control: the copied script works while its sibling library is present, so the
+    # failure below is attributable to the deletion and not to the copy.
+    out="$(/usr/bin/env -uBASH_ENV PATH="$box/ghbin:$PATH" LABEL_VOCAB_ROOT="$box" \
+        "$REAL_BASH" --noprofile --norc "$box/bin/label-vocab-reconcile.sh" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "the copied reconciler runs normally with its library present"
+
+    rc=0
+    command rm -f "$box/bin/lib/label-vocab.sh"
+    out="$(/usr/bin/env -uBASH_ENV PATH="$box/ghbin:$PATH" LABEL_VOCAB_ROOT="$box" \
+        "$REAL_BASH" --noprofile --norc "$box/bin/label-vocab-reconcile.sh" 2>&1)" || rc=$?
+    assert_exit 2 "$rc" "a missing shared parser exits 2, per the documented contract"
+    assert_contains "$out" "shared label parser is missing" \
+        "the curated diagnostic is emitted, not a bare bash error"
+    assert_not_contains "$out" "No drift" "a run with no parser claims nothing"
+}
+
+test_step_summary_mirrors_stdout() {
+    local box summary
+    box="$(make_sandbox status/in-progress status/blocked)"
+    stub_gh "$box" ok status/in-progress
+    summary="$box/step-summary.md"
+    : >"$summary"
+
+    # emit() writes to stdout AND $GITHUB_STEP_SUMMARY. The summary is the only
+    # place a scheduled job's findings are visible without digging into raw logs,
+    # so a silently-broken append would make the job effectively invisible while
+    # still exiting the right code. Never exercised until now.
+    local rc=0
+    /usr/bin/env -uBASH_ENV PATH="$box/ghbin:$PATH" LABEL_VOCAB_ROOT="$box" \
+        GITHUB_STEP_SUMMARY="$summary" \
+        "$REAL_BASH" --noprofile --norc "$RECONCILE_SH" >/dev/null 2>&1 || rc=$?
+    assert_exit 1 "$rc" "the drift case still exits 1"
+    assert_file_contains "$summary" "status/blocked" \
+        "the finding reaches the step summary, not only stdout"
+    assert_file_contains "$summary" "Declared but absent" \
+        "and so does the section that frames it"
+}
+
+test_all_md_safe_metacharacters_are_neutralized() {
+    local box raw
+    box="$(make_sandbox status/in-progress)"
+    # md_safe maps TWELVE characters; only the backtick and the bracket/paren pair
+    # were exercised. An off-by-one between the tr class and its replacement string
+    # would silently mis-map the other nine, and nothing would have noticed. One
+    # label carrying all of them pins the whole class.
+    raw='status/x*b*_e_~t~#h|p<l>g'
+    stub_gh "$box" ok status/in-progress "$raw"
+
+    run_reconcile "$box"
+    assert_exit 1 "$RC_CODE" "the undeclared label is reported"
+    # The expected string is the MEASURED output, not a hand-written guess: every
+    # one of the twelve maps to `?`, including the closing `*`/`_`/`~`, so the
+    # result is `status/x?b??e??t??h?p?l?g`. A first draft wrote the openers as `?`
+    # and left the closers literal, which failed — worth recording, since an
+    # assertion built on a guessed transformation is how a test ends up pinning the
+    # wrong behavior when it happens to pass.
+    assert_contains "$RC_OUT" "status/x?b??e??t?" "emphasis and tilde are replaced on both sides"
+    assert_contains "$RC_OUT" "?h?p?l?g" "hash, pipe and angle brackets are replaced"
+    assert_not_contains "$RC_OUT" "$raw" "the raw metacharacters never reach the report"
+}
+
+test_autolink_in_a_label_name_is_neutralized() {
+    local box
+    box="$(make_sandbox status/in-progress)"
+    # GFM linkifies a BARE url with no bracket syntax, so neutralizing brackets and
+    # parens alone still lets a label name plant a clickable link in the report.
+    stub_gh "$box" ok status/in-progress 'status/see-https://evil.example/x'
+
+    run_reconcile "$box"
+    assert_exit 1 "$RC_CODE" "the undeclared label is reported"
+    assert_not_contains "$RC_OUT" "https://" "the url scheme is broken"
+    assert_contains "$RC_OUT" "status/see-https?//evil.example/x" \
+        "the name stays legible as evidence, minus the scheme"
+}
+
+test_shared_library_is_syntactically_valid() {
+    local rc=0
+    # A syntax error in the sourced library is the "could not run" case this whole
+    # design refuses to let pass quietly — and it is reachable by editing a COMMENT,
+    # not just code: the awk program is single-quoted in the shell, so an apostrophe
+    # in a comment inside it ends the program early. That happened while writing
+    # this very file's quote-leniency note, and the reconciler died with
+    # "unexpected EOF" at a line far from the edit. `bash -n` catches the whole class
+    # for the price of one assertion.
+    "$REAL_BASH" -n "$VOCAB_LIB" 2>/dev/null || rc=$?
+    assert_exit 0 "$rc" "bin/lib/label-vocab.sh parses (a comment apostrophe can break it)"
+
+    rc=0
+    "$REAL_BASH" -n "$RECONCILE_SH" 2>/dev/null || rc=$?
+    assert_exit 0 "$rc" "bin/label-vocab-reconcile.sh parses"
+
+    rc=0
+    "$REAL_BASH" -n "$LINT_SH" 2>/dev/null || rc=$?
+    assert_exit 0 "$rc" "tests/lint-status-label-refs.sh parses"
+}
+
 # --- one parser, two callers (#663) -----------------------------------------
 
 test_shared_parser_is_the_only_parser() {
@@ -816,6 +933,11 @@ run_test test_parser_ignores_trailing_comments_and_quotes "the shared parser tri
 run_test test_a_hash_inside_a_label_name_is_not_a_comment "a # inside a label name is not a comment"
 run_test test_first_temp_file_is_cleaned_when_second_mktemp_fails "the trap re-arm: no temp file is orphaned by a later mktemp failure"
 run_test test_refactored_offline_gate_still_enforces_both_rules "the refactored offline gate is EXECUTED, not grepped"
+run_test test_autolink_in_a_label_name_is_neutralized "a bare url in a label name cannot become an autolink"
+run_test test_shared_library_is_syntactically_valid "every shipped script parses (a comment apostrophe can break the awk block)"
+run_test test_reconciler_missing_shared_parser_exits_two "the reconciler's OWN missing-parser guard exits 2 (the twin)"
+run_test test_step_summary_mirrors_stdout "findings reach GITHUB_STEP_SUMMARY, not only stdout"
+run_test test_all_md_safe_metacharacters_are_neutralized "all twelve md_safe metacharacters are neutralized"
 run_test test_shared_parser_is_the_only_parser "one parser: neither caller carries a copy"
 run_test test_both_callers_derive_the_same_vocabulary "one parser: both callers derive the same vocabulary"
 run_test test_workflow_is_dispatchable_and_informational "the workflow is dispatchable and cannot red a PR"

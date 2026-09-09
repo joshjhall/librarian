@@ -59,6 +59,20 @@ declared_status_labels() {
             command awk '
                 /^labels:/ { inblock = 1; next }
                 inblock && /^[a-zA-Z_]+:/ { inblock = 0 }
+                # QUOTE BALANCE IS DELIBERATELY NOT CHECKED. The optional-quote
+                # class accepts a mismatched or one-sided quote, and the gsub below
+                # strips whatever is there. (No quote characters appear in this
+                # comment: the awk program is itself single-quoted in the shell, so a
+                # stray apostrophe here would end the program early — which is
+                # exactly what happened when this note was first written.)
+                # That leniency is the right trade for this
+                # corpus: metadata.yml is repo-controlled and reviewed, an unbalanced
+                # quote is a YAML error the formatter and dprint catch long before
+                # this parser, and a strict pattern would instead SKIP such a line —
+                # silently reading a real label as undeclared, which is the more
+                # damaging failure of the two. Recorded so this reads as examined
+                # rather than overlooked.
+                #
                 # The optional quote in the MATCH, not just in the cleanup below:
                 # requiring `status/` immediately after `name:` means a quoted
                 # `- name: "status/x"` never matches at all, so the label reads as
