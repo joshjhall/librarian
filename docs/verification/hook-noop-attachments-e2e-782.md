@@ -19,7 +19,7 @@ Measured on `feature/issue-782` at `6c0920f`, 2026-08-24.
 | 1 | Every hook in `plugins/**/hooks/` emits nothing on the no-op path | **PASS** — already true before this issue; now gated. (The *operator-side* `hookify` fix was host-only and re-enabled in every container until containers#897 landed — see § AC#1 revisited, then § AC#1 re-verified for the fresh-container confirmation) |
 | 2 | `dev-core` guidance documents silence-by-default with measured rationale | **PASS** — `shell-scripting/SKILL.md` § Hook Output Contract |
 | 3 | A hook that must emit `{}` carries a comment saying why | **PASS (vacuous)** — no shipped hook emits on a no-op path, so none needs the comment; the rule is documented for the case that arises |
-| 4 | Before/after measured with `token-report.sh`, delta recorded | **MEASURED, NOT CONCLUSIVE (#793, 2026-09-03)** — 9-day post-fix window; `avg_prompt_per_request` rose **+13.5%**, i.e. **no saving is detectable**. Reported as found. A contamination confound (containers#897) remains until that lands; see § AC#4 |
+| 4 | Before/after measured with `token-report.sh`, delta recorded | **DONE (#793, 2026-09-09)** — clean post-fix window (2026-09-08, first uncontaminated day) captured and recorded: `avg_prompt_per_request` **-14.6%**, against **+13.5%** from the earlier contaminated window. A 28-point swing on window choice, inside a 2.0x pre-fix daily spread — the metric does not resolve the question either way at one-day granularity. The capture and record ACs are met; the **unresolved question** is carried forward to [#972](https://github.com/joshjhall/librarian/issues/972). See § AC#4 |
 | 5 | `docs/verification/` records the out-of-tree finding for operator action | **PASS** — this file |
 
 ## AC#1 — the in-tree audit contradicts the premise
@@ -293,10 +293,10 @@ since those carry a real message.
 A ready-to-file report is at the end of this file (§ Upstream report). It was
 **not** filed from this session: the available token is fine-grained and scoped
 to this account's own repos, so `gh issue create` against `anthropics/*` returns
-`Resource not accessible by personal access token`. Filing it by hand is tracked
-as an AC on #793.
+`Resource not accessible by personal access token`. Filing it by hand was an AC
+on #793 and is now tracked by **#971** (§ #793 disposition).
 
-## AC#4 — baseline captured; delta MEASURED on #793 (no saving found)
+## AC#4 — baseline captured; delta measured twice on #793 (undetermined)
 
 `token-report.sh` is available (#781, `6c0920f`) and a gateway **is** reachable
 from this environment, so the original blocker is gone. Two **pre-fix** windows
@@ -339,6 +339,12 @@ observed spread of one pair rather than a confidence interval. It is a floor to
 clear, not a threshold to test against.
 
 ### VERIFIED — live (post-fix window, measured 2026-09-03 on #793)
+
+> **SUPERSEDED 2026-09-09.** This window was contaminated (every container
+> still re-enabled `hookify`) and is retained as recorded, not deleted. The
+> clean re-measure is the § *clean window* block below; read the two
+> together — their disagreement in **sign** is what the later block
+> concludes from.
 
 The after-window now exists. Same tool, same endpoint shape, baselines **reused
 rather than re-derived** (the 2026-08-23 window was re-run as a control and
@@ -456,6 +462,90 @@ this was hit on the first attempt. Same failure family as the `?model=` vs
 `?models=` trap the tool was built to guard: a wrong answer that reads as a
 right one.
 
+### VERIFIED — live (clean window, measured 2026-09-09 on #793)
+
+The first **contamination-free** window. containers#897 shipped in v4.20.0,
+pinned here by `ee37ab9` on 2026-09-07 and confirmed in a fresh container
+(§ AC#1 re-verified), so `hookify` is attached nowhere — host or container —
+from 2026-09-08 onward. That makes **2026-09-08** the only fully clean day
+available, and the window is one day wide for that reason alone.
+
+The measuring container was itself checked before capture:
+`grep -c hookify ~/.claude/settings.json` → **0**, and `claude plugin list`
+matched no `hookify`.
+
+Baselines **reused, not re-derived** (per the issue's instruction). The
+2026-08-23 pre-fix window was re-run as a control and reproduced its recorded
+figures exactly, at the same reconciliation delta (2, tolerance 90). The clean
+window reconciled at delta **0** (tolerance 27).
+
+**Figures normalized**, same precedent as the block above: percentages and
+ratios only.
+
+```bash
+# TSV, NOT --json — see "A trap worth recording" above.
+plugins/workflow/scripts/token-report.sh window \
+  --start 2026-09-08T00:00:00Z --end 2026-09-09T00:00:00Z > /tmp/after.tsv
+
+plugins/workflow/scripts/token-report.sh compare \
+  --baseline /tmp/before.tsv --compare /tmp/after.tsv --percent-only
+```
+
+#### Result — the headline flips sign, and that is the finding
+
+```text
+model                              requests  prompt_tokens         cost    avg/req
+claude-opus-5                        -63.1%         -73.3%       -69.9%     -27.8%
+claude-sonnet-5                      -74.5%         -75.3%       -73.7%      -3.2%
+TOTAL                                -69.5%         -73.9%       -70.7%     -14.6%
+```
+
+Against the same baseline, the contaminated 9-day window gave **+13.5%** and
+this clean one-day window gives **-14.6%**. A metric that swings 28 points on
+the choice of after-window is not measuring the intervention.
+
+**This is NOT recorded as a saving.** Three checks, and the interesting one
+falsifies a hypothesis rather than confirming it:
+
+1. **Is the clean day outside pre-fix variation?** No. Pulling per-day opus
+   `avg_prompt_per_request` for 08-19 → 08-23 — all pre-fix — gives a spread of
+   **117k → 236k**, a 2.0x range within a single week. The clean day's **168k**
+   sits in the middle of that band. It is not separable from an ordinary day.
+2. **Is there a trend the windows straddle?** Yes. The daily series drifts
+   strongly upward across the period (08-19 **117k** … 09-05 **278k**) and then
+   falls back. Two point windows on opposite sides of a drift like that will
+   report whatever their separation happens to sample.
+3. **Is the delta a volume artifact?** **No — hypothesis tested and
+   falsified.** The clean day carries 69.5% fewer requests, so "low volume →
+   short sessions → low average" is the obvious confound to suspect. It does not
+   hold: 09-01 (1,222 opus requests) averaged **231k** and 09-03 (1,155)
+   averaged **255k**, both low-volume days with *high* averages. Volume does not
+   predict the average on this fleet.
+
+#### What this settles
+
+**At one-day granularity this metric cannot resolve the question in either
+direction.** That supersedes both prior verdicts: the +13.5% "moved the wrong
+way" reading recorded above, and any "-14.6% saving" reading of the table here.
+Both are artifacts of window selection over a drifting series.
+
+It also **retires the 1.6% noise floor** the issue asked the delta to clear.
+That figure came from two windows sharing a start-of-day boundary — not
+independent samples. The honest per-day spread is the 2.0x range in check 1,
+which no single-day comparison can clear.
+
+The predicted effect remains large on paper (~40% of an average prompt,
+§ *What this means* above). A large effect that stays invisible across two
+windows of opposite sign is still unexplained — but the explanation is now
+constrained to measurement power, not to contamination, which is gone.
+
+**What would settle it**: accumulate clean days until the post-fix sample spans
+the pre-fix daily spread, then compare **distributions** — per-day averages
+across N days each side — rather than two point windows. That needs calendar
+time, not tooling; `token-report.sh` already emits everything required. This is
+**#972**, split out when #793 closed — the measurement is done, the question is
+not.
+
 ## AC#1 revisited — the fix is NOT durable in containers
 
 AC#1 is marked applied, and it is — **on the host**. The edit to
@@ -540,31 +630,41 @@ before/after as *measured, not conclusive* — `avg_prompt_per_request` rose
 **+13.5%** over the 9-day post-fix window, i.e. no saving was detectable — and
 named containers#897 as a live contamination source, since every container was
 re-enabling the plugin the host had disabled. That source is now gone. A clean
-re-measure is therefore possible for the first time, and remains open under
-issue #793. Nothing in this section is evidence that a saving exists.
+re-measure was therefore possible for the first time, and was taken on
+2026-09-08 — see § *clean window* below. Nothing in this section is evidence
+that a saving exists.
 
-## #793 disposition — two ACs stay open
+## #793 disposition — closed, with two items split out
 
-This file closes #793's **measurement** ACs; two remain genuinely open, so
-issue #793 must **not** be auto-closed on the strength of this work:
+**Three** of #793's four ACs are done from this repo. The fourth — the
+upstream filing — is **not met and could not be**: it needs a credential this
+repo does not have. By operator decision (2026-09-09) it moves to a follow-up
+issue rather than holding #793 open, and the underpowered-measurement question
+moves with it, so this PR **closes** #793 on the work that was in scope here:
 
 | #793 AC | State |
 | --- | --- |
 | hookify disabled/patched on the operator machine | **DONE (2026-09-07)** — host yes; containers yes since [containers#897](https://github.com/joshjhall/containers/issues/897) shipped in v4.20.0 and was verified in a fresh container (§ AC#1 re-verified). Was PARTIAL — host-only — until that pin bump. |
-| Filed upstream against `claude-plugins-official` | **OPEN — blocked** on a token with issue-write there (§ below) |
-| Before/after captured with `token-report.sh` | **DONE** (§ AC#4) |
-| Delta recorded in this file | **DONE** (§ AC#4) |
+| Filed upstream against `claude-plugins-official` | **NOT MET — SPLIT OUT → [#971](https://github.com/joshjhall/librarian/issues/971)** — blocked on a token with issue-write there; re-probed and refused a third time (§ Upstream report). The ready-to-file body stays in this document. |
+| Before/after captured with `token-report.sh` | **DONE (2026-09-09)** — clean window, § AC#4 |
+| Delta recorded in this file | **DONE (2026-09-09)** — recorded as non-resolving at this power, § AC#4 |
 
-The delivering commit therefore says **`Contributes to #793`**, not
-`Closes #793` — a squash-merge would otherwise auto-close an issue with two
-unmet criteria. #793 stays open pending the upstream filing and a clean
-re-measure.
+**What was split out, and why it is not a silent drop.** Two things outlived
+this issue and are tracked rather than abandoned:
 
-**Update 2026-09-07:** containers#897 has landed and is verified in a fresh
-container (§ AC#1 re-verified), so the re-measure is now unblocked — but not
-done. #793 still stays open: the upstream filing against
-`claude-plugins-official` remains blocked on a token with issue-write there, and
-no post-fix measurement window has been collected yet.
+- **[#971](https://github.com/joshjhall/librarian/issues/971) — file the report upstream.** Refused on three separate
+  days (2026-08-24, 09-03, 09-09), which is what reclassified it from a
+  transient failure to a **standing** token limitation. It needs a credential
+  or a human action this repo cannot supply, so it was never going to close on
+  a code change.
+- **[#972](https://github.com/joshjhall/librarian/issues/972) — settle the question at adequate power.** The measurement
+  ACs asked for a capture and a record; both are delivered. What they could not
+  ask for is a *conclusive* answer, and § AC#4 explains why one day cannot
+  produce one. Closing #793 marks the measurement **done**, not the question
+  **answered** — the distinction is the reason for the second issue.
+
+Neither item is evidence that a saving exists. § AC#4's verdict stands as the
+current state of knowledge: undetermined, at a granularity too coarse to decide.
 
 ## Upstream report — ready to file
 
@@ -572,13 +672,17 @@ The one-line fix benefits every user of the plugin, so it belongs upstream at
 [`anthropics/claude-plugins-official`](https://github.com/anthropics/claude-plugins-official)
 rather than only in one operator's settings.
 
-**Still not filed — retried 2026-09-03 on #793 and refused again.** The token now
-*reads* `anthropics/claude-plugins-official` fine (`gh api repos/...` → 200,
-`permissions: {pull: true, push: false}`), so the repo is reachable; but
+**Still not filed — re-probed 2026-09-09 on #793 and refused a third time**
+(previously 2026-08-24 and 2026-09-03). The token *reads*
+`anthropics/claude-plugins-official` fine (`gh api repos/...` → 200,
+`permissions: {"pull":true,"push":false}`), so the repo is reachable; but
 `gh issue create` still returns
 `GraphQL: Resource not accessible by personal access token (createIssue)`.
-Read access is not write access — filing needs a token with issue-write scope
-there, or filing by hand through the web UI. A duplicate search was run first
+Three probes across 16 days is enough to treat this as a **standing** token
+limitation rather than a transient one: it will not clear by retrying, so
+closing this AC needs either a token with issue-write scope there or a
+one-time filing by hand through the web UI (read access is not write access).
+A duplicate search was run first
 (15 open `hookify` issues plus four targeted phrase searches): **no existing
 issue covers the empty-payload defect**, so this is still worth filing. Copy the
 body below verbatim; suggested title:
