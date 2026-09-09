@@ -117,6 +117,7 @@ make_sandbox() {
 #   ok      print the given labels, exit 0
 #   fail    print an auth error to stderr, exit 1
 #   empty   print nothing, exit 0
+#   many    print N synthetic labels, exit 0 (drives the truncation guard)
 stub_gh() {
     local box="$1" mode="$2"
     shift 2
@@ -143,6 +144,17 @@ stub_gh() {
         empty)
             {
                 command printf '#!/usr/bin/env bash\n'
+                command printf 'exit 0\n'
+            } >"$shim"
+            ;;
+        many)
+            # $1 = how many labels to emit. The shim reads its own --limit so the
+            # fixture cannot drift out of step with the script's page size.
+            {
+                command printf '#!/usr/bin/env bash\n'
+                command printf 'n=%s\n' "$1"
+                command printf 'i=1\n'
+                command printf 'while [ "$i" -le "$n" ]; do printf "pad/%%s\\n" "$i"; i=$((i + 1)); done\n'
                 command printf 'exit 0\n'
             } >"$shim"
             ;;
@@ -374,6 +386,59 @@ test_missing_plugins_dir_exits_two() {
     assert_exit 2 "$RC_CODE" "an absent plugins/ exits 2, not a clean scan"
 }
 
+test_unknown_argument_is_rejected() {
+    local box out rc=0
+    box="$(make_sandbox status/in-progress)"
+    stub_gh "$box" ok status/in-progress
+
+    out="$(/usr/bin/env -uBASH_ENV PATH="$box/ghbin:$PATH" LABEL_VOCAB_ROOT="$box" \
+        "$REAL_BASH" --noprofile --norc "$RECONCILE_SH" bogus-arg 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "an unknown argument is rejected (1, per the documented contract)"
+    assert_contains "$out" "unknown argument" "the diagnostic names the problem"
+    # It must refuse BEFORE comparing anything — a guard that ran the scan and
+    # then complained would have already done the work it was meant to prevent.
+    assert_not_contains "$out" "No drift" "the run refuses instead of reconciling"
+    assert_not_contains "$out" "vocabulary reconciliation" "no report is emitted at all"
+}
+
+test_truncated_label_list_exits_two() {
+    local box
+    box="$(make_sandbox status/in-progress)"
+    # At or above the page size, a missing label is indistinguishable from a
+    # truncated page — so the run must refuse (2) rather than report the declared
+    # label as deleted (1). This is the same class as the auth-failure case: an
+    # incomplete comparison must never wear the costume of a finding.
+    stub_gh "$box" many 500
+
+    run_reconcile "$box"
+    assert_exit 2 "$RC_CODE" "a possibly-truncated label list exits 2, not 1"
+    assert_contains "$RC_OUT" "TRUNCATED" "the diagnostic names truncation"
+    assert_not_contains "$RC_OUT" "Declared but absent" \
+        "truncation is never reported as a deleted label"
+}
+
+test_label_list_below_the_limit_is_not_truncation() {
+    local box
+    box="$(make_sandbox status/in-progress)"
+    # The guard's other arm: a large-but-complete list must still reconcile. A
+    # guard keyed on the wrong comparison would refuse every real run, which is
+    # the failure mode that gets a scheduled job muted.
+    # 498 pad labels PLUS the declared one = 499 raw lines, one UNDER the guard's
+    # `-ge` comparison against the 500 page size. Off-by-one matters here and the
+    # first draft got it wrong (499 pads + 1 = exactly 500, which trips the guard):
+    # this arm is precisely about the boundary, so the count is derived, not eyeballed.
+    # The extra label is spliced BEFORE the shim's `exit 0`, not appended after it
+    # — appending put it past the exit, where it never ran and the case failed for
+    # a fixture reason rather than a subject one.
+    stub_gh "$box" many 498
+    command sed -i.bak 's|^exit 0$|printf "status/in-progress\\n"\nexit 0|' "$box/ghbin/gh"
+    command rm -f "$box/ghbin/gh.bak"
+
+    run_reconcile "$box"
+    assert_exit 0 "$RC_CODE" "a complete list just under the limit reconciles normally"
+    assert_contains "$RC_OUT" "No drift" "and reports clean"
+}
+
 # --- one parser, two callers (#663) -----------------------------------------
 
 test_shared_parser_is_the_only_parser() {
@@ -431,10 +496,29 @@ test_workflow_is_dispatchable_and_informational() {
     assert_file_contains "$wf" "issues: read" "gh label list needs issues: read"
     # AC3 is structural — it cannot fail a PR because nothing aggregates it. The
     # positive check is that it stays out of ci.yml and out of every shard.
-    assert_true "! command grep -q 'label-vocab-reconcile' '$REPO_ROOT/.github/workflows/ci.yml'" \
+    #
+    # THE ABSENCE CHECKS ASSERT THE HAYSTACK EXISTS FIRST. A negated `grep` over a
+    # MISSING file succeeds, so `! grep -q X missing.yml` passes for the wrong
+    # reason — measured here: typoing the ci.yml path left this whole test green.
+    # That is the vacuous-assertion shape a gate's own fixtures are most prone to,
+    # and the reason to state the haystack as its own assertion rather than to
+    # trust the negation. Same for the shard sweep, whose corpus is asserted
+    # non-empty below.
+    local ci="$REPO_ROOT/.github/workflows/ci.yml"
+    assert_file_exists "$ci" "the ci.yml haystack exists (else the absence check below is vacuous)"
+    assert_true "! command grep -q 'label-vocab-reconcile' '$ci'" \
         "AC3: the reconciler is not part of ci.yml's merge-gate aggregation"
+
+    local n_shards
+    n_shards="$(command ls "$SCRIPT_DIR"/shards/*.sh 2>/dev/null | command grep -c . || true)"
+    assert_true "[ '$n_shards' -gt 0 ]" \
+        "the shard corpus is non-empty (else the absence check below is vacuous)"
     assert_true "! command grep -rq 'bin/label-vocab-reconcile' '$SCRIPT_DIR/shards'" \
         "AC3: the scan itself is not a run-all.sh stage (only this behavior gate is)"
+    # And the positive half: THIS suite IS dispatched. Absence-only assertions
+    # would also pass if nothing about the feature were wired up at all.
+    assert_true "command grep -rq 'validate-label-vocab-reconcile' '$SCRIPT_DIR/shards'" \
+        "the behavior gate IS dispatched by a shard (absence checks alone prove nothing)"
 }
 
 test_offline_gate_names_its_other_half() {
@@ -461,6 +545,9 @@ run_test test_failing_gh_exits_two "fail loud: failing gh exits 2, never 1"
 run_test test_empty_gh_output_exits_two "fail loud: gh returning no labels exits 2"
 run_test test_empty_declared_vocabulary_exits_two "fail loud: an empty declared vocabulary exits 2"
 run_test test_missing_plugins_dir_exits_two "fail loud: an absent plugins/ exits 2"
+run_test test_unknown_argument_is_rejected "usage: an unknown argument is rejected before any work"
+run_test test_truncated_label_list_exits_two "fail loud: a possibly-truncated label list exits 2"
+run_test test_label_list_below_the_limit_is_not_truncation "the truncation guard does not fire below the limit"
 run_test test_shared_parser_is_the_only_parser "one parser: neither caller carries a copy"
 run_test test_both_callers_derive_the_same_vocabulary "one parser: both callers derive the same vocabulary"
 run_test test_workflow_is_dispatchable_and_informational "the workflow is dispatchable and cannot red a PR"

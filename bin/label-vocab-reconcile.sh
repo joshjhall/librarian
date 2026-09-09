@@ -56,8 +56,14 @@
 #
 # Exit codes:
 #   0 = declared and live vocabularies agree
-#   1 = drift in either direction (the scheduled run goes red)
+#   1 = drift in either direction (the scheduled run goes red), OR a usage error
 #   2 = required runtime/input absent (fail loud — never a silent "no drift")
+#
+# A usage error shares 1 with drift deliberately, matching
+# bin/ai-config-prescan.sh's documented contract ("1 = new findings, OR a usage
+# error") rather than diverging from its sibling. 2 is reserved for "this run
+# could not compare anything", which is the distinction callers actually branch
+# on; a bad argument is a caller bug, and no caller passes one twice.
 #
 # Env overrides (for tests):
 #   LABEL_VOCAB_ROOT   repo root whose plugins/ supplies the declared side
@@ -81,7 +87,12 @@ fi
 # Exit 2 throughout, never 0. Each of these produces an EMPTY comparison, and an
 # empty comparison is indistinguishable from "no drift" — the inert-gate shape
 # this repo keeps filing issues about (#538, #571, #906).
-for tool in gh sort comm awk; do
+# EVERY runtime dependency, not just the interesting ones. The point of this loop
+# is the curated FATAL diagnostic; a dependency missing from the list dies with a
+# bare "command not found" at whatever line reaches it first, which is the one
+# outcome the loop exists to prevent. sed/grep/mktemp are near-universal, but
+# "near-universal" is not the contract this script claims for itself.
+for tool in gh sort comm awk sed grep mktemp; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         command printf 'label-vocab-reconcile: FATAL — %s not found on PATH.\n' "$tool" >&2
         command printf '  This job needs network + gh auth by design; refusing to report no drift.\n' >&2
@@ -117,9 +128,18 @@ fi
 # `gh`'s exit code is load-bearing: an auth failure, a rate limit and a network
 # error all emit nothing, and treating any of them as an empty label set would
 # report EVERY declared label as deleted — a maximally alarming false positive.
+# GH_LABEL_LIMIT is a page size, and a page size that is silently reached is a
+# TRUNCATION, not a smaller repo. `gh label list` gives no "more results exist"
+# signal in this shape, so a label sorted past the cutoff would simply be missing
+# from LIVE_RAW and read as "declared but absent from the repo" — the same
+# maximally-alarming false positive this script refuses to emit for an auth
+# failure, arriving by a different route. Every other incomplete-comparison path
+# here exits 2; this one must too, so the count is checked against the limit
+# below rather than assumed to be under it.
+GH_LABEL_LIMIT=500
 LIVE_RAW=""
 GH_RC=0
-LIVE_RAW="$(command gh label list --limit 200 --json name --jq '.[].name' 2>&1)" || GH_RC=$?
+LIVE_RAW="$(command gh label list --limit "$GH_LABEL_LIMIT" --json name --jq '.[].name' 2>&1)" || GH_RC=$?
 if [ "$GH_RC" -ne 0 ]; then
     command printf 'label-vocab-reconcile: FATAL — `gh label list` exited %s.\n' "$GH_RC" >&2
     command printf '  Output was:\n' >&2
@@ -135,6 +155,19 @@ if [ -z "$LIVE_RAW" ]; then
     exit 2
 fi
 
+# Truncation guard, before any filtering: if the RAW count reached the page size
+# we cannot rule out that labels were dropped, so refuse rather than compare a
+# possibly-partial set. Counted on the unfiltered list because that is what the
+# limit applies to.
+N_RAW="$(command printf '%s\n' "$LIVE_RAW" | command grep -c . || true)"
+if [ "$N_RAW" -ge "$GH_LABEL_LIMIT" ]; then
+    command printf 'label-vocab-reconcile: FATAL — `gh label list` returned %s labels, at or above\n' "$N_RAW" >&2
+    command printf '  the --limit of %s, so the list may be TRUNCATED.\n' "$GH_LABEL_LIMIT" >&2
+    command printf '  A truncated live vocabulary reports present labels as deleted. Raise\n' >&2
+    command printf '  GH_LABEL_LIMIT in this script, or paginate with `gh api --paginate`.\n' >&2
+    exit 2
+fi
+
 # Filter to the status/* vocabulary — see the header on why this is load-bearing.
 # `|| true` absorbs a legitimate no-match; the emptiness is then diagnosed below,
 # where it is a real finding (every declared label deleted) rather than a runtime
@@ -143,7 +176,13 @@ LIVE="$({ command printf '%s\n' "$LIVE_RAW" |
     command grep -E '^status/' || true; } | command sort -u)"
 
 # --- compare, both directions ------------------------------------------------
+# THE TRAP IS ARMED BEFORE THE SECOND mktemp CAN FAIL. Creating both files and
+# then trapping leaks the first one whenever the second `|| exit 2` fires (a full
+# /tmp, an fd or quota limit between the two calls) — the exit path runs with no
+# trap registered at all. So arm after the first, then RE-arm to cover the second.
 DECL_F="$(command mktemp)" || exit 2
+# shellcheck disable=SC2064  # expand the path now, at trap-registration time
+trap "command rm -f '$DECL_F'" EXIT
 LIVE_F="$(command mktemp)" || exit 2
 # shellcheck disable=SC2064  # expand the paths now, at trap-registration time
 trap "command rm -f '$DECL_F' '$LIVE_F'" EXIT
