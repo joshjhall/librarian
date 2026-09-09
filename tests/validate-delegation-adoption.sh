@@ -332,7 +332,10 @@ test_string_shaped_content_is_not_dropped() {
     command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-s1.meta.json"
     run_adoption ac5 "$root"
     assert_equals "0" "$RC" "ac5 exits 0 on string-shaped content"
-    assert_contains "$OUT" "yes" \
+    # Pin the ROW. A bare "yes" would be a weaker claim than it looks, and the
+    # size column is what proves the string was actually READ rather than the
+    # anchor merely defaulting true.
+    assert_contains "$OUT" "general-purpose                          13      yes" \
         "a bare-string assistant turn is read, not silently dropped"
 }
 
@@ -348,7 +351,10 @@ test_ac5_reports_na_for_a_spawn_with_no_answer() {
     command printf '{"agentType":"general-purpose"}\n' >"$dir/agent-n1.meta.json"
     run_adoption ac5 "$root"
     assert_equals "0" "$RC" "ac5 exits 0 when a spawn never answered"
-    assert_contains "$OUT" "n/a" "an unanswered spawn reports n/a, not a score"
+    # Both columns, not a bare "n/a": the row must show n/a for SIZE as well as
+    # for anchors, or an absent answer could still be scored as 0 tokens.
+    assert_contains "$OUT" "general-purpose                         n/a      n/a" \
+        "an unanswered spawn reports n/a in both columns, not a score"
 }
 
 test_subagent_type_sidecar_key_is_honoured() {
