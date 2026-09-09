@@ -280,6 +280,15 @@ def _has_anchor(text: str) -> bool:
     free -- `src/app.py:42:` (pytest/mypy) and `pkg/mod.py:42:5` (ripgrep
     --vimgrep) both hit, and those two shapes are why this is a regex.
 
+    A NOTE ON HOW MUCH THIS MATTERS. Four review cycles found seven errors here,
+    which is out of proportion to the function's reach: on the corpus this tool
+    was written for, the anchor column feeds exactly ONE row -- a docs lookup the
+    tally already discounts as not a sample of the behavior AC5 asks about.
+    Forcing this function to return True unconditionally changes no conclusion in
+    that document. It is written to this standard because the column becomes
+    load-bearing the moment adoption is non-zero (#978), not because it is
+    load-bearing today. Weigh further hardening against that.
+
     A URL is rejected however it is spelled, because a link is not a citation
     even when it ends in a real source extension. Three spellings, all measured:
     `https://host/src/app.py:42` (the `://` guard), `//cdn.example.com/a.js:12`

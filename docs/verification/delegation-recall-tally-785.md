@@ -266,7 +266,13 @@ What the data **does not** establish, stated as plainly as the prior art demands
   would each have scored a return value merely *mentioning* something as having
   "cited its sources", and two false negatives (the two formats above) that
   would have under-reported the behavior the guidance exists to produce. A URL
-  is not a citation however it is spelled, and it took four spellings to say so. The checks are one
+  is not a citation however it is spelled, and it took four spellings to say so.
+  **Scope check, so a later reader weighs this correctly:** the anchor column
+  feeds exactly one row of this tally — row 2, the docs lookup already discounted
+  above — and forcing the check to return `yes` unconditionally changes no
+  conclusion in this document. The care went in because the column becomes
+  load-bearing the moment adoption is non-zero, not because it is load-bearing
+  today. The checks are one
   regex rather than a chain of guards because each incremental guard fixed one
   shape and broke another — and once even disarmed the test for a different
   guard. (c) **`delegation-adoption.sh ac5`
