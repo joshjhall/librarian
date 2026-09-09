@@ -126,6 +126,12 @@ run_stage "is_test_file basename anchoring" bash "$SCRIPT_DIR/lint-test-file-anc
 # bash, this one pins WHICH LANGUAGE it means and that the contract matrix and
 # both runtimes agree about it (#622 Phase 0, ADR 0002).
 run_stage "Scanner language-table consistency" bash "$SCRIPT_DIR/lint-language-table-sync.sh"
+# The same ADR 0002 subset rule, one consumer over (#913). The stage above scans
+# the four check-* scanners only, and review-route.sh — which decides whether the
+# review fan-out RUNS AT ALL — followed the rule by hand, ungated. Its own gate
+# rather than a fifth entry there: that one is shaped around a patterns.{py,sh}
+# pair plus a `## Language Support` matrix this file has neither of.
+run_stage "review-route.sh extension table" bash "$SCRIPT_DIR/lint-review-route-lang.sh"
 run_stage "check-* deterministic coverage tool" bash "$SCRIPT_DIR/validate-patterns-coverage.sh"
 run_stage "Coverage-corpus completeness" bash "$SCRIPT_DIR/validate-coverage-corpus.sh"
 run_stage "Coverage runner resolution + fail-loud" bash "$SCRIPT_DIR/validate-coverage-runner.sh"
