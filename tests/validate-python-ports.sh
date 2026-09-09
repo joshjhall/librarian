@@ -637,17 +637,20 @@ EOF
 # in shebang_lang, and pinned for INTENT in validate-source-detectors.sh.
 #
 # THE SHEBANG LINE IS CRLF, THE CONTENT LINE IS NOT, and that asymmetry is
-# deliberate. A CRLF *content* line exposes a SEPARATE, PRE-EXISTING divergence
-# that has nothing to do with this issue: the evidence field is captured from
-# the matched line, and python's text-mode read strips the trailing CR while
-# bash's `grep` keeps it, so the TSV differs by one byte. Verified against
-# origin/main with a plain `.py` file containing a CRLF credential line — it
-# reproduces there identically, with no shebang involved. It is latent only
-# because no fixture in this corpus had ever carried a CR — the #836 shape,
-# where a whole-corpus diff is bounded by the input shapes the corpus holds.
-# Filed as #902 rather than fixed here (it spans every detector's evidence field
-# in every scanner); this fixture keeps the shebang half testable meanwhile, and
-# #902's first AC is the CRLF CONTENT fixture this line had to give up.
+# still deliberate: this fixture isolates the SHEBANG resolver, so its content
+# line stays LF to keep the two failures separable. The CRLF *content* case is
+# a SEPARATE divergence — the evidence field is captured from the matched line,
+# and python's text-mode read strips the trailing CR while bash's `grep` keeps
+# it, so the TSV differed by one byte. It was open when #858 landed, which is
+# why this line had to give it up; #902 has since FIXED it, in the `truncate_chars`
+# CR strip shared by all 15 pre-scan .sh files, and `crlfcontent.py` below is
+# the CRLF-content fixture that pins it.
+#
+# A CRLF line still ends in `\n`, so both runtimes agree on where it SPLITS. A
+# lone `\r` (or a form feed) is a separator to python's splitlines() and not to
+# grep, which diverges the LINE NUMBER as well as the evidence -- a distinct
+# defect in the splitting step, tracked in #980. No fixture here carries one yet;
+# that is the same #836 bound, one input class over.
 command printf '#!/usr/bin/env bash\r\npassword = "realsecret123"\n' >"$FIXDIR/crlfbang"
 
 # ...and the same line ending on the DIRECT-PATH branch, which reaches the token
@@ -677,6 +680,21 @@ command printf '#!/bin/sh\r\npassword = "realsecret123"\n' >"$FIXDIR/crlfdirect"
 } >"$FIXDIR/pastcap"
 unset _capi
 
+# CRLF CONTENT line (#902) — the fixture the #858 comment above had to give up.
+#
+# A plain, extension-resolved `.py` file: no shebang, nothing exotic, just a
+# matched line whose terminator is CRLF. The evidence field is captured FROM
+# that line, and the two runtimes reach it by different mechanisms — python's
+# text-mode read drops the `\r`, bash's `grep` keeps it — so before #902 the
+# two TSV rows differed by exactly one byte in the evidence column.
+#
+# This corpus had never carried a CR in a CONTENT line, so the whole-corpus diff
+# passed on an input shape it did not hold: the #836 trap, where absence of a
+# shape reads as parity. The second line is deliberately LF-terminated, so a fix
+# that mangles ordinary lines while normalizing CRLF ones still fails here.
+command printf 'password = "realsecret123"\r\nquery = f"SELECT * FROM users WHERE id={user_id}"\n' \
+    >"$FIXDIR/crlfcontent.py"
+
 FILE_LIST="$WORKDIR/list.txt"
 : >"$FILE_LIST"
 for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" \
@@ -685,7 +703,7 @@ for f in "$FIXDIR/app.py" "$FIXDIR/app.ts" "$FIXDIR/app.go" "$FIXDIR/view.html" 
     "$FIXDIR/app.rs" \
     "$FIXDIR/deploy" "$FIXDIR/provision" "$FIXDIR/migrate" \
     "$FIXDIR/legacyrun" "$FIXDIR/oddball" \
-    "$FIXDIR/crlfbang" "$FIXDIR/crlfdirect" "$FIXDIR/pastcap" \
+    "$FIXDIR/crlfbang" "$FIXDIR/crlfdirect" "$FIXDIR/crlfcontent.py" "$FIXDIR/pastcap" \
     "$FIXDIR/model.ts" "$FIXDIR/api.d.ts" "$FIXDIR/Model.swift" \
     "$FIXDIR/Upper.PY" "$FIXDIR/Widget.TS" \
     "$FIXDIR/prose/agents/reviewer.md" "$FIXDIR/prose/skills/demo/SKILL.md" \

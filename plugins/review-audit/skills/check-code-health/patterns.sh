@@ -166,6 +166,17 @@ unset _cand
 # truncate_chars <maxchars> <string> — first <maxchars> characters on stdout.
 truncate_chars() {
     local n="$1" s="$2"
+    # Strip a trailing CR before slicing (#902). Evidence is captured from the
+    # matched source line; python's text-mode read drops the CRLF `\r` while
+    # bash's `grep` keeps it, so a CRLF-terminated line emitted TSV rows
+    # differing by one byte between the runtimes. bash normalizes toward python
+    # because python is the primary impl and its CR-free evidence is the
+    # contract tests/validate-python-ports.sh pins. It runs before the slice by
+    # convention, so all 15 copies stay identical and one grep can gate them
+    # all — NOT because the order is observable here: for a single trailing CR
+    # the two orders were measured equivalent at every n and in both slice
+    # spellings.
+    s=${s%$'\r'}
     if [ -n "$_PRESCAN_UTF8_LOCALE" ]; then
         local LC_CTYPE="$_PRESCAN_UTF8_LOCALE"
         printf '%s' "${s:0:$n}"
