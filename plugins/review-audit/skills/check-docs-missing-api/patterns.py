@@ -95,7 +95,7 @@ def scan_file(path: str) -> None:
                 continue
             emit(path, line_no, "Python", content)
 
-    elif ext in ("js", "ts", "jsx", "tsx"):
+    elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
         for line_no, content in defs(
             r"^export (function|class|const|type|interface|enum) "
         ):

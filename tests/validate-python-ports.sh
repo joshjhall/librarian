@@ -211,14 +211,27 @@ command printf 'key = "%s"\n' "$STRIPE_TOK" >"$FIXDIR/secrets.env.example"
 # js/ts arms; without a fixture carrying these extensions the parity assertion
 # passes VACUOUSLY with respect to that branch — it never runs. A top-level
 # console.log is the cheapest input that reaches the arm in every ported tool.
+#
+# EXTENDED for #840. The original two lines only reached arms that ALREADY
+# covered .mjs/.cjs (the two shared debug-statement regions), so the four arms
+# widened in Phase 3 — empty-handler, injection-risk, lifecycle, missing-api —
+# would have agreed here VACUOUSLY, by both runtimes emitting nothing. Parity
+# over two silences is the trap this fixture's own #568 note warns about, not a
+# pass; each line below reaches one newly-widened arm.
 command cat >"$FIXDIR/tool.mjs" <<'EOF'
 console.log('left in by accident');
 export function undocumented() {}
+try { risky(); } catch (e) {}
+const child = spawn('ls', args);
+const q = `SELECT * FROM t WHERE id=${id}`;
 EOF
 
 command cat >"$FIXDIR/tool.cjs" <<'EOF'
 console.log('left in by accident');
 module.exports.thing = function () {};
+try { risky(); } catch (e) {}
+const child = spawn('ls', args);
+const q = `SELECT * FROM t WHERE id=${id}`;
 EOF
 
 # TypeScript coverage (#726). `ts` became its OWN language key rather than a js

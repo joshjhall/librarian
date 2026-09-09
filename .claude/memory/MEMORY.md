@@ -41,6 +41,7 @@
 - [Deferred work may be doable now](deferred-work-may-be-doable-now.md) — "wait for Phase N" is an estimate; probe the blocker before accepting it
 - [Strictness-first failures are in the checker](strictness-first-fails-in-the-checker.md) — a finer gate's first findings are its own parser bugs; never edit the subject to go green
 - [Harden one knob, grep siblings](harden-one-knob-grep-every-sibling.md) — recurring class (#487/#489/#493): fix one site, sibling stays exposed
+- [Sync-region boundary predicts stale arms](sync-region-boundary-predicts-stale-arms.md) — a past widening reached only the WATCHED copies; probe every unwatched sibling (#840)
 - [Required param beats optional default](required-param-beats-optional-default.md) — a smarter default preserves the footgun; require it, and test the omitted AND wrong-value paths
 - [Third instance means fix the shape](third-instance-means-fix-the-shape.md) — 3 review cycles found 3 of 35; measure the class, re-key the structure, table-drive the test
 - [Survey scoped to a glob misses a plugin](survey-scoped-to-a-glob-misses-a-plugin.md) — grep the defective LINE across plugins/; a `check-*` survey missed four `dev-core` twins

@@ -281,7 +281,7 @@ while IFS= read -r file; do
             emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '=[[:space:]]*open[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
             ;;
-        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx])
+        *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             emit_rows '\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
             emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '=[[:space:]]*fs\.(openSync|createReadStream|createWriteStream)[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"

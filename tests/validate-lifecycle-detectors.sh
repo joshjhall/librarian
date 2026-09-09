@@ -148,6 +148,21 @@ test_unreaped_subprocess() {
     assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
         "lifecycle: JS spawn/execFile/exec fires"
 
+    # ESM/CJS (#840). This scanner has ONE arm covering all four categories, so
+    # the missing .mjs/.cjs made every lifecycle category blind to them at once.
+    # The .js case above is the control for these two.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const child = spawn("ls", args)' >"$d/c.mjs"
+    list="$(make_list "$d/l" "$d/c.mjs")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: ESM (.mjs) spawn fires"
+
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const child = spawn("ls", args)' >"$d/c.cjs"
+    list="$(make_list "$d/l" "$d/c.cjs")"
+    assert_fires "$list" unreaped-subprocess "Subprocess spawned without visible reap" \
+        "lifecycle: CJS (.cjs) spawn fires"
+
     # Go exec.Command
     d="$(fresh_dir)"
     command printf '%s\n' 'cmd := exec.Command("ls")' >"$d/d.go"
@@ -233,6 +248,19 @@ test_terminate_without_kill() {
     assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
         "lifecycle: Python .terminate() fires"
 
+    # ESM (#840). The JS arm covers all four categories at once, so each one
+    # needs its own .mjs proof — a single spawn() fixture would leave the other
+    # three asserted by comment only. `.cjs` is deliberately not repeated for
+    # these three: both extensions enter through the SAME case arm, and the
+    # spawn .mjs/.cjs pair in test_unreaped_subprocess already proves that arm
+    # treats them identically. What needed proving here is per-CATEGORY reach,
+    # not per-extension.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'proc.terminate()' >"$d/t.mjs"
+    list="$(make_list "$d/l" "$d/t.mjs")"
+    assert_fires "$list" terminate-without-kill "Terminate without kill escalation" \
+        "lifecycle: ESM (.mjs) .terminate() fires"
+
     # JS .terminate() (e.g. a Worker) — assert the JS arm independently.
     d="$(fresh_dir)"
     command printf '%s\n' 'child.terminate()' >"$d/c.js"
@@ -276,6 +304,13 @@ test_unclosed_handle() {
     list="$(make_list "$d/l" "$d/a.py")"
     assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
         "lifecycle: Python f = open() fires"
+
+    # ESM (#840) — see the note in test_terminate_without_kill.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'const s = fs.createReadStream(p)' >"$d/h.mjs"
+    list="$(make_list "$d/l" "$d/h.mjs")"
+    assert_fires "$list" unclosed-handle "Handle acquired without scoped close" \
+        "lifecycle: ESM (.mjs) fs.createReadStream fires"
 
     # Python scoped `with open() as f:` stays SILENT (the low-FP boundary — no
     # `= open(` assignment).
@@ -374,6 +409,13 @@ test_unpaired_listener() {
     list="$(make_list "$d/l" "$d/aev.js")"
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: JS addEventListener fires"
+
+    # ESM (#840) — see the note in test_terminate_without_kill.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'el.addEventListener("click", h)' >"$d/aev.mjs"
+    list="$(make_list "$d/l" "$d/aev.mjs")"
+    assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
+        "lifecycle: ESM (.mjs) addEventListener fires"
 
     d="$(fresh_dir)"
     command printf '%s\n' 'const t = setInterval(tick, 1000)' >"$d/iv.js"

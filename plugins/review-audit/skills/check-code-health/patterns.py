@@ -425,7 +425,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                 nxt = _first_nonblank_after(lines, idx + 1)
                 if re.search(r"^\s*pass\s*$", nxt):
                     emit(path, idx, "empty-handler", "Empty except block (pass)", line)
-        elif ext in ("js", "ts", "jsx", "tsx"):
+        elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
             if re.search(r"catch\s*\([^)]*\)\s*\{\s*\}", line):
                 emit(path, idx, "empty-handler", "Empty catch block", line)
         elif ext in ("java", "kt"):

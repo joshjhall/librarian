@@ -120,7 +120,7 @@ def scan_file(path: str, lines: list[str]) -> None:
                 emit(path, idx, "terminate-without-kill", L_TERMINATE, line)
             if re.search(r"=\s*open\s*\(", line):
                 emit(path, idx, "unclosed-handle", L_HANDLE, line)
-        elif ext in ("js", "ts", "jsx", "tsx"):
+        elif ext in ("js", "ts", "jsx", "tsx", "mjs", "cjs"):
             if re.search(
                 r"\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)\s*\(", line
             ):

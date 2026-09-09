@@ -32,7 +32,7 @@ category is LLM-side and declares no per-language arms.
 | Language     | ext(s)     | public-symbol form                    | doc marker | undocumented-public-api |
 | ------------ | ---------- | ------------------------------------- | ---------- | ----------------------- |
 | Python       | py         | def / class, `_`-prefix is private    | `"""`      | M                       |
-| JavaScript   | js, jsx    | `export function\|class\|const\|…`     | `/**`      | M                       |
+| JavaScript   | js, jsx, mjs, cjs | `export function\|class\|const\|…` | `/**`      | M                       |
 | TypeScript   | ts, tsx    | as JavaScript                          | `/**`      | M                       |
 | Go           | go         | func + capitalized name               | `// Name`  | M                       |
 | Rust         | rs         | `pub fn\|struct\|enum\|trait\|type`    | `///`      | M                       |
