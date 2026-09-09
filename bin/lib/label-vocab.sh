@@ -59,9 +59,26 @@ declared_status_labels() {
             command awk '
                 /^labels:/ { inblock = 1; next }
                 inblock && /^[a-zA-Z_]+:/ { inblock = 0 }
-                inblock && /^[[:space:]]*-[[:space:]]*name:[[:space:]]*status\// {
+                # The optional quote in the MATCH, not just in the cleanup below:
+                # requiring `status/` immediately after `name:` means a quoted
+                # `- name: "status/x"` never matches at all, so the label reads as
+                # UNDECLARED rather than as declared-with-quotes. Stripping quotes
+                # after the fact cannot fix a line the pattern already skipped —
+                # found by the fixture that was written to test the stripping.
+                inblock && /^[[:space:]]*-[[:space:]]*name:[[:space:]]*["'"'"']?status\// {
                     sub(/^[[:space:]]*-[[:space:]]*name:[[:space:]]*/, "")
-                    gsub(/"/, "")
+                    # A TRAILING COMMENT OR QUOTE IS NOT PART OF THE NAME. No
+                    # metadata.yml uses either today, but this function is now the
+                    # single source BOTH the offline gate and the scheduled
+                    # reconciler trust — so a corpus edit adding `# note` after a
+                    # label would produce a false "declared but absent" in one and
+                    # a false "undeclared reference" in the other, from one typo.
+                    # Extraction is what raised the blast radius; the trim is what
+                    # bounds it. Order matters: strip the comment before trimming
+                    # trailing space, or the space the comment left behind stays.
+                    sub(/[[:space:]]*#.*$/, "")
+                    gsub(/["'"'"']/, "")
+                    sub(/[[:space:]]+$/, "")
                     print
                 }
             ' "$meta"

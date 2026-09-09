@@ -54,6 +54,14 @@ permissions:
   contents: read
   issues: read
 
+# One run at a time. A dispatch during a scheduled run (or a burst of dispatches
+# while somebody is fixing a finding) otherwise piles up identical read-only jobs
+# racing to report the same vocabulary. The newest run is the one whose answer is
+# current, so in-progress runs are cancelled rather than queued.
+concurrency:
+  group: label-vocab-reconcile
+  cancel-in-progress: true
+
 jobs:
   reconcile:
     name: status/* vocabulary (declared vs live)
@@ -66,6 +74,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job only READS the tree and queries labels; it never pushes. A
+          # persisted credential in .git/config would outlive the step for no
+          # reason, which contradicts the least-privilege posture the
+          # `permissions:` block above already sets.
+          persist-credentials: false
 
       # `gh` is preinstalled on ubuntu-latest; the script fails loud (exit 2) if
       # it is absent, unauthenticated, or returns nothing, rather than reporting

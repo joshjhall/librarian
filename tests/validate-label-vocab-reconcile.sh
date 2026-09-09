@@ -559,6 +559,112 @@ test_markdown_in_a_live_label_name_is_neutralized() {
     assert_not_contains "$RC_OUT" "](http" "the link syntax is neutralized"
 }
 
+test_backtick_and_newline_in_a_label_name_are_neutralized() {
+    local box line_count
+    box="$(make_sandbox status/in-progress)"
+    # The BACKTICK path, which md_safe's comment calls out by name ("escapes its
+    # code span") but the bracket/paren case above never exercises — a different
+    # GFM vector, and `tr` is byte-wise so it is a distinct code path.
+    stub_gh "$box" ok status/in-progress 'status/x`code`y'
+
+    run_reconcile "$box"
+    assert_exit 1 "$RC_CODE" "the undeclared label is still reported as drift"
+    assert_contains "$RC_OUT" "status/x" "the label is still named"
+    # Each finding is emitted as `- \`name\``, so exactly two backticks belong on
+    # that line. A name carrying its own would make four and break the span.
+    line_count="$(command printf '%s\n' "$RC_OUT" | command grep -c 'status/x' || true)"
+    assert_equals "1" "$line_count" "the neutralized name occupies exactly one line"
+    assert_contains "$RC_OUT" "status/x?code?y" "the backticks are replaced, not deleted"
+}
+
+test_a_multiline_label_name_cannot_open_a_heading() {
+    local box heading_count
+    box="$(make_sandbox status/in-progress)"
+    # A label name spanning two lines, the second of which is markdown block
+    # syntax. Note WHICH mechanism stops this, because the first draft of this case
+    # credited the wrong one: `gh label list` is LINE-BASED, so a multi-line name
+    # arrives as two separate lines and the `^status/` filter drops the second
+    # outright. Mutating md_safe's newline collapse away left this case still
+    # passing — the filter, not the neutralizer, is the load-bearing part here.
+    # Recorded rather than papered over: the assertion is kept for the property
+    # (no injected heading reaches the report) with the real reason named, instead
+    # of standing as false evidence for md_safe.
+    stub_gh "$box" ok status/in-progress 'status/evil
+### FAKE HEADING'
+
+    run_reconcile "$box"
+    assert_exit 1 "$RC_CODE" "drift is still reported"
+    heading_count="$(command printf '%s\n' "$RC_OUT" | command grep -c '^### FAKE' || true)"
+    assert_equals "0" "$heading_count" "no label-injected heading reaches the report"
+    assert_not_contains "$RC_OUT" "FAKE HEADING" "the second line is filtered out entirely"
+}
+
+test_md_safe_collapses_a_tab_in_a_live_label_name() {
+    local box
+    box="$(make_sandbox status/in-progress)"
+    # md_safe's control-character collapse, driven through the REAL script rather
+    # than a copy of the function. A first draft re-declared md_safe inside the
+    # test, which tests the copy and would keep passing after the real one changed
+    # — the wrong-copy-under-test shape. A TAB is the way in: unlike a newline it
+    # survives gh's line-based output, so it actually reaches md_safe.
+    stub_gh "$box" ok status/in-progress "$(command printf 'status/tab\there')"
+
+    run_reconcile "$box"
+    assert_exit 1 "$RC_CODE" "the undeclared label is reported as drift"
+    assert_contains "$RC_OUT" "status/tab here" "the tab is collapsed to a space"
+    assert_not_contains "$RC_OUT" "$(command printf 'status/tab\there')" \
+        "the raw tab does not reach the report"
+}
+
+test_gh_err_temp_file_is_cleaned_on_gh_failure_paths() {
+    local box rc=0 leftover iso
+    box="$(make_sandbox status/in-progress)"
+    stub_gh "$box" fail
+
+    # GH_ERR is mktemp'd BEFORE the comparison files, so its cleanup on gh's OWN
+    # failure paths is a different arm from the mktemp-failure case above: that one
+    # proves the re-arm, this one proves the FIRST trap covers the early exits.
+    # An ISOLATED TMPDIR is essential — /tmp here is shared with peer golems, so a
+    # count over it is noise (measured: a delta of 4 from other sessions while this
+    # script left nothing).
+    iso="$box/isotmp"
+    command mkdir -p "$iso"
+    /usr/bin/env -uBASH_ENV TMPDIR="$iso" PATH="$box/ghbin:$PATH" LABEL_VOCAB_ROOT="$box" \
+        "$REAL_BASH" --noprofile --norc "$RECONCILE_SH" >/dev/null 2>&1 || rc=$?
+    assert_exit 2 "$rc" "a failing gh still exits 2"
+    leftover="$(command ls -A "$iso" 2>/dev/null | command grep -c . || true)"
+    assert_equals "0" "$leftover" "the stderr temp file is cleaned up on gh's failure path"
+}
+
+test_parser_ignores_trailing_comments_and_quotes() {
+    local box declared
+    box="$(command mktemp -d)"
+    SANDBOXES="$SANDBOXES $box"
+    command mkdir -p "$box/plugins/p/skills/s"
+    # Neither spelling appears in a metadata.yml today. This function is now the
+    # ONE source both halves trust, so a corpus edit adding either would otherwise
+    # produce a false finding in the offline gate AND the reconciler at once.
+    {
+        command printf 'labels:\n'
+        command printf '  - name: status/plain\n'
+        command printf '  - name: status/commented  # a triage note\n'
+        command printf "  - name: 'status/singlequoted'\n"
+        command printf '  - name: "status/doublequoted"\n'
+    } >"$box/plugins/p/skills/s/metadata.yml"
+
+    declared="$(
+        # shellcheck source=bin/lib/label-vocab.sh
+        . "$VOCAB_LIB"
+        declared_status_labels "$box/plugins"
+    )"
+    assert_contains "$declared" "status/commented" "a trailing comment is trimmed off the name"
+    assert_not_contains "$declared" "triage note" "the comment text never becomes part of a label"
+    assert_not_contains "$declared" "#" "no label carries a comment marker"
+    assert_contains "$declared" "status/singlequoted" "single quotes are stripped"
+    assert_contains "$declared" "status/doublequoted" "double quotes are stripped"
+    assert_not_contains "$declared" "'" "no label carries a stray quote"
+}
+
 # --- one parser, two callers (#663) -----------------------------------------
 
 test_shared_parser_is_the_only_parser() {
@@ -669,6 +775,11 @@ run_test test_unknown_argument_is_rejected "usage: an unknown argument is reject
 run_test test_truncated_label_list_exits_two "fail loud: a possibly-truncated label list exits 2"
 run_test test_label_list_below_the_limit_is_not_truncation "the truncation guard does not fire below the limit"
 run_test test_markdown_in_a_live_label_name_is_neutralized "a live label name cannot inject markdown into the report"
+run_test test_backtick_and_newline_in_a_label_name_are_neutralized "a backtick in a label name cannot break its code span"
+run_test test_a_multiline_label_name_cannot_open_a_heading "a multi-line label name cannot open a heading (via the status/ filter)"
+run_test test_md_safe_collapses_a_tab_in_a_live_label_name "md_safe collapses a tab, driven through the real script"
+run_test test_gh_err_temp_file_is_cleaned_on_gh_failure_paths "the stderr temp file is cleaned on gh's own failure paths"
+run_test test_parser_ignores_trailing_comments_and_quotes "the shared parser trims trailing comments and quotes"
 run_test test_first_temp_file_is_cleaned_when_second_mktemp_fails "the trap re-arm: no temp file is orphaned by a later mktemp failure"
 run_test test_refactored_offline_gate_still_enforces_both_rules "the refactored offline gate is EXECUTED, not grepped"
 run_test test_shared_parser_is_the_only_parser "one parser: neither caller carries a copy"

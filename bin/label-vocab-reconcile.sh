@@ -157,9 +157,16 @@ trap "command rm -f '$GH_ERR'" EXIT
 LIVE_RAW="$(command gh label list --limit "$GH_LABEL_LIMIT" --json name --jq '.[].name' 2>"$GH_ERR")" || GH_RC=$?
 if [ "$GH_RC" -ne 0 ]; then
     command printf 'label-vocab-reconcile: FATAL — `gh label list` exited %s.\n' "$GH_RC" >&2
-    command printf '  Output was:\n' >&2
+    # Two LABELLED sections. Merged under one "Output was:" header, a reader
+    # debugging a scheduled failure cannot tell an auth error (stderr) from a
+    # partial JSON body cut off mid-stream (stdout) — which is the distinction
+    # that decides what to do next.
+    command printf '  stderr:\n' >&2
     command sed 's/^/    /' "$GH_ERR" >&2
-    command printf '%s\n' "$LIVE_RAW" | command sed 's/^/    /' >&2
+    if [ -n "$LIVE_RAW" ]; then
+        command printf '  stdout (partial):\n' >&2
+        command printf '%s\n' "$LIVE_RAW" | command sed 's/^/    /' >&2
+    fi
     command printf '  Zero labels from a failed query is not an empty repo.\n' >&2
     exit 2
 fi
@@ -241,14 +248,23 @@ emit() {
 #
 # The declared side is repo content and trusted; the live side comes from
 # `gh label list`, and label creation is a triage-level permission. The step
-# summary renders as GFM, so a name carrying a backtick escapes its code span and
-# one carrying `[...](...)` becomes a link — enough to misrepresent the report
-# even though GitHub's renderer blocks script execution. A report whose whole
-# value is being believed should not be reshapeable by the thing it reports on.
-# Backtick, brackets and parens are replaced rather than stripped, so evidence of
-# an odd name survives instead of vanishing.
+# summary renders as GFM, so an unescaped name can reshape the report: a backtick
+# escapes its code span, `[..](..)` becomes a link, `*`/`_`/`~` add emphasis, and
+# `#` at a line start becomes a heading. A report whose whole value is being
+# believed should not be reshapeable by the thing it reports on.
+#
+# NEWLINES ARE THE ONE THAT ESCAPES THE BULLET. Every finding is emitted as a
+# single `- \`name\`` line, so an embedded newline (or CR) does not merely style
+# text — it spills content outside the bullet and can open block-level syntax on
+# the next line. Those are collapsed to a space FIRST, before the metacharacter
+# pass, so nothing can arrive at the report on a line of its own.
+#
+# Characters are REPLACED, not deleted: an odd name should still be visible as
+# evidence rather than silently becoming a different-looking name. All of these
+# are single-byte ASCII, so `tr` (a byte tool) is safe here — a multi-byte
+# character in a label name passes through untouched, which is what we want.
 md_safe() {
-    command printf '%s' "$1" | command tr '`[]()' '?????'
+    command printf '%s' "$1" | command tr '\n\r\t' '   ' | command tr '`[]()*_~#|<>' '????????????'
 }
 
 emit "## status/* label vocabulary reconciliation"
