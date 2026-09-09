@@ -11,7 +11,7 @@ human gate) live in the root [MEMORY.md](MEMORY.md).
 - [Frozen counter = done, not wedged](frozen-counter-is-done-not-wedged.md) — Δ=0 usually = done-idle-at-prompt; check `gh pr list` first
 - [Idle-detector false positive](idle-detector-false-positive-own-monitors.md) — false-fires when a golem waits on its OWN monitors (#517)
 - [Stale-BLOCKED false positive](stale-blocked-false-positive.md) — trust the feed/pane FOOTER over a pane grep (#422)
-- [Phantom prompt-buffer text](phantom-prompt-buffer-text.md) — panes show unsent text at `❯`; inert — reap, don't blind-keystroke
+- [Phantom prompt-buffer text](phantom-prompt-buffer-text.md) — unsent text at `❯` AFTER a golem asks a question; inert — reap, don't blind-keystroke, don't escalate as intrusion (#977)
 - [Review-wedge root cause](review-wedge-root-cause.md) — golems wedge in unbounded reviews; #307 wall-bound is PROSE not code
 - [Wall-timeout decision helper](wall-timeout-decision-helper.md) — TaskStop is model-only; mechanize via workflow-wall-timeout.sh (#327)
 
