@@ -55,3 +55,25 @@ test_skip_patterns:
   #                                  only on its ruff stage; post-start has no
   #                                  coverage at all). Tracked as a real gap by
   #                                  #948, not silenced by a suppression.
+
+stdout_is_output:
+  # CLI measurement tools whose print() IS the program's output, not a debug
+  # leftover (#680). Each is a report generator invoked by an operator to read
+  # its stdout; a run that printed nothing would be the bug.
+  #
+  # This is a STRUCTURAL fact about the files, not a preference: they have no
+  # other output channel, and their stderr/exit-code paths are separately
+  # asserted by their behavioral gates (validate-measure-spawn-prefix.sh,
+  # validate-delegation-adoption.sh) — including the exit-3 arms, so the
+  # suppression cannot hide a silent-failure path.
+  #
+  # The key suppresses ONLY the print family. breakpoint(), pdb and friends keep
+  # firing in these files, which is the point: those are never program output.
+  #
+  # NOT a `scripts/*.py` glob. Both paths are named because the directory also
+  # holds tools where a stray print WOULD be a leftover (autonomy-resolve.py
+  # emits a machine-read key=value contract; golem-event-listener.py is a
+  # receiver). A glob would silence those too, and their prints are exactly the
+  # ones worth flagging.
+  - "plugins/workflow/scripts/delegation-adoption.py"
+  - "plugins/workflow/scripts/measure-spawn-prefix.py"

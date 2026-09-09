@@ -328,3 +328,76 @@ printf '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens
 
 # A path that does not exist -> the missing-root exit 3.
 PREFIX_GHOST="$WFDIR/prefix-never-created"
+
+# =============================================================================
+# delegation-adoption.py — investigation-delegation adoption (#797)
+# =============================================================================
+#
+# A second synthetic transcript root, shaped like ~/.claude/projects but arming
+# the arms THIS tool branches on, which are not the ones measure-spawn-prefix
+# needs. Reusing PREFIX_ROOT would leave the interesting half unexecuted: every
+# spawn there sits under a `workflows/` segment, so the direct-spawn arm — the
+# whole subject of the tool — would never run.
+#
+# The arms:
+#   harness spawn   under `workflows/`  -> the fan-out bucket
+#   direct spawn    NOT under it        -> the delegated-investigation bucket
+#   main session    `<proj>/<uuid>.jsonl` with a sizeable tool_result, so
+#                   `opportunities` has a denominator to walk
+#   degenerates     a journal.jsonl, a non-object meta sidecar, a malformed line
+ADOPT_ROOT="$WFDIR/adopt-root"
+ADOPT_HARNESS="$ADOPT_ROOT/proj/sess/subagents/workflows/wf_fixture"
+ADOPT_DIRECT="$ADOPT_ROOT/proj/sess/subagents"
+mkdir -p "$ADOPT_HARNESS" "$ADOPT_DIRECT"
+
+# A harness spawn — path carries the `workflows/` segment.
+printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"harness finding"}]}}\n' \
+    >"$ADOPT_HARNESS/agent-h1.jsonl"
+printf '{"agentType":"dev-core:code-reviewer","spawnDepth":1}\n' \
+    >"$ADOPT_HARNESS/agent-h1.meta.json"
+
+# A direct spawn whose return value IS a conclusion — small, and anchored with a
+# path:line citation, so the `ac5` anchor branch resolves true.
+{
+    printf '{"type":"user","message":{"role":"user","content":"investigate"}}\n'
+    printf 'not json at all\n'
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Answer: the default is set at plugins/workflow/scripts/config.sh:41"}]}}\n'
+} >"$ADOPT_DIRECT/agent-d1.jsonl"
+printf '{"agentType":"general-purpose","spawnDepth":1}\n' \
+    >"$ADOPT_DIRECT/agent-d1.meta.json"
+
+# A direct spawn returning an UNANCHORED dump -> the false arm of _has_anchor.
+{
+    printf '{"type":"user","message":{"role":"user","content":"investigate"}}\n'
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I read a great many files and here is all of it with no citations at all"}]}}\n'
+} >"$ADOPT_DIRECT/agent-d2.jsonl"
+printf '[1,2,3]\n' >"$ADOPT_DIRECT/agent-d2.meta.json"
+
+# journal.jsonl is skipped by name, not content.
+printf '{"journal":true}\n' >"$ADOPT_DIRECT/journal.jsonl"
+
+# A main-session transcript: one oversized tool_result followed by enough turns
+# that the product clears the break-even, plus a sub-floor result so the
+# floor-rejection branch runs too.
+_adopt_pad="$(head -c 12000 /dev/zero | tr '\0' 'x')"
+{
+    printf '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"%s"}]}}\n' "$_adopt_pad"
+    printf '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"tiny"}]}}\n'
+    _adopt_i=0
+    while [ "$_adopt_i" -lt 20 ]; do
+        printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"t"}]}}\n'
+        _adopt_i=$((_adopt_i + 1))
+    done
+} >"$ADOPT_ROOT/proj/session-main.jsonl"
+unset _adopt_pad _adopt_i
+
+# A root holding main sessions but NO spawns -> `adoption` exits 3 while
+# `opportunities` still succeeds. That asymmetry is deliberate in the tool (the
+# denominator must survive a zero-delegation corpus), so both halves are driven.
+ADOPT_NOSPAWN="$WFDIR/adopt-nospawn"
+mkdir -p "$ADOPT_NOSPAWN/proj"
+printf '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"short"}]}}\n' \
+    >"$ADOPT_NOSPAWN/proj/session-only.jsonl"
+
+# A path that does not exist -> the missing-root exit 3.
+ADOPT_GHOST="$WFDIR/adopt-never-created"

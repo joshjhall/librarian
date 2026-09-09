@@ -1,11 +1,19 @@
 # Investigation-delegation cost & recall tally — issue #785
 
-**Status: OPEN — the instrument, with no rows yet.** This file ships with the
-guidance change ([#785](https://github.com/joshjhall/librarian/issues/785)) and is
-filled by [#797](https://github.com/joshjhall/librarian/issues/797), the
-measurement follow-up that owns AC5/AC6. Rows are appended as windows
-are captured, so this is a running tally rather than a completed report (per
-CLAUDE.md § `docs/verification/`).
+**Status: CLOSED — see § Verdict.** This file shipped with the guidance change
+([#785](https://github.com/joshjhall/librarian/issues/785)) as the instrument for
+its AC5/AC6, and was filled and closed by
+[#797](https://github.com/joshjhall/librarian/issues/797), the measurement
+follow-up that owns those two criteria.
+
+**It closes on a result nobody planned for: the guidance never fired.** The row
+target below (>= 10 delegated investigations) is not merely unmet — it is
+unreachable from the measured corpus, which contains **zero** delegated
+investigations against 49 inline ones that cleared the break-even. So the recall
+question this tally was built to answer is **UNTESTED**, a third state distinct
+from both readings its § *The recall problem* anticipated, and the live finding
+is non-adoption, tracked as
+[#978](https://github.com/joshjhall/librarian/issues/978). See § Verdict.
 
 **Figures here are NORMALIZED — percentages and ratios only.** See
 [`token-baseline-tally-781.md`](token-baseline-tally-781.md) § Why no absolute
@@ -149,19 +157,160 @@ row target is what it is.
 
 ## Rows
 
-| # | date | issue | investigation | delegated? | parent ctx growth | missed later? | notes |
-| ---: | --- | --- | --- | --- | ---: | --- | --- |
-| | | | | | | | *(none yet — see § Status)* |
+Measured 2026-09-09 with `plugins/workflow/scripts/delegation-adoption.sh`
+(shipped by #797 — the count is re-derivable, not hand-tallied). Corpus: every
+local transcript under `~/.claude/projects`, 2026-09-07 .. 09-09 — i.e. a window
+opening **two weeks after** the guidance merged (`ff01b88`, 2026-08-24).
+
+| # | date | corpus | delegated investigations | parent ctx growth | missed later? | notes |
+| ---: | --- | --- | ---: | --- | --- | --- |
+| 1 | 2026-09-09 | 118 subagent spawns, 13 sessions | **0** | n/a | n/a | 117 of 118 spawns are `ship-issue` review-harness fan-out (`subagents/workflows/**`), which happen with or without the guidance |
+| 2 | 2026-09-09 | the 1 non-harness spawn | 1 (`claude-code-guide`) | ~417 tok returned | not observed | a **docs lookup**, not fan-out investigation — it is not a sample of the behavior AC5 asks about |
+| 3 | 2026-09-09 | 49 inline results >= 2k tok, 7 sessions | **0 of 49 delegated** | absorbed inline | n/a | **100%** of them cleared the 24,650 break-even (`tok x turns_resident`); largest 6,124 tok resident 1,233 turns = 7.5M |
+
+Row 3 is the one that makes row 1 mean something. Zero delegations against zero
+opportunities would be a quiet corpus; zero against 49 qualifying ones is a
+statement about the guidance. The guidance was also **loaded** — the string
+`delegating-investigation` appears in 12 of the 13 session transcripts — so this
+is not a discoverability gap at the skill-loading layer.
+
+Reproduce:
+
+```bash
+plugins/workflow/scripts/delegation-adoption.sh adoption
+plugins/workflow/scripts/delegation-adoption.sh opportunities
+plugins/workflow/scripts/delegation-adoption.sh ac5
+```
+
+**Two defects found in review would each have produced a FALSE zero here**, and
+both are worth naming because they are the failure mode this instrument was
+built to rule out rather than commit. (1) The harness/direct split read the
+*absolute* path, so a corpus living under any ancestor directory named
+`workflows` classified every direct spawn as harness fan-out and reported zero
+delegated investigations — a directory name outside the corpus deciding the
+headline number. (2) A transcript carrying raw non-UTF-8 bytes crashed the whole
+scan, which a caller swallowing the exit code would read as "nothing found".
+Both are fixed and pinned by tests that fail without the fix. The figures below
+were re-derived after those fixes.
+
+**The harness count is a moving figure; the finding is not.** Re-running the
+commands above later returns a *larger* total, because every `ship-issue` review
+cycle — including the one that reviewed the PR closing this issue — adds spawns
+under `subagents/workflows/**`. It stood at 118 when this row was captured and at
+138 an hour later, all of the growth harness fan-out. What does **not** move is
+the column the verdict rests on: **direct spawns stayed at 1**, and delegated
+investigations at 0. Read row 1's total as a snapshot and the direct count as the
+measurement.
+
+The absolute spawn counts are local-machine figures, not fleet spend, so § *Why
+no absolute figures* does not bite: publishing "118 spawns on one dev box"
+discloses no org-wide volume. The token figures stay as ratios and per-item
+sizes.
 
 ## Per-model windows
 
 | window | opus req share | opus cost share | fleet avg prompt/req | reconcile delta | notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | 2026-08-22T18:00Z .. 2026-08-23T18:00Z | 41.9% | 80.7% | 151,739 | 0 | #781 baseline (before) |
+| — | — | — | — | — | **AC6 DEFERRED — no after-window; see below** |
+
+**AC6 is deferred, not failed.** `BIFROST_URL` is unset in every environment
+this issue could reach, and `token-report.sh` correctly **refuses** rather than
+emitting a window (it names the variable and warns that `ANTHROPIC_BASE_URL` is
+the wrong root, whose `/api/logs/stats` answers HTML with HTTP 200). No after-row
+was fabricated, and none is inferred from the local transcripts: those measure
+one machine, while the baseline row is fleet-wide, and pairing them would produce
+exactly the kind of plausible-but-wrong comparison the reconciliation guard in
+that tool exists to prevent.
+
+Note also that AC6 has been **made moot in its original form** by the adoption
+finding. It asks whether opus's token share fell *because* investigation moved to
+sonnet subagents. With zero such delegations there is no mechanism for it to have
+moved, so any share change in a future window would be attributable to something
+else. Re-run AC6 **after** adoption is non-zero, or the measurement answers a
+question about a cause that was not operating:
+
+```bash
+export BIFROST_URL=<gateway ADMIN root>        # NOT ANTHROPIC_BASE_URL
+TR=plugins/workflow/scripts/token-report.sh
+"$TR" window --start 2026-08-22T18:00:00Z --end 2026-08-23T18:00:00Z > /tmp/baseline.tsv
+"$TR" window --start <after-start> --end <after-end> > /tmp/after.tsv
+"$TR" compare --baseline /tmp/baseline.tsv --compare /tmp/after.tsv --percent-only
+```
 
 ## Verdict
 
-*Not yet reached — no rows.* To be written under
-[#797](https://github.com/joshjhall/librarian/issues/797) when the row target is
-met, in the form the prior art demands: state what the data **does** establish
-and what it does not, and do not upgrade "did not visibly break" into "held".
+**The guidance did not fire. Recall is untested, not intact.**
+
+What the data **does** establish:
+
+- **Adoption is zero.** Across 118 spawns in 13 sessions over a window opening
+  two weeks post-merge, **no session delegated a fan-out investigation**. 117
+  spawns are review-harness fan-out; the single direct spawn was a
+  documentation lookup.
+- **The opportunities existed.** 49 inline investigation results were large
+  enough to size, and **all 49** cleared the guidance's own break-even. The
+  guidance was loaded in 12 of 13 sessions. It was available, applicable, and
+  unused.
+
+What the data **does not** establish, stated as plainly as the prior art demands:
+
+- **Recall is UNTESTED — not "held", and not even "did not visibly break".**
+  `.claude/memory/review-cost-after-2026-07-28.md` earned the second phrasing
+  from two real delegations that could have missed something. This tally has
+  **zero**. There was nothing to recall, so no evidence about recall was
+  produced, in either direction. Anyone later citing this file for a recall claim
+  is citing a measurement that did not happen.
+- **AC5 is one sample, the wrong shape, and measured by a PROXY.** Two separate
+  shortfalls, and the second is easy to miss. (a) The lone direct spawn returned
+  ~417 tokens with no `file:line` anchors — small is the direction AC5 wants and
+  unanchored is not, but it was a docs question with no repo location to cite, so
+  it is weak evidence about *doc lookups* and none about fan-out investigations.
+  (b) **The anchor test recognizes `path/to/file.ext:LINE` and nothing looser.**
+  It requires a path separator, an alphabetic extension and a line number, and
+  rejects any token carrying a URL scheme — so a bare `config.sh:41` with no
+  directory scores `no`, while `src/app.py:42:` (pytest/mypy) and
+  `pkg/mod.py:42:5` (ripgrep) score `yes`. Getting there took three review
+  cycles and seven measured errors in both directions: five false positives
+  (a source URL, a scheme-less `host.tld:port`, a numeric extension, a bare
+  `example.com/org/src/app.py:42`, and a protocol-relative `//cdn/a.js:12`) that
+  would each have scored a return value merely *mentioning* something as having
+  "cited its sources", and two false negatives (the two formats above) that
+  would have under-reported the behavior the guidance exists to produce. A URL
+  is not a citation however it is spelled, and it took five spellings to say so
+  (the fifth being a domain carrying a port, `api.example.com:8080/v1/a.py:42`).
+  **Scope check, so a later reader weighs this correctly:** the anchor column
+  feeds exactly one row of this tally — row 2, the docs lookup already discounted
+  above — and forcing the check to return `yes` unconditionally changes no
+  conclusion in this document. The care went in because the column becomes
+  load-bearing the moment adoption is non-zero, not because it is load-bearing
+  today. The checks are one
+  regex rather than a chain of guards because each incremental guard fixed one
+  shape and broke another — and once even disarmed the test for a different
+  guard. (c) **`delegation-adoption.sh ac5`
+  does not measure what AC5 names.** AC5 asks
+  whether the *parent's* context growth is bounded by the conclusion; the
+  subcommand sizes the *subagent's return value* and checks for anchors. That is
+  a defensible proxy — the parent can only absorb what it was handed — but it is
+  not the growth measurement, and the `~417 tok` figure in row 2 is a return-value
+  size, not a measured parent-context delta. The growth recipe in § AC5 above is
+  **unimplemented**, deliberately: there is no fan-out delegation in this corpus
+  to run it against. Implement it when adoption is non-zero.
+- **AC6 is deferred**, per § Per-model windows: no gateway, no after-window, and
+  no mechanism for the change it looks for.
+- **Nothing here is fleet-general.** One machine, three days, one operator's
+  working style. It cannot distinguish "this guidance does not get followed" from
+  "it did not get followed *here*, in this period, on this kind of work".
+
+The live finding is **non-adoption**, which is a behavior question rather than a
+measurement one and so is tracked as its own issue —
+[#978](https://github.com/joshjhall/librarian/issues/978) — rather than absorbed
+here.
+`delegation-adoption.sh` is the instrument for re-measuring it: a later window
+showing a non-zero direct-spawn count is what would reopen the recall question
+this tally could not answer.
+
+One property worth keeping when that happens: the tool exits **3** on an empty
+corpus rather than reporting "0 delegations". An absent measurement and a
+measured zero are different claims, and only the second is evidence — the same
+distinction the 77 sentinel draws for a gate whose linter is missing (#538/#571).

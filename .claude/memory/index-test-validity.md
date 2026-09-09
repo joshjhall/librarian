@@ -22,6 +22,8 @@ evidence a fix works, and before reporting a mutation round's verdict.
 - [A prefix arm can't detect a suffix strip](prefix-arm-cannot-detect-a-suffix-strip.md) — build the fixture on the arm that DISAGREES when the normalization is removed
 - [Two lenses, two thresholds](two-lenses-two-thresholds.md) — a fixture sized for the audit lens leaves the review lens silent; both mutations survive green
 - [A preserved fixture can heal](preserved-fixture-can-heal.md) — the kept repro self-healed and proved nothing; verify against what's broken NOW (#768)
+- [A measured zero needs a denominator](measured-zero-needs-a-denominator.md) — absent must not read as zero; measure the opportunities beside the occurrences (#797)
+- [A green suite is not evidence until mutated](green-suite-is-not-evidence-until-mutated.md) — 11 assertions proved nothing in one PR; 4 shapes, and a new guard can disarm an old test (#797)
 
 ## The assertion is blind to what it claims to check
 
