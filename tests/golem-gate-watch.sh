@@ -129,4 +129,9 @@ run_fragment_test test_pane_prompt_line_class_last_line_wins "pane_prompt_line_c
 run_fragment_test test_panes_snapshot_suggestion_annotation "panes_snapshot annotates a suggestion; plain idle line byte-identical (#977)"
 run_fragment_test test_liveness_stabilize_strips_suggestion_annotation "liveness_stabilize strips the volatile suggestion annotation (#977)"
 
+run_fragment_test test_confirm_turn_end_suggestion_annotation "confirm_turn_end: annotated idle still debounced; annotation survives (#977 review)"
+run_fragment_test test_liveness_pane_suggestion_annotation "liveness_snapshot idle arm annotates a suggestion end-to-end (#977 review)"
+
+run_fragment_test test_strip_sgr_unterminated_csi "_strip_sgr: unterminated CSI does not invent an empty prompt (#977 review)"
+
 generate_report

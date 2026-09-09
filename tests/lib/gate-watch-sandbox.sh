@@ -330,12 +330,30 @@ _run_liveness_snapshot_tmux() {
     # Fake tmux: `ls` -> nothing (only the status file seeds the sweep);
     # `has-session` -> success; `capture-pane` -> the canned pane text from
     # $FAKE_PANE_TEXT; anything else -> success no-op. Kept bash-3.2 clean.
+    #
+    # `capture-pane` answers the ESCAPE-PRESERVING read (`-e`, #977's
+    # pane_prompt_line_class) from $FAKE_PANE_TEXT_E and every other read from
+    # $FAKE_PANE_TEXT — the same split _run_panes_snapshot_tmux uses, and needed
+    # here for the same reason: liveness_snapshot()'s idle arm also annotates, so
+    # without the split no fixture routed through this driver could carry a dim
+    # run and the `suggestion` branch would be structurally unreachable — which is
+    # exactly the coverage gap the #977 review caught. $FAKE_PANE_TEXT_E is
+    # optional (caller-set via $LIVE_PANE_TEXT_E); unset, `-e` falls back to
+    # $FAKE_PANE_TEXT, so every pre-#977 caller is unaffected.
     command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
     ls) exit 0 ;;
     has-session) exit 0 ;;
-    capture-pane) command printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
+    capture-pane)
+        for _a in "$@"; do
+            if [ "$_a" = "-e" ]; then
+                command printf '%s\n' "${FAKE_PANE_TEXT_E-${FAKE_PANE_TEXT:-}}"
+                exit 0
+            fi
+        done
+        command printf '%s\n' "${FAKE_PANE_TEXT:-}"
+        ;;
     *) exit 0 ;;
 esac
 TMUX_STUB
@@ -350,6 +368,7 @@ TMUX_STUB
             /usr/bin/env "${git_scrub[@]/#/-u}" -uBASH_ENV \
                 PATH="$stub_bin" \
                 FAKE_PANE_TEXT="$pane_text" \
+                FAKE_PANE_TEXT_E="${LIVE_PANE_TEXT_E-$pane_text}" \
                 GOLEM_STALL_THRESHOLD="$stall" GOLEM_BLOCK_TTL=3600 \
                 GOLEM_WORKTREE_DIR=.worktrees \
                 GOLEM_STATUS_DIR=.worktrees/.status \

@@ -1007,3 +1007,76 @@ test_liveness_stabilize_strips_suggestion_annotation() {
     assert_equals "$without" "$with" \
         "Annotated and un-annotated idle stabilize to the SAME key (no false transition)"
 }
+
+# confirm_turn_end must not be fooled by the annotation (#977 review finding).
+# The debounce gates on an EXACT $TURN_END_MSG match, so an annotated idle line
+# failed that test and fell through the `else` arm — emitted on the FIRST poll,
+# skipping the #447 confirmation entirely, and dropped from $PENDING_TURN_END so
+# a suggestion that then cleared re-suppressed the standing line for an extra
+# poll. Reproduced before the fix: an annotated line emitted on poll 1 while the
+# identical plain line was correctly withheld.
+#
+# This is the sibling-channel instance of the hazard liveness_stabilize() already
+# handled on --stream-liveness: harden one knob, grep every sibling.
+test_confirm_turn_end_suggestion_annotation() {
+    local out annot
+    out="$(
+        . "$GATE_WATCH"
+        annot="${TURN_END_MSG}${SUGGESTION_ANNOT}"
+        # shellcheck disable=SC2034  # read by the sourced confirm_turn_end
+        PENDING_TURN_END=" "
+        # Poll 1: annotated idle must be WITHHELD, exactly as a plain idle is.
+        confirm_turn_end "$(command printf 'golem-1\t%s\n' "$annot")"
+        command printf '[p1]%s' "$CONFIRMED_SNAPSHOT"
+        # Poll 2: confirmed — emits, and the annotation still reaches the operator.
+        confirm_turn_end "$(command printf 'golem-1\t%s\n' "$annot")"
+        command printf '[p2]%s' "$CONFIRMED_SNAPSHOT"
+        # Poll 3: the suggestion clears. The golem is still idle and still
+        # confirmed, so the standing line must keep coming — not be re-suppressed.
+        confirm_turn_end "$(command printf 'golem-1\t%s\n' "$TURN_END_MSG")"
+        command printf '[p3]%s' "$CONFIRMED_SNAPSHOT"
+    )"
+    assert_contains "$out" "[p1][p2]golem-1" \
+        "An annotated idle line is WITHHELD on the first poll (the #447 debounce still applies)"
+    assert_contains "$out" "suggestion shown (inert, not queued input)" \
+        "...and the annotation survives to the confirmed output line"
+    assert_contains "$out" "[p3]golem-1" \
+        "A cleared suggestion does not re-suppress the standing idle line for an extra poll"
+
+    # A real gate line still passes straight through, annotated or not.
+    out="$(
+        . "$GATE_WATCH"
+        # shellcheck disable=SC2034  # read by the sourced confirm_turn_end
+        PENDING_TURN_END=" "
+        confirm_turn_end "$(command printf 'golem-2\tplan gate — ExitPlanMode awaiting approval\n')"
+        command printf '%s' "$CONFIRMED_SNAPSHOT"
+    )"
+    assert_contains "$out" "plan gate" \
+        "A non-idle gate line is still immediate (the annotation split did not gate it)"
+}
+
+# _strip_sgr's unterminated-CSI guard (#977 review, deferrable-but-cheap). The
+# A capture clipped mid-escape must not make a populated prompt read as `empty`.
+# Note what this does and does not prove: removing the `*m*)` guard still passes
+# these assertions (measured), because the unguarded form leaves the visible text
+# intact plus a stray char. So this pins the BEHAVIOR that matters to callers —
+# real text never reports empty — rather than crediting the guard with preventing
+# a failure it does not actually prevent.
+test_strip_sgr_unterminated_csi() {
+    local out esc
+    esc="$(command printf '\033')"
+    out="$(
+        . "$GATE_WATCH"
+        _strip_sgr "real text${esc}[2"
+    )"
+    assert_contains "$out" "real text" \
+        "An unterminated CSI does not swallow the visible text before it"
+
+    # The consequence the comment names: such a line must not read as `empty`.
+    local glyph nbsp
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+    assert_equals "input" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} real text${esc}[2")" \
+        "A truncated-escape prompt line reports input, never a false empty"
+}

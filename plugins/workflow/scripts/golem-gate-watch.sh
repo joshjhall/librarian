@@ -725,9 +725,15 @@ PROMPT_NBSP="$(command printf '\302\240')"      # the NBSP the prompt pads with
 # "is there any VISIBLE text here?" without the attributes confusing the answer.
 # Parameter expansion rather than sed: BSD sed reads \x1b as a literal and the
 # repo bans GNU-only regex, so a sed spelling would silently no-op on macOS —
-# which for this function would turn every empty prompt into `input`. An
-# UNTERMINATED CSI breaks the loop rather than consuming the rest of the line:
-# over-stripping would invent an empty prompt out of real text.
+# which for this function would turn every empty prompt into `input`.
+#
+# An UNTERMINATED CSI (a capture clipped mid-escape) breaks the loop rather than
+# stripping a `ESC[` prefix whose terminator never arrives. Measured, so the
+# claim is not overstated: without the guard the visible text still survives
+# (`real text` + a stray `2`), so this is about not leaking escape debris into
+# the visible-text test — NOT about preventing a false `empty`, which the
+# unguarded form does not cause either. The behavior that actually matters is
+# pinned by test_strip_sgr_unterminated_csi.
 _strip_sgr() {
     local v="$1" pre post
     while :; do
@@ -968,23 +974,45 @@ PENDING_TURN_END=" "
 CONFIRMED_SNAPSHOT=""
 confirm_turn_end() {
     local snapshot="$1"
-    local nextpending=" " out="" golem msg
+    local nextpending=" " out="" golem msg base annot
     while IFS=$'\t' read -r golem msg; do
         [ -z "$golem" ] && continue
+        # #977: split the VOLATILE suggestion annotation off before the turn-end
+        # comparison, and re-attach it to whatever is emitted. The debounce keys
+        # on an EXACT $TURN_END_MSG match, so an annotated idle line would fail
+        # that test and fall through the `else` arm — emitted on the FIRST poll,
+        # skipping the very #447 confirmation this function exists to apply, and
+        # dropping the golem from $nextpending so a suggestion that then clears
+        # re-suppresses the standing idle line for an extra poll. The annotation
+        # also toggles on its own while the golem sits equally idle, so leaving it
+        # in the message would make emit_transitions' exact-match dedup read each
+        # flicker as a fresh transition. Same reasoning, and same fix, as
+        # liveness_stabilize() on the --stream-liveness channel; this is the
+        # sibling path (grep every channel when hardening one).
+        base="$msg"
+        annot=""
+        case "$msg" in
+            *"$SUGGESTION_ANNOT")
+                base="${msg%"$SUGGESTION_ANNOT"}"
+                annot="$SUGGESTION_ANNOT"
+                ;;
+        esac
+        msg="$base"
         if [ "$msg" = "$TURN_END_MSG" ]; then
             if _set_has "$PENDING_TURN_END" "$golem"; then
                 # Confirmed: idle on two consecutive polls — pass it through and KEEP
                 # pending so it is not re-suppressed while the stall persists (dedup
                 # of the standing line is emit_transitions' job downstream).
-                out="${out}${golem}"$'\t'"${msg}"$'\n'
+                out="${out}${golem}"$'\t'"${msg}${annot}"$'\n'
                 _set_has "$nextpending" "$golem" || nextpending="${nextpending}${golem} "
             else
                 # First idle poll for this golem: hold it back, mark pending.
                 nextpending="${nextpending}${golem} "
             fi
         else
-            # A non-turn-end line (real gate) passes straight through.
-            out="${out}${golem}"$'\t'"${msg}"$'\n'
+            # A non-turn-end line (real gate) passes straight through, carrying
+            # its annotation if it had one.
+            out="${out}${golem}"$'\t'"${msg}${annot}"$'\n'
         fi
     done <<<"$snapshot"
     PENDING_TURN_END="$nextpending"
