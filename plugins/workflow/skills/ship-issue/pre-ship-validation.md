@@ -110,6 +110,7 @@ behavior is noted inline per check; environment variables referenced here
    | `decomposition-seam`  | A language-shaped split shape, or a reasoned decline | MED/LOW   |
    | `hardcoded-secret` / `injection-risk` / `xss-risk` / `insecure-crypto` / `command-injection` / `insecure-deserialization` / `weak-randomness` / `tls-verification-disabled` / `permissive-cors` / `jwt-unverified` / `xxe-risk` | The `check-security` detectors (#708), delegated at runtime | HIGH |
    | `security-scan-unavailable` | The security scan DID NOT RUN — never a clean result | HIGH |
+   | `okf-*` (missing-type, unparseable-frontmatter, reserved-file-structure, version-drift) / `memory-*` (orphan, dangling-index, multi-index, stale, missing-why) | Memory-bundle schema floor + graph health, from `check-okf-conformance` (#699), delegated at runtime | HIGH/MED/LOW |
 
    The two `*-bloat` rows are the **prose** half of the size lens (#724). A
    markdown file the scanner can classify by path — an `agents/*.md`, a
@@ -203,6 +204,12 @@ behavior is noted inline per check; environment variables referenced here
    So: **zero security rows plus exit 0 means clean; a refusal means unknown.**
    Read the refusal as "not scanned", never as "nothing found" — and do not pipe
    this gate, which discards the exit code that carries the distinction (#854).
+
+   **The memory arm is delegated too, but degrades QUIETLY (#699)** — an absent
+   OKF scanner emits no rows and leaves the exit code alone, because a memory
+   bundle is *optional*. Full rationale, the diff-scoping rule, and why the
+   disposition differs from the security arm: `review-routing.md` § "Memory-bundle
+   conformance rows".
 
    **Keep the parsed TSV for item 6 (#556).** Retain the rows as
    `[{file, line, category, evidence, certainty}]` and pass them to the review
