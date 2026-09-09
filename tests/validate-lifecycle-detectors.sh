@@ -250,7 +250,11 @@ test_terminate_without_kill() {
 
     # ESM (#840). The JS arm covers all four categories at once, so each one
     # needs its own .mjs proof — a single spawn() fixture would leave the other
-    # three asserted by comment only.
+    # three asserted by comment only. `.cjs` is deliberately not repeated for
+    # these three: both extensions enter through the SAME case arm, and the
+    # spawn .mjs/.cjs pair in test_unreaped_subprocess already proves that arm
+    # treats them identically. What needed proving here is per-CATEGORY reach,
+    # not per-extension.
     d="$(fresh_dir)"
     command printf '%s\n' 'proc.terminate()' >"$d/t.mjs"
     list="$(make_list "$d/l" "$d/t.mjs")"
