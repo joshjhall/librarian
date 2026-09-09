@@ -102,6 +102,12 @@ RESULT_FLOOR_TOKENS = 2_000
 # but quadratic, which is slow enough to matter.
 ANCHOR_RE = re.compile(r"/[^/\s:]+\.[A-Za-z]{1,4}:\d+")
 
+# A token that begins `host.tld/` -- a URL wearing no scheme. `://` does not
+# catch `example.com/repo/blob/main/src/app.py:42` or `www.example.com/a/b.py:9`,
+# and both end in a real source extension, so ANCHOR_RE alone matches them. A
+# link is not a citation however it is spelled.
+DOMAIN_PREFIX_RE = re.compile(r"^[\w\-]+(?:\.[\w\-]+)+/")
+
 
 def _require_python() -> None:
     """Fail loud on an unsupported interpreter rather than emit wrong numbers."""
@@ -274,12 +280,22 @@ def _has_anchor(text: str) -> bool:
     free -- `src/app.py:42:` (pytest/mypy) and `pkg/mod.py:42:5` (ripgrep
     --vimgrep) both hit, and those two shapes are why this is a regex.
 
-    A scheme-carrying token is rejected up front: a URL ending in a real source
-    extension (`https://host/src/app.py:42`) satisfies the pattern but cites no
-    local file.
+    A URL is rejected however it is spelled, because a link is not a citation
+    even when it ends in a real source extension. Three spellings, all measured:
+    `https://host/src/app.py:42` (the `://` guard), `//cdn.example.com/a.js:12`
+    (protocol-relative), and `example.com/repo/src/app.py:42` (a bare domain --
+    DOMAIN_PREFIX_RE, since nothing in the token says "not local").
     """
     for token in text.replace("\n", " ").split():
         if "://" in token:
+            continue
+        # Strip wrapping punctuation so a citation inside quotes, parens or a
+        # markdown link still reaches the domain checks below with its real
+        # first character.
+        token = token.lstrip("([\"'")
+        if token.startswith("//"):
+            continue
+        if DOMAIN_PREFIX_RE.match(token):
             continue
         if ANCHOR_RE.search(token):
             return True

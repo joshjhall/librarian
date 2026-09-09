@@ -260,11 +260,13 @@ What the data **does not** establish, stated as plainly as the prior art demands
   rejects any token carrying a URL scheme — so a bare `config.sh:41` with no
   directory scores `no`, while `src/app.py:42:` (pytest/mypy) and
   `pkg/mod.py:42:5` (ripgrep) score `yes`. Getting there took three review
-  cycles and five measured errors in both directions: three false positives
-  (a source URL, a scheme-less `host.tld:port`, a numeric extension) that would
-  have scored a return value merely *mentioning* something as having "cited its
-  sources", and two false negatives (the two formats above) that would have
-  under-reported the behavior the guidance exists to produce. The checks are one
+  cycles and seven measured errors in both directions: five false positives
+  (a source URL, a scheme-less `host.tld:port`, a numeric extension, a bare
+  `example.com/org/src/app.py:42`, and a protocol-relative `//cdn/a.js:12`) that
+  would each have scored a return value merely *mentioning* something as having
+  "cited its sources", and two false negatives (the two formats above) that
+  would have under-reported the behavior the guidance exists to produce. A URL
+  is not a citation however it is spelled, and it took four spellings to say so. The checks are one
   regex rather than a chain of guards because each incremental guard fixed one
   shape and broke another — and once even disarmed the test for a different
   guard. (c) **`delegation-adoption.sh ac5`

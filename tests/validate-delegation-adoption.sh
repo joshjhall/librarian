@@ -446,6 +446,61 @@ test_anchor_scan_is_linear_on_a_pathological_token() {
     assert_equals "0" "$RC" "the anchor scan completes well inside 3s (124 = bound hit)"
 }
 
+test_ac5_rejects_a_scheme_less_domain_url() {
+    # REGRESSION (review cycle 4). `://` only catches a URL that admits to being
+    # one. `example.com/org/repo/blob/main/src/app.py:42` ends in a real source
+    # extension and has a path separator, so it satisfied every other condition
+    # — a link scoring as "cited its sources", which is the exact false positive
+    # this function has now been wrong about four different ways.
+    local root="$WORKDIR/baredomain"
+    direct_spawn "$root" d1 general-purpose "Upstream at example.com/org/repo/blob/main/src/app.py:42 has it"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          15       no" \
+        "a scheme-less domain URL is not a path:line anchor"
+}
+
+test_ac5_rejects_a_protocol_relative_url() {
+    # The third URL spelling. `//cdn.example.com/lib/app.js:12` has no scheme AND
+    # no dot before its first slash, so neither the `://` guard nor the domain
+    # prefix catches it — the leading `//` is the only signal.
+    local root="$WORKDIR/protorel"
+    direct_spawn "$root" d1 general-purpose "Loaded from //cdn.example.com/lib/app.js:12 at runtime"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          13       no" \
+        "a protocol-relative URL is not a path:line anchor"
+}
+
+test_ac5_accepts_a_wrapped_citation() {
+    # The punctuation strip must not cost a real citation: `(src/app.py:42)` is
+    # a shape agents emit constantly.
+    local root="$WORKDIR/wrapped"
+    direct_spawn "$root" d1 general-purpose "The fix is (src/app.py:42) per the trace"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          10      yes" \
+        "a parenthesized citation is still an anchor"
+}
+
+test_ac5_rejects_a_wrapped_domain_url() {
+    # The case that makes the lstrip load-bearing, and the reason the test above
+    # is not enough: `(src/app.py:42)` matches via `search` with or without the
+    # strip, so removing the strip breaks nothing there (measured — that test
+    # survived its own mutation).
+    #
+    # A WRAPPED bare-domain URL is where the two implementations differ. The
+    # domain check is anchored with `match`, so it only sees a token whose first
+    # character is real — without the strip, `(example.com/...` does not look
+    # like a domain and the link scores as a citation.
+    local root="$WORKDIR/wrapdomain"
+    direct_spawn "$root" d1 general-purpose "Upstream (example.com/org/src/app.py:42) is the source"
+    run_adoption ac5 "$root"
+    assert_equals "0" "$RC" "ac5 exits 0"
+    assert_contains "$OUT" "general-purpose                          13       no" \
+        "a wrapped domain URL is still not an anchor"
+}
+
 test_string_shaped_content_is_not_dropped() {
     # REGRESSION (review cycle 1): a message's `content` may be a bare STRING
     # rather than a block list. Returning [] for that shape silently dropped a
@@ -680,6 +735,10 @@ run_test test_ac5_accepts_a_trailing_colon_citation "AC5 accepts a trailing-colo
 run_test test_ac5_accepts_a_line_col_citation "AC5 accepts a file:line:col citation"
 run_test test_ac5_keeps_scanning_past_a_rejected_host_port "AC5 keeps scanning past a rejected host:port"
 run_test test_anchor_scan_is_linear_on_a_pathological_token "Anchor scan is linear on a pathological token"
+run_test test_ac5_rejects_a_scheme_less_domain_url "AC5 rejects a scheme-less domain URL"
+run_test test_ac5_rejects_a_protocol_relative_url "AC5 rejects a protocol-relative URL"
+run_test test_ac5_accepts_a_wrapped_citation "AC5 accepts a wrapped citation"
+run_test test_ac5_rejects_a_wrapped_domain_url "AC5 rejects a wrapped domain URL"
 run_test test_string_shaped_content_is_not_dropped "String-shaped message content is not dropped"
 run_test test_wrong_shaped_content_yields_no_blocks "Wrong-shaped message content yields no blocks"
 run_test test_ac5_reports_na_for_a_spawn_with_no_answer "AC5 reports n/a for a spawn that never answered"
