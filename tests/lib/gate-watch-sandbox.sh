@@ -489,6 +489,11 @@ _pane_class() {
 # are pinned — not just the isolated matcher functions (the tests above). Mirrors
 # _run_liveness_snapshot_tmux. The fake tmux reports one live golem-9 session and
 # returns $FAKE_PANE_TEXT for capture-pane. Sets PANES_OUT / PANES_RC.
+#
+# Optional $PANE_TEXT_E (caller-set, exported into the stub as
+# $FAKE_PANE_TEXT_E) supplies a DIFFERENT pane text for the escape-preserving
+# `-e` read that #977's classifier makes. Unset, it defaults to the same text,
+# so existing callers behave exactly as before.
 _run_panes_snapshot_tmux() {
     local pane_text="$1"
     local tmp stub_bin real_bash
@@ -502,11 +507,28 @@ _run_panes_snapshot_tmux() {
     command ln -s "$real_bash" "$stub_bin/bash"
     # Fake tmux: `ls` -> one live golem session; `capture-pane` -> the canned
     # pane text; anything else -> success no-op. Kept bash-3.2 clean.
+    #
+    # `capture-pane` answers the ESCAPE-PRESERVING read (`-e`, #977's
+    # pane_prompt_line_class) from $FAKE_PANE_TEXT_E and every other read from
+    # $FAKE_PANE_TEXT. The split is what makes the distinction TESTABLE: the real
+    # divergence under test is that `-p` STRIPS the SGR run while `-p -e` keeps
+    # it, so a stub returning one string for both could not tell a passing
+    # classifier from one that ignores the flag entirely. $FAKE_PANE_TEXT_E is
+    # optional — unset, `-e` falls back to $FAKE_PANE_TEXT, so every pre-#977
+    # caller is unaffected.
     command cat >"$stub_bin/tmux" <<'TMUX_STUB'
 #!/usr/bin/env bash
 case "$1" in
     ls) command printf '%s\n' "golem-9: 1 windows" ;;
-    capture-pane) command printf '%s\n' "${FAKE_PANE_TEXT:-}" ;;
+    capture-pane)
+        for _a in "$@"; do
+            if [ "$_a" = "-e" ]; then
+                command printf '%s\n' "${FAKE_PANE_TEXT_E-${FAKE_PANE_TEXT:-}}"
+                exit 0
+            fi
+        done
+        command printf '%s\n' "${FAKE_PANE_TEXT:-}"
+        ;;
     *) exit 0 ;;
 esac
 TMUX_STUB
@@ -518,6 +540,7 @@ TMUX_STUB
         cd "$tmp" &&
             /usr/bin/env -uBASH_ENV PATH="$stub_bin" \
                 FAKE_PANE_TEXT="$pane_text" \
+                FAKE_PANE_TEXT_E="${PANE_TEXT_E-$pane_text}" \
                 "$real_bash" "$GATE_WATCH" --once-panes
     ) >"$tmp/out" 2>/dev/null && PANES_RC=0 || PANES_RC=$?
     PANES_OUT="$(command cat "$tmp/out")"

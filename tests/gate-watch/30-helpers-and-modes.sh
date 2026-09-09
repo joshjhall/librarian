@@ -823,3 +823,187 @@ test_emit_transitions_dedup() {
     assert_contains "$out" "[regate]golem-2"$'\t'"PR gate" \
         "A cleared-then-re-gated golem is a fresh transition"
 }
+
+# ---------------------------------------------------------------------------
+# Prompt-line classifier (#977)
+# ---------------------------------------------------------------------------
+# The pane readers could not tell an autocomplete SUGGESTION at the prompt from
+# text the operator had QUEUED — five phantom instances across two orchestration
+# runs, two of them outward or gate-bypassing (`merge it once CI is green`;
+# `push it` on a golem that had said it was withholding the push).
+#
+# THE FIXTURES BELOW ARE THE REAL CAPTURED BYTES, not invented shapes. Captured
+# 2026-09-09 with `tmux capture-pane -p -e` from live golem-840 / golem-938 and a
+# disposable control session. That matters: the whole fix rests on the claim that
+# a suggestion carries SGR 2 (dim) and real input does not, so a fixture someone
+# made up would test the implementation against itself.
+#
+# _pane_e_class drives the REAL pane_prompt_line_class through a flag-aware tmux
+# stub, so it exercises the `-e` capture the classifier makes — not just the
+# string logic. The stub returns $2 for `-e` and a DIFFERENT plain-capture text
+# for everything else, mirroring the real divergence (`-p` strips the SGR run;
+# `-p -e` keeps it) that made this bug invisible in the first place.
+_pane_e_class() {
+    local esc_text="$1" tmp stub_bin real_bash out
+    tmp="$(command mktemp -d)" || return 1
+    stub_bin="$tmp/stub-bin"
+    command mkdir -p "$stub_bin"
+    real_bash="$(command -v bash)"
+    command ln -s "$real_bash" "$stub_bin/bash"
+    command cat >"$stub_bin/tmux" <<'TMUX_STUB'
+#!/usr/bin/env bash
+case "$1" in
+    capture-pane)
+        for _a in "$@"; do
+            if [ "$_a" = "-e" ]; then
+                command printf '%s\n' "${FAKE_E:-}"
+                exit 0
+            fi
+        done
+        # Plain capture: the SGR-stripped view, which is what the pre-#977
+        # readers saw and why they could not classify.
+        command printf '%s\n' "${FAKE_PLAIN:-}"
+        ;;
+    *) exit 0 ;;
+esac
+TMUX_STUB
+    command chmod +x "$stub_bin/tmux"
+    out="$(
+        /usr/bin/env -uBASH_ENV PATH="$stub_bin:$PATH" \
+            FAKE_E="$esc_text" FAKE_PLAIN="stripped-plain-view" \
+            "$real_bash" -c '
+                . "$1"
+                pane_prompt_line_class golem-9
+            ' _ "$GATE_WATCH" 2>/dev/null
+    )"
+    command rm -rf "$tmp"
+    command printf '%s' "$out"
+}
+
+# The three positive classes, from the real captured bytes.
+test_pane_prompt_line_class() {
+    local esc glyph nbsp
+    esc="$(command printf '\033')"
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+
+    assert_equals "suggestion" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[2mopen the PR once it lands${esc}[0m")" \
+        "A dim (SGR 2) prompt line is an autocomplete suggestion (live golem-840 bytes)"
+    assert_equals "suggestion" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[2mrebase onto main and push${esc}[0m")" \
+        "The second live phantom (golem-938 bytes) classifies the same way"
+    assert_equals "input" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} rebase onto main and push")" \
+        "The SAME TEXT typed for real, with no dim run, is queued input — the whole distinction"
+    assert_equals "empty" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[39m")" \
+        "A prompt line with only attributes and padding is empty"
+}
+
+# `unknown` is NOT `empty`. A reader that could not look learned nothing, and
+# must never emit the positive claim "the prompt is clear" — otherwise a headless
+# or unreadable golem gains a false all-clear, which is the silence-reads-as-a-
+# pass shape this repo keeps filing issues about (#538/#571).
+test_pane_prompt_line_class_unknown_not_empty() {
+    assert_equals "unknown" "$(_pane_e_class "")" \
+        "An unreadable/empty capture is unknown, NOT empty"
+    assert_equals "unknown" \
+        "$(_pane_e_class "just some scrolling build output"$'\n'"  auto mode on")" \
+        "A pane with no prompt-glyph line at all is unknown, NOT empty"
+}
+
+# Footer anchoring (#246 discipline, as every sibling matcher): this very file
+# and golem-gate-watch.sh discuss the dim escape, so a golem cat-ing/grepping
+# either must not self-trip a false suggestion.
+test_pane_prompt_line_class_footer_anchored() {
+    local esc glyph nbsp filler
+    esc="$(command printf '\033')"
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+    filler=$'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10'
+    # The scrolled dim line is the ONLY glyph line, so last-line-wins cannot mask
+    # a missing anchor: without footer anchoring this reads `suggestion`, with it
+    # `unknown`. (The first draft of this case put an empty prompt below the
+    # filler, which last-line-wins alone already handled — it passed against a
+    # whole-scrollback mutant, i.e. it tested nothing.)
+    assert_equals "unknown" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[2mscrolled phantom text${esc}[0m"$'\n'"$filler")" \
+        "A dim prompt line scrolled ABOVE the footer window does not fake a suggestion"
+    # Control: the SAME line inside the window does classify — proving the
+    # assertion above fails for the anchoring reason and not because the fixture
+    # is unmatchable.
+    assert_equals "suggestion" \
+        "$(_pane_e_class "${esc}[39m${glyph}${nbsp} ${esc}[2mscrolled phantom text${esc}[0m")" \
+        "...and the same line INSIDE the window is still detected (anchor, not blindness)"
+}
+
+# The LAST glyph line wins: submitted history entries keep their prompt glyph in
+# the scrollback (measured on the control session), so reading the FIRST would
+# report an already-submitted command as the current buffer — reporting queued
+# input where the prompt is actually clear.
+test_pane_prompt_line_class_last_line_wins() {
+    local esc glyph nbsp
+    esc="$(command printf '\033')"
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+    assert_equals "empty" \
+        "$(_pane_e_class "${esc}[39m${glyph} an earlier submitted command"$'\n'"${esc}[39m${glyph}${nbsp} ${esc}[39m")" \
+        "A submitted history line above an empty prompt does not read as queued input"
+}
+
+# The annotation is appended on a suggestion and ABSENT otherwise — the
+# byte-identical guarantee that keeps this from disturbing #447/#517 semantics.
+# Drives the REAL panes_snapshot() end-to-end, so the wiring is pinned, not just
+# the classifier.
+test_panes_snapshot_suggestion_annotation() {
+    local esc glyph nbsp idle_footer
+    esc="$(command printf '\033')"
+    glyph="$(command printf '\342\235\257')"
+    nbsp="$(command printf '\302\240')"
+    idle_footer="  ⏵⏵ auto mode on"
+
+    PANE_TEXT_E="${esc}[39m${glyph}${nbsp} ${esc}[2mpush it${esc}[0m"$'\n'"$idle_footer" \
+        _run_panes_snapshot_tmux "$idle_footer"
+    assert_contains "$PANES_OUT" "suggestion shown (inert, not queued input)" \
+        "An idle golem showing a suggestion is annotated (#977)"
+    assert_contains "$PANES_OUT" "idle at prompt" \
+        "The annotation is ADDITIVE — the idle verdict itself is unchanged"
+
+    PANE_TEXT_E="${esc}[39m${glyph}${nbsp} ${esc}[39m"$'\n'"$idle_footer" \
+        _run_panes_snapshot_tmux "$idle_footer"
+    assert_not_contains "$PANES_OUT" "suggestion shown" \
+        "A plain idle golem's line is byte-identical — no annotation"
+    assert_contains "$PANES_OUT" "idle at prompt" \
+        "...and it still reports idle"
+}
+
+# The annotation is VOLATILE: a suggestion appears and vanishes while the golem
+# sits equally idle. liveness_stabilize must strip it, or its arrival/departure
+# reads as a class change and re-fires the per-golem line — the exact noise that
+# function exists to suppress.
+test_liveness_stabilize_strips_suggestion_annotation() {
+    local out annotated
+    annotated="⚠ idle at prompt — process up, not advancing (check pane) · suggestion shown (inert, not queued input)"
+    out="$(
+        . "$GATE_WATCH"
+        liveness_stabilize "$(command printf 'golem-1\t%s\n' "$annotated")"
+    )"
+    assert_not_contains "$out" "suggestion shown" \
+        "liveness_stabilize strips the volatile suggestion annotation from the dedup key"
+    assert_contains "$out" "idle at prompt" \
+        "...while preserving the idle class the dedup actually keys on"
+
+    # A suggestion flicker must NOT look like a transition.
+    local with without
+    with="$(
+        . "$GATE_WATCH"
+        liveness_stabilize "$(command printf 'golem-1\t%s\n' "$annotated")"
+    )"
+    without="$(
+        . "$GATE_WATCH"
+        liveness_stabilize "$(command printf 'golem-1\t⚠ idle at prompt — process up, not advancing (check pane)\n')"
+    )"
+    assert_equals "$without" "$with" \
+        "Annotated and un-annotated idle stabilize to the SAME key (no false transition)"
+}

@@ -122,4 +122,11 @@ run_fragment_test test_ghost_gate_dropped_when_no_trace "Ghost filter: gated gol
 run_fragment_test test_pane_is_api_error "pane_is_api_error: matches API-error death, spinner vetoes, classifies retriable/terminal (#446)"
 run_fragment_test test_panes_snapshot_died_dispatch "panes_snapshot: died-on-API-error emits DIED before turn-end; modal gates still win (#446)"
 
+run_fragment_test test_pane_prompt_line_class "pane_prompt_line_class: dim=suggestion, plain=input, bare=empty (#977)"
+run_fragment_test test_pane_prompt_line_class_unknown_not_empty "pane_prompt_line_class: unreadable/glyph-less pane is unknown, NOT empty (#977)"
+run_fragment_test test_pane_prompt_line_class_footer_anchored "pane_prompt_line_class is footer-anchored (no self-trip on scrolled text) (#977)"
+run_fragment_test test_pane_prompt_line_class_last_line_wins "pane_prompt_line_class reads the LAST prompt line, not a submitted history one (#977)"
+run_fragment_test test_panes_snapshot_suggestion_annotation "panes_snapshot annotates a suggestion; plain idle line byte-identical (#977)"
+run_fragment_test test_liveness_stabilize_strips_suggestion_annotation "liveness_stabilize strips the volatile suggestion annotation (#977)"
+
 generate_report

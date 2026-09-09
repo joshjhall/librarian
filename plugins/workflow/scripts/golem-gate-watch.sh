@@ -188,6 +188,27 @@ pane_error_lines="${GOLEM_PANE_ERROR_LINES:-40}"
 # assignment so a SOURCED unit test sees it before calling either function.
 TURN_END_MSG="⚠ idle at prompt — turn ended, awaiting input (check pane)"
 
+# Suggestion annotation (#977), appended to an idle line when the golem's prompt
+# is showing an autocomplete SUGGESTION rather than queued input. An ANNOTATION,
+# never a class: a golem showing a suggestion is still idle — the suggestion is
+# inert chrome, not work — so the liveness/turn-end verdict is unchanged and the
+# #447/#517 idle semantics are not re-litigated. Appended only on `suggestion`,
+# so every other class leaves the line byte-identical to before.
+#
+# Defined at top level (like TURN_END_MSG, and for the same reason) because three
+# functions couple on it: panes_snapshot() and liveness_snapshot() append it, and
+# liveness_stabilize() strips it back off for transition dedup.
+SUGGESTION_ANNOT=" · suggestion shown (inert, not queued input)"
+
+# pane_suggestion_suffix <session> — $SUGGESTION_ANNOT when that golem's prompt is
+# showing a suggestion, else the empty string. Wraps the classifier so both idle
+# call sites annotate identically and neither has to know the class vocabulary.
+pane_suggestion_suffix() {
+    case "$(pane_prompt_line_class "$1")" in
+        suggestion) command printf '%s' "$SUGGESTION_ANNOT" ;;
+    esac
+}
+
 # The multi-question-form push message (#467). It states the KEYSTROKE RULE
 # rather than just the gate class, because the observed operator error was
 # applying the single-question reflex (`1 Enter`) to a widget where a digit does
@@ -638,6 +659,135 @@ pane_pending_own_work() {
     command printf '%s\n' "$footer" | "$GREP" -qE "$OWN_WORK_RE"
 }
 
+# ---------------------------------------------------------------------------
+# Prompt-line classifier (issue #977)
+# ---------------------------------------------------------------------------
+# Tells an autocomplete SUGGESTION at the input line from real QUEUED INPUT.
+#
+# The failure it closes: golem panes intermittently show a plausible next-step
+# instruction sitting at the prompt that nobody typed — five instances across two
+# orchestration runs. Every pane reader here saw it as indistinguishable from
+# text the operator had queued, and two of the five were outward or
+# gate-bypassing actions (`merge it once CI is green`; `push it` on a golem that
+# had explicitly stated it was withholding the push). The plan-gate broker sends
+# `1 Enter` into these very panes routinely, so a reader that cannot tell the two
+# apart is a standing hazard: a stray Enter would submit an unapproved action,
+# and an operator reading the pane would believe someone queued it.
+#
+# THE DISCRIMINATOR IS THE DIM ATTRIBUTE, AND IT IS MEASURED
+# ----------------------------------------------------------
+# Claude Code renders the suggestion in SGR 2 (dim); real typed input carries no
+# such run. Captured 2026-09-09 from two live golems and a disposable control
+# session (escapes shown as ESC):
+#
+#   suggestion   ESC[39m<glyph> ESC[2mopen the PR once it lands ESC[0m
+#   real input   ESC[39m<glyph> rebase onto main and push
+#   empty        ESC[39m<glyph>
+#
+# WHY THIS TAKES A SESSION NAME, NOT PANE TEXT
+# --------------------------------------------
+# Every sibling matcher above takes already-captured pane TEXT. This one cannot:
+# the callers capture with `tmux capture-pane -p`, which STRIPS the SGR run — the
+# discriminating bytes never reach them. That stripping is exactly why the
+# distinction was invisible. So this function takes a session name and runs its
+# own `capture-pane -p -e`.
+#
+# It deliberately does NOT switch the shared capture to `-e`. That would inject
+# escape sequences into the footer text pane_is_turn_end / pane_is_api_error /
+# pane_is_fork / pane_pending_own_work match against — silently loosening every
+# matcher whose anchoring discipline (#246/#452) is load-bearing. The existing
+# plain capture is untouched; this is a second, narrow read.
+#
+# UNKNOWN IS NOT EMPTY
+# --------------------
+# A pane that could not be read, or that has no prompt line, yields `unknown` —
+# never `empty`. `empty` asserts "the prompt is clear", a positive claim; a
+# detector that could not look learned nothing and must say so, or a headless
+# golem would gain a false all-clear. Callers annotate only on `suggestion`, so
+# every other class (including both no-information ones) leaves output
+# byte-identical to before this existed.
+#
+# Footer-anchored to the same $pane_footer_lines window as its siblings, for the
+# same #246 reason: this script and its tests necessarily discuss these very
+# shapes, so a whole-scrollback match would self-trip on a golem reading them.
+# The glyph and the escape are built from printf octal escapes rather than
+# written literally (mirroring golem-mode-check.sh's MODE_GLYPH_*), so this file
+# contains no matchable prompt line even inside a displayed footer window.
+#
+# The LAST prompt-glyph line in the window is the live one: SUBMITTED history
+# entries keep their glyph in the scrollback (measured on the control session),
+# so taking the first would classify an old command as the current buffer.
+PROMPT_GLYPH="$(command printf '\342\235\257')" # the input-line marker
+SGR_DIM="$(command printf '\033[2m')"           # dim — the suggestion attribute
+PROMPT_NBSP="$(command printf '\302\240')"      # the NBSP the prompt pads with
+
+# _strip_sgr <text> — text with CSI ... m sequences removed, so a caller can ask
+# "is there any VISIBLE text here?" without the attributes confusing the answer.
+# Parameter expansion rather than sed: BSD sed reads \x1b as a literal and the
+# repo bans GNU-only regex, so a sed spelling would silently no-op on macOS —
+# which for this function would turn every empty prompt into `input`. An
+# UNTERMINATED CSI breaks the loop rather than consuming the rest of the line:
+# over-stripping would invent an empty prompt out of real text.
+_strip_sgr() {
+    local v="$1" pre post
+    while :; do
+        case "$v" in
+            *$'\033['*) ;;
+            *) break ;;
+        esac
+        pre="${v%%$'\033['*}"
+        post="${v#*$'\033['}"
+        case "$post" in
+            *m*) ;;
+            *) break ;;
+        esac
+        post="${post#*m}"
+        v="$pre$post"
+    done
+    command printf '%s' "$v"
+}
+
+# pane_prompt_line_class <session> — echo suggestion | input | empty | unknown.
+pane_prompt_line_class() {
+    local sess="$1" pane footer l line rest visible
+    command -v tmux >/dev/null 2>&1 || {
+        command echo "unknown"
+        return 0
+    }
+    pane="$(tmux capture-pane -p -e -t "$sess" 2>/dev/null || true)"
+    if [ -z "$pane" ]; then
+        command echo "unknown"
+        return 0
+    fi
+    footer="$("$TAIL" -n "$pane_footer_lines" <<<"$pane")"
+    line=""
+    while IFS= read -r l; do
+        case "$l" in
+            *"$PROMPT_GLYPH"*) line="$l" ;;
+        esac
+    done <<<"$footer"
+    if [ -z "$line" ]; then
+        command echo "unknown"
+        return 0
+    fi
+    # Everything after the LAST glyph on that line is the buffer region.
+    rest="${line##*"$PROMPT_GLYPH"}"
+    visible="$(_strip_sgr "$rest")"
+    visible="${visible//$PROMPT_NBSP/ }"
+    visible="$(command printf '%s' "$visible" | "$TR" -d '[:space:]')"
+    if [ -z "$visible" ]; then
+        command echo "empty"
+        return 0
+    fi
+    case "$rest" in
+        *"$SGR_DIM"*)
+            command echo "suggestion"
+            return 0
+            ;;
+    esac
+    command echo "input"
+}
+
 # Turn-ended / idle-at-prompt overlay (issue #447). NOT a modal overlay: a golem
 # that finished its turn and sits at an empty prompt awaiting human input — e.g.
 # commit signing halted on a locked 1Password vault, so the golem correctly
@@ -784,7 +934,10 @@ panes_snapshot() {
             command printf '%s\t%s: %s (check pane)\n' \
                 "$sess" "$DIED_MSG_PREFIX" "$(pane_api_error_class "$pane")"
         elif pane_is_turn_end "$pane"; then
-            command printf '%s\t%s\n' "$sess" "$TURN_END_MSG"
+            # #977: annotate when the prompt is showing a suggestion, so the
+            # operator is not left reading it as something someone queued.
+            command printf '%s\t%s%s\n' "$sess" "$TURN_END_MSG" \
+                "$(pane_suggestion_suffix "$sess")"
         fi
     done
 }
@@ -1044,7 +1197,10 @@ liveness_snapshot() {
                         continue
                         ;;
                     idle)
-                        command printf '%s\t%s\n' "golem-$n" "⚠ idle at prompt — process up, not advancing (check pane)"
+                        # #977 suggestion annotation, as in panes_snapshot().
+                        command printf '%s\t%s%s\n' "golem-$n" \
+                            "⚠ idle at prompt — process up, not advancing (check pane)" \
+                            "$(pane_suggestion_suffix "golem-$n")"
                         continue
                         ;;
                 esac
@@ -1155,6 +1311,18 @@ liveness_stabilize() {
                 ;;
             "possible stall — no progress for "*)
                 msg="possible stall"
+                ;;
+        esac
+        # #977: the suggestion annotation is VOLATILE — a suggestion appears and
+        # vanishes on its own while the golem sits equally idle throughout. Left
+        # in the key, its arrival/departure would read as a class CHANGE and
+        # re-fire the per-golem line, which is the noise this whole function
+        # exists to suppress (same reason the mtime age is stripped above).
+        # Stripped as a SUFFIX, so an annotation is removed only where the
+        # callers actually append it.
+        case "$msg" in
+            *"$SUGGESTION_ANNOT")
+                msg="${msg%"$SUGGESTION_ANNOT"}"
                 ;;
         esac
         command printf '%s\t%s\n' "$golem" "$msg"
