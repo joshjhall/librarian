@@ -186,6 +186,19 @@ changing it, re-verify with `claude plugin details <name>@librarian` showing
   unlisted or a listed one is missing; (4) dispatch with `run_fragment_test` so
   a failure names its fragment. A helper used by exactly one area stays in that
   area's file — the shared library must not accrete single-use code.
+  **Copy the entry point's tail, never regenerate it** (#899): rebuilding it from
+  the `run_test` dispatch lines drops what FOLLOWS them, and what follows them is
+  the trailing `generate_report` — the only call that turns `TESTS_FAILED` into a
+  non-zero exit. Without it a suite prints `FAIL` lines and still exits 0, so
+  `run_stage` renders `[ok]`; that is how #859's split shipped a suite reporting
+  `18 passed` with two assertions failing. `tests/lint-suite-reporting.sh` (run by
+  `tests/run-all.sh`, so it gates CI and pre-push) now requires a **column-0**
+  `generate_report` as the **last executable statement** of every harness-sourcing
+  suite — column-0 because eight suites legitimately call it *indented* on a skip
+  branch, and last-statement because a following `exit 0` discards the verdict
+  just as thoroughly. The harness-side `EXIT` trap was rejected deliberately: 39 of
+  the 94 suites already arm their own cleanup trap, which would silently overwrite
+  it.
   `.mjs` areas follow the same shape with `run()` exports, one shared
   collect-all `failures` array (`tests/lib/mjs-assert.mjs`), and a `try/catch`
   per area so a throw outside an assertion cannot mask its siblings. When adding

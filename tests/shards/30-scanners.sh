@@ -108,6 +108,12 @@ run_stage "Hook no-op silence" bash "$SCRIPT_DIR/lint-hook-silence.sh"
 # Steers definition-shaped assertions to assert_file_defines, so the comment
 # explaining a setting can never satisfy the test that the setting exists (#830).
 run_stage "Definition-shaped assertions" bash "$SCRIPT_DIR/lint-definition-assertions.sh"
+# The same silence-reads-as-a-pass family, one layer up: that gate stops a COMMENT
+# satisfying an assertion, this one stops a whole SUITE whose failing assertions
+# are never collected. A suite that sources harness.sh and drops its trailing
+# `generate_report` prints FAIL lines and exits 0, so run_stage renders it [ok]
+# (#899) — the shape a suite split is most likely to introduce (#564, #859).
+run_stage "Suite verdict reporting" bash "$SCRIPT_DIR/lint-suite-reporting.sh"
 # Structural backstop for the extension-dispatch half of that parity (#754). The
 # behavioral suites below can only pin the languages their corpus happens to
 # contain, and a mutation round showed arms revert INDEPENDENTLY — so this reads
