@@ -355,4 +355,66 @@ export async function run() {
   const rd = src.slice(src.indexOf("const reviewerData ="), src.indexOf("\nconst ", src.indexOf("const reviewerData =") + 1));
   ok(rd.includes("conventionsSection()"), "ship-issue: conventionsSection is in the shared reviewerData block (#256)");
 }
+
+// =============================================================================
+// ship-issue — memory-bundle conformance folds into `decomposition` (#699)
+// =============================================================================
+// The pre-scan emits okf-*/memory-* rows for changed .claude/memory/** files; a
+// dimension is what turns such a row into a judged finding. Folded into
+// `decomposition` rather than given a sixth dimension, because that is the only
+// dimension whose DIMENSION_RELEVANT_TYPES row claims `docs` — so it already
+// survives the #550 cheap route and already runs delta-local under #492
+// narrowing. A sixth would have cost a whole extra agent per cycle to
+// re-establish all three properties.
+//
+// These assert the dimension's CONTRACT, which is prose in `instructions` and so
+// has no other enforcement: three of the issue's acceptance criteria (deferrable-
+// leaning, structure-only, never-print-content) are satisfied by that prose and
+// by nothing else, which is exactly the shape that silently rots.
+{
+  const src = harnessSource(SHIP);
+
+  // The decomposition dimension's instruction blob.
+  const decompStart = src.indexOf("name: 'decomposition'");
+  ok(decompStart > 0, "ship-issue: the decomposition dimension is present (#699)");
+  const decomp = src.slice(decompStart, src.indexOf("name: 'scope-drift'", decompStart));
+
+  ok(
+    /MEMORY-BUNDLE CONFORMANCE/i.test(decomp),
+    "ship-issue: decomposition owns the memory-bundle rows — no sixth dimension (#699 AC#4)",
+  );
+  ok(
+    /okf-\*/.test(decomp) && /memory-\*/.test(decomp),
+    "ship-issue: the dimension names the okf-*/memory-* pre-scan categories it consumes (#699)",
+  );
+
+  // AC#6 — deferrable-leaning, and specifically about MEMORY rather than only
+  // the pre-existing size clause. Scoped to the memory paragraph so the size
+  // lens's own DEFERRABLE-LEANING line cannot satisfy this on its own.
+  const memPara = decomp.slice(decomp.indexOf("MEMORY-BUNDLE CONFORMANCE"));
+  ok(
+    /DEFERRABLE-LEANING/i.test(memPara),
+    "ship-issue: the memory clause is deferrable-leaning — a malformed memory in an unrelated PR must not block (#699 AC#6)",
+  );
+  ok(
+    /almost never block|should.{0,20}not block/i.test(memPara),
+    "ship-issue: the deferrable steer is explicit about NOT blocking, not merely labelled (#699 AC#6)",
+  );
+
+  // AC#7 — the semantic/quality pass stays OUT of the merge gate.
+  ok(
+    /STRUCTURE ONLY/i.test(memPara),
+    "ship-issue: the memory clause is structure-only (#699 AC#7)",
+  );
+  ok(
+    /semantic/i.test(memPara),
+    "ship-issue: the memory clause says the semantic pass belongs to the audit half (#699 AC#7)",
+  );
+
+  // AC#9 — memory content must never reach a PR comment.
+  ok(
+    /NEVER QUOTE MEMORY CONTENT/i.test(memPara),
+    "ship-issue: the memory clause forbids quoting memory body text into a PR comment (#699 AC#9)",
+  );
+}
 }

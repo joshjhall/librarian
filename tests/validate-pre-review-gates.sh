@@ -102,7 +102,8 @@ FRAGMENTS="10-ai-slop.sh
 95-test-discovery-literals.sh
 96-portability.sh
 97-sizing.sh
-98-security.sh"
+98-security.sh
+99-okf-memory.sh"
 
 # shellcheck disable=SC2086  # deliberate word-splitting: FRAGMENTS is a list
 source_fragments "$SCRIPT_DIR/pre-review-gates" $FRAGMENTS
@@ -233,5 +234,12 @@ run_fragment_test test_unresolvable_list_warns_without_failing "an unresolvable 
 run_fragment_test test_empty_list_stays_silent_on_stderr "an empty list stays silent on STDERR too — the warning is non-empty-gated (#816)"
 run_fragment_test test_partially_resolvable_list_does_not_warn "one resolvable path suppresses the warning (#816 AC#2)"
 run_fragment_test test_guard_does_not_alter_normal_scan "the guard does not change what a correct invocation reports (#816)"
+
+run_fragment_test test_okf_conformance_row_emitted "a changed memory file with no type emits an okf-missing-type row (#699)"
+run_fragment_test test_okf_graph_row_scoped_to_changed_file "whole-bundle read, diff-local report: the introduced orphan fires, the untouched one does not (#699 AC#2)"
+run_fragment_test test_okf_no_bundle_reviews_cleanly "a repo with no memory bundle reviews cleanly — no rows, no error (#699 AC#8)"
+run_fragment_test test_okf_absent_degrades_quietly "an absent OKF scanner degrades quietly, unlike the security arm (#699)"
+run_fragment_test test_okf_never_prints_memory_content "memory body text never reaches the TSV evidence (#699 AC#9)"
+run_fragment_test test_okf_categories_known_to_router "every emitted okf/memory category is known to review-route.sh R4 (#699)"
 
 generate_report

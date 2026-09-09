@@ -1318,6 +1318,47 @@ if [ -f "$_SIZING" ]; then
     fi
 fi
 
+# --- memory-bundle conformance, resolved at RUNTIME (#699) -------------------
+# A PR that adds a malformed memory -- no `type`, orphaned from every index, an
+# index line pointing at a file that was never created -- passed a clean review
+# before this arm existed. Every one of those failures is SILENT: nothing errors
+# when a memory is unreachable from every index, it is simply never recalled.
+#
+# The routing half was already in place: review-route.sh's R4 lists all nine
+# okf-*/memory-* categories and forces a `full` route when one appears, so a
+# doc-only memory PR cannot decay into a cheap cycle. What was missing is the
+# PRODUCER -- nothing ever emitted those rows, so R4 was wired to a scanner that
+# never ran.
+#
+# WHY DELEGATION AND NOT A `# >>> shared:` SENTINEL REGION. Issue #699 proposed
+# copying the OKF rules in as a pinned duplicate. The #708 security arm at the
+# foot of this file had already settled the question for exactly this shape, and
+# its reasoning applies here verbatim: sentinel regions exist for logic that must
+# be IN SCOPE -- sourced shell functions, which genuinely cannot cross a plugin
+# boundary. check-okf-conformance is not sourced. It is EXECUTED as a separate
+# process whose interface is the same five-column TSV this script already emits,
+# so nothing needs to be in scope and nothing can drift silently.
+# Measured: the duplicate would be ~250 lines (scan_bundle alone is 171) plus
+# eight non-portable globals and a thresholds.yml that does not exist beside this
+# file, into a script already over its size budget. The AC was amended on the
+# issue rather than satisfied literally.
+#
+# ABSENCE DEGRADES GRACEFULLY -- the sizing.sh disposition, NOT the fail-loud
+# check-security one. The distinction is the one this file already draws: a
+# missing security scan is byte-identical to a clean one (the #538/#571 inert
+# gate), so it must refuse. A missing memory-hygiene opinion is not that: the
+# memory bundle is OPTIONAL and most repos have none, so failing loud here would
+# fire on every repo without a bundle -- turning a hygiene signal into a blocked
+# pipeline for everyone it does not apply to.
+#
+# PLACED BELOW, not here. The arm runs where the security arm does, because it
+# calls resolve_okf_scanner() -- and that resolver, along with the generic walk
+# it shares with #708, is defined further down this file. A call site above the
+# definition is a `command not found` at runtime, not a parse error, so it
+# survives `bash -n` and every syntax check: it fails only when the arm actually
+# runs. Keeping the rationale here (beside the sibling delegation it mirrors) and
+# the execution there is the tradeoff; the marker below names this comment.
+
 # --- security pre-scan, resolved at RUNTIME (#708) ---------------------------
 # ship-issue's adversarial review fans out five dimensions. Four had a
 # deterministic pre-scan handoff; `security` had none -- it resolved through
@@ -1427,14 +1468,25 @@ _prescan_ver_gt() {
 #                         Both walks were verified against a real installed
 #                         layout, not derived on paper — an earlier draft of each
 #                         was off by one level and resolved nothing.
-resolve_security_scanner() {
-    local rel='skills/check-security/patterns.sh'
+#
+# PARAMETERIZED over the scanner (#699). The walk is identical for every
+# review-audit scanner -- only the relative path and the override variable
+# differ -- so a second consumer takes two arguments rather than a second copy
+# of the three probes. That is the same reasoning the delegation itself rests
+# on: duplicating a walk whose two copies must agree is how they stop agreeing.
+#
+#   $1 = relative path under the review-audit plugin root
+#   $2 = the explicit-override value (already expanded by the caller, so an
+#        unset variable arrives as the empty string under `set -u`)
+_resolve_review_audit_scanner() {
+    local rel="$1"
+    local override="$2"
     local candidate
 
-    if [ -n "${SECURITY_SCANNER:-}" ]; then
+    if [ -n "$override" ]; then
         # Printed even when it does not exist: the caller reports the configured
         # path in its refusal, which is far more useful than "not found".
-        command printf '%s' "$SECURITY_SCANNER"
+        command printf '%s' "$override"
         return 0
     fi
 
@@ -1499,6 +1551,65 @@ resolve_security_scanner() {
 
     return 0
 }
+
+# resolve_security_scanner -- the #708 consumer. Kept as a named entry point:
+# its absence disposition (fail loud) differs from the OKF one below, and the
+# name is what the absence tests drive.
+resolve_security_scanner() {
+    _resolve_review_audit_scanner 'skills/check-security/patterns.sh' \
+        "${SECURITY_SCANNER:-}"
+}
+
+# resolve_okf_scanner -- the #699 consumer (memory-bundle conformance + graph).
+resolve_okf_scanner() {
+    _resolve_review_audit_scanner 'skills/check-okf-conformance/patterns.sh' \
+        "${OKF_SCANNER:-}"
+}
+
+# --- memory-bundle conformance arm (#699) ------------------------------------
+# The rationale for this arm lives with the sizing delegation above; only the
+# execution is here, after resolve_okf_scanner() is defined.
+_OKF_SCANNER="$(resolve_okf_scanner)"
+if [ -n "$_OKF_SCANNER" ] && [ -f "$_OKF_SCANNER" ]; then
+    # SCOPED TO THE CHANGED FILES, deliberately, and this is the whole
+    # engineering content of the arm.
+    #
+    # The scanner is an AUDIT lens: a graph check is defined by the whole bundle
+    # (an orphan is the ABSENCE of a pointer anywhere, a dangling index line a
+    # file that exists nowhere), so it must READ every memory file to be correct
+    # at all. But it also REPORTS on every one of them. Measured on this repo:
+    # handing it a single changed memory file emitted 81 rows across 81 files --
+    # 80 of them about files the PR never touched.
+    #
+    # Unscoped, that is not a hygiene signal, it is a wall of pre-existing debt
+    # attached to whoever happened to touch one memory. It would be triaged as
+    # noise and the dimension would be switched off, which is the outcome the
+    # issue explicitly warns against.
+    #
+    # So: read whole-bundle, report diff-local. The filter lives HERE rather than
+    # in the scanner because the scanner's audit behavior is correct for the
+    # audit sweep -- narrowing it there would break slice H. Verified the case
+    # this slice exists for survives the filter: an orphan INTRODUCED by the diff
+    # names the changed file itself, so it still reports.
+    #
+    # An awk pass, not `grep -f`: the comparison must be a whole-field equality
+    # on column 1, and a path is full of characters grep would read as a pattern
+    # (`config-value-is-not-a-pattern`). FS/OFS are set to a literal tab so a row
+    # is passed through byte-identically -- including an empty trailing field,
+    # which a rebuilt $0 would otherwise collapse.
+    #
+    # `|| true` on the scanner: its own fail-loud non-zero (an unresolvable
+    # version pin, an unreadable list) must not abort a gate whose other rows are
+    # already on stdout. Its stderr still reaches the operator.
+    command bash "$_OKF_SCANNER" "$FILE_LIST" 2>/dev/null |
+        command awk -F'\t' -v OFS='\t' '
+            NR == FNR {
+                if ($0 != "") changed[$0] = 1
+                next
+            }
+            $1 in changed { print }
+        ' "$FILE_LIST" - || true
+fi
 
 # Deliberately LAST in the file: every other scanner's rows are already on
 # stdout, so a refusal here costs the operator nothing they had earned. The

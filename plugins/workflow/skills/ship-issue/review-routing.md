@@ -129,10 +129,24 @@ then a rule that skips it.
 
 **Why a routing rule rather than trusting the pre-scan.** The issue comments
 assumed `pre-review-gates.sh` already carried these scanners, so preserving
-item-5's advisory surfacing would suffice. It does not: that script scans only
-ai-slop, debug statements and missing tests. The sizing rows come from
-`sizing.sh`, and the `decomposition` **dimension** is what turns such a row into
-a judged blocking-or-deferrable finding. On a cheap cycle that dimension is
+item-5's advisory surfacing would suffice. It does not: that script's own
+detectors are ai-slop, debug statements and missing tests. The sizing rows come
+from `sizing.sh`, the memory rows from `check-okf-conformance` (both delegated,
+see below), and the `decomposition` **dimension** is what turns such a row into
+a judged blocking-or-deferrable finding.
+
+**The memory rows now have a producer (#699).** When R4 was written, its
+`okf-*`/`memory-*` tokens named a scanner nothing invoked — the rule was correct
+and unreachable. `pre-review-gates.sh` now resolves
+`check-okf-conformance/patterns.sh` at runtime (the #708 subprocess/TSV shape,
+not a duplicated region) and emits those rows for changed `.claude/memory/**`
+files, so R4 fires on real input. The rows are **scoped to the changed files**:
+the scanner reads the whole bundle, because an orphan is defined by the absence
+of a pointer anywhere in it, but reporting is filtered to the diff — unscoped, a
+one-file memory edit emitted 81 rows across 81 files, which is how a dimension
+gets switched off. The findings are judged by `decomposition`, which already
+claims `docs` and already leans deferrable; a sixth dimension was rejected on
+fan-out cost. On a cheap cycle that dimension is
 dropped, so the row would decay to an advisory table entry — blocking only under
 `PRE_REVIEW_STRICT` — i.e. it would "vanish into a `clean: true`", which those
 comments explicitly rule out. `R4` refuses the cheap path outright instead,
@@ -178,6 +192,44 @@ The alternative — forcing `clean: false` on a routed cycle — was rejected as
 self-defeating: a cycle that can never be clean can never terminate the loop, so
 every routed PR would burn cheap cycles to `REVIEW_MAX_CYCLES` and dead-end for
 a human. That is strictly worse than the status quo it optimizes.
+
+## Memory-bundle conformance rows
+
+`pre-review-gates.sh` resolves `check-okf-conformance/patterns.sh` at runtime and
+emits its `okf-*`/`memory-*` rows for changed `.claude/memory/**` files. Three
+properties are load-bearing.
+
+**Delegation, not duplication.** Issue #699 proposed copying the OKF rules in
+behind `# >>> shared:` sentinels. The #708 security arm had already settled this
+shape: sentinel regions exist for logic that must be *in scope* (sourced shell
+functions, which cannot cross a plugin boundary). This scanner is **executed** as
+a separate process whose interface is the same five-column TSV, so nothing needs
+to be in scope and nothing can drift. The duplicate would have been ~250 lines
+(`scan_bundle` alone is 171) plus eight non-portable globals and a
+`thresholds.yml` that does not exist beside the gate — into a file already over
+its size budget. The AC was amended on the issue rather than satisfied literally.
+
+**Whole-bundle read, diff-local report.** A graph finding is defined by the whole
+bundle — an orphan is the *absence* of a pointer anywhere in it — so the scanner
+must read every memory file to be correct. But it also *reports* on every one:
+measured, a single changed memory file emitted **81 rows across 81 files**. That
+is not a hygiene signal, it is the bundle's pre-existing debt charged to whoever
+touched one file, and it is how a dimension gets switched off. So the gate
+filters the scanner's **output** to the changed files. Filtering its *input*
+instead would look identical on the happy path and silently lose every graph
+finding, which is the failure this slice exists to catch.
+
+**Absence degrades quietly** — deliberately unlike the security arm. A memory
+bundle is optional and most repos have none, so failing loud would fire on every
+repo the feature does not apply to. The asymmetry is exact: absence of a
+**security** scan is indistinguishable from a clean scan; absence of a **memory**
+scan is indistinguishable from having no bundle.
+
+The rows are judged by `decomposition` rather than a sixth dimension (it already
+claims `docs`, so it already survives this route and already runs delta-local),
+are **structural only** — does it parse, has it a `type`, is it reachable — and
+never carry memory body text into a PR comment. Semantic quality stays in the
+audit half.
 
 ## What still runs on the cheap path
 

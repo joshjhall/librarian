@@ -499,14 +499,26 @@ cmd_check() {
         _reason="doc-only"
     fi
 
-    # The dimensions the caller should run. On the cheap path this is
-    # scope-drift ALONE — see the header for why it survives routing. Emitted
-    # rather than left for the caller to infer, so the contract is observable in
-    # the output and pinned by the test suite.
+    # The dimensions the caller should run. Both strings MIRROR the harness --
+    # they do not decide anything, so a drifted value is a lie the caller acts
+    # on rather than an error anyone sees. Both were wrong before #699:
+    #
+    #   full:  advertised `conventions`, a dimension DELETED by #551. A caller
+    #          reading this string would run a dimension that does not exist.
+    #   cheap: advertised scope-drift ALONE, but cheap-route survival is DERIVED
+    #          in the harness -- a dimension survives iff its
+    #          DIMENSION_RELEVANT_TYPES row claims `docs`, and `decomposition` is
+    #          exactly that dimension. review-routing.md said so; this string
+    #          disagreed with both.
+    #
+    # The authority is workflow.src/30-dimensions.js (membership) and
+    # 74-narrowing.js (survivesCheapRoute / the scope-drift always-run arm).
+    # Both are pinned by tests/validate-review-route.sh so the next deletion
+    # cannot drift silently the way #551's did.
     if [ "$_route" = "cheap" ]; then
-        _dimensions="scope-drift"
+        _dimensions="decomposition,scope-drift"
     else
-        _dimensions="security,correctness,tests,conventions,decomposition,scope-drift"
+        _dimensions="security,correctness,tests,decomposition,scope-drift"
     fi
 
     command printf 'route=%s\n' "$_route"

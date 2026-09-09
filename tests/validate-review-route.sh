@@ -62,7 +62,13 @@ route_of() {
 
 # --- 1. Rule cases -----------------------------------------------------------
 
-# The one path to `cheap`. Also pins the dimension contract: scope-drift ALONE.
+# The one path to `cheap`. Also pins the dimension contract: the dimensions whose
+# DIMENSION_RELEVANT_TYPES row claims `docs` (today `decomposition`), plus the
+# always-run `scope-drift`. This asserted `scope-drift` ALONE until #699 — which
+# contradicted both review-routing.md and the harness's own derived
+# survivesCheapRoute, and was wrong the whole time because nothing compared the
+# advertised string to the harness (test_advertised_dimensions_match_the_harness
+# now does).
 test_doc_and_config_only_routes_cheap() {
     local list out
     list="$(mklist 'README.md' 'docs/guide.md' 'CHANGELOG.md')"
@@ -70,8 +76,8 @@ test_doc_and_config_only_routes_cheap() {
 
     assert_equals "cheap" "$(val route "$out")" "doc-ONLY diff routes cheap"
     assert_equals "R7-doc-only" "$(val rule "$out")" "R7 is the deciding rule"
-    assert_equals "scope-drift" "$(val dimensions "$out")" \
-        "cheap path runs scope-drift ALONE"
+    assert_equals "decomposition,scope-drift" "$(val dimensions "$out")" \
+        "cheap path runs the docs-claiming dimensions + scope-drift (#699)"
     assert_equals "3" "$(val doc_files "$out")" "counts all three doc files"
 }
 
@@ -94,9 +100,17 @@ test_full_route_names_every_dimension() {
     out="$(route_of "$list")"
     dims="$(val dimensions "$out")"
 
-    for d in security correctness tests conventions decomposition scope-drift; do
+    # `conventions` is NOT in this list: #551 deleted that dimension, but this
+    # test went on asserting it and the router went on advertising it, so the two
+    # agreed with each other and disagreed with the harness for four releases.
+    # A hardcoded list can only ever pin what someone remembered to type;
+    # test_advertised_dimensions_match_the_harness derives the same set from
+    # 30-dimensions.js and is what actually catches the next deletion (#699).
+    for d in security correctness tests decomposition scope-drift; do
         assert_contains "$dims" "$d" "full route runs the $d dimension"
     done
+    assert_not_contains "$dims" "conventions" \
+        "full route does NOT advertise conventions — #551 deleted that dimension (#699)"
 }
 
 # --- 2. Fail-safe cases ------------------------------------------------------
@@ -606,11 +620,75 @@ run_test test_auto_override_permits_cheap
 run_test test_diff_over_line_ceiling_forces_full
 run_test test_diff_under_line_ceiling_routes_cheap
 run_test test_line_ceiling_is_env_overridable
+# The `dimensions=` strings are a MIRROR of the harness, not a decision — so a
+# drifted value is a lie the caller acts on rather than an error anyone sees.
+# Both were wrong before #699 and nothing caught it:
+#
+#   full:  advertised `conventions`, a dimension DELETED by #551.
+#   cheap: advertised scope-drift alone, but cheap-route survival is DERIVED in
+#          the harness (a dimension survives iff its DIMENSION_RELEVANT_TYPES row
+#          claims `docs`), which `decomposition` does.
+#
+# DERIVED FROM THE HARNESS, never a retyped literal: a hardcoded expectation here
+# would just be a third copy free to drift with the other two. This reads
+# 30-dimensions.js for membership and 74-narrowing.js for the docs-claim, so
+# deleting or adding a dimension fails this test until the router is updated.
+test_advertised_dimensions_match_the_harness() {
+    local dims narrowing list out full cheap d _row
+    dims="$REPO_ROOT/plugins/workflow/skills/ship-issue/workflow.src/30-dimensions.js"
+    narrowing="$REPO_ROOT/plugins/workflow/skills/ship-issue/workflow.src/74-narrowing.js"
+
+    if [ ! -f "$dims" ] || [ ! -f "$narrowing" ]; then
+        skip_test "ship-issue workflow.src fragments not present"
+        return
+    fi
+
+    # Every dimension the harness defines, in declaration order.
+    full="$(command grep -oE "name: '[a-z-]+'" "$dims" |
+        command sed "s/name: '//; s/'//" | command tr '\n' ',' | command sed 's/,$//')"
+    assert_not_empty "$full" "dimension names are discoverable — otherwise this test proves nothing"
+
+    list="$(mklist 'src/app.py')"
+    out="$(route_of "$list")"
+    assert_equals "$full" "$(val dimensions "$out")" \
+        "the full-path dimensions= mirrors NEW_DIMENSIONS + REUSED_DIMENSIONS (#699)"
+
+    # A dimension survives the cheap route iff its DIMENSION_RELEVANT_TYPES row
+    # claims 'docs'; scope-drift always runs regardless of its row.
+    #
+    # CAPTURE THEN TEST, never `... | grep -q "'docs'"`. Under `set -o pipefail`
+    # a terminating `grep -q` exits on its first match, the upstream `sed` takes
+    # SIGPIPE, and the pipeline reports 141 — so a SUCCESSFUL match reads as a
+    # failure and the dimension silently drops out of the expected set. It needs
+    # the 64KB pipe buffer to fill before it bites, so at today's table size it
+    # would pass while being wrong in shape (CLAUDE.md § grep -q under pipefail).
+    cheap=""
+    for d in $(command printf '%s' "$full" | command tr ',' ' '); do
+        if [ "$d" = "scope-drift" ]; then
+            cheap="${cheap:+$cheap,}$d"
+        else
+            _row="$(command sed -n "/DIMENSION_RELEVANT_TYPES/,/^}/p" "$narrowing" |
+                command grep -E "^[[:space:]]*$d:")" || _row=""
+            case "$_row" in
+                *"'docs'"*) cheap="${cheap:+$cheap,}$d" ;;
+            esac
+        fi
+    done
+    assert_not_empty "$cheap" "at least one dimension survives the cheap route"
+
+    list="$(mklist 'README.md' 'docs/guide.md')"
+    out="$(route_of "$list")"
+    assert_equals "cheap" "$(val route "$out")" "the doc-only fixture actually routes cheap"
+    assert_equals "$cheap" "$(val dimensions "$out")" \
+        "the cheap-path dimensions= mirrors survivesCheapRoute + the scope-drift always-run arm (#699)"
+}
+
 run_test test_line_ceiling_cannot_make_a_source_diff_cheap
 run_test test_bad_diff_lines_fails_loud
 run_test test_bad_env_ceiling_fails_loud
 run_test test_missing_files_flag_fails_loud
 run_test test_unknown_flag_and_subcommand_fail_loud
 run_test test_cheap_is_reachable_at_all
+run_test test_advertised_dimensions_match_the_harness
 
 generate_report

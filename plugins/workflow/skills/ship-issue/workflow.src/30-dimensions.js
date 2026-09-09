@@ -77,7 +77,25 @@ const NEW_DIMENSIONS = [
       '[<destination> ...]`, which proves it mechanically: production-LOC ' +
       'conservation, every top-level unit preserved, no dangling callers, and ' +
       'for markdown every moved heading still reachable by a link. That is the ' +
-      'difference between suggesting a split and accepting one.',
+      'difference between suggesting a split and accepting one.\n' +
+      'MEMORY-BUNDLE CONFORMANCE (#699). This dimension also owns the pre-scan\'s ' +
+      '`okf-*` and `memory-*` candidates for changed `.claude/memory/**` files. ' +
+      'Folded in here rather than given a sixth dimension because this is the only ' +
+      'dimension that already reads `docs`, so it already survives doc-only ' +
+      'routing and already runs delta-local -- a sixth would cost a whole extra ' +
+      'agent per cycle to re-establish all three properties.\n' +
+      'STRUCTURE ONLY, never content quality. Judge whether the file parses, ' +
+      'carries a `type`, is reachable from an index, and whether an index line ' +
+      'resolves to a file that exists. Whether a memory is WORTH keeping, ' +
+      'duplicates another, or sits in the wrong tier is the audit half\'s ' +
+      'semantic pass -- advisory and human-reviewed. Wiring knowledge-quality ' +
+      'judgment into a merge gate is how the dimension gets switched off.\n' +
+      'DEFERRABLE-LEANING, more so than size. A malformed memory in a PR whose ' +
+      'subject is something else should almost never block: it is a one-line fix ' +
+      'the author can make in a follow-up. Block only when the PR\'s OWN subject ' +
+      'is the memory bundle.\n' +
+      'NEVER QUOTE MEMORY CONTENT. Cite the file, the category and the structural ' +
+      'defect; the body text of a memory must not reach a PR comment or issue.',
   },
   {
     name: 'scope-drift',
