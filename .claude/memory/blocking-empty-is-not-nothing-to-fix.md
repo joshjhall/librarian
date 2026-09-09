@@ -60,6 +60,16 @@ than about what the gate enforces:
 - **#797** (PR #985): **11 assertions passed while proving nothing** and were
   caught only by mutation. The golem called that, not its headline
   zero-adoption finding, the reusable lesson of the issue.
+- **#867** (PR #988), same day, third instance: cycle 1 returned `blocking: []`
+  with two deferrable `tests` findings, **both real and both about the new
+  gate's own vacuity guards** — a fixture with no arm asserting its purpose, and
+  a reporter dispatched through `run_test` that could never fail (the #538/#571
+  inert-gate shape, reproduced *inside a PR whose subject is exactly that
+  shape*). Fixed rather than deferred; cycle 2 on the fix delta was clean.
+  Mutation settled it in both directions — mutating the tracked scanner proved
+  the corpus bites, mutating each new guard proved it can fail. Note the guards
+  paid off **before** any reviewer saw them: two of the new regexes were wrong
+  on their first run and the vacuity guard, not the review, caught them.
 
 Why this sub-shape matters: when the subject under test IS a test, "the suite is
 green" and "the suite would notice" are different claims, and a judge scoring
