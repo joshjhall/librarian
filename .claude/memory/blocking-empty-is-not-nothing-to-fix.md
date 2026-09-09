@@ -46,6 +46,28 @@ was supposed to eliminate it. (Confirmed live on #580's own PR: cycle 1 returned
 no blocking findings, and its deferrable-tier notes held a real comment/code
 mismatch I had written and a half-finished doc change.)
 
+**Confirmed twice more, 2026-09-09 (4-lane tracks run) — with a new sub-shape:
+the defect is in the CHECKER, not the subject.** Both golems were building a
+*gate*, and every cycle's findings were about the gate's own fixtures rather
+than about what the gate enforces:
+
+- **#899** (PR #981): five review cycles, **every one returned `blocking: []`**,
+  and every one still held something real — three genuine defects in cycle 1, a
+  defect its own cycle-1 fix introduced in cycle 2, a fixture passing for the
+  wrong reason in cycle 4, two dead branches in cycle 5. Not one was a defect in
+  what the gate enforces. Shipping on the `blocking: []` label alone would have
+  merged all of them.
+- **#797** (PR #985): **11 assertions passed while proving nothing** and were
+  caught only by mutation. The golem called that, not its headline
+  zero-adoption finding, the reusable lesson of the issue.
+
+Why this sub-shape matters: when the subject under test IS a test, "the suite is
+green" and "the suite would notice" are different claims, and a judge scoring
+findings against the diff sees only the first. Both golems found their own
+fixtures vacuous **by mutating them**, which is the check that separates the two.
+So when a PR builds a gate, budget for mutation explicitly — see
+[[structural-gate-where-fixtures-dont-scale]] and the test-validity index.
+
 **How to apply:** read every finding on merit, not just the `blocking` array.
 Take anything that is a live defect in code the PR itself rewrites, regardless
 of disposition, and say in the commit body that you took a deferrable one and

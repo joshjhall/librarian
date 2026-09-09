@@ -91,7 +91,7 @@
 - [Whole-repo diff is bounded by repo content](whole-repo-diff-bounded-by-repo-content.md) — absent input shapes read as parity; grep the shape, 0 files = silent gate (#836)
 - [The correct copy is the one under test](the-correct-copy-is-the-one-under-test.md) — N unpinned copies, and the fixture calls the RIGHT one; grep the test corpus by PATH (#836)
 - [Pinned behavior may be a bug report](pinned-behavior-may-be-a-bug-report.md) — "recorded, not asserted-as-desirable" is a deferred defect; fix the row, comment, and every runtime together
-- [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — the DEFERRABLE bucket held a real defect twice (#544, #549)
+- [blocking==[] is not "nothing to fix"](blocking-empty-is-not-nothing-to-fix.md) — DEFERRABLE held a real defect 4x; when the PR builds a GATE, the defect is in the checker (#899, #797)
 - [One row per line must name every hit](one-row-per-line-must-name-every-hit.md) — collapsing N findings re-creates the suppression bug; assert the SECOND hit in the evidence
 - [Verify-then-refetch is not verified](verify-then-refetch-is-not-verified.md) — re-resolving by name installs unaudited bytes; install the verified path
 - [stop/C6-duplicate can hold a live defect](c6-duplicate-stop-can-hold-a-live-defect.md) — a stop verdict on a cycle that ALSO blocked leaves the fix unreviewed (#613)
