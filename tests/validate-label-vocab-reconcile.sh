@@ -985,6 +985,22 @@ test_workflow_is_dispatchable_and_informational() {
         "cancel-in-progress is conditional, never unconditionally true"
     assert_file_contains "$wf" "github.event_name == 'schedule'" \
         "only schedules coalesce; a dispatch someone is waiting on is left alone"
+
+    # THE FORK GUARD. A scheduled workflow also fires on forks of the default
+    # branch, where it would compare OUR declared vocabulary against the FORK's
+    # label set — every label reading as deleted — and mail the fork owner about it.
+    # The workflow's header explains that at length, and nothing asserted it: one
+    # deleted line and the job silently starts spamming every fork, with the whole
+    # repo green. A documented reason is not a gate.
+    assert_file_contains "$wf" "github.repository == 'joshjhall/librarian'" \
+        "the fork guard is present (without it a scheduled run mails every fork owner)"
+    # Least privilege, the two halves that are easy to drop in an edit.
+    assert_file_contains "$wf" "persist-credentials: false" \
+        "checkout does not persist credentials (this job only reads)"
+    assert_file_contains "$wf" "timeout-minutes:" \
+        "the job is time-bounded"
+    assert_file_not_contains "$wf" "^      contents: write" \
+        "the workflow never grants write access to contents"
     assert_file_contains "$wf" "cron:" "it is scheduled"
     assert_file_contains "$wf" "issues: read" "gh label list needs issues: read"
     # AC3 is structural — it cannot fail a PR because nothing aggregates it. The

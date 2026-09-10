@@ -66,9 +66,19 @@ permissions:
 # to pre-empt.
 #
 # So the group is keyed by EVENT: schedules coalesce among themselves (the newest
-# has the current answer, older ones are redundant), while every dispatch runs in
-# its own lane and is left alone. cancel-in-progress is false for dispatch —
-# a re-run someone is actively waiting on is never the run to discard.
+# has the current answer, older ones are redundant), while a dispatch is never
+# cancelled — a run someone is actively waiting on is not the one to discard.
+#
+# WHAT THIS DOES NOT DO. The key is the event name alone, so every dispatch shares
+# the group `label-vocab-reconcile-workflow_dispatch`; it does not give each its own
+# lane. With cancel-in-progress false there, a second dispatch fired while a first
+# is still running QUEUES behind it and starts only when the first finishes (bounded
+# by that job's timeout-minutes, below). That is the intended trade — serialized but
+# never discarded beats parallel but cancellable — and it is written down because an
+# earlier draft of this comment claimed the parallel behavior instead, which is a
+# comment asserting a property the code does not have. Keying the dispatch side by
+# `github.run_id` would make the runs genuinely parallel, and is deliberately not
+# done: concurrent reconciliations of one vocabulary have no reason to overlap.
 concurrency:
   group: label-vocab-reconcile-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'schedule' }}
