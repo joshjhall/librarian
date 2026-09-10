@@ -1,0 +1,111 @@
+name: status label vocabulary reconcile
+
+# The ONLINE half of the status/* label contract (issue #938, follow-up to #921
+# AC4). #921 shipped tests/lint-status-label-refs.sh, which checks one direction
+# offline: prose in plugins/**/*.md may not name a `status/*` label that no
+# metadata.yml declares. Offline is the right call there — tests/run-all.sh runs
+# in CI *and* in lefthook's pre-push, neither of which can assume `gh` auth, so a
+# network gate would sit on the 77 skip sentinel and catch nothing.
+#
+# But that costs exactly the direction that caused #921: a label DELETED or
+# RENAMED in the repo changes nothing under plugins/**, so the offline gate stays
+# green while every `gh issue edit --add-label` in the pipeline starts failing —
+# and a failed add after a landed remove leaves an in-flight issue with NO status
+# label, briefly re-selectable by another golem (#636). This job is that missing
+# direction, and it is the only place it is checked.
+#
+# NAMED FOR WHAT IT PERFORMS, per #907's note on ai-config-prescan.yml. This
+# reconciles the `status/*` VOCABULARY — the declared set against `gh label list`
+# — and nothing else. It does NOT check label descriptions or colors, does not
+# look at any label family other than `status/*` (the vocabulary the pipeline's
+# label calls depend on), and does not check the offline direction, which remains
+# tests/lint-status-label-refs.sh's job. A job named for the whole label contract
+# while performing half of it would be the
+# gate-header-claims-an-unimplemented-check shape this repo files issues about.
+#
+# NOT A MERGE GATE. Like ai-config-prescan.yml and code-scanning.yml, this is
+# informational and runs on its own schedule: it is not part of ci.yml's
+# merge-gate aggregation, is not a tests/run-all.sh stage, and cannot red a PR.
+# It genuinely cannot be one — it needs network + `gh` auth, which is the whole
+# reason #921 deferred it here.
+#
+# ALL LOGIC LIVES IN bin/label-vocab-reconcile.sh, deliberately: a `run:` block's
+# regressions are re-orderings and deletions that every grep-the-YAML test
+# survives, whereas tests/validate-label-vocab-reconcile.sh can EXECUTE the
+# script against fixtures with a stubbed `gh`.
+
+on:
+  schedule:
+    # 06:23 UTC on Mondays. The label vocabulary changes rarely, and a break is
+    # only actionable when somebody is working — so weekly at the start of the
+    # week, rather than the twice-monthly cadence ai-config-prescan.yml inherited
+    # from #551's documented interval. Off-the-hour per the usual advice about
+    # scheduled jobs stampeding the top of the hour.
+    - cron: "23 6 * * 1"
+  # Escape hatch: the schedule only ever fires on the default branch, so this is
+  # also the ONLY way to exercise the job from a branch or to re-run it on demand
+  # after fixing a finding.
+  workflow_dispatch:
+
+# Least privilege. `contents: read` to check out the declared vocabulary;
+# `issues: read` is what `gh label list` needs. No new secret — GITHUB_TOKEN
+# suffices, unlike the `claude -p` path #907 rejected.
+permissions:
+  contents: read
+  issues: read
+
+# One run at a time PER TRIGGER, and a dispatch is never cancelled.
+#
+# A single group with cancel-in-progress: true defeats this issue's own AC2. The
+# only way to exercise this job — and the only way to confirm GITHUB_TOKEN plus
+# `issues: read` really suffices for `gh label list` — is a manual
+# workflow_dispatch, because a schedule fires only on the default branch. With one
+# shared group, a Monday schedule firing seconds after a dispatch cancels the
+# dispatch, and the operator waiting for that answer silently never gets it. The
+# escape hatch AC2 depends on must not be cancellable by the very cadence it exists
+# to pre-empt.
+#
+# So the group is keyed by EVENT: schedules coalesce among themselves (the newest
+# has the current answer, older ones are redundant), while a dispatch is never
+# cancelled — a run someone is actively waiting on is not the one to discard.
+#
+# WHAT THIS DOES NOT DO. The key is the event name alone, so every dispatch shares
+# the group `label-vocab-reconcile-workflow_dispatch`; it does not give each its own
+# lane. With cancel-in-progress false there, a second dispatch fired while a first
+# is still running QUEUES behind it and starts only when the first finishes (bounded
+# by that job's timeout-minutes, below). That is the intended trade — serialized but
+# never discarded beats parallel but cancellable — and it is written down because an
+# earlier draft of this comment claimed the parallel behavior instead, which is a
+# comment asserting a property the code does not have. Keying the dispatch side by
+# `github.run_id` would make the runs genuinely parallel, and is deliberately not
+# done: concurrent reconciliations of one vocabulary have no reason to overlap.
+concurrency:
+  group: label-vocab-reconcile-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'schedule' }}
+
+jobs:
+  reconcile:
+    name: status/* vocabulary (declared vs live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A scheduled workflow also fires on forks of the default branch, where it
+    # would compare OUR declared vocabulary against the FORK's label set — every
+    # label reading as deleted — and mail the fork owner about it. Pin it here.
+    if: github.repository == 'joshjhall/librarian'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job only READS the tree and queries labels; it never pushes. A
+          # persisted credential in .git/config would outlive the step for no
+          # reason, which contradicts the least-privilege posture the
+          # `permissions:` block above already sets.
+          persist-credentials: false
+
+      # `gh` is preinstalled on ubuntu-latest; the script fails loud (exit 2) if
+      # it is absent, unauthenticated, or returns nothing, rather than reporting
+      # no drift from a query that never ran.
+      - name: Reconcile the declared status/* vocabulary against the live repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash bin/label-vocab-reconcile.sh
