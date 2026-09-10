@@ -91,6 +91,25 @@ _PRESCAN_BIDI_BYTES="$(command printf '\342\200\213|\342\200\214|\342\200\215|\3
 _PRESCAN_BIDI_BYTES="${_PRESCAN_BIDI_BYTES}$(command printf '\342\200\252|\342\200\253|\342\200\254|\342\200\255|\342\200\256|')"
 _PRESCAN_BIDI_BYTES="${_PRESCAN_BIDI_BYTES}$(command printf '\342\201\246|\342\201\247|\342\201\250|\342\201\251|\357\273\277')"
 
+# The leading word-boundary class for the Python listener arm (#841 review).
+#
+# It excludes ASCII identifier characters AND every HIGH BYTE (\200-\377),
+# and the high-byte half is the locale bug fix. Under a UTF-8 locale, grep
+# reads `\303\251` as one letter that `[[:alnum:]]` matches, so a plain
+# `[^[:alnum:]_]` correctly rejects `caf<e-acute>add_reader(`. Under a strict
+# `C` locale the SAME pattern classifies each byte on its own: neither 0303 nor
+# 0251 is alnum, so the negated class matches the trailing byte and the arm
+# FIRES -- while the python twin, whose `re` is Unicode-aware regardless of the
+# OS locale, stays silent. That is a bash-only false positive AND a byte-parity
+# break, on exactly the minimal-container/CI default this fallback targets.
+#
+# Pinning the class rather than forcing a locale, per loc_engine.py's
+# BLANK_RE/INDENT_RE precedent: `LC_ALL=C.UTF-8` is NOT portable (base macOS
+# commonly lacks it), so forcing it would trade a measured bug for a silent one.
+# Built with printf as LITERAL bytes for the #679/#932 reason -- `\200` inside
+# the pattern text is read as literal characters by grep, not as a byte.
+_LISTENER_NOT_WORD="$(command printf '[^[:alnum:]_\200-\377]')"
+
 assert_file_list_shape() {
     local list="$1"
     local tool="${BASH_SOURCE[0]##*/}"
@@ -293,10 +312,9 @@ while IFS= read -r file; do
             # unlike Phase 2's `[^{}]*`, which admitted identifier characters
             # and let `catches { }` through on bash alone.
             #
-            # NON-ASCII: `[[:alnum:]]` is NOT ASCII-only -- measured under both
-            # C and C.UTF-8, it matches a multibyte letter, which is what keeps
-            # this class in step with the twin's Unicode-aware `\w`. See the
-            # twin for why `re.ASCII` must not be added there.
+            # NON-ASCII: the leading class is $_LISTENER_NOT_WORD, which also
+            # excludes high bytes -- see its definition above for why a plain
+            # `[^[:alnum:]_]` diverges from the python twin under a `C` locale.
             #
             # ONE emit_rows, not two, and that is load-bearing for parity:
             # emit_rows greps the WHOLE FILE per call, so a second call would
@@ -308,7 +326,7 @@ while IFS= read -r file; do
             # in order 2,1 while the python twin emits 1,2. A single
             # alternation also keeps a line matching both halves at ONE row,
             # matching the twin's single re.search.
-            emit_rows '(^|[^[:alnum:]_])(signal\.signal|atexit\.register|threading\.Timer)[[:space:]]*\(|(^|[^[:alnum:]_])(add_signal_handler|add_reader|add_writer)[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
+            emit_rows "(^|${_LISTENER_NOT_WORD})(signal\.signal|atexit\.register|threading\.Timer)[[:space:]]*\(|(^|${_LISTENER_NOT_WORD})(add_signal_handler|add_reader|add_writer)[[:space:]]*\(" "unpaired-listener" "$L_LISTENER" "$file"
             ;;
         *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             emit_rows '\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"

@@ -570,29 +570,52 @@ test_unpaired_listener() {
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Python QUALIFIED registration fires (self.loop.add_reader)"
 
-    # NON-ASCII leading boundary -- py/sh parity, pinned (#841 review).
+    # NON-ASCII leading boundary -- py/sh parity under BOTH locales (#841).
     #
-    # The review raised this as a suspected divergence: python `\w` is
-    # Unicode-aware by default while bash `[[:alnum:]_]` was assumed ASCII-only,
-    # which would make a `cafeadd_reader(` (with a multibyte letter) silent in
-    # python and MATCHING in bash. Measured: both stay silent, so there is no
-    # divergence -- but for a reason worth pinning, because the obvious "fix"
-    # would have BROKEN it.
+    # THE LOCALE IS THE POINT, so this runs the scanners under `env -i` with an
+    # explicit locale rather than inheriting the suite's. A first version of
+    # this fixture ran ambient and passed while the bug was live: the box's
+    # LANG=C.UTF-8 meant the C-locale path was never exercised at all.
     #
-    # Python: the multibyte letter IS `\w`, so the leading class rejects.
-    # Bash:   `[[:alnum:]]` matches that letter too (measured under both C and
-    #         C.UTF-8 -- it is NOT ASCII-only as assumed), so the negated class
-    #         rejects as well. The two agree.
-    #
-    # Hence the arm must NOT be given `re.ASCII`: that was the suggested
-    # remedy, and it flips python to MATCHING while bash stays silent --
-    # manufacturing the exact parity break the suggestion aimed to prevent.
-    # This fixture is what stops that edit landing green.
+    # What it pins: python `\w` is Unicode-aware regardless of locale, so
+    # `caf<e-acute>add_reader(` is always rejected there. Bash `[[:alnum:]]` is
+    # locale-SENSITIVE -- under a UTF-8 locale it matches the multibyte letter
+    # and agrees, but under a strict `C` locale it classifies each byte alone,
+    # neither byte is alnum, the negated class matches the trailing byte, and
+    # the arm FIRES. That is a bash-only false positive AND a byte-parity break
+    # on the minimal-container/CI default this fallback targets. The fix is the
+    # high-byte exclusion in `_LISTENER_NOT_WORD`; this fixture is what stops it
+    # being reverted to a plain `[^[:alnum:]_]`.
     d="$(fresh_dir)"
     command printf 'caf\303\251add_reader(fd)\n' >"$d/nonascii.py"
     list="$(make_list "$d/l" "$d/nonascii.py")"
-    assert_silent "$list" unpaired-listener \
-        "lifecycle: Python listener non-ASCII leading boundary is silent in BOTH runtimes (no re.ASCII)"
+
+    for _loc in C C.UTF-8; do
+        _sh_rows="$(/usr/bin/env -i "LANG=$_loc" "LC_ALL=$_loc" "PATH=$PATH" \
+            PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+            command awk -F '\t' '$3 == "unpaired-listener"')"
+        assert_output_empty "$_sh_rows" \
+            "lifecycle: non-ASCII listener boundary silent in bash under LC_ALL=$_loc"
+        if [ "$HAVE_PY" -eq 1 ]; then
+            _py_rows="$(/usr/bin/env -i "LANG=$_loc" "LC_ALL=$_loc" "PATH=$PATH" \
+                python3 "$SK/patterns.py" "$list" 2>/dev/null |
+                command awk -F '\t' '$3 == "unpaired-listener"')"
+            assert_output_empty "$_py_rows" \
+                "lifecycle: non-ASCII listener boundary silent in python under LC_ALL=$_loc"
+        fi
+    done
+
+    # Control for the loop above: a REAL registration must still fire under the
+    # C locale, so the silence asserted there is the boundary working and not
+    # the whole arm going dark.
+    d="$(fresh_dir)"
+    command printf '%s\n' 'loop.add_reader(fd, cb)' >"$d/cloc.py"
+    list="$(make_list "$d/l" "$d/cloc.py")"
+    _sh_ctl="$(/usr/bin/env -i LANG=C LC_ALL=C "PATH=$PATH" \
+        PATTERNS_FORCE_BASH=1 "$REAL_BASH" "$SK/patterns.sh" "$list" 2>/dev/null |
+        command awk -F '\t' '$3 == "unpaired-listener"')"
+    assert_contains "$_sh_ctl" "Listener/timer registered without visible removal" \
+        "lifecycle: a real registration still fires in bash under LC_ALL=C (control)"
 
     # ONE row, not two, for a line matching BOTH halves of the alternation --
     # the property that keeps the single-emit_rows spelling honest. Asserted on

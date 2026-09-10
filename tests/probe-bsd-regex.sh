@@ -250,6 +250,46 @@ info "BRE \\| alternation" "$V" "SUPPORTED on GNU = alternation"
 probe_grep V 'foo' 'f.o' -P
 info "grep -P (PCRE)" "$V" # lint-allow-gnu-regex: report label, not a pattern
 
+# --- REQUIRE: the multibyte word-boundary class (#841) ------------------------
+
+hdr "Multibyte boundary class (the #841 question)"
+
+# check-lifecycle's Python unpaired-listener arm needs a leading word boundary
+# whose behaviour matches its python twin, whose `\w` is Unicode-aware
+# REGARDLESS of the OS locale. A plain `[^[:alnum:]_]` does NOT: under a UTF-8
+# locale grep reads a multibyte letter as one alnum character and rejects the
+# boundary (agreeing with python), but under a strict `C` locale it classifies
+# each BYTE alone, neither byte is alnum, the negated class matches the trailing
+# byte, and the arm FIRES -- a bash-only false positive and a byte-parity break.
+#
+# The fix is to exclude high bytes explicitly. These rows probe that spelling on
+# THIS host, which is the point of running here: the class is asserted in
+# check-lifecycle's fixtures, but tests/validate-lifecycle-detectors.sh runs only
+# on the ubuntu shard, so BSD grep -- the very runtime patterns.sh's fallback
+# exists for -- never sees it there. That is the gap this section closes.
+#
+# REQUIRE, not info: the scanner's parity depends on the answer, so a host where
+# it does not hold must fail loudly rather than report a curiosity.
+
+_MB_NOT_WORD="$(command printf '[^[:alnum:]_\200-\377]')"
+_MB_LINE="$(command printf 'caf\303\251add_reader(fd)')"
+_MB_OK="$(command printf 'loop.add_reader(fd)')"
+
+# The multibyte letter must NOT satisfy the boundary (else: false positive).
+probe_grep_rejects V "$_MB_LINE" "(^|${_MB_NOT_WORD})add_reader[[:space:]]*\(" -E
+require "high-byte class rejects a multibyte boundary" "$V"
+
+# ...while a real registration still matches (else: the arm went dark).
+probe_grep V "$_MB_OK" "(^|${_MB_NOT_WORD})add_reader[[:space:]]*\(" -E
+require "high-byte class still matches a real boundary" "$V"
+
+# The naive spelling, INFO: on a UTF-8 locale it rejects too, so this row says
+# whether THIS host would have hidden the bug. UNSUPPORTED here = rejects =
+# the locale is masking it; SUPPORTED = matches = the false positive is live.
+probe_grep V "$_MB_LINE" '(^|[^[:alnum:]_])add_reader[[:space:]]*\(' -E
+info "plain [^[:alnum:]_] vs multibyte boundary" "$V" \
+    "SUPPORTED means this host/locale exhibits the #841 false positive"
+
 # --- verdict -----------------------------------------------------------------
 
 hdr "Verdict"

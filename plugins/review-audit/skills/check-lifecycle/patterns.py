@@ -146,13 +146,25 @@ def scan_file(path: str, lines: list[str]) -> None:
             # `[^\w]` / `[^[:alnum:]_]`, and the negative fixtures pin the
             # boundary that actually does the work.
             #
-            # NON-ASCII: do NOT add `re.ASCII` here (#841 review). Python's
-            # `\w` is Unicode-aware and bash's `[[:alnum:]]` matches a
-            # multibyte letter too (measured under C and C.UTF-8 -- it is not
-            # ASCII-only), so both runtimes reject a `caf<e-acute>add_reader(`
-            # boundary and AGREE. Forcing re.ASCII flips python to matching
-            # while bash stays silent -- manufacturing a parity break. Pinned by
-            # a fixture in tests/validate-lifecycle-detectors.sh.
+            # NON-ASCII: do NOT add `re.ASCII` here, and note the bash twin's
+            # class is deliberately WIDER than this one (#841 review).
+            #
+            # Python's `\w` is Unicode-aware regardless of the OS locale, so a
+            # `caf<e-acute>add_reader(` boundary is rejected here always. The
+            # bash class is locale-SENSITIVE: under a UTF-8 locale
+            # `[[:alnum:]]` matches the multibyte letter and agrees with this
+            # arm, but under a strict `C` locale it classifies each byte alone,
+            # neither byte is alnum, and the arm FIRES -- a bash-only false
+            # positive and a byte-parity break. The twin therefore excludes
+            # high bytes explicitly (`_LISTENER_NOT_WORD`); read its definition
+            # before touching either spelling.
+            #
+            # An earlier draft of this comment asserted the two agreed "under C
+            # and C.UTF-8". That was measured with `LC_ALL=C` alone while the
+            # ambient `LANG=C.UTF-8` still applied, so the C-locale case was
+            # never actually exercised -- the claim was false and hid this bug.
+            # Re-measure locale behaviour with `env -i`, never by setting one
+            # locale variable over an inherited environment.
             #
             # Note the idiom names above are written WITHOUT a trailing
             # paren on purpose. This scanner has no lexical gating -- every

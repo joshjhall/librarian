@@ -110,17 +110,40 @@ terminator unlike Phase 2's `[^{}]*`, which admitted identifier characters and
 let `catches { }` through on the bash runtime alone. Both edges, and the
 qualified form, are fixture-pinned in both runtimes.
 
-**Do not add `re.ASCII` to the Python arm.** Pre-PR review raised the two
-boundary spellings as a suspected py/sh divergence — Python's `\w` being
-Unicode-aware while `[[:alnum:]_]` was assumed ASCII-only, which would make a
-multibyte letter before the idiom silent in Python and matching in bash.
-Measured: **no divergence.** Python rejects because the letter *is* `\w`, and
-bash rejects because `[[:alnum:]]` matches it too — that class is not ASCII-only
-(verified under both `C` and `C.UTF-8`). The two agree for different reasons,
-which is why the suggested remedy is the dangerous move: forcing `re.ASCII`
-flips Python to matching while bash stays silent, manufacturing the very parity
-break it was meant to prevent. A fixture now pins the agreement and goes red on
-exactly that edit.
+**The leading boundary is locale-proofed, and the story is worth keeping.**
+Pre-PR review raised the two spellings as a suspected py/sh divergence on
+non-ASCII input — Python's `\w` being Unicode-aware while `[[:alnum:]_]` was
+assumed ASCII-only. The first response measured it and "refuted" it. **That
+measurement was wrong, and the bug was real.**
+
+The test set `LC_ALL=C` over an environment whose `LANG` was already
+`C.UTF-8`, so the C-locale path was never exercised; re-run under `env -i`, bash
+**fires** on `caf<é>add_reader(` while Python stays silent. Under a UTF-8 locale
+`[[:alnum:]]` matches the multibyte letter and the two agree; under a strict `C`
+locale grep classifies each byte alone, neither byte is alnum, the negated class
+matches the trailing byte, and the arm emits — a **bash-only false positive** and
+a byte-parity break, on precisely the minimal-container / CI default the bash
+fallback exists to serve.
+
+Three consequences, all load-bearing:
+
+- **The bash class excludes high bytes** (`_LISTENER_NOT_WORD`, built with
+  `printf` as literal bytes per #679/#932). It is deliberately *wider* than the
+  Python side's `[^\w]`; the two spellings differ so the two **behaviours** can
+  match.
+- **The class is pinned, not the locale.** Forcing `LC_ALL=C.UTF-8` would trade a
+  measured bug for a silent one: base macOS commonly lacks that locale. This
+  follows `loc_engine.py`'s `BLANK_RE`/`INDENT_RE` precedent, which pins both
+  impls to an explicit class for the same reason.
+- **Do not add `re.ASCII` to the Python arm.** That was the review's original
+  suggested remedy and it fixes the wrong side — it flips Python to matching and
+  re-opens the divergence from the other direction.
+
+The fixture runs the scanners under `env -i` at **both** `C` and `C.UTF-8`, with
+a control asserting a real registration still fires under `C`. An ambient-locale
+fixture passed while the bug was live, which is the reusable lesson: **measure
+locale behaviour with `env -i`, never by setting one locale variable over an
+inherited environment.**
 
 Rust (#838) is `M` for all four, but two of its arms are spelled differently from
 every other language's and the reason is worth recording:
