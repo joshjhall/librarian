@@ -293,6 +293,11 @@ while IFS= read -r file; do
             # unlike Phase 2's `[^{}]*`, which admitted identifier characters
             # and let `catches { }` through on bash alone.
             #
+            # NON-ASCII: `[[:alnum:]]` is NOT ASCII-only -- measured under both
+            # C and C.UTF-8, it matches a multibyte letter, which is what keeps
+            # this class in step with the twin's Unicode-aware `\w`. See the
+            # twin for why `re.ASCII` must not be added there.
+            #
             # ONE emit_rows, not two, and that is load-bearing for parity:
             # emit_rows greps the WHOLE FILE per call, so a second call would
             # emit all of its rows AFTER the first pattern's -- while the Python

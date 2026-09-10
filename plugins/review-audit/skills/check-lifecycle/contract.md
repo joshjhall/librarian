@@ -110,6 +110,18 @@ terminator unlike Phase 2's `[^{}]*`, which admitted identifier characters and
 let `catches { }` through on the bash runtime alone. Both edges, and the
 qualified form, are fixture-pinned in both runtimes.
 
+**Do not add `re.ASCII` to the Python arm.** Pre-PR review raised the two
+boundary spellings as a suspected py/sh divergence — Python's `\w` being
+Unicode-aware while `[[:alnum:]_]` was assumed ASCII-only, which would make a
+multibyte letter before the idiom silent in Python and matching in bash.
+Measured: **no divergence.** Python rejects because the letter *is* `\w`, and
+bash rejects because `[[:alnum:]]` matches it too — that class is not ASCII-only
+(verified under both `C` and `C.UTF-8`). The two agree for different reasons,
+which is why the suggested remedy is the dangerous move: forcing `re.ASCII`
+flips Python to matching while bash stays silent, manufacturing the very parity
+break it was meant to prevent. A fixture now pins the agreement and goes red on
+exactly that edit.
+
 Rust (#838) is `M` for all four, but two of its arms are spelled differently from
 every other language's and the reason is worth recording:
 

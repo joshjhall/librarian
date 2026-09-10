@@ -146,6 +146,14 @@ def scan_file(path: str, lines: list[str]) -> None:
             # `[^\w]` / `[^[:alnum:]_]`, and the negative fixtures pin the
             # boundary that actually does the work.
             #
+            # NON-ASCII: do NOT add `re.ASCII` here (#841 review). Python's
+            # `\w` is Unicode-aware and bash's `[[:alnum:]]` matches a
+            # multibyte letter too (measured under C and C.UTF-8 -- it is not
+            # ASCII-only), so both runtimes reject a `caf<e-acute>add_reader(`
+            # boundary and AGREE. Forcing re.ASCII flips python to matching
+            # while bash stays silent -- manufacturing a parity break. Pinned by
+            # a fixture in tests/validate-lifecycle-detectors.sh.
+            #
             # Note the idiom names above are written WITHOUT a trailing
             # paren on purpose. This scanner has no lexical gating -- every
             # detector is language-specific, so an unmodeled file is skipped

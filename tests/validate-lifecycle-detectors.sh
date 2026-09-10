@@ -570,6 +570,30 @@ test_unpaired_listener() {
     assert_fires "$list" unpaired-listener "Listener/timer registered without visible removal" \
         "lifecycle: Python QUALIFIED registration fires (self.loop.add_reader)"
 
+    # NON-ASCII leading boundary -- py/sh parity, pinned (#841 review).
+    #
+    # The review raised this as a suspected divergence: python `\w` is
+    # Unicode-aware by default while bash `[[:alnum:]_]` was assumed ASCII-only,
+    # which would make a `cafeadd_reader(` (with a multibyte letter) silent in
+    # python and MATCHING in bash. Measured: both stay silent, so there is no
+    # divergence -- but for a reason worth pinning, because the obvious "fix"
+    # would have BROKEN it.
+    #
+    # Python: the multibyte letter IS `\w`, so the leading class rejects.
+    # Bash:   `[[:alnum:]]` matches that letter too (measured under both C and
+    #         C.UTF-8 -- it is NOT ASCII-only as assumed), so the negated class
+    #         rejects as well. The two agree.
+    #
+    # Hence the arm must NOT be given `re.ASCII`: that was the suggested
+    # remedy, and it flips python to MATCHING while bash stays silent --
+    # manufacturing the exact parity break the suggestion aimed to prevent.
+    # This fixture is what stops that edit landing green.
+    d="$(fresh_dir)"
+    command printf 'caf\303\251add_reader(fd)\n' >"$d/nonascii.py"
+    list="$(make_list "$d/l" "$d/nonascii.py")"
+    assert_silent "$list" unpaired-listener \
+        "lifecycle: Python listener non-ASCII leading boundary is silent in BOTH runtimes (no re.ASCII)"
+
     # ONE row, not two, for a line matching BOTH halves of the alternation --
     # the property that keeps the single-emit_rows spelling honest. Asserted on
     # the row COUNT because assert_fires only proves at least one row.
