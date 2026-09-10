@@ -27,6 +27,8 @@ Subcommands:
   summary    per-spawn prefix stats + prefix x turns attribution (default)
   split      per-spawn cached-vs-written split and billing-weighted cost
   cache      cache HIT/MISS rate and the measured penalty of a miss
+  timing     WHY a miss happens: miss rate against spawn order within a fan-out
+             barrier and against the gap since the previous barrier (#870)
 
 Exit codes: 0 = success; 2 = usage error; 3 = no transcripts found.
 
@@ -39,6 +41,8 @@ CLAUDE.md § Key conventions (runtime policy).
 from __future__ import annotations
 
 import argparse
+import collections
+import datetime
 import json
 import math
 import pathlib
@@ -49,6 +53,23 @@ import sys
 # bills at a tenth; writing an entry costs a 25% premium over base.
 CACHE_READ_MULTIPLIER = 0.1
 CACHE_WRITE_MULTIPLIER = 1.25
+
+# `timing` groups spawns into BARRIERS: consecutive spawns of one session
+# dispatched as a single fan-out. There is no barrier id in the transcript, so
+# the grouping is inferred from dispatch latency — a fan-out's siblings start
+# within a few seconds of each other, while the next cycle is separated by the
+# reviewers' own runtime plus (on a ship) a CI wait.
+#
+# 20s is comfortably above the widest observed intra-barrier spread (the
+# leader->2nd-spawn delta tops out near 19s on a 7-way fan-out) and far below
+# the smallest inter-barrier gap. The verdict is not sensitive to the exact
+# value: the leader/follower split it produces is a ~5x rate difference, which
+# no plausible threshold in that range erases.
+BARRIER_GAP_SECONDS = 20.0
+
+# The Anthropic prompt cache's documented TTL. `timing` buckets the gap before a
+# barrier around it to separate TTL expiry from per-barrier allocation.
+CACHE_TTL_SECONDS = 300.0
 
 MIN_PYTHON = (3, 11)
 
@@ -72,6 +93,23 @@ def transcript_root() -> pathlib.Path:
 def _usage(record: dict) -> dict:
     """Pull the usage block, which sits under `message` on assistant records."""
     return (record.get("message") or {}).get("usage") or record.get("usage") or {}
+
+
+def _parse_ts(raw: object) -> datetime.datetime | None:
+    """Parse a transcript ISO-8601 timestamp, tolerating a trailing `Z`.
+
+    Returns None for anything unparseable rather than raising: a spawn with no
+    usable timestamp simply cannot be placed in a barrier, and dropping it is
+    the same degradation an unreadable sidecar gets. `fromisoformat` accepts `Z`
+    only from 3.11 — which this module already requires — but the explicit
+    replace keeps the parse working if that floor is ever lowered.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _agent_type(jsonl: pathlib.Path) -> str:
@@ -114,6 +152,8 @@ def iter_spawns(root: pathlib.Path):
         input_total = 0
         prompt_chars = 0
         seen_first = False
+        session = None
+        started = None
 
         for line in lines:
             if not line.strip():
@@ -145,6 +185,13 @@ def iter_spawns(root: pathlib.Path):
             if not seen_first:
                 seen_first = True
                 prefix, cached, written = context, read, create
+                # Identity and wall-clock of the FIRST billed turn — the two
+                # fields `timing` clusters on. Taken here rather than from the
+                # transcript's first line because that line may be an unbilled
+                # record, and a spawn's position in a barrier is defined by when
+                # it was billed, not when its file was opened.
+                session = record.get("sessionId")
+                started = _parse_ts(record.get("timestamp"))
 
         if seen_first:
             yield {
@@ -157,6 +204,8 @@ def iter_spawns(root: pathlib.Path):
                 "cache_read": cache_read_total,
                 "input_total": input_total,
                 "prompt_tokens_est": round(prompt_chars / 4),
+                "session": session,
+                "started": started,
             }
 
 
@@ -310,6 +359,174 @@ def cmd_cache(spawns: list[dict]) -> None:
     print(f"total penalty paid           {len(misses) * penalty:,.0f} tok-equiv")
 
 
+def build_barriers(spawns: list[dict]) -> list[list[dict]]:
+    """Group spawns into fan-out barriers, annotating rank and inter-barrier gap.
+
+    A barrier is a run of consecutive same-session spawns each starting within
+    BARRIER_GAP_SECONDS of its predecessor. Spawns missing a session or a
+    timestamp are dropped — they cannot be ordered, and guessing a position
+    would fabricate exactly the signal this report exists to measure.
+
+    Each spawn gains `rank` (0 = the barrier's leader) and each barrier's leader
+    gains `gap_before`: seconds since the END of that session's previous
+    barrier, or None when it is the session's first (a cold start, which has no
+    prior entry to reuse and so belongs in its own category rather than in the
+    largest gap bucket).
+    """
+    ordered = [s for s in spawns if s.get("session") and s.get("started")]
+    ordered.sort(key=lambda s: (s["session"], s["started"]))
+
+    barriers: list[list[dict]] = []
+    for spawn in ordered:
+        current = barriers[-1] if barriers else None
+        if (
+            current
+            and current[-1]["session"] == spawn["session"]
+            and (spawn["started"] - current[-1]["started"]).total_seconds()
+            <= BARRIER_GAP_SECONDS
+        ):
+            current.append(spawn)
+        else:
+            barriers.append([spawn])
+
+    previous_end: dict[str, datetime.datetime] = {}
+    for barrier in barriers:
+        session = barrier[0]["session"]
+        prior = previous_end.get(session)
+        barrier[0]["gap_before"] = (
+            (barrier[0]["started"] - prior).total_seconds() if prior else None
+        )
+        previous_end[session] = barrier[-1]["started"]
+        for rank, spawn in enumerate(barrier):
+            spawn["rank"] = rank
+    return barriers
+
+
+def _rate_row(label: str, misses: int, total: int) -> str:
+    pct = f"{100 * misses / total:.0f}%" if total else "n/a"
+    return f"  {label:<26}{misses:>4}/{total:<5}{pct:>6}"
+
+
+def cmd_timing(spawns: list[dict]) -> None:
+    """Correlate cache misses against spawn order and cycle boundaries (#870).
+
+    #870 named three hypotheses — a 5-minute TTL expiring between review cycles,
+    barrier scheduling racing to populate the cache, and cold-start floor — and
+    asked for timing evidence BEFORE any fix, because the first two make
+    distinguishable predictions. This report is that evidence. The measured
+    answer is that the first two are BOTH real: a barrier's leader carries the
+    great majority of misses (the barrier effect) and its miss probability then
+    climbs with the gap since the previous barrier (the TTL effect).
+    """
+    barriers = build_barriers(spawns)
+    if not barriers:
+        print(
+            "no spawn carries both a sessionId and a timestamp — "
+            "cannot reconstruct barriers from this corpus"
+        )
+        return
+
+    placed = sum(len(b) for b in barriers)
+    print(f"spawns placed in barriers   {placed:,} of {len(spawns):,}")
+    print(f"barriers                    {len(barriers):,}")
+    print(f"barrier gap threshold       {BARRIER_GAP_SECONDS:.0f}s\n")
+
+    # --- Spawn order: does position within the fan-out predict a miss? --------
+    by_rank: dict[int, list[int]] = collections.defaultdict(lambda: [0, 0])
+    for barrier in barriers:
+        for spawn in barrier:
+            # Rank 5+ is pooled: past the fifth sibling the per-rank samples are
+            # too thin to read, and the question is leader-vs-follower anyway.
+            by_rank[min(spawn["rank"], 5)][not spawn["cached"]] += 1
+
+    print("rank within barrier (0 = the spawn that opens the fan-out):")
+    print(f"  {'rank':<26}{'miss':>4}/{'n':<5}{'rate':>6}")
+    for rank in sorted(by_rank):
+        hits, misses = by_rank[rank]
+        label = "5+" if rank == 5 else str(rank)
+        print(_rate_row(label, misses, hits + misses))
+
+    # --- Cycle boundaries: does the gap before a barrier predict a miss? -----
+    buckets = [
+        ("0-30s", 0.0, 30.0),
+        ("30-60s", 30.0, 60.0),
+        ("60-120s", 60.0, 120.0),
+        ("120-300s", 120.0, CACHE_TTL_SECONDS),
+        ("300-600s", CACHE_TTL_SECONDS, 600.0),
+        ("600s+", 600.0, float("inf")),
+    ]
+    by_gap: dict[str, list[int]] = collections.defaultdict(lambda: [0, 0])
+    cold = [0, 0]
+    for barrier in barriers:
+        leader = barrier[0]
+        gap = leader["gap_before"]
+        if gap is None:
+            cold[not leader["cached"]] += 1
+            continue
+        for label, low, high in buckets:
+            if low <= gap < high:
+                by_gap[label][not leader["cached"]] += 1
+                break
+
+    print("\nleader miss rate by gap since the session's previous barrier")
+    print(f"  (TTL is {CACHE_TTL_SECONDS:.0f}s — a pure-TTL cause would step there and")
+    print("   be flat below it):")
+    print(f"  {'gap':<26}{'miss':>4}/{'n':<5}{'rate':>6}")
+    for label, _low, _high in buckets:
+        hits, misses = by_gap[label]
+        if hits + misses:
+            print(_rate_row(label, misses, hits + misses))
+    if sum(cold):
+        print(_rate_row("cold (session's first)", cold[1], sum(cold)))
+
+    # --- Attribution: where does the penalty actually accrue? ----------------
+    #
+    # Cost per miss is derived exactly as cmd_cache derives it — the shared block
+    # inferred from the difference of the two group means, priced at the spread
+    # between the write and read multipliers. Re-deriving the cost model here
+    # would let the two reports disagree about the same corpus.
+    hits = [s for s in spawns if s["cached"]]
+    misses = [s for s in spawns if not s["cached"]]
+    shared = 0.0
+    if hits and misses:
+        shared = statistics.mean(s["written"] for s in misses) - statistics.mean(
+            s["written"] for s in hits
+        )
+    penalty = max(0.0, (CACHE_WRITE_MULTIPLIER - CACHE_READ_MULTIPLIER) * shared)
+
+    categories: collections.Counter[str] = collections.Counter()
+    for barrier in barriers:
+        for spawn in barrier:
+            if spawn["cached"]:
+                continue
+            if spawn["rank"] > 0:
+                categories["follower (within a barrier)"] += 1
+            elif spawn["gap_before"] is None:
+                categories["leader, session cold start"] += 1
+            elif spawn["gap_before"] > CACHE_TTL_SECONDS:
+                categories["leader, gap > TTL"] += 1
+            else:
+                categories["leader, gap <= TTL"] += 1
+
+    total_misses = sum(categories.values())
+    print("\nmiss attribution:")
+    if not total_misses:
+        print("  no misses in this corpus")
+        return
+    for name, count in categories.most_common():
+        share = 100 * count / total_misses
+        cost = f"{count * penalty:,.0f} tok-equiv" if penalty else "n/a"
+        print(f"  {name:<30}{count:>4}  ({share:>3.0f}%)  {cost:>22}")
+    if penalty:
+        print(f"\n  total penalty              {total_misses * penalty:,.0f} tok-equiv")
+    else:
+        # Same refusal cmd_cache makes: without both groups (or with an inverted
+        # sample) the shared block cannot be sized, and a fabricated cost is
+        # worse than an absent one.
+        print("\n  (cost per miss unavailable — this sample cannot size the")
+        print("   shared block; see the `cache` subcommand)")
+
+
 def main(argv: list[str] | None = None) -> int:
     _require_python()
 
@@ -321,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         "subcommand",
         nargs="?",
         default="summary",
-        choices=("summary", "split", "cache"),
+        choices=("summary", "split", "cache", "timing"),
         help="which report to emit (default: summary)",
     )
     parser.add_argument(
@@ -346,9 +563,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 3
 
-    {"summary": cmd_summary, "split": cmd_split, "cache": cmd_cache}[args.subcommand](
-        spawns
-    )
+    {
+        "summary": cmd_summary,
+        "split": cmd_split,
+        "cache": cmd_cache,
+        "timing": cmd_timing,
+    }[args.subcommand](spawns)
     return 0
 
 
