@@ -280,6 +280,30 @@ while IFS= read -r file; do
             emit_rows '\b(subprocess\.)?Popen[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"
             emit_rows '\.terminate[[:space:]]*\(\)' "terminate-without-kill" "$L_TERMINATE" "$file"
             emit_rows '=[[:space:]]*open[[:space:]]*\(' "unclosed-handle" "$L_HANDLE" "$file"
+            # Registration sites (#841) -- signal handler, exit hook, timer
+            # thread, asyncio loop callback. Twin of the patterns.py arm; see
+            # there for why threading.Timer is in and a bare `Timer(` is not.
+            #
+            # BOTH boundaries spelled long-hand: `\w` and `\b` are GNU
+            # extensions BSD grep reads as literals, so the leading side is a
+            # negated bracket class. It admits `.` on purpose -- see the twin in
+            # patterns.py for the measurement (excluding `.` bought no negative
+            # and silenced the qualified true positives). The trailing side is
+            # carried by the REQUIRED `[[:space:]]*\(`, a genuine terminator
+            # unlike Phase 2's `[^{}]*`, which admitted identifier characters
+            # and let `catches { }` through on bash alone.
+            #
+            # ONE emit_rows, not two, and that is load-bearing for parity:
+            # emit_rows greps the WHOLE FILE per call, so a second call would
+            # emit all of its rows AFTER the first pattern's -- while the Python
+            # twin walks line by line. A file registering an add_reader above a
+            # signal.signal would then differ in ROW ORDER, which
+            # validate-python-ports.sh compares byte-for-byte. MEASURED, not
+            # reasoned: on that two-line file the two-call spelling emits rows
+            # in order 2,1 while the python twin emits 1,2. A single
+            # alternation also keeps a line matching both halves at ONE row,
+            # matching the twin's single re.search.
+            emit_rows '(^|[^[:alnum:]_])(signal\.signal|atexit\.register|threading\.Timer)[[:space:]]*\(|(^|[^[:alnum:]_])(add_signal_handler|add_reader|add_writer)[[:space:]]*\(' "unpaired-listener" "$L_LISTENER" "$file"
             ;;
         *.[Jj][Ss] | *.[Tt][Ss] | *.[Jj][Ss][Xx] | *.[Tt][Ss][Xx] | *.[Mm][Jj][Ss] | *.[Cc][Jj][Ss])
             emit_rows '\b(spawn|spawnSync|exec|execFile|execFileSync|execSync)[[:space:]]*\(' "unreaped-subprocess" "$L_SUBPROCESS" "$file"

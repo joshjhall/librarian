@@ -47,6 +47,16 @@ category is LLM-side and declares no per-language arms.
 This is the broadest coverage of the four scanners, and the only one that models
 Rust and Bash today.
 
+**The Python row's doc marker is why docstrings stay lexically visible (#841).**
+This scanner's Python arm keys on `"""` — it is the *only* thing that
+distinguishes a documented `def` from an undocumented one. Phase 4 considered
+teaching the shared lexical model to treat a `"""…"""` block as a comment, and
+rejected it partly for that reason: a model that hid docstrings would make this
+arm report every documented Python symbol as undocumented. The full decision,
+with its measured cost, lives in `check-code-health/contract.md` § *Python
+docstrings are NOT modeled as comments*. Read it before proposing a
+block-comment dimension here.
+
 Two things about the Swift row (#839) are worth stating rather than inferring:
 
 - **Both public access levels count.** Swift's default is `internal`, so an
