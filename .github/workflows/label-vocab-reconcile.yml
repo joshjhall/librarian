@@ -54,13 +54,24 @@ permissions:
   contents: read
   issues: read
 
-# One run at a time. A dispatch during a scheduled run (or a burst of dispatches
-# while somebody is fixing a finding) otherwise piles up identical read-only jobs
-# racing to report the same vocabulary. The newest run is the one whose answer is
-# current, so in-progress runs are cancelled rather than queued.
+# One run at a time PER TRIGGER, and a dispatch is never cancelled.
+#
+# A single group with cancel-in-progress: true defeats this issue's own AC2. The
+# only way to exercise this job — and the only way to confirm GITHUB_TOKEN plus
+# `issues: read` really suffices for `gh label list` — is a manual
+# workflow_dispatch, because a schedule fires only on the default branch. With one
+# shared group, a Monday schedule firing seconds after a dispatch cancels the
+# dispatch, and the operator waiting for that answer silently never gets it. The
+# escape hatch AC2 depends on must not be cancellable by the very cadence it exists
+# to pre-empt.
+#
+# So the group is keyed by EVENT: schedules coalesce among themselves (the newest
+# has the current answer, older ones are redundant), while every dispatch runs in
+# its own lane and is left alone. cancel-in-progress is false for dispatch —
+# a re-run someone is actively waiting on is never the run to discard.
 concurrency:
-  group: label-vocab-reconcile
-  cancel-in-progress: true
+  group: label-vocab-reconcile-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'schedule' }}
 
 jobs:
   reconcile:

@@ -92,12 +92,29 @@ fi
 # bare "command not found" at whatever line reaches it first, which is the one
 # outcome the loop exists to prevent. sed/grep/mktemp are near-universal, but
 # "near-universal" is not the contract this script claims for itself.
-# `find` is used TRANSITIVELY, by declared_status_labels in bin/lib/label-vocab.sh
-# — the sourced library is as much a dependency as a direct call, and omitting it
-# meant an absent `find` died with a bare "find: command not found" and an
-# undocumented exit code instead of the curated FATAL/2 this loop promises. `rm`
-# runs in the EXIT trap, where a failure would silently skip cleanup.
-for tool in gh sort comm awk sed grep mktemp find rm; do
+# THE LIST IS DERIVED, NOT CURATED — and its comment used to lie. It claimed to
+# cover "EVERY runtime dependency" while omitting first `find`, then `tr`; a
+# comment asserting what the code lacks is its own defect, because it stops the
+# next reader from checking. So here is the derivation instead of the claim:
+#
+#   grep -ohE 'command [a-z-]+' bin/label-vocab-reconcile.sh bin/lib/label-vocab.sh
+#
+# yields awk comm find gh grep mktemp printf rm sed sort tr. `printf` is a bash
+# BUILTIN — measured working on an empty PATH — so it is not a PATH dependency and
+# is deliberately absent below. Every other name is here. `find` arrives
+# TRANSITIVELY through declared_status_labels in the sourced library (a sourced
+# dependency is still a dependency), and `rm` runs only in the EXIT trap.
+#
+# `tr` IS THE ONE THAT PROVED WHY THIS MATTERS. It is used by md_safe, which is
+# called as `emit "- \`$(md_safe "$lbl")\`"` — a command substitution embedded in a
+# larger argument. Under `set -e` bash treats a failing substitution as fatal ONLY
+# as the direct RHS of a simple assignment, so an absent `tr` did not abort:
+# measured, the label rendered as an EMPTY STRING and the run exited 0. A missing
+# tool silently blanking a finding is precisely the failure this whole script is
+# built to refuse, and the preflight is the only thing standing between them.
+#
+# Adding a `command <tool>` call to this script means adding it here.
+for tool in gh sort comm awk sed grep mktemp find rm tr; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         command printf 'label-vocab-reconcile: FATAL — %s not found on PATH.\n' "$tool" >&2
         command printf '  This job needs network + gh auth by design; refusing to report no drift.\n' >&2

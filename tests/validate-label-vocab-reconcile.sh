@@ -535,6 +535,29 @@ test_refactored_offline_gate_still_enforces_both_rules() {
     assert_exit 1 "$rc" "Rule 1 still fires after the parser was extracted"
     assert_contains "$out" "status/ghost" "and names the undeclared label"
 
+    # RULE 2, which this test's NAME promised and its body did not deliver. The
+    # extraction only touched Rule 1's parser, so Rule 2 was never at risk — but the
+    # name asserted it had been re-verified, and a name claiming coverage that does
+    # not exist is worse than the omission: it stops the next reader from checking.
+    # Planting a combined add+remove call is a two-line fixture, so the honest fix is
+    # to make the name true rather than to narrow it.
+    rc=0
+    command printf 'Run `gh issue edit 1 --add-label a --remove-label b` to move it.\n' \
+        >>"$box/plugins/p/skills/s/SKILL.md"
+    out="$(/usr/bin/env -uBASH_ENV "$REAL_BASH" --noprofile --norc \
+        "$box/tests/lint-status-label-refs.sh" 2>&1)" || rc=$?
+    assert_exit 1 "$rc" "Rule 2 still fires after the refactor"
+    assert_contains "$out" "COMBINED add+remove" "and names the violated rule"
+    # Its documented ellipsis carve-out must survive too: prose that quotes the
+    # forbidden shape in order to FORBID it is not an instance of it.
+    command rm -f "$box/plugins/p/skills/s/SKILL.md"
+    rc=0
+    command printf 'Use `status/in-progress`. Never `gh issue edit --add-label … --remove-label …`.\n' \
+        >"$box/plugins/p/skills/s/SKILL.md"
+    out="$(/usr/bin/env -uBASH_ENV "$REAL_BASH" --noprofile --norc \
+        "$box/tests/lint-status-label-refs.sh" 2>&1)" || rc=$?
+    assert_exit 0 "$rc" "the ellipsis carve-out still exempts prose that forbids the pattern"
+
     # The new fail-loud branch: no library -> exit 2, never an empty vocabulary.
     rc=0
     command rm -f "$box/bin/lib/label-vocab.sh"
@@ -815,6 +838,51 @@ test_shared_library_is_syntactically_valid() {
     assert_exit 0 "$rc" "tests/lint-status-label-refs.sh parses"
 }
 
+test_missing_tr_fails_loud_instead_of_blanking_a_label() {
+    local box out rc=0 t src
+    box="$(make_sandbox status/in-progress)"
+    stub_gh "$box" ok status/in-progress 'status/x[bad]'
+
+    # `tr` ABSENT, everything else present. This is the arm that made the omission
+    # dangerous rather than untidy: md_safe runs inside a command substitution
+    # embedded in a larger argument (`emit "- \`$(md_safe …)\`"`), and under `set -e`
+    # bash treats a failing substitution as fatal ONLY as the direct RHS of a simple
+    # assignment. Measured before the fix: the run did not abort, the label rendered
+    # as an EMPTY STRING, and it exited 0 — a finding silently blanked by a missing
+    # tool, on the one report whose value is being believed.
+    command mkdir -p "$box/notr"
+    # `dirname` is in this list even though the preflight does not check it: it runs
+    # at line 1 to resolve SCRIPT_DIR, BEFORE the preflight exists to diagnose
+    # anything, so omitting it made the mutation run die there instead of at the
+    # `tr` check — again a fixture failure impersonating a subject one. The sandbox
+    # must supply everything the script needs EXCEPT the one tool under test.
+    # `env` and `bash` are here because the gh SHIM's own shebang is
+    # `#!/usr/bin/env bash` — without them the shim cannot start, gh "fails", and the
+    # run dies at the gh-failure branch rather than at the `tr` check. That is the
+    # third distinct layer of this fixture that impersonated a subject failure while
+    # only the sandbox was wrong; each was found by re-reading the mutation's actual
+    # diagnostic instead of accepting FAIL as proof.
+    for t in gh sort comm awk sed grep mktemp find rm cat dirname pwd env bash; do
+        src="$(command -v "$t" 2>/dev/null)" || continue
+        [ -n "$src" ] || continue
+        command ln -sf "$src" "$box/notr/$t" 2>/dev/null || true
+    done
+    # The gh shim must still resolve, so link it in rather than prepending its dir.
+    # A `cp` here fails once `tr` is removed from the preflight during a mutation
+    # run (the sandbox dir is built before `cp` is on the stubbed PATH), which made
+    # the mutation look like it fired for the right reason when it had not — the
+    # fixture-failure-wearing-a-subject-failure shape. A symlink needs no copy.
+    command ln -sf "$box/ghbin/gh" "$box/notr/gh"
+
+    out="$(/usr/bin/env -uBASH_ENV PATH="$box/notr" LABEL_VOCAB_ROOT="$box" \
+        "$REAL_BASH" --noprofile --norc "$RECONCILE_SH" 2>&1)" || rc=$?
+    assert_exit 2 "$rc" "an absent tr exits 2 at the preflight, never 0 with a blank label"
+    assert_contains "$out" "tr not found" "the diagnostic names the missing tool"
+    # The negative half: it must fail BEFORE reporting, not report emptily.
+    assert_not_contains "$out" "No drift" "no verdict is emitted"
+    assert_not_contains "$out" "- \`\`" "no label is rendered as an empty code span"
+}
+
 # --- one parser, two callers (#663) -----------------------------------------
 
 test_shared_parser_is_the_only_parser() {
@@ -868,6 +936,21 @@ test_workflow_is_dispatchable_and_informational() {
     assert_file_exists "$wf" "the scheduled workflow exists"
     assert_file_contains "$wf" "workflow_dispatch:" \
         "AC2: dispatchable, since the schedule only ever fires on the default branch"
+    # AC2's escape hatch must not be cancellable by the cadence it pre-empts. A
+    # single concurrency group with an unconditional cancel-in-progress lets a
+    # schedule firing seconds after a dispatch kill the dispatch — and the dispatch
+    # is the ONLY way to exercise this job or to confirm the token's permissions.
+    assert_file_contains "$wf" 'group: label-vocab-reconcile-\${{ github.event_name }}' \
+        "the concurrency group is keyed by event, so a schedule cannot cancel a dispatch"
+    # Anchored to the SETTING, at line start. The bare phrase also appears in the
+    # comment that EXPLAINS why the setting is conditional, so an unanchored
+    # not-contains failed on the file's own rationale — the
+    # prose-that-forbids-the-pattern-is-not-an-instance-of-it shape this repo already
+    # carves out elsewhere.
+    assert_file_not_contains "$wf" "^  cancel-in-progress: true" \
+        "cancel-in-progress is conditional, never unconditionally true"
+    assert_file_contains "$wf" "github.event_name == 'schedule'" \
+        "only schedules coalesce; a dispatch someone is waiting on is left alone"
     assert_file_contains "$wf" "cron:" "it is scheduled"
     assert_file_contains "$wf" "issues: read" "gh label list needs issues: read"
     # AC3 is structural — it cannot fail a PR because nothing aggregates it. The
@@ -933,6 +1016,7 @@ run_test test_parser_ignores_trailing_comments_and_quotes "the shared parser tri
 run_test test_a_hash_inside_a_label_name_is_not_a_comment "a # inside a label name is not a comment"
 run_test test_first_temp_file_is_cleaned_when_second_mktemp_fails "the trap re-arm: no temp file is orphaned by a later mktemp failure"
 run_test test_refactored_offline_gate_still_enforces_both_rules "the refactored offline gate is EXECUTED, not grepped"
+run_test test_missing_tr_fails_loud_instead_of_blanking_a_label "an absent tr fails loud instead of blanking a label"
 run_test test_autolink_in_a_label_name_is_neutralized "a bare url in a label name cannot become an autolink"
 run_test test_shared_library_is_syntactically_valid "every shipped script parses (a comment apostrophe can break the awk block)"
 run_test test_reconciler_missing_shared_parser_exits_two "the reconciler's OWN missing-parser guard exits 2 (the twin)"
