@@ -84,6 +84,12 @@ run_stage "Namespaced slash-command refs" bash "$SCRIPT_DIR/lint-command-refs.sh
 run_stage "READONLY harness wording" bash "$SCRIPT_DIR/lint-readonly-harness.sh"
 run_stage "Prose-vs-code env var drift" bash "$SCRIPT_DIR/lint-env-var-drift.sh"
 run_stage "Adversarial-review harness refs" bash "$SCRIPT_DIR/lint-harness-refs.sh"
+# The same prose-drift class as the line above (#890): background-work.md named
+# ship-issue/ as a consumer while ship-issue referenced it ZERO times, and all
+# five measured false-idles happened there. The classifier fix (#954) and the
+# registry (#949) both landed; this gate covers whether the skills that START
+# background work actually say so.
+run_stage "Background-work registration refs" bash "$SCRIPT_DIR/lint-background-work-refs.sh"
 # The same prose-drift class, one contract over (#886): KNOWN_ARG_KEYS is the
 # authority for the review harness's accepted `args` keys, and six prose copies
 # restate it. The #597 runtime guard catches an INVENTED key but is structurally

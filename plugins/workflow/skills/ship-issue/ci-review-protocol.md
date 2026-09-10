@@ -138,7 +138,9 @@ iteration counter by hand.
   (`pre-ship-validation.md` Step 3.5 b, `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`): the
   `ci-fixer` harness is budget-bounded but not wall-clock-bounded, and a stuck
   fixer agent would otherwise hang the ship (#224). Invoke it as a background
-  task and, at each poll, **call**
+  task — **register it** (`golem-work.sh register workflow "ci-fixer"`, complete
+  when it returns; `golem/background-work.md`), since a backgrounded harness is
+  exactly the shape #890 measured as a false idle — and, at each poll, **call**
   `${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh check --elapsed-min
   <acc> --level {N} --extensions-used <k>` for the stop `verdict` rather than
   re-deriving the threshold in prose (#327) — on `stop`, `TaskStop` it. Treat a
@@ -219,6 +221,12 @@ Run the loop with `cycle = 1`, `cap = REVIEW_MAX_CYCLES` (default 5), `attempt =
 1`, and `attempt_cap = REVIEW_MAX_ATTEMPTS` (default `2 × cap`). `cycle` counts
 cycles that produced a review; `attempt` counts every trip including crashed ones
 — see step (f) (#616):
+
+**Register each harness re-run as background work** (#890) — `golem-work.sh
+register workflow`, `complete` when the cycle returns. Every cycle re-runs the
+`Workflow` harness and ends its turn while the fan-out is still running, so an
+unregistered loop reads as an idle golem for its whole duration. Protocol:
+`golem/background-work.md`.
 
 a. **Gather the changed scope** (now includes any CI fixes):
 
