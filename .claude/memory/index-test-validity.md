@@ -51,6 +51,7 @@ evidence a fix works, and before reporting a mutation round's verdict.
 
 - [Mutate after every security fixture](mutate-after-every-security-fixture.md) — 2 injection fixtures passed without the fix too (#596)
 - [Mutate every RULE, not every test](mutation-round-finds-the-untested-rule.md) — the rule with 0 failures is the one the round exists to find
+- [A surviving mutant may be a no-op](surviving-mutant-may-be-a-noop.md) — overwritten or unreachable; diff mutant vs original OUTPUT before blaming the test (#870)
 - [Mutation harness keyed on exit code](mutation-harness-keyed-on-exit-code.md) — ALL rules "survived" means the harness is blind; key on FAIL count, verify one by hand
 - [Mutation restore is never git checkout](mutation-restore-must-not-be-git-checkout.md) — reverts to HEAD and DELETES the uncommitted fix; snapshot-copy instead
 - [Untracked file survives a checkout restore](untracked-file-survives-git-checkout-restore.md) — `git checkout` leaves an untracked mutation in place; remove it explicitly
