@@ -138,9 +138,9 @@ iteration counter by hand.
   (`pre-ship-validation.md` Step 3.5 b, `LIBRARIAN_WORKFLOW_WALL_TIMEOUT`): the
   `ci-fixer` harness is budget-bounded but not wall-clock-bounded, and a stuck
   fixer agent would otherwise hang the ship (#224). Invoke it as a background
-  task — **register it** (`golem-work.sh register workflow "ci-fixer"`, complete
-  when it returns; `golem/background-work.md`), since a backgrounded harness is
-  exactly the shape #890 measured as a false idle — and, at each poll, **call**
+  task — **register it** with `golem-work.sh` (`register workflow`/`complete`;
+  runnable recipe in `golem/background-work.md`), since a backgrounded harness is
+  the shape #890 measured as a false idle — and, at each poll, **call**
   `${CLAUDE_PLUGIN_ROOT}/scripts/workflow-wall-timeout.sh check --elapsed-min
   <acc> --level {N} --extensions-used <k>` for the stop `verdict` rather than
   re-deriving the threshold in prose (#327) — on `stop`, `TaskStop` it. Treat a

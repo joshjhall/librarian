@@ -120,26 +120,43 @@ fi
 # wrapped-phrase window. The last line of a section joins nothing, correctly — a
 # phrase cannot wrap past the end of its own section.
 SCAN_AWK='
+# trigger_on(t) — does t carry a COMPLETE background-work trigger? ONE predicate,
+# used both to detect a match and to attribute it to a line, so the two can never
+# disagree. A cycle-1 review found them disagreeing: attribution used a loose
+# /[Ii]nvoke/ keyword, which claimed any window whose FIRST line merely contained
+# "invoked"/"invoking"/"revoke" while the real, unwrapped trigger sat entirely on
+# the second — reproduced, then fixed by factoring the regex out to here.
+function trigger_on(t) {
+    if (t ~ /\*\*[Ii]nvoke[[:space:]]+the[[:space:]]+`?Workflow`?[[:space:]]+tool\*\*/) return 1
+    if (t ~ /\*\*[Rr]un\*\*[[:space:]]+the[[:space:]]+`?Workflow`?[[:space:]]+tool/) return 1
+    if (t ~ /[Ii]nvoke it as a background task/) return 1
+    if (t ~ /run_in_background/) return 1
+    return 0
+}
 function flush(   i, two, hit, named, hitline) {
     if (nsec == 0) return
     hit = 0; named = 0; hitline = 0
     for (i = 1; i <= nsec; i++) {
         two = sec[i] (i < nsec ? " " sec[i + 1] : "")
-        if (two ~ /\*\*[Ii]nvoke[[:space:]]+the[[:space:]]+`?Workflow`?[[:space:]]+tool\*\*/ ||
-            two ~ /\*\*[Rr]un\*\*[[:space:]]+the[[:space:]]+`?Workflow`?[[:space:]]+tool/ ||
-            two ~ /[Ii]nvoke it as a background task/ ||
-            two ~ /run_in_background/) {
+        if (trigger_on(two)) {
             if (!hit) {
                 hit = 1
-                # Report the line the trigger actually starts on, which on a
-                # wrapped match is sec[i] and on a heading-plus-first-line window
-                # is sec[i+1]. Reporting the window opener instead would point an
-                # author at a heading that carries no prose.
-                # Key on the trigger OPENING token, not on the word Workflow.
-                # On a wrapped match the first line holds the bolded Invoke and
-                # Workflow lands on the SECOND, so keying on Workflow reports the
-                # continuation line while the author eye is on the opening one.
-                hitline = (sec[i] ~ /[Ii]nvoke|\*\*[Rr]un\*\*|run_in_background/) ? secln[i] : secln[i + 1]
+                # WHICH line to report. Three cases, and the ORDER matters:
+                #
+                #  1. sec[i] alone carries a complete trigger -> secln[i].
+                #  2. sec[i+1] alone carries one -> secln[i+1]. The join matched
+                #     only because it CONTAINS that line; sec[i] is unrelated
+                #     prose that happens to precede it. Reporting sec[i] here is
+                #     the cycle-1 defect: "We already invoked the setup earlier"
+                #     got blamed for a trigger entirely on the next line.
+                #  3. neither alone, only the join -> a genuine WRAP, so the
+                #     trigger opens on sec[i] -> secln[i].
+                #
+                # Case 2 must be tested BEFORE case 3, since a wrap and a
+                # trailing-line match are indistinguishable from the join alone.
+                if (trigger_on(sec[i])) hitline = secln[i]
+                else if (i < nsec && trigger_on(sec[i + 1])) hitline = secln[i + 1]
+                else hitline = secln[i]
             }
         }
         if (sec[i] ~ /golem-work\.sh/) named = 1
@@ -162,18 +179,49 @@ END { flush() }
 # per offending section (empty when the file is clean).
 CUR_FILE=""
 CUR_VIOLATIONS=""
+# FAIL LOUD ON A SCAN THAT COULD NOT RUN, never quietly "clean" (review cycle 1).
+# The earlier form ended `2>/dev/null || true`, which folded an awk RUNTIME error
+# into the same empty output as a clean file — so a per-file failure (an
+# unexpected byte sequence, a platform regex quirk) would read as "this file has
+# no unregistered background work". That is the silence-reads-as-a-pass shape this
+# repo keeps filing issues about (#538, #571), arriving per-file instead of
+# per-gate: the 77 sentinel covers an ABSENT awk, and nothing covered a PRESENT
+# awk that failed.
+#
+# Runs awk to a temp file first so the exit status is the AWK's, not a pipeline's
+# last stage — a `while read` fed by a process substitution discards it entirely.
+# CUR_SCAN_ERR is set (not printed) so the caller decides how loudly to surface it;
+# scan_file's own contract is "either accurate rows or a flagged failure".
+CUR_SCAN_ERR=""
 scan_file() {
     local file="$1"
     CUR_VIOLATIONS=""
-    local row lineno hdr rel
+    CUR_SCAN_ERR=""
+    local row lineno hdr rel out err rc=0
     rel="${file#"$REPO_ROOT"/}"
+    out="$(command mktemp)" || {
+        CUR_SCAN_ERR="mktemp failed"
+        return 0
+    }
+    err="$(command mktemp)" || {
+        command rm -f "$out"
+        CUR_SCAN_ERR="mktemp failed"
+        return 0
+    }
+    command awk "$SCAN_AWK" "$file" >"$out" 2>"$err" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        CUR_SCAN_ERR="awk exited $rc on $rel: $(command tr '\n' ' ' <"$err" | command cut -c1-200)"
+        command rm -f "$out" "$err"
+        return 0
+    fi
     while IFS= read -r row; do
         [ -n "$row" ] || continue
         lineno="${row%%:*}"
         hdr="${row#*:}"
         [ -n "$hdr" ] || hdr="(file head, before the first heading)"
         CUR_VIOLATIONS+="${rel}:${lineno}: under ${hdr}"$'\n'
-    done < <(command awk "$SCAN_AWK" "$file" 2>/dev/null || true)
+    done <"$out"
+    command rm -f "$out" "$err"
 }
 
 # --- Corpus -------------------------------------------------------------------
@@ -229,6 +277,11 @@ build_detail() {
 # attributable to the file that caused it.
 test_file_background_work_refs() {
     scan_file "$CUR_FILE"
+    # A scan that could not RUN learned nothing — never render it as a pass.
+    if [ -n "$CUR_SCAN_ERR" ]; then
+        _fail "SCAN DID NOT RUN for $(command basename "$CUR_FILE") — $CUR_SCAN_ERR"
+        return 0
+    fi
     if [ -n "$CUR_VIOLATIONS" ]; then
         build_detail "$CUR_VIOLATIONS"
         _fail "Background work started without the registry named in $(command basename "$CUR_FILE") — name \`golem-work.sh\` or \`golem/background-work.md\` in the same section (#890)" \
@@ -443,6 +496,108 @@ FIXTURE
         "The window does not join lines across a heading boundary"
 }
 
+# Pins the FAIL-LOUD scan path (review cycle 1). A scan that could not run
+# learned nothing, so it must never render as "clean" — the per-file arm of the
+# #538/#571 silence-reads-as-a-pass rule. Forces a real awk failure by handing the
+# scanner a syntactically invalid program, which is the only way to exercise the
+# branch without waiting for a platform quirk.
+test_scan_failure_is_loud_not_clean() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    command cat >"$tmp/subject.md" <<'FIXTURE'
+## An unregistered site
+   b. **Invoke the `Workflow` tool** with the bundled script.
+FIXTURE
+
+    # Control: with the real program the file is flagged, so the fixture is
+    # genuinely scannable and the mutation below is what changes the outcome.
+    scan_file "$tmp/subject.md"
+    assert_not_empty "$CUR_VIOLATIONS" "Control: the fixture is flagged by the real program"
+    assert_equals "" "$CUR_SCAN_ERR" "Control: a healthy scan reports no error"
+
+    # Now break the program itself and re-scan the SAME file.
+    local saved="$SCAN_AWK"
+    SCAN_AWK='function { syntax error'
+    scan_file "$tmp/subject.md"
+    local broke_err="$CUR_SCAN_ERR" broke_rows="$CUR_VIOLATIONS"
+    SCAN_AWK="$saved"
+
+    assert_not_empty "$broke_err" \
+        "A failing awk sets CUR_SCAN_ERR instead of yielding a silent clean file"
+    assert_equals "" "$broke_rows" \
+        "A failed scan reports NO rows (it cannot know them) rather than partial ones"
+    assert_contains "$broke_err" "awk exited" \
+        "The error names the failure and its file (actionable, not silent)"
+
+    # And the per-file test body must FAIL on that state rather than pass.
+    CUR_FILE="$tmp/subject.md"
+    SCAN_AWK='function { syntax error'
+    local out rc=0
+    out="$(test_file_background_work_refs 2>&1)" || rc=$?
+    SCAN_AWK="$saved"
+    assert_contains "$out" "SCAN DID NOT RUN" \
+        "The per-file test surfaces a scan failure as a failure, not a pass"
+}
+
+# Pins LINE ATTRIBUTION against the cycle-1 review defect. The window joins two
+# lines, so when a match appears only in the join there are three possible sites,
+# and an earlier draft keyed the choice off a loose /[Ii]nvoke/ keyword — which
+# blamed any line merely containing "invoked"/"invoking"/"revoke" for a trigger
+# that sat entirely on the NEXT line. A wrong line number sends the author to
+# unrelated prose, and the gate looks broken rather than right.
+test_line_attribution_picks_the_trigger_line() {
+    local tmp
+    tmp="$(command mktemp -d)" || {
+        skip_test "mktemp unavailable"
+        return 0
+    }
+    # shellcheck disable=SC2064  # expand $tmp now, at trap-registration time
+    trap "command rm -rf '$tmp'" RETURN
+
+    # Case 2: the preceding line contains "invoked" but NO complete trigger; the
+    # real trigger is wholly on the line after it. This is the reproduced defect.
+    command cat >"$tmp/herring.md" <<'FIXTURE'
+## Red herring above the trigger
+We already invoked the setup earlier for context.
+   b. **Invoke the `Workflow` tool** with the bundled script.
+FIXTURE
+    scan_file "$tmp/herring.md"
+    assert_contains "$CUR_VIOLATIONS" ":3: " \
+        "The trigger line is reported, not the line that merely says 'invoked'"
+    assert_not_contains "$CUR_VIOLATIONS" ":2: " \
+        "The unrelated preceding line is NOT blamed (cycle-1 defect)"
+
+    # Case 1: a complete trigger on one line, with prose after it, still reports
+    # its own line — the narrowness check for the fix above.
+    command cat >"$tmp/plain.md" <<'FIXTURE'
+## Plain single-line trigger
+   b. **Invoke the `Workflow` tool** with the bundled script.
+and some trailing prose that mentions invoking things.
+FIXTURE
+    scan_file "$tmp/plain.md"
+    assert_contains "$CUR_VIOLATIONS" ":2: " \
+        "A complete single-line trigger reports its own line"
+
+    # Case 3: a genuine WRAP still reports the OPENING line, which is the
+    # property test_wrapped_trigger_is_detected depends on. Pinned here too so a
+    # future edit to the three-case branch cannot satisfy one case by breaking
+    # another — the three are one decision and must be asserted together.
+    command cat >"$tmp/wrap.md" <<'FIXTURE'
+## Genuine wrap
+   b. **Invoke the
+   `Workflow` tool** with the bundled script.
+FIXTURE
+    scan_file "$tmp/wrap.md"
+    assert_contains "$CUR_VIOLATIONS" ":2: " \
+        "A wrapped trigger reports the line it opens on"
+}
+
 # Pins the fence toggle. A `#`-prefixed line inside a fenced block is a shell
 # comment, not a markdown heading. Without the toggle that line splits the
 # section, and the violation gets attributed to a "heading" the reader sees as
@@ -646,6 +801,8 @@ run_test test_corpus_scope_is_deliberate "orchestrate/ is out of scope on purpos
 run_test test_exemption_is_narrow "The exemption is one FILE, and it genuinely arms the gate"
 run_test test_negative_case_fires "scan_file flags unregistered sites and honors every satisfier"
 run_test test_wrapped_trigger_is_detected "A trigger wrapped across two lines is detected (not single-line)"
+run_test test_scan_failure_is_loud_not_clean "A scan that could not run fails loud, never reads as clean (cycle-1 review)"
+run_test test_line_attribution_picks_the_trigger_line "The reported line is the trigger line, not a neighbour (cycle-1 review)"
 run_test test_fence_suppresses_fake_heading "A #-line inside a code fence is not treated as a heading"
 run_test test_registry_named_in_real_corpus "The registry is genuinely named in the real corpus"
 run_test test_detail_truncation "Violation detail truncates at MAX_DETAIL with an accurate remainder"

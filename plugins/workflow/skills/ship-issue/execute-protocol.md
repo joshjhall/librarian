@@ -52,9 +52,14 @@ procedure in one file instead of breaking mid-sequence across two.
 
    The push runs the lefthook pre-push suite — measured 461 s, and #890 recorded
    one at 6m38s reported as `⚠ idle at prompt`. If you background it, **register
-   it** (`golem-work.sh register bash "git push" --pid {pid}`) and `complete`
-   when it returns; the pid is what reaps a crashed push in seconds rather than
-   at the hour-long age bound. Protocol: `golem/background-work.md`.
+   it** — and `complete` when it returns. The pid is what reaps a crashed push in
+   seconds rather than at the hour-long age bound. Full protocol, including the
+   `complete` call: `golem/background-work.md`.
+
+   ```bash
+   # substitute <skill-base-dir>: next-issue/worktree-safe-recipes.md (#815)
+   <skill-base-dir>/../../scripts/golem-work.sh register bash "git push" --pid {pid}
+   ```
 
 1. **Create a PR**:
 

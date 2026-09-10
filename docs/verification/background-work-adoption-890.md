@@ -196,6 +196,72 @@ signal, because a heartbeat cannot distinguish *working* from *parked*. That is
 most of what the liveness column is for, and it is precisely the automation
 the #890 "Why it matters" section says is blocked.
 
+## Cycle 1 of the adversarial review: three blocking findings
+
+The mutation round above was run BEFORE the review. The review then returned
+**three blocking findings**, two of them in code the mutants had exercised — which
+is the argument for the review being a separate gate rather than a redundant one,
+restated with fresh evidence.
+
+### B1 — line attribution keyed off a loose keyword (HIGH, reproduced)
+
+The window joins two lines, so a match visible only in the join has three possible
+sites. Attribution chose between them with a bare `/[Ii]nvoke/` test, which claims
+any first line merely containing *invoked* / *invoking* / *revoke* while the real,
+unwrapped trigger sits wholly on the second. Reproduced independently before
+fixing:
+
+```text
+## Red herring above the trigger
+We already invoked the setup earlier for context.
+   b. **Invoke the `Workflow` tool** with the bundled script.
+
+  before: 2:## Red herring above the trigger   <- unrelated prose blamed
+  after:  3:## Red herring above the trigger   <- the actual trigger line
+```
+
+Fixed by factoring the trigger into ONE `trigger_on()` predicate used both to
+detect and to attribute — they can no longer disagree — plus an explicit
+three-case branch whose **order is load-bearing** (a trailing-line match and a
+genuine wrap are indistinguishable from the join alone, so the trailing case must
+be tested first). `test_line_attribution_picks_the_trigger_line` pins all three
+cases together, and reverting to the loose keyword turns it red.
+
+Note what my own mutation round missed here: M1–M3 targeted the satisfier lookup,
+section scope, and the window. Attribution was a **fourth** class I had not
+thought to mutate — and I had already *fixed* an attribution bug during
+development, which is exactly the blind spot. Having debugged one instance made
+the code feel settled.
+
+### B2 — a failed scan read as "clean" (MEDIUM)
+
+`scan_file` ended `awk … 2>/dev/null || true`, folding an awk **runtime** failure
+into the same empty output as a clean file. The 77 sentinel covers an *absent*
+awk; nothing covered a *present* awk that failed on a particular file. That is the
+per-file arm of the #538/#571 silence-reads-as-a-pass rule.
+
+Now runs awk to a temp file so the status is awk's own (a `while read` fed by a
+process substitution discards it), sets `CUR_SCAN_ERR`, and the per-file test
+**fails** with `SCAN DID NOT RUN` rather than passing.
+`test_scan_failure_is_loud_not_clean` drives it by breaking `SCAN_AWK` itself, with
+a control proving the fixture is otherwise scannable.
+
+### B3 — bare `golem-work.sh` in three of the new pointers (MEDIUM)
+
+The adopted pointers showed a path-less `golem-work.sh register …` while every
+other recipe in the same worktree-isolated files uses
+`<skill-base-dir>/../../scripts/…`. A bare `golem-work.sh` is **not on PATH** — it
+is a bundled plugin script — so a golem copying the parenthetical literally gets
+`command not found` and never registers. Soft failure (the verdict degrades to
+indeterminate rather than idle), but it silently loses precisely the signal this
+PR exists to add.
+
+**Independently confirmed while shipping this PR**: registering the pre-push suite
+by hand, I reached for `register --worktree`, which `register` refuses (`--worktree`
+is an *observer* flag on `count`/`list`). The docs were right and my invocation was
+wrong — which is the same class of error B3 predicts a reader will make. Both the
+flag split and the runnable recipes are now stated explicitly.
+
 ## What this round does NOT prove
 
 The same limit `work-registry-mutation-949.md` records, restated because it
